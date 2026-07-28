@@ -1,0 +1,28 @@
+# 密钥与配置
+api.json
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# 运行时数据
+storys/
+books/
+profiles/
+exports/
+
+# 临时文件
+*.tmp
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+
+# 系统
+.DS_Store
+Thumbs.db
