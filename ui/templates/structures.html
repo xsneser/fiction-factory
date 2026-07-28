@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📋 大纲库 <span style="font-size:14px;color:#8b949e">（{{ templates|length }} 模板）</span></h1>
+{% for t in templates %}
+<div class="card" style="margin-bottom:16px">
+    <div class="title">{{ t.name }} <span class="tag">{{ t.genre }}</span>{% if t.sub_genre %} <span class="tag blue">{{ t.sub_genre }}</span>{% endif %}</div>
+    <p style="font-size:13px;margin:8px 0">{{ t.description }}</p>
+    <p style="font-size:12px;color:#8b949e">总章节: {{ t.total_chapters }} · 阶段数: {{ t.stages|length }}</p>
+    <div style="margin-top:12px">
+        {% for s in t.stages %}
+        <span class="tag" title="{{ s.description }}">{{ s.name }} ({{ s.min_chapters }}-{{ s.max_chapters }}章)</span>
+        {% endfor %}
+    </div>
+    {% if t.tags %}<p style="margin-top:8px">{% for tag in t.tags %}<span class="tag green">{{ tag }}</span>{% endfor %}</p>{% endif %}
+</div>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🔍 审查测试</h1>
+<p style="color:#8b949e;margin-bottom:20px">粘贴小说段落，查看审查评分和问题</p>
+
+<form method="POST">
+    <div class="form-group"><label>待审查文本</label>
+        <textarea name="text" rows="10" style="font-size:14px" placeholder="粘贴需要审查的章节..."></textarea>
+    </div>
+    <button type="submit">🔍 审查</button>
+</form>
+
+{% if result %}
+<div style="margin-top:24px">
+    <div class="detail-grid">
+        <div class="detail-item"><div class="label">评分</div><div class="value" style="color:{% if result.score>=80 %}#3fb950{% elif result.score>=60 %}#d29922{% else %}#f85149{% endif %}">{{ result.score }}/100</div></div>
+        <div class="detail-item"><div class="label">状态</div><div class="value">{% if result.passed %}<span class="tag green">通过</span>{% else %}<span class="tag red">不通过</span>{% endif %}</div></div>
+    </div>
+    <p style="margin:12px 0;font-size:13px">{{ result.summary }}</p>
+
+    {% if result.issues %}
+    <h3>问题列表 ({{ result.issues|length }})</h3>
+    {% for issue in result.issues %}
+    <div class="alert {{ 'error' if issue.severity=='error' else 'warning' if issue.severity=='warning' else 'info' }}">
+        <strong>[{{ issue.category }}]</strong> {{ issue.description }}
+        {% if issue.suggestion %}<br><small>💡 {{ issue.suggestion }}</small>{% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

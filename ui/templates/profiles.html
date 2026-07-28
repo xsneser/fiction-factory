@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>👤 笔名档案 <a href="/profiles/new" class="btn" style="float:right">+ 新笔名</a></h1>
+{% if profiles %}
+<div class="cards">
+{% for p in profiles %}
+<div class="card">
+    <div class="title">{{ p.pen_name }}</div>
+    <p style="font-size:13px;color:#8b949e">{{ p.description }}</p>
+    <div style="margin-top:8px">
+        <span class="tag">{{ p.style_fingerprint.get('humor_style','') }}</span>
+        <span class="tag blue">{{ p.style_fingerprint.get('sentence_length','') }}句</span>
+    </div>
+    {% if p.word_print.get('common_words') %}
+    <p style="font-size:11px;margin-top:8px;color:#484f58">常用词: {{ p.word_print.common_words|join(', ') }}</p>
+    {% endif %}
+    <p style="font-size:11px;color:#484f58">关联: {{ p.assigned_books|length }} 本书</p>
+</div>
+{% endfor %}
+</div>
+{% else %}<div class="empty"><p>暂无笔名</p></div>{% endif %}
+{% endblock %}

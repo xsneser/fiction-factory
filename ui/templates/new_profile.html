@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🆕 创建笔名</h1>
+<form method="POST">
+    <div class="form-row">
+        <div class="form-group"><label>笔名 *</label><input name="pen_name" required></div>
+        <div class="form-group"><label>描述</label><input name="description" placeholder="如：都市爽文专业户"></div>
+    </div>
+    <div class="form-row-3">
+        <div class="form-group"><label>幽默风格</label>
+            <select name="humor_style"><option value="">无</option><option>吐槽型</option><option>冷幽默</option><option>无厘头</option></select></div>
+        <div class="form-group"><label>动作风格</label>
+            <select name="action_style"><option value="">默认</option><option>简洁利落</option><option>画面感强</option><option>华丽铺陈</option></select></div>
+        <div class="form-group"><label>句子长度</label>
+            <select name="sentence_length"><option value="short">短句(8-15字)</option><option value="medium">中句(15-25字)</option><option value="long">长句(25+字)</option></select></div>
+    </div>
+    <div class="form-group"><label>常用词汇（逗号分隔）</label><input name="common_words" placeholder="如：卧槽, 淦, 牛逼"></div>
+    <div class="form-group"><label>禁用词汇（逗号分隔）</label><input name="avoid_words" placeholder="如：仿佛, 似乎, 不禁"></div>
+    <button type="submit">创建笔名</button>
+</form>
+{% endblock %}

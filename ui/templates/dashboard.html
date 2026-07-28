@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🏠 仪表盘</h1>
+<div class="cards">
+    <div class="card">
+        <div class="label">总书目</div>
+        <div class="stat">{{ books|length }}</div>
+    </div>
+    <div class="card">
+        <div class="label">笔名数</div>
+        <div class="stat">{{ pen_names|length }}</div>
+    </div>
+    <div class="card">
+        <div class="label">桥段模板</div>
+        <div class="stat">{{ plot_count }}</div>
+    </div>
+    <div class="card">
+        <div class="label">大纲结构</div>
+        <div class="stat">{{ struct_count }}</div>
+    </div>
+    <div class="card">
+        <div class="label">笑点模式</div>
+        <div class="stat">{{ gag_count }}</div>
+    </div>
+    <div class="card">
+        <div class="label">内涵母题</div>
+        <div class="stat">{{ theme_count }}</div>
+    </div>
+</div>
+
+<h2>📚 书目概览</h2>
+{% if books %}
+<table>
+    <thead><tr><th>书名</th><th>笔名</th><th>流派</th><th>进度</th><th>状态</th><th>操作</th></tr></thead>
+    <tbody>
+    {% for b in books %}
+    <tr>
+        <td><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title or '(未命名)' }}</a></td>
+        <td>{{ b.pen_name }}</td>
+        <td><span class="tag">{{ b.genre }}</span>{% if b.sub_genre %} <span class="tag blue">{{ b.sub_genre }}</span>{% endif %}</td>
+        <td>
+            <div class="progress-bar" style="width:100px"><div class="progress-fill" style="width:{{ (b.current_chapter/b.chapter_count*100)|int if b.chapter_count else 0 }}%"></div></div>
+            <small>{{ b.current_chapter }}/{{ b.chapter_count }} 章</small>
+        </td>
+        <td><span class="tag {{ 'green' if b.status=='writing' else 'yellow' if b.status=='planning' else 'blue' }}">{{ b.status }}</span></td>
+        <td><a href="/books/{{ b.book_id }}" class="btn small">查看</a></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty"><div class="icon">📚</div><p>还没有创建任何书</p><a href="/books/new" class="btn">创建第一本书</a></div>
+{% endif %}
+
+<h2>👤 笔名一览</h2>
+{% if pen_names %}
+<div class="cards">
+{% for p in pen_names %}
+<div class="card">
+    <div class="title">{{ p.pen_name }}</div>
+    <div class="meta">{{ p.description }}</div>
+    <div class="meta">关联书籍: {{ p.assigned_books|length }} 本</div>
+</div>
+{% endfor %}
+</div>
+{% else %}
+<p style="color:#484f58">暂无笔名档案</p>
+{% endif %}
+{% endblock %}

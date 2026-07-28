@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📚 书库 <a href="/books/new" class="btn" style="float:right">+ 新书</a></h1>
+
+{% if books %}
+<table>
+    <thead><tr><th>ID</th><th>书名</th><th>笔名</th><th>流派</th><th>平台</th><th>进度</th><th>操作</th></tr></thead>
+    <tbody>
+    {% for b in books %}
+    <tr>
+        <td><code>{{ b.book_id }}</code></td>
+        <td><strong><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title }}</a></strong></td>
+        <td>{{ b.pen_name }}</td>
+        <td><span class="tag">{{ b.genre }}</span>{% if b.sub_genre %} <span class="tag blue">{{ b.sub_genre }}</span>{% endif %}</td>
+        <td><span class="tag {{ 'green' if b.platform=='fanqie' else 'blue' }}">{{ b.platform }}</span></td>
+        <td>{{ b.current_chapter }}/{{ b.chapter_count }}</td>
+        <td>
+            <a href="/books/{{ b.book_id }}" class="btn small">详情</a>
+            <form method="POST" action="/books/{{ b.book_id }}/delete" style="display:inline" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
+                <button class="small danger">删除</button>
+            </form>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty"><div class="icon">📚</div><p>书库为空</p><a href="/books/new" class="btn">创建新书</a></div>
+{% endif %}
+{% endblock %}

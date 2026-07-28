@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🔄 去AI味测试</h1>
+<p style="color:#8b949e;margin-bottom:20px">粘贴一段文本，查看去AI处理效果</p>
+
+<form method="POST">
+    <div class="form-group"><label>原始文本</label>
+        <textarea name="text" rows="8" style="font-size:14px" placeholder="粘贴AI生成的文本...">{% if result %}{{ result.original }}{% endif %}</textarea>
+    </div>
+    <button type="submit">🔄 去AI味处理</button>
+</form>
+
+{% if result %}
+<div style="margin-top:24px">
+    <h3>📊 处理结果 <span class="tag green">替换 {{ result.word_replacements }} 处</span></h3>
+    <div class="form-row">
+        <div>
+            <label>处理前</label>
+            <pre style="max-height:300px;overflow-y:auto">{{ result.original }}</pre>
+        </div>
+        <div>
+            <label>处理后</label>
+            <pre style="max-height:300px;overflow-y:auto;background:#0d3322">{{ result.processed }}</pre>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

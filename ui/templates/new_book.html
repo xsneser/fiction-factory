@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📝 创建新书</h1>
+
+<form method="POST">
+    <div class="form-row">
+        <div class="form-group"><label>书名 *</label><input type="text" name="title" placeholder="如：系统修仙录" required></div>
+        <div class="form-group"><label>笔名 *</label>
+            <select name="pen_name" required>
+                <option value="">选择笔名</option>
+                {% for p in pen_names %}<option value="{{ p.pen_name }}">{{ p.pen_name }} — {{ p.description[:30] }}</option>{% endfor %}
+            </select>
+        </div>
+    </div>
+    <div class="form-row-3">
+        <div class="form-group"><label>流派 *</label>
+            <select name="genre" required>
+                <option value="玄幻">玄幻</option><option value="都市">都市</option>
+                <option value="言情">言情</option><option value="悬疑">悬疑</option>
+                <option value="穿越">穿越</option>
+            </select>
+        </div>
+        <div class="form-group"><label>子流派</label><input type="text" name="sub_genre" placeholder="如：系统流"></div>
+        <div class="form-group"><label>目标平台</label>
+            <select name="platform"><option value="fanqie">番茄小说</option><option value="qidian">起点中文网</option></select>
+        </div>
+    </div>
+    <div class="form-row">
+        <div class="form-group"><label>总章节数</label><input type="number" name="chapter_count" value="500" min="10" max="2000"></div>
+        <div class="form-group"><label>大纲模板</label>
+            <select name="structure_id">
+                <option value="">自动匹配</option>
+                {% for s in structures %}<option value="{{ s.id }}">{{ s.name }} ({{ s.total_chapters }}章)</option>{% endfor %}
+            </select>
+        </div>
+    </div>
+    <div class="form-group"><label>笔名档案</label>
+        <select name="profile_id">
+            <option value="">自动匹配</option>
+            {% for p in pen_names %}<option value="{{ p.id }}">{{ p.pen_name }}</option>{% endfor %}
+        </select>
+    </div>
+    <button type="submit">🚀 创建新书</button>
+</form>
+{% endblock %}
