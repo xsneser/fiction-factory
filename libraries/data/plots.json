@@ -817,6 +817,255 @@
       "quality_rating": 4,
       "created_at": "2026-05-01",
       "enabled": true
+    },
+    {
+      "id": "scout_fanqie_苦逼挖矿攒经验",
+      "name": "苦逼挖矿攒经验",
+      "category": "开篇/升级流",
+      "sub_category": "",
+      "description": "",
+      "template_structure": "[主角描述当前劳动]→[通过疲惫和汗水塑造坚韧]→[获得经验/属性提升]→[强化目标：继续肝下去]",
+      "slots": [
+        {
+          "name": "劳动场景",
+          "description": "",
+          "options": [
+            "挖矿",
+            "伐木",
+            "打铁",
+            "药剂制作"
+          ],
+          "default": ""
+        },
+        {
+          "name": "经验获取方式",
+          "description": "",
+          "options": [
+            "体力消耗带来微弱暖流/凉意",
+            "每击产生数字提示",
+            "物品收集自动累积"
+          ],
+          "default": ""
+        },
+        {
+          "name": "属性提升效果",
+          "description": "",
+          "options": [
+            "力量+耐力+血量",
+            "敏捷+速度",
+            "精神+感知"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [],
+      "fit_contexts": [],
+      "word_range": [
+        800,
+        2500
+      ],
+      "source": "fanqie",
+      "usage_notes": "",
+      "examples": [],
+      "quality_rating": 0,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "scout_fanqie_恶霸欺压与隐忍",
+      "name": "恶霸欺压与隐忍",
+      "category": "爽文/冲突",
+      "sub_category": "",
+      "description": "",
+      "template_structure": "[恶霸出现并挑衅]→[威胁与要求上供]→[主角评估实力后选择忍让]→[暗下决心/留伏笔]→[恶霸满意离开]",
+      "slots": [
+        {
+          "name": "恶霸身份",
+          "description": "",
+          "options": [
+            "监工/管事的狗腿",
+            "老牌矿工头子",
+            "地方地头蛇",
+            "新手村一霸"
+          ],
+          "default": ""
+        },
+        {
+          "name": "冲突起因",
+          "description": "",
+          "options": [
+            "主角比别人干时间长",
+            "主角采集效率高",
+            "主角不小心占了恶霸的矿点",
+            "恶霸单纯欺生"
+          ],
+          "default": ""
+        },
+        {
+          "name": "忍让方式",
+          "description": "",
+          "options": [
+            "交出部分收获",
+            "口头答应减少工时",
+            "低头认错",
+            "赔笑送东西"
+          ],
+          "default": ""
+        },
+        {
+          "name": "主角真实心计",
+          "description": "",
+          "options": [
+            "正在观察恶霸属性",
+            "计划升级后报复",
+            "先麻痹对方争取发育时间",
+            "暗中收集对方把柄"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [],
+      "fit_contexts": [],
+      "word_range": [
+        800,
+        2500
+      ],
+      "source": "fanqie",
+      "usage_notes": "",
+      "examples": [],
+      "quality_rating": 0,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "scout_fanqie_发现同类玩家",
+      "name": "发现同类玩家",
+      "category": "开篇/世界观拓展",
+      "sub_category": "",
+      "description": "",
+      "template_structure": "[主角照常行动]→[看到其他角色被殴打/异常]→[使用探查技能或系统面板查看]→[发现对方有等级/属性面板]→[内心震惊/惊喜/规划]",
+      "slots": [
+        {
+          "name": "同类状态",
+          "description": "",
+          "options": [
+            "正在被NPC欺负",
+            "因战力不足而濒死",
+            "被关押/奴役",
+            "偷偷练级遇到危险"
+          ],
+          "default": ""
+        },
+        {
+          "name": "发现方式",
+          "description": "",
+          "options": [
+            "使用探查术/系统扫描",
+            "看到对方头顶等级显示",
+            "听到对方骂系统/现实",
+            "注意到对方行为不像NPC"
+          ],
+          "default": ""
+        },
+        {
+          "name": "主角初始反应",
+          "description": "",
+          "options": [
+            "想上前相认但被制止",
+            "暗中观察并记下位置",
+            "评估对方价值后决定是否搭救",
+            "兴奋于存在其他玩家"
+          ],
+          "default": ""
+        },
+        {
+          "name": "后续行动",
+          "description": "",
+          "options": [
+            "暂时观望",
+            "私下接触交换情报",
+            "联手/收小弟",
+            "利用对方当探路石"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [],
+      "fit_contexts": [],
+      "word_range": [
+        800,
+        2500
+      ],
+      "source": "fanqie",
+      "usage_notes": "",
+      "examples": [],
+      "quality_rating": 0,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "scout_fanqie_属性面板与加点时刻",
+      "name": "属性面板与加点时刻",
+      "category": "系统/奖励",
+      "sub_category": "",
+      "description": "",
+      "template_structure": "[获得升级提示/奖励]→[主角打开属性面板]→[展示当前各项属性与可用点数]→[分析属性作用]→[做出加点决策]→[体验加点后的提升效果]",
+      "slots": [
+        {
+          "name": "升级来源",
+          "description": "",
+          "options": [
+            "累积劳动升级",
+            "完成隐藏任务",
+            "击杀怪物",
+            "采集到稀有材料"
+          ],
+          "default": ""
+        },
+        {
+          "name": "属性构成",
+          "description": "",
+          "options": [
+            "力量/敏捷/精神/血量",
+            "攻击/防御/速度/魔力",
+            "体质/智力/魅力/幸运"
+          ],
+          "default": ""
+        },
+        {
+          "name": "可加点数",
+          "description": "",
+          "options": [
+            "固定点数（如每级1点）",
+            "随机点数（如1~3）",
+            "自由分配"
+          ],
+          "default": ""
+        },
+        {
+          "name": "加点策略",
+          "description": "",
+          "options": [
+            "优先加主属性（力量）",
+            "平衡加点",
+            "根据当前困境（缺生存就加血量）",
+            "参考隐藏职业需求"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [],
+      "fit_contexts": [],
+      "word_range": [
+        800,
+        2500
+      ],
+      "source": "fanqie",
+      "usage_notes": "",
+      "examples": [],
+      "quality_rating": 0,
+      "created_at": "2026-05-01",
+      "enabled": true
     }
   ]
 }

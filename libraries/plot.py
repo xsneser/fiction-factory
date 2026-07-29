@@ -81,7 +81,9 @@ class PlotLibrary:
 
     def __init__(self, data_dir: str = ""):
         self.path = Path(data_dir) if data_dir else None
-        self.save_path = Path(data_dir) / "plots.json" if data_dir else Path("libraries/data/plots.json")
+        # 修复: 使用脚本所在目录的 data/ 子目录，避免CWD问题
+        base = Path(__file__).parent / "data"
+        self.save_path = Path(data_dir) / "plots.json" if data_dir else base / "plots.json"
         self.templates: list[PlotTemplate] = []
         self._load()
 
