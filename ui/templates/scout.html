@@ -8,6 +8,7 @@
     <a href="javascript:;" class="platform-tab" data-platform="web" onclick="switchPlatform('web')" style="opacity:0.5;cursor:not-allowed">🌐 网页抓取 <span style="font-size:10px;color:#8b949e">即将推出</span></a>
     <a href="javascript:;" class="platform-tab" data-platform="qidian" onclick="switchPlatform('qidian')" style="opacity:0.5;cursor:not-allowed">📖 起点中文 <span style="font-size:10px;color:#8b949e">即将推出</span></a>
     <a href="javascript:;" class="platform-tab" data-platform="jinjiang" onclick="switchPlatform('jinjiang')" style="opacity:0.5;cursor:not-allowed">🌸 晋江文学城 <span style="font-size:10px;color:#8b949e">即将推出</span></a>
+    <a href="javascript:;" class="platform-tab" data-platform="saved" onclick="switchPlatform('saved')">📂 已下载</a>
 </div>
 
 {# ─── 番茄小说面板 ─── #}
@@ -42,6 +43,13 @@
         <div class="icon" style="font-size:36px">📖</div>
         <p style="color:#8b949e;font-size:14px;margin-top:12px">起点中文网抓取功能正在开发中</p>
         <p style="color:#484f58;font-size:12px;margin-top:6px">敬请期待</p>
+    </div>
+</div>
+
+{# ─── 已下载面板 ─── #}
+<div id="platform-saved" class="platform-panel" style="display:none">
+    <div id="saved-novels-list">
+        <div class="empty" style="padding:40px"><p style="color:#484f58">加载中...</p></div>
     </div>
 </div>
 
@@ -119,6 +127,7 @@ function switchPlatform(pid) {
     var panel = document.getElementById('platform-' + pid);
     if (panel) panel.style.display = 'block';
     currentPlatform = pid;
+    if (pid === 'saved') loadDownloadedNovels();
 }
 
 function startScout() {
@@ -187,12 +196,14 @@ function handleEvent(d) {
         addLog('找到: 「' + d.title + '」(' + d.author + ') ' + (d.chapters||'') + '章', 'success');
         return;
     }
-    if (d.event === 'analysis_result') {
+    if (d.event === 'fetch_done') {
         document.getElementById('progress-fill').style.width = '100%';
-        document.getElementById('phase-label').textContent = '✅ 分析完成，请审核入库内容';
+        document.getElementById('phase-label').textContent = '✅ 下载完成！已保存到本地';
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
-        showReviewCards(d);
+        addLog('✅ 下载完成: 「' + d.title + '」(' + d.saved_chapters + '章) 保存到 ' + d.platform + '/' + d.folder, 'success');
+        // 刷新已下载列表
+        loadDownloadedNovels();
         return;
     }
     if (d.event === 'error') {
@@ -357,5 +368,94 @@ function showToast(msg, type) {
     document.body.appendChild(t);
     setTimeout(function(){ t.remove(); }, 3000);
 }
+
+// ─── 已下载小说 ───
+
+function loadDownloadedNovels() {
+    fetch('/api/scout/novels')
+        .then(function(r) { return r.json(); })
+        .then(function(novels) {
+            var el = document.getElementById('saved-novels-list');
+            if (!novels || novels.length === 0) {
+                el.innerHTML = '<div class="empty" style="padding:40px"><div class="icon" style="font-size:36px">📂</div><p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p><p style="color:#484f58;font-size:12px;margin-top:6px">先抓取一本再说</p></div>';
+                return;
+            }
+            var html = '';
+            novels.forEach(function(n) {
+                html += '<div class="card" style="margin-bottom:12px">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+                html += '<div><strong>' + n.title + '</strong> <span class="tag">' + (n.author||'') + '</span></div>';
+                html += '<span style="font-size:12px;color:#8b949e">' + n.saved_chapters + '/' + n.chapter_count + '章</span>';
+                html += '</div>';
+                html += '<p style="font-size:12px;color:#484f58;margin-top:6px">';
+                html += '平台: ' + (n.platform||'') + ' · 收录: ' + (n.downloaded_at||'');
+                if (n.url) html += ' · <a href="' + n.url + '" target="_blank" style="color:#58a6ff">原文链接</a>';
+                html += '</p>';
+                html += '<div style="margin-top:8px;display:flex;gap:8px">';
+                if (n.analyzed) {
+                    html += '<span class="tag green">✅ 已分析</span>';
+                    html += '<button class="small" onclick="analyzeNovel(\'' + n.platform + '\',\'' + n.folder + '\')">🔄 重新分析</button>';
+                } else {
+                    html += '<button class="small" style="background:#238636" onclick="analyzeNovel(\'' + n.platform + '\',\'' + n.folder + '\')">🔬 分析</button>';
+                }
+                html += '<button class="small danger" onclick="deleteNovel(\'' + n.platform + '\',\'' + n.folder + '\')">🗑 删除</button>';
+                html += '</div></div>';
+            });
+            el.innerHTML = html;
+        });
+}
+
+function analyzeNovel(platform, folder) {
+    var btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '分析中...';
+    
+    fetch('/api/scout/analyze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({platform: platform, folder: folder}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) {
+            showToast('✅ 分析完成: ' + d.title, 'success');
+            addLog('✅ 分析完成: ' + d.title + ' (' + (d.plot_details||[]).length + '桥段 '
+                + (d.structure_details||[]).length + '大纲 '
+                + (d.gag_details||[]).length + '笑点 '
+                + (d.theme_details||[]).length + '内涵)', 'success');
+            if (d.writing_style && d.writing_style.summary) {
+                addLog('📝 写作风格: ' + d.writing_style.summary, 'info');
+            }
+            showReviewCards({
+                title: d.title,
+                plot_details: d.plot_details || [],
+                structure_details: d.structure_details || [],
+                gag_details: d.gag_details || [],
+                theme_details: d.theme_details || [],
+            });
+            loadDownloadedNovels();
+        } else {
+            showToast('❌ 分析失败: ' + (d.error||''), 'error');
+        }
+    })
+    .catch(function(e) {
+        showToast('❌ 请求失败: ' + e.message, 'error');
+    })
+    .finally(function() {
+        btn.disabled = false;
+        btn.textContent = platform === 'fanqie' ? '🔬 分析' : '分析';
+    });
+}
+
+function deleteNovel(platform, folder) {
+    if (!confirm('确认删除「' + folder + '」？')) return;
+    // Simple delete - remove from storage (no delete API yet, just refresh)
+    showToast('🗑 删除功能待添加', 'warning');
+}
+
+// 页面加载时加载已下载列表
+(function() {
+    loadDownloadedNovels();
+})();
 </script>
 {% endblock %}

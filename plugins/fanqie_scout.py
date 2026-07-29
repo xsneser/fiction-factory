@@ -870,6 +870,54 @@ class FanqieScoutAgent:
 
         return result
 
+    def fetch_novel(self, title: str, chapters: int = 50,
+                    on_progress=None) -> tuple:
+        """仅下载（不分析不入库），返回 (NovelInfo, downloaded_chapters)"""
+        result = ScoutResult()
+
+        if on_progress:
+            on_progress("search", 0, 1, f"搜索: {title}")
+        novel = self.crawler.search_novel(title)
+        if not novel:
+            return None, None
+
+        if on_progress:
+            on_progress("search", 1, 1, f"找到: {novel.title}")
+
+        chapter_list = self.crawler.get_chapter_list(novel.book_id, chapters)
+        total_ch = len(chapter_list)
+
+        if on_progress:
+            on_progress("download", 0, total_ch, f"下载 {total_ch} 章...")
+
+        downloaded = []
+        for i, ch in enumerate(chapter_list):
+            content = self.crawler.download_chapter(novel.book_id, ch["id"])
+            if content.strip():
+                imported_re = __import__("re")
+                downloaded.append({
+                    "index": ch["index"], "title": ch["title"],
+                    "content": content,
+                    "word_count": len(imported_re.findall(r"[\u4e00-\u9fff]", content)),
+                })
+            if on_progress:
+                on_progress("download", i+1, total_ch, ch["title"][:30])
+            if i < total_ch - 1:
+                import time as _t; _t.sleep(1.0)
+
+        if on_progress:
+            on_progress("download", total_ch, total_ch, f"下载完成 {len(downloaded)}章")
+
+        # 保存到 storage/novels/
+        from plugins.novel_storage import save_novel
+        folder = save_novel("fanqie", {
+            "title": novel.title, "author": novel.author,
+            "book_id": novel.book_id, "url": novel.url,
+            "genre": novel.genre, "chapter_count": novel.chapter_count,
+        }, downloaded)
+
+        return novel, {"folder": folder, "chapters": len(downloaded)}
+
     def scout_single_book(self, title: str, chapters: int = 50,
                           on_progress=None) -> ScoutResult:
         """

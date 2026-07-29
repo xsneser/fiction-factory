@@ -757,7 +757,6 @@ def scout_run():
         return jsonify({"error": "LLM 未配置"}), 500
 
     scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib, theme_lib)
-    scout_cache = {}  # 缓存分析结果供入库
 
     def generate():
         import json as _json
@@ -799,17 +798,13 @@ def scout_run():
 
         def worker():
             try:
-                result = scout.scout_single_book(novel.title, chapters, on_progress=on_progress)
-                evt_queue.put(("analysis_result", result))
+                novel_info, dl_info = scout.fetch_novel(novel.title, chapters, on_progress=on_progress)
+                evt_queue.put(("fetch_done", {"novel_info": novel_info, "dl_info": dl_info}))
             except Exception as e:
                 evt_queue.put(("error", str(e)))
 
         t = _threading.Thread(target=worker, daemon=True)
         t.start()
-
-        # 缓存本次分析结果，供后面的入库请求使用
-        import threading as _th
-        scout_cache[novel.title] = {"result": None, "lock": _th.Lock()}
 
         # 从队列读取进度事件，实时 yield
         while t.is_alive() or not evt_queue.empty():
@@ -822,27 +817,15 @@ def scout_run():
                         "phase": phase, "current": current,
                         "total": total, "message": message,
                     })
-                elif kind == "analysis_result":
-                    result = item[1]
-                    # 缓存结果供入库使用
-                    with scout_cache[novel.title]["lock"]:
-                        scout_cache[novel.title]["result"] = result
-                    yield send_event("analysis_result", {
-                        "title": novel.title,
-                        "downloaded_chapters": result.downloaded_chapters,
-                        "plot_details": [{"name": p.get("name",""), "category": p.get("category",""),
-                            "description": p.get("description",""), "structure": p.get("structure",""),
-                            "slots": p.get("slots",[]), "examples": p.get("examples",[])}
-                            for p in result.new_plots],
-                        "structure_details": [{"name": s.get("name",""), "description": s.get("description",""),
-                            "stages": [st.get("name","") for st in s.get("stages",[])]}
-                            for s in result.new_structures],
-                        "gag_details": [{"name": g.get("name",""), "category": g.get("category",""),
-                            "pattern_description": g.get("pattern_description",""), "examples": g.get("examples",[])}
-                            for g in result.new_gags],
-                        "theme_details": [{"name": t.get("name",""), "description": t.get("description",""),
-                            "techniques": t.get("techniques",t.get("writing_tips",[]))}
-                            for t in result.new_themes],
+                elif kind == "fetch_done":
+                    ni = item[1]["novel_info"]
+                    di = item[1]["dl_info"]
+                    yield send_event("fetch_done", {
+                        "title": ni.title,
+                        "author": ni.author,
+                        "saved_chapters": di["chapters"],
+                        "folder": di["folder"],
+                        "platform": "fanqie",
                     })
                 elif kind == "error":
                     yield send_event("error", {"message": item[1]})
@@ -895,6 +878,98 @@ def scout_ingest():
 # ═══════════════════════════════════════
 # ⚙️ 设置页
 # ═══════════════════════════════════════
+
+# ─── 已下载小说列表 ───
+
+@app.route("/api/scout/novels")
+def scout_novels():
+    """列出已下载的小说"""
+    from plugins.novel_storage import list_novels
+    platform = request.args.get("platform", "")
+    novels = list_novels(platform)
+    # 标记是否已分析
+    for n in novels:
+        from pathlib import Path
+        analyzed_file = Path(n["path"]) / ".analyzed"
+        n["analyzed"] = analyzed_file.exists()
+    return jsonify(novels)
+
+
+# ─── 分析已下载的小说（提取库条目+写作风格） ───
+
+@app.route("/api/scout/analyze", methods=["POST"])
+def scout_analyze():
+    """分析已下载的小说"""
+    from plugins.novel_storage import load_novel
+    from plugins.style_analyzer import extract_writing_style
+    from plugins.fanqie_scout import FanqieScoutAgent, NovelAnalyzer
+
+    data = request.json or {}
+    platform = data.get("platform", "")
+    folder = data.get("folder", "")
+    profile_id = data.get("profile_id", "")
+
+    if not platform or not folder:
+        return jsonify({"ok": False, "error": "参数缺失"}), 400
+
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+
+    novel_data = load_novel(platform, folder)
+    if not novel_data:
+        return jsonify({"ok": False, "error": "小说不存在"}), 404
+
+    info = novel_data["info"]
+    chapters = novel_data["chapters"]
+
+    from libraries.plot import PlotTemplate
+    from pathlib import Path
+
+    # Step 1: 分析四大库
+    analyzer = NovelAnalyzer(llm)
+    analysis = analyzer.analyze_book(
+        type("obj", (object,), {
+            "title": info.get("title", ""),
+            "genre": info.get("genre", ""),
+            "sub_genre": "",
+            "chapter_count": len(chapters),
+        })(),
+        chapters
+    )
+
+    # Step 2: 分析写作风格
+    style = extract_writing_style(llm, info.get("title", ""), chapters)
+
+    # 如果指定了笔名，自动生成风格档案
+    profile_ready = False
+    if profile_id and profiles.get(profile_id):
+        profile = profiles.get(profile_id)
+        style_words = style.get("common_words", [])
+        avoid_words = style.get("avoid_words", [])
+        if style_words or avoid_words:
+            wp = profile.word_print or {}
+            wp["common_words"] = list(set(wp.get("common_words", []) + style_words))
+            wp["avoid_words"] = list(set(wp.get("avoid_words", []) + avoid_words))
+            profile.word_print = wp
+            profile.save()
+            profile_ready = True
+
+    # 标记已分析
+    novel_path = Path(__file__).parent.parent / "storage" / "novels" / platform / folder
+    (novel_path / ".analyzed").touch()
+
+    return jsonify({
+        "ok": True,
+        "title": info.get("title", ""),
+        "plot_details": analysis.get("plots", []),
+        "structure_details": analysis.get("structures", []),
+        "gag_details": analysis.get("gags", []),
+        "theme_details": analysis.get("themes", []),
+        "writing_style": style,
+        "profile_updated": profile_ready,
+    })
+
 
 @app.route("/settings")
 def settings_page():
