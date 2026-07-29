@@ -84,12 +84,7 @@ class FanqieCrawler:
         self.session = requests.Session()
         self.session.headers.update(self.HEADERS)
         self.session.verify = False  # 跳过SSL验证（Windows旧证书兼容）
-        # 设置系统代理（从环境变量检测）
-        for var in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]:
-            proxy = os.environ.get(var, "")
-            if proxy:
-                self.session.proxies.update({"http": proxy, "https": proxy})
-                break
+        self.session.trust_env = False  # 不用系统代理，直连访问
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.cache_dir = Path(cache_dir)
