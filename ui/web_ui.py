@@ -744,6 +744,108 @@ def scout_run():
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
+# ═══════════════════════════════════════
+# ⚙️ 设置页
+# ═══════════════════════════════════════
+
+@app.route("/settings")
+def settings_page():
+    """设置页面"""
+    api_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api.json")
+    cfg = {}
+    if os.path.exists(api_path):
+        with open(api_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+
+    # 检查 LLM 连接状态
+    from core.llm_client import LLMClient
+    from core.models import APIConfig
+    llm_ok = False
+    try:
+        llm = get_llm()
+        if llm:
+            # 简单 ping
+            models = llm.client.models.list() if hasattr(llm.client, 'models') else None
+            llm_ok = True
+    except Exception:
+        llm_ok = False
+
+    return render_template("settings.html",
+        config={
+            "api_key": cfg.get("api_key", ""),
+            "base_url": cfg.get("base_url", "https://api.deepseek.com"),
+            "model": cfg.get("model", "deepseek-chat"),
+            "http_timeout_seconds": cfg.get("http_timeout_seconds", 300),
+            "context_budget_tokens": cfg.get("context_budget_tokens", 300000),
+            "url_strict": cfg.get("url_strict", False),
+        },
+        llm_ok=llm_ok,
+    )
+
+
+@app.route("/api/settings/save", methods=["POST"])
+def settings_save():
+    """保存设置"""
+    data = request.json or {}
+    api_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api.json")
+
+    # 读取当前配置，只覆盖传入的字段
+    cfg = {}
+    if os.path.exists(api_path):
+        with open(api_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+
+    for key in ("api_key", "base_url", "model", "url_strict",
+                "http_timeout_seconds", "context_budget_tokens"):
+        if key in data:
+            cfg[key] = data[key]
+
+    # 校验
+    if not cfg.get("api_key"):
+        return jsonify({"ok": False, "error": "API Key 不能为空"}), 400
+    if not cfg.get("base_url"):
+        return jsonify({"ok": False, "error": "API 地址不能为空"}), 400
+
+    try:
+        with open(api_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"写入失败: {e}"}), 500
+
+    # 清除缓存的 LLM 客户端
+    global _llm_client
+    _llm_client = None
+
+    return jsonify({"ok": True, "message": "设置已保存"})
+
+
+@app.route("/api/settings/test", methods=["POST"])
+def settings_test():
+    """测试 LLM 连接"""
+    data = request.json or {}
+
+    from core.llm_client import LLMClient
+    from core.models import APIConfig
+
+    api_cfg = APIConfig(
+        api_key=data.get("api_key", ""),
+        base_url=data.get("base_url", "https://api.deepseek.com"),
+        model=data.get("model", "deepseek-chat"),
+        http_timeout_seconds=10,
+    )
+
+    try:
+        client = LLMClient(api_cfg)
+        # 发一条简单的请求确认连接
+        result = client.chat_completion([
+            {"role": "user", "content": "回复 'ok'"}
+        ], max_tokens=10, temperature=0)
+        return jsonify({"ok": True, "model": api_cfg.model,
+                        "response": result.get("content", "")[:50]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
 @app.route("/api/engine/status")
 def engine_status():
     """全局引擎状态"""
