@@ -750,14 +750,16 @@ def scout_run():
 
     def generate():
         import json as _json
+        import queue as _queue
+        import threading as _threading
 
         def send_event(event, d):
             return f"data: {_json.dumps({'event': event, **d}, ensure_ascii=False)}\n\n"
 
-        try:
-            yield send_event("start", {"title": title or direct_id, "chapters": chapters})
+        yield send_event("start", {"title": title or direct_id, "chapters": chapters})
 
-            # 搜索或直接用ID
+        # 搜索阶段：阻塞执行，但速度很快
+        try:
             if direct_id:
                 novel = scout.crawler._get_novel_from_page(direct_id)
                 if not novel:
@@ -768,49 +770,69 @@ def scout_run():
                 if not novel:
                     yield send_event("error", {"message": f"not found: {title}"})
                     return
-
-            yield send_event("found", {
-                "title": novel.title, "author": novel.author,
-                "genre": novel.genre, "chapters": novel.chapter_count,
-                "words": novel.word_count,
-            })
-
-            result = scout.scout_single_book(novel.title, chapters)
-
-            yield send_event("progress", {
-                "phase": "download", "current": result.downloaded_chapters,
-                "total": result.downloaded_chapters,
-                "message": f"downloaded {result.downloaded_chapters} chapters",
-            })
-            yield send_event("progress", {
-                "phase": "analyze", "current": 1, "total": 1, "message": "analyzing...",
-            })
-            yield send_event("progress", {
-                "phase": "ingest", "current": 1, "total": 1, "message": "ingesting...",
-            })
-
-            yield send_event("done", {
-                "title": novel.title,
-                "downloaded_chapters": result.downloaded_chapters,
-                "plots": len(result.new_plots),
-                "structures": len(result.new_structures),
-                "gags": len(result.new_gags),
-                "themes": len(result.new_themes),
-                "plot_details": [{"name": p.get("name",""), "category": p.get("category",""),
-                    "description": p.get("description",""), "structure": p.get("structure","")}
-                    for p in result.new_plots],
-                "gag_details": [{"name": g.get("name",""), "category": g.get("category",""),
-                    "description": g.get("pattern_description",""), "examples": g.get("examples",[])}
-                    for g in result.new_gags],
-                "structure_details": [{"name": s.get("name",""), "description": s.get("description",""),
-                    "stages": [st.get("name","") for st in s.get("stages",[])]}
-                    for s in result.new_structures],
-                "theme_details": [{"name": t.get("name",""), "description": t.get("description",""),
-                    "techniques": t.get("techniques",t.get("writing_tips",[]))}
-                    for t in result.new_themes],
-            })
         except Exception as e:
-            yield send_event("error", {"message": str(e)})
+            yield send_event("error", {"message": f"搜索失败: {e}"})
+            return
+
+        yield send_event("found", {
+            "title": novel.title, "author": novel.author,
+            "genre": novel.genre, "chapters": novel.chapter_count,
+            "words": novel.word_count,
+        })
+
+        # scrout_single_book 耗时长，用线程跑 + 队列传进度
+        evt_queue = _queue.Queue()
+
+        def on_progress(phase, current, total, message):
+            evt_queue.put(("progress", phase, current, total, message))
+
+        def worker():
+            try:
+                result = scout.scout_single_book(novel.title, chapters, on_progress=on_progress)
+                evt_queue.put(("done", result))
+            except Exception as e:
+                evt_queue.put(("error", str(e)))
+
+        t = _threading.Thread(target=worker, daemon=True)
+        t.start()
+
+        # 从队列读取进度事件，实时 yield
+        while t.is_alive() or not evt_queue.empty():
+            try:
+                item = evt_queue.get(timeout=0.3)
+                kind = item[0]
+                if kind == "progress":
+                    _, phase, current, total, message = item
+                    yield send_event("progress", {
+                        "phase": phase, "current": current,
+                        "total": total, "message": message,
+                    })
+                elif kind == "done":
+                    result = item[1]
+                    yield send_event("done", {
+                        "title": novel.title,
+                        "downloaded_chapters": result.downloaded_chapters,
+                        "plots": len(result.new_plots),
+                        "structures": len(result.new_structures),
+                        "gags": len(result.new_gags),
+                        "themes": len(result.new_themes),
+                        "plot_details": [{"name": p.get("name",""), "category": p.get("category",""),
+                            "description": p.get("description",""), "structure": p.get("structure","")}
+                            for p in result.new_plots],
+                        "gag_details": [{"name": g.get("name",""), "category": g.get("category",""),
+                            "description": g.get("pattern_description",""), "examples": g.get("examples",[])}
+                            for g in result.new_gags],
+                        "structure_details": [{"name": s.get("name",""), "description": s.get("description",""),
+                            "stages": [st.get("name","") for st in s.get("stages",[])]}
+                            for s in result.new_structures],
+                        "theme_details": [{"name": t.get("name",""), "description": t.get("description",""),
+                            "techniques": t.get("techniques",t.get("writing_tips",[]))}
+                            for t in result.new_themes],
+                    })
+                elif kind == "error":
+                    yield send_event("error", {"message": item[1]})
+            except _queue.Empty:
+                pass
 
     return Response(
         stream_with_context(generate()),

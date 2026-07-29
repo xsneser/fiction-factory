@@ -15,9 +15,9 @@
     <p style="font-size:13px;color:#8b949e;margin-bottom:16px">搜索番茄小说 → 下载章节 → LLM 拆解 → 自动入库桥段/大纲/笑点/内涵库</p>
     <div class="scout-form">
         <div class="input-row">
-            <input type="text" id="book-title" placeholder="输入书名，如：十日终焉" value="十日终焉" autofocus>
+            <input type="text" id="book-title" placeholder="输入书名，如：十日终焉" onfocus="clearOther('book-id')">
             <span class="or-divider">或</span>
-            <input type="text" id="book-id" placeholder="直接输入 book_id 或 URL">
+            <input type="text" id="book-id" placeholder="直接输入 book_id 或 URL" onfocus="clearOther('book-title')">
         </div>
         <div class="form-row-inline">
             <label>下载章节数</label>
@@ -173,6 +173,10 @@ function handleEvent(d) {
         document.getElementById('phase-label').textContent = d.message || d.phase;
         document.getElementById('progress-text').textContent = d.current + '/' + d.total;
         document.getElementById('progress-fill').style.width = pct + '%';
+        // 下载每章时记录日志
+        if (d.phase === 'download') {
+            addLog('下载: ' + (d.message || '第' + d.current + '章'), 'info');
+        }
         return;
     }
     if (d.event === 'found') {
