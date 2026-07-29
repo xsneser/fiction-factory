@@ -184,12 +184,8 @@ function handleEvent(d) {
         return;
     }
     if (d.event === 'done') {
-        // 进度条置满后渐出
         document.getElementById('progress-fill').style.width = '100%';
         document.getElementById('phase-label').textContent = '✅ 完成！';
-        setTimeout(function() {
-            document.getElementById('progress-area').style.display = 'none';
-        }, 1000);
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
         lastResult = d;
@@ -202,9 +198,6 @@ function handleEvent(d) {
         document.getElementById('phase-label').textContent = '❌ 失败: ' + (d.message||'');
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
-        setTimeout(function() {
-            document.getElementById('progress-area').style.display = 'none';
-        }, 3000);
         return;
     }
     if (d.event === 'start') {
