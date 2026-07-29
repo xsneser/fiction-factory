@@ -16,7 +16,7 @@
             <strong>{{ t.name }}</strong>
             <span class="tag">{{ t.category }}</span>
             {% if t.sub_category %} <span class="tag blue">{{ t.sub_category }}</span>{% endif %}
-            {% for _ in range(t.quality_rating) %}⭐{% endfor %}
+
             {% if not t.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
         </span>
         <span style="color:#8b949e;font-size:12px">{{ t.word_range[0] }}-{{ t.word_range[1] }}字</span>

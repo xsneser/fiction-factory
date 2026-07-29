@@ -50,7 +50,7 @@ class PlotTemplate:
             "fit_contexts": self.fit_contexts,
             "word_range": list(self.word_range),
             "source": self.source, "usage_notes": self.usage_notes,
-            "examples": self.examples, "quality_rating": self.quality_rating,
+            "examples": self.examples,
             "created_at": self.created_at,
             "enabled": self.enabled,
         }
@@ -70,7 +70,6 @@ class PlotTemplate:
             source=d.get("source", ""),
             usage_notes=d.get("usage_notes", ""),
             examples=d.get("examples", []),
-            quality_rating=d.get("quality_rating", 0),
             created_at=d.get("created_at", "2026-05-01"),
             enabled=d.get("enabled", True),
         )
@@ -123,8 +122,6 @@ class PlotLibrary:
             results = [t for t in results
                        if any(ctx in t.fit_contexts for ctx in [context])
                        or context in t.description]
-        if min_rating:
-            results = [t for t in results if t.quality_rating >= min_rating]
         return results
 
     def match_for_chapter(self, chapter_context: str,
@@ -139,8 +136,6 @@ class PlotLibrary:
             for ctx in t.fit_contexts:
                 if ctx in chapter_context:
                     score += 2
-            if t.quality_rating:
-                score += t.quality_rating
             if score > 0:
                 scored.append((score, t))
         scored.sort(key=lambda x: -x[0])
@@ -180,7 +175,6 @@ BUILTIN_PLOTS = [
         word_range=(1500, 3000),
         source="创作积累",
         usage_notes="注意：主角实力展示要留有后手，不可一次亮完底牌",
-        quality_rating=4,
     ),
     PlotTemplate(
         id="plot_dating_002", name="拍卖会捡漏",
@@ -200,7 +194,6 @@ BUILTIN_PLOTS = [
         word_range=(1500, 2500),
         source="创作积累",
         usage_notes="建议在主角资源匮乏、需要突破时使用",
-        quality_rating=4,
     ),
     PlotTemplate(
         id="plot_dating_003", name="拜师/拜入门派",
@@ -220,7 +213,6 @@ BUILTIN_PLOTS = [
         word_range=(2000, 3500),
         source="创作积累",
         usage_notes="可用于主角进入新地图/获取新技能树",
-        quality_rating=4,
     ),
     PlotTemplate(
         id="plot_dating_004", name="闯关/秘境探险",
@@ -242,7 +234,6 @@ BUILTIN_PLOTS = [
         word_range=(3000, 6000),
         source="创作积累",
         usage_notes="适合用于主角需要突破境界/获取关键道具时",
-        quality_rating=5,
     ),
     PlotTemplate(
         id="plot_dating_005", name="装逼打脸连环套",
@@ -262,7 +253,6 @@ BUILTIN_PLOTS = [
         word_range=(2000, 5000),
         source="创作积累",
         usage_notes="打脸强度要递进，最后的脸要最大",
-        quality_rating=5,
     ),
     PlotTemplate(
         id="plot_dating_006", name="英雄救美/关键救援",
@@ -286,7 +276,6 @@ BUILTIN_PLOTS = [
         word_range=(1500, 3000),
         source="创作积累",
         usage_notes="避免救完后主角和被救者强行黏在一起，自然推进关系",
-        quality_rating=3,
     ),
     PlotTemplate(
         id="plot_dating_007", name="擂台/比武大会",
@@ -308,7 +297,6 @@ BUILTIN_PLOTS = [
         word_range=(3000, 6000),
         source="创作积累",
         usage_notes="建议给对手塑造独立动机，不要纯工具人",
-        quality_rating=4,
     ),
     PlotTemplate(
         id="plot_dating_008", name="扮猪吃虎日常",
@@ -328,7 +316,6 @@ BUILTIN_PLOTS = [
         word_range=(1000, 2500),
         source="创作积累",
         usage_notes="点到为止，频率不宜过高（每10-20章一次即可）",
-        quality_rating=4,
     ),
     PlotTemplate(
         id="plot_dating_009", name="修罗场/情感博弈",
@@ -348,7 +335,6 @@ BUILTIN_PLOTS = [
         word_range=(2000, 3500),
         source="创作积累",
         usage_notes="情感博弈的精彩在于'未言明'，避免对话过于直白",
-        quality_rating=3,
     ),
     PlotTemplate(
         id="plot_dating_010", name="宗门/家族危机",
@@ -368,7 +354,6 @@ BUILTIN_PLOTS = [
         word_range=(3000, 6000),
         source="创作积累",
         usage_notes="危机是让角色成长的最佳催化剂",
-        quality_rating=4,
     ),
     PlotTemplate(
         id="plot_dating_011", name="穿越/重生开局",
@@ -388,7 +373,6 @@ BUILTIN_PLOTS = [
         word_range=(2000, 3000),
         source="创作积累",
         usage_notes="第一章前200字必须有钩子，主角面临的第一个危机要立刻出现",
-        quality_rating=5,
     ),
     PlotTemplate(
         id="plot_dating_012", name="获得金手指/系统激活",
@@ -408,6 +392,5 @@ BUILTIN_PLOTS = [
         word_range=(1500, 2500),
         source="创作积累",
         usage_notes="金手指要给限制，否则后面全无敌了没有故事可写",
-        quality_rating=4,
     ),
 ]

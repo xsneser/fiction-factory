@@ -724,7 +724,6 @@ class LibraryIngestor:
             slots=slots,
             usage_notes=data.get("notes",""),
             word_range=tuple(data.get("word_range", [800, 2500])),
-            quality_rating=data.get("quality_rating", 0),
         )
         self.plot_lib.templates.append(template)
 
