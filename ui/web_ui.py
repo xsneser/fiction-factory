@@ -951,6 +951,34 @@ def engine_status():
             "cost": round(cost.spent, 2),
         })
     return jsonify(status)
+@app.route("/api/debug/search-test")
+def debug_search_test():
+    """调试：测试搜索"""
+    from plugins.fanqie_scout import FanqieCrawler
+    title = request.args.get("q", "这个游戏不对劲，我挖矿成神！")
+    try:
+        c = FanqieCrawler()
+        # 检查文件修改时间
+        import os
+        mtime = os.path.getmtime(os.path.join(os.path.dirname(__file__), "..", "plugins", "fanqie_scout.py"))
+        from datetime import datetime
+        mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+        
+        novel = c.search_novel(title)
+        if novel:
+            return jsonify({
+                "ok": True,
+                "title": novel.title,
+                "author": novel.author,
+                "book_id": novel.book_id,
+                "chapters": novel.chapter_count,
+                "file_time": mtime_str,
+            })
+        return jsonify({"ok": False, "message": "not found", "file_time": mtime_str})
+    except Exception as e:
+        import traceback
+        return jsonify({"ok": False, "error": str(e), "traceback": traceback.format_exc()})
+
 
 
 if __name__ == "__main__":

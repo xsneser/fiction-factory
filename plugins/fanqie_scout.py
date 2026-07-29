@@ -82,6 +82,9 @@ class FanqieCrawler:
     def __init__(self, cache_dir: str = "storage/fanqie_cache"):
         self.session = requests.Session()
         self.session.headers.update(self.HEADERS)
+        self.session.verify = False  # 跳过SSL验证（Windows旧证书兼容）
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._decoder = None  # lazy init
@@ -145,10 +148,20 @@ class FanqieCrawler:
         logger.info(f"搜索 {title[:30]} -> {len(queries)}种查询")
         for q in queries:
             try:
-                r = self.session.get(
-                    f"https://www.bing.com/search?q={urllib.parse.quote(q)}",
-                    timeout=15,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+                bing_hosts = ["https://cn.bing.com", "https://www.bing.com"]
+                r = None
+                for host in bing_hosts:
+                    try:
+                        r = self.session.get(
+                            f"{host}/search?q={urllib.parse.quote(q)}",
+                            timeout=10,
+                            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+                        if r.status_code == 200:
+                            break
+                    except Exception:
+                        continue
+                if r is None:
+                    continue
                 ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
                 if ids:
                     seen = set()
@@ -158,8 +171,25 @@ class FanqieCrawler:
                         logger.info(f"搜到: {info.title} (ID={info.book_id})")
                         return info
             except Exception as e:
-                logger.debug(f"Bing '{q[:30]}': {e}")
+                logger.debug(f"搜索 '{q[:30]}': {e}")
                 continue
+
+        # 兜底：直接用番茄搜索页 URL（浏览器能搜到的都行）
+        try:
+            import urllib.parse as _up
+            search_url = f"https://fanqienovel.com/search/{_up.quote(title)}"
+            r = self.session.get(search_url, timeout=10,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+            ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
+            if ids:
+                seen = set()
+                unique_ids = [x for x in ids if not (x in seen or seen.add(x))]
+                info = self._get_novel_from_page(unique_ids[0])
+                if info and info.title:
+                    logger.info(f"番茄搜索页兜底成功: {info.title} (ID={info.book_id})")
+                    return info
+        except Exception as e:
+            logger.debug(f"番茄搜索页兜底: {e}")
 
         logger.warning(f"搜索失败: {title}")
         return None
