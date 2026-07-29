@@ -796,17 +796,33 @@ def scout_run():
             "words": novel.word_count,
         })
 
-        # scrout_single_book 耗时长，用线程跑 + 队列传进度
+        # 注册到全局任务管理器（跨页面可见）
+        from plugins import task_manager
+        task_id = f"fetch_{novel.title}"
+        task_manager.start(task_id, name="小说抓取", title=novel.title,
+                          total=chapters, phase="搜索")
+        task_manager.log(task_id, f"找到: {novel.title}", "success")
+
         evt_queue = _queue.Queue()
 
         def on_progress(phase, current, total, message):
             evt_queue.put(("progress", phase, current, total, message))
+            # 同步更新全局任务管理器
+            if phase == "search":
+                task_manager.progress(task_id, current, total, "搜索", message)
+            elif phase == "download":
+                task_manager.progress(task_id, current, total, "下载", message)
+                task_manager.log(task_id, f"下载: {message}")
+            elif phase == "analysis_done":
+                task_manager.progress(task_id, 0, 1, "完成", "分析完成")
 
         def worker():
             try:
                 novel_info, dl_info = scout.fetch_novel(novel.title, chapters, on_progress=on_progress)
+                task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")
                 evt_queue.put(("fetch_done", {"novel_info": novel_info, "dl_info": dl_info}))
             except Exception as e:
+                task_manager.fail(task_id, str(e))
                 evt_queue.put(("error", str(e)))
 
         t = _threading.Thread(target=worker, daemon=True, name="scout-fetch")
@@ -980,18 +996,8 @@ def scout_analyze():
 @app.route("/api/status/tasks")
 def status_tasks():
     """返回当前运行中的任务列表（供右侧状态栏轮询）"""
-    from datetime import datetime
-    tasks = []
-    # 这个端点将返回全局运行任务，持续补充完善
-    import threading as _th
-    active = [t for t in _th.enumerate() if t.is_alive() and t.name and 'scout' in t.name.lower()]
-    for t in active:
-        tasks.append({
-            "name": "小说抓取",
-            "phase": "运行中",
-            "current": 0, "total": 0,
-            "time": datetime.now().strftime("%H:%M:%S"),
-        })
+    from plugins import task_manager
+    tasks = task_manager.get_tasks()
     return jsonify(tasks)
 
 

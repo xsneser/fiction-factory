@@ -149,29 +149,63 @@
             });
         });
 
-        // 运行状态轮询
+        // 运行状态轮询（跨页面持久化）
+        var prevLogCount = {};
         var statusInterval = setInterval(function() {
             fetch('/api/status/tasks')
                 .then(function(r) { return r.json(); })
                 .then(function(tasks) {
                     var el = document.getElementById('status-tasks');
+                    var curTask = document.getElementById('current-task');
+                    var logArea = document.getElementById('task-log');
+                    var logList = document.getElementById('task-log-list');
+
                     if (!tasks || tasks.length === 0) {
                         el.innerHTML = '<div class="status-empty">暂无运行中的任务</div>';
+                        if (curTask) curTask.style.display = 'none';
+                        if (logArea) logArea.style.display = 'none';
                         return;
                     }
-                    var html = '';
+
+                    el.innerHTML = '';
                     tasks.forEach(function(t) {
-                        html += '<div class="status-card">';
-                        html += '<div class="task-name">' + (t.name||'') + '</div>';
-                        html += '<div class="task-phase">' + (t.phase||'') + ' (' + (t.current||0) + '/' + (t.total||0) + ')</div>';
+                        var pct = t.total > 0 ? Math.round((t.current/t.total)*100) : 0;
+                        var isActive = t.status === 'running';
+                        var cardHtml = '<div class="status-card" style="' + (isActive?'':'opacity:0.6') + '">';
+                        cardHtml += '<div class="task-name">' + (t.title ? t.title : t.name) + '</div>';
+                        cardHtml += '<div class="task-phase">' + (t.phase||'') + '</div>';
                         if (t.total > 0) {
-                            var pct = Math.round((t.current/t.total)*100);
-                            html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
+                            cardHtml += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
                         }
-                        if (t.time) html += '<div class="task-time">' + t.time + '</div>';
-                        html += '</div>';
+                        if (t.time) cardHtml += '<div class="task-time">' + t.time + '</div>';
+                        cardHtml += '</div>';
+                        el.innerHTML = cardHtml;
+
+                        // 同步更新cur-task（兼容页面JS直接更新）
+                        if (curTask && isActive) {
+                            curTask.innerHTML = cardHtml;
+                            curTask.style.display = 'block';
+                        } else if (curTask) {
+                            curTask.style.display = 'none';
+                        }
+
+                        // 日志
+                        if (logArea && t.logs && t.logs.length > 0) {
+                            logArea.style.display = 'block';
+                            var prev = prevLogCount[t.id] || 0;
+                            if (t.logs.length > prev) {
+                                for (var i = prev; i < t.logs.length; i++) {
+                                    var l = t.logs[i];
+                                    var div = document.createElement('div');
+                                    div.style.cssText = 'padding:2px 0;border-left:2px solid ' + (l.level==='error'?'#f85149':l.level==='success'?'#3fb950':'#30363d') + ';padding-left:6px;margin:1px 0;font-size:11px';
+                                    div.textContent = l.time + ' ' + l.message;
+                                    logList.appendChild(div);
+                                }
+                                logList.scrollTop = logList.scrollHeight;
+                            }
+                            prevLogCount[t.id] = t.logs.length;
+                        }
                     });
-                    el.innerHTML = html;
                 }).catch(function() {});
         }, 2000);
     </script>
