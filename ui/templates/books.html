@@ -15,7 +15,8 @@
         <td><span class="tag {{ 'green' if b.platform=='fanqie' else 'blue' }}">{{ b.platform }}</span></td>
         <td>{{ b.current_chapter }}/{{ b.chapter_count }}</td>
         <td>
-            <a href="/books/{{ b.book_id }}" class="btn small">详情</a>
+            <a href="/books/{{ b.book_id }}/continue" class="btn small">续写</a>
+            <a href="/books/{{ b.book_id }}" class="btn small secondary">详情</a>
             <form method="POST" action="/books/{{ b.book_id }}/delete" style="display:inline" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
                 <button class="small danger">删除</button>
             </form>

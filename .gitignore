@@ -26,3 +26,6 @@ exports/
 # 系统
 .DS_Store
 Thumbs.db
+
+# 运行时缓存
+storage/

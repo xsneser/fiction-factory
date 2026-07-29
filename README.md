@@ -96,6 +96,31 @@ D:\NovelEngine/
 
 ## 快速开始
 
+### 方式一：一键启动（推荐）
+
+**Windows**：双击 `launch.bat`  
+**Linux/WSL2**：`bash launch.sh`
+
+脚本自动完成：Python 检测 → api.json 检查 → 依赖安装 → 启动 Web 面板
+
+浏览器自动打开 `http://localhost:58080`
+
+### 方式二：手动启动
+
+```bash
+# 1. 安装依赖
+pip install -r requirements.txt
+
+# 2. 配置 API
+cp api.example.json api.json
+# 编辑 api.json 填入你的 DeepSeek API Key
+
+# 3. 启动
+python run.py server    # FastAPI 后端 (58080)
+python ui/web_ui.py     # Flask 管理面板 (58080)
+python run.py ui        # Streamlit 实验台 (8501)
+```
+
 ### 1. 配置 API
 
 编辑 `api.json`：

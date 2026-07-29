@@ -1,5 +1,6 @@
 """
-引擎路由器（Engine Router）
+引擎路由器（Engine Router）v2.0
+两个完整流程：新书启动 + 现有续写
 纯函数路由 + 状态机，所有模块的总调度中心
 """
 from enum import Enum
@@ -17,22 +18,58 @@ from libraries.profiles import PenNameProfile, ProfileManager
 from libraries.book_manager import BookManager, BookConfig
 from libraries.cost_tracker import CostTracker
 from libraries.de_ai import DeAIEngine
-from libraries.writing_pipeline import WritingPipeline, WritingContext, WritingResult
 from libraries.character_state import CharacterStateMachine, CharacterState
 from libraries.reviewer import ContentReviewer, ReviewResult
-from libraries.new_book import NewBookPipeline, NewBookConfig, Chapter3Result
+from libraries.new_book import NewBookPipeline, NewBookConfig, Chapter3Result, recommend_opening
+from libraries.beat_writer import ChapterWriter, BeatLibrary
+
+
+# ═══════════════════════════════════════════════
+# 枚举定义
+# ═══════════════════════════════════════════════
+
+class BookMode(Enum):
+    """图书模式"""
+    NEW = "new"            # 新书启动
+    CONTINUE = "continue"  # 现有续写
+
+
+class Phase(Enum):
+    """引擎阶段"""
+    # 新书启动阶段
+    NEW_PLANNING = "new_planning"       # 规划：大纲+角色+伏笔+书名方案
+    NEW_CHAPTER1 = "new_chapter1"       # 第一章：钩子+金手指
+    NEW_CHAPTER2 = "new_chapter2"       # 第二章：世界观展开
+    NEW_CHAPTER3 = "new_chapter3"       # 第三章：首次冲突
+    NEW_TITLE = "new_title"             # 书名+简介生成
+
+    # 通用阶段
+    IDLE = "idle"
+    OUTLINE = "outline"
+    WRITING = "writing"
+    REVIEWING = "reviewing"
+    DE_AI = "de_ai"
+    COMPLETE = "complete"
 
 
 class Op(Enum):
     """操作指令"""
     COMPLETE = "complete"              # 全书完成
+    PAUSE = "pause"                    # 暂停（预算不足等）
+
+    # 新书启动专用
+    PLAN_BOOK = "plan_book"            # 规划全书
+    WRITE_CH1 = "write_ch1"            # 写第一章
+    WRITE_CH2 = "write_ch2"            # 写第二章
+    WRITE_CH3 = "write_ch3"            # 写第三章
+    GENERATE_TITLE = "generate_title"  # 生成书名+简介
+
+    # 续写专用
     PLAN_OUTLINE = "plan_outline"      # 生成大纲
-    PLAN_CHAPTER = "plan_chapter"      # 规划本章（匹配模板+变量）
     WRITE_CHAPTER = "write_chapter"    # 写正文
     REVIEW_CHAPTER = "review_chapter"  # 审查
-    DE_AI_PASS = "de_ai_pass"         # 去AI味
+    DE_AI_PASS = "de_ai_pass"          # 去AI味
     CONFIRM_CHAPTER = "confirm"        # 确认发布
-    PAUSE = "pause"                    # 暂停（预算不足等）
 
 
 @dataclass
@@ -44,17 +81,44 @@ class Instruction:
     reason: str = ""
 
 
+# ═══════════════════════════════════════════════
+# 引擎状态
+# ═══════════════════════════════════════════════
+
+@dataclass
+class NewBookState:
+    """新书启动的中间状态"""
+    # 规划产物
+    outline_generated: bool = False
+    characters_created: list[dict] = field(default_factory=list)   # [{name, identity, ...}]
+    foreshadows_planned: list[dict] = field(default_factory=list)  # [{desc, plant_ch, resolve_ch, ...}]
+    opening_plan: dict = field(default_factory=dict)               # plan_opening 返回的结果
+
+    # 前三章产物
+    chapter1: str = ""
+    chapter2: str = ""
+    chapter3: str = ""
+
+    # 书名+简介
+    title_options: list[str] = field(default_factory=list)
+    best_title: str = ""
+    synopsis: str = ""
+    title_finalized: bool = False
+
+
 @dataclass
 class EngineState:
     """引擎全局状态"""
     book_id: str = ""
-    phase: str = "idle"                # idle/outline/writing/reviewing/complete
+    book_mode: BookMode = BookMode.NEW        # 当前模式
+    phase: Phase = Phase.IDLE
 
     # 书目信息
     title: str = ""
     pen_name: str = ""
     genre: str = ""
     sub_genre: str = ""
+    platform: str = "fanqie"
 
     # 大纲
     outline_data: dict = field(default_factory=dict)
@@ -74,18 +138,29 @@ class EngineState:
     started_at: str = ""
     updated_at: str = ""
 
+    # 新书子状态（仅在 NEW 模式下使用）
+    new_book: NewBookState = field(default_factory=NewBookState)
+
+
+# ═══════════════════════════════════════════════
+# 总引擎
+# ═══════════════════════════════════════════════
 
 class NovelEngine:
     """
-    小说工厂总引擎
+    小说工厂总引擎 v2.0
 
-    用法：
-        engine = NovelEngine(llm_client)
-        engine.load_book("book_001")
-        engine.run()              # 自动跑一整个 cycle
-        或
-        step = engine.route()     # 查看下一步
-        engine.execute(step)      # 执行
+    两个入口：
+        engine.start_new_book(config)   → 新书启动流程
+        engine.continue_book(book_id)   → 现有续写流程
+
+    新书启动流程：
+        选题 → 规划(大纲+角色+伏笔+书名) → 第一章(钩子+金手指)
+        → 第二章(世界观) → 第三章(首次冲突) → 书名简介定稿
+        → 自动转入续写循环
+
+    续写流程：
+        恢复状态 → 写→审→去AI→下一章 → 循环
     """
 
     def __init__(self, llm_client=None):
@@ -97,75 +172,610 @@ class NovelEngine:
         self.theme_lib = ThemeLibrary()
         self.profiles = ProfileManager("profiles")
         self.book_mgr = BookManager("books")
-        self.new_book = NewBookPipeline(llm_client)
-        self.writing = WritingPipeline(llm_client, self.profiles)
-        self.char_states = CharacterStateMachine()
-        self.reviewer = ContentReviewer(llm_client)
+        self.new_book_pipeline = NewBookPipeline(llm_client)
         self.de_ai = DeAIEngine(llm_client)
+        self.reviewer = ContentReviewer(llm_client)
+        self.profile: Optional[PenNameProfile] = None
+        self.chapter_writer = ChapterWriter(llm_client, self.de_ai, self.reviewer, self.gag_lib, self.profile)
+        self.char_states = CharacterStateMachine()
 
         # 状态
         self.state = EngineState()
         self.cost_tracker = CostTracker()
         self.book: Optional[BookConfig] = None
-        self.profile: Optional[PenNameProfile] = None
 
-    # ─── 书生命周期 ───
+        # 新书配置（start_new_book 时设置）
+        self._new_book_config: Optional[NewBookConfig] = None
 
-    def load_book(self, book_id: str):
-        """加载已有图书"""
+    # ═══════════════════════════════════════════
+    # 入口
+    # ═══════════════════════════════════════════
+
+    def start_new_book(self, config: NewBookConfig) -> EngineState:
+        """
+        🔰 新书启动入口
+
+        设置所有初始状态，进入规划阶段。
+        后续调用 run() 或 step() 逐步推进。
+        """
+        if not self.llm:
+            raise RuntimeError("LLM 未配置，无法启动新书")
+
+        self._new_book_config = config
+        self.state = EngineState(
+            book_mode=BookMode.NEW,
+            phase=Phase.NEW_PLANNING,
+            title=config.title or "(待定)",
+            pen_name=config.pen_name,
+            genre=config.genre,
+            sub_genre=config.sub_genre,
+            platform=config.platform,
+            total_chapters=config.chapter_count,
+            current_chapter=0,
+            started_at=datetime.now().isoformat(),
+        )
+
+        # 加载笔名档案
+        self.profile = None
+        if config.style_profile_id:
+            try:
+                self.profile = self.profiles.get(config.style_profile_id)
+            except Exception:
+                pass
+        if not self.profile:
+            try:
+                self.profile = self.profiles.get_by_name(config.pen_name)
+            except Exception:
+                pass
+
+        # 初始化成本追踪
+        self.cost_tracker = CostTracker()
+        self.cost_tracker.book_id = "new_book"
+
+        return self.state
+
+    def continue_book(self, book_id: str) -> EngineState:
+        """
+        ♻️ 现有续写入口
+
+        从图书目录恢复全部状态：大纲、角色、伏笔、进度、成本。
+        """
         self.book = self.book_mgr.get(book_id)
         if not self.book:
             raise ValueError(f"图书 {book_id} 不存在")
 
-        self.state.book_id = book_id
-        self.state.title = self.book.title
-        self.state.pen_name = self.book.pen_name
-        self.state.genre = self.book.genre
-        self.state.sub_genre = self.book.sub_genre
-        self.state.current_chapter = self.book.current_chapter
-        self.state.total_chapters = self.book.chapter_count
+        self.state = EngineState(
+            book_mode=BookMode.CONTINUE,
+            phase=Phase.IDLE,
+            book_id=book_id,
+            title=self.book.title,
+            pen_name=self.book.pen_name,
+            genre=self.book.genre,
+            sub_genre=self.book.sub_genre,
+            platform=self.book.platform,
+            current_chapter=self.book.current_chapter,
+            total_chapters=self.book.chapter_count,
+            structure_template_id=self.book.structure_template_id,
+        )
 
         # 加载风格档案
+        self.profile = None
         if self.book.style_profile_id:
-            self.profile = self.profiles.get(self.book.style_profile_id)
-        else:
-            self.profile = self.profiles.get_by_name(self.book.pen_name)
+            try:
+                self.profile = self.profiles.get(self.book.style_profile_id)
+            except Exception:
+                pass
 
         # 加载角色状态
         char_path = Path("books") / book_id / "character_states.json"
         if char_path.exists():
-            self.char_states.load(str(char_path))
+            try:
+                self.char_states.load(str(char_path))
+            except Exception:
+                pass
 
         # 加载成本
         cost_path = Path("books") / book_id / "cost.json"
-        self.cost_tracker = CostTracker.load(str(cost_path))
+        try:
+            self.cost_tracker = CostTracker.load(str(cost_path))
+        except Exception:
+            self.cost_tracker = CostTracker()
         self.cost_tracker.book_id = book_id
 
         # 加载大纲
         outline = self.book_mgr.get_outline(book_id)
         if outline:
             self.state.outline_data = outline
+            self.state.chapters = outline.get("chapters", [])
+            self.state.phase = Phase.WRITING
+
+        # 确定当前阶段
+        if self.book.current_chapter >= self.book.chapter_count:
+            self.state.phase = Phase.COMPLETE
+        elif self.state.chapters and self.book.current_chapter > 0:
+            self.state.phase = Phase.WRITING
+        else:
+            self.state.phase = Phase.OUTLINE
 
         return self.state
 
-    def _save_state(self):
-        """保存所有状态"""
-        if not self.state.book_id:
-            return
-        book_dir = Path("books") / self.state.book_id
+    # ═══════════════════════════════════════════
+    # 路由（纯函数）
+    # ═══════════════════════════════════════════
 
-        # 角色状态
-        self.char_states.save(str(book_dir / "character_states.json"))
+    def route(self) -> Instruction:
+        """
+        纯函数路由：根据 book_mode 和 phase 决定下一步
+        """
+        if self.state.book_mode == BookMode.NEW:
+            return self._route_new_book()
+        else:
+            return self._route_continue()
 
-        # 成本
-        self.cost_tracker.save(str(book_dir / "cost.json"))
+    def _route_new_book(self) -> Instruction:
+        """🔰 新书启动路由"""
+        s = self.state
+        nb = s.new_book
+        phase = s.phase
 
-    def plan_outline(self):
-        """生成大纲"""
+        # 1. 规划阶段
+        if phase == Phase.NEW_PLANNING:
+            if not nb.outline_generated:
+                return Instruction(Op.PLAN_BOOK, reason="规划全书：大纲+角色+伏笔+书名方案")
+            # 规划完成 → 开始写第一章
+            s.phase = Phase.NEW_CHAPTER1
+            return Instruction(Op.WRITE_CH1, chapter_num=1, reason="第一章：钩子+金手指+首次危机")
+
+        # 2. 第一章
+        if phase == Phase.NEW_CHAPTER1:
+            if not nb.chapter1:
+                return Instruction(Op.WRITE_CH1, chapter_num=1, reason="第一章：钩子+金手指+首次危机")
+            s.phase = Phase.NEW_CHAPTER2
+            return Instruction(Op.WRITE_CH2, chapter_num=2, reason="第二章：世界观展开")
+
+        # 3. 第二章
+        if phase == Phase.NEW_CHAPTER2:
+            if not nb.chapter2:
+                return Instruction(Op.WRITE_CH2, chapter_num=2, reason="第二章：世界观展开")
+            s.phase = Phase.NEW_CHAPTER3
+            return Instruction(Op.WRITE_CH3, chapter_num=3, reason="第三章：首次核心冲突")
+
+        # 4. 第三章
+        if phase == Phase.NEW_CHAPTER3:
+            if not nb.chapter3:
+                return Instruction(Op.WRITE_CH3, chapter_num=3, reason="第三章：首次核心冲突")
+            s.phase = Phase.NEW_TITLE
+            return Instruction(Op.GENERATE_TITLE, reason="生成书名+简介")
+
+        # 5. 书名+简介
+        if phase == Phase.NEW_TITLE:
+            if not nb.title_finalized:
+                return Instruction(Op.GENERATE_TITLE, reason="生成书名+简介")
+
+            # 新书启动完成 → 转入续写模式
+            s.book_mode = BookMode.CONTINUE
+            s.phase = Phase.WRITING
+            s.current_chapter = 3  # 从第4章开始续写
+            return Instruction(Op.WRITE_CHAPTER, chapter_num=4,
+                               reason="新书启动完成，开始续写")
+
+        # 不应该到这里
+        return Instruction(Op.COMPLETE, reason="未知状态")
+
+    def _route_continue(self) -> Instruction:
+        """♻️ 续写路由"""
+        s = self.state
+
+        # 1. 完本
+        if s.current_chapter >= s.total_chapters and s.current_content:
+            return Instruction(Op.COMPLETE, reason="全书完成")
+
+        # 2. 还没有大纲
+        if not s.outline_data and not s.chapters:
+            return Instruction(Op.PLAN_OUTLINE, reason="需要生成大纲")
+
+        # 3. 预算检查
+        if self.cost_tracker.remaining() <= 0:
+            return Instruction(Op.PAUSE,
+                               reason=f"预算耗尽 ({self.cost_tracker.spent:.2f}/{self.cost_tracker.budget})")
+
+        # 4. 当前章需要审查
+        if s.current_content and s.phase == Phase.REVIEWING:
+            return Instruction(Op.REVIEW_CHAPTER, s.current_chapter,
+                               reason="审查本章")
+
+        # 5. 审查通过 → 去AI味
+        if s.current_content and s.phase == Phase.DE_AI:
+            return Instruction(Op.DE_AI_PASS, s.current_chapter,
+                               reason="去AI味处理")
+
+        # 6. 写下一章
+        next_ch = s.current_chapter + 1
+        return Instruction(Op.WRITE_CHAPTER, next_ch,
+                           reason=f"写第 {next_ch} 章")
+
+    # ═══════════════════════════════════════════
+    # 执行
+    # ═══════════════════════════════════════════
+
+    def execute(self, inst: Instruction) -> dict:
+        """执行路由指令，分发到对应处理器"""
+        handlers = {
+            Op.COMPLETE:        self._exec_complete,
+            Op.PAUSE:           self._exec_pause,
+            Op.PLAN_BOOK:       self._exec_plan_book,
+            Op.WRITE_CH1:       self._exec_write_ch1,
+            Op.WRITE_CH2:       self._exec_write_ch2,
+            Op.WRITE_CH3:       self._exec_write_ch3,
+            Op.GENERATE_TITLE:  self._exec_generate_title,
+            Op.PLAN_OUTLINE:    self._exec_plan_outline,
+            Op.WRITE_CHAPTER:   self._exec_write_chapter,
+            Op.REVIEW_CHAPTER:  self._exec_review_current,
+            Op.DE_AI_PASS:      self._exec_de_ai_current,
+            Op.CONFIRM_CHAPTER: self._exec_confirm_current,
+        }
+        handler = handlers.get(inst.op)
+        if handler:
+            return handler(inst)
+        return {"status": "unknown_op", "op": inst.op.value}
+
+    # ─── 通用 ───
+
+    def _exec_complete(self, inst: Instruction) -> dict:
+        return {"status": "complete", "message": "全书完成"}
+
+    def _exec_pause(self, inst: Instruction) -> dict:
+        return {"status": "paused", "reason": inst.reason}
+
+    # ═══════════════════════════════════════════
+    # 🔰 新书启动执行器
+    # ═══════════════════════════════════════════
+
+    def _exec_plan_book(self, inst: Instruction) -> dict:
+        """
+        Phase: 规划全书
+
+        完成：
+        1. 开篇方案推荐（选桥段+大纲模板）
+        2. 展开大纲结构（卷/弧/章层级）
+        3. 创建初始角色（主角+反派+主要配角）
+        4. 规划伏笔方案
+        5. 生成书名方案（先占位，等前三章写好再精调）
+        """
+        config = self._new_book_config
+        if not config:
+            raise RuntimeError("没有新书配置，请先调用 start_new_book()")
+
+        nb = self.state.new_book
+
+        # ── 1. 开篇方案 ──
+        nb.opening_plan = self.new_book_pipeline.plan_opening(config)
+
+        # ── 2. 大纲结构 ──
+        struct = self.struct_lib.search(
+            genre=config.genre,
+            sub_genre=config.sub_genre,
+            chapter_count=config.chapter_count)
+        template = struct[0] if struct else None
+
+        if template:
+            self.state.structure_template_id = template.id
+            self.state.outline_data = {
+                "structure": template.id,
+                "structure_name": template.name,
+                "stages": [s.__dict__ for s in template.stages],
+                "total_chapters": template.total_chapters,
+            }
+            # 从 stages 生成章节列表
+            ch_num = 1
+            self.state.chapters = []
+            for stage in template.stages:
+                for _ in range(stage.min_chapters):
+                    self.state.chapters.append({
+                        "num": ch_num,
+                        "title": f"{stage.name} ({ch_num})",
+                        "stage": stage.name,
+                        "outline": "",
+                    })
+                    ch_num += 1
+            self.state.total_chapters = len(self.state.chapters)
+
+        # ── 3. 初始角色创建 ──
+        nb.characters_created = self._generate_initial_characters(config)
+
+        # ── 4. 伏笔规划 ──
+        nb.foreshadows_planned = self._generate_foreshadows(config)
+
+        # ── 5. 书名占位（等前三章写好再精调） ──
+        nb.title_options = [config.title] if config.title else [f"{config.genre}之{config.pen_name}"]
+
+        nb.outline_generated = True
+        self.state.updated_at = datetime.now().isoformat()
+
+        return {
+            "status": "book_planned",
+            "phase": "new_planning",
+            "structure": self.state.structure_template_id,
+            "total_chapters": self.state.total_chapters,
+            "characters": len(nb.characters_created),
+            "foreshadows": len(nb.foreshadows_planned),
+            "opening_plot": nb.opening_plan.get("opening_plot").name
+                             if nb.opening_plan.get("opening_plot") else "auto",
+        }
+
+    def _exec_write_ch1(self, inst: Instruction) -> dict:
+        """第一章：钩子 + 金手指激活 + 首个危机（节拍级写作）"""
+        config = self._new_book_config
+        nb = self.state.new_book
+
+        ch1_outline = (
+            f"第一章：钩子+金手指+首个危机\n"
+            f"流派：{config.genre}/{config.sub_genre}\n"
+            f"任务：前200字有强烈钩子→介绍主角处境→触发第一个危机→激活金手指\n"
+            f"核心要求：主角用幽默自嘲面对困境，奠定网文爽感基调"
+        )
+
+        self.chapter_writer.executor.profile = self.profile
+        result = self.chapter_writer.write_chapter(
+            chapter_num=1, chapter_outline=ch1_outline,
+            target_words=config.words_per_chapter or 3000,
+            genre=config.genre, pen_name=config.pen_name)
+
+        nb.chapter1 = result["text"]
+        self.cost_tracker.record("ch1_draft", "", result["text"])
+        self._save_new_book_chapter(1, "钩子·金手指·首次危机", nb.chapter1)
+        self.state.updated_at = datetime.now().isoformat()
+
+        return {"status": "ch1_done", "chapter": 1,
+                "word_count": result["word_count"], "beats": result["beats"]}
+
+    def _exec_write_ch2(self, inst: Instruction) -> dict:
+        """第二章：世界观展开 + 能力初试（节拍级写作）"""
+        config = self._new_book_config
+        nb = self.state.new_book
+        prev_end = nb.chapter1[-500:] if nb.chapter1 else ""
+
+        ch2_outline = (
+            f"第二章：世界观展开+能力初试\n"
+            f"流派：{config.genre}/{config.sub_genre}\n"
+            f"任务：展示世界观→第一次使用金手指→建立日常节奏→章末中等钩子\n"
+            f"承接上文：{nb.chapter1[-200:] if nb.chapter1 else ''}..."
+        )
+
+        self.chapter_writer.executor.profile = self.profile
+        result = self.chapter_writer.write_chapter(
+            chapter_num=2, chapter_outline=ch2_outline,
+            target_words=config.words_per_chapter or 3000,
+            genre=config.genre, pen_name=config.pen_name,
+            previous_chapter_ending=prev_end)
+
+        nb.chapter2 = result["text"]
+        self.cost_tracker.record("ch2_draft", "", result["text"])
+        self._save_new_book_chapter(2, "世界观展开", nb.chapter2)
+        self.state.updated_at = datetime.now().isoformat()
+
+        return {"status": "ch2_done", "chapter": 2,
+                "word_count": result["word_count"], "beats": result["beats"]}
+
+    def _exec_write_ch3(self, inst: Instruction) -> dict:
+        """第三章：首次核心冲突 + 展现实力（节拍级写作）"""
+        config = self._new_book_config
+        nb = self.state.new_book
+        prev_end = nb.chapter2[-500:] if nb.chapter2 else ""
+
+        ch3_outline = (
+            f"第三章：首次核心冲突+展现实力\n"
+            f"流派：{config.genre}/{config.sub_genre}\n"
+            f"任务：主角面临第一个真正的对手→展现实力→冲突解决→获得认可→\n"
+            f"      埋更大世界的伏笔→章末强钩子"
+        )
+
+        self.chapter_writer.executor.profile = self.profile
+        result = self.chapter_writer.write_chapter(
+            chapter_num=3, chapter_outline=ch3_outline,
+            target_words=config.words_per_chapter or 3000,
+            genre=config.genre, pen_name=config.pen_name,
+            previous_chapter_ending=prev_end,
+            previous_summary=f"前两章概要：{nb.chapter1[:200]}... → {nb.chapter2[:200]}...")
+
+        nb.chapter3 = result["text"]
+        self.cost_tracker.record("ch3_draft", "", result["text"])
+        self._save_new_book_chapter(3, "首次核心冲突", nb.chapter3)
+        self.state.updated_at = datetime.now().isoformat()
+
+        return {"status": "ch3_done", "chapter": 3,
+                "word_count": result["word_count"], "beats": result["beats"]}
+
+    def _exec_generate_title(self, inst: Instruction) -> dict:
+        """
+        书名 + 简介生成（基于前三章内容）
+        """
+        config = self._new_book_config
+        nb = self.state.new_book
+
+        ch123 = nb.chapter1 + "\n\n" + nb.chapter2 + "\n\n" + nb.chapter3
+
+        # 书名
+        title_prompt = self.new_book_pipeline.build_title_prompt(config, ch123)
+        from core.llm_client import extract_json
+        raw_title = self.llm.call(
+            "你是一位专业的网文编辑。请只返回JSON，不要加任何额外文字。",
+            title_prompt, temperature=0.8, max_tokens=512)
+        try:
+            title_data = json.loads(extract_json(raw_title))
+            nb.title_options = title_data.get("titles", [])
+            nb.best_title = title_data.get("best", nb.title_options[0] if nb.title_options else config.title)
+        except Exception:
+            nb.title_options = [config.title] if config.title else ["未命名"]
+            nb.best_title = nb.title_options[0]
+
+        # 简介
+        synopsis_prompt = self.new_book_pipeline.build_synopsis_prompt(config, ch123)
+        raw_syn = self.llm.call(
+            "你是一位专业的网文编辑。请只返回JSON，不要加任何额外文字。",
+            synopsis_prompt, temperature=0.8, max_tokens=512)
+        try:
+            syn_data = json.loads(extract_json(raw_syn))
+            nb.synopsis = syn_data.get("synopsis", "")
+        except Exception:
+            nb.synopsis = ""
+
+        self.cost_tracker.record("title_synopsis", title_prompt + synopsis_prompt,
+                                 raw_title + raw_syn)
+
+        # 更新书籍信息
+        self.state.title = nb.best_title
+        nb.title_finalized = True
+        self.state.updated_at = datetime.now().isoformat()
+
+        return {
+            "status": "title_generated",
+            "best_title": nb.best_title,
+            "options": nb.title_options,
+            "synopsis": nb.synopsis[:100] + "..." if len(nb.synopsis) > 100 else nb.synopsis,
+        }
+
+    # ─── 新书辅助方法 ───
+
+    def _generate_initial_characters(self, config: NewBookConfig) -> list[dict]:
+        """AI 生成初始角色设定"""
+        if not self.llm:
+            return []
+
+        prompt = (
+            f"为一本{config.genre}/{config.sub_genre}类网络小说设计核心角色阵容。\n"
+            f"平台：{config.platform}\n"
+            f"总章节：约{config.chapter_count}章\n\n"
+            "请设计：\n"
+            "1. 主角（姓名、性格、背景、金手指类型、成长路线）\n"
+            "2. 1-2个反派\n"
+            "3. 3-5个主要配角（伙伴/导师/红颜/对手）\n"
+            "4. 每个角色的核心冲突和弧线\n\n"
+            "以JSON返回：{\"characters\": [{"
+            "\"name\": \"\", \"identity\": \"\", \"personality\": \"\", "
+            "\"background\": \"\", \"arc\": \"\", \"role\": \"protagonist/antagonist/supporting\""
+            "}]}"
+        )
+        raw = self.llm.call(
+            "你是一位专业的网络小说设定师。请只返回JSON。",
+            prompt, temperature=0.7, max_tokens=4096)
+        try:
+            from core.llm_client import extract_json
+            data = json.loads(extract_json(raw))
+            chars = data.get("characters", [])
+            # 注册到状态机
+            for c in chars:
+                self.char_states.register(
+                    name=c.get("name", ""),
+                    identity=c.get("identity", ""),
+                    power_level=c.get("power_level", ""),
+                )
+            return chars
+        except Exception:
+            return []
+
+    def _generate_foreshadows(self, config: NewBookConfig) -> list[dict]:
+        """AI 规划伏笔方案"""
+        if not self.llm:
+            return []
+
+        prompt = (
+            f"为一本{config.genre}/{config.sub_genre}类网络小说规划伏笔方案。\n"
+            f"总章节：约{config.chapter_count if config.chapter_count else 500}章\n\n"
+            "请设计 5-8 条伏笔，覆盖不同层级：\n"
+            "- 全局伏笔（贯穿全书的大谜团）\n"
+            "- 弧级伏笔（每个卷/弧的关键线索）\n"
+            "- 章级伏笔（单章内的悬念设置）\n\n"
+            "每条伏笔标注：描述、建议埋设章节、预计回收章节、重要程度(major/minor/background)\n\n"
+            "以JSON返回：{\"foreshadows\": [{"
+            "\"description\": \"\", \"plant_chapter\": 0, \"resolve_chapter\": 0, "
+            "\"importance\": \"major|minor|background\""
+            "}]}"
+        )
+        raw = self.llm.call(
+            "你是一位专业的小说策划编辑。请只返回JSON。",
+            prompt, temperature=0.7, max_tokens=2048)
+        try:
+            from core.llm_client import extract_json
+            data = json.loads(extract_json(raw))
+            return data.get("foreshadows", [])
+        except Exception:
+            return []
+
+    def _save_new_book_chapter(self, ch_num: int, title: str, content: str):
+        """保存新书启动阶段的章节到临时路径"""
+        save_dir = Path("books") / "new_book_temp"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        (save_dir / f"chapter_{ch_num:04d}.json").write_text(
+            json.dumps({
+                "num": ch_num, "title": title, "content": content,
+                "created_at": datetime.now().isoformat(),
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+
+    def finalize_new_book(self) -> BookConfig:
+        """
+        新书启动完成后，正式创建图书记录。
+
+        将临时数据迁移到 books/ 目录，返回 BookConfig。
+        """
+        nb = self.state.new_book
+
+        # 创建正式图书
+        book = self.book_mgr.create(
+            title=nb.best_title or self.state.title,
+            pen_name=self.state.pen_name,
+            genre=self.state.genre,
+            sub_genre=self.state.sub_genre,
+            platform=self.state.platform,
+            chapter_count=self.state.total_chapters,
+            structure_template_id=self.state.structure_template_id,
+            style_profile_id=self._new_book_config.style_profile_id if self._new_book_config else "",
+        )
+        book.first_three_chapters = {
+            "chapter1": nb.chapter1[:500] + "...",
+            "chapter2": nb.chapter2[:500] + "...",
+            "chapter3": nb.chapter3[:500] + "...",
+        }
+        book.synopsis_ = nb.synopsis  # 非 dataclass 字段暂存
+
+        # 保存前三章
+        self.book_mgr.save_chapter(book.book_id, 1, "钩子·金手指·首次危机", nb.chapter1)
+        self.book_mgr.save_chapter(book.book_id, 2, "世界观展开", nb.chapter2)
+        self.book_mgr.save_chapter(book.book_id, 3, "首次核心冲突", nb.chapter3)
+        book.current_chapter = 3
+
+        # 保存大纲
+        self.book_mgr.save_outline(book.book_id, {
+            "structure": self.state.structure_template_id,
+            "chapters": self.state.chapters,
+            "characters": nb.characters_created,
+            "foreshadows": nb.foreshadows_planned,
+            "synopsis": nb.synopsis,
+        })
+
+        # 保存角色状态
+        self.char_states.save(str(Path("books") / book.book_id / "character_states.json"))
+
+        # 保存成本
+        cost_path = Path("books") / book.book_id / "cost.json"
+        self.cost_tracker.save(str(cost_path))
+
+        self.book_mgr.update(book)
+        self.state.book_id = book.book_id
+        self.book = book
+
+        return book
+
+    # ═══════════════════════════════════════════
+    # ♻️ 续写执行器
+    # ═══════════════════════════════════════════
+
+    def _exec_plan_outline(self, inst: Instruction) -> dict:
+        """生成大纲（续写模式下首次使用或重置大纲）"""
         if not self.llm:
             raise RuntimeError("LLM 未配置")
 
-        # 选大纲模板
         struct = self.struct_lib.search(
             genre=self.state.genre,
             sub_genre=self.state.sub_genre,
@@ -179,140 +789,92 @@ class NovelEngine:
                 "stages": [s.__dict__ for s in template.stages],
                 "total_chapters": template.total_chapters,
             }
-            # 从 stages 生成章节列表
             ch_num = 1
             self.state.chapters = []
             for stage in template.stages:
                 for _ in range(stage.min_chapters):
                     self.state.chapters.append({
-                        "num": ch_num, "title": f"{stage.name} ({ch_num})",
-                        "stage": stage.name, "outline": "",
+                        "num": ch_num,
+                        "title": f"{stage.name} ({ch_num})",
+                        "stage": stage.name,
+                        "outline": "",
                     })
                     ch_num += 1
+            self.state.total_chapters = len(self.state.chapters)
 
-        self.state.phase = "outline"
+        self.state.phase = Phase.WRITING
+        return {
+            "status": "outline_planned",
+            "structure": self.state.structure_template_id,
+            "chapters": len(self.state.chapters),
+        }
 
-    # ─── 路由（纯函数） ───
-
-    def route(self) -> Instruction:
-        """纯函数路由：决定下一步做什么"""
-        s = self.state
-
-        # 1. 完本
-        if s.current_chapter >= s.total_chapters and s.current_content:
-            return Instruction(Op.COMPLETE, reason="全书完成")
-
-        # 2. 还没有大纲
-        if not s.outline_data and not s.chapters:
-            return Instruction(Op.PLAN_OUTLINE, reason="需要生成大纲")
-
-        # 3. 当前章需要审查
-        if s.current_content and s.phase == "reviewing":
-            return Instruction(Op.REVIEW_CHAPTER, s.current_chapter,
-                               reason="审查本章")
-
-        # 4. 有内容且审查通过 → 去AI味
-        if s.current_content and s.phase == "de_ai":
-            return Instruction(Op.DE_AI_PASS, s.current_chapter,
-                               reason="去AI味处理")
-
-        # 5. 预算检查
-        if self.cost_tracker.remaining() <= 0:
-            return Instruction(Op.PAUSE, reason=f"预算耗尽 ({self.cost_tracker.spent:.2f}/{self.cost_tracker.budget})")
-
-        # 6. 写下一章
-        return Instruction(Op.WRITE_CHAPTER, s.current_chapter + 1,
-                           reason=f"写第 {s.current_chapter + 1} 章")
-
-    # ─── 执行 ───
-
-    def execute(self, inst: Instruction) -> dict:
-        """执行路由指令"""
-        if inst.op == Op.COMPLETE:
-            return {"status": "complete", "message": "全书完成"}
-
-        elif inst.op == Op.PAUSE:
-            return {"status": "paused", "reason": inst.reason}
-
-        elif inst.op == Op.PLAN_OUTLINE:
-            self.plan_outline()
-            return {"status": "outline_planned",
-                    "structure": self.state.structure_template_id,
-                    "chapters": len(self.state.chapters)}
-
-        elif inst.op == Op.WRITE_CHAPTER:
-            return self._write_chapter(inst.chapter_num)
-
-        elif inst.op == Op.REVIEW_CHAPTER:
-            return self._review_current()
-
-        elif inst.op == Op.DE_AI_PASS:
-            return self._de_ai_current()
-
-        elif inst.op == Op.CONFIRM_CHAPTER:
-            return self._confirm_current()
-
-        return {"status": "unknown"}
-
-    def _write_chapter(self, chapter_num: int) -> dict:
-        """写一章"""
+    def _exec_write_chapter(self, inst: Instruction) -> dict:
+        """写一章（续写模式 — 节拍级写作）"""
+        chapter_num = inst.chapter_num
         self.state.current_chapter = chapter_num
 
-        # 匹配桥段模板
+        # 获取本章大纲
         ch_data = {}
-        if chapter_num <= len(self.state.chapters):
+        if 0 < chapter_num <= len(self.state.chapters):
             ch_data = self.state.chapters[chapter_num - 1]
+        chapter_outline = ch_data.get("outline", f"第{chapter_num}章")
 
-        ctx = WritingContext(
+        # 获取上文结尾
+        prev_ending = ""
+        if chapter_num > 1 and self.book:
+            prev_ch = self.book_mgr.load_chapter(self.state.book_id, chapter_num - 1)
+            if prev_ch:
+                prev_ending = prev_ch.get("content", "")[-500:]
+
+        # 角色状态
+        char_states = self.char_states.build_context_prompt(chapter_num=chapter_num)
+
+        # 使用节拍级写作管线
+        target_words = self.book.words_per_chapter if self.book else 3000
+        self.chapter_writer.executor.profile = self.profile  # 更新 profile
+
+        result = self.chapter_writer.write_chapter(
             chapter_num=chapter_num,
-            chapter_title=ch_data.get("title", f"第{chapter_num}章"),
-            chapter_outline=ch_data.get("outline", ""),
-            style_profile=self.profile,
-            target_words=self.book.words_per_chapter if self.book else 3000,
-            de_ai=True,
+            chapter_outline=chapter_outline,
+            target_words=target_words,
+            genre=self.state.genre,
+            pen_name=self.state.pen_name,
+            previous_chapter_ending=prev_ending,
+            character_states=char_states,
         )
 
-        # 匹配模板
-        ctx = self.writing.match_templates(
-            f"{self.state.genre} {ch_data.get('outline', '')}",
-            self.state.genre, ch_data.get("outline", ""),
-            existing_ctx=ctx)
-
-        # 注入角色状态
-        ctx.character_states = self.char_states.build_context_prompt(
-            chapter_num=chapter_num)
-
-        # 生成
-        result = self.writing.generate(ctx, self.cost_tracker)
-
-        self.state.current_content = result.content
-        self.state.current_plot_id = ctx.plot_template.id if ctx.plot_template else ""
-        self.state.phase = "reviewing"
+        full_text = result["text"]
+        self.state.current_content = full_text
+        self.state.current_plot_id = "beat_writer"
+        self.state.phase = Phase.REVIEWING
 
         # 更新角色状态
-        self.char_states.update_from_chapter(chapter_num, result.content)
+        self.char_states.update_from_chapter(chapter_num, full_text)
 
-        self._save_state()
+        self._save_continue_state()
 
         # 保存章节
         if self.book:
             self.book_mgr.save_chapter(
                 self.state.book_id, chapter_num,
                 ch_data.get("title", f"第{chapter_num}章"),
-                result.content
-            )
+                full_text)
+
+        # 记录成本
+        self.cost_tracker.record(f"ch{chapter_num}_beat", "", full_text)
 
         return {
-            "status": "written",
+            "status": "chapter_written",
             "chapter": chapter_num,
-            "word_count": result.word_count,
-            "plot_used": ctx.plot_template.name if ctx.plot_template else "none",
-            "gags": result.applied_gags,
-            "themes": result.applied_themes,
+            "word_count": result["word_count"],
+            "plot_used": "beat_writer",
+            "beats": result["beats"],
+            "beat_details": result.get("beat_details", []),
             "cost": round(self.cost_tracker.spent, 4),
         }
 
-    def _review_current(self) -> dict:
+    def _exec_review_current(self, inst: Instruction) -> dict:
         """审查当前章"""
         result = self.reviewer.review(
             self.state.current_content,
@@ -321,73 +883,148 @@ class NovelEngine:
         )
 
         if result.passed:
-            self.state.phase = "de_ai"
-            self.state.current_chapter += 1
-            return {"status": "review_passed", "score": result.score,
-                    "issues": len(result.issues)}
+            self.state.phase = Phase.DE_AI
+            return {
+                "status": "review_passed",
+                "score": result.score,
+                "issues": len(result.issues),
+            }
         else:
-            return {"status": "review_failed", "score": result.score,
-                    "issues": [i.description for i in result.issues]}
+            return {
+                "status": "review_failed",
+                "score": result.score,
+                "issues": [i.description for i in result.issues],
+            }
 
-    def _de_ai_current(self) -> dict:
+    def _exec_de_ai_current(self, inst: Instruction) -> dict:
         """去 AI 味处理"""
         result = self.de_ai.process_rule_based(self.state.current_content)
         self.state.current_content = result.processed
-        self.state.phase = "complete"
+        self.state.phase = Phase.IDLE
 
-        # 更新书籍进度
+        # 更新进度
         if self.book:
-            self.book.current_chapter = self.state.current_chapter + 1
+            self.book.current_chapter = self.state.current_chapter
             self.book_mgr.update(self.book)
 
-        self._save_state()
+        self._save_continue_state()
         return {
             "status": "de_ai_done",
             "word_replacements": result.word_replacements,
             "processed_chars": len(result.processed),
         }
 
-    def _confirm_current(self) -> dict:
+    def _exec_confirm_current(self, inst: Instruction) -> dict:
         """确认当前章"""
-        self.state.phase = "idle"
         self.state.current_content = ""
-        self._save_state()
+        self._save_continue_state()
         return {"status": "confirmed", "chapter": self.state.current_chapter}
 
-    # ─── 自动运行 ───
+    def _save_continue_state(self):
+        """保存续写状态"""
+        if not self.state.book_id:
+            return
+        book_dir = Path("books") / self.state.book_id
 
-    def run(self, max_chapters: int = 1) -> list[dict]:
-        """自动跑 max_chapters 章"""
+        # 角色状态
+        self.char_states.save(str(book_dir / "character_states.json"))
+
+        # 成本
+        self.cost_tracker.save(str(book_dir / "cost.json"))
+
+    # ═══════════════════════════════════════════
+    # 自动运行
+    # ═══════════════════════════════════════════
+
+    def step(self) -> dict:
+        """执行一步（route → execute）"""
+        inst = self.route()
+        return {"instruction": inst.op.value, "reason": inst.reason,
+                **self.execute(inst)}
+
+    def run(self, max_steps: int = 10) -> list[dict]:
+        """
+        自动跑最多 max_steps 步。
+
+        对于新书模式：会跑完规划→前三章→书名
+        对于续写模式：会跑写→审→去AI 循环
+        """
         results = []
-        for _ in range(max_chapters):
+        for _ in range(max_steps):
             inst = self.route()
             if inst.op in (Op.COMPLETE, Op.PAUSE):
-                results.append({"status": inst.op.value, "reason": inst.reason})
+                results.append({
+                    "status": inst.op.value,
+                    "reason": inst.reason,
+                })
                 break
             result = self.execute(inst)
             results.append(result)
+
+            # 审查失败 → 暂停等人工干预
             if result.get("status") == "review_failed":
-                break  # 审查失败需要人工干预
+                break
+
         return results
 
     def run_full_cycle(self) -> dict:
-        """跑完一章的完整周期：写→审→去AI"""
+        """
+        跑完一章的完整周期：写 → 审 → 去AI
+        （仅适用于续写模式）
+        """
+        if self.state.book_mode != BookMode.CONTINUE:
+            return {"status": "error", "reason": "run_full_cycle 仅适用于续写模式"}
+
         inst = self.route()
 
-        # 先写
         if inst.op == Op.WRITE_CHAPTER:
             write_result = self.execute(inst)
 
-            # 再审
             review_inst = self.route()
             review_result = self.execute(review_inst)
 
-            # 再去AI
             if review_result.get("status") == "review_passed":
                 deai_inst = Instruction(Op.DE_AI_PASS, self.state.current_chapter)
                 deai_result = self.execute(deai_inst)
-                return {"write": write_result, "review": review_result, "de_ai": deai_result}
+                return {
+                    "write": write_result,
+                    "review": review_result,
+                    "de_ai": deai_result,
+                }
             else:
                 return {"write": write_result, "review": review_result}
 
         return {"status": inst.op.value, "reason": inst.reason}
+
+    def run_new_book_full(self) -> dict:
+        """
+        一键跑完新书启动全流程：
+        规划 → 第一章 → 第二章 → 第三章 → 书名简介
+
+        返回完整结果，包含所有中间产物。
+        """
+        if self.state.book_mode != BookMode.NEW:
+            return {"status": "error", "reason": "当前不是新书模式"}
+
+        results = []
+        for _ in range(10):
+            inst = self.route()
+            if inst.op == Op.WRITE_CHAPTER:
+                # 新书启动完成，转入续写模式
+                results.append({"status": "new_book_startup_complete"})
+                break
+            result = self.execute(inst)
+            results.append(result)
+
+        return {
+            "status": "new_book_complete",
+            "steps": len(results),
+            "results": results,
+            "summary": {
+                "title": self.state.title,
+                "chapters": [1, 2, 3],
+                "characters": len(self.state.new_book.characters_created),
+                "foreshadows": len(self.state.new_book.foreshadows_planned),
+                "title_options": self.state.new_book.title_options,
+            },
+        }

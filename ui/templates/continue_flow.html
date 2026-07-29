@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}续写 — {{ book.title }}{% endblock %}
+{% block content %}
+<h1>♻️ {{ book.title }}</h1>
+<div class="info-bar">
+    <span>笔名：<strong>{{ book.pen_name }}</strong></span>
+    <span>进度：<strong>{{ book.current_chapter }} / {{ book.chapter_count }} 章</strong></span>
+    <span>平台：<strong>{{ book.platform }}</strong></span>
+    <span>预算：<strong class="cost-display" id="cost-display">-</strong></span>
+</div>
+
+<div class="main-layout">
+    <!-- 左侧：章节列表 -->
+    <div class="chapter-list">
+        <h3>📑 章节</h3>
+        <div id="chapter-nav">
+            {% for n in range(1, book.chapter_count + 1) %}
+            <div class="ch-item {% if n <= book.current_chapter %}done{% elif n == book.current_chapter + 1 %}current{% endif %}" id="ch-{{ n }}">
+                <span class="ch-num">{{ n }}</span>
+                <span class="ch-label">
+                    {% if n <= 3 %}
+                        {{ ['钩子','世界观','冲突'][n-1] }}
+                    {% elif n <= book.current_chapter %}
+                        已完成
+                    {% elif n == book.current_chapter + 1 %}
+                        当前
+                    {% else %}
+                        待写
+                    {% endif %}
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- 右侧：写作面板 -->
+    <div class="write-panel">
+        <div id="write-area">
+            <h3 id="current-ch-title">准备就绪</h3>
+            <div id="write-output" class="write-output"></div>
+            <div id="review-result" class="review-result" style="display:none"></div>
+        </div>
+
+        <div class="write-controls">
+            <button id="btn-generate" class="btn-primary" onclick="generateChapter()">▶ 生成下一章</button>
+            <button id="btn-stop" class="btn-danger" style="display:none" onclick="stopGeneration()">⏹ 停止</button>
+            <span id="gen-status" class="gen-status"></span>
+        </div>
+    </div>
+</div>
+
+<script>
+const engineId = "{{ engine_id }}";
+let generating = false;
+let stopReq = false;
+
+function setChStatus(n, state) {
+    const el = document.getElementById('ch-' + n);
+    if (el) el.className = 'ch-item ' + state;
+}
+
+async function generateChapter() {
+    generating = true;
+    stopReq = false;
+    document.getElementById('btn-generate').style.display = 'none';
+    document.getElementById('btn-stop').style.display = 'inline-block';
+    document.getElementById('gen-status').textContent = '⚙️ 生成中...';
+    document.getElementById('review-result').style.display = 'none';
+
+    const resp = await fetch('/api/engine/' + engineId + '/chapter/generate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+    });
+    const data = await resp.json();
+
+    if (data.error) {
+        document.getElementById('write-output').innerHTML = '<div class="error">❌ ' + data.error + '</div>';
+        document.getElementById('gen-status').textContent = '失败';
+        resetControls();
+        return;
+    }
+
+    if (data.status === 'complete') {
+        document.getElementById('write-output').innerHTML = '<div class="success">🎉 全书完成！</div>';
+        resetControls();
+        return;
+    }
+
+    if (data.status === 'paused') {
+        document.getElementById('write-output').innerHTML = '<div class="warning">⏸ ' + data.reason + '</div>';
+        resetControls();
+        return;
+    }
+
+    // 显示结果
+    const ch = data.chapter || '?';
+    document.getElementById('current-ch-title').textContent = '第 ' + ch + ' 章';
+
+    let html = '';
+    if (data.status === 'chapter_written') {
+        html += '<div class="step done">✅ 写作完成 · ' + (data.word_count || '?') + '字';
+        if (data.beats) html += ' · ' + data.beats + ' 个节拍';
+        html += '</div>';
+
+        // 显示节拍详情
+        if (data.beat_details && data.beat_details.length > 0) {
+            html += '<div class="beat-grid">';
+            data.beat_details.forEach(b => {
+                const humorIcon = b.humor ? '😂' : '';
+                html += '<div class="beat-chip">' +
+                    '<span class="beat-idx">#' + b.index + '</span>' +
+                    '<span class="beat-info">' + b.template.replace('beat_','') + ' ' + b.words + '字 ' + humorIcon + '</span>' +
+                    '</div>';
+            });
+            html += '</div>';
+        }
+        if (data.review) {
+            html += '<div class="step ' + (data.review.status === 'review_passed' ? 'done' : 'warn') + '">';
+            html += data.review.status === 'review_passed' ? '✅ 审查通过' : '⚠️ 审查未通过';
+            html += ' · 评分：' + (data.review.score || '?') + '/100';
+            if (data.review.issues > 0) html += ' · 问题：' + data.review.issues + '个';
+            html += '</div>';
+        }
+        if (data.de_ai) {
+            html += '<div class="step done">✅ 去AI味完成 · 替换 ' + (data.de_ai.word_replacements || 0) + ' 处</div>';
+        }
+        if (data.cycle_complete) {
+            html += '<div class="success">✅ 本章全流程完成！</div>';
+            setChStatus(ch, 'done');
+            // 更新下一个
+            setChStatus(ch + 1, 'current');
+            document.getElementById('gen-status').textContent = '✅ 第 ' + ch + ' 章完成';
+            // 更新成本
+            updateStatus();
+        }
+    }
+
+    document.getElementById('write-output').innerHTML = html;
+    resetControls();
+}
+
+function resetControls() {
+    generating = false;
+    document.getElementById('btn-generate').style.display = 'inline-block';
+    document.getElementById('btn-stop').style.display = 'none';
+}
+
+function stopGeneration() {
+    stopReq = true;
+    document.getElementById('gen-status').textContent = '⏹ 已停止';
+    resetControls();
+}
+
+async function updateStatus() {
+    try {
+        const resp = await fetch('/api/engine/' + engineId + '/status');
+        const data = await resp.json();
+        if (data.current_chapter) {
+            document.getElementById('cost-display').textContent = '第' + data.current_chapter + '章';
+        }
+    } catch(e) {}
+}
+
+// 初始加载
+updateStatus();
+</script>
+
+<style>
+.info-bar { display:flex; gap:20px; padding:12px 16px; background:#161b22; border-radius:8px; margin-bottom:20px; color:#8b949e; font-size:13px; }
+.info-bar strong { color:#f0f6fc; }
+.main-layout { display:flex; gap:20px; }
+.chapter-list { width:200px; flex-shrink:0; max-height:70vh; overflow-y:auto; }
+.chapter-list h3 { color:#8b949e; font-size:13px; margin-bottom:8px; }
+.ch-item { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:4px; margin-bottom:2px; font-size:12px; color:#484f58; transition:all .2s; }
+.ch-item.done { color:#3fb950; }
+.ch-item.current { color:#58a6ff; background:#1a2332; font-weight:600; }
+.ch-num { min-width:24px; text-align:right; }
+.write-panel { flex:1; }
+.write-output { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:16px; min-height:120px; margin-bottom:16px; }
+.step { padding:8px 12px; margin-bottom:6px; border-radius:6px; font-size:13px; background:#161b22; color:#c9d1d9; }
+.step.done { border-left:3px solid #3fb950; }
+.step.warn { border-left:3px solid #d29922; }
+.success { color:#3fb950; padding:12px; background:#0a1a0a; border-radius:8px; margin-top:8px; }
+.warning { color:#d29922; padding:12px; background:#1a1a0a; border-radius:8px; }
+.error { color:#f85149; padding:12px; background:#1a0a0a; border-radius:8px; }
+.write-controls { display:flex; align-items:center; gap:12px; }
+.btn-primary { background:#238636; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:14px; cursor:pointer; }
+.btn-primary:hover { background:#2ea043; }
+.btn-danger { background:#da3633; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:14px; cursor:pointer; }
+.gen-status { color:#8b949e; font-size:13px; }
+.beat-grid { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
+.beat-chip { display:flex; align-items:center; gap:6px; background:#1a2332; border:1px solid #30363d; border-radius:6px; padding:4px 10px; font-size:11px; color:#8b949e; }
+.beat-idx { color:#58a6ff; font-weight:600; }
+.beat-info { color:#c9d1d9; }
+</style>
+{% endblock %}

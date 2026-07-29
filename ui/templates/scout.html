@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}侦察兵 — NovelEngine{% endblock %}
+{% block content %}
+<h1>🔍 番茄侦察兵</h1>
+<p class="subtitle">搜索番茄小说 → 下载章节 → LLM拆解 → 自动入库到四大库</p>
+
+<div class="scout-form">
+    <div class="input-row">
+        <input type="text" id="book-title" placeholder="输入书名，如：十日终焉" value="十日终焉" autofocus>
+        <span class="or-divider">或</span>
+        <input type="text" id="book-id" placeholder="直接输入 book_id 或 URL">
+    </div>
+    <div class="form-row-inline">
+        <label>下载章节数</label>
+        <input type="number" id="chapters" value="30" min="5" max="100">
+    </div>
+    <button id="btn-scout" class="btn-primary" onclick="startScout()">🔍 开始侦察</button>
+</div>
+
+<div id="progress-area" style="display:none">
+    <div class="progress-header">
+        <span id="phase-label">准备中...</span>
+        <span id="progress-text"></span>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    <div id="log-area" class="log-area"></div>
+</div>
+
+<div id="result-area" style="display:none"></div>
+
+<script>
+var STORAGE_KEY = 'ne_scout';
+var lastResult = null;
+
+// 页面加载恢复
+(function(){
+    try {
+        var s = sessionStorage.getItem(STORAGE_KEY);
+        if (s) { lastResult = JSON.parse(s); if (lastResult.title) showResults(lastResult); }
+    } catch(e) {}
+})();
+
+function startScout() {
+    var title = document.getElementById('book-title').value.trim();
+    var bookId = document.getElementById('book-id').value.trim();
+    var chapters = parseInt(document.getElementById('chapters').value) || 30;
+    var directId = '';
+    if (bookId) { var m = bookId.match(/(\\d{15,})/); directId = m ? m[1] : bookId; }
+    if (!title && !directId) return alert('请输入书名或 book_id');
+
+    document.getElementById('btn-scout').disabled = true;
+    document.getElementById('btn-scout').textContent = '...';
+    document.getElementById('progress-area').style.display = 'block';
+    document.getElementById('result-area').style.display = 'none';
+    document.getElementById('log-area').innerHTML = '';
+    document.getElementById('progress-fill').style.width = '0%';
+    sessionStorage.removeItem(STORAGE_KEY);
+    lastResult = null;
+
+    fetch('/api/scout/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title: title, chapters: chapters, book_id: directId})
+    }).then(function(resp) {
+        var reader = resp.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+        function pump() {
+            reader.read().then(function(r) {
+                if (r.done) { done(); return; }
+                buffer += decoder.decode(r.value, {stream: true});
+                var lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                lines.forEach(function(line) {
+                    if (line.startsWith('data: ')) {
+                        try { handleEvent(JSON.parse(line.slice(6))); } catch(e) {}
+                    }
+                });
+                pump();
+            });
+        }
+        pump();
+    }).catch(function(e) { addLog('Error: ' + e.message); done(); });
+
+    function done() {
+        document.getElementById('btn-scout').disabled = false;
+        document.getElementById('btn-scout').textContent = 'start scout';
+    }
+}
+
+function handleEvent(data) {
+    var ev = data.event;
+    if (ev === 'start') {
+        addLog('start: ' + data.title);
+    } else if (ev === 'found') {
+        addLog('found: ' + data.title + ' by ' + data.author);
+        addLog('  ' + (data.genre||'') + ' | ' + data.chapters + 'ch | ' + formatWords(data.words));
+        document.getElementById('phase-label').textContent = 'downloading';
+    } else if (ev === 'progress') {
+        var pct = data.total > 0 ? Math.round(data.current/data.total*100) : 0;
+        document.getElementById('progress-fill').style.width = pct + '%';
+        document.getElementById('progress-text').textContent = data.current + '/' + data.total;
+        document.getElementById('phase-label').textContent = data.phase;
+        if (data.message) addLog('  ' + data.message);
+    } else if (ev === 'done') {
+        document.getElementById('progress-fill').style.width = '100%';
+        document.getElementById('phase-label').textContent = 'done';
+        addLog('DONE');
+        lastResult = data;
+        try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+        showResults(data);
+    } else if (ev === 'error') {
+        addLog('ERROR: ' + data.message);
+    }
+}
+
+function formatWords(n) { return n > 10000 ? (n/10000).toFixed(1)+'w' : n; }
+function addLog(msg) {
+    var el = document.getElementById('log-area');
+    el.innerHTML += '<div class="log-line">' + msg + '</div>';
+    el.scrollTop = el.scrollHeight;
+}
+
+function showResults(data) {
+    document.getElementById('result-area').style.display = 'block';
+    var plots = data.plot_details || [];
+    var gags = data.gag_details || [];
+    var structs = data.structure_details || [];
+    var themes = data.theme_details || [];
+
+    var html = '<h2>results: ' + escHtml(data.title||'') + '</h2>';
+    html += '<div class="result-meta">downloaded ' + (data.downloaded_chapters||0) + ' chapters</div>';
+    html += '<div class="cards">';
+    html += cardHtml('plot', plots.length, plots);
+    html += cardHtml('gag', gags.length, gags);
+    html += cardHtml('struct', structs.length, structs);
+    html += cardHtml('theme', themes.length, themes);
+    html += '</div>';
+    document.getElementById('result-area').innerHTML = html;
+}
+
+function cardHtml(type, count, items) {
+    var labels = {plot: 'plots', gag: 'gags', struct: 'structures', theme: 'themes'};
+    var icons = {plot: 'P', gag: 'G', struct: 'S', theme: 'T'};
+    var label = labels[type] || type;
+    var detailId = 'd-' + type;
+    var h = '<div class="card rcard" onclick="toggleDetail(\'' + detailId + '\',this)">';
+    h += '<div class="stat">' + count + '</div><div class="label">' + label + '</div>';
+    if (count > 0) h += '<div class="expand-hint">click to expand</div>';
+    h += '</div>';
+    if (count > 0) {
+        h += '<div id="' + detailId + '" class="detail-panel" style="display:none">';
+        h += '<h3>' + label + ' (' + count + ')</h3>';
+        items.forEach(function(item, i) {
+            h += '<div class="detail-item">';
+            h += '<div class="detail-name">' + (i+1) + '. ' + escHtml(item.name||'') + '</div>';
+            if (item.category) h += '<span class="tag">' + escHtml(item.category) + '</span> ';
+            if (item.description) h += '<div class="detail-desc">' + escHtml(item.description).substring(0,300) + '</div>';
+            if (item.structure) h += '<div class="detail-code">' + escHtml(item.structure).substring(0,200) + '</div>';
+            if (item.examples && item.examples.length) h += '<div class="detail-example">' + escHtml(item.examples[0]).substring(0,150) + '</div>';
+            if (item.stages && item.stages.length) h += '<div class="detail-desc">stages: ' + item.stages.join(', ') + '</div>';
+            if (item.techniques && item.techniques.length) h += '<div class="detail-desc">techniques: ' + item.techniques.join(', ') + '</div>';
+            h += '</div>';
+        });
+        h += '</div>';
+    }
+    return h;
+}
+
+function toggleDetail(id, card) {
+    var panel = document.getElementById(id);
+    if (!panel) return;
+    var open = panel.style.display === 'block';
+    panel.style.display = open ? 'none' : 'block';
+    var hint = card.querySelector('.expand-hint');
+    if (hint) hint.textContent = open ? 'click to expand' : 'collapse';
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+</script>
+
+<style>
+.subtitle { color:#8b949e; margin-bottom:24px; }
+.scout-form { display:flex; gap:12px; align-items:flex-end; margin-bottom:24px; flex-wrap:wrap; }
+.input-row { display:flex; gap:8px; align-items:center; flex:1; min-width:300px; }
+.or-divider { color:#484f58; font-size:12px; flex-shrink:0; }
+.scout-form input[type=text] { flex:1; min-width:140px; padding:10px 14px; background:#0d1117; border:1px solid #30363d; color:#f0f6fc; border-radius:8px; font-size:15px; }
+.scout-form input[type=text]:focus { border-color:#58a6ff; outline:none; }
+.scout-form input[type=number] { width:80px; padding:10px; background:#0d1117; border:1px solid #30363d; color:#f0f6fc; border-radius:8px; font-size:14px; }
+.form-row-inline { display:flex; align-items:center; gap:6px; }
+.form-row-inline label { color:#8b949e; font-size:13px; white-space:nowrap; }
+.progress-header { display:flex; justify-content:space-between; margin-bottom:8px; color:#c9d1d9; font-size:13px; }
+.progress-bar { height:8px; background:#30363d; border-radius:4px; overflow:hidden; margin-bottom:16px; }
+.progress-fill { height:100%; background:#238636; border-radius:4px; transition:width .3s; }
+.log-area { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:12px; max-height:300px; overflow-y:auto; font-size:12px; font-family:monospace; }
+.log-line { color:#8b949e; padding:2px 0; }
+.btn-primary { background:#238636; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:15px; cursor:pointer; white-space:nowrap; }
+.btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+.result-meta { color:#8b949e; margin-bottom:16px; font-size:13px; }
+.rcard { cursor:pointer; position:relative; }
+.rcard:hover { border-color:#58a6ff !important; }
+.expand-hint { font-size:11px; color:#484f58; margin-top:6px; }
+.detail-panel { background:#161b22; border:1px solid #30363d; border-radius:0 0 8px 8px; padding:16px; margin-top:-8px; margin-bottom:16px; }
+.detail-panel h3 { color:#58a6ff; margin-bottom:12px; font-size:14px; }
+.detail-item { padding:10px 0; border-bottom:1px solid #21262d; }
+.detail-item:last-child { border-bottom:none; }
+.detail-name { color:#f0f6fc; font-weight:600; margin-bottom:4px; }
+.detail-desc { color:#8b949e; font-size:12px; margin:4px 0; line-height:1.5; }
+.detail-code { color:#c9d1d9; font-size:11px; font-family:monospace; background:#0d1117; padding:4px 8px; border-radius:4px; margin:4px 0; }
+.detail-example { color:#8b949e; font-size:11px; font-style:italic; }
+</style>
+{% endblock %}

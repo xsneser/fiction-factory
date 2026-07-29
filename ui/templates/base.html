@@ -43,6 +43,7 @@
         /* Buttons */
         button, .btn { padding:8px 16px; background:#238636; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500; transition:all .2s; }
         button:hover { background:#2ea043; }
+        .btn-primary { background:#238636; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:14px; cursor:pointer; }
         button.secondary { background:#30363d; }
         button.danger { background:#da3633; }
         button.small { padding:4px 10px; font-size:12px; }
@@ -90,8 +91,8 @@
         <div class="logo">📖 NovelEngine</div>
         <a href="/" class="{{ 'active' if request.path == '/' else '' }}">🏠 仪表盘</a>
         <div class="section">创作</div>
-        <a href="/books" class="{{ 'active' if request.path.startswith('/books') else '' }}">📚 书库</a>
-        <a href="/write" class="{{ 'active' if request.path == '/write' else '' }}">✍️ 写作台</a>
+        <a href="/books/start" class="{{ 'active' if request.path == '/books/start' else '' }}">🔰 启动新书</a>
+        <a href="/books" class="{{ 'active' if request.path == '/books' else '' }}">📚 书库</a>
         <div class="section">资产库</div>
         <a href="/plots" class="{{ 'active' if request.path == '/plots' else '' }}">🧩 桥段库</a>
         <a href="/structures" class="{{ 'active' if request.path == '/structures' else '' }}">📋 大纲库</a>
@@ -100,6 +101,7 @@
         <div class="section">管理</div>
         <a href="/profiles" class="{{ 'active' if request.path.startswith('/profiles') else '' }}">👤 笔名档案</a>
         <div class="section">工具</div>
+        <a href="/scout" class="{{ 'active' if request.path == '/scout' else '' }}">🔍 侦察兵</a>
         <a href="/deai" class="{{ 'active' if request.path == '/deai' else '' }}">🔄 去AI测试</a>
         <a href="/review-test" class="{{ 'active' if request.path == '/review-test' else '' }}">🔍 审查测试</a>
     </nav>

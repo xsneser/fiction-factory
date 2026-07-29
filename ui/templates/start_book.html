@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}启动新书 — NovelEngine{% endblock %}
+{% block content %}
+<h1>🔰 启动新书</h1>
+<p class="subtitle">填写基本信息即可开始，引擎会自动完成规划、前三章和书名生成。</p>
+
+<form method="POST" class="form-grid">
+    <fieldset>
+        <legend>📖 基本信息</legend>
+        <div class="form-row">
+            <label>书名（可先留空，引擎会生成）</label>
+            <input name="title" placeholder="书名（可选）" value="{{ request.form.get('title','') }}">
+        </div>
+        <div class="form-row">
+            <label>笔名</label>
+            <select name="pen_name" required>
+                <option value="">选择笔名...</option>
+                {% for p in pen_names %}
+                <option value="{{ p.pen_name }}" {% if request.form.get('pen_name')==p.pen_name %}selected{% endif %}>{{ p.pen_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-row half">
+            <label>流派</label>
+            <select name="genre" required>
+                <option value="">选择...</option>
+                <option value="玄幻" {% if request.form.get('genre')=='玄幻' %}selected{% endif %}>玄幻</option>
+                <option value="都市" {% if request.form.get('genre')=='都市' %}selected{% endif %}>都市</option>
+                <option value="言情" {% if request.form.get('genre')=='言情' %}selected{% endif %}>言情</option>
+                <option value="悬疑" {% if request.form.get('genre')=='悬疑' %}selected{% endif %}>悬疑</option>
+                <option value="穿越" {% if request.form.get('genre')=='穿越' %}selected{% endif %}>穿越</option>
+                <option value="科幻" {% if request.form.get('genre')=='科幻' %}selected{% endif %}>科幻</option>
+            </select>
+            <label>子类型</label>
+            <input name="sub_genre" placeholder="如：系统流、重生、逆袭" value="{{ request.form.get('sub_genre','') }}">
+        </div>
+        <div class="form-row half">
+            <label>目标平台</label>
+            <select name="platform">
+                <option value="fanqie" {% if request.form.get('platform')=='fanqie' %}selected{% endif %}>番茄小说</option>
+                <option value="qidian" {% if request.form.get('platform')=='qidian' %}selected{% endif %}>起点中文网</option>
+            </select>
+            <label>总章节数</label>
+            <input name="chapter_count" type="number" value="{{ request.form.get('chapter_count', 500) }}" min="10" max="2000">
+        </div>
+        <div class="form-row">
+            <label>笔名风格档案</label>
+            <select name="style_profile_id">
+                <option value="">跟随笔名默认风格</option>
+                {% for p in pen_names %}
+                <option value="profile_{{ '%03d' % (loop.index) }}">{{ p.pen_name }} · 风格档案</option>
+                {% endfor %}
+            </select>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>📐 模板选择（可选，留空由引擎自动匹配）</legend>
+        <div class="form-row">
+            <label>开篇桥段</label>
+            <select name="opening_template_id">
+                <option value="">自动匹配</option>
+                {% for t in openings %}
+                <option value="{{ t.id }}">{{ t.name }} — {{ t.description[:40] }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-row">
+            <label>金手指桥段</label>
+            <select name="golden_finger_template_id">
+                <option value="">自动匹配</option>
+                {% for t in golden_fingers %}
+                <option value="{{ t.id }}">{{ t.name }} — {{ t.description[:40] }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-row">
+            <label>大纲结构</label>
+            <select name="structure_template_id">
+                <option value="">自动匹配</option>
+                {% for s in structures %}
+                <option value="{{ s.id }}">{{ s.name }} ({{ s.total_chapters }}章)</option>
+                {% endfor %}
+            </select>
+        </div>
+    </fieldset>
+
+    <button type="submit" class="btn-primary">🚀 启动新书</button>
+</form>
+
+<style>
+.subtitle { color:#8b949e; margin-bottom:24px; }
+.form-grid { max-width:800px; }
+fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
+legend { color:#58a6ff; font-weight:600; padding:0 8px; }
+.form-row { margin-bottom:14px; }
+.form-row label { display:block; color:#c9d1d9; font-size:13px; margin-bottom:4px; }
+.form-row input, .form-row select { width:100%; background:#0d1117; border:1px solid #30363d; color:#f0f6fc; padding:8px 12px; border-radius:6px; font-size:14px; }
+.form-row input:focus, .form-row select:focus { border-color:#58a6ff; outline:none; }
+.form-row.half { display:flex; gap:12px; }
+.form-row.half > * { flex:1; }
+.form-row.half label { display:block; }
+.form-row.half input, .form-row.half select { width:100%; }
+.btn-primary { background:#238636; color:white; border:none; padding:12px 32px; border-radius:8px; font-size:16px; cursor:pointer; transition:all .2s; }
+.btn-primary:hover { background:#2ea043; }
+</style>
+{% endblock %}
