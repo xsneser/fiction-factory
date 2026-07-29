@@ -30,29 +30,40 @@
     </form>
 </div>
 
-{# 连接状态由 JS 动态渲染到 #status-card #}
+<div id="status-card"></div>
 
 <div style="display:flex;gap:12px;margin-top:20px">
     <button class="btn btn-primary" onclick="saveSettings()">💾 保存设置</button>
-    <button class="btn" style="background:#30363d;color:#f0f6fc" onclick="testConnection()">🔌 测试连接</button>
+    <button id="btn-test" class="btn" style="background:#30363d;color:#f0f6fc" onclick="testConnection()">🔌 测试连接</button>
 </div>
 
 <div id="settings-toast" style="display:none;position:fixed;top:20px;right:20px;z-index:1000" class="alert"></div>
-<div id="status-card"></div>
+
+<style>
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid #8b949e;
+    border-top-color: #58a6ff;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+}
+</style>
 
 <script>
 (function() {
     var ok = {{ 'true' if llm_ok else 'false' }};
-    var el = document.getElementById('status-card');
-    var html = '<div class="card"><h2>连接状态</h2>';
-    if (ok) {
-        html += '<div class="alert info">📋 已配置 · {{ config.base_url }}</div>';
-    } else {
-        html += '<div class="alert warning">⚠️ 未配置 · 请填写 API Key</div>';
-    }
-    html += '</div>';
-    el.innerHTML = html;
+    renderStatus(ok ? 'info' : 'warning', ok ? '📋 已配置 · {{ config.base_url }}' : '⚠️ 未配置 · 请填写 API Key');
 })();
+
+function renderStatus(type, msg) {
+    var el = document.getElementById('status-card');
+    var icons = { info: '📋', success: '✅', warning: '⚠️', error: '❌' };
+    el.innerHTML = '<div class="card"><h2>连接状态</h2><div class="alert ' + type + '">' + (icons[type]||'') + ' ' + msg + '</div></div>';
+}
 
 function showToast(msg, type) {
     var t = document.getElementById('settings-toast');
@@ -60,18 +71,6 @@ function showToast(msg, type) {
     t.className = 'alert ' + type;
     t.style.display = 'block';
     setTimeout(function(){ t.style.display = 'none'; }, 3000);
-}
-
-function updateStatus(ok, msg) {
-    var el = document.getElementById('status-card');
-    var html = '<div class="card"><h2>连接状态</h2>';
-    if (ok) {
-        html += '<div class="alert success">✅ ' + msg + '</div>';
-    } else {
-        html += '<div class="alert error">❌ ' + msg + '</div>';
-    }
-    html += '</div>';
-    el.innerHTML = html;
 }
 
 function getVal(id) {
@@ -100,6 +99,12 @@ async function saveSettings() {
 }
 
 async function testConnection() {
+    var btn = document.getElementById('btn-test');
+    var origText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> 测试中...';
+    renderStatus('warning', '⏳ 正在测试连接...');
+
     var payload = {
         api_key: getVal('api_key'),
         base_url: getVal('base_url'),
@@ -114,15 +119,17 @@ async function testConnection() {
         var d = await r.json();
         if (d.ok) {
             showToast('✅ 连接成功！' + (d.model || ''), 'success');
-            updateStatus(true, '连接成功 · ' + (d.model || ''));
+            renderStatus('success', '连接成功 · ' + (d.model || ''));
         } else {
             showToast('❌ 连接失败: ' + (d.error || '未知错误'), 'error');
-            updateStatus(false, '连接失败: ' + (d.error || '未知错误'));
+            renderStatus('error', '连接失败: ' + (d.error || '未知错误'));
         }
     } catch(e) {
         showToast('❌ 请求失败: ' + e.message, 'error');
-        updateStatus(false, '请求失败: ' + e.message);
+        renderStatus('error', '请求失败: ' + e.message);
     }
+    btn.disabled = false;
+    btn.innerHTML = origText;
 }
 </script>
 {% endblock %}
