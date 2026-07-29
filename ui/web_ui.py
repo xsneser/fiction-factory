@@ -757,6 +757,7 @@ def scout_run():
         return jsonify({"error": "LLM 未配置"}), 500
 
     scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib, theme_lib)
+    scout_cache = {}  # 缓存分析结果供入库
 
     def generate():
         import json as _json
@@ -799,12 +800,16 @@ def scout_run():
         def worker():
             try:
                 result = scout.scout_single_book(novel.title, chapters, on_progress=on_progress)
-                evt_queue.put(("done", result))
+                evt_queue.put(("analysis_result", result))
             except Exception as e:
                 evt_queue.put(("error", str(e)))
 
         t = _threading.Thread(target=worker, daemon=True)
         t.start()
+
+        # 缓存本次分析结果，供后面的入库请求使用
+        import threading as _th
+        scout_cache[novel.title] = {"result": None, "lock": _th.Lock()}
 
         # 从队列读取进度事件，实时 yield
         while t.is_alive() or not evt_queue.empty():
@@ -817,24 +822,24 @@ def scout_run():
                         "phase": phase, "current": current,
                         "total": total, "message": message,
                     })
-                elif kind == "done":
+                elif kind == "analysis_result":
                     result = item[1]
-                    yield send_event("done", {
+                    # 缓存结果供入库使用
+                    with scout_cache[novel.title]["lock"]:
+                        scout_cache[novel.title]["result"] = result
+                    yield send_event("analysis_result", {
                         "title": novel.title,
                         "downloaded_chapters": result.downloaded_chapters,
-                        "plots": len(result.new_plots),
-                        "structures": len(result.new_structures),
-                        "gags": len(result.new_gags),
-                        "themes": len(result.new_themes),
                         "plot_details": [{"name": p.get("name",""), "category": p.get("category",""),
-                            "description": p.get("description",""), "structure": p.get("structure","")}
+                            "description": p.get("description",""), "structure": p.get("structure",""),
+                            "slots": p.get("slots",[]), "examples": p.get("examples",[])}
                             for p in result.new_plots],
-                        "gag_details": [{"name": g.get("name",""), "category": g.get("category",""),
-                            "description": g.get("pattern_description",""), "examples": g.get("examples",[])}
-                            for g in result.new_gags],
                         "structure_details": [{"name": s.get("name",""), "description": s.get("description",""),
                             "stages": [st.get("name","") for st in s.get("stages",[])]}
                             for s in result.new_structures],
+                        "gag_details": [{"name": g.get("name",""), "category": g.get("category",""),
+                            "pattern_description": g.get("pattern_description",""), "examples": g.get("examples",[])}
+                            for g in result.new_gags],
                         "theme_details": [{"name": t.get("name",""), "description": t.get("description",""),
                             "techniques": t.get("techniques",t.get("writing_tips",[]))}
                             for t in result.new_themes],
@@ -851,6 +856,41 @@ def scout_run():
                  "Connection": "keep-alive"},
     )
     return resp
+
+
+# ─── 入库（人工筛选后） ───
+
+@app.route("/api/scout/ingest", methods=["POST"])
+def scout_ingest():
+    """入库选中的分析结果"""
+    from plugins.fanqie_scout import FanqieScoutAgent
+    data = request.json or {}
+    title = data.get("title", "")
+    plots = data.get("plots", [])
+    structures = data.get("structures", [])
+    gags = data.get("gags", [])
+    themes = data.get("themes", [])
+
+    if not title and not any([plots, structures, gags, themes]):
+        return jsonify({"ok": False, "error": "参数为空"}), 400
+
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+
+    scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib, theme_lib)
+    stats = scout.ingest_selected(
+        plots=plots, structures=structures,
+        gags=gags, themes=themes, source="fanqie",
+    )
+
+    return jsonify({
+        "ok": True,
+        "stats": stats,
+        "message": f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
+                   f"+{stats['gags']}笑点 +{stats['themes']}内涵",
+    })
+
 
 # ═══════════════════════════════════════
 # ⚙️ 设置页

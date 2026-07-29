@@ -464,18 +464,30 @@ class NovelAnalyzer:
     def __init__(self, llm_client=None):
         self.llm = llm_client
 
-    def analyze_book(self, novel: NovelInfo, chapters: list[dict]) -> dict:
+    def analyze_book(self, novel: NovelInfo, chapters: list[dict],
+                      on_progress=None) -> dict:
         """分析一本小说，提取所有可复用元素"""
         if not self.llm:
             return {"plots": [], "structures": [], "gags": [], "themes": []}
 
-        # 准备样本：取前5章 + 中间2章 + 最后3章（如果够的话）
         samples = self._select_samples(chapters)
 
         result = {}
+
+        if on_progress:
+            on_progress("analyze", 1, 4, "提取桥段...")
         result["plots"] = self.extract_plots(novel, samples)
+
+        if on_progress:
+            on_progress("analyze", 2, 4, "提取大纲...")
         result["structures"] = self.extract_structure(novel, samples)
+
+        if on_progress:
+            on_progress("analyze", 3, 4, "提取笑点...")
         result["gags"] = self.extract_gags(novel, samples)
+
+        if on_progress:
+            on_progress("analyze", 4, 4, "提取内涵...")
         result["themes"] = self.extract_themes(novel, samples)
 
         return result
@@ -770,6 +782,10 @@ class FanqieScoutAgent:
                  gag_lib=None, theme_lib=None):
         self.crawler = FanqieCrawler()
         self.analyzer = NovelAnalyzer(llm_client)
+        self.plot_lib = plot_lib
+        self.struct_lib = struct_lib
+        self.gag_lib = gag_lib
+        self.theme_lib = theme_lib
         self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib, theme_lib)
 
     def run(self, genre: str = "", book_count: int = 5,
@@ -882,11 +898,7 @@ class FanqieScoutAgent:
 
         if on_progress:
             on_progress("analyze", 0, 4, "LLM分析...")
-        analysis = self.analyzer.analyze_book(novel, downloaded)
-
-        if on_progress:
-            on_progress("ingest", 0, 1, "入库...")
-        stats = self.ingestor.ingest(analysis, "fanqie")
+        analysis = self.analyzer.analyze_book(novel, downloaded, on_progress=on_progress)
 
         result.new_plots = analysis.get("plots", [])
         result.new_structures = analysis.get("structures", [])
@@ -894,11 +906,60 @@ class FanqieScoutAgent:
         result.new_themes = analysis.get("themes", [])
 
         if on_progress:
-            on_progress("ingest", 1, 1,
-                        f"完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
-                        f"+{stats['gags']}笑点 +{stats['themes']}内涵")
+            on_progress("analysis_done", 4, 4, "分析完成，等待入库")
 
         return result
+
+    def ingest_selected(self, plots: list = None, structures: list = None,
+                        gags: list = None, themes: list = None,
+                        source: str = "fanqie", on_progress=None) -> dict:
+        """选择性入库"""
+        from datetime import datetime
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        stats = {"plots": 0, "structures": 0, "gags": 0, "themes": 0}
+
+        if plots and self.plot_lib:
+            for item in plots:
+                item["source"] = source
+                item["created_at"] = now
+                self.ingestor._add_plot(item, source)
+                stats["plots"] += 1
+            if on_progress:
+                on_progress("ingest", stats["plots"], len(plots), f"桥段已入库 {stats['plots']}/{len(plots)}")
+            self.plot_lib._save()
+
+        if structures and self.struct_lib:
+            for item in structures:
+                item["source"] = source
+                item["created_at"] = now
+                self.ingestor._add_structure(item, source)
+                stats["structures"] += 1
+            if on_progress:
+                on_progress("ingest", 1, 1, f"大纲已入库 {stats['structures']}个")
+            self.struct_lib._save()
+
+        if gags and self.gag_lib:
+            for item in gags:
+                item["source"] = source
+                item["created_at"] = now
+                self.ingestor._add_gag(item, source)
+                stats["gags"] += 1
+            if on_progress:
+                on_progress("ingest", 1, 1, f"笑点已入库 {stats['gags']}个")
+            self.gag_lib._save()
+
+        if themes and self.theme_lib:
+            for item in themes:
+                item["source"] = source
+                item["created_at"] = now
+                self.ingestor._add_theme(item, source)
+                stats["themes"] += 1
+            if on_progress:
+                on_progress("ingest", 1, 1, f"内涵已入库 {stats['themes']}个")
+            self.theme_lib._save()
+
+        return stats
 
 
 # ═══════════════════════════════════════════

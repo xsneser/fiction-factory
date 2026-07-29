@@ -91,6 +91,11 @@
 .result-card .detail-item { padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
 .result-card .detail-item:last-child { border-bottom: none; }
 .tabs .platform-tab { cursor: pointer; }
+.review-item { display:flex;align-items:flex-start;gap:12px;padding:12px;margin-bottom:8px;background:#161b22;border:1px solid #30363d;border-radius:6px;cursor:pointer;transition:border-color .2s; }
+.review-item:hover { border-color:#58a6ff; }
+.review-item input[type=checkbox] { margin-top:3px;width:16px;height:16px;accent-color:#238636; }
+.review-content { flex:1; }
+.review-panel { margin-top:8px; }
 </style>
 
 <script>
@@ -173,7 +178,6 @@ function handleEvent(d) {
         document.getElementById('phase-label').textContent = d.message || d.phase;
         document.getElementById('progress-text').textContent = d.current + '/' + d.total;
         document.getElementById('progress-fill').style.width = pct + '%';
-        // 下载每章时记录日志
         if (d.phase === 'download') {
             addLog('下载: ' + (d.message || '第' + d.current + '章'), 'info');
         }
@@ -183,14 +187,12 @@ function handleEvent(d) {
         addLog('找到: 「' + d.title + '」(' + d.author + ') ' + (d.chapters||'') + '章', 'success');
         return;
     }
-    if (d.event === 'done') {
+    if (d.event === 'analysis_result') {
         document.getElementById('progress-fill').style.width = '100%';
-        document.getElementById('phase-label').textContent = '✅ 完成！';
+        document.getElementById('phase-label').textContent = '✅ 分析完成，请审核入库内容';
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
-        lastResult = d;
-        try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch(e) {}
-        showResults(d);
+        showReviewCards(d);
         return;
     }
     if (d.event === 'error') {
@@ -216,49 +218,144 @@ function addLog(msg, level) {
     area.scrollTop = area.scrollHeight;
 }
 
-function showResults(d) {
+var _lastReviewData = null;
+
+function showReviewCards(d) {
+    _lastReviewData = d;
     var area = document.getElementById('result-area');
     area.style.display = 'block';
-    var html = '<div class="result-card">';
-    html += '<div class="header"><span style="font-size:18px;font-weight:600">📖 ' + d.title + '</span></div>';
-    html += '<div class="stats">';
-    html += '<div class="stat-item"><div class="stat-num">' + (d.downloaded_chapters||0) + '</div><div class="stat-label">已下载章节</div></div>';
-    html += '<div class="stat-item"><div class="stat-num">' + (d.plots?d.plots.length:0) + '</div><div class="stat-label">桥段</div></div>';
-    html += '<div class="stat-item"><div class="stat-num">' + (d.structures?d.structures.length:0) + '</div><div class="stat-label">大纲</div></div>';
-    html += '<div class="stat-item"><div class="stat-num">' + ((d.gags?d.gags.length:0) + (d.themes?d.themes.length:0)) + '</div><div class="stat-label">笑点+内涵</div></div>';
+
+    var html = '<div class="card" style="margin-bottom:16px">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+    html += '<span style="font-size:18px;font-weight:600">📖 ' + d.title + '</span>';
+    html += '<span style="color:#8b949e">已下载 ' + (d.downloaded_chapters||0) + ' 章</span>';
+    html += '</div>';
+    html += '<div style="margin-top:16px;display:flex;gap:10px">';
+    html += '<button class="btn-primary" onclick="ingestAll()">📦 全部入库</button>';
+    html += '<button class="btn" style="background:#30363d;color:#f0f6fc" onclick="ingestSelected()">✅ 入库选中</button>';
+    html += '</div>';
     html += '</div>';
 
-    if (d.plot_details && d.plot_details.length) {
-        html += '<div class="detail-section"><strong style="color:#58a6ff">🧩 新增桥段</strong>';
-        d.plot_details.forEach(function(p) {
-            html += '<div class="detail-item"><code>' + (p.category||'') + '</code> <strong>' + (p.name||'') + '</strong> — ' + (p.description||'').slice(0,80) + '</div>';
-        });
-        html += '</div>';
-    }
-    if (d.structure_details && d.structure_details.length) {
-        html += '<div class="detail-section"><strong style="color:#58a6ff">📋 新增大纲</strong>';
-        d.structure_details.forEach(function(s) {
-            var stages = (s.stages||[]).join(' → ');
-            html += '<div class="detail-item"><strong>' + (s.name||'') + '</strong> — ' + (s.description||'').slice(0,80) + '<br><span style="color:#484f58">' + stages + '</span></div>';
-        });
-        html += '</div>';
-    }
-    if (d.gag_details && d.gag_details.length) {
-        html += '<div class="detail-section"><strong style="color:#58a6ff">😂 新增笑点</strong>';
-        d.gag_details.forEach(function(g) {
-            html += '<div class="detail-item"><code>' + (g.category||'') + '</code> <strong>' + (g.name||'') + '</strong> — ' + (g.description||'').slice(0,80) + '</div>';
-        });
-        html += '</div>';
-    }
-    if (d.theme_details && d.theme_details.length) {
-        html += '<div class="detail-section"><strong style="color:#58a6ff">💡 新增内涵</strong>';
-        d.theme_details.forEach(function(t) {
-            html += '<div class="detail-item"><strong>' + (t.name||'') + '</strong> — ' + (t.description||'').slice(0,80) + '</div>';
-        });
-        html += '</div>';
-    }
+    // 分类标签 + 内容
+    var cats = [
+        {key:'plot', label:'🧩 桥段', items: d.plot_details || [], fields:['category','name','description','structure']},
+        {key:'structure', label:'📋 大纲', items: d.structure_details || [], fields:['name','description','stages']},
+        {key:'gag', label:'😂 笑点', items: d.gag_details || [], fields:['category','name','pattern_description']},
+        {key:'theme', label:'💡 内涵', items: d.theme_details || [], fields:['name','description','techniques']},
+    ];
+
+    html += '<div class="tabs" style="margin-bottom:12px">';
+    cats.forEach(function(c, i) {
+        var active = i === 0 ? 'active' : '';
+        html += '<a href="javascript:;" class="review-tab ' + active + '" data-tab="' + c.key + '" onclick="switchReviewTab(\'' + c.key + '\')">' + c.label + ' (' + c.items.length + ')</a>';
+    });
     html += '</div>';
+
+    cats.forEach(function(c) {
+        var show = c.key === 'plot' ? '' : ' style="display:none"';
+        html += '<div class="review-panel" id="review-' + c.key + '"' + show + '>';
+        if (c.items.length === 0) {
+            html += '<div class="empty" style="padding:30px"><p style="color:#484f58">无提取结果</p></div>';
+        } else {
+            c.items.forEach(function(item, idx) {
+                html += '<label class="review-item">';
+                html += '<input type="checkbox" class="review-cb" data-cat="' + c.key + '" data-idx="' + idx + '" checked>';
+                html += '<div class="review-content">';
+                if (c.key === 'plot') {
+                    html += '<div><code>' + (item.category||'') + '</code> <strong>' + (item.name||'') + '</strong></div>';
+                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
+                    if (item.structure) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">结构: ' + item.structure.slice(0,100) + '</div>';
+                } else if (c.key === 'structure') {
+                    html += '<div><strong>' + (item.name||'') + '</strong></div>';
+                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
+                    if (item.stages) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">阶段: ' + (item.stages.join(' → ')).slice(0,100) + '</div>';
+                } else if (c.key === 'gag') {
+                    html += '<div><code>' + (item.category||'') + '</code> <strong>' + (item.name||'') + '</strong></div>';
+                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.pattern_description||'').slice(0,120) + '</div>';
+                } else if (c.key === 'theme') {
+                    html += '<div><strong>' + (item.name||'') + '</strong></div>';
+                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
+                }
+                html += '</div></label>';
+            });
+        }
+        html += '</div>';
+    });
+
     area.innerHTML = html;
+}
+
+function switchReviewTab(key) {
+    document.querySelectorAll('.review-tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.review-panel').forEach(function(p) { p.style.display = 'none'; });
+    var tab = document.querySelector('.review-tab[data-tab="' + key + '"]');
+    if (tab) tab.classList.add('active');
+    var panel = document.getElementById('review-' + key);
+    if (panel) panel.style.display = 'block';
+}
+
+function getCheckedItems() {
+    var result = {plots:[], structures:[], gags:[], themes:[]};
+    if (!_lastReviewData) return result;
+    var cbs = document.querySelectorAll('.review-cb:checked');
+    cbs.forEach(function(cb) {
+        var cat = cb.getAttribute('data-cat');
+        var idx = parseInt(cb.getAttribute('data-idx'));
+        if (cat === 'plot' && _lastReviewData.plot_details[idx]) result.plots.push(_lastReviewData.plot_details[idx]);
+        if (cat === 'structure' && _lastReviewData.structure_details[idx]) result.structures.push(_lastReviewData.structure_details[idx]);
+        if (cat === 'gag' && _lastReviewData.gag_details[idx]) result.gags.push(_lastReviewData.gag_details[idx]);
+        if (cat === 'theme' && _lastReviewData.theme_details[idx]) result.themes.push(_lastReviewData.theme_details[idx]);
+    });
+    return result;
+}
+
+async function ingestAll() {
+    var items = getCheckedItems();
+    var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
+    if (total === 0) return alert('没有可入库的条目');
+    await doIngest(items);
+}
+
+async function ingestSelected() {
+    var items = getCheckedItems();
+    var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
+    if (total === 0) return alert('请勾选要入库的条目');
+    await doIngest(items);
+}
+
+async function doIngest(items) {
+    var title = _lastReviewData ? _lastReviewData.title : '';
+    var btn = document.querySelector('.btn-primary');
+    var orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '入库中...';
+    try {
+        var r = await fetch('/api/scout/ingest', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({title: title, plots: items.plots, structures: items.structures, gags: items.gags, themes: items.themes}),
+        });
+        var d = await r.json();
+        if (d.ok) {
+            addLog('✅ ' + d.message, 'success');
+            showToast(d.message, 'success');
+        } else {
+            addLog('❌ 入库失败: ' + (d.error||''), 'error');
+        }
+    } catch(e) {
+        addLog('❌ 入库失败: ' + e.message, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = orig;
+}
+
+function showToast(msg, type) {
+    var t = document.createElement('div');
+    t.className = 'alert ' + (type||'info');
+    t.textContent = msg;
+    t.style.cssText = 'position:fixed;top:20px;right:20px;z-index:1000';
+    document.body.appendChild(t);
+    setTimeout(function(){ t.remove(); }, 3000);
 }
 </script>
 {% endblock %}
