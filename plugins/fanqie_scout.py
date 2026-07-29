@@ -147,8 +147,24 @@ class FanqieCrawler:
                     queries.insert(1, f"{prefix} site:fanqienovel.com")
                     break
 
-        print(f"[搜索] 开始搜索 '{title[:30]}' -> {len(queries)}种查询" + str([q[:30] for q in queries]))
+        # 4) 如果只有一个词，尝试不同的搜索策略
+        if len(parts) <= 2:
+            # 用书名直接搜（不加 site 限制，让Bing自己匹配）
+            queries.append(f"{title} 番茄小说")
+            # 截取前几个字加 site
+            if len(title) >= 4:
+                queries.append(f"{title[:4]} site:fanqienovel.com")
+        
+        # 5) 去重
+        seen_q = set()
+        unique_queries = []
         for q in queries:
+            if q not in seen_q:
+                seen_q.add(q)
+                unique_queries.append(q)
+
+        print(f"[搜索] 开始搜索 '{title[:30]}' -> {len(unique_queries)}种查询" + str([q[:30] for q in unique_queries]))
+        for q in unique_queries:
             try:
                 bing_hosts = ["https://cn.bing.com", "https://www.bing.com"]
                 r = None
