@@ -809,7 +809,7 @@ def scout_run():
             except Exception as e:
                 evt_queue.put(("error", str(e)))
 
-        t = _threading.Thread(target=worker, daemon=True)
+        t = _threading.Thread(target=worker, daemon=True, name="scout-fetch")
         t.start()
 
         # 从队列读取进度事件，实时 yield
@@ -975,6 +975,24 @@ def scout_analyze():
         "writing_style": style,
         "profile_updated": profile_ready,
     })
+
+
+@app.route("/api/status/tasks")
+def status_tasks():
+    """返回当前运行中的任务列表（供右侧状态栏轮询）"""
+    from datetime import datetime
+    tasks = []
+    # 这个端点将返回全局运行任务，持续补充完善
+    import threading as _th
+    active = [t for t in _th.enumerate() if t.is_alive() and t.name and 'scout' in t.name.lower()]
+    for t in active:
+        tasks.append({
+            "name": "小说抓取",
+            "phase": "运行中",
+            "current": 0, "total": 0,
+            "time": datetime.now().strftime("%H:%M:%S"),
+        })
+    return jsonify(tasks)
 
 
 @app.route("/settings")
