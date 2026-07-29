@@ -118,37 +118,51 @@ class FanqieCrawler:
         return novels[:count]
 
     def search_novel(self, title: str) -> Optional[NovelInfo]:
-        """按书名搜索——Bing搜索 + 页面解析"""
-        queries = [
-            f"{title} site:fanqienovel.com",  # 全书名
-        ]
-        # 退化：去掉特殊符号，只用前几个关键词
-        import unicodedata
-        clean = unicodedata.normalize("NFKC", title)  # 全角→半角
-        clean = re.sub(r'[：:，,。.！!？?～~··「」【】《》、\\s]+', ' ', clean).strip()
+        """按书名搜索——Bing搜索 + 页面解析 + fanqie搜索页兜底"""
+        import urllib.parse, unicodedata
+        
+        # 生成多级搜索查询
+        queries = []
+        # 1) 全书名
+        queries.append(f"{title} site:fanqienovel.com")
+        # 2) 归一化后取前几个词
+        clean = unicodedata.normalize("NFKC", title)
+        clean = re.sub(r'[：:，,。.！!？?～~··「」【】《》、\s]+', ' ', clean).strip()
         parts = [p for p in clean.split() if len(p) > 1]
-        if parts and clean != title:
-            queries.insert(0, f"{' '.join(parts[:2])} site:fanqienovel.com")
-            queries.insert(0, f"{parts[0]} site:fanqienovel.com")
+        if parts:
+            queries.append(f"{' '.join(parts[:2])} site:fanqienovel.com")
+            queries.append(f"{parts[0]} site:fanqienovel.com")
+            if len(parts) >= 4:
+                queries.append(f"{' '.join(parts[:3])} site:fanqienovel.com")
+        # 3) 冒号前的前缀词
+        for sep in ['：', ':']:
+            if sep in title:
+                prefix = title.split(sep)[0].strip()
+                if prefix and len(prefix) > 1 and (not parts or prefix != parts[0]):
+                    queries.insert(1, f"{prefix} site:fanqienovel.com")
+                    break
 
+        logger.info(f"搜索 {title[:30]} -> {len(queries)}种查询")
         for q in queries:
             try:
-                import urllib.parse
                 r = self.session.get(
                     f"https://www.bing.com/search?q={urllib.parse.quote(q)}",
-                    timeout=15)
+                    timeout=15,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
                 ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
                 if ids:
-                    # 去重取第一个
                     seen = set()
                     unique_ids = [x for x in ids if not (x in seen or seen.add(x))]
                     info = self._get_novel_from_page(unique_ids[0])
                     if info and info.title:
+                        logger.info(f"搜到: {info.title} (ID={info.book_id})")
                         return info
             except Exception as e:
-                logger.debug(f"Bing search '{q[:30]}': {e}")
+                logger.debug(f"Bing '{q[:30]}': {e}")
                 continue
 
+        logger.warning(f"搜索失败: {title}")
+        return None
         return None
 
     def _get_novel_from_page(self, book_id: str) -> Optional[NovelInfo]:
