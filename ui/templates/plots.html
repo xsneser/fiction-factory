@@ -10,9 +10,15 @@
 </div>
 
 {% for t in templates %}
-<div class="accordion">
+<div class="accordion" id="plot-{{ t.id }}" style="opacity:{{ '0.5' if not t.enabled else '1' }}">
     <div class="accordion-header">
-        <span><strong>{{ t.name }}</strong> <span class="tag">{{ t.category }}</span>{% if t.sub_category %} <span class="tag blue">{{ t.sub_category }}</span>{% endif %} {% for _ in range(t.quality_rating) %}⭐{% endfor %}</span>
+        <span>
+            <strong>{{ t.name }}</strong>
+            <span class="tag">{{ t.category }}</span>
+            {% if t.sub_category %} <span class="tag blue">{{ t.sub_category }}</span>{% endif %}
+            {% for _ in range(t.quality_rating) %}⭐{% endfor %}
+            {% if not t.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
+        </span>
         <span style="color:#8b949e;font-size:12px">{{ t.word_range[0] }}-{{ t.word_range[1] }}字</span>
     </div>
     <div class="accordion-body">
@@ -29,8 +35,32 @@
         {% if t.variants %}<p><strong>变体:</strong> {% for v in t.variants %}<span class="tag green">{{ v }}</span>{% endfor %}</p>{% endif %}
         {% if t.fit_contexts %}<p><strong>适用场景:</strong> {% for c in t.fit_contexts %}<span class="tag">{{ c }}</span>{% endfor %}</p>{% endif %}
         {% if t.usage_notes %}<p style="color:#d29922">⚠️ {{ t.usage_notes }}</p>{% endif %}
-        <p style="color:#484f58;font-size:11px">ID: <code>{{ t.id }}</code> · 来源: {{ t.source }}</p>
+        <p style="color:#484f58;font-size:11px">
+            ID: <code>{{ t.id }}</code>
+            · 收录: {{ t.created_at }}
+            · 来源: {{ t.source or '创作积累' }}
+        </p>
+        <p style="margin-top:8px">
+            <button class="small" onclick="togglePlot('{{ t.id }}')">{{ '✅ 启用' if not t.enabled else '⏸ 禁用' }}</button>
+            <button class="small danger" onclick="deletePlot('{{ t.id }}')">🗑 删除</button>
+        </p>
     </div>
 </div>
 {% endfor %}
+
+<script>
+async function togglePlot(id) {
+    const r = await fetch('/api/plots/' + id + '/toggle', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else alert('操作失败: ' + (d.error||''));
+}
+async function deletePlot(id) {
+    if (!confirm('确认删除桥段「' + id + '」？')) return;
+    const r = await fetch('/api/plots/' + id + '/delete', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else alert('删除失败: ' + (d.error||''));
+}
+</script>
 {% endblock %}

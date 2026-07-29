@@ -7,6 +7,9 @@ from pathlib import Path
 import json
 
 
+_DEFAULT_DATA_DIR = Path(__file__).parent / "data"
+
+
 @dataclass
 class StageNode:
     """大纲阶段节点"""
@@ -28,9 +31,12 @@ class StructureTemplate:
     description: str = ""
     total_chapters: int = 500
     stages: list[StageNode] = field(default_factory=list)
-    opening_patterns: list[str] = field(default_factory=list)  # 推荐开篇桥段ID
-    climax_patterns: list[str] = field(default_factory=list)   # 高潮阶段推荐
+    opening_patterns: list[str] = field(default_factory=list)
+    climax_patterns: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    source: str = ""                 # 来源
+    created_at: str = "2026-05-01"   # 收录时间
+    enabled: bool = True              # 启用状态
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +52,9 @@ class StructureTemplate:
             "opening_patterns": self.opening_patterns,
             "climax_patterns": self.climax_patterns,
             "tags": self.tags,
+            "source": self.source,
+            "created_at": self.created_at,
+            "enabled": self.enabled,
         }
 
     @classmethod
@@ -59,6 +68,9 @@ class StructureTemplate:
             opening_patterns=d.get("opening_patterns", []),
             climax_patterns=d.get("climax_patterns", []),
             tags=d.get("tags", []),
+            source=d.get("source", ""),
+            created_at=d.get("created_at", "2026-05-01"),
+            enabled=d.get("enabled", True),
         )
 
 
@@ -67,10 +79,23 @@ class StructureLibrary:
 
     def __init__(self):
         self.templates: list[StructureTemplate] = []
-        self._load_builtin()
+        self._save_path = _DEFAULT_DATA_DIR / "structures.json"
+        self._load()
 
-    def _load_builtin(self):
-        self.templates = BUILTIN_STRUCTURES
+    def _load(self):
+        if self._save_path.exists():
+            with open(self._save_path, encoding="utf-8") as f:
+                data = json.load(f)
+            self.templates = [StructureTemplate.from_dict(d)
+                              for d in data.get("templates", [])]
+        else:
+            self.templates = BUILTIN_STRUCTURES
+
+    def _save(self):
+        self._save_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._save_path, "w", encoding="utf-8") as f:
+            json.dump({"templates": [t.to_dict() for t in self.templates]},
+                      f, ensure_ascii=False, indent=2)
 
     def load(self, path: str):
         with open(path, encoding="utf-8") as f:

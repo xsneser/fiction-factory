@@ -2,12 +2,39 @@
 {% block content %}
 <h1>💡 内涵库 <span style="font-size:14px;color:#8b949e">（{{ entries|length }} 母题）</span></h1>
 {% for e in entries %}
-<div class="card" style="margin-bottom:12px">
-    <div class="title">{{ e.name }}</div>
+<div class="card" style="margin-bottom:12px;opacity:{{ '0.5' if not e.enabled else '1' }}">
+    <div class="title">
+        {{ e.name }}
+        {% if not e.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
+    </div>
     <p>{{ e.description }}</p>
     <p style="font-size:12px;margin-top:8px"><strong>表达手法:</strong> {% for t in e.techniques %}<span class="tag blue">{{ t }}</span>{% endfor %}</p>
     {% if e.tips %}<p style="font-size:12px;color:#d29922">💡 {% for tip in e.tips %}{{ tip }}<br>{% endfor %}</p>{% endif %}
     {% if e.compatible_plots %}<p style="font-size:12px">关联桥段: {% for pid in e.compatible_plots %}<code>{{ pid }}</code> {% endfor %}</p>{% endif %}
+    <p style="color:#484f58;font-size:11px;margin-top:8px">
+        收录: {{ e.created_at }}
+        · 来源: {{ e.source or '创作积累' }}
+    </p>
+    <p style="margin-top:8px">
+        <button class="small" onclick="toggleTheme('{{ e.id }}')">{{ '✅ 启用' if not e.enabled else '⏸ 禁用' }}</button>
+        <button class="small danger" onclick="deleteTheme('{{ e.id }}')">🗑 删除</button>
+    </p>
 </div>
 {% endfor %}
+
+<script>
+async function toggleTheme(id) {
+    const r = await fetch('/api/themes/' + id + '/toggle', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else alert('操作失败: ' + (d.error||''));
+}
+async function deleteTheme(id) {
+    if (!confirm('确认删除内涵库条目「' + id + '」？')) return;
+    const r = await fetch('/api/themes/' + id + '/delete', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else alert('删除失败: ' + (d.error||''));
+}
+</script>
 {% endblock %}

@@ -3,28 +3,34 @@
 故事背后要传达的核心主题与讨论母题
 """
 from dataclasses import dataclass, field
+from pathlib import Path
 import json
+
+_DEFAULT_DATA_DIR = Path(__file__).parent / "data"
 
 
 @dataclass
 class ThemeEntry:
     """一个母题/主题单元"""
     id: str
-    name: str                    # 母题名：公平、成长、牺牲、自由...
-    description: str             # 母题描述
-    techniques: list[str]        # 表达手法列表
+    name: str
+    description: str
+    techniques: list[str]
     """
     可选手法：
-    - "角色行动展示": 不靠说教，靠角色做了什么
-    - "对话间接暗示": 通过角色对话传递但不直接说
-    - "环境/象征物呼应": 用环境或物件象征母题
-    - "对比/反差": 用相反的情境形成反差，凸显主题
-    - "群像反应": 不同角色对同一件事的不同反应来展示
+    - "角色行动展示"
+    - "对话间接暗示"
+    - "环境/象征物呼应"
+    - "对比/反差"
+    - "群像反应"
     """
-    compatible_plots: list[str] = field(default_factory=list)  # 适用的桥段ID
-    compatible_gags: list[str] = field(default_factory=list)   # 搭配的笑点
-    tips: list[str] = field(default_factory=list)              # 使用提示
-    examples: list[str] = field(default_factory=list)          # 参考例句/片段
+    compatible_plots: list[str] = field(default_factory=list)
+    compatible_gags: list[str] = field(default_factory=list)
+    tips: list[str] = field(default_factory=list)
+    examples: list[str] = field(default_factory=list)
+    source: str = ""                 # 来源
+    created_at: str = "2026-05-01"   # 收录时间
+    enabled: bool = True              # 启用状态
 
     def to_dict(self) -> dict:
         return {
@@ -34,6 +40,8 @@ class ThemeEntry:
             "compatible_plots": self.compatible_plots,
             "compatible_gags": self.compatible_gags,
             "tips": self.tips, "examples": self.examples,
+            "source": self.source, "created_at": self.created_at,
+            "enabled": self.enabled,
         }
 
     @classmethod
@@ -47,10 +55,23 @@ class ThemeLibrary:
 
     def __init__(self):
         self.entries: list[ThemeEntry] = []
-        self._load_builtin()
+        self._save_path = _DEFAULT_DATA_DIR / "themes.json"
+        self._load()
 
-    def _load_builtin(self):
-        self.entries = BUILTIN_THEMES
+    def _load(self):
+        if self._save_path.exists():
+            with open(self._save_path, encoding="utf-8") as f:
+                data = json.load(f)
+            self.entries = [ThemeEntry.from_dict(d)
+                            for d in data.get("entries", [])]
+        else:
+            self.entries = BUILTIN_THEMES
+
+    def _save(self):
+        self._save_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._save_path, "w", encoding="utf-8") as f:
+            json.dump({"entries": [e.to_dict() for e in self.entries]},
+                      f, ensure_ascii=False, indent=2)
 
     def load(self, path: str):
         with open(path, encoding="utf-8") as f:
@@ -62,6 +83,12 @@ class ThemeLibrary:
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"entries": [e.to_dict() for e in self.entries]},
                       f, ensure_ascii=False, indent=2)
+
+    def get_by_id(self, theme_id: str):
+        for e in self.entries:
+            if e.id == theme_id:
+                return e
+        return None
 
     def search(self, name: str = "") -> list[ThemeEntry]:
         if not name:

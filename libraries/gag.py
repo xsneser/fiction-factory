@@ -3,7 +3,10 @@
 网文高频搞笑模式的结构化模板
 """
 from dataclasses import dataclass, field
+from pathlib import Path
 import json
+
+_DEFAULT_DATA_DIR = Path(__file__).parent / "data"
 
 
 @dataclass
@@ -19,6 +22,9 @@ class GagPattern:
     fit_scenes: list[str] = field(default_factory=list)
     usage_count: int = 0
     banned_in: list[str] = field(default_factory=list)
+    source: str = ""                 # 来源
+    created_at: str = "2026-05-01"   # 收录时间
+    enabled: bool = True              # 启用状态
 
     def to_dict(self) -> dict:
         return {
@@ -27,6 +33,8 @@ class GagPattern:
             "template": self.template, "variables": self.variables,
             "examples": self.examples, "fit_scenes": self.fit_scenes,
             "usage_count": self.usage_count, "banned_in": self.banned_in,
+            "source": self.source, "created_at": self.created_at,
+            "enabled": self.enabled,
         }
 
     @classmethod
@@ -38,10 +46,23 @@ class GagPattern:
 class GagLibrary:
     def __init__(self):
         self.patterns: list[GagPattern] = []
-        self._load_builtin()
+        self._save_path = _DEFAULT_DATA_DIR / "gags.json"
+        self._load()
 
-    def _load_builtin(self):
-        self.patterns = BUILTIN_GAGS
+    def _load(self):
+        if self._save_path.exists():
+            with open(self._save_path, encoding="utf-8") as f:
+                data = json.load(f)
+            self.patterns = [GagPattern.from_dict(d)
+                             for d in data.get("patterns", [])]
+        else:
+            self.patterns = BUILTIN_GAGS
+
+    def _save(self):
+        self._save_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._save_path, "w", encoding="utf-8") as f:
+            json.dump({"patterns": [p.to_dict() for p in self.patterns]},
+                      f, ensure_ascii=False, indent=2)
 
     def load(self, path: str):
         with open(path, encoding="utf-8") as f:
@@ -53,6 +74,12 @@ class GagLibrary:
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"patterns": [p.to_dict() for p in self.patterns]},
                       f, ensure_ascii=False, indent=2)
+
+    def get_by_id(self, gag_id: str):
+        for p in self.patterns:
+            if p.id == gag_id:
+                return p
+        return None
 
     def search(self, category: str = "", scene: str = "",
                book_id: str = "") -> list[GagPattern]:

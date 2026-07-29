@@ -1,20 +1,57 @@
 {% extends "base.html" %}
-{% block title %}侦察兵 — NovelEngine{% endblock %}
+{% block title %}抓取 — NovelEngine{% endblock %}
 {% block content %}
-<h1>🔍 番茄侦察兵</h1>
-<p class="subtitle">搜索番茄小说 → 下载章节 → LLM拆解 → 自动入库到四大库</p>
+<h1>🔍 抓取 <span style="font-size:14px;color:#8b949e">采集小说数据 → 自动分析入库</span></h1>
 
-<div class="scout-form">
-    <div class="input-row">
-        <input type="text" id="book-title" placeholder="输入书名，如：十日终焉" value="十日终焉" autofocus>
-        <span class="or-divider">或</span>
-        <input type="text" id="book-id" placeholder="直接输入 book_id 或 URL">
+<div class="tabs" style="margin-bottom:20px">
+    <a href="javascript:;" class="platform-tab active" data-platform="fanqie" onclick="switchPlatform('fanqie')">🍅 番茄小说</a>
+    <a href="javascript:;" class="platform-tab" data-platform="web" onclick="switchPlatform('web')" style="opacity:0.5;cursor:not-allowed">🌐 网页抓取 <span style="font-size:10px;color:#8b949e">即将推出</span></a>
+    <a href="javascript:;" class="platform-tab" data-platform="qidian" onclick="switchPlatform('qidian')" style="opacity:0.5;cursor:not-allowed">📖 起点中文 <span style="font-size:10px;color:#8b949e">即将推出</span></a>
+    <a href="javascript:;" class="platform-tab" data-platform="jinjiang" onclick="switchPlatform('jinjiang')" style="opacity:0.5;cursor:not-allowed">🌸 晋江文学城 <span style="font-size:10px;color:#8b949e">即将推出</span></a>
+</div>
+
+{# ─── 番茄小说面板 ─── #}
+<div id="platform-fanqie" class="platform-panel">
+    <p style="font-size:13px;color:#8b949e;margin-bottom:16px">搜索番茄小说 → 下载章节 → LLM 拆解 → 自动入库桥段/大纲/笑点/内涵库</p>
+    <div class="scout-form">
+        <div class="input-row">
+            <input type="text" id="book-title" placeholder="输入书名，如：十日终焉" value="十日终焉" autofocus>
+            <span class="or-divider">或</span>
+            <input type="text" id="book-id" placeholder="直接输入 book_id 或 URL">
+        </div>
+        <div class="form-row-inline">
+            <label>下载章节数</label>
+            <input type="number" id="chapters" value="30" min="5" max="100">
+        </div>
+        <button id="btn-scout" class="btn-primary" onclick="startScout()">🍅 开始抓取</button>
     </div>
-    <div class="form-row-inline">
-        <label>下载章节数</label>
-        <input type="number" id="chapters" value="30" min="5" max="100">
+</div>
+
+{# ─── 网页抓取面板（占位） ─── #}
+<div id="platform-web" class="platform-panel" style="display:none">
+    <div class="empty" style="padding:40px 20px">
+        <div class="icon" style="font-size:36px">🌐</div>
+        <p style="color:#8b949e;font-size:14px;margin-top:12px">网页抓取功能正在开发中</p>
+        <p style="color:#484f58;font-size:12px;margin-top:6px">支持从任意小说网站抓取章节数据</p>
     </div>
-    <button id="btn-scout" class="btn-primary" onclick="startScout()">🔍 开始侦察</button>
+</div>
+
+{# ─── 起点面板（占位） ─── #}
+<div id="platform-qidian" class="platform-panel" style="display:none">
+    <div class="empty" style="padding:40px 20px">
+        <div class="icon" style="font-size:36px">📖</div>
+        <p style="color:#8b949e;font-size:14px;margin-top:12px">起点中文网抓取功能正在开发中</p>
+        <p style="color:#484f58;font-size:12px;margin-top:6px">敬请期待</p>
+    </div>
+</div>
+
+{# ─── 晋江面板（占位） ─── #}
+<div id="platform-jinjiang" class="platform-panel" style="display:none">
+    <div class="empty" style="padding:40px 20px">
+        <div class="icon" style="font-size:36px">🌸</div>
+        <p style="color:#8b949e;font-size:14px;margin-top:12px">晋江文学城抓取功能正在开发中</p>
+        <p style="color:#484f58;font-size:12px;margin-top:6px">敬请期待</p>
+    </div>
 </div>
 
 <div id="progress-area" style="display:none">
@@ -28,9 +65,38 @@
 
 <div id="result-area" style="display:none"></div>
 
+<style>
+.scout-form { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; }
+.input-row { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+.input-row input { flex: 1; }
+.or-divider { color: #484f58; font-size: 12px; white-space: nowrap; }
+.form-row-inline { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.form-row-inline label { font-size: 13px; color: #8b949e; }
+.form-row-inline input[type=number] { width: 80px; }
+.progress-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
+.log-area { margin-top: 12px; max-height: 300px; overflow-y: auto; font-size: 12px; line-height: 1.6; }
+.log-area .log-line { padding: 2px 8px; border-left: 2px solid #30363d; margin: 2px 0; }
+.log-area .log-line.info { border-left-color: #58a6ff; }
+.log-area .log-line.success { border-left-color: #3fb950; }
+.log-area .log-line.warn { border-left-color: #d29922; }
+.log-area .log-line.error { border-left-color: #f85149; }
+.result-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-top: 16px; cursor: pointer; transition: all 0.2s; }
+.result-card:hover { border-color: #58a6ff; }
+.result-card .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.result-card .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 12px 0; }
+.result-card .stat-item { text-align: center; padding: 8px; background: #0d1117; border-radius: 6px; }
+.result-card .stat-num { font-size: 24px; font-weight: bold; color: #58a6ff; }
+.result-card .stat-label { font-size: 11px; color: #8b949e; }
+.result-card .detail-section { margin-top: 12px; }
+.result-card .detail-item { padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
+.result-card .detail-item:last-child { border-bottom: none; }
+.tabs .platform-tab { cursor: pointer; }
+</style>
+
 <script>
 var STORAGE_KEY = 'ne_scout';
 var lastResult = null;
+var currentPlatform = 'fanqie';
 
 // 页面加载恢复
 (function(){
@@ -40,7 +106,18 @@ var lastResult = null;
     } catch(e) {}
 })();
 
+function switchPlatform(pid) {
+    document.querySelectorAll('.platform-tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.platform-panel').forEach(function(p) { p.style.display = 'none'; });
+    var tab = document.querySelector('.platform-tab[data-platform="' + pid + '"]');
+    if (tab) tab.classList.add('active');
+    var panel = document.getElementById('platform-' + pid);
+    if (panel) panel.style.display = 'block';
+    currentPlatform = pid;
+}
+
 function startScout() {
+    if (currentPlatform !== 'fanqie') return;
     var title = document.getElementById('book-title').value.trim();
     var bookId = document.getElementById('book-id').value.trim();
     var chapters = parseInt(document.getElementById('chapters').value) || 30;
@@ -49,7 +126,7 @@ function startScout() {
     if (!title && !directId) return alert('请输入书名或 book_id');
 
     document.getElementById('btn-scout').disabled = true;
-    document.getElementById('btn-scout').textContent = '...';
+    document.getElementById('btn-scout').textContent = '抓取中...';
     document.getElementById('progress-area').style.display = 'block';
     document.getElementById('result-area').style.display = 'none';
     document.getElementById('log-area').innerHTML = '';
@@ -61,157 +138,122 @@ function startScout() {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({title: title, chapters: chapters, book_id: directId})
-    }).then(function(resp) {
-        var reader = resp.body.getReader();
+    }).then(function(r) {
+        var reader = r.body.getReader();
         var decoder = new TextDecoder();
-        var buffer = '';
-        function pump() {
-            reader.read().then(function(r) {
-                if (r.done) { done(); return; }
-                buffer += decoder.decode(r.value, {stream: true});
-                var lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-                lines.forEach(function(line) {
+        function read() {
+            reader.read().then(function(res) {
+                if (res.done) return;
+                var raw = decoder.decode(res.value, {stream: true});
+                var lines = raw.split('\\n');
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i].trim();
                     if (line.startsWith('data: ')) {
-                        try { handleEvent(JSON.parse(line.slice(6))); } catch(e) {}
+                        try {
+                            var d = JSON.parse(line.slice(6));
+                            handleEvent(d);
+                        } catch(e) {}
                     }
-                });
-                pump();
+                }
+                read();
             });
         }
-        pump();
-    }).catch(function(e) { addLog('Error: ' + e.message); done(); });
-
-    function done() {
+        read();
+    }).catch(function(e) {
+        addLog('连接失败: ' + e.message, 'error');
         document.getElementById('btn-scout').disabled = false;
-        document.getElementById('btn-scout').textContent = 'start scout';
-    }
+        document.getElementById('btn-scout').textContent = '🍅 开始抓取';
+    });
 }
 
-function handleEvent(data) {
-    var ev = data.event;
-    if (ev === 'start') {
-        addLog('start: ' + data.title);
-    } else if (ev === 'found') {
-        addLog('found: ' + data.title + ' by ' + data.author);
-        addLog('  ' + (data.genre||'') + ' | ' + data.chapters + 'ch | ' + formatWords(data.words));
-        document.getElementById('phase-label').textContent = 'downloading';
-    } else if (ev === 'progress') {
-        var pct = data.total > 0 ? Math.round(data.current/data.total*100) : 0;
+function handleEvent(d) {
+    if (d.event === 'log') { addLog(d.message, d.level||'info'); return; }
+    if (d.event === 'progress') {
+        var pct = Math.min(100, Math.round((d.current / d.total) * 100));
+        document.getElementById('phase-label').textContent = d.message || d.phase;
+        document.getElementById('progress-text').textContent = d.current + '/' + d.total;
         document.getElementById('progress-fill').style.width = pct + '%';
-        document.getElementById('progress-text').textContent = data.current + '/' + data.total;
-        document.getElementById('phase-label').textContent = data.phase;
-        if (data.message) addLog('  ' + data.message);
-    } else if (ev === 'done') {
-        document.getElementById('progress-fill').style.width = '100%';
-        document.getElementById('phase-label').textContent = 'done';
-        addLog('DONE');
-        lastResult = data;
-        try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
-        showResults(data);
-    } else if (ev === 'error') {
-        addLog('ERROR: ' + data.message);
+        return;
+    }
+    if (d.event === 'found') {
+        addLog('找到: 「' + d.title + '」(' + d.author + ') ' + (d.chapters||'') + '章', 'success');
+        return;
+    }
+    if (d.event === 'done') {
+        document.getElementById('progress-area').style.display = 'none';
+        document.getElementById('btn-scout').disabled = false;
+        document.getElementById('btn-scout').textContent = '🍅 开始抓取';
+        lastResult = d;
+        try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch(e) {}
+        showResults(d);
+        return;
+    }
+    if (d.event === 'error') {
+        addLog('❌ ' + (d.message||'未知错误'), 'error');
+        document.getElementById('btn-scout').disabled = false;
+        document.getElementById('btn-scout').textContent = '🍅 开始抓取';
+        document.getElementById('progress-area').style.display = 'none';
+        return;
+    }
+    if (d.event === 'start') {
+        addLog('开始抓取: ' + d.title, 'info');
+        return;
     }
 }
 
-function formatWords(n) { return n > 10000 ? (n/10000).toFixed(1)+'w' : n; }
-function addLog(msg) {
-    var el = document.getElementById('log-area');
-    el.innerHTML += '<div class="log-line">' + msg + '</div>';
-    el.scrollTop = el.scrollHeight;
+function addLog(msg, level) {
+    var area = document.getElementById('log-area');
+    var div = document.createElement('div');
+    div.className = 'log-line ' + (level||'info');
+    var time = new Date().toLocaleTimeString();
+    div.textContent = time + ' ' + msg;
+    area.appendChild(div);
+    area.scrollTop = area.scrollHeight;
 }
 
-function showResults(data) {
-    document.getElementById('result-area').style.display = 'block';
-    var plots = data.plot_details || [];
-    var gags = data.gag_details || [];
-    var structs = data.structure_details || [];
-    var themes = data.theme_details || [];
-
-    var html = '<h2>results: ' + escHtml(data.title||'') + '</h2>';
-    html += '<div class="result-meta">downloaded ' + (data.downloaded_chapters||0) + ' chapters</div>';
-    html += '<div class="cards">';
-    html += cardHtml('plot', plots.length, plots);
-    html += cardHtml('gag', gags.length, gags);
-    html += cardHtml('struct', structs.length, structs);
-    html += cardHtml('theme', themes.length, themes);
+function showResults(d) {
+    var area = document.getElementById('result-area');
+    area.style.display = 'block';
+    var html = '<div class="result-card">';
+    html += '<div class="header"><span style="font-size:18px;font-weight:600">📖 ' + d.title + '</span></div>';
+    html += '<div class="stats">';
+    html += '<div class="stat-item"><div class="stat-num">' + (d.downloaded_chapters||0) + '</div><div class="stat-label">已下载章节</div></div>';
+    html += '<div class="stat-item"><div class="stat-num">' + (d.plots?d.plots.length:0) + '</div><div class="stat-label">桥段</div></div>';
+    html += '<div class="stat-item"><div class="stat-num">' + (d.structures?d.structures.length:0) + '</div><div class="stat-label">大纲</div></div>';
+    html += '<div class="stat-item"><div class="stat-num">' + ((d.gags?d.gags.length:0) + (d.themes?d.themes.length:0)) + '</div><div class="stat-label">笑点+内涵</div></div>';
     html += '</div>';
-    document.getElementById('result-area').innerHTML = html;
-}
 
-function cardHtml(type, count, items) {
-    var labels = {plot: 'plots', gag: 'gags', struct: 'structures', theme: 'themes'};
-    var icons = {plot: 'P', gag: 'G', struct: 'S', theme: 'T'};
-    var label = labels[type] || type;
-    var detailId = 'd-' + type;
-    var h = '<div class="card rcard" onclick="toggleDetail(\'' + detailId + '\',this)">';
-    h += '<div class="stat">' + count + '</div><div class="label">' + label + '</div>';
-    if (count > 0) h += '<div class="expand-hint">click to expand</div>';
-    h += '</div>';
-    if (count > 0) {
-        h += '<div id="' + detailId + '" class="detail-panel" style="display:none">';
-        h += '<h3>' + label + ' (' + count + ')</h3>';
-        items.forEach(function(item, i) {
-            h += '<div class="detail-item">';
-            h += '<div class="detail-name">' + (i+1) + '. ' + escHtml(item.name||'') + '</div>';
-            if (item.category) h += '<span class="tag">' + escHtml(item.category) + '</span> ';
-            if (item.description) h += '<div class="detail-desc">' + escHtml(item.description).substring(0,300) + '</div>';
-            if (item.structure) h += '<div class="detail-code">' + escHtml(item.structure).substring(0,200) + '</div>';
-            if (item.examples && item.examples.length) h += '<div class="detail-example">' + escHtml(item.examples[0]).substring(0,150) + '</div>';
-            if (item.stages && item.stages.length) h += '<div class="detail-desc">stages: ' + item.stages.join(', ') + '</div>';
-            if (item.techniques && item.techniques.length) h += '<div class="detail-desc">techniques: ' + item.techniques.join(', ') + '</div>';
-            h += '</div>';
+    if (d.plot_details && d.plot_details.length) {
+        html += '<div class="detail-section"><strong style="color:#58a6ff">🧩 新增桥段</strong>';
+        d.plot_details.forEach(function(p) {
+            html += '<div class="detail-item"><code>' + (p.category||'') + '</code> <strong>' + (p.name||'') + '</strong> — ' + (p.description||'').slice(0,80) + '</div>';
         });
-        h += '</div>';
+        html += '</div>';
     }
-    return h;
-}
-
-function toggleDetail(id, card) {
-    var panel = document.getElementById(id);
-    if (!panel) return;
-    var open = panel.style.display === 'block';
-    panel.style.display = open ? 'none' : 'block';
-    var hint = card.querySelector('.expand-hint');
-    if (hint) hint.textContent = open ? 'click to expand' : 'collapse';
-}
-
-function escHtml(s) {
-    if (!s) return '';
-    var d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+    if (d.structure_details && d.structure_details.length) {
+        html += '<div class="detail-section"><strong style="color:#58a6ff">📋 新增大纲</strong>';
+        d.structure_details.forEach(function(s) {
+            var stages = (s.stages||[]).join(' → ');
+            html += '<div class="detail-item"><strong>' + (s.name||'') + '</strong> — ' + (s.description||'').slice(0,80) + '<br><span style="color:#484f58">' + stages + '</span></div>';
+        });
+        html += '</div>';
+    }
+    if (d.gag_details && d.gag_details.length) {
+        html += '<div class="detail-section"><strong style="color:#58a6ff">😂 新增笑点</strong>';
+        d.gag_details.forEach(function(g) {
+            html += '<div class="detail-item"><code>' + (g.category||'') + '</code> <strong>' + (g.name||'') + '</strong> — ' + (g.description||'').slice(0,80) + '</div>';
+        });
+        html += '</div>';
+    }
+    if (d.theme_details && d.theme_details.length) {
+        html += '<div class="detail-section"><strong style="color:#58a6ff">💡 新增内涵</strong>';
+        d.theme_details.forEach(function(t) {
+            html += '<div class="detail-item"><strong>' + (t.name||'') + '</strong> — ' + (t.description||'').slice(0,80) + '</div>';
+        });
+        html += '</div>';
+    }
+    html += '</div>';
+    area.innerHTML = html;
 }
 </script>
-
-<style>
-.subtitle { color:#8b949e; margin-bottom:24px; }
-.scout-form { display:flex; gap:12px; align-items:flex-end; margin-bottom:24px; flex-wrap:wrap; }
-.input-row { display:flex; gap:8px; align-items:center; flex:1; min-width:300px; }
-.or-divider { color:#484f58; font-size:12px; flex-shrink:0; }
-.scout-form input[type=text] { flex:1; min-width:140px; padding:10px 14px; background:#0d1117; border:1px solid #30363d; color:#f0f6fc; border-radius:8px; font-size:15px; }
-.scout-form input[type=text]:focus { border-color:#58a6ff; outline:none; }
-.scout-form input[type=number] { width:80px; padding:10px; background:#0d1117; border:1px solid #30363d; color:#f0f6fc; border-radius:8px; font-size:14px; }
-.form-row-inline { display:flex; align-items:center; gap:6px; }
-.form-row-inline label { color:#8b949e; font-size:13px; white-space:nowrap; }
-.progress-header { display:flex; justify-content:space-between; margin-bottom:8px; color:#c9d1d9; font-size:13px; }
-.progress-bar { height:8px; background:#30363d; border-radius:4px; overflow:hidden; margin-bottom:16px; }
-.progress-fill { height:100%; background:#238636; border-radius:4px; transition:width .3s; }
-.log-area { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:12px; max-height:300px; overflow-y:auto; font-size:12px; font-family:monospace; }
-.log-line { color:#8b949e; padding:2px 0; }
-.btn-primary { background:#238636; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:15px; cursor:pointer; white-space:nowrap; }
-.btn-primary:disabled { opacity:.5; cursor:not-allowed; }
-.result-meta { color:#8b949e; margin-bottom:16px; font-size:13px; }
-.rcard { cursor:pointer; position:relative; }
-.rcard:hover { border-color:#58a6ff !important; }
-.expand-hint { font-size:11px; color:#484f58; margin-top:6px; }
-.detail-panel { background:#161b22; border:1px solid #30363d; border-radius:0 0 8px 8px; padding:16px; margin-top:-8px; margin-bottom:16px; }
-.detail-panel h3 { color:#58a6ff; margin-bottom:12px; font-size:14px; }
-.detail-item { padding:10px 0; border-bottom:1px solid #21262d; }
-.detail-item:last-child { border-bottom:none; }
-.detail-name { color:#f0f6fc; font-weight:600; margin-bottom:4px; }
-.detail-desc { color:#8b949e; font-size:12px; margin:4px 0; line-height:1.5; }
-.detail-code { color:#c9d1d9; font-size:11px; font-family:monospace; background:#0d1117; padding:4px 8px; border-radius:4px; margin:4px 0; }
-.detail-example { color:#8b949e; font-size:11px; font-style:italic; }
-</style>
 {% endblock %}

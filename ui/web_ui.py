@@ -360,6 +360,80 @@ def plot_detail_api(plot_id):
     return jsonify(t.to_dict())
 
 
+# ─── 库启用/禁用/删除 ───
+
+@app.route("/api/plots/<plot_id>/toggle", methods=["POST"])
+def plot_toggle(plot_id):
+    t = plot_lib.get_by_id(plot_id)
+    if not t: return jsonify({"ok": False, "error": "not found"}), 404
+    t.enabled = not t.enabled
+    plot_lib._save()
+    return jsonify({"ok": True, "enabled": t.enabled})
+
+
+@app.route("/api/plots/<plot_id>/delete", methods=["POST"])
+def plot_delete(plot_id):
+    t = plot_lib.get_by_id(plot_id)
+    if not t: return jsonify({"ok": False, "error": "not found"}), 404
+    plot_lib.templates = [x for x in plot_lib.templates if x.id != plot_id]
+    plot_lib._save()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/structures/<struct_id>/toggle", methods=["POST"])
+def struct_toggle(struct_id):
+    t = struct_lib.get_by_id(struct_id)
+    if not t: return jsonify({"ok": False, "error": "not found"}), 404
+    t.enabled = not t.enabled
+    struct_lib._save()
+    return jsonify({"ok": True, "enabled": t.enabled})
+
+
+@app.route("/api/structures/<struct_id>/delete", methods=["POST"])
+def struct_delete(struct_id):
+    t = struct_lib.get_by_id(struct_id)
+    if not t: return jsonify({"ok": False, "error": "not found"}), 404
+    struct_lib.templates = [x for x in struct_lib.templates if x.id != struct_id]
+    struct_lib._save()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/gags/<gag_id>/toggle", methods=["POST"])
+def gag_toggle(gag_id):
+    p = gag_lib.get_by_id(gag_id)
+    if not p: return jsonify({"ok": False, "error": "not found"}), 404
+    p.enabled = not p.enabled
+    gag_lib._save()
+    return jsonify({"ok": True, "enabled": p.enabled})
+
+
+@app.route("/api/gags/<gag_id>/delete", methods=["POST"])
+def gag_delete(gag_id):
+    p = gag_lib.get_by_id(gag_id)
+    if not p: return jsonify({"ok": False, "error": "not found"}), 404
+    gag_lib.patterns = [x for x in gag_lib.patterns if x.id != gag_id]
+    gag_lib._save()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/themes/<theme_id>/toggle", methods=["POST"])
+def theme_toggle(theme_id):
+    e = theme_lib.get_by_id(theme_id)
+    if not e: return jsonify({"ok": False, "error": "not found"}), 404
+    e.enabled = not e.enabled
+    theme_lib._save()
+    return jsonify({"ok": True, "enabled": e.enabled})
+
+
+@app.route("/api/themes/<theme_id>/delete", methods=["POST"])
+def theme_delete(theme_id):
+    e = theme_lib.get_by_id(theme_id)
+    if not e: return jsonify({"ok": False, "error": "not found"}), 404
+    theme_lib.entries = [x for x in theme_lib.entries if x.id != theme_id]
+    theme_lib._save()
+    return jsonify({"ok": True})
+
+
 @app.route("/structures")
 def structures():
     return render_template("structures.html", templates=struct_lib.templates)

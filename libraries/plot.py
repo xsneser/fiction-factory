@@ -25,15 +25,17 @@ class PlotTemplate:
     category: str                    # 分类：爽文/悬念/情感/战斗...
     sub_category: str = ""           # 子分类：身份反转/扮猪吃虎/...
     description: str = ""
-    template_structure: str = ""     # 桥段结构骨架，如 "[甩婚书]→[众人嘲讽]→..."
+    template_structure: str = ""     # 桥段结构骨架
     slots: list[PlotSlot] = field(default_factory=list)
-    variants: list[str] = field(default_factory=list)  # 变体名：严肃版/幽默版/...
-    fit_contexts: list[str] = field(default_factory=list)  # 适用场景标签
-    word_range: tuple[int, int] = (800, 2500)  # 建议字数范围
-    source: str = ""                 # 来源：创作积累 / 扒取:番茄 / ...
-    usage_notes: str = ""            # 使用注意事项
-    examples: list[str] = field(default_factory=list)  # 示例文本片段
-    quality_rating: int = 0          # 效果评分 0-5
+    variants: list[str] = field(default_factory=list)
+    fit_contexts: list[str] = field(default_factory=list)
+    word_range: tuple[int, int] = (800, 2500)
+    source: str = ""                 # 来源
+    usage_notes: str = ""
+    examples: list[str] = field(default_factory=list)
+    quality_rating: int = 0
+    created_at: str = "2026-05-01"   # 收录时间
+    enabled: bool = True              # 启用状态
 
     def to_dict(self) -> dict:
         return {
@@ -49,6 +51,8 @@ class PlotTemplate:
             "word_range": list(self.word_range),
             "source": self.source, "usage_notes": self.usage_notes,
             "examples": self.examples, "quality_rating": self.quality_rating,
+            "created_at": self.created_at,
+            "enabled": self.enabled,
         }
 
     @classmethod
@@ -67,6 +71,8 @@ class PlotTemplate:
             usage_notes=d.get("usage_notes", ""),
             examples=d.get("examples", []),
             quality_rating=d.get("quality_rating", 0),
+            created_at=d.get("created_at", "2026-05-01"),
+            enabled=d.get("enabled", True),
         )
 
 
@@ -75,15 +81,26 @@ class PlotLibrary:
 
     def __init__(self, data_dir: str = ""):
         self.path = Path(data_dir) if data_dir else None
+        self.save_path = Path(data_dir) / "plots.json" if data_dir else Path("libraries/data/plots.json")
         self.templates: list[PlotTemplate] = []
-        self._load_builtin()
+        self._load()
 
-    def _load_builtin(self):
-        """加载内置桥段模板"""
-        self.templates = BUILTIN_PLOTS
+    def _load(self):
+        """加载：优先从持久文件，否则内置"""
+        if self.save_path.exists():
+            with open(self.save_path, encoding="utf-8") as f:
+                data = json.load(f)
+            self.templates = [PlotTemplate.from_dict(d) for d in data.get("templates", [])]
+        else:
+            self.templates = BUILTIN_PLOTS
+
+    def _save(self):
+        self.save_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.save_path, "w", encoding="utf-8") as f:
+            json.dump({"templates": [t.to_dict() for t in self.templates]},
+                      f, ensure_ascii=False, indent=2)
 
     def load(self, path: str):
-        """从 JSON 文件加载"""
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         self.templates = [PlotTemplate.from_dict(d) for d in data.get("templates", [])]

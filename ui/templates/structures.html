@@ -2,8 +2,13 @@
 {% block content %}
 <h1>📋 大纲库 <span style="font-size:14px;color:#8b949e">（{{ templates|length }} 模板）</span></h1>
 {% for t in templates %}
-<div class="card" style="margin-bottom:16px">
-    <div class="title">{{ t.name }} <span class="tag">{{ t.genre }}</span>{% if t.sub_genre %} <span class="tag blue">{{ t.sub_genre }}</span>{% endif %}</div>
+<div class="card" style="margin-bottom:16px;opacity:{{ '0.5' if not t.enabled else '1' }}">
+    <div class="title">
+        {{ t.name }}
+        <span class="tag">{{ t.genre }}</span>
+        {% if t.sub_genre %} <span class="tag blue">{{ t.sub_genre }}</span>{% endif %}
+        {% if not t.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
+    </div>
     <p style="font-size:13px;margin:8px 0">{{ t.description }}</p>
     <p style="font-size:12px;color:#8b949e">总章节: {{ t.total_chapters }} · 阶段数: {{ t.stages|length }}</p>
     <div style="margin-top:12px">
@@ -12,6 +17,30 @@
         {% endfor %}
     </div>
     {% if t.tags %}<p style="margin-top:8px">{% for tag in t.tags %}<span class="tag green">{{ tag }}</span>{% endfor %}</p>{% endif %}
+    <p style="color:#484f58;font-size:11px;margin-top:8px">
+        收录: {{ t.created_at }}
+        · 来源: {{ t.source or '创作积累' }}
+    </p>
+    <p style="margin-top:8px">
+        <button class="small" onclick="toggleStruct('{{ t.id }}')">{{ '✅ 启用' if not t.enabled else '⏸ 禁用' }}</button>
+        <button class="small danger" onclick="deleteStruct('{{ t.id }}')">🗑 删除</button>
+    </p>
 </div>
 {% endfor %}
+
+<script>
+async function toggleStruct(id) {
+    const r = await fetch('/api/structures/' + id + '/toggle', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else alert('操作失败: ' + (d.error||''));
+}
+async function deleteStruct(id) {
+    if (!confirm('确认删除大纲「' + id + '」？')) return;
+    const r = await fetch('/api/structures/' + id + '/delete', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else alert('删除失败: ' + (d.error||''));
+}
+</script>
 {% endblock %}
