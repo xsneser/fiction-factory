@@ -147,47 +147,31 @@
             });
         });
 
-        // 运行状态轮询（跨页面持久化）
+        // 运行状态轮询（仅更新进度/日志，不重建整块DOM防闪烁）
         var prevLogCount = {};
+        var prevTaskHtml = '';
         function pollStatus() {
             fetch('/api/status/tasks')
                 .then(function(r) { return r.json(); })
                 .then(function(tasks) {
                     var el = document.getElementById('status-tasks');
-                    var curTask = document.getElementById('current-task');
                     var logArea = document.getElementById('task-log');
                     var logList = document.getElementById('task-log-list');
 
+                    var html;
                     if (!tasks || tasks.length === 0) {
-                        el.innerHTML = '<div class="status-empty">暂无运行中的任务</div>';
-                        if (curTask) curTask.style.display = 'none';
+                        html = '<div class="status-empty">暂无运行中的任务</div>';
                         if (logArea) logArea.style.display = 'none';
-                        return;
-                    }
-
-                    el.innerHTML = '';
-                    tasks.forEach(function(t) {
+                    } else {
+                        var t = tasks[0];
                         var pct = t.total > 0 ? Math.round((t.current/t.total)*100) : 0;
-                        var isActive = t.status === 'running';
-                        var cardHtml = '<div class="status-card" style="' + (isActive?'':'opacity:0.6') + '">';
-                        cardHtml += '<div class="task-name">' + (t.title ? t.title : t.name) + '</div>';
-                        cardHtml += '<div class="task-phase">' + (t.phase||'') + '</div>';
-                        if (t.total > 0) {
-                            cardHtml += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
-                        }
-                        if (t.time) cardHtml += '<div class="task-time">' + t.time + '</div>';
-                        cardHtml += '</div>';
-                        el.innerHTML = cardHtml;
-
-                        // 同步更新cur-task（兼容页面JS直接更新）
-                        if (curTask && isActive) {
-                            curTask.innerHTML = cardHtml;
-                            curTask.style.display = 'block';
-                        } else if (curTask) {
-                            curTask.style.display = 'none';
-                        }
-
-                        // 日志
+                        html = '<div class="status-card">';
+                        html += '<div class="task-name">' + (t.title || t.name) + '</div>';
+                        html += '<div class="task-phase">' + (t.phase||'') + '</div>';
+                        if (t.total > 0) html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
+                        if (t.time) html += '<div class="task-time">' + t.time + '</div>';
+                        html += '</div>';
+                        // 日志增量追加
                         if (logArea && t.logs && t.logs.length > 0) {
                             logArea.style.display = 'block';
                             var prev = prevLogCount[t.id] || 0;
@@ -203,10 +187,15 @@
                             }
                             prevLogCount[t.id] = t.logs.length;
                         }
-                    });
+                    }
+                    // 只在变化时替换
+                    if (html !== prevTaskHtml) {
+                        el.innerHTML = html;
+                        prevTaskHtml = html;
+                    }
                 }).catch(function() {});
         }
-        pollStatus(); // 立刻执行一次
+        pollStatus();
         setInterval(pollStatus, 2000);
     </script>
 </body>
