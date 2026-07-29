@@ -68,6 +68,7 @@ class FanqieCrawler:
                       "Chrome/125.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
         "Referer": "https://fanqienovel.com/",
     }
 
@@ -118,20 +119,35 @@ class FanqieCrawler:
 
     def search_novel(self, title: str) -> Optional[NovelInfo]:
         """按书名搜索——Bing搜索 + 页面解析"""
-        # 策略1：Bing搜索番茄链接
-        try:
-            import urllib.parse
-            bing_query = f"{title} site:fanqienovel.com"
-            r = self.session.get(
-                f"https://www.bing.com/search?q={urllib.parse.quote(bing_query)}",
-                timeout=15)
-            ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
-            if ids:
-                info = self._get_novel_from_page(ids[0])
-                if info and info.title:
-                    return info
-        except Exception as e:
-            logger.debug(f"Bing search: {e}")
+        queries = [
+            f"{title} site:fanqienovel.com",  # 全书名
+        ]
+        # 退化：去掉特殊符号，只用前几个关键词
+        import unicodedata
+        clean = unicodedata.normalize("NFKC", title)  # 全角→半角
+        clean = re.sub(r'[：:，,。.！!？?～~··「」【】《》、\\s]+', ' ', clean).strip()
+        parts = [p for p in clean.split() if len(p) > 1]
+        if parts and clean != title:
+            queries.insert(0, f"{' '.join(parts[:2])} site:fanqienovel.com")
+            queries.insert(0, f"{parts[0]} site:fanqienovel.com")
+
+        for q in queries:
+            try:
+                import urllib.parse
+                r = self.session.get(
+                    f"https://www.bing.com/search?q={urllib.parse.quote(q)}",
+                    timeout=15)
+                ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
+                if ids:
+                    # 去重取第一个
+                    seen = set()
+                    unique_ids = [x for x in ids if not (x in seen or seen.add(x))]
+                    info = self._get_novel_from_page(unique_ids[0])
+                    if info and info.title:
+                        return info
+            except Exception as e:
+                logger.debug(f"Bing search '{q[:30]}': {e}")
+                continue
 
         return None
 
