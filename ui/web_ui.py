@@ -758,15 +758,12 @@ def settings_page():
             cfg = json.load(f)
 
     # 检查 LLM 连接状态
-    from core.llm_client import LLMClient
-    from core.models import APIConfig
     llm_ok = False
     try:
         llm = get_llm()
         if llm:
-            # 简单 ping
-            models = llm.client.models.list() if hasattr(llm.client, 'models') else None
-            llm_ok = True
+            result = llm.test_connection()
+            llm_ok = result.get("success", False)
     except Exception:
         llm_ok = False
 
@@ -836,12 +833,12 @@ def settings_test():
 
     try:
         client = LLMClient(api_cfg)
-        # 发一条简单的请求确认连接
-        result = client.chat_completion([
-            {"role": "user", "content": "回复 'ok'"}
-        ], max_tokens=10, temperature=0)
-        return jsonify({"ok": True, "model": api_cfg.model,
-                        "response": result.get("content", "")[:50]})
+        result = client.test_connection()
+        if result.get("success"):
+            return jsonify({"ok": True, "model": api_cfg.model,
+                            "response": result.get("sample", "")[:50]})
+        else:
+            return jsonify({"ok": False, "error": result.get("error", "连接失败")}), 400
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 
