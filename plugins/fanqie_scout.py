@@ -718,12 +718,15 @@ class LibraryIngestor:
 
         stages = []
         for s in data.get("stages", []):
-            stages.append(StageNode(
-                name=s.get("name",""), description=s.get("description",""),
-                min_chapters=s.get("min_chapters",10),
-                max_chapters=s.get("max_chapters",20),
-                key_events=s.get("key_events",[]),
-            ))
+            if isinstance(s, str):
+                stages.append(StageNode(name=s, description=""))
+            else:
+                stages.append(StageNode(
+                    name=s.get("name",""), description=s.get("description",""),
+                    min_chapters=s.get("min_chapters",10),
+                    max_chapters=s.get("max_chapters",20),
+                    key_events=s.get("key_events",[]),
+                ))
         template = StructureTemplate(
             id=sid, name=data.get("name",""),
             genre="", sub_genre="",
