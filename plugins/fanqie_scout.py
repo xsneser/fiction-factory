@@ -534,10 +534,10 @@ class NovelAnalyzer:
 
 返回 JSON：
 {{"plots": [
-  {{"name":"桥段名", "category":"爽文/开篇/战斗/...",
+  {{"name":"桥段名", "category":"爽文", "sub_category":"打脸/反转/...",
    "structure":"[步骤1]→[步骤2]→...",
    "slots":[{{"name":"变量名","options":["选项1","选项2"]}}],
-   "notes":"使用注意", "word_range":[800,2500]}}
+   "notes":"使用注意", "word_range":[800,2500], "quality_rating":4}}
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的网文拆书分析师。只返回JSON。",
@@ -605,7 +605,7 @@ class NovelAnalyzer:
 {{"gags": [
   {{"name":"模式名","category":"吐槽/反差/误会/沙雕/...",
    "pattern_description":"详细描述这个搞笑模式的结构",
-   "scene_fit":["日常","战斗","对话"],
+   "fit_scenes":["日常","战斗","对话"],
    "examples":["例句1","例句2"]}}
 ]}}"""
         try:
@@ -717,11 +717,14 @@ class LibraryIngestor:
                  for s in data.get("slots", [])]
         template = PlotTemplate(
             id=tid, name=data.get("name",""),
-            category=data.get("category",""), source=source,
+            category=data.get("category",""),
+            sub_category=data.get("sub_category",""),
+            source=source,
             template_structure=data.get("structure",""),
             slots=slots,
             usage_notes=data.get("notes",""),
             word_range=tuple(data.get("word_range", [800, 2500])),
+            quality_rating=data.get("quality_rating", 0),
         )
         self.plot_lib.templates.append(template)
 
