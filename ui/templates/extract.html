@@ -64,18 +64,19 @@ function loadNovelsForExtract(mode) {
                 html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + (n.platform||'') + ' · 收录: ' + (n.downloaded_at||'') + '</p>';
                 html += '<div style="margin-top:8px;display:flex;gap:8px">';
 
+                var p = n.platform, f = n.folder;
                 if (mode === 'library') {
                     if (n.analyzed) {
                         html += '<span class="tag green">✅ 已提取</span>';
-                        html += '<button class="small" onclick="extractLibrary(\\'' + n.platform + '\\',\\'' + n.folder + '\\',this)">🔄 重新提取</button>';
+                        html += '<button class="small lib-btn" data-p="' + p + '" data-f="' + f + '">🔄 重新提取</button>';
                     } else {
-                        html += '<button class="small" style="background:#238636" onclick="extractLibrary(\\'' + n.platform + '\\',\\'' + n.folder + '\\',this)">🗂️ 提取资产库</button>';
+                        html += '<button class="small lib-btn" data-p="' + p + '" data-f="' + f + '" style="background:#238636">🗂️ 提取资产库</button>';
                     }
                 } else {
                     if (n.analyzed) {
                         html += '<span class="tag green">✅ 已分析</span>';
                     }
-                    html += '<button class="small" style="background:#1f6feb" onclick="extractStyle(\\'' + n.platform + '\\',\\'' + n.folder + '\\',this)">✍️ 分析写作风格</button>';
+                    html += '<button class="small style-btn" data-p="' + p + '" data-f="' + f + '" style="background:#1f6feb">✍️ 分析写作风格</button>';
                 }
 
                 html += '</div></div>';
@@ -280,6 +281,20 @@ async function doIngest(items) {
     }
     if (btn) { btn.disabled = false; btn.textContent = orig; }
 }
+
+// 事件委托处理按钮点击
+document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.lib-btn');
+    if (btn) {
+        extractLibrary(btn.getAttribute('data-p'), btn.getAttribute('data-f'), btn);
+        return;
+    }
+    btn = e.target.closest('.style-btn');
+    if (btn) {
+        extractStyle(btn.getAttribute('data-p'), btn.getAttribute('data-f'), btn);
+        return;
+    }
+});
 
 // 页面加载
 loadNovelsForExtract('library');
