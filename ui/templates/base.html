@@ -102,7 +102,8 @@
         <a href="/profiles" class="{{ 'active' if request.path.startswith('/profiles') else '' }}">👤 笔名档案</a>
         <a href="/settings" class="{{ 'active' if request.path == '/settings' else '' }}">⚙️ 设置</a>
         <div class="section">工具</div>
-        <a href="/scout" class="{{ 'active' if request.path == '/scout' else '' }}">🔍 抓取</a>
+        <a href="/scout" class="{{ 'active' if request.path == '/scout' else '' }}">🔍 小说抓取</a>
+        <a href="/extract" class="{{ 'active' if request.path == '/extract' else '' }}">📝 内容提取</a>
         <a href="/deai" class="{{ 'active' if request.path == '/deai' else '' }}">🔄 去AI测试</a>
         <a href="/review-test" class="{{ 'active' if request.path == '/review-test' else '' }}">🔍 审查测试</a>
     </nav>

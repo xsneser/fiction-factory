@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+{% block title %}内容提取 — NovelEngine{% endblock %}
+{% block content %}
+<h1>📝 内容提取</h1>
+<p style="font-size:13px;color:#8b949e;margin-bottom:20px">从已下载的小说中提取资产库条目和写作风格</p>
+
+<div class="tabs" style="margin-bottom:20px">
+    <a href="javascript:;" class="extract-tab active" data-tab="library" onclick="switchExtractTab('library')">🗂️ 资产库提取</a>
+    <a href="javascript:;" class="extract-tab" data-tab="style" onclick="switchExtractTab('style')">✍️ 写作风格提取</a>
+</div>
+
+{# ─── 资产库提取 ─── #}
+<div id="extract-library" class="extract-panel">
+    <p style="font-size:13px;color:#8b949e;margin-bottom:12px">选中已下载的小说，分析并提取桥段/大纲/笑点/内涵到四大库</p>
+    <div id="library-novels-list"></div>
+</div>
+
+{# ─── 写作风格提取 ─── #}
+<div id="extract-style" class="extract-panel" style="display:none">
+    <p style="font-size:13px;color:#8b949e;margin-bottom:12px">分析已下载小说的写作风格，生成风格摘要并可关联到笔名档案</p>
+    <div id="style-novels-list"></div>
+</div>
+
+<div id="extract-result-area" style="display:none;margin-top:20px"></div>
+
+<style>
+.style-result { background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin-bottom:16px }
+.style-result h3 { color:#58a6ff;margin-bottom:12px }
+.style-result .field { margin-bottom:10px }
+.style-result .field-label { font-size:12px;color:#8b949e }
+.style-result .field-value { font-size:14px;margin-top:2px }
+</style>
+
+<script>
+function switchExtractTab(key) {
+    document.querySelectorAll('.extract-tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.extract-panel').forEach(function(p) { p.style.display = 'none'; });
+    var tab = document.querySelector('.extract-tab[data-tab="' + key + '"]');
+    if (tab) tab.classList.add('active');
+    var panel = document.getElementById('extract-' + key);
+    if (panel) panel.style.display = 'block';
+    if (key === 'library') loadNovelsForExtract('library');
+    if (key === 'style') loadNovelsForExtract('style');
+}
+
+function loadNovelsForExtract(mode) {
+    var el = document.getElementById(mode === 'library' ? 'library-novels-list' : 'style-novels-list');
+    el.innerHTML = '<div class="empty"><p style="color:#484f58">加载中...</p></div>';
+
+    fetch('/api/scout/novels')
+        .then(function(r) { return r.json(); })
+        .then(function(novels) {
+            if (!novels || novels.length === 0) {
+                el.innerHTML = '<div class="empty" style="padding:40px"><div class="icon" style="font-size:36px">📂</div><p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p><p style="color:#484f58;font-size:12px;margin-top:6px">先去「小说抓取」下载几本</p></div>';
+                return;
+            }
+            var html = '';
+            novels.forEach(function(n) {
+                html += '<div class="card" style="margin-bottom:12px">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+                html += '<div><strong>' + n.title + '</strong> <span class="tag">' + (n.author||'') + '</span></div>';
+                html += '<span style="font-size:12px;color:#8b949e">' + (n.saved_chapters||0) + '/' + (n.chapter_count||'?') + '章</span>';
+                html += '</div>';
+                html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + (n.platform||'') + ' · 收录: ' + (n.downloaded_at||'') + '</p>';
+                html += '<div style="margin-top:8px;display:flex;gap:8px">';
+
+                if (mode === 'library') {
+                    if (n.analyzed) {
+                        html += '<span class="tag green">✅ 已提取</span>';
+                        html += '<button class="small" onclick="extractLibrary(\\'' + n.platform + '\\',\\'' + n.folder + '\\',this)">🔄 重新提取</button>';
+                    } else {
+                        html += '<button class="small" style="background:#238636" onclick="extractLibrary(\\'' + n.platform + '\\',\\'' + n.folder + '\\',this)">🗂️ 提取资产库</button>';
+                    }
+                } else {
+                    if (n.analyzed) {
+                        html += '<span class="tag green">✅ 已分析</span>';
+                    }
+                    html += '<button class="small" style="background:#1f6feb" onclick="extractStyle(\\'' + n.platform + '\\',\\'' + n.folder + '\\',this)">✍️ 分析写作风格</button>';
+                }
+
+                html += '</div></div>';
+            });
+            el.innerHTML = html;
+        });
+}
+
+function extractLibrary(platform, folder, btn) {
+    btn.disabled = true;
+    btn.textContent = '提取中...';
+    document.getElementById('extract-result-area').style.display = 'none';
+
+    fetch('/api/scout/analyze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({platform: platform, folder: folder}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) {
+            showAlert('✅ 分析完成: ' + d.title + ' (' + (d.plot_details||[]).length + '桥段 ' + (d.structure_details||[]).length + '大纲 ' + (d.gag_details||[]).length + '笑点 ' + (d.theme_details||[]).length + '内涵)', 'success');
+            showReviewCards(d);
+        } else {
+            showAlert('❌ 分析失败: ' + (d.error||''), 'error');
+        }
+    })
+    .catch(function(e) { showAlert('❌ 请求失败: ' + e.message, 'error'); })
+    .finally(function() { btn.disabled = false; btn.textContent = '🗂️ 提取资产库'; });
+}
+
+function extractStyle(platform, folder, btn) {
+    btn.disabled = true;
+    btn.textContent = '分析中...';
+    document.getElementById('extract-result-area').style.display = 'none';
+
+    fetch('/api/scout/analyze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({platform: platform, folder: folder}),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok && d.writing_style) {
+            var s = d.writing_style;
+            var html = '<div class="style-result">';
+            html += '<h3>✍️ ' + d.title + ' — 写作风格分析</h3>';
+            html += '<div class="field"><div class="field-label">📝 风格概要</div><div class="field-value">' + (s.summary || '') + '</div></div>';
+            html += '<div class="field"><div class="field-label">句子节奏</div><div class="field-value">' + (s.sentence_rhythm || '') + '</div></div>';
+            html += '<div class="field"><div class="field-label">对话风格</div><div class="field-value">' + (s.dialogue_style || '') + '</div></div>';
+            html += '<div class="field"><div class="field-label">描写偏好</div><div class="field-value">' + (s.description_focus || '') + '</div></div>';
+            html += '<div class="field"><div class="field-label">情绪表达</div><div class="field-value">' + (s.emotional_expression || '') + '</div></div>';
+            if (s.common_words && s.common_words.length) html += '<div class="field"><div class="field-label">常用词</div><div class="field-value">' + s.common_words.join('、') + '</div></div>';
+            if (s.avoid_words && s.avoid_words.length) html += '<div class="field"><div class="field-label">禁用词</div><div class="field-value">' + s.avoid_words.join('、') + '</div></div>';
+            html += '<div class="field"><div class="field-label">叙事视角</div><div class="field-value">' + (s.narrative_perspective || '') + '</div></div>';
+            html += '<div class="field"><div class="field-label">开篇风格</div><div class="field-value">' + (s.opening_style || '') + '</div></div>';
+            html += '<div class="field"><div class="field-label">节奏把控</div><div class="field-value">' + (s.pacing || '') + '</div></div>';
+            html += '</div>';
+            document.getElementById('extract-result-area').innerHTML = html;
+            document.getElementById('extract-result-area').style.display = 'block';
+            showAlert('✅ 风格分析完成', 'success');
+        } else {
+            showAlert('❌ 分析失败: ' + ((d.error)||'无结果'), 'error');
+        }
+    })
+    .catch(function(e) { showAlert('❌ 请求失败: ' + e.message, 'error'); })
+    .finally(function() { btn.disabled = false; btn.textContent = '✍️ 分析写作风格'; });
+}
+
+function showAlert(msg, type) {
+    var t = document.createElement('div');
+    t.className = 'alert ' + (type || 'info');
+    t.textContent = msg;
+    t.style.cssText = 'position:fixed;top:20px;right:20px;z-index:1000';
+    document.body.appendChild(t);
+    setTimeout(function(){ t.remove(); }, 3000);
+}
+
+// ─── 审核入库（复用scout的逻辑） ───
+
+var _lastReviewData = null;
+
+function showReviewCards(d) {
+    _lastReviewData = d;
+    var area = document.getElementById('extract-result-area');
+    area.style.display = 'block';
+
+    var html = '<div class="card" style="margin-bottom:16px">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+    html += '<span style="font-size:18px;font-weight:600">📖 ' + d.title + '</span>';
+    html += '</div>';
+    html += '<div style="margin-top:16px;display:flex;gap:10px">';
+    html += '<button class="btn-primary" onclick="ingestAll()">📦 全部入库</button>';
+    html += '<button class="btn" style="background:#30363d;color:#f0f6fc" onclick="ingestSelected()">✅ 入库选中</button>';
+    html += '</div></div>';
+
+    var cats = [
+        {key:'plot', label:'🧩 桥段', items: d.plot_details || [], fields:['category','name','description','structure']},
+        {key:'structure', label:'📋 大纲', items: d.structure_details || [], fields:['name','description','stages']},
+        {key:'gag', label:'😂 笑点', items: d.gag_details || [], fields:['category','name','pattern_description']},
+        {key:'theme', label:'💡 内涵', items: d.theme_details || [], fields:['name','description','techniques']},
+    ];
+
+    html += '<div class="tabs" style="margin-bottom:12px">';
+    cats.forEach(function(c, i) {
+        html += '<a href="javascript:;" class="review-tab ' + (i===0?'active':'') + '" data-tab="' + c.key + '" onclick="switchReviewTab(\'' + c.key + '\')">' + c.label + ' (' + c.items.length + ')</a>';
+    });
+    html += '</div>';
+
+    cats.forEach(function(c) {
+        html += '<div class="review-panel" id="review-' + c.key + '"' + (c.key!=='plot'?' style="display:none"':'') + '>';
+        if (c.items.length === 0) {
+            html += '<div class="empty" style="padding:30px"><p style="color:#484f58">无提取结果</p></div>';
+        } else {
+            c.items.forEach(function(item, idx) {
+                html += '<label class="review-item">';
+                html += '<input type="checkbox" class="review-cb" data-cat="' + c.key + '" data-idx="' + idx + '" checked>';
+                html += '<div class="review-content">';
+                if (c.key === 'plot') {
+                    html += '<div><code>' + (item.category||'') + '</code> <strong>' + (item.name||'') + '</strong></div>';
+                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
+                    if (item.structure) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">结构: ' + item.structure.slice(0,100) + '</div>';
+                } else if (c.key === 'structure') {
+                    html += '<div><strong>' + (item.name||'') + '</strong></div>';
+                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
+                    if (item.stages) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">阶段: ' + (item.stages.join(' → ')).slice(0,100) + '</div>';
+                } else if (c.key === 'gag') {
+                    html += '<div><code>' + (item.category||'') + '</code> <strong>' + (item.name||'') + '</strong></div>';
+                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.pattern_description||'').slice(0,120) + '</div>';
+                } else if (c.key === 'theme') {
+                    html += '<div><strong>' + (item.name||'') + '</strong></div>';
+                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
+                }
+                html += '</div></label>';
+            });
+        }
+        html += '</div>';
+    });
+
+    // 滚动到结果区域
+    area.innerHTML = html;
+    area.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function switchReviewTab(key) {
+    document.querySelectorAll('.review-tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.review-panel').forEach(function(p) { p.style.display = 'none'; });
+    var tab = document.querySelector('.review-tab[data-tab="' + key + '"]');
+    if (tab) tab.classList.add('active');
+    var panel = document.getElementById('review-' + key);
+    if (panel) panel.style.display = 'block';
+}
+
+function getCheckedItems() {
+    var result = {plots:[], structures:[], gags:[], themes:[]};
+    if (!_lastReviewData) return result;
+    var cbs = document.querySelectorAll('.review-cb:checked');
+    cbs.forEach(function(cb) {
+        var cat = cb.getAttribute('data-cat');
+        var idx = parseInt(cb.getAttribute('data-idx'));
+        if (cat === 'plot' && _lastReviewData.plot_details[idx]) result.plots.push(_lastReviewData.plot_details[idx]);
+        if (cat === 'structure' && _lastReviewData.structure_details[idx]) result.structures.push(_lastReviewData.structure_details[idx]);
+        if (cat === 'gag' && _lastReviewData.gag_details[idx]) result.gags.push(_lastReviewData.gag_details[idx]);
+        if (cat === 'theme' && _lastReviewData.theme_details[idx]) result.themes.push(_lastReviewData.theme_details[idx]);
+    });
+    return result;
+}
+
+async function ingestAll() {
+    var items = getCheckedItems();
+    var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
+    if (total === 0) return alert('没有可入库的条目');
+    await doIngest(items);
+}
+
+async function ingestSelected() {
+    var items = getCheckedItems();
+    var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
+    if (total === 0) return alert('请勾选要入库的条目');
+    await doIngest(items);
+}
+
+async function doIngest(items) {
+    var title = _lastReviewData ? _lastReviewData.title : '';
+    var btn = document.querySelector('.btn-primary');
+    var orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '入库中...'; }
+    try {
+        var r = await fetch('/api/scout/ingest', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({title: title, plots: items.plots, structures: items.structures, gags: items.gags, themes: items.themes}),
+        });
+        var d = await r.json();
+        if (d.ok) {
+            showAlert('✅ ' + d.message, 'success');
+        } else {
+            showAlert('❌ 入库失败: ' + (d.error||''), 'error');
+        }
+    } catch(e) {
+        showAlert('❌ 入库失败: ' + e.message, 'error');
+    }
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+}
+
+// 页面加载
+loadNovelsForExtract('library');
+</script>
+{% endblock %}

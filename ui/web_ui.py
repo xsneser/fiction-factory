@@ -545,6 +545,12 @@ def review_test():
 # 🔍 番茄侦察兵
 # ═══════════════════════════════════════
 
+@app.route("/extract")
+def extract_page():
+    """内容提取页"""
+    return render_template("extract.html")
+
+
 @app.route("/scout")
 def scout_page():
     """侦察兵页面"""
