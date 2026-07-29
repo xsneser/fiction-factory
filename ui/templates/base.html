@@ -151,7 +151,7 @@
 
         // 运行状态轮询（跨页面持久化）
         var prevLogCount = {};
-        var statusInterval = setInterval(function() {
+        function pollStatus() {
             fetch('/api/status/tasks')
                 .then(function(r) { return r.json(); })
                 .then(function(tasks) {
@@ -207,7 +207,9 @@
                         }
                     });
                 }).catch(function() {});
-        }, 2000);
+        }
+        pollStatus(); // 立刻执行一次
+        setInterval(pollStatus, 2000);
     </script>
 </body>
 </html>
