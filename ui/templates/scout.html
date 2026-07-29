@@ -54,15 +54,6 @@
     </div>
 </div>
 
-<div id="progress-area" style="display:none">
-    <div class="progress-header">
-        <span id="phase-label">准备中...</span>
-        <span id="progress-text"></span>
-    </div>
-    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
-    <div id="log-area" class="log-area"></div>
-</div>
-
 <div id="result-area" style="display:none"></div>
 
 <style>
@@ -73,13 +64,7 @@
 .form-row-inline { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .form-row-inline label { font-size: 13px; color: #8b949e; }
 .form-row-inline input[type=number] { width: 80px; }
-.progress-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
-.log-area { margin-top: 12px; max-height: 300px; overflow-y: auto; font-size: 12px; line-height: 1.6; }
-.log-area .log-line { padding: 2px 8px; border-left: 2px solid #30363d; margin: 2px 0; }
-.log-area .log-line.info { border-left-color: #58a6ff; }
-.log-area .log-line.success { border-left-color: #3fb950; }
-.log-area .log-line.warn { border-left-color: #d29922; }
-.log-area .log-line.error { border-left-color: #f85149; }
+
 .result-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-top: 16px; cursor: pointer; transition: all 0.2s; }
 .result-card:hover { border-color: #58a6ff; }
 .result-card .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
@@ -121,6 +106,34 @@ function switchPlatform(pid) {
     currentPlatform = pid;
 }
 
+function updateSidebarTask(name, phase, pct, msg) {
+    var el = document.getElementById('current-task');
+    if (!el) return;
+    if (phase === 'hide') { el.style.display = 'none'; return; }
+    var html = '<div class="status-card">';
+    html += '<div class="task-name">' + name + '</div>';
+    html += '<div class="task-phase">' + (msg || phase) + '</div>';
+    if (pct >= 0) {
+        html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + Math.min(100,pct) + '%"></div></div>';
+    }
+    html += '<div class="task-time">' + new Date().toLocaleTimeString() + '</div>';
+    html += '</div>';
+    el.innerHTML = html;
+    el.style.display = 'block';
+}
+
+function sideLog(msg, level) {
+    var logList = document.getElementById('task-log-list');
+    var logArea = document.getElementById('task-log');
+    if (!logList || !logArea) return;
+    logArea.style.display = 'block';
+    var div = document.createElement('div');
+    div.style.cssText = 'padding:2px 0;border-left:2px solid ' + (level==='error'?'#f85149':level==='success'?'#3fb950':'#30363d') + ';padding-left:6px;margin:2px 0';
+    div.textContent = new Date().toLocaleTimeString() + ' ' + msg;
+    logList.appendChild(div);
+    logList.scrollTop = logList.scrollHeight;
+}
+
 function startScout() {
     if (currentPlatform !== 'fanqie') return;
     var title = document.getElementById('book-title').value.trim();
@@ -132,10 +145,11 @@ function startScout() {
 
     document.getElementById('btn-scout').disabled = true;
     document.getElementById('btn-scout').textContent = '抓取中...';
-    document.getElementById('progress-area').style.display = 'block';
     document.getElementById('result-area').style.display = 'none';
-    document.getElementById('log-area').innerHTML = '';
-    document.getElementById('progress-fill').style.width = '0%';
+    // 清空侧边栏日志
+    document.getElementById('task-log-list').innerHTML = '';
+    document.getElementById('task-log').style.display = 'none';
+    updateSidebarTask('小说抓取', '准备中', 0, '');
     sessionStorage.removeItem(STORAGE_KEY);
     lastResult = null;
 
@@ -165,58 +179,47 @@ function startScout() {
         }
         read();
     }).catch(function(e) {
-        addLog('连接失败: ' + e.message, 'error');
+        sideLog('连接失败: ' + e.message, 'error');
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
     });
 }
 
 function handleEvent(d) {
-    if (d.event === 'log') { addLog(d.message, d.level||'info'); return; }
+    if (d.event === 'log') { sideLog(d.message, d.level||'info'); return; }
     if (d.event === 'progress') {
         var pct = Math.min(100, Math.round((d.current / d.total) * 100));
-        document.getElementById('phase-label').textContent = d.message || d.phase;
-        document.getElementById('progress-text').textContent = d.current + '/' + d.total;
-        document.getElementById('progress-fill').style.width = pct + '%';
+        updateSidebarTask('小说抓取', d.phase, pct, d.message || '');
         if (d.phase === 'download') {
-            addLog('下载: ' + (d.message || '第' + d.current + '章'), 'info');
+            sideLog('下载: ' + (d.message || '第' + d.current + '章'), 'info');
         }
         return;
     }
     if (d.event === 'found') {
-        addLog('找到: 「' + d.title + '」(' + d.author + ') ' + (d.chapters||'') + '章', 'success');
+        sideLog('找到: 「' + d.title + '」(' + d.author + ') ' + (d.chapters||'') + '章', 'success');
         return;
     }
     if (d.event === 'fetch_done') {
-        document.getElementById('progress-fill').style.width = '100%';
-        document.getElementById('phase-label').textContent = '✅ 下载完成！已保存到本地';
+        updateSidebarTask('小说抓取', '完成', 100, '✅ 下载完成');
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
-        addLog('✅ 下载完成: 「' + d.title + '」(' + d.saved_chapters + '章) 保存到 ' + d.platform + '/' + d.folder, 'success');
+        sideLog('✅ 下载完成: 「' + d.title + '」(' + d.saved_chapters + '章)', 'success');
         return;
     }
     if (d.event === 'error') {
-        addLog('❌ ' + (d.message||'未知错误'), 'error');
-        document.getElementById('phase-label').textContent = '❌ 失败: ' + (d.message||'');
+        sideLog('❌ ' + (d.message||'未知错误'), 'error');
+        updateSidebarTask('小说抓取', '失败', 0, '❌ ' + (d.message||''));
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
         return;
     }
     if (d.event === 'start') {
-        addLog('开始抓取: ' + d.title, 'info');
+        sideLog('开始抓取: ' + d.title, 'info');
         return;
     }
 }
 
-function addLog(msg, level) {
-    var area = document.getElementById('log-area');
-    var div = document.createElement('div');
-    div.className = 'log-line ' + (level||'info');
-    var time = new Date().toLocaleTimeString();
-    div.textContent = time + ' ' + msg;
-    area.appendChild(div);
-    area.scrollTop = area.scrollHeight;
-}
+
 
 var _lastReviewData = null;
 
@@ -337,13 +340,13 @@ async function doIngest(items) {
         });
         var d = await r.json();
         if (d.ok) {
-            addLog('✅ ' + d.message, 'success');
+            sideLog('✅ ' + d.message, 'success');
             showToast(d.message, 'success');
         } else {
-            addLog('❌ 入库失败: ' + (d.error||''), 'error');
+            sideLog('❌ 入库失败: ' + (d.error||''), 'error');
         }
     } catch(e) {
-        addLog('❌ 入库失败: ' + e.message, 'error');
+        sideLog('❌ 入库失败: ' + e.message, 'error');
     }
     btn.disabled = false;
     btn.textContent = orig;
