@@ -29,3 +29,6 @@ Thumbs.db
 
 # 运行时缓存
 storage/
+
+# 持久化数据（自动生成）
+libraries/data/
