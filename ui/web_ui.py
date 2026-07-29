@@ -23,7 +23,14 @@ from core.llm_client import LLMClient
 from core.models import APIConfig
 
 # 设置日志级别以便调试搜索
-logging.getLogger("fanqie-scout").setLevel(logging.DEBUG)
+for name in ["fanqie-scout", "__main__"]:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s"))
+        logger.addHandler(handler)
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 

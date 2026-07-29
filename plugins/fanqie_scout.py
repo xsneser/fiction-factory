@@ -152,11 +152,12 @@ class FanqieCrawler:
                     queries.insert(1, f"{prefix} site:fanqienovel.com")
                     break
 
-        logger.info(f"搜索 {title[:30]} -> {len(queries)}种查询")
+        print(f"[搜索] 开始搜索 '{title[:30]}' -> {len(queries)}种查询" + str([q[:30] for q in queries]))
         for q in queries:
             try:
                 bing_hosts = ["https://cn.bing.com", "https://www.bing.com"]
                 r = None
+                last_err = None
                 for host in bing_hosts:
                     try:
                         r = self.session.get(
@@ -165,9 +166,11 @@ class FanqieCrawler:
                             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
                         if r.status_code == 200:
                             break
-                    except Exception:
+                    except Exception as e:
+                        last_err = e
                         continue
                 if r is None:
+                    print(f"[搜索] 无法连接Bing: {last_err}")
                     continue
                 ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
                 if ids:
