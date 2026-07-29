@@ -31,11 +31,11 @@
 </div>
 
 <div class="card">
-    <h2>连接状态</h2>
+    <h2>连接状态 <span style="font-size:12px;color:#8b949e;font-weight:normal">（点「测试连接」验证）</span></h2>
     {% if llm_ok %}
-    <div class="alert success">✅ 已连接 · {{ config.base_url }}</div>
+    <div class="alert info">📋 已配置 · {{ config.base_url }}</div>
     {% else %}
-    <div class="alert warning">❌ 未连接 · {{ config.base_url }}</div>
+    <div class="alert warning">⚠️ 未配置 · 请填写 API Key</div>
     {% endif %}
 </div>
 

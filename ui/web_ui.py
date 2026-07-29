@@ -824,22 +824,15 @@ def scout_run():
 
 @app.route("/settings")
 def settings_page():
-    """设置页面"""
+    """设置页面 — 纯静态渲染，不发起 API 请求"""
     api_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api.json")
     cfg = {}
     if os.path.exists(api_path):
         with open(api_path, encoding="utf-8") as f:
             cfg = json.load(f)
 
-    # 检查 LLM 连接状态
-    llm_ok = False
-    try:
-        llm = get_llm()
-        if llm:
-            result = llm.test_connection()
-            llm_ok = result.get("success", False)
-    except Exception:
-        llm_ok = False
+    # 不调用 LLM API，只检查本地配置是否存在（瞬间完成）
+    api_configured = bool(cfg.get("api_key") and cfg.get("base_url"))
 
     return render_template("settings.html",
         config={
@@ -850,7 +843,7 @@ def settings_page():
             "context_budget_tokens": cfg.get("context_budget_tokens", 300000),
             "url_strict": cfg.get("url_strict", False),
         },
-        llm_ok=llm_ok,
+        llm_ok=api_configured,
     )
 
 
