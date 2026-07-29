@@ -1,0 +1,822 @@
+{
+  "templates": [
+    {
+      "id": "plot_dating_001",
+      "name": "退婚打脸",
+      "category": "爽文",
+      "sub_category": "身份反转",
+      "description": "经典废柴逆袭桥段：被退婚后展露真正实力",
+      "template_structure": "[当众羞辱]→[主角沉默/隐忍]→[关键时刻展现实力]→[全场震惊]→[对方后悔]",
+      "slots": [
+        {
+          "name": "主角身份",
+          "description": "主角在此场景中的公众认知",
+          "options": [
+            "公认废柴",
+            "被误解的天才",
+            "扮猪吃老虎"
+          ],
+          "default": ""
+        },
+        {
+          "name": "对手身份",
+          "description": "施压方",
+          "options": [
+            "世家大小姐",
+            "宗门长老",
+            "情敌",
+            "家族族长"
+          ],
+          "default": ""
+        },
+        {
+          "name": "场合",
+          "description": "事件发生地点",
+          "options": [
+            "家族大会",
+            "宗门大典",
+            "婚礼现场",
+            "坊市偶遇"
+          ],
+          "default": ""
+        },
+        {
+          "name": "反转方式",
+          "description": "主角如何证明自己",
+          "options": [
+            "爆发隐藏实力",
+            "亮出神器/功法",
+            "召唤强援",
+            "血脉觉醒"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "严肃版",
+        "幽默反转版",
+        "草蛇灰线版"
+      ],
+      "fit_contexts": [
+        "前期",
+        "转折",
+        "身份揭示",
+        "打脸"
+      ],
+      "word_range": [
+        1500,
+        3000
+      ],
+      "source": "创作积累",
+      "usage_notes": "注意：主角实力展示要留有后手，不可一次亮完底牌",
+      "examples": [],
+      "quality_rating": 4,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_002",
+      "name": "拍卖会捡漏",
+      "category": "爽文",
+      "sub_category": "智取",
+      "description": "在拍卖会上以低价拿下被所有人看走眼的宝物",
+      "template_structure": "[宝物出场被轻视]→[主角认出真正价值]→[众人嘲讽]→[低价拿下]→[事后揭开真相]",
+      "slots": [
+        {
+          "name": "宝物类型",
+          "description": "被看走眼的物品",
+          "options": [
+            "残破功法",
+            "不起眼材料",
+            "古旧法器",
+            "来历不明的小兽"
+          ],
+          "default": ""
+        },
+        {
+          "name": "识破方式",
+          "description": "主角如何看出价值",
+          "options": [
+            "前世记忆",
+            "特殊瞳术",
+            "系统提示",
+            "见多识广"
+          ],
+          "default": ""
+        },
+        {
+          "name": "对手类型",
+          "description": "和主角争抢的人",
+          "options": [
+            "宿敌",
+            "路人甲",
+            "大家族少爷"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "正剧版",
+        "捡漏装逼版"
+      ],
+      "fit_contexts": [
+        "中期",
+        "日常",
+        "宝物",
+        "打脸",
+        "积累资源"
+      ],
+      "word_range": [
+        1500,
+        2500
+      ],
+      "source": "创作积累",
+      "usage_notes": "建议在主角资源匮乏、需要突破时使用",
+      "examples": [],
+      "quality_rating": 4,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_003",
+      "name": "拜师/拜入门派",
+      "category": "成长",
+      "sub_category": "师承",
+      "description": "拜入隐藏大佬门下或加入宗门",
+      "template_structure": "[测试/试炼]→[主角表现异常]→[大能注意到]→[破格收徒/特殊待遇]→[同门嫉妒/质疑]",
+      "slots": [
+        {
+          "name": "师长身份",
+          "description": "收主角为徒的人",
+          "options": [
+            "归隐高人",
+            "宗门掌门",
+            "仙逝大能的残魂",
+            "学院导师"
+          ],
+          "default": ""
+        },
+        {
+          "name": "拜师契机",
+          "description": "机缘如何发生",
+          "options": [
+            "测试第一名",
+            "一眼识破隐藏关卡",
+            "意外做了件大事",
+            "被强收"
+          ],
+          "default": ""
+        },
+        {
+          "name": "冲突层面",
+          "description": "拜师后的对立面",
+          "options": [
+            "同门挑衅",
+            "师门内斗",
+            "外部势力反对"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "正剧版",
+        "搞笑版（拜错师/被强收）",
+        "烧脑版"
+      ],
+      "fit_contexts": [
+        "前期",
+        "成长",
+        "资源获取",
+        "世界观展开"
+      ],
+      "word_range": [
+        2000,
+        3500
+      ],
+      "source": "创作积累",
+      "usage_notes": "可用于主角进入新地图/获取新技能树",
+      "examples": [],
+      "quality_rating": 4,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_004",
+      "name": "闯关/秘境探险",
+      "category": "冒险",
+      "sub_category": "战斗",
+      "description": "主角独闯/组队进入秘境，各显神通",
+      "template_structure": "[秘境开启]→[组队/独闯]→[关卡解谜/战斗]→[队友暗中算计/关键时刻]→[主角得最大好处]→[事后争议]",
+      "slots": [
+        {
+          "name": "秘境类型",
+          "description": "探险目标",
+          "options": [
+            "上古传承",
+            "仙人洞府",
+            "试炼塔",
+            "禁地"
+          ],
+          "default": ""
+        },
+        {
+          "name": "组队模式",
+          "description": "主角的伙伴构成",
+          "options": [
+            "独闯",
+            "临时组队（有内鬼）",
+            "固定队伍",
+            "与宿敌被迫合作"
+          ],
+          "default": ""
+        },
+        {
+          "name": "最大收获",
+          "description": "主角得到什么",
+          "options": [
+            "功法传承",
+            "神器/法宝",
+            "灵药/资源",
+            "强者指点"
+          ],
+          "default": ""
+        },
+        {
+          "name": "隐藏危机",
+          "description": "探险中的意外",
+          "options": [
+            "秘境即将崩塌",
+            "队友背叛",
+            "更高位面介入",
+            "远古生物苏醒"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "新手村版",
+        "高难极限版",
+        "与宿敌合作版"
+      ],
+      "fit_contexts": [
+        "中期",
+        "后期",
+        "转折",
+        "升级",
+        "资源获取"
+      ],
+      "word_range": [
+        3000,
+        6000
+      ],
+      "source": "创作积累",
+      "usage_notes": "适合用于主角需要突破境界/获取关键道具时",
+      "examples": [],
+      "quality_rating": 5,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_005",
+      "name": "装逼打脸连环套",
+      "category": "爽文",
+      "sub_category": "多重反转",
+      "description": "接连几波打脸，一层比一层狠",
+      "template_structure": "[第一波：小喽啰挑衅]→[碾压]→[第二波：靠山出场]→[再碾压]→[第三波：叫来终极boss]→[依旧碾压]→[全场跪服]",
+      "slots": [
+        {
+          "name": "打脸层级",
+          "description": "几层打脸",
+          "options": [
+            "三层（经典）",
+            "两层（快速版）",
+            "四层以上（大场面）"
+          ],
+          "default": ""
+        },
+        {
+          "name": "最终boss身份",
+          "description": "最后出场的大人物",
+          "options": [
+            "宗门老祖",
+            "一城之主",
+            "皇族成员"
+          ],
+          "default": ""
+        },
+        {
+          "name": "打脸风格",
+          "description": "怎么打",
+          "options": [
+            "实力碾压",
+            "身份碾压（亮身份吓尿）",
+            "智商碾压（布局反杀）"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "经典连环版",
+        "身份碾压版",
+        "智商反杀版"
+      ],
+      "fit_contexts": [
+        "前期",
+        "中期",
+        "高光时刻",
+        "立威"
+      ],
+      "word_range": [
+        2000,
+        5000
+      ],
+      "source": "创作积累",
+      "usage_notes": "打脸强度要递进，最后的脸要最大",
+      "examples": [],
+      "quality_rating": 5,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_006",
+      "name": "英雄救美/关键救援",
+      "category": "情感",
+      "sub_category": "建立羁绊",
+      "description": "在危急时刻救下重要角色，建立深层羁绊",
+      "template_structure": "[危境]→[主角察觉/路过]→[权衡/犹豫]→[出手]→[逆转危局]→[双方反应]",
+      "slots": [
+        {
+          "name": "被救者身份",
+          "description": "谁处于危险中",
+          "options": [
+            "女主/男主",
+            "重要配角",
+            "路人NPC",
+            "敌方阵营成员"
+          ],
+          "default": ""
+        },
+        {
+          "name": "危险来源",
+          "description": "危局性质",
+          "options": [
+            "反派追杀",
+            "妖兽/怪物袭击",
+            "陷阱/阴谋",
+            "自然灾害"
+          ],
+          "default": ""
+        },
+        {
+          "name": "主角动机",
+          "description": "为何出手",
+          "options": [
+            "路见不平",
+            "被救者有利用价值",
+            "出于旧情/因果",
+            "被迫卷入"
+          ],
+          "default": ""
+        },
+        {
+          "name": "救援代价",
+          "description": "主角付出什么",
+          "options": [
+            "无代价轻松解决",
+            "暴露隐藏实力",
+            "受伤/消耗",
+            "结下大仇"
+          ],
+          "default": ""
+        },
+        {
+          "name": "后续影响",
+          "description": "对剧情的影响",
+          "options": [
+            "建立盟友",
+            "结下因果/好感",
+            "引发新矛盾",
+            "只是一次日常"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "一见钟情版",
+        "冷面救场版",
+        "救完就走的潇洒版"
+      ],
+      "fit_contexts": [
+        "前期",
+        "中期",
+        "情感升温",
+        "转折"
+      ],
+      "word_range": [
+        1500,
+        3000
+      ],
+      "source": "创作积累",
+      "usage_notes": "避免救完后主角和被救者强行黏在一起，自然推进关系",
+      "examples": [],
+      "quality_rating": 3,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_007",
+      "name": "擂台/比武大会",
+      "category": "战斗",
+      "sub_category": "竞技",
+      "description": "参加正式或非正式的武道对决",
+      "template_structure": "[大会开场]→[主角参加/被迫参加]→[前几轮碾压]→[遭遇强敌]→[逆势翻盘或新招式出]→[冠军/关注/暗流]",
+      "slots": [
+        {
+          "name": "大会性质",
+          "description": "什么性质的比赛",
+          "options": [
+            "宗门大比",
+            "武举/科举",
+            "坊市竞技",
+            "生死战"
+          ],
+          "default": ""
+        },
+        {
+          "name": "参赛动机",
+          "description": "主角为何参加",
+          "options": [
+            "为资源/奖励",
+            "为证明/复仇",
+            "被迫参赛",
+            "为进入/接近某地"
+          ],
+          "default": ""
+        },
+        {
+          "name": "核心强敌",
+          "description": "最大对手",
+          "options": [
+            "宿敌",
+            "设定中的天才",
+            "黑马",
+            "幕后操纵者的傀儡"
+          ],
+          "default": ""
+        },
+        {
+          "name": "最终结果",
+          "description": "比赛结局",
+          "options": [
+            "夺冠",
+            "惜败（留后手）",
+            "故意弃权/身体出现意外",
+            "发现更大阴谋"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "热血竞技版",
+        "扮猪吃虎版",
+        "阴谋揭露版"
+      ],
+      "fit_contexts": [
+        "中期",
+        "后期",
+        "技能展示",
+        "角色成长",
+        "铺垫大阴谋"
+      ],
+      "word_range": [
+        3000,
+        6000
+      ],
+      "source": "创作积累",
+      "usage_notes": "建议给对手塑造独立动机，不要纯工具人",
+      "examples": [],
+      "quality_rating": 4,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_008",
+      "name": "扮猪吃虎日常",
+      "category": "爽文",
+      "sub_category": "反差",
+      "description": "主角以弱者的伪装，在别人面前突然展现恐怖实力",
+      "template_structure": "[看似普通的场景]→[有人看低/挑衅主角]→[主角默默做某事]→[不经意间显露]→[在场所有人当场石化]",
+      "slots": [
+        {
+          "name": "伪装身份",
+          "description": "主角的伪装",
+          "options": [
+            "谁都可以欺负的新人",
+            "路人",
+            "废物徒弟/师弟"
+          ],
+          "default": ""
+        },
+        {
+          "name": "展示方式",
+          "description": "如何暴露实力",
+          "options": [
+            "秒杀大BOSS",
+            "施展失传绝技",
+            "说出惊天地的话",
+            "气势全开"
+          ],
+          "default": ""
+        },
+        {
+          "name": "围观群众",
+          "description": "谁被惊呆了",
+          "options": [
+            "同门/同事",
+            "路人甲乙丙丁",
+            "挑衅者及其靠山",
+            "大人物/老前辈"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "装逼型",
+        "幽默型",
+        "冷酷型"
+      ],
+      "fit_contexts": [
+        "前期",
+        "日常",
+        "搞笑",
+        "立威"
+      ],
+      "word_range": [
+        1000,
+        2500
+      ],
+      "source": "创作积累",
+      "usage_notes": "点到为止，频率不宜过高（每10-20章一次即可）",
+      "examples": [],
+      "quality_rating": 4,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_009",
+      "name": "修罗场/情感博弈",
+      "category": "情感",
+      "sub_category": "冲突",
+      "description": "多方关系在同一场景中碰撞，产生微妙的情感张力",
+      "template_structure": "[多方角色无意中聚在一起]→[各自的秘密/情感被触碰]→[言语试探/交锋]→[某一方情绪失控/爆出关键信息]→[关系重新洗牌]",
+      "slots": [
+        {
+          "name": "核心冲突",
+          "description": "情感修罗场的本质",
+          "options": [
+            "多角恋",
+            "身份/阵营对立",
+            "旧情VS新缘",
+            "误会连环"
+          ],
+          "default": ""
+        },
+        {
+          "name": "参与方",
+          "description": "卷入感情博弈的角色",
+          "options": [
+            "主角+2-3位异性",
+            "主角+旧识+新识",
+            "主角+对手+共同在意的人"
+          ],
+          "default": ""
+        },
+        {
+          "name": "引爆点",
+          "description": "冲突如何升级",
+          "options": [
+            "无意撞破",
+            "言语试探",
+            "第三方挑拨",
+            "危机时本能选择"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "轻松日常版",
+        "狗血高潮版",
+        "暗流涌动版"
+      ],
+      "fit_contexts": [
+        "中期",
+        "情感转折",
+        "关系洗牌"
+      ],
+      "word_range": [
+        2000,
+        3500
+      ],
+      "source": "创作积累",
+      "usage_notes": "情感博弈的精彩在于'未言明'，避免对话过于直白",
+      "examples": [],
+      "quality_rating": 3,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_010",
+      "name": "宗门/家族危机",
+      "category": "冲突",
+      "sub_category": "阵营对抗",
+      "description": "主角所在势力面临外部威胁，激发凝聚力",
+      "template_structure": "[危机预兆]→[敌方亮出底牌]→[主角力排众议/扛住压力]→[生死之战]→[胜利/惨胜]→[威望骤升]",
+      "slots": [
+        {
+          "name": "威胁来源",
+          "description": "谁在进攻",
+          "options": [
+            "敌对宗门",
+            "外来势力",
+            "皇朝/官府",
+            "远古封印破裂"
+          ],
+          "default": ""
+        },
+        {
+          "name": "主角角色",
+          "description": "主角在对抗中的位置",
+          "options": [
+            "最高战力",
+            "诡道策士",
+            "精神领袖",
+            "被排除后强行正名"
+          ],
+          "default": ""
+        },
+        {
+          "name": "重大牺牲",
+          "description": "代价",
+          "options": [
+            "重要配角阵亡",
+            "主角重伤/实力倒退",
+            "献祭某物/某人",
+            "零代价"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "热血守护版",
+        "悲壮牺牲版",
+        "翻转碾压版"
+      ],
+      "fit_contexts": [
+        "中期",
+        "后期",
+        "阵营转折",
+        "成长高潮"
+      ],
+      "word_range": [
+        3000,
+        6000
+      ],
+      "source": "创作积累",
+      "usage_notes": "危机是让角色成长的最佳催化剂",
+      "examples": [],
+      "quality_rating": 4,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_011",
+      "name": "穿越/重生开局",
+      "category": "开篇",
+      "sub_category": "穿越重生",
+      "description": "主角穿越或重生到另一个世界的开场",
+      "template_structure": "[死亡/穿越]→[醒来]→[接受身份/获取记忆]→[发现处境/危机]→[确立目标]→[首次利用先发优势]",
+      "slots": [
+        {
+          "name": "穿越类型",
+          "description": "怎么穿越的",
+          "options": [
+            "死了重生到多年前",
+            "魂穿到异世界",
+            "肉身穿",
+            "游戏世界"
+          ],
+          "default": ""
+        },
+        {
+          "name": "接收身份",
+          "description": "穿越后是什么人",
+          "options": [
+            "废柴家主",
+            "赘婿",
+            "被退婚的废物",
+            "病秧子",
+            "小家族子弟"
+          ],
+          "default": ""
+        },
+        {
+          "name": "先发优势",
+          "description": "穿越/重生带来的优势",
+          "options": [
+            "前世记忆",
+            "系统/外挂",
+            "先知先觉",
+            "特殊体质"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "废柴逆袭版",
+        "系统爽文版",
+        "权谋智者版"
+      ],
+      "fit_contexts": [
+        "开篇",
+        "第一章",
+        "穿越",
+        "重生"
+      ],
+      "word_range": [
+        2000,
+        3000
+      ],
+      "source": "创作积累",
+      "usage_notes": "第一章前200字必须有钩子，主角面临的第一个危机要立刻出现",
+      "examples": [],
+      "quality_rating": 5,
+      "created_at": "2026-05-01",
+      "enabled": true
+    },
+    {
+      "id": "plot_dating_012",
+      "name": "获得金手指/系统激活",
+      "category": "开篇",
+      "sub_category": "金手指",
+      "description": "主角首次获得/激活特殊能力或系统",
+      "template_structure": "[触发契机]→[系统/能力激活]→[功能介绍/探索]→[首次尝试]→[尝到甜头/发现限制]→[确立使用路径]",
+      "slots": [
+        {
+          "name": "金手指类型",
+          "description": "什么特殊能力",
+          "options": [
+            "签到系统",
+            "任务系统",
+            "抽奖/商城系统",
+            "天赋觉醒",
+            "神器认主"
+          ],
+          "default": ""
+        },
+        {
+          "name": "激活方式",
+          "description": "怎么触发的",
+          "options": [
+            "生死危机",
+            "意外事件",
+            "被别人激活的余波波及",
+            "自己研究发现的"
+          ],
+          "default": ""
+        },
+        {
+          "name": "首次应用",
+          "description": "第一次怎么用的",
+          "options": [
+            "立刻脱困",
+            "修为突破",
+            "发掘隐藏宝物",
+            "预知危险"
+          ],
+          "default": ""
+        }
+      ],
+      "variants": [
+        "惊喜版",
+        "冷静分析版",
+        "误打误撞版"
+      ],
+      "fit_contexts": [
+        "开篇",
+        "前期",
+        "第一章",
+        "系统流"
+      ],
+      "word_range": [
+        1500,
+        2500
+      ],
+      "source": "创作积累",
+      "usage_notes": "金手指要给限制，否则后面全无敌了没有故事可写",
+      "examples": [],
+      "quality_rating": 4,
+      "created_at": "2026-05-01",
+      "enabled": true
+    }
+  ]
+}
