@@ -834,11 +834,13 @@ def scout_run():
             except _queue.Empty:
                 pass
 
-    return Response(
+    resp = Response(
         stream_with_context(generate()),
         mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"},
     )
+    return resp
 
 # ═══════════════════════════════════════
 # ⚙️ 设置页
