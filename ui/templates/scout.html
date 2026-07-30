@@ -189,6 +189,12 @@ function handleEvent(d) {
         sideLog('✅ 下载完成: 「' + d.title + '」(' + d.saved_chapters + '章)', 'success');
         return;
     }
+    if (d.event === 'cancelled') {
+        sideLog('⏹️ 任务已取消', 'info');
+        document.getElementById('btn-scout').disabled = false;
+        document.getElementById('btn-scout').textContent = '🍅 开始抓取';
+        return;
+    }
     if (d.event === 'error') {
         sideLog('❌ ' + (d.message||'未知错误'), 'error');
         document.getElementById('btn-scout').disabled = false;

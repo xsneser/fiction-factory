@@ -14,6 +14,8 @@ from typing import Optional
 
 _lock = threading.Lock()
 _tasks: dict[str, dict] = {}
+# 每个任务关联一个取消事件，worker 线程定期检查
+_cancel_events: dict[str, threading.Event] = {}
 
 
 def _now() -> str:
@@ -35,6 +37,34 @@ def start(task_id: str, name: str = "", title: str = "",
             "started_at": _now(),
             "status": "running",
         }
+
+
+def register_cancel(task_id: str):
+    """注册一个取消事件，供 worker 线程检查"""
+    with _lock:
+        _cancel_events[task_id] = threading.Event()
+
+
+def cancel(task_id: str):
+    """取消指定任务（触发取消事件，标记状态）"""
+    with _lock:
+        t = _tasks.get(task_id)
+        if t and t["status"] == "running":
+            t["status"] = "cancelled"
+            t["phase"] = "已取消"
+            t["phase_display"] = "⏹️ 已取消"
+            t["ended_at"] = _now()
+            t["ended_at_ts"] = time.time()
+        evt = _cancel_events.get(task_id)
+    if evt:
+        evt.set()  # 通知 worker 线程停止
+
+
+def is_cancelled(task_id: str) -> bool:
+    """检查任务是否被取消（worker 线程调用）"""
+    with _lock:
+        evt = _cancel_events.get(task_id)
+    return evt is not None and evt.is_set()
 
 
 def progress(task_id: str, current: int = 0, total: int = 0,
@@ -129,8 +159,10 @@ def clear_old(keep_seconds: int = 60):
                     to_remove.append(tid)
         for tid in to_remove:
             _tasks.pop(tid, None)
+            _cancel_events.pop(tid, None)
 
 def remove(task_id: str):
     """手动移除指定任务"""
     with _lock:
         _tasks.pop(task_id, None)
+        _cancel_events.pop(task_id, None)

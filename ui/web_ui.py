@@ -801,13 +801,18 @@ def scout_run():
         task_id = f"fetch_{novel.title}"
         task_manager.start(task_id, name="小说抓取", title=novel.title,
                           total=chapters, phase="搜索")
+        task_manager.register_cancel(task_id)
         task_manager.log(task_id, f"找到: {novel.title}", "success")
 
         evt_queue = _queue.Queue()
+        _cancel_exception = Exception("__CANCELLED__")
 
         def on_progress(phase, current, total, message):
+            # 检查取消：如果被取消了就抛异常，让 worker catch 住
+            if task_manager.is_cancelled(task_id):
+                raise _cancel_exception
             evt_queue.put(("progress", phase, current, total, message))
-            # 同步更新全局任务管理器（日志由前端SSE事件处理，此处避免重复）
+            # 同步更新全局任务管理器
             if phase == "search":
                 task_manager.progress(task_id, current, total, "搜索", message)
             elif phase == "download":
@@ -818,11 +823,16 @@ def scout_run():
         def worker():
             try:
                 novel_info, dl_info = scout.fetch_novel(novel.title, chapters, on_progress=on_progress)
-                task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")
-                evt_queue.put(("fetch_done", {"novel_info": novel_info, "dl_info": dl_info}))
+                # 如果没有被取消才标记完成
+                if not task_manager.is_cancelled(task_id):
+                    task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")
+                    evt_queue.put(("fetch_done", {"novel_info": novel_info, "dl_info": dl_info}))
             except Exception as e:
                 import traceback
                 err_msg = str(e)
+                # 如果是取消导致的，不报错
+                if str(e) == "__CANCELLED__":
+                    return
                 # 翻译常见异常为用户友好提示
                 if "NoneType" in err_msg and "subscriptable" in err_msg:
                     err_msg = "页面数据解析失败，番茄页面结构可能已变更，请等待插件更新"
@@ -838,6 +848,10 @@ def scout_run():
 
         # 从队列读取进度事件，实时 yield
         while t.is_alive() or not evt_queue.empty():
+            # SSE 循环中也检查取消，如果已被取消则提前结束 SSE 流
+            if task_manager.is_cancelled(task_id):
+                yield send_event("cancelled", {"message": "任务已取消"})
+                break
             try:
                 item = evt_queue.get(timeout=0.3)
                 kind = item[0]
@@ -1011,11 +1025,14 @@ def status_tasks():
 
 @app.route("/api/status/tasks/close", methods=["POST"])
 def status_tasks_close():
-    """关闭/删除指定任务"""
+    """关闭/删除指定任务（运行中的任务自动取消，已完成/失败的直接移除）"""
     from plugins import task_manager
     data = request.get_json()
     task_id = data.get("id", "")
     if task_id:
+        # 如果还在运行则先取消
+        task_manager.cancel(task_id)
+        # 从列表移除
         task_manager.remove(task_id)
         return jsonify({"ok": True})
     return jsonify({"ok": False, "error": "missing id"})
