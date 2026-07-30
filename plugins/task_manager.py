@@ -82,6 +82,7 @@ def done(task_id: str, message: str = "完成"):
         t["phase_display"] = f"✅ {message}"
         t["current"] = t["total"]
         t["ended_at"] = _now()
+        t["ended_at_ts"] = time.time()
 
 
 def fail(task_id: str, message: str = "失败"):
@@ -94,19 +95,14 @@ def fail(task_id: str, message: str = "失败"):
         t["phase"] = "失败"
         t["phase_display"] = f"❌ {message}"
         t["ended_at"] = _now()
+        t["ended_at_ts"] = time.time()
 
 
 def get_tasks() -> list[dict]:
-    """获取所有活跃任务（含刚完成的）"""
+    """获取所有任务（关闭按钮手动清理，不作自动清理）"""
     with _lock:
-        now = time.time()
         result = []
-        to_remove = []
-        for tid, t in _tasks.items():
-            # 已完成/失败超过30秒的自动清理
-            if t["status"] in ("done", "failed") and t.get("ended_at"):
-                # 简单清理：保留最近的
-                pass
+        for tid, t in list(_tasks.items()):
             result.append({
                 "id": t["id"],
                 "name": t["name"],
@@ -122,12 +118,19 @@ def get_tasks() -> list[dict]:
 
 
 def clear_old(keep_seconds: int = 60):
-    """清理旧任务"""
+    """清理超过 keep_seconds 秒的已完成/失败任务"""
     with _lock:
         now = time.time()
         to_remove = []
         for tid, t in _tasks.items():
-            if t["status"] in ("done", "failed"):
-                to_remove.append(tid)
+            if t["status"] in ("done", "failed") and t.get("ended_at_ts"):
+                age = now - t["ended_at_ts"]
+                if age >= keep_seconds:
+                    to_remove.append(tid)
         for tid in to_remove:
             _tasks.pop(tid, None)
+
+def remove(task_id: str):
+    """手动移除指定任务"""
+    with _lock:
+        _tasks.pop(task_id, None)

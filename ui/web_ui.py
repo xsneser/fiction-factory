@@ -807,12 +807,11 @@ def scout_run():
 
         def on_progress(phase, current, total, message):
             evt_queue.put(("progress", phase, current, total, message))
-            # 同步更新全局任务管理器
+            # 同步更新全局任务管理器（日志由前端SSE事件处理，此处避免重复）
             if phase == "search":
                 task_manager.progress(task_id, current, total, "搜索", message)
             elif phase == "download":
                 task_manager.progress(task_id, current, total, "下载", message)
-                task_manager.log(task_id, f"下载: {message}")
             elif phase == "analysis_done":
                 task_manager.progress(task_id, 0, 1, "完成", "分析完成")
 
@@ -822,8 +821,17 @@ def scout_run():
                 task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")
                 evt_queue.put(("fetch_done", {"novel_info": novel_info, "dl_info": dl_info}))
             except Exception as e:
-                task_manager.fail(task_id, str(e))
-                evt_queue.put(("error", str(e)))
+                import traceback
+                err_msg = str(e)
+                # 翻译常见异常为用户友好提示
+                if "NoneType" in err_msg and "subscriptable" in err_msg:
+                    err_msg = "页面数据解析失败，番茄页面结构可能已变更，请等待插件更新"
+                elif "timeout" in err_msg.lower() or "timed out" in err_msg.lower():
+                    err_msg = "网络请求超时，请检查网络连接或稍后重试"
+                elif "Connection" in err_msg:
+                    err_msg = "网络连接失败，请检查网络"
+                task_manager.fail(task_id, err_msg)
+                evt_queue.put(("error", err_msg))
 
         t = _threading.Thread(target=worker, daemon=True, name="scout-fetch")
         t.start()
@@ -999,6 +1007,18 @@ def status_tasks():
     from plugins import task_manager
     tasks = task_manager.get_tasks()
     return jsonify(tasks)
+
+
+@app.route("/api/status/tasks/close", methods=["POST"])
+def status_tasks_close():
+    """关闭/删除指定任务"""
+    from plugins import task_manager
+    data = request.get_json()
+    task_id = data.get("id", "")
+    if task_id:
+        task_manager.remove(task_id)
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "missing id"})
 
 
 @app.route("/settings")

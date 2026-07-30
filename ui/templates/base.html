@@ -25,7 +25,7 @@
         aside#status-bar .status-empty { font-size:12px; color:#484f58; text-align:center; padding:20px 0; }
         aside#status-bar .status-card {
             background:#0d1117; border:1px solid #21262d; border-radius:6px;
-            padding:10px 12px; font-size:12px;
+            padding:10px 12px; font-size:12px; position:relative;
         }
         aside#status-bar .status-card .task-name { color:#c9d1d9; font-weight:500; }
         aside#status-bar .status-card .task-phase { color:#8b949e; font-size:11px; margin-top:2px; }
@@ -130,12 +130,11 @@
         </main>
         <aside id="status-bar">
             <div class="status-title">⏳ 运行状态</div>
-            <div id="current-task" style="display:none"></div>
-            <div id="task-log" style="display:none">
-                <div class="status-title" style="margin-top:8px">📋 日志</div>
-                <div id="task-log-list" style="font-size:11px;line-height:1.6"></div>
-            </div>
             <div id="status-tasks"></div>
+            <div id="task-log" style="display:none">
+                <div class="status-title" style="margin-top:12px">📋 日志</div>
+                <div id="task-log-list" style="font-size:11px;line-height:1.6;max-height:400px;overflow-y:auto"></div>
+            </div>
         </aside>
     </div>
     <script>
@@ -147,9 +146,44 @@
             });
         });
 
-        // 运行状态轮询（仅更新进度/日志，不重建整块DOM防闪烁）
+        // 运行状态轮询：所有任务卡片统一在 status-tasks 渲染，日志独立追加
         var prevLogCount = {};
-        var prevTaskHtml = '';
+        var STATUS_EMPTY = '<div class="status-empty">暂无运行中的任务</div>';
+        
+        function closeTask(taskId) {
+            fetch('/api/status/tasks/close', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id: taskId})
+            }).then(function() {
+                var card = document.querySelector('#status-tasks .status-card[data-id="' + taskId + '"]');
+                if (card) card.remove();
+                if (!document.querySelector('#status-tasks .status-card')) {
+                    document.getElementById('status-tasks').innerHTML = STATUS_EMPTY;
+                }
+            });
+        }
+        
+        function renderTaskCards(taskArray) {
+            if (!taskArray || taskArray.length === 0) {
+                return STATUS_EMPTY;
+            }
+            var html = '';
+            for (var i = 0; i < taskArray.length; i++) {
+                var t = taskArray[i];
+                var pct = t.total > 0 ? Math.round((t.current/t.total)*100) : 0;
+                html += '<div class="status-card" data-id="' + t.id + '">';
+                html += '<div class="task-name">' + (t.title || t.name) + '</div>';
+                html += '<div class="task-phase">' + (t.phase||'') + '</div>';
+                if (t.total > 0) html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
+                if (t.time) html += '<div class="task-time">' + t.time + '</div>';
+                // 所有任务（运行中/完成/失败）都可以关闭
+                html += '<button onclick="closeTask(\'' + t.id.replace(/'/g, '') + '\')" style="position:absolute;top:6px;right:6px;background:none;border:none;color:#484f58;cursor:pointer;font-size:14px;line-height:1" title="关闭">✕</button>';
+                html += '</div>';
+            }
+            return html;
+        }
+        
         function pollStatus() {
             fetch('/api/status/tasks')
                 .then(function(r) { return r.json(); })
@@ -157,41 +191,37 @@
                     var el = document.getElementById('status-tasks');
                     var logArea = document.getElementById('task-log');
                     var logList = document.getElementById('task-log-list');
-
-                    var html;
-                    if (!tasks || tasks.length === 0) {
-                        html = '<div class="status-empty">暂无运行中的任务</div>';
-                        if (logArea) logArea.style.display = 'none';
-                    } else {
-                        var t = tasks[0];
-                        var pct = t.total > 0 ? Math.round((t.current/t.total)*100) : 0;
-                        html = '<div class="status-card">';
-                        html += '<div class="task-name">' + (t.title || t.name) + '</div>';
-                        html += '<div class="task-phase">' + (t.phase||'') + '</div>';
-                        if (t.total > 0) html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
-                        if (t.time) html += '<div class="task-time">' + t.time + '</div>';
-                        html += '</div>';
-                        // 日志增量追加
-                        if (logArea && t.logs && t.logs.length > 0) {
-                            logArea.style.display = 'block';
-                            var prev = prevLogCount[t.id] || 0;
-                            if (t.logs.length > prev) {
-                                for (var i = prev; i < t.logs.length; i++) {
-                                    var l = t.logs[i];
-                                    var div = document.createElement('div');
-                                    div.style.cssText = 'padding:2px 0;border-left:2px solid ' + (l.level==='error'?'#f85149':l.level==='success'?'#3fb950':'#30363d') + ';padding-left:6px;margin:1px 0;font-size:11px';
-                                    div.textContent = l.time + ' ' + l.message;
-                                    logList.appendChild(div);
-                                }
-                                logList.scrollTop = logList.scrollHeight;
-                            }
-                            prevLogCount[t.id] = t.logs.length;
-                        }
+                    
+                    // 渲染任务卡片（完整替换，保持最新的进度数据）
+                    var newHtml = renderTaskCards(tasks);
+                    if (el.innerHTML !== newHtml) {
+                        el.innerHTML = newHtml;
                     }
-                    // 只在变化时替换
-                    if (html !== prevTaskHtml) {
-                        el.innerHTML = html;
-                        prevTaskHtml = html;
+                    
+                    // 日志增量追加（独立于卡片，不受卡片替换影响）
+                    if (tasks && tasks.length > 0 && logArea && logList) {
+                        var anyNew = false;
+                        for (var ti = 0; ti < tasks.length; ti++) {
+                            var t = tasks[ti];
+                            if (t.logs && t.logs.length > 0) {
+                                var prev = prevLogCount[t.id] || 0;
+                                if (t.logs.length > prev) {
+                                    for (var i = prev; i < t.logs.length; i++) {
+                                        var l = t.logs[i];
+                                        var div = document.createElement('div');
+                                        div.style.cssText = 'padding:2px 0;border-left:2px solid ' + (l.level==='error'?'#f85149':l.level==='success'?'#3fb950':'#30363d') + ';padding-left:6px;margin:1px 0;font-size:11px';
+                                        div.textContent = l.time + ' ' + l.message;
+                                        logList.appendChild(div);
+                                    }
+                                    prevLogCount[t.id] = t.logs.length;
+                                    anyNew = true;
+                                }
+                            }
+                        }
+                        if (anyNew) {
+                            logArea.style.display = 'block';
+                            logList.scrollTop = logList.scrollHeight;
+                        }
                     }
                 }).catch(function() {});
         }

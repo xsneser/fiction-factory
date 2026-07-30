@@ -163,43 +163,11 @@ class FanqieCrawler:
                 seen_q.add(q)
                 unique_queries.append(q)
 
-        print(f"[搜索] 开始搜索 '{title[:30]}' -> {len(unique_queries)}种查询" + str([q[:30] for q in unique_queries]))
-        for q in unique_queries:
-            try:
-                bing_hosts = ["https://cn.bing.com", "https://www.bing.com"]
-                r = None
-                last_err = None
-                for host in bing_hosts:
-                    try:
-                        r = self.session.get(
-                            f"{host}/search?q={urllib.parse.quote(q)}",
-                            timeout=10,
-                            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-                        if r.status_code == 200:
-                            break
-                    except Exception as e:
-                        last_err = e
-                        continue
-                if r is None:
-                    print(f"[搜索] 无法连接Bing: {last_err}")
-                    continue
-                ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
-                if ids:
-                    seen = set()
-                    unique_ids = [x for x in ids if not (x in seen or seen.add(x))]
-                    info = self._get_novel_from_page(unique_ids[0])
-                    if info and info.title:
-                        logger.info(f"搜到: {info.title} (ID={info.book_id})")
-                        return info
-            except Exception as e:
-                logger.debug(f"搜索 '{q[:30]}': {e}")
-                continue
-
-        # 兜底：直接用番茄搜索页 URL（浏览器能搜到的都行）
+        # 优先：直接用番茄搜索页（最快，不依赖Bing）
         try:
             import urllib.parse as _up
             search_url = f"https://fanqienovel.com/search/{_up.quote(title)}"
-            r = self.session.get(search_url, timeout=10,
+            r = self.session.get(search_url, timeout=2,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
             ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
             if ids:
@@ -207,13 +175,113 @@ class FanqieCrawler:
                 unique_ids = [x for x in ids if not (x in seen or seen.add(x))]
                 info = self._get_novel_from_page(unique_ids[0])
                 if info and info.title:
-                    logger.info(f"番茄搜索页兜底成功: {info.title} (ID={info.book_id})")
+                    logger.info(f"番茄搜索页成功: {info.title} (ID={info.book_id})")
                     return info
         except Exception as e:
-            logger.debug(f"番茄搜索页兜底: {e}")
+            logger.debug(f"番茄搜索页: {e}")
+
+        # 并行搜索：所有查询同时发，谁先返回谁赢
+        import concurrent.futures
+        import urllib.parse as _up2
+
+        def _bing_search(query: str) -> Optional[NovelInfo]:
+            """单次 Bing 查询"""
+            bing_hosts = ["https://cn.bing.com", "https://www.bing.com"]
+            for host in bing_hosts:
+                try:
+                    r = self.session.get(
+                        f"{host}/search?q={_up2.quote(query)}",
+                        timeout=2,
+                            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+                    if r.status_code != 200:
+                        continue
+                    ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
+                    if ids:
+                        seen = set()
+                        unique_ids = [x for x in ids if not (x in seen or seen.add(x))]
+                        info = self._get_novel_from_page(unique_ids[0])
+                        if info and info.title:
+                            return info
+                except Exception:
+                    continue
+            return None
+
+        print(f"[搜索] 并行搜索 '{title[:30]}' -> {len(unique_queries)}种查询")
+        
+        # 先用最精确的查询串行试一次
+        if unique_queries:
+            result = _bing_search(unique_queries[0])
+            if result:
+                logger.info(f"搜到: {result.title} (ID={result.book_id})")
+                return result
+        
+        # 失败则并行跑剩余查询（每个查询用独立 session，requests.Session 非线程安全）
+        if len(unique_queries) > 1:
+            def _parallel_search():
+                import requests as _req
+                import urllib3 as _urllib3
+                _urllib3.disable_warnings(_urllib3.exceptions.InsecureRequestWarning)
+                # 每个线程独立 session
+                local_session = _req.Session()
+                local_session.headers.update(self.HEADERS)
+                local_session.verify = False
+                local_session.trust_env = False
+                
+                bing_hosts = ["https://cn.bing.com", "https://www.bing.com"]
+                for host in bing_hosts:
+                    try:
+                        r = local_session.get(
+                            f"{host}/search?q={_up2.quote(query)}",
+                            timeout=2,
+                            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+                        if r.status_code != 200:
+                            continue
+                        ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
+                        if ids:
+                            seen = set()
+                            unique_ids = [x for x in ids if not (x in seen or seen.add(x))]
+                            info = self._get_novel_from_page(unique_ids[0])
+                            if info and info.title:
+                                return info
+                    except Exception:
+                        continue
+                return None
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(unique_queries)-1) as executor:
+                futures = {executor.submit(_parallel_search): q for q in unique_queries[1:]}
+                try:
+                    for future in concurrent.futures.as_completed(futures, timeout=5):
+                        try:
+                            result = future.result()
+                            if result:
+                                logger.info(f"搜到: {result.title} (ID={result.book_id})")
+                                for f in futures:
+                                    f.cancel()
+                                return result
+                        except Exception:
+                            continue
+                except concurrent.futures.TimeoutError:
+                    logger.debug("并行搜索超时，进入兜底")
+                    for f in futures:
+                        f.cancel()
+
+        # 全部失败则兜底番茄搜索页
+        try:
+            search_url = f"https://fanqienovel.com/search/{_up2.quote(title)}"
+            r = self.session.get(search_url, timeout=2,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+            ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
+            if ids:
+                seen = set()
+                unique_ids = [x for x in ids if not (x in seen or seen.add(x))]
+                info = self._get_novel_from_page(unique_ids[0])
+                if info and info.title:
+                    logger.info(f"番茄搜索页兜底: {info.title} (ID={info.book_id})")
+                    return info
+        except Exception as e:
+            logger.debug(f"兜底搜索: {e}")
 
         logger.warning(f"搜索失败: {title}")
-        return None
         return None
 
     def _get_novel_from_page(self, book_id: str) -> Optional[NovelInfo]:
@@ -323,7 +391,7 @@ class FanqieCrawler:
         """获取单本书详细信息"""
         try:
             url = f"{self.API_BASE}/reader/book_info/v0"
-            resp = self.session.get(url, params={"book_id": book_id}, timeout=10)
+            resp = self.session.get(url, params={"book_id": book_id}, timeout=3)
             data = resp.json()
             info = data.get("data", {})
 

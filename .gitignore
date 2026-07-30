@@ -32,3 +32,6 @@ storage/
 
 # 持久化数据（自动生成）
 libraries/data/
+
+# 运行时任务缓存
+_api_tasks.json
