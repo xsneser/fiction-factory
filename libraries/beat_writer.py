@@ -467,9 +467,12 @@ class BeatExecutor:
         self.profile = profile
 
     def execute_beat(self, beat: Beat, context: dict,
-                     accumulated_text: str = "") -> BeatResult:
+                     accumulated_text: str = "",
+                     library_enrichment: str = "") -> BeatResult:
         """
-        执行一个节拍：匹配模板 → 注入笑点 → LLM生成 → 返回结果
+        执行一个节拍：匹配模板 → 注入笑点+库材料 → LLM生成 → 返回结果
+
+        library_enrichment: 来自 BookAssembler 的桥段/笑点/内涵 prompt 注入
         """
         template = self.beat_lib.get(beat.template_id)
         if not template:
@@ -477,7 +480,8 @@ class BeatExecutor:
                        self.beat_lib.get("beat_status_normal")
 
         # 构建节拍级 prompt
-        system, user = self._build_beat_prompt(beat, template, context, accumulated_text)
+        system, user = self._build_beat_prompt(
+            beat, template, context, accumulated_text, library_enrichment)
 
         # 生成
         if self.llm:
@@ -498,7 +502,8 @@ class BeatExecutor:
         )
 
     def _build_beat_prompt(self, beat: Beat, template: BeatTemplate,
-                           context: dict, accumulated: str) -> tuple[str, str]:
+                           context: dict, accumulated: str,
+                           library_enrichment: str = "") -> tuple[str, str]:
         """构建单个节拍的写作 prompt"""
         parts = []
 
@@ -527,7 +532,11 @@ class BeatExecutor:
         parts.append(f"完成目标：{template.narrative_function}")
         parts.append(f"微观结构：{template.micro_structure}")
 
-        # 6. 笑点指令
+        # 6. 库材料注入（桥段模板 + 笑点模式 + 内涵提示）—— 来自 BookAssembler
+        if library_enrichment:
+            parts.append(f"\n{library_enrichment}")
+
+        # 7. 笑点指令（节拍级）
         if beat.humor_required and template.humor_slots:
             parts.append("\n【笑点要求 — 必须自然融入，不要生硬】")
             for hs in template.humor_slots:
@@ -541,11 +550,11 @@ class BeatExecutor:
                 if gags:
                     parts.append(f"  可选笑点模式参考：{gags[0].pattern_description[:100]}")
 
-        # 7. 风格约束
+        # 8. 风格约束
         if self.profile:
             parts.append("\n" + self.profile.build_style_prompt())
 
-        # 8. 字数
+        # 9. 字数
         parts.append(f"\n目标字数：约 {beat.word_target} 字")
         parts.append("只输出本节拍的正文，不要加标题、编号、'第X节'等元信息。")
 
@@ -664,7 +673,7 @@ class ChapterWriter:
     完整的一章写作管线：
 
     1. ChapterPlanner: 大纲 → 节拍列表
-    2. BeatExecutor: 逐节拍生成（模板+笑点+风格）
+    2. BeatExecutor: 逐节拍生成（模板+笑点+库材料+风格）
     3. ChapterAssembler: 拼接+过渡+去AI+校验
     """
 
@@ -684,12 +693,26 @@ class ChapterWriter:
                       previous_summary: str = "",
                       character_states: str = "",
                       active_foreshadows: str = "",
-                      on_beat=None) -> dict:
+                      on_beat=None,
+                      assembler_plan=None,
+                      stage_index: int = 0) -> dict:
         """
         写完整一章。
 
+        assembler_plan: BookAssemblerPlan，如果提供，会自动注入当前阶段的桥段/笑点/内涵
+        stage_index: 当前处于哪个大纲阶段（用于从计划中取对应材料）
         on_beat: 可选回调，每完成一个节拍时调用 on_beat(beat_index, beat_result)
         """
+        # Step 0: 生成库材料注入文本
+        library_enrichment = ""
+        if assembler_plan:
+            try:
+                from .assembler import PlanInjector
+                library_enrichment = PlanInjector.build_chapter_prompt_enrichment(
+                    assembler_plan, stage_index)
+            except Exception:
+                pass
+
         # Step 1: 节拍规划
         plan = self.planner.plan_chapter(
             chapter_num, chapter_outline, target_words, genre,
@@ -707,7 +730,9 @@ class ChapterWriter:
         beat_results = []
         accumulated = ""
         for beat in plan.beats:
-            result = self.executor.execute_beat(beat, context, accumulated)
+            result = self.executor.execute_beat(
+                beat, context, accumulated,
+                library_enrichment=library_enrichment)
             beat_results.append(result)
             accumulated += result.text + "\n\n"
             if on_beat:
