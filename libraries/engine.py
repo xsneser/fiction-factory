@@ -22,6 +22,7 @@ from libraries.character_state import CharacterStateMachine, CharacterState
 from libraries.reviewer import ContentReviewer, ReviewResult
 from libraries.new_book import NewBookPipeline, NewBookConfig, Chapter3Result, recommend_opening
 from libraries.beat_writer import ChapterWriter, BeatLibrary
+from libraries.assembler import BookAssembler, BookAssemblerPlan, PlanInjector
 
 
 # ═══════════════════════════════════════════════
@@ -125,6 +126,9 @@ class EngineState:
     structure_template_id: str = ""
     chapters: list[dict] = field(default_factory=list)
 
+    # 组装计划（库材料注入的神器）
+    assembler_plan: Optional[BookAssemblerPlan] = None
+
     # 进度
     current_chapter: int = 0
     total_chapters: int = 500
@@ -178,6 +182,15 @@ class NovelEngine:
         self.profile: Optional[PenNameProfile] = None
         self.chapter_writer = ChapterWriter(llm_client, self.de_ai, self.reviewer, self.gag_lib, self.profile)
         self.char_states = CharacterStateMachine()
+
+        # 书籍组装器（连接四大库与生成管线）
+        self.assembler = BookAssembler(
+            plot_lib=self.plot_lib,
+            structure_lib=self.struct_lib,
+            gag_lib=self.gag_lib,
+            theme_lib=self.theme_lib,
+            llm_client=llm_client,
+        )
 
         # 状态
         self.state = EngineState()
@@ -421,6 +434,28 @@ class NovelEngine:
 
     # ─── 通用 ───
 
+    def _get_stage_index(self, chapter_num: int) -> int:
+        """
+        根据章节号反查当前属于哪个大纲阶段（用于给组装计划取材料）。
+        """
+        plan = self.state.assembler_plan
+        if not plan or not plan.stages:
+            return 0
+
+        # 新书前三章 → 阶段 0（觉醒/重生）
+        if self.state.book_mode == BookMode.NEW and chapter_num <= 3:
+            return 0
+
+        # 续写模式：累计章节数反查阶段
+        accumulated = 0
+        for i, sp in enumerate(plan.stages):
+            min_ch, max_ch = sp.chapter_range
+            accumulated += min_ch
+            if chapter_num <= accumulated:
+                return i
+        # 超出范围的取最后一个阶段
+        return len(plan.stages) - 1
+
     def _exec_complete(self, inst: Instruction) -> dict:
         return {"status": "complete", "message": "全书完成"}
 
@@ -490,6 +525,14 @@ class NovelEngine:
         nb.title_options = [config.title] if config.title else [f"{config.genre}之{config.pen_name}"]
 
         nb.outline_generated = True
+
+        # ── 6. 组装计划：按大纲逐阶段匹配桥段/笑点/内涵 ──
+        self.state.assembler_plan = self.assembler.assemble_book(
+            genre=config.genre,
+            sub_genre=config.sub_genre,
+            title_hint=config.title,
+        )
+
         self.state.updated_at = datetime.now().isoformat()
 
         return {
@@ -501,6 +544,9 @@ class NovelEngine:
             "foreshadows": len(nb.foreshadows_planned),
             "opening_plot": nb.opening_plan.get("opening_plot").name
                              if nb.opening_plan.get("opening_plot") else "auto",
+            "book_title": self.state.assembler_plan.book_title,
+            "themes": [t.name for t in self.state.assembler_plan.themes],
+            "stages_matched": len(self.state.assembler_plan.stages),
         }
 
     def _exec_write_ch1(self, inst: Instruction) -> dict:
@@ -519,7 +565,9 @@ class NovelEngine:
         result = self.chapter_writer.write_chapter(
             chapter_num=1, chapter_outline=ch1_outline,
             target_words=config.words_per_chapter or 3000,
-            genre=config.genre, pen_name=config.pen_name)
+            genre=config.genre, pen_name=config.pen_name,
+            assembler_plan=self.state.assembler_plan,
+            stage_index=self._get_stage_index(1))
 
         nb.chapter1 = result["text"]
         self.cost_tracker.record("ch1_draft", "", result["text"])
@@ -547,7 +595,9 @@ class NovelEngine:
             chapter_num=2, chapter_outline=ch2_outline,
             target_words=config.words_per_chapter or 3000,
             genre=config.genre, pen_name=config.pen_name,
-            previous_chapter_ending=prev_end)
+            previous_chapter_ending=prev_end,
+            assembler_plan=self.state.assembler_plan,
+            stage_index=self._get_stage_index(2))
 
         nb.chapter2 = result["text"]
         self.cost_tracker.record("ch2_draft", "", result["text"])
@@ -576,7 +626,9 @@ class NovelEngine:
             target_words=config.words_per_chapter or 3000,
             genre=config.genre, pen_name=config.pen_name,
             previous_chapter_ending=prev_end,
-            previous_summary=f"前两章概要：{nb.chapter1[:200]}... → {nb.chapter2[:200]}...")
+            previous_summary=f"前两章概要：{nb.chapter1[:200]}... → {nb.chapter2[:200]}...",
+            assembler_plan=self.state.assembler_plan,
+            stage_index=self._get_stage_index(3))
 
         nb.chapter3 = result["text"]
         self.cost_tracker.record("ch3_draft", "", result["text"])
@@ -754,6 +806,12 @@ class NovelEngine:
             "synopsis": nb.synopsis,
         })
 
+        # 保存组装计划
+        if self.state.assembler_plan:
+            from libraries.assembler import save_plan
+            plan_path = Path("books") / book.book_id / "assembler_plan.json"
+            save_plan(self.state.assembler_plan, str(plan_path))
+
         # 保存角色状态
         self.char_states.save(str(Path("books") / book.book_id / "character_states.json"))
 
@@ -802,11 +860,19 @@ class NovelEngine:
                     ch_num += 1
             self.state.total_chapters = len(self.state.chapters)
 
+        # 生成组装计划（桥段/笑点/内涵匹配）
+        if not self.state.assembler_plan:
+            self.state.assembler_plan = self.assembler.assemble_book(
+                genre=self.state.genre,
+                sub_genre=self.state.sub_genre,
+            )
+
         self.state.phase = Phase.WRITING
         return {
             "status": "outline_planned",
             "structure": self.state.structure_template_id,
             "chapters": len(self.state.chapters),
+            "book_title": self.state.assembler_plan.book_title if self.state.assembler_plan else "",
         }
 
     def _exec_write_chapter(self, inst: Instruction) -> dict:
@@ -842,6 +908,8 @@ class NovelEngine:
             pen_name=self.state.pen_name,
             previous_chapter_ending=prev_ending,
             character_states=char_states,
+            assembler_plan=self.state.assembler_plan,
+            stage_index=self._get_stage_index(chapter_num),
         )
 
         full_text = result["text"]
