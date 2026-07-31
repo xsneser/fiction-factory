@@ -62,9 +62,16 @@ class BookManager:
                     self._cache[cfg.book_id] = cfg
 
     def list_all(self) -> list[BookConfig]:
+        # 每次重新扫描磁盘（引擎/其他实例可能新建了书）
+        self._cache = {}
+        self._load_all()
         return list(self._cache.values())
 
     def get(self, book_id: str) -> BookConfig | None:
+        if book_id not in self._cache:
+            # 缓存未命中时重新扫描磁盘
+            self._cache = {}
+            self._load_all()
         return self._cache.get(book_id)
 
     def create(self, title: str, pen_name: str, genre: str = "",
