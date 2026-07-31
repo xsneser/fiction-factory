@@ -211,11 +211,11 @@
                 html += '<div class="task-phase">' + detail + '</div>';
                 if (t.total > 0) html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
                 if (t.time) html += '<div class="task-time">' + t.time + '</div>';
-                html += '<div class="task-actions" style="margin-top:6px;display:flex;gap:6px">';
-                // 查看按钮：跳转到任务对应页面（SPA 导航）
-                if (t.url) html += '<button onclick="navigateTo(\'' + t.url + '\')" style="flex:1;background:#1f6feb;border:none;color:#fff;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer" title="去查看">👁 查看</button>';
-                // 所有任务（运行中/完成/失败）都可以关闭
-                html += '<button onclick="closeTask(\'' + t.id.replace(/'/g, '') + '\')" style="background:none;border:none;color:#484f58;cursor:pointer;font-size:14px;line-height:1" title="关闭">✕</button>';
+                html += '<div class="task-actions" style="margin-top:6px;display:flex;gap:6px;align-items:center">';
+                // 查看按钮：低调灰色小按钮，hover 提亮
+                if (t.url) html += '<button onclick="navigateTo(\'' + t.url + '\')" style="flex:1;background:transparent;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;transition:all .2s" onmouseover="this.style.color=\'#f0f6fc\';this.style.borderColor=\'#58a6ff\'" onmouseout="this.style.color=\'#8b949e\';this.style.borderColor=\'#30363d\'" title="去查看">查看</button>';
+                // 所有任务（运行中/完成/失败）都可以关闭：大一点更显眼，hover 变红
+                html += '<button onclick="closeTask(\'' + t.id.replace(/'/g, '') + '\')" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px;line-height:1;padding:0 2px;transition:color .2s" onmouseover="this.style.color=\'#f85149\'" onmouseout="this.style.color=\'#8b949e\'" title="关闭">✕</button>';
                 html += '</div>';
                 html += '</div>';
             }
