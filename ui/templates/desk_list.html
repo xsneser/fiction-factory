@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}写作台 — 选择项目{% endblock %}
+{% block content %}
+<h1>✍️ 写作台</h1>
+<p style="color:#8b949e;margin-bottom:20px">选择一个时间线配置，进入写作台</p>
+
+{% if timelines %}
+<div class="cards">
+    {% for t in timelines %}
+    <div class="card">
+        <div class="title">{{ t.pen_name }} · {{ t.title }}</div>
+        <div class="meta">{{ t.genre }}{% if t.sub_genre %}/{{ t.sub_genre }}{% endif %} · 状态：{{ t.phase or '未知' }}</div>
+        <div style="margin-top:12px">
+            <a href="/timeline/{{ t.id }}/desk" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none;display:inline-block">✍️ 进入写作台</a>
+            <a href="/timeline/{{ t.id }}/edit" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">🛠 编辑</a>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty" style="padding:60px">
+    <div class="icon" style="font-size:48px">📋</div>
+    <p style="color:#8b949e;margin-top:12px">还没有时间线配置</p>
+    <p style="color:#484f58;font-size:12px;margin-top:6px">先去「启动新书」创建项目</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -429,6 +429,32 @@ def api_delete_outline(timeline_id):
 # ✍️ 写作台（蓝图构建 v2）
 # ═══════════════════════════════════════════
 
+@app.route("/desk")
+def desk_list():
+    """写作台入口 — 列出所有时间线配置"""
+    from pathlib import Path
+    from libraries.timeline import load_timeline
+    timelines = []
+    tl_dir = Path("books/timelines")
+    if tl_dir.exists():
+        for f in sorted(tl_dir.glob("tl_*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                tl = load_timeline(str(f))
+                if tl:
+                    timelines.append({
+                        "id": f.stem,
+                        "title": tl.book_title or "未命名",
+                        "pen_name": tl.pen_name,
+                        "genre": tl.genre,
+                        "sub_genre": tl.sub_genre,
+                        "phase": tl.phase,
+                        "updated": f.stat().st_mtime,
+                    })
+            except Exception:
+                pass
+    return render_template("desk_list.html", timelines=timelines)
+
+
 @app.route("/timeline/<timeline_id>/desk")
 def writing_desk(timeline_id):
     """写作台页面"""
