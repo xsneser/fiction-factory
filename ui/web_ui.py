@@ -425,6 +425,65 @@ def api_delete_outline(timeline_id):
     return jsonify({"ok": True})
 
 
+# ═══════════════════════════════════════════
+# ✍️ 写作台（蓝图构建 v2）
+# ═══════════════════════════════════════════
+
+@app.route("/timeline/<timeline_id>/desk")
+def writing_desk(timeline_id):
+    """写作台页面"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        tl = load_timeline(f"books/timelines/{timeline_id}.json")
+    if not tl:
+        return "时间线配置不存在或已过期", 404
+    return render_template("writing_desk.html", timeline_id=timeline_id, timeline=tl)
+
+
+@app.route("/api/timeline/<timeline_id>/build", methods=["POST"])
+def api_build_timeline(timeline_id):
+    """蓝图式构建全文（SSE 流式）— 按大纲扩写→桥段填充→笑点注入→审查→分章"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        tl = load_timeline(f"books/timelines/{timeline_id}.json")
+    if not tl:
+        return jsonify({"ok": False, "error": "not found"}), 404
+
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+
+    from libraries.timeline_writer import BlueprintWritingPipeline
+
+    def generate():
+        import json as _json
+
+        def send(event, message="", data=None):
+            d = {"event": event, "message": message}
+            if data:
+                d.update(data)
+            return f"data: {_json.dumps(d, ensure_ascii=False)}\n\n"
+
+        pipeline = BlueprintWritingPipeline(
+            timeline=tl, llm_client=llm,
+            gag_lib=gag_lib, theme_lib=theme_lib,
+        )
+
+        try:
+            for event_type, message, data in pipeline.build():
+                yield send(event_type, message, data)
+        except Exception as e:
+            yield send("error", str(e))
+
+    resp = Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"},
+    )
+    return resp
+
+
 @app.route("/books/start/timeline/<timeline_id>/write")
 def timeline_start_writing(timeline_id):
     """从时间线配置启动蓝图式写作引擎（新核心）"""

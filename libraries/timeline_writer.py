@@ -1,391 +1,555 @@
 """
-蓝图式写作引擎（Timeline Writer）— 按 BookTimeline 施工
+蓝图式写作引擎 v2 — 按依赖关系构建全文，最后分章
 
-与旧写作核心（ChapterWriter 流水线）的区别：
-  旧：先有章节大纲文字 → AI 拆节拍 → 逐节拍生成（桥段/笑点按阶段模糊注入）
-  新：先有整书蓝图（BookTimeline）→ 按章节位置解析出"该处活跃的大纲+桥段+笑点钉子"
-      → 桥段结构直接驱动节拍规划 → 逐节拍生成（精确注入）
+流程（从左往右、从上往下）：
+  Phase 1: 大纲扩写 — 每个大纲 1 次 LLM，生成详细叙事稿
+  Phase 2: 桥段填充 — 仅处理完全包含在已扩写大纲内的桥段，每个 1 次 LLM
+            跨大纲桥段跳过（等依赖大纲扩写完再回来）
+  Phase 3: 笑点/内涵注入 — 每个桥段 1-2 次 LLM
+  Phase 4: 一致性审查 — 全文 1 次 LLM
+  Phase 5: 分章节 — 全部正文写完后 1 次 LLM 决定切在哪里
 
-流程：
-  chapter_num → 累计字数位置 → 解析活跃元素（大纲/桥段嵌套链/笑点/内涵）
-  → 桥段结构拆成节拍序列 → 每节拍注入对应桥段+笑点钉子 → LLM 生成 → 组装
+全程 SSE 流式输出，UI 左栏蓝图高亮、右栏实时进度+正文
 """
 from dataclasses import dataclass, field
-from typing import Optional
-import re
+from typing import Optional, Callable
+import json, re, time
 
 from .timeline import BookTimeline, OutlineSlot, PlotSlot
-from .beat_writer import (
-    BeatLibrary, Beat, ChapterBeatPlan, BeatExecutor,
-    ChapterAssembler, BeatResult,
-)
 
 
 # ═══════════════════════════════════════════
-# 位置解析器：章节 → 蓝图元素
+# 数据结构
 # ═══════════════════════════════════════════
 
 @dataclass
-class ChapterBlueprint:
-    """一章写作需要的全部蓝图上下文"""
-    chapter_num: int
-    cumulative_words: int          # 本章开始的累计字数（估算）
-    chapter_words_target: int      # 本章目标字数
+class OutlineExpansion:
+    """一个大纲的扩写结果"""
+    outline_id: str
+    name: str
+    text: str           # 扩写正文
+    word_count: int
+    start_words: int    # 在全文中的起始字数位置
+    end_words: int      # 结束位置
 
-    active_outlines: list[OutlineSlot] = field(default_factory=list)  # 可能多个（重叠）
-    active_plots: list[PlotSlot] = field(default_factory=list)        # 本章要走的桥段
-    active_gags: list[str] = field(default_factory=list)              # 笑点钉子描述
-    active_themes: list[str] = field(default_factory=list)            # 内涵提示
+@dataclass
+class FilledPlot:
+    """一个桥段的填充结果"""
+    plot_id: str
+    name: str
+    text: str
+    word_count: int
+    gags_applied: list[str]
+    themes_applied: list[str]
 
-    def has_content(self) -> bool:
-        return bool(self.active_plots) or bool(self.active_outlines)
+@dataclass
+class BuildState:
+    """构建状态 — 用于 SSE 进度报告"""
+    phase: str  # outlining|filling|gags|review|splitting|done
+    current_outline: str = ""
+    current_plot: str = ""
+    message: str = ""
+    total_outlines: int = 0
+    total_plots: int = 0
+    outlines_done: int = 0
+    plots_done: int = 0
+    plots_skipped: int = 0
 
 
-class TimelinePositionResolver:
-    """
-    把章节号映射到时间线位置，取回该位置活跃的蓝图元素。
+# ═══════════════════════════════════════════
+# Phase 1: 大纲扩写器
+# ═══════════════════════════════════════════
 
-    章节→字数映射：按每章 words_per_chapter 估算累计字数，
-    大纲/桥段用 start/end（字数）判断是否覆盖当前位置。
-    """
+class OutlineExpander:
+    """将每个大纲扩写为详细叙事稿"""
 
-    def __init__(self, timeline: BookTimeline):
+    def __init__(self, timeline: BookTimeline, llm_client=None, on_progress=None):
         self.tl = timeline
-        self.words_per_chapter = max(timeline.words_per_chapter or 3000, 500)
-
-    def resolve(self, chapter_num: int) -> ChapterBlueprint:
-        # 估算累计字数：本章开头的字数位置
-        start_words = (chapter_num - 1) * self.words_per_chapter
-        end_words = chapter_num * self.words_per_chapter
-        mid_words = (start_words + end_words) // 2
-
-        bp = ChapterBlueprint(
-            chapter_num=chapter_num,
-            cumulative_words=start_words,
-            chapter_words_target=self.words_per_chapter,
-        )
-
-        # 1. 活跃大纲：位置被大纲范围覆盖（含重叠）
-        for o in self.tl.outlines:
-            o_start = (o.start_chapter - 1) * self.words_per_chapter
-            o_end = o.end_chapter * self.words_per_chapter
-            if mid_words >= o_start and mid_words < o_end:
-                bp.active_outlines.append(o)
-
-        # 2. 活跃桥段：属于活跃大纲、阶段对应本章、且位置在桥段覆盖范围内
-        #    桥段按 order 排序，作为本章节拍的骨架
-        active_outline_ids = {o.id for o in bp.active_outlines}
-        candidate_plots = [
-            p for p in self.tl.plots
-            if p.outline_id in active_outline_ids
-        ]
-
-        # 估算桥段的字数位置（按桥段在阶段内的比例）
-        for p in sorted(candidate_plots, key=lambda x: (x.outline_id, x.stage_index, x.order)):
-            # 用桥段的 cover_beats 占阶段权重粗估位置
-            bp.active_plots.append(p)
-
-        # 3. 笑点/内涵钉子：从活跃桥段收集
-        for p in bp.active_plots:
-            for gid in p.gag_ids[:2]:
-                bp.active_gags.append(gid)
-            bp.active_themes.extend(p.theme_hints[:1])
-
-        return bp
-
-    def build_plot_chain(self, plot: PlotSlot) -> list[PlotSlot]:
-        """返回桥段的嵌套链（自身 + 所有子桥段）"""
-        chain = [plot]
-        children = [p for p in self.tl.plots if p.parent_plot_id == plot.id]
-        for c in sorted(children, key=lambda x: x.order):
-            chain.extend(self.build_plot_chain(c))
-        return chain
-
-
-# ═══════════════════════════════════════════
-# 蓝图 → 节拍规划
-# ═══════════════════════════════════════════
-
-class TimelinePlanner:
-    """
-    蓝图驱动的节拍规划器：
-    桥段模板结构（[步骤1]→[步骤2]→...）本身就是节拍序列骨架，
-    嵌套桥段作为子节拍插入父桥段之后。
-    """
-
-    def __init__(self, beat_lib: BeatLibrary = None, llm_client=None):
-        self.beat_lib = beat_lib or BeatLibrary()
         self.llm = llm_client
+        self.on_progress = on_progress or (lambda s,m: None)
 
-    def plan_chapter(self, bp: ChapterBlueprint) -> ChapterBeatPlan:
-        """根据蓝图生成节拍计划"""
-        if self.llm and bp.active_plots:
-            return self._ai_plan(bp)
-        return self._rule_plan(bp)
+    def expand_all(self) -> list[OutlineExpansion]:
+        results = []
+        cumulative_words = 0
 
-    def _rule_plan(self, bp: ChapterBlueprint) -> ChapterBeatPlan:
-        """规则规划：桥段结构 → 节拍"""
-        beats: list[Beat] = []
-        idx = 1
+        for o in self.tl.outlines:
+            self.on_progress("outlining", f"大纲扩写: {o.name}")
+            wc_target = self.tl.words_per_chapter * (o.end_chapter - o.start_chapter + 1)
 
-        # 1. 开头钩子（如果本章是第一个大纲的第一章）
-        if bp.chapter_num <= 3 or idx == 1:
-            beats.append(Beat(
-                index=idx, beat_type="hook",
-                description="开场钩子：用冲击性画面/对话抓住读者",
-                template_id="beat_hook_crisis",
-                humor_required=True, word_target=200,
-            ))
-            idx += 1
+            # 构建上下文：前面已扩写的大纲
+            prev_context = ""
+            if results:
+                prev_names = [r.name for r in results]
+                prev_context = f"前面已完成的大纲：{' → '.join(prev_names)}\n"
 
-        # 2. 每个活跃桥段 → 结构步骤 → 节拍
-        for p in bp.active_plots[:3]:  # 一章最多走 3 个主桥段
-            chain = self._chain_for(p, bp)
-            for plot in chain:
-                beats.extend(self._plot_to_beats(plot, bp, idx))
-                idx = len(beats) + 1
+            expanded = self._expand_one(o, wc_target, prev_context, cumulative_words)
+            results.append(expanded)
+            cumulative_words = expanded.end_words
 
-        # 3. 兜底：如果没有桥段，用通用节拍
-        if not beats:
-            beats = self._fallback_beats(bp)
+        return results
 
-        # 4. 章末钩子
-        beats.append(Beat(
-            index=len(beats) + 1, beat_type="close",
-            description="章末钩子：收束本章+留悬念",
-            template_id="beat_close_cliffhanger",
-            humor_required=False, word_target=200,
-        ))
+    def _expand_one(self, outline: OutlineSlot, word_target: int,
+                     prev_context: str, start_pos: int) -> OutlineExpansion:
+        # 生成大纲阶段描述
+        stage_desc = "\n".join(
+            f"  {s.get('name','?')}（{s.get('min_ch',2)}-{s.get('max_ch',5)}章）: {', '.join(s.get('events',[])[:3])}"
+            for s in outline.stages[:4]
+        ) if outline.stages else "（按标准升级流推进）"
 
-        # 设置衔接
-        for i in range(1, len(beats)):
-            beats[i].transition_from_prev = beats[i-1].description[:50]
+        prompt = f"""根据以下设定，展开 "{outline.name}" 大纲的详细叙事稿。
 
-        return ChapterBeatPlan(
-            chapter_num=bp.chapter_num,
-            chapter_title=f"第{bp.chapter_num}章",
-            chapter_outline=self._outline_text(bp),
-            beats=beats,
-            total_words_target=bp.chapter_words_target,
+【本书信息】
+流派：{self.tl.genre}{'/'+self.tl.sub_genre if self.tl.sub_genre else ''}
+笔名风格：{self.tl.pen_name}
+每章目标：{self.tl.words_per_chapter}字
+
+【主角设定】
+{json.dumps(self.tl.basic_info.get('protagonist',{}), ensure_ascii=False)}
+
+【世界观】
+{self.tl.basic_info.get('world_building',{}).get('description','') or '标准异世界'}
+
+【前面大纲】
+{prev_context or '（这是全书开头）'}
+
+【本大纲阶段】
+{stage_desc}
+
+【要求】
+1. 写出完整的故事叙事稿（不是提纲），是可直接阅读的正文
+2. 目标 {word_target} 字，控制在 ±10% 内
+3. 主角性格贯穿始终，幽默自嘲风格
+4. 每个阶段过渡自然，不要生硬分段标题
+5. 可以分段（段落间空行），但不要章节标题/编号"""
+
+        text = self._call_llm(prompt, word_target)
+
+        wc = len(re.findall(r'[\u4e00-\u9fff]', text))
+        return OutlineExpansion(
+            outline_id=outline.id, name=outline.name,
+            text=text, word_count=wc,
+            start_words=start_pos, end_words=start_pos + wc,
         )
 
-    def _chain_for(self, p: PlotSlot, bp: ChapterBlueprint) -> list[PlotSlot]:
-        """取桥段的嵌套链（父→子）"""
-        return [p] + [c for c in bp.active_plots if c.parent_plot_id == p.id]
-
-    def _plot_to_beats(self, plot: PlotSlot, bp: ChapterBlueprint, start_idx: int) -> list[Beat]:
-        """一个桥段 → 1-3 个节拍"""
-        structure = plot.template_structure or ""
-        steps = [s.strip() for s in re.split(r'[→>]', structure) if s.strip()]
-        if not steps:
-            steps = [plot.name]
-
-        # 桥段的每个结构步骤 → 一个节拍
-        beats = []
-        for si, step in enumerate(steps[:3]):  # 一个桥段最多 3 个步骤节拍
-            beat_type = self._step_to_beat_type(si, len(steps))
-            template_id = {
-                "hook": "beat_hook_crisis",
-                "conflict": "beat_conflict_confront",
-                "action": "beat_action_show_power",
-                "twist": "beat_twist_reveal",
-                "status": "beat_status_low",
-            }.get(beat_type, "beat_status_normal")
-
-            beats.append(Beat(
-                index=start_idx + si,
-                beat_type=beat_type,
-                description=f"桥段「{plot.name}」步骤{si+1}：{step}",
-                template_id=template_id,
-                humor_required=bool(plot.gag_ids),
-                word_target=max(200, bp.chapter_words_target // max(len(bp.active_plots)*3, 3)),
-            ))
-        return beats
-
-    def _step_to_beat_type(self, idx: int, total: int) -> str:
-        """结构步骤 → 节拍类型"""
-        if idx == 0:
-            return "hook" if total > 1 else "status"
-        if idx == total - 1:
-            return "twist" if idx > 1 else "conflict"
-        return "conflict" if idx == 1 else "action"
-
-    def _fallback_beats(self, bp: ChapterBlueprint) -> list[Beat]:
-        return [
-            Beat(1, "status", "展示主角当前处境", "beat_status_low", True, 300),
-            Beat(2, "conflict", "引入本章核心矛盾", "beat_conflict_verbal", True, 350),
-            Beat(3, "action", "主角应对与展现实力", "beat_action_clever_move", True, 350),
-        ]
-
-    def _outline_text(self, bp: ChapterBlueprint) -> str:
-        """生成章节大纲文字（供 prompt 使用）"""
-        parts = []
-        for o in bp.active_outlines:
-            parts.append(f"大纲：{o.name}（第{o.start_chapter}-{o.end_chapter}章）")
-        for p in bp.active_plots[:3]:
-            parts.append(f"桥段：{p.name} — {p.template_structure[:80]}")
-        return "\n".join(parts)
-
-    def _ai_plan(self, bp: ChapterBlueprint) -> ChapterBeatPlan:
-        """AI 规划（规则规划的增强版：让 AI 细化桥段步骤）"""
-        # 复用规则规划的骨架，但用 AI 优化节拍描述
-        plan = self._rule_plan(bp)
+    def _call_llm(self, prompt: str, word_target: int) -> str:
+        if not self.llm:
+            return f"[大纲扩写稿 - {word_target}字 - LLM 未配置]"
+        from core.llm_client import extract_json
+        raw = self.llm.call(
+            "你是一位专业的网络小说作者。请根据设定展开大纲叙事稿。",
+            prompt, temperature=0.7, max_tokens=max(2048, word_target * 2))
+        # 尝试提取 JSON（如果 LLM 返回了 JSON 包裹），否则用原始文本
         try:
-            plots_desc = "\n".join(
-                f"- {p.name}: {p.template_structure[:120]}"
-                for p in bp.active_plots[:3]
-            )
-            prompt = f"""根据以下蓝图配置第{bp.chapter_num}章的节拍计划。
-
-【本章活跃元素】
-{plots_desc or '（无桥段，通用推进）'}
-
-【现有节拍骨架】
-{' | '.join(b.description for b in plan.beats)}
-
-请优化每个节拍的描述，使其更具体（说清写什么、谁出场、发生什么），
-保持节拍数量不变。返回 JSON：
-{{"beats": [{{"index":1, "description":"具体描述"}}, ...]}}"""
-            from core.llm_client import extract_json
-            import json
-            raw = self.llm.call("你是网文章节策划。只返回JSON。", prompt,
-                                temperature=0.5, max_tokens=1536)
             data = json.loads(extract_json(raw))
-            descs = {b.get("index"): b.get("description", "") for b in data.get("beats", [])}
-            for b in plan.beats:
-                if b.index in descs and descs[b.index]:
-                    b.description = descs[b.index]
+            return data.get("text", raw)
+        except Exception:
+            return raw.strip()
+
+
+# ═══════════════════════════════════════════
+# Phase 2+3: 桥段填充 + 笑点注入
+# ═══════════════════════════════════════════
+
+class PlotFiller:
+    """在大纲扩写稿基础上填充桥段（仅填充完全包含在已扩写大纲内的桥段）"""
+
+    def __init__(self, timeline: BookTimeline, llm_client=None,
+                 gag_lib=None, theme_lib=None, on_progress=None):
+        self.tl = timeline
+        self.llm = llm_client
+        self.gag_lib = gag_lib
+        self.theme_lib = theme_lib
+        self.on_progress = on_progress or (lambda s,m: None)
+
+    def fill_all(self, expansions: list[OutlineExpansion]) -> tuple[list[FilledPlot], int]:
+        """
+        按依赖顺序填充所有桥段。
+        返回 (已填充的桥段列表, 跳过的桥段数)。
+        跨大纲桥段（依赖的大纲未全部扩写）跳过，标记待处理。
+        """
+        results: list[FilledPlot] = []
+        skipped = 0
+
+        # 建立 大纲id → 扩写稿 映射
+        exp_map = {e.outline_id: e for e in expansions}
+        expanded_outline_ids = set(exp_map.keys())
+
+        # 排序：先按大纲顺序，再按阶段顺序
+        sorted_plots = sorted(self.tl.plots,
+            key=lambda p: (next((i for i, o in enumerate(self.tl.outlines) if o.id == p.outline_id), 99), p.stage_index, p.order))
+
+        for p in sorted_plots:
+            # 检查依赖：桥段所属的大纲必须已扩写
+            if p.outline_id not in expanded_outline_ids:
+                skipped += 1
+                continue
+
+            self.on_progress("filling", f"桥段填充: {p.name}")
+            expansion = exp_map[p.outline_id]
+
+            # 填充这个桥段
+            filled = self._fill_one(p, expansion)
+            if filled:
+                results.append(filled)
+
+            # 注入笑点
+            if filled and p.gag_ids:
+                self.on_progress("gags", f"笑点注入: {p.name}")
+                self._inject_gags(filled, p)
+
+        return results, skipped
+
+    def _fill_one(self, plot: PlotSlot, expansion: OutlineExpansion) -> Optional[FilledPlot]:
+        """基于大纲扩写稿，按桥段骨架填充一段正文"""
+        structure = plot.template_structure or plot.name
+        slots_text = ""
+        if plot.slots:
+            slots_text = "\n".join(
+                f"  {s.get('name','?')} = {s.get('default','?')}（可选: {', '.join(s.get('options',[])[:3])}）"
+                for s in plot.slots[:4]
+            )
+
+        # 取大纲扩写稿中与该桥段阶段相关的部分作为上下文
+        context = expansion.text[:1500] + "..." + expansion.text[-500:]
+
+        wc_target = min(plot.cover_beats * 400, 2500)
+
+        prompt = f"""基于以下大纲扩写稿，按桥段骨架填充一段完整正文。
+
+【大纲上下文】
+{context}
+
+【桥段骨架】
+{structure}
+
+【变量槽位】
+{slots_text or '跟随大纲上下文自由发挥'}
+
+【要求】
+1. 这段正文是之前大纲的细化/展开，不是独立片段
+2. 目标 {wc_target} 字，控制在 ±20%
+3. 按骨架步骤自然推进，不要标注"步骤1/2"
+4. 如果桥段是嵌套的子桥段，篇幅更短、更聚焦
+5. 保持大纲的风格和人物性格一致"""
+
+        text = self._call_llm(prompt, wc_target)
+        if not text or len(text) < 30:
+            return None
+
+        wc = len(re.findall(r'[\u4e00-\u9fff]', text))
+        return FilledPlot(
+            plot_id=plot.id, name=plot.name,
+            text=text, word_count=wc,
+            gags_applied=[], themes_applied=[],
+        )
+
+    def _inject_gags(self, filled: FilledPlot, plot: PlotSlot):
+        """在已填充的桥段正文中注入笑点和内涵"""
+        gags_desc = ""
+        if self.gag_lib:
+            gag_patterns = []
+            for gid in plot.gag_ids[:2]:
+                found = next((g for g in self.gag_lib.patterns if g.id == gid), None)
+                if found:
+                    gag_patterns.append(f"{found.name}: {found.pattern_description}")
+            gags_desc = "\n".join(gag_patterns) if gag_patterns else plot.gag_ids
+
+        if not gags_desc and not filled.text:
+            return
+
+        prompt = f"""在以下桥段正文中，自然地注入笑点和内涵线索。不要大改原文结构，在合适位置插入/微调 2-3 处即可。
+
+【桥段正文】
+{filled.text[:2000]}
+
+【笑点模式】
+{gags_desc or '无特殊要求'}
+
+【内涵提示】
+{'; '.join(plot.theme_hints[:2]) if plot.theme_hints else '无'}
+
+【要求】
+1. 笑点要自然，不能生硬插入
+2. 返回完整修改后的正文
+3. 返回 JSON：{{"text": "修改后全文"}}"""
+
+        try:
+            from core.llm_client import extract_json
+            raw = self.llm.call("你是专业的网文编辑。只返回JSON。", prompt,
+                                temperature=0.5, max_tokens=min(4096, len(filled.text)*2))
+            data = json.loads(extract_json(raw))
+            new_text = data.get("text", filled.text)
+            filled.text = new_text
+            filled.gags_applied = plot.gag_ids
+            filled.themes_applied = plot.theme_hints
+            filled.word_count = len(re.findall(r'[\u4e00-\u9fff]', new_text))
+        except Exception:
+            pass  # 注入失败不影响正文
+
+    def _call_llm(self, prompt: str, word_target: int) -> str:
+        if not self.llm:
+            return f"[桥段 - {word_target}字 - LLM 未配置]"
+        raw = self.llm.call(
+            "你是一位专业的网络小说作者。请按桥段骨架填充正文。",
+            prompt, temperature=0.8, max_tokens=max(1536, word_target * 2))
+        return raw.strip()
+
+
+# ═══════════════════════════════════════════
+# Phase 4: 一致性审查
+# ═══════════════════════════════════════════
+
+class ConsistencyChecker:
+    """全文一致性检查"""
+
+    def __init__(self, llm_client=None, on_progress=None):
+        self.llm = llm_client
+        self.on_progress = on_progress or (lambda s,m: None)
+
+    def review(self, full_text: str, timeline: BookTimeline) -> str:
+        self.on_progress("review", "审查全文一致性...")
+        if not self.llm or len(full_text) < 500:
+            return full_text
+
+        prompt = f"""审查以下网络小说全文的一致性和连贯性。特别注意：
+- 人物名称前后是否一致
+- 时间线是否有跳跃漏洞
+- 桥段过渡是否生硬
+- 需要修复的地方尽量少改动
+
+流派：{timeline.genre}
+主角：{timeline.basic_info.get('protagonist',{}).get('name','') or '主角'}
+
+返回 JSON：{{"needs_fix": true/false, "fixed_text": "修复后全文", "issues": ["问题1"]}}"""
+
+        try:
+            from core.llm_client import extract_json
+            raw = self.llm.call("你是小说编辑，审查全文一致性。只返回JSON。",
+                                prompt + "\n\n【全文】\n" + full_text[:4000],
+                                temperature=0.3, max_tokens=4096)
+            data = json.loads(extract_json(raw))
+            if data.get("needs_fix") and data.get("fixed_text"):
+                return data["fixed_text"]
         except Exception:
             pass
-        return plan
+        return full_text
 
 
 # ═══════════════════════════════════════════
-# 蓝图注入器：把桥段/笑点/内涵转化为 prompt 指令
+# Phase 5: 分章节
 # ═══════════════════════════════════════════
 
-class TimelineInjector:
-    """把 ChapterBlueprint 转化为 LLM 写作指令（精确到桥段/笑点钉子）"""
+@dataclass
+class ChapterBoundary:
+    """一个章节边界"""
+    chapter_num: int
+    title_hint: str
+    start_offset: int   # 在全文中的起始字符位置
+    end_offset: int     # 结束位置
+    word_count: int
 
-    @staticmethod
-    def build_enrichment(bp: ChapterBlueprint, plot_lib=None, gag_lib=None) -> str:
-        parts = []
+class ChapterSplitter:
+    """全文写完后，AI 决定切在哪里分章节"""
 
-        # 1. 活跃大纲（重叠说明）
-        if bp.active_outlines:
-            o_desc = "、".join(f"{o.name}" for o in bp.active_outlines)
-            parts.append(f"【当前大纲】{o_desc}")
-            if len(bp.active_outlines) > 1:
-                parts.append("⚠️ 当前处于多个大纲重叠区——自然过渡，不要生硬切换")
+    def __init__(self, timeline: BookTimeline, llm_client=None, on_progress=None):
+        self.tl = timeline
+        self.llm = llm_client
+        self.on_progress = on_progress or (lambda s,m: None)
 
-        # 2. 桥段（含嵌套链）
-        for p in bp.active_plots[:3]:
-            parts.append(f"\n【桥段：{p.name}】")
-            if p.template_structure:
-                parts.append(f"结构骨架：{p.template_structure}")
-            if p.slots:
-                slots = "、".join(f"{s.get('name','?')}={s.get('default','?')}" for s in p.slots[:4])
-                parts.append(f"变量槽位：{slots}")
-            if p.parent_plot_id:
-                parts.append("（嵌套在父桥段中，篇幅更短，起辅助作用）")
+    def split(self, full_text: str) -> list[ChapterBoundary]:
+        self.on_progress("splitting", "AI 分章节...")
+        wc = len(re.findall(r'[\u4e00-\u9fff]', full_text))
+        target_per_ch = self.tl.words_per_chapter
 
-        # 3. 笑点钉子（精确指令）
-        if bp.active_gags:
-            parts.append(f"\n【本节笑点钉子（必须在对应桥段中自然呈现）】\n{chr(10).join('- ' + g for g in bp.active_gags[:3])}")
+        if not self.llm or wc <= target_per_ch * 1.3:
+            # 少于一章半，不用分
+            return [ChapterBoundary(1, "", 0, len(full_text), wc)]
 
-        # 4. 内涵提示
-        if bp.active_themes:
-            parts.append(f"\n【内涵提示】{chr(10).join('- ' + t for t in bp.active_themes[:2])}")
+        approx_chapters = max(1, wc // target_per_ch)
 
-        return "\n".join(parts)
+        prompt = f"""以下是一篇网络小说的完整正文（{wc}字）。请将其分为 {approx_chapters} 章左右。
+
+每章约 {target_per_ch} 字，分章位置选在自然停顿处（场景切换/时间跳跃/悬念高潮之后），
+不要强行在段落中间切断。
+
+返回 JSON：
+{{"chapters": [
+  {{"start_marker": "第一章开头前20个字（用于定位）", "title": "章名"}},
+  ...
+]}}"""
+
+        try:
+            from core.llm_client import extract_json
+            raw = self.llm.call("你是小说编辑，负责分章节。只返回JSON。",
+                                prompt + "\n\n【正文】\n" + full_text[:5000] + "...",
+                                temperature=0.4, max_tokens=2048)
+            data = json.loads(extract_json(raw))
+            chapters = data.get("chapters", [])
+
+            # 用 start_marker 在全文里定位分章点
+            boundaries = []
+            prev_pos = 0
+            for ci, ch in enumerate(chapters):
+                marker = ch.get("start_marker", "")
+                if marker and ci > 0:
+                    pos = full_text.find(marker, prev_pos + 50)
+                    if pos < 0:
+                        pos = prev_pos + target_per_ch  # fallback: 按字数估算
+                else:
+                    pos = 0 if ci == 0 else prev_pos
+
+                if ci == 0:
+                    pos = 0
+
+                ch_text = full_text[prev_pos:pos] if pos > prev_pos else full_text[prev_pos:]
+                ch_wc = len(re.findall(r'[\u4e00-\u9fff]', ch_text))
+                boundaries.append(ChapterBoundary(
+                    chapter_num=ci + 1,
+                    title_hint=ch.get("title", f"第{ci+1}章"),
+                    start_offset=prev_pos,
+                    end_offset=pos,
+                    word_count=ch_wc,
+                ))
+                prev_pos = pos
+
+            return boundaries if boundaries else self._fallback_split(full_text, target_per_ch)
+        except Exception:
+            return self._fallback_split(full_text, target_per_ch)
+
+    def _fallback_split(self, full_text: str, words_per_ch: int) -> list[ChapterBoundary]:
+        """规则分章：按字数均匀切"""
+        wc = len(re.findall(r'[\u4e00-\u9fff]', full_text))
+        ch_count = max(1, wc // words_per_ch)
+        boundaries = []
+        for i in range(ch_count):
+            start = i * words_per_ch * 4  # 粗略估算字符位置（中文每字约2字符）
+            end = min((i+1) * words_per_ch * 4, len(full_text))
+            boundaries.append(ChapterBoundary(
+                chapter_num=i+1, title_hint=f"第{i+1}章",
+                start_offset=start, end_offset=end,
+                word_count=words_per_ch,
+            ))
+        return boundaries
 
 
 # ═══════════════════════════════════════════
-# 完整蓝图章节写作管线
+# 完整蓝图写作管线 v2（SSE 流式）
 # ═══════════════════════════════════════════
 
-class TimelineChapterWriter:
+class BlueprintWritingPipeline:
     """
-    蓝图式章节写作管线：
+    蓝图写作管线 v2 — 先写完全文再分章，SSE 流式输出进度
 
-    1. TimelinePositionResolver: 章节号 → ChapterBlueprint（活跃大纲/桥段/笑点钉子）
-    2. TimelinePlanner: 蓝图 → 节拍计划（桥段结构驱动）
-    3. BeatExecutor: 逐节拍生成（注入蓝图指令）
-    4. ChapterAssembler: 拼接+过渡+去AI+校验
+    用法:
+        pipeline = BlueprintWritingPipeline(timeline, llm, ...)
+        for event in pipeline.build():
+            # event = (phase, message, data_dict)
+            yield sse_event(event)
     """
 
     def __init__(self, timeline: BookTimeline, llm_client=None,
-                 de_ai_engine=None, reviewer=None, gag_lib=None,
-                 plot_lib=None, profile=None):
+                 gag_lib=None, theme_lib=None, de_ai_engine=None):
         self.tl = timeline
         self.llm = llm_client
-        self.resolver = TimelinePositionResolver(timeline)
-        self.beat_lib = BeatLibrary()
-        self.planner = TimelinePlanner(self.beat_lib, llm_client)
-        self.executor = BeatExecutor(llm_client, self.beat_lib, gag_lib, profile)
-        self.assembler = ChapterAssembler(llm_client, de_ai_engine, reviewer)
-        self.plot_lib = plot_lib
         self.gag_lib = gag_lib
+        self.theme_lib = theme_lib
+        self.de_ai = de_ai_engine
+        self.state = BuildState()
 
-    def write_chapter(self, chapter_num: int,
-                      previous_chapter_ending: str = "",
-                      previous_summary: str = "",
-                      character_states: str = "",
-                      on_beat=None) -> dict:
-        """按蓝图写一章"""
-        # Step 1: 解析蓝图
-        bp = self.resolver.resolve(chapter_num)
-        if not bp.has_content():
-            # 超出时间线范围：用通用推进
-            bp.active_outlines = [self.tl.outlines[-1]] if self.tl.outlines else []
-            bp.active_plots = [
-                p for p in self.tl.plots
-                if p.outline_id == (self.tl.outlines[-1].id if self.tl.outlines else "")
-            ][:2]
+    def build(self):
+        """生成器：逐步构建全文，yield (phase, message, data) 事件"""
+        expansions: list[OutlineExpansion] = []
+        filled_plots: list[FilledPlot] = []
 
-        # Step 2: 节拍规划
-        plan = self.planner.plan_chapter(bp)
+        # ── Phase 1: 大纲扩写 ──
+        self.state.total_outlines = len(self.tl.outlines)
+        self.state.total_plots = len(self.tl.plots)
+        yield ("phase", "大纲扩写", {})
 
-        # Step 3: 蓝图指令注入
-        enrichment = TimelineInjector.build_enrichment(bp, self.plot_lib, self.gag_lib)
+        expander = OutlineExpander(self.tl, self.llm,
+            on_progress=lambda s, m: self._update("outlining", s, m))
 
-        # Step 4: 逐节拍生成
-        context = {
-            "chapter_num": chapter_num,
-            "chapter_outline": plan.chapter_outline,
-            "genre": self.tl.genre,
-            "pen_name": self.tl.pen_name,
-            "character_states": character_states,
-        }
-        beat_results: list[BeatResult] = []
-        accumulated = ""
-        for beat in plan.beats:
-            result = self.executor.execute_beat(
-                beat, context, accumulated,
-                library_enrichment=enrichment)
-            beat_results.append(result)
-            accumulated += result.text + "\n\n"
-            if on_beat:
-                on_beat(beat.index, result)
+        for i, o in enumerate(self.tl.outlines):
+            self.state.current_outline = o.name
+            self.state.message = f"大纲扩写: {o.name}"
+            yield ("outline_start", o.name, {"index": i+1, "total": len(self.tl.outlines)})
 
-        # Step 5: 组装
-        full_text = self.assembler.assemble(
-            plan, beat_results, previous_chapter_ending)
+            expanded = expander._expand_one(
+                o,
+                self.tl.words_per_chapter * (o.end_chapter - o.start_chapter + 1),
+                self._prev_context(expansions),
+                expansions[-1].end_words if expansions else 0,
+            )
+            expansions.append(expanded)
+            self.state.outlines_done = len(expansions)
 
-        total_wc = len(re.findall(r'[\u4e00-\u9fff]', full_text))
-        return {
-            "chapter_num": chapter_num,
-            "text": full_text,
-            "word_count": total_wc,
-            "beats": len(beat_results),
-            "blueprint": {
-                "outlines": [o.name for o in bp.active_outlines],
-                "plots": [p.name for p in bp.active_plots],
-                "gags": bp.active_gags,
-            },
-            "beat_details": [
-                {"index": br.index, "words": br.word_count,
-                 "template": br.template_used, "humor": br.humor_applied}
-                for br in beat_results
-            ],
-        }
+            yield ("outline_done", o.name, {
+                "index": i+1, "words": expanded.word_count,
+                "outline_id": o.id, "text_preview": expanded.text[:200] + "...",
+            })
+
+        # ── Phase 2: 桥段填充 ──
+        yield ("phase", "桥段填充", {})
+        filler = PlotFiller(self.tl, self.llm, self.gag_lib, self.theme_lib,
+            on_progress=lambda s, m: self._update("filling", s, m))
+
+        filled, skipped = filler.fill_all(expansions)
+        self.state.plots_done = len(filled)
+        self.state.plots_skipped = skipped
+
+        for fp in filled:
+            yield ("plot_done", fp.name, {
+                "plot_id": fp.plot_id, "words": fp.word_count,
+                "gags": fp.gags_applied, "text_preview": fp.text[:200] + "...",
+            })
+
+        if skipped:
+            yield ("info", f"跳过了 {skipped} 个跨大纲桥段", {})
+
+        # ── Phase 4: 一致性审查 ──
+        yield ("phase", "一致性审查", {})
+        full_text = self._assemble_full_text(expansions, filled)
+        checker = ConsistencyChecker(self.llm, on_progress=lambda s,m: None)
+        reviewed_text = checker.review(full_text, self.tl)
+
+        # ── Phase 5: 分章节 ──
+        yield ("phase", "分章节", {})
+        splitter = ChapterSplitter(self.tl, self.llm)
+        chapters = splitter.split(reviewed_text)
+
+        # 组装最终结果
+        chapters_data = []
+        for ch in chapters:
+            ch_text = reviewed_text[ch.start_offset:ch.end_offset] if ch != chapters[-1] else reviewed_text[ch.start_offset:]
+            chapters_data.append({
+                "num": ch.chapter_num, "title": ch.title_hint,
+                "word_count": ch.word_count,
+                "text": ch_text,
+            })
+
+        yield ("done", "构建完成", {
+            "total_words": sum(c["word_count"] for c in chapters_data),
+            "chapters": len(chapters_data),
+            "outlines_expanded": len(expansions),
+            "plots_filled": len(filled),
+            "plots_skipped": skipped,
+            "chapters_data": chapters_data,
+        })
+
+    def _prev_context(self, expansions: list[OutlineExpansion]) -> str:
+        if not expansions:
+            return ""
+        return f"前面已完成的大纲：{' → '.join(e.name for e in expansions)}"
+
+    def _assemble_full_text(self, expansions: list[OutlineExpansion],
+                            filled: list[FilledPlot]) -> str:
+        """组装全文：大纲扩写稿为主干，桥段填充稿替换/补充对应部分"""
+        # 简单策略：拼接所有扩写稿 + 填充稿
+        parts = []
+        parts.extend(e.text for e in expansions)
+        parts.extend(f.text for f in filled)
+        return "\n\n".join(parts)
+
+    def _update(self, phase: str, state: str, message: str):
+        self.state.phase = phase
+        self.state.message = message

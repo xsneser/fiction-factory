@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}写作台 — {{ timeline.book_title or timeline.pen_name }}{% endblock %}
+{% block content %}
+<h1>✍️ 写作台</h1>
+<div class="info-bar">
+    <span>笔名：<strong>{{ timeline.pen_name }}</strong></span>
+    <span>流派：<strong>{{ timeline.genre }}{% if timeline.sub_genre %}/{{ timeline.sub_genre }}{% endif %}</strong></span>
+    <span>每章：<strong>{{ timeline.words_per_chapter }}字</strong></span>
+</div>
+
+<div class="desk-layout">
+    {# ── 左栏: 蓝图 ── #}
+    <div class="desk-left">
+        <h3>📋 蓝图</h3>
+        <div id="blueprint-view">
+            {% for o in timeline.outlines %}
+            <div class="bp-outline" id="bp-outline-{{ o.id }}">
+                <div class="bp-outline-name">{{ o.name }}</div>
+                <div class="bp-outline-range">第{{ o.start_chapter }}-{{ o.end_chapter }}章</div>
+                {% for p in timeline.plots if p.outline_id == o.id %}
+                <div class="bp-plot" id="bp-plot-{{ p.id }}" data-outline="{{ o.id }}">
+                    <span class="bp-plot-name">{{ p.name }}</span>
+                    <span class="bp-plot-meta">{{ p.cover_beats }}节拍 {% if p.parent_plot_id %}↳嵌套{% endif %}</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    {# ── 右栏: 构建过程 + 成文 ── #}
+    <div class="desk-right">
+        <div class="desk-tabs">
+            <a href="javascript:;" class="desk-tab active" data-tab="progress" onclick="switchTab('progress')">⏳ 进度</a>
+            <a href="javascript:;" class="desk-tab" data-tab="output" onclick="switchTab('output')">📝 成文</a>
+        </div>
+
+        <div id="tab-progress" class="desk-tab-panel">
+            <div id="progress-log" class="progress-log">
+                <div class="empty" style="padding:40px"><p style="color:#484f58">准备就绪，点击开始构建</p></div>
+            </div>
+        </div>
+
+        <div id="tab-output" class="desk-tab-panel" style="display:none">
+            <div id="output-area" class="output-area"></div>
+        </div>
+    </div>
+</div>
+
+{# ── 控制 ── #}
+<div class="desk-controls">
+    <button id="btn-build" class="btn-primary" onclick="startBuild()" style="font-size:16px;padding:12px 32px">🚀 开始构建全文</button>
+    <button id="btn-stop" class="btn-danger" style="display:none" onclick="stopBuild()">⏹ 停止</button>
+    <span id="build-status" style="margin-left:16px;color:#8b949e;font-size:13px"></span>
+</div>
+
+<style>
+.info-bar { display:flex; gap:20px; padding:12px 16px; background:#161b22; border-radius:8px; margin-bottom:20px; color:#8b949e; font-size:13px; }
+.info-bar strong { color:#f0f6fc; }
+
+.desk-layout { display:flex; gap:16px; min-height:500px; margin-bottom:20px; }
+.desk-left { width:280px; flex-shrink:0; background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px; overflow-y:auto; max-height:600px; }
+.desk-left h3 { font-size:14px; color:#f0f6fc; margin-bottom:12px; }
+.desk-right { flex:1; background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px; overflow-y:auto; max-height:600px; min-height:0; }
+
+/* Blueprint items */
+.bp-outline { margin-bottom:12px; padding:10px; border-radius:6px; border:2px solid transparent; transition:all .3s; }
+.bp-outline-name { font-size:13px; font-weight:600; color:#58a6ff; }
+.bp-outline-range { font-size:11px; color:#484f58; margin-top:2px; }
+.bp-plot { margin:4px 0 4px 12px; padding:4px 8px; border-radius:4px; font-size:12px; transition:all .3s; border-left:2px solid transparent; }
+.bp-plot-name { color:#c9d1d9; }
+.bp-plot-meta { color:#484f58; font-size:10px; margin-left:6px; }
+
+/* Active/highlight states */
+.bp-outline.active { border-color:#58a6ff; background:#1a2332; }
+.bp-outline.done { border-color:#3fb950; }
+.bp-plot.active { border-left-color:#f0f6fc; background:#1f2937; }
+.bp-plot.done { border-left-color:#3fb950; }
+.bp-plot.skipped { border-left-color:#d29922; opacity:.5; }
+
+/* Tabs */
+.desk-tabs { display:flex; gap:4px; margin-bottom:12px; border-bottom:1px solid #30363d; }
+.desk-tab { padding:6px 16px; color:#8b949e; text-decoration:none; font-size:13px; border-bottom:2px solid transparent; }
+.desk-tab.active, .desk-tab:hover { color:#f0f6fc; border-bottom-color:#58a6ff; }
+
+/* Progress log */
+.progress-log { font-size:12px; line-height:1.8; }
+.progress-item { padding:3px 8px; margin:2px 0; border-radius:3px; }
+.progress-item.phase { color:#58a6ff; font-weight:600; }
+.progress-item.outline { color:#3fb950; }
+.progress-item.plot { color:#c9d1d9; }
+.progress-item.gag { color:#ffa657; }
+.progress-item.error { color:#f85149; }
+
+/* Output */
+.output-area { font-size:14px; line-height:1.8; color:#c9d1d9; white-space:pre-wrap; }
+.output-chapter { margin-bottom:24px; }
+.output-chapter h4 { color:#58a6ff; margin-bottom:8px; }
+
+.desk-controls { display:flex; align-items:center; gap:12px; margin-top:20px; }
+.btn-primary { background:#238636; color:white; border:none; padding:10px 24px; border-radius:8px; cursor:pointer; }
+.btn-primary:hover { background:#2ea043; }
+.btn-danger { background:#da3633; color:white; border:none; padding:10px 24px; border-radius:8px; cursor:pointer; display:none; }
+.btn-danger:hover { opacity:.8; }
+</style>
+
+<script>
+var timelineId = "{{ timeline_id }}";
+var abortController = null;
+var completedChapters = [];
+
+function switchTab(key) {
+    document.querySelectorAll('.desk-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.desk-tab-panel').forEach(p => p.style.display = 'none');
+    document.querySelector('.desk-tab[data-tab="'+key+'"]').classList.add('active');
+    document.getElementById('tab-'+key).style.display = 'block';
+}
+
+function addProgress(msg, cls) {
+    var el = document.getElementById('progress-log');
+    var div = document.createElement('div');
+    div.className = 'progress-item ' + (cls||'');
+    div.textContent = new Date().toLocaleTimeString() + ' ' + msg;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+}
+
+function highlight(id, cls) {
+    document.querySelectorAll('.bp-outline.active,.bp-plot.active').forEach(e => e.classList.remove('active'));
+    var el = document.getElementById(id);
+    if (el) { el.classList.add(cls); el.scrollIntoView({behavior:'smooth',block:'nearest'}); }
+}
+
+async function startBuild() {
+    document.getElementById('btn-build').style.display = 'none';
+    document.getElementById('btn-stop').style.display = 'inline-block';
+    document.getElementById('progress-log').innerHTML = '';
+    completedChapters = [];
+
+    abortController = new AbortController();
+    var resp = await fetch('/api/timeline/' + timelineId + '/build', {
+        method: 'POST',
+        signal: abortController.signal,
+    });
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+
+    while (true) {
+        var result = await reader.read();
+        if (result.done) break;
+        var raw = decoder.decode(result.value, {stream: true});
+        var lines = raw.split('\n');
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (line.startsWith('data: ')) {
+                try {
+                    var d = JSON.parse(line.slice(6));
+                    handleEvent(d);
+                } catch(e) {}
+            }
+        }
+    }
+
+    document.getElementById('btn-build').style.display = 'none';
+    document.getElementById('btn-stop').style.display = 'none';
+    document.getElementById('build-status').textContent = '✅ 构建完成';
+}
+
+function handleEvent(d) {
+    var status = document.getElementById('build-status');
+    switch (d.event) {
+        case 'phase':
+            addProgress('── ' + d.message + ' ──', 'phase');
+            status.textContent = d.message;
+            break;
+        case 'outline_start':
+            addProgress('📋 大纲扩写: ' + d.message, 'outline');
+            highlight('bp-outline-' + d.outline_id, 'active');
+            status.textContent = '大纲扩写: ' + d.message;
+            break;
+        case 'outline_done':
+            addProgress('✅ 大纲完成: ' + d.message + ' (' + d.words + '字)', 'outline');
+            highlight('bp-outline-' + d.outline_id, 'done');
+            break;
+        case 'plot_done':
+            addProgress('🔗 桥段填充: ' + d.message + ' (' + d.words + '字)', d.gags ? 'gag' : 'plot');
+            highlight('bp-plot-' + d.plot_id, 'done');
+            break;
+        case 'info':
+            addProgress('ℹ️ ' + d.message, '');
+            break;
+        case 'done':
+            addProgress('🎉 全文构建完成！' + d.total_words + '字 · ' + d.chapters + '章', 'phase');
+            status.textContent = '✅ 完成 ' + d.total_words + '字';
+            // 渲染成文
+            if (d.chapters_data) {
+                completedChapters = d.chapters_data;
+                renderOutput(d.chapters_data);
+            }
+            break;
+        case 'error':
+            addProgress('❌ ' + (d.message||'未知错误'), 'error');
+            break;
+    }
+}
+
+function renderOutput(chapters) {
+    var area = document.getElementById('output-area');
+    var html = '';
+    chapters.forEach(function(ch) {
+        html += '<div class="output-chapter">';
+        html += '<h4>第' + ch.num + '章 ' + (ch.title||'') + ' (' + ch.word_count + '字)</h4>';
+        html += '<div class="output-text">' + (ch.text||'').replace(/\n/g,'<br>') + '</div>';
+        html += '</div>';
+    });
+    area.innerHTML = html;
+    document.getElementById('tab-output').style.display = 'block';
+    switchTab('output');
+}
+
+function stopBuild() {
+    if (abortController) abortController.abort();
+    document.getElementById('btn-build').style.display = 'inline-block';
+    document.getElementById('btn-stop').style.display = 'none';
+    document.getElementById('build-status').textContent = '⏹ 已停止';
+}
+</script>
+{% endblock %}

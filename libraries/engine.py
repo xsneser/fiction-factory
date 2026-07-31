@@ -296,6 +296,7 @@ class NovelEngine:
 
         # 初始化蓝图写作器
         from .timeline_writer import TimelineChapterWriter
+
         self.timeline_writer = TimelineChapterWriter(
             timeline=timeline,
             llm_client=self.llm,
