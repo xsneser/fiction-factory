@@ -35,3 +35,4 @@ libraries/data/
 
 # 运行时任务缓存
 _api_tasks.json
+app_output.log

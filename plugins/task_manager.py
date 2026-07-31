@@ -23,8 +23,8 @@ def _now() -> str:
 
 
 def start(task_id: str, name: str = "", title: str = "",
-           total: int = 0, phase: str = "准备中"):
-    """注册一个新任务"""
+           total: int = 0, phase: str = "准备中", url: str = ""):
+    """注册一个新任务（url: 任务对应页面的跳转地址，供侧边栏“查看”按钮使用）"""
     with _lock:
         _tasks[task_id] = {
             "id": task_id,
@@ -36,7 +36,32 @@ def start(task_id: str, name: str = "", title: str = "",
             "logs": [],
             "started_at": _now(),
             "status": "running",
+            "url": url,
         }
+
+
+def ensure_single(name: str):
+    """确保同一工具名只有一个任务（单任务互斥）。
+    同 name 的所有旧任务（运行中/已完成/失败）都会被取消并移除，由新任务替代。
+    返回被替代的旧任务 id（无则 None）。
+    """
+    with _lock:
+        replaced = None
+        for tid, t in list(_tasks.items()):
+            if t.get("name") == name:
+                if t["status"] == "running":
+                    t["status"] = "cancelled"
+                    t["phase"] = "已取消"
+                    t["phase_display"] = "⏹️ 被新任务替代"
+                    t["ended_at"] = _now()
+                    t["ended_at_ts"] = time.time()
+                    evt = _cancel_events.get(tid)
+                    if evt:
+                        evt.set()  # 通知旧 worker 线程停止
+                _tasks.pop(tid, None)
+                _cancel_events.pop(tid, None)
+                replaced = tid
+        return replaced
 
 
 def register_cancel(task_id: str):
@@ -142,6 +167,7 @@ def get_tasks() -> list[dict]:
                 "total": t["total"],
                 "status": t["status"],
                 "time": t.get("started_at", ""),
+                "url": t.get("url", ""),
                 "logs": t.get("logs", [])[-10:],  # 最近10条
             })
         return result

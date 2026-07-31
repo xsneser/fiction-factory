@@ -6,20 +6,22 @@
     <title>NovelEngine — 小说工厂</title>
     <style>
         * { margin:0; padding:0; box-sizing:border-box; }
-        body { font-family: -apple-system, 'Microsoft YaHei', sans-serif; background:#0f1117; color:#e1e4e8; display:flex; min-height:100vh; overflow:hidden; }
+        html, body { height:100%; }
+        body { font-family: -apple-system, 'Microsoft YaHei', sans-serif; background:#0f1117; color:#e1e4e8; display:flex; height:100vh; overflow:hidden; }
         /* Sidebar */
-        nav { width:220px; background:#161b22; padding:20px 0; border-right:1px solid #30363d; flex-shrink:0; }
+        nav { width:220px; background:#161b22; padding:20px 0; border-right:1px solid #30363d; flex-shrink:0; min-height:0; overflow-y:auto; }
         nav .logo { padding:0 20px 20px; font-size:20px; font-weight:bold; color:#58a6ff; border-bottom:1px solid #30363d; margin-bottom:10px; }
         nav a { display:block; padding:10px 20px; color:#8b949e; text-decoration:none; font-size:14px; transition:all .2s; }
         nav a:hover, nav a.active { color:#f0f6fc; background:#1f2937; }
         nav .section { padding:12px 20px 4px; color:#484f58; font-size:11px; text-transform:uppercase; letter-spacing:1px; }
         /* Main */
-        .main-wrapper { flex:1; display:flex; overflow:hidden; }
-        main { flex:1; padding:30px; overflow-y:auto; }
+        .main-wrapper { flex:1; display:flex; overflow:hidden; min-height:0; }
+        main { flex:1; padding:30px; overflow-y:auto; min-height:0; }
         /* Right sidebar - 运行状态 */
         aside#status-bar {
             width: 260px; background:#161b22; border-left:1px solid #30363d;
             padding: 16px; overflow-y:auto; flex-shrink:0; display:flex; flex-direction:column; gap:10px;
+            min-height:0;
         }
         aside#status-bar .status-title { font-size:12px; color:#484f58; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
         aside#status-bar .status-empty { font-size:12px; color:#484f58; text-align:center; padding:20px 0; }
@@ -146,8 +148,28 @@
             });
         });
 
+        // ─── SPA 导航：拦截侧边栏链接，避免整页重刷 ───
+        document.addEventListener('click', function(e) {
+            var link = e.target.closest('nav a[href]');
+            if (!link) return;
+            // 跳过 javascript: 链接和外部链接
+            var href = link.getAttribute('href');
+            if (!href || href.startsWith('javascript:') || href.startsWith('http')) return;
+            e.preventDefault();
+            if (href === location.pathname + location.search) return;
+            navigateTo(href);
+        });
+        // 处理浏览器后退/前进
+        window.addEventListener('popstate', function() {
+            location.reload();
+        });
+
         // 运行状态轮询：所有任务卡片统一在 status-tasks 渲染，日志独立追加
-        var prevLogCount = {};
+        // 日志计数持久化到 sessionStorage，切换 SPA 页面不丢失
+        var prevLogCount = JSON.parse(sessionStorage.getItem('novelengine_logcount') || '{}');
+        window.addEventListener('beforeunload', function() {
+            sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
+        });
         var STATUS_EMPTY = '<div class="status-empty">暂无运行中的任务</div>';
         
         function closeTask(taskId) {
@@ -177,11 +199,50 @@
                 html += '<div class="task-phase">' + (t.phase||'') + '</div>';
                 if (t.total > 0) html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
                 if (t.time) html += '<div class="task-time">' + t.time + '</div>';
+                html += '<div class="task-actions" style="margin-top:6px;display:flex;gap:6px">';
+                // 查看按钮：跳转到任务对应页面（SPA 导航）
+                if (t.url) html += '<button onclick="navigateTo(\'' + t.url + '\')" style="flex:1;background:#1f6feb;border:none;color:#fff;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer" title="去查看">👁 查看</button>';
                 // 所有任务（运行中/完成/失败）都可以关闭
-                html += '<button onclick="closeTask(\'' + t.id.replace(/'/g, '') + '\')" style="position:absolute;top:6px;right:6px;background:none;border:none;color:#484f58;cursor:pointer;font-size:14px;line-height:1" title="关闭">✕</button>';
+                html += '<button onclick="closeTask(\'' + t.id.replace(/'/g, '') + '\')" style="background:none;border:none;color:#484f58;cursor:pointer;font-size:14px;line-height:1" title="关闭">✕</button>';
+                html += '</div>';
                 html += '</div>';
             }
             return html;
+        }
+        
+        // SPA 导航（供侧边栏“查看”按钮复用）
+        function navigateTo(target) {
+            if (!target || target === location.pathname) return;
+            fetch(target)
+                .then(function(r) { return r.text(); })
+                .then(function(html) {
+                    var parser = new DOMParser();
+                    var doc = parser.parseFromString(html, 'text/html');
+                    var newContent = doc.querySelector('main');
+                    var oldContent = document.querySelector('main');
+                    if (newContent && oldContent) {
+                        oldContent.innerHTML = newContent.innerHTML;
+                        document.title = doc.title;
+                        // 执行新内容中的脚本标签
+                        oldContent.querySelectorAll('script').forEach(function(s) {
+                            var newScript = document.createElement('script');
+                            if (s.src) {
+                                newScript.src = s.src;
+                            } else {
+                                newScript.textContent = s.textContent;
+                            }
+                            document.body.appendChild(newScript);
+                            document.body.removeChild(newScript);
+                        });
+                        // 更新侧边栏 active 状态
+                        document.querySelectorAll('nav a').forEach(function(a) {
+                            var h = a.getAttribute('href');
+                            a.classList.toggle('active', h === target || (target.startsWith(h) && h !== '/'));
+                        });
+                    }
+                    history.pushState(null, '', target);
+                })
+                .catch(function() { location.href = target; });
         }
         
         function pollStatus() {
@@ -198,6 +259,16 @@
                         el.innerHTML = newHtml;
                     }
                     
+                    // 清理：任务已不存在（被替代/关闭）→ 移除对应日志行
+                    if (logList) {
+                        var liveIds = {};
+                        if (tasks) tasks.forEach(function(t) { liveIds[t.id] = true; });
+                        logList.querySelectorAll('[data-task-id]').forEach(function(div) {
+                            var tid = div.getAttribute('data-task-id');
+                            if (!liveIds[tid]) div.remove();
+                        });
+                    }
+                    
                     // 日志增量追加（独立于卡片，不受卡片替换影响）
                     if (tasks && tasks.length > 0 && logArea && logList) {
                         var anyNew = false;
@@ -209,11 +280,14 @@
                                     for (var i = prev; i < t.logs.length; i++) {
                                         var l = t.logs[i];
                                         var div = document.createElement('div');
+                                        div.setAttribute('data-task-id', t.id);
                                         div.style.cssText = 'padding:2px 0;border-left:2px solid ' + (l.level==='error'?'#f85149':l.level==='success'?'#3fb950':'#30363d') + ';padding-left:6px;margin:1px 0;font-size:11px';
                                         div.textContent = l.time + ' ' + l.message;
                                         logList.appendChild(div);
                                     }
                                     prevLogCount[t.id] = t.logs.length;
+                                    // 每次追加后同步到 sessionStorage
+                                    sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
                                     anyNew = true;
                                 }
                             }
