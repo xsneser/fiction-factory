@@ -35,6 +35,7 @@ def start(task_id: str, name: str = "", title: str = "",
             "total": total,
             "logs": [],
             "started_at": _now(),
+            "started_at_ts": time.time(),
             "status": "running",
             "url": url,
         }
@@ -167,6 +168,7 @@ def get_tasks() -> list[dict]:
                 "total": t["total"],
                 "status": t["status"],
                 "time": t.get("started_at", ""),
+                "started_at_ts": t.get("started_at_ts", 0),
                 "url": t.get("url", ""),
                 "logs": t.get("logs", [])[-10:],  # 最近10条
             })

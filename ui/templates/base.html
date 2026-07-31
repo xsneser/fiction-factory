@@ -134,7 +134,9 @@
             <div class="status-title">⏳ 运行状态</div>
             <div id="status-tasks"></div>
             <div id="task-log" style="display:none">
-                <div class="status-title" style="margin-top:12px">📋 日志</div>
+                <div class="status-title" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">📋 日志
+                    <button onclick="clearLogs()" style="background:none;border:none;color:#484f58;cursor:pointer;font-size:11px" title="清空日志">🗑 清空</button>
+                </div>
                 <div id="task-log-list" style="font-size:11px;line-height:1.6;max-height:400px;overflow-y:auto"></div>
             </div>
         </aside>
@@ -171,6 +173,13 @@
             sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
         });
         var STATUS_EMPTY = '<div class="status-empty">暂无运行中的任务</div>';
+        
+        function clearLogs() {
+            var list = document.getElementById('task-log-list');
+            if (list) list.innerHTML = '';
+            prevLogCount = {};
+            sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
+        }
         
         function closeTask(taskId) {
             fetch('/api/status/tasks/close', {
@@ -259,15 +268,8 @@
                         el.innerHTML = newHtml;
                     }
                     
-                    // 清理：任务已不存在（被替代/关闭）→ 移除对应日志行
-                    if (logList) {
-                        var liveIds = {};
-                        if (tasks) tasks.forEach(function(t) { liveIds[t.id] = true; });
-                        logList.querySelectorAll('[data-task-id]').forEach(function(div) {
-                            var tid = div.getAttribute('data-task-id');
-                            if (!liveIds[tid]) div.remove();
-                        });
-                    }
+                    // 日志只追加不清除（任务卡片和日志各自独立，符合 task-system-spec）
+                    // 新任务替代旧任务时，旧日志保留供回溯
                     
                     // 日志增量追加（独立于卡片，不受卡片替换影响）
                     if (tasks && tasks.length > 0 && logArea && logList) {
@@ -275,7 +277,9 @@
                         for (var ti = 0; ti < tasks.length; ti++) {
                             var t = tasks[ti];
                             if (t.logs && t.logs.length > 0) {
-                                var prev = prevLogCount[t.id] || 0;
+                                // 用 id+启动时间戳做 key：同名任务重启后日志计数不混淆
+                                var logKey = t.id + ':' + (t.started_at_ts || 0);
+                                var prev = prevLogCount[logKey] || 0;
                                 if (t.logs.length > prev) {
                                     for (var i = prev; i < t.logs.length; i++) {
                                         var l = t.logs[i];
@@ -285,7 +289,7 @@
                                         div.textContent = l.time + ' ' + l.message;
                                         logList.appendChild(div);
                                     }
-                                    prevLogCount[t.id] = t.logs.length;
+                                    prevLogCount[logKey] = t.logs.length;
                                     // 每次追加后同步到 sessionStorage
                                     sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
                                     anyNew = true;
@@ -294,6 +298,10 @@
                         }
                         if (anyNew) {
                             logArea.style.display = 'block';
+                            // 容量上限：最多保留 300 条，超出删除最旧的
+                            while (logList.children.length > 300) {
+                                logList.removeChild(logList.firstChild);
+                            }
                             logList.scrollTop = logList.scrollHeight;
                         }
                     }
