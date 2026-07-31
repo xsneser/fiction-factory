@@ -204,8 +204,11 @@
                 var t = taskArray[i];
                 var pct = t.total > 0 ? Math.round((t.current/t.total)*100) : 0;
                 html += '<div class="status-card" data-id="' + t.id + '">';
-                html += '<div class="task-name">' + (t.title || t.name) + '</div>';
-                html += '<div class="task-phase">' + (t.phase||'') + '</div>';
+                // 第一行：工具名（在干什么操作）
+                html += '<div class="task-name">' + (t.name || '任务') + '</div>';
+                // 第二行：对象 + 具体阶段（对谁、干到哪）
+                var detail = (t.title ? t.title + ' · ' : '') + (t.phase||'');
+                html += '<div class="task-phase">' + detail + '</div>';
                 if (t.total > 0) html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
                 if (t.time) html += '<div class="task-time">' + t.time + '</div>';
                 html += '<div class="task-actions" style="margin-top:6px;display:flex;gap:6px">';
