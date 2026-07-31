@@ -45,6 +45,8 @@
     width: 100%;
     max-width: 1100px;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   /* Header */
@@ -55,6 +57,7 @@
     align-items: center;
     justify-content: space-between;
     background: #1a1c2b;
+    flex-shrink: 0;
   }
   .header h1 {
     font-size: 13px;
@@ -71,7 +74,10 @@
   /* Main layout */
   .main {
     display: flex;
-    height: 520px;
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
   }
 
   /* --- CHAPTER PANEL (left of axis) --- */
@@ -327,6 +333,7 @@
     padding: 6px 12px;
     border-top: 1px solid var(--border);
     display: flex;
+    flex-shrink: 0;
     gap: 10px;
     align-items: center;
     font-size: 10px;
