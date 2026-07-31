@@ -35,21 +35,21 @@
     justify-content: center;
     align-items: center;
     min-height: 100vh;
-    padding: 20px;
+    padding: 8px;
   }
 
   .app {
     background: var(--panel-bg);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    width: 1100px;
+    border-radius: 8px;
+    width: 100%;
+    max-width: 1100px;
     overflow: hidden;
-    box-shadow: 0 8px 40px rgba(0,0,0,.4);
   }
 
   /* Header */
   .header {
-    padding: 16px 24px;
+    padding: 8px 14px;
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
@@ -57,26 +57,26 @@
     background: #1a1c2b;
   }
   .header h1 {
-    font-size: 16px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--text-bright);
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
   }
   .header h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-  .header .meta { font-size: 12px; color: var(--text-dim); }
+  .header .meta { font-size: 10px; color: var(--text-dim); }
   .header .meta span { color: var(--text); margin: 0 4px; }
 
   /* Main layout */
   .main {
     display: flex;
-    height: 680px;
+    height: 520px;
   }
 
   /* --- CHAPTER PANEL (left of axis) --- */
   .chapter-panel {
-    width: 80px;
+    width: 55px;
     position: relative;
     border-right: 1px solid var(--border);
     background: #13141d;
@@ -84,18 +84,18 @@
   }
   .chapter-panel .chapter-mark {
     position: absolute;
-    left: 8px;
-    right: 8px;
+    left: 4px;
+    right: 4px;
     transform: translateY(-50%);
     display: flex;
     align-items: center;
     gap: 4px;
   }
   .chapter-panel .chapter-dot {
-    width: 8px; height: 8px; border-radius: 50%;
+    width: 6px; height: 6px; border-radius: 50%;
     background: var(--accent);
     flex-shrink: 0;
-    box-shadow: 0 0 8px var(--accent);
+    box-shadow: 0 0 6px var(--accent);
   }
   .chapter-panel .chapter-line {
     position: absolute;
@@ -105,20 +105,20 @@
     background: var(--axis);
   }
   .chapter-panel .chapter-num {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--accent);
     font-weight: 700;
     white-space: nowrap;
   }
   .chapter-panel .chapter-words {
-    font-size: 10px;
+    font-size: 9px;
     color: var(--text-dim);
     white-space: nowrap;
   }
 
   /* --- AXIS --- */
   .axis-panel {
-    width: 20px;
+    width: 14px;
     position: relative;
     flex-shrink: 0;
   }
@@ -170,21 +170,21 @@
     left: 0;
     right: 0;
     z-index: 10;
-    padding: 6px 10px;
-    font-size: 11px;
+    padding: 4px 6px;
+    font-size: 10px;
     font-weight: 700;
     color: var(--text-bright);
     background: linear-gradient(to bottom, rgba(22,24,34,.95), rgba(22,24,34,0));
-    letter-spacing: 1px;
+    letter-spacing: 0px;
   }
   .lane-header .icon { margin-right: 4px; }
 
   .lane-body {
     position: absolute;
-    top: 32px;
-    left: 6px;
-    right: 6px;
-    bottom: 8px;
+    top: 24px;
+    left: 4px;
+    right: 4px;
+    bottom: 4px;
   }
 
   /* --- BARS --- */
@@ -207,10 +207,13 @@
     box-shadow: 0 0 16px rgba(0,0,0,.5);
   }
   .bar .bar-label {
-    font-size: 11px;
+    font-size: 10px;
     color: #fff;
     font-weight: 600;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
     text-shadow: 0 1px 3px rgba(0,0,0,.6);
     pointer-events: none;
   }
@@ -322,12 +325,12 @@
 
   /* Legend */
   .legend {
-    padding: 8px 24px;
+    padding: 6px 12px;
     border-top: 1px solid var(--border);
     display: flex;
-    gap: 16px;
+    gap: 10px;
     align-items: center;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-dim);
     background: #1a1c2b;
   }
@@ -347,9 +350,9 @@
 <div class="app">
   <!-- Header -->
   <div class="header">
-    <h1><span class="dot"></span>小说工厂 · 大纲时间线</h1>
+    <h1><span class="dot"></span>大纲时间线</h1>
     <div class="meta">
-      总字数 <span>6,000</span> · 章节 <span>2</span> · 大纲线 <span>4</span> · 桥段 <span>14</span> · 笑点 <span>6</span> · 内涵 <span>5</span>
+      总字数 <span>6,000</span> · 章节 <span>2</span> · 大纲 <span>4</span> · 桥段 <span>14</span>
     </div>
   </div>
 
