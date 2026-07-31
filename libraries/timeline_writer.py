@@ -45,7 +45,7 @@ class FilledPlot:
 @dataclass
 class BuildState:
     """构建状态 — 用于 SSE 进度报告"""
-    phase: str  # outlining|filling|gags|review|splitting|done
+    phase: str = "idle"  # outlining|filling|gags|review|splitting|done
     current_outline: str = ""
     current_plot: str = ""
     message: str = ""
