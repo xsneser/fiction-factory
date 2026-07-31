@@ -17,7 +17,7 @@ from libraries.de_ai import DeAIEngine
 from libraries.writing_pipeline import WritingPipeline, WritingContext
 from libraries.character_state import CharacterStateMachine
 from libraries.reviewer import ContentReviewer
-from libraries.engine import NovelEngine, BookMode, Phase, Op
+from libraries.engine import NovelEngine, BookMode, Phase, Op, Instruction
 from libraries.new_book import NewBookConfig, NewBookPipeline, recommend_opening
 from core.llm_client import LLMClient
 from core.models import APIConfig
@@ -427,31 +427,76 @@ def api_delete_outline(timeline_id):
 
 @app.route("/books/start/timeline/<timeline_id>/write")
 def timeline_start_writing(timeline_id):
-    """从时间线配置启动写作引擎"""
+    """从时间线配置启动蓝图式写作引擎（新核心）"""
     tl = _timelines.get(timeline_id)
     if not tl:
         return "时间线配置不存在或已过期", 404
 
-    # TODO: 基于时间线配置创建 NovelEngine，按断点写作
-    # 当前版本：先跳转到旧引擎页面作为兼容过渡
     llm = get_llm()
     if not llm:
         return jsonify({"error": "LLM 未配置"}), 500
 
     engine = NovelEngine(llm_client=llm)
-    # 用时间线数据初始化引擎（最小兼容：取第一个大纲作为整体大纲）
-    from libraries.new_book import NewBookConfig
-    config = NewBookConfig(
-        title=tl.book_title, pen_name=tl.pen_name, genre=tl.genre,
-        sub_genre=tl.sub_genre, platform="fanqie",
-        chapter_count=sum(o.end_chapter - o.start_chapter + 1 for o in tl.outlines),
-        words_per_chapter=tl.words_per_chapter,
-    )
-    engine.start_new_book(config)
+    engine.start_new_book_timeline(tl)
 
-    temp_id = f"tl_{engine.state.pen_name}"
+    temp_id = f"tlw_{tl.pen_name}_{int(__import__('time').time())}"
     _engines[temp_id] = engine
-    return redirect(url_for("new_book_workflow", engine_id=temp_id))
+    return redirect(url_for("timeline_write_flow", engine_id=temp_id))
+
+
+@app.route("/books/timeline/write/<engine_id>")
+def timeline_write_flow(engine_id):
+    """蓝图式写作流程页（新核心）"""
+    engine = _engines.get(engine_id)
+    if not engine:
+        return "引擎会话已过期", 404
+    return render_template("timeline_write_flow.html",
+        engine_id=engine_id,
+        state=engine.state,
+        timeline=engine.timeline,
+    )
+
+
+@app.route("/api/timeline-engine/<engine_id>/step", methods=["POST"])
+def timeline_engine_step(engine_id):
+    """蓝图引擎：写一章"""
+    from plugins import task_manager
+
+    engine = _engines.get(engine_id)
+    if not engine:
+        return jsonify({"error": "not found"}), 404
+
+    task_id = f"engine_{engine_id}"
+    next_ch = engine.state.current_chapter + 1
+
+    # 注册/更新任务
+    if next_ch == 1:
+        task_manager.ensure_single("新书生成")
+        task_manager.start(task_id, name="新书生成",
+                          title=engine.state.pen_name or "",
+                          total=3, phase=f"第{next_ch}章...", url="/books/start")
+    else:
+        task_manager.progress(task_id, current=min(next_ch, 3), phase=f"第{next_ch}章...")
+    task_manager.log(task_id, f"蓝图写作：第{next_ch}章", "info")
+
+    # 检查是否写完前三章
+    if next_ch > 3:
+        task_manager.done(task_id, message=f"前三章完成")
+        return jsonify({"status": "done", "flow_complete": True, "reason": "前三章已写完"})
+
+    inst = Instruction(Op.WRITE_TIMELINE_CHAPTER, chapter_num=next_ch)
+    result = engine.execute(inst)
+    task_manager.log(task_id, f"第{next_ch}章完成 {result.get('word_count', 0)}字", "success")
+
+    return jsonify({
+        "op": "write_timeline_chapter",
+        "chapter_num": next_ch,
+        "status": result.get("status"),
+        "word_count": result.get("word_count", 0),
+        "beats": result.get("beats", 0),
+        "blueprint": result.get("blueprint", {}),
+        "cost": result.get("cost", 0),
+    })
 
 
 

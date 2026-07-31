@@ -32,7 +32,7 @@
     <div style="font-size:11px;color:#8b949e;margin-top:6px">📝 {{ o.notes }}</div>
     {% endif %}
 </div>
-{% if o.start_chapter <= timeline.outlines[(loop.index0 if loop else 0)] if o.overlaps_with and not loop.first %}
+{% if o.overlaps_with %}
 <div class="outline-overlap"></div>
 {% endif %}
 

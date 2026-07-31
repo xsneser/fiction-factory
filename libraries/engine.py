@@ -72,6 +72,9 @@ class Op(Enum):
     DE_AI_PASS = "de_ai_pass"          # 去AI味
     CONFIRM_CHAPTER = "confirm"        # 确认发布
 
+    # 蓝图写作（时间线驱动）
+    WRITE_TIMELINE_CHAPTER = "write_timeline_chapter"  # 按蓝图写一章
+
 
 @dataclass
 class Instruction:
@@ -192,6 +195,11 @@ class NovelEngine:
             llm_client=llm_client,
         )
 
+        # 蓝图式写作（时间线驱动，新核心）
+        self.timeline: Optional[dict] = None          # BookTimeline
+        self.timeline_writer = None                    # TimelineChapterWriter
+        self._timeline_config: Optional[dict] = None   # 原始时间线配置
+
         # 状态
         self.state = EngineState()
         self.cost_tracker = CostTracker()
@@ -244,6 +252,95 @@ class NovelEngine:
         # 初始化成本追踪
         self.cost_tracker = CostTracker()
         self.cost_tracker.book_id = "new_book"
+
+        return self.state
+
+    def start_new_book_timeline(self, timeline: dict, config: dict = None) -> EngineState:
+        """
+        🔰 蓝图式新书启动（新核心）
+
+        timeline: BookTimeline 对象（多大纲序列 + 桥段嵌套 + 笑点/内涵）
+        config: 可选覆盖配置（pen_name/genre/sub_genre/words_per_chapter）
+        """
+        if not self.llm:
+            raise RuntimeError("LLM 未配置，无法启动新书")
+
+        # 保存时间线配置
+        self._timeline_config = timeline
+        self.timeline = timeline
+
+        pen_name = (config or {}).get("pen_name") or timeline.pen_name
+        genre = (config or {}).get("genre") or timeline.genre
+        sub_genre = (config or {}).get("sub_genre") or timeline.sub_genre
+        words_per_chapter = (config or {}).get("words_per_chapter") or timeline.words_per_chapter
+
+        # 总章节数 = 时间线里所有大纲的章节范围之和
+        total_ch = 0
+        if timeline.outlines:
+            total_ch = max(o.end_chapter for o in timeline.outlines)
+        if total_ch <= 0:
+            total_ch = 100
+
+        self.state = EngineState(
+            book_mode=BookMode.CONTINUE,   # 蓝图模式直接进入写作
+            phase=Phase.WRITING,
+            title=timeline.book_title or "(待定)",
+            pen_name=pen_name,
+            genre=genre,
+            sub_genre=sub_genre,
+            platform="fanqie",
+            total_chapters=total_ch,
+            current_chapter=0,
+            started_at=datetime.now().isoformat(),
+        )
+
+        # 初始化蓝图写作器
+        from .timeline_writer import TimelineChapterWriter
+        self.timeline_writer = TimelineChapterWriter(
+            timeline=timeline,
+            llm_client=self.llm,
+            de_ai_engine=self.de_ai,
+            reviewer=self.reviewer,
+            gag_lib=self.gag_lib,
+            plot_lib=self.plot_lib,
+            profile=self.profile,
+        )
+
+        # 加载笔名档案
+        self.profile = None
+        try:
+            self.profile = self.profiles.get_by_name(pen_name)
+        except Exception:
+            pass
+        if self.timeline_writer:
+            self.timeline_writer.executor.profile = self.profile
+
+        # 初始化成本追踪
+        self.cost_tracker = CostTracker()
+        self.cost_tracker.book_id = "timeline_book"
+
+        # 创建正式图书记录（蓝图模式章节直接落盘）
+        try:
+            from .book_manager import BookConfig
+            book = self.book_mgr.create(
+                title=timeline.book_title or "(待定)",
+                pen_name=pen_name,
+                genre=genre,
+                sub_genre=sub_genre,
+                platform="fanqie",
+                chapter_count=total_ch,
+                structure_template_id="timeline",
+                style_profile_id=self.profile.id if self.profile else "",
+            )
+            self.book = book
+            self.state.book_id = book.book_id
+            self.cost_tracker.book_id = book.book_id
+            # 保存时间线配置到图书目录
+            from .timeline import save_timeline
+            save_timeline(timeline, f"books/{book.book_id}/timeline.json")
+        except Exception as e:
+            print(f"[timeline] 创建图书记录失败: {e}")
+            self.book = None
 
         return self.state
 
@@ -426,6 +523,7 @@ class NovelEngine:
             Op.REVIEW_CHAPTER:  self._exec_review_current,
             Op.DE_AI_PASS:      self._exec_de_ai_current,
             Op.CONFIRM_CHAPTER: self._exec_confirm_current,
+            Op.WRITE_TIMELINE_CHAPTER: self._exec_write_timeline_chapter,
         }
         handler = handlers.get(inst.op)
         if handler:
@@ -939,6 +1037,73 @@ class NovelEngine:
             "plot_used": "beat_writer",
             "beats": result["beats"],
             "beat_details": result.get("beat_details", []),
+            "cost": round(self.cost_tracker.spent, 4),
+        }
+
+    def _exec_write_timeline_chapter(self, inst: Instruction) -> dict:
+        """按蓝图（时间线）写一章 — 新核心"""
+        chapter_num = inst.chapter_num
+        self.state.current_chapter = chapter_num
+
+        if not self.timeline_writer:
+            return {"error": "蓝图写作器未初始化，请先调用 start_new_book_timeline()"}
+
+        # 获取上文结尾
+        prev_ending = ""
+        if chapter_num > 1:
+            try:
+                prev_ch = self.book_mgr.load_chapter(
+                    self.state.book_id, chapter_num - 1)
+                if prev_ch:
+                    prev_ending = prev_ch.get("content", "")[-500:]
+            except Exception:
+                pass
+
+        # 角色状态
+        char_states = ""
+        try:
+            char_states = self.char_states.build_context_prompt(chapter_num=chapter_num)
+        except Exception:
+            pass
+
+        result = self.timeline_writer.write_chapter(
+            chapter_num=chapter_num,
+            previous_chapter_ending=prev_ending,
+            character_states=char_states,
+        )
+
+        full_text = result["text"]
+        self.state.current_content = full_text
+        self.state.phase = Phase.REVIEWING
+
+        # 更新角色状态
+        try:
+            self.char_states.update_from_chapter(chapter_num, full_text)
+        except Exception:
+            pass
+
+        self._save_continue_state()
+
+        # 保存章节
+        if self.book:
+            try:
+                self.book_mgr.save_chapter(
+                    self.state.book_id, chapter_num,
+                    f"第{chapter_num}章", full_text)
+            except Exception:
+                pass
+
+        # 记录成本
+        self.cost_tracker.record(f"ch{chapter_num}_timeline", "", full_text)
+
+        return {
+            "status": "chapter_written",
+            "chapter": chapter_num,
+            "word_count": result["word_count"],
+            "plot_used": "timeline_writer",
+            "beats": result["beats"],
+            "beat_details": result.get("beat_details", []),
+            "blueprint": result.get("blueprint", {}),
             "cost": round(self.cost_tracker.spent, 4),
         }
 

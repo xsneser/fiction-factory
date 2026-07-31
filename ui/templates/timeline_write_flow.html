@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}蓝图写作 — {{ state.pen_name }}{% endblock %}
+{% block content %}
+<h1>🔰 蓝图式写作（新核心）</h1>
+<div class="info-bar">
+    <span>笔名：<strong>{{ state.pen_name }}</strong></span>
+    <span>流派：<strong>{{ state.genre }}{% if state.sub_genre %}/{{ state.sub_genre }}{% endif %}</strong></span>
+    <span>每章：<strong>{{ timeline.words_per_chapter }}字</strong></span>
+</div>
+
+{# ─── 时间线概览（大纲条） ─── #}
+<div class="timeline-overview" style="margin-bottom:20px">
+    <div class="tl-label">📋 大纲时间线</div>
+    <div class="tl-track" id="tl-track">
+        {% for o in timeline.outlines %}
+        <div class="tl-outline" style="left: {{ ((o.start_chapter-1) / (timeline.outlines[-1].end_chapter if timeline.outlines else 100)) * 100 }}%; width: {{ ((o.end_chapter - o.start_chapter + 1) / (timeline.outlines[-1].end_chapter if timeline.outlines else 100)) * 100 }}%">
+            {{ o.name }}
+        </div>
+        {% endfor %}
+        <div class="tl-cursor" id="tl-cursor" style="left:0%"></div>
+    </div>
+</div>
+
+{# ─── 章节状态 ─── #}
+<div id="chapter-status" class="chapter-status" style="margin-bottom:16px">
+    <span style="color:#8b949e">当前章节：</span><strong id="cur-ch" style="color:#58a6ff">第1章</strong>
+    <span id="cur-blueprint" style="color:#8b949e;margin-left:12px"></span>
+</div>
+
+{# ─── 输出区 ─── #}
+<div id="output" class="output-panel">
+    <div id="output-body" style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:20px;min-height:200px;white-space:pre-wrap;font-size:14px;line-height:1.8;color:#c9d1d9"></div>
+</div>
+
+{# ─── 控制 ─── #}
+<div class="controls" style="margin-top:20px;display:flex;gap:12px">
+    <button id="btn-start" class="btn-primary" onclick="startFlow()">▶ 开始写前三章</button>
+    <button id="btn-stop" class="btn-danger" style="display:none;background:#da3633;color:white;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer" onclick="stopFlow()">⏹ 停止</button>
+    <button id="btn-next" class="btn-primary" style="display:none;background:#1f6feb" onclick="nextChapter()">▶ 写下一章</button>
+</div>
+
+<style>
+.info-bar { display:flex; gap:20px; padding:12px 16px; background:#161b22; border-radius:8px; margin-bottom:20px; color:#8b949e; font-size:13px; }
+.info-bar strong { color:#f0f6fc; }
+.timeline-overview { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px; }
+.tl-label { font-size:12px; color:#8b949e; margin-bottom:10px; }
+.tl-track { position:relative; height:40px; background:#0d1117; border-radius:6px; overflow:hidden; }
+.tl-outline { position:absolute; top:4px; bottom:4px; background:linear-gradient(135deg, #1f6feb, #58a6ff88); border-radius:4px; font-size:11px; color:#fff; display:flex; align-items:center; padding:0 8px; overflow:hidden; white-space:nowrap; }
+.tl-cursor { position:absolute; top:0; bottom:0; width:2px; background:#f85149; box-shadow:0 0 8px #f85149; transition:left .5s; }
+.chapter-status { font-size:13px; }
+.btn-primary { background:#238636; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:14px; cursor:pointer; }
+.btn-primary:hover { background:#2ea043; }
+.output-panel .writing { animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%{opacity:.4} 50%{opacity:1} 100%{opacity:.4} }
+</style>
+
+<script>
+const engineId = "{{ engine_id }}";
+let running = false;
+let stopRequested = false;
+let currentChapter = 0;
+const totalOutlines = {{ timeline.outlines|length }};
+const lastChapter = {{ timeline.outlines[-1].end_chapter if timeline.outlines else 100 }};
+
+function updateCursor() {
+    const pct = (currentChapter / lastChapter) * 100;
+    document.getElementById('tl-cursor').style.left = pct + '%';
+    document.getElementById('cur-ch').textContent = '第' + currentChapter + '章';
+}
+
+function showMsg(text, cls) {
+    const el = document.getElementById('output-body');
+    el.innerHTML = text;
+    el.className = cls || '';
+}
+
+async function startFlow() {
+    running = true;
+    stopRequested = false;
+    document.getElementById('btn-start').style.display = 'none';
+    document.getElementById('btn-stop').style.display = 'inline-block';
+    showMsg('<span class="writing">🚀 蓝图引擎启动，开始规划第1章...</span>');
+
+    // 连续写前三章
+    for (let i = 0; i < 3; i++) {
+        if (stopRequested) break;
+        await writeChapter();
+    }
+
+    running = false;
+    document.getElementById('btn-stop').style.display = 'none';
+    document.getElementById('btn-next').style.display = 'inline-block';
+}
+
+async function nextChapter() {
+    await writeChapter();
+}
+
+async function writeChapter() {
+    const resp = await fetch('/api/timeline-engine/' + engineId + '/step', { method: 'POST' });
+    const data = await resp.json();
+
+    if (data.error) {
+        showMsg('❌ ' + data.error);
+        return;
+    }
+    if (data.flow_complete) {
+        showMsg('<div style="color:#3fb950;font-size:16px">🎉 前三章全部完成！</div>');
+        document.getElementById('btn-start').style.display = 'none';
+        document.getElementById('btn-next').style.display = 'none';
+        return;
+    }
+
+    currentChapter = data.chapter_num;
+    updateCursor();
+
+    const bp = data.blueprint || {};
+    const bpText = (bp.outlines || []).join(' / ') + ' → ' + (bp.plots || []).join('、');
+    document.getElementById('cur-blueprint').textContent = '🎯 ' + bpText;
+
+    // 等 2 秒让内容刷出来（简单轮询读取实际章节内容由后端保存）
+    showMsg(`<span style="color:#3fb950">✅ 第${data.chapter_num}章完成</span> · ${data.word_count}字 · ${data.beats}节拍\n\n蓝图：${bpText}\n\n<span style="color:#484f58">（正文已保存，可在书库中查看）</span>`);
+}
+
+function stopFlow() {
+    stopRequested = true;
+    showMsg('⏹️ 已停止');
+    document.getElementById('btn-stop').style.display = 'none';
+    document.getElementById('btn-start').style.display = 'none';
+}
+</script>
+{% endblock %}
