@@ -64,6 +64,8 @@ def get_llm():
 
 # ─── 引擎实例缓存 ───
 _engines: dict[str, NovelEngine] = {}
+_timelines: dict[str, dict] = {}  # 时间线配置缓存
+from libraries.timeline import BookTimeline, save_timeline, load_timeline, TimelineBuilder
 
 def create_engine() -> NovelEngine:
     llm = get_llm()
@@ -93,33 +95,57 @@ def dashboard():
 
 @app.route("/books/start", methods=["GET", "POST"])
 def start_new_book():
-    """新书启动页面"""
+    """新书启动 — v2: 先创建时间线配置，再跳转编辑器"""
     if request.method == "POST":
-        config = NewBookConfig(
-            title=request.form.get("title", ""),
-            pen_name=request.form.get("pen_name", ""),
-            genre=request.form.get("genre", ""),
-            sub_genre=request.form.get("sub_genre", ""),
-            platform=request.form.get("platform", "fanqie"),
-            chapter_count=int(request.form.get("chapter_count", 500)),
-            opening_template_id=request.form.get("opening_template_id", ""),
-            golden_finger_template_id=request.form.get("golden_finger_template_id", ""),
-            structure_template_id=request.form.get("structure_template_id", ""),
-            style_profile_id=request.form.get("style_profile_id", ""),
-        )
-
         llm = get_llm()
         if not llm:
-            return jsonify({"error": "LLM 未配置，请先设置 api.json"}), 500
+            return jsonify({"error": "LLM 未配置"}), 500
 
-        engine = NovelEngine(llm_client=llm)
-        engine.start_new_book(config)
+        pen_name = request.form.get("pen_name", "")
+        genre = request.form.get("genre", "")
+        sub_genre = request.form.get("sub_genre", "")
 
-        # 缓存引擎
-        temp_id = f"new_{engine.state.pen_name}"
-        _engines[temp_id] = engine
+        # 创建时间线配置
+        timeline = BookTimeline(
+            book_title=request.form.get("title", ""),
+            genre=genre,
+            sub_genre=sub_genre,
+            words_per_chapter=int(request.form.get("words_per_chapter", 3000)),
+            pen_name=pen_name,
+            basic_info={
+                "protagonist": {
+                    "name": request.form.get("protag_name", ""),
+                    "identity": request.form.get("protag_identity", ""),
+                    "personality": request.form.get("protag_personality", ""),
+                    "golden_finger": request.form.get("protag_golden_finger", ""),
+                },
+                "world_building": {
+                    "description": request.form.get("world_desc", ""),
+                },
+            },
+            phase="config",
+        )
 
-        return redirect(url_for("new_book_workflow", engine_id=temp_id))
+        # 如果用户给了时间线描述，立即用 AI 生成大纲序列
+        timeline_hint = request.form.get("timeline_hint", "")
+        if timeline_hint:
+            builder = TimelineBuilder(
+                structure_lib=struct_lib,
+                plot_lib=plot_lib,
+                gag_lib=gag_lib,
+                theme_lib=theme_lib,
+                llm_client=llm,
+            )
+            timeline.outlines = builder.build_outline_sequence(
+                genre=genre, sub_genre=sub_genre, custom_context=timeline_hint)
+            timeline.phase = "outlines"
+
+        # 保存并跳转
+        timeline_id = f"tl_{pen_name}_{int(__import__('time').time())}"
+        _timelines[timeline_id] = timeline
+        save_timeline(timeline, f"books/timelines/{timeline_id}.json")
+
+        return redirect(url_for("timeline_edit", timeline_id=timeline_id))
 
     return render_template("start_book.html",
         pen_names=profiles.list_all(),
@@ -226,6 +252,209 @@ def engine_status_api(engine_id):
             "foreshadows": len(engine.state.new_book.foreshadows_planned),
         } if engine.state.book_mode == BookMode.NEW else None,
     })
+# ═══════════════════════════════════════════
+# ⏱️ 时间线编辑（新书启动 v2）
+# ═══════════════════════════════════════════
+
+@app.route("/timeline/<timeline_id>/edit")
+def timeline_edit(timeline_id):
+    """时间线编辑器页面"""
+    tl_data = _timelines.get(timeline_id)
+    if not tl_data:
+        tl_data = load_timeline(f"books/timelines/{timeline_id}.json")
+        if tl_data:
+            _timelines[timeline_id] = tl_data
+    if not tl_data:
+        return "时间线配置不存在或已过期", 404
+    return render_template("timeline_editor.html",
+        timeline_id=timeline_id,
+        timeline=tl_data,
+    )
+
+
+@app.route("/api/timeline/<timeline_id>/generate-outlines", methods=["POST"])
+def api_generate_outlines(timeline_id):
+    """AI 或规则生成大纲序列"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        return jsonify({"ok": False, "error": "not found"}), 404
+
+    llm = get_llm()
+    builder = TimelineBuilder(
+        structure_lib=struct_lib, plot_lib=plot_lib,
+        gag_lib=gag_lib, theme_lib=theme_lib, llm_client=llm,
+    )
+
+    mode = request.args.get("mode", "ai")
+    if mode == "rule":
+        tl.outlines = builder.build_outline_sequence(genre=tl.genre, mode="rule")
+    else:
+        tl.outlines = builder.build_outline_sequence(
+            genre=tl.genre, sub_genre=tl.sub_genre,
+            custom_context=tl.basic_info.get("world_building", {}).get("description", ""),
+            mode="ai",
+        )
+    tl.phase = "outlines"
+    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    return jsonify({"ok": True, "count": len(tl.outlines)})
+
+
+@app.route("/api/timeline/<timeline_id>/confirm-outlines", methods=["POST"])
+def api_confirm_outlines(timeline_id):
+    """确认大纲配置，进入桥段编排阶段"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    tl.phase = "plots"
+    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    return jsonify({"ok": True, "phase": "plots"})
+
+
+@app.route("/api/timeline/<timeline_id>/fill-plots", methods=["POST"])
+def api_fill_plots(timeline_id):
+    """给每个大纲填充桥段"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if not tl.outlines:
+        return jsonify({"ok": False, "error": "请先生成大纲序列"}), 400
+
+    llm = get_llm()
+    builder = TimelineBuilder(
+        structure_lib=struct_lib, plot_lib=plot_lib,
+        gag_lib=gag_lib, theme_lib=theme_lib, llm_client=llm,
+    )
+
+    new_plots = []
+    for o in tl.outlines:
+        new_plots.extend(builder.fill_plots_for_outline(o, tl))
+
+    # 去重：按 id 合并
+    existing_ids = {p.id for p in tl.plots}
+    for p in new_plots:
+        if p.id not in existing_ids:
+            tl.plots.append(p)
+
+    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    return jsonify({"ok": True, "plots_added": len(new_plots),
+                    "total_plots": len(tl.plots)})
+
+
+@app.route("/api/timeline/<timeline_id>/fill-gags", methods=["POST"])
+def api_fill_gags(timeline_id):
+    """注入笑点和吸睛点"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        return jsonify({"ok": False, "error": "not found"}), 404
+
+    builder = TimelineBuilder(
+        structure_lib=struct_lib, plot_lib=plot_lib,
+        gag_lib=gag_lib, theme_lib=theme_lib,
+    )
+    builder.fill_gags_and_hooks(tl.plots, tl)
+    tl.phase = "ready" if tl.plots else "gags"
+    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    return jsonify({"ok": True, "phase": tl.phase})
+
+
+@app.route("/api/timeline/<timeline_id>/plot-confirm", methods=["POST"])
+def api_plot_confirm(timeline_id):
+    """切换单个桥段的确认状态"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    data = request.json or {}
+    plot_id = data.get("plot_id", "")
+    confirmed = data.get("confirmed", False)
+    for p in tl.plots:
+        if p.id == plot_id:
+            p.confirmed = confirmed
+            break
+    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/timeline/<timeline_id>/update-outline", methods=["POST"])
+def api_update_outline(timeline_id):
+    """更新大纲的章节范围"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    data = request.json or {}
+    oid = data.get("id", "")
+    field = data.get("field", "")
+    val = data.get("value", 0)
+    for o in tl.outlines:
+        if o.id == oid:
+            setattr(o, field, int(val))
+            break
+    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/timeline/<timeline_id>/move-outline", methods=["POST"])
+def api_move_outline(timeline_id):
+    """上移/下移大纲"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    data = request.json or {}
+    oid = data.get("id", "")
+    direction = data.get("direction", "up")
+    idx = next((i for i, o in enumerate(tl.outlines) if o.id == oid), -1)
+    if idx < 0:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    new_idx = idx - 1 if direction == "up" else idx + 1
+    if 0 <= new_idx < len(tl.outlines):
+        tl.outlines[idx], tl.outlines[new_idx] = tl.outlines[new_idx], tl.outlines[idx]
+    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/timeline/<timeline_id>/delete-outline", methods=["POST"])
+def api_delete_outline(timeline_id):
+    """删除一个大纲（同时删除其下的桥段）"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    data = request.json or {}
+    oid = data.get("id", "")
+    tl.outlines = [o for o in tl.outlines if o.id != oid]
+    tl.plots = [p for p in tl.plots if p.outline_id != oid]
+    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    return jsonify({"ok": True})
+
+
+@app.route("/books/start/timeline/<timeline_id>/write")
+def timeline_start_writing(timeline_id):
+    """从时间线配置启动写作引擎"""
+    tl = _timelines.get(timeline_id)
+    if not tl:
+        return "时间线配置不存在或已过期", 404
+
+    # TODO: 基于时间线配置创建 NovelEngine，按断点写作
+    # 当前版本：先跳转到旧引擎页面作为兼容过渡
+    llm = get_llm()
+    if not llm:
+        return jsonify({"error": "LLM 未配置"}), 500
+
+    engine = NovelEngine(llm_client=llm)
+    # 用时间线数据初始化引擎（最小兼容：取第一个大纲作为整体大纲）
+    from libraries.new_book import NewBookConfig
+    config = NewBookConfig(
+        title=tl.book_title, pen_name=tl.pen_name, genre=tl.genre,
+        sub_genre=tl.sub_genre, platform="fanqie",
+        chapter_count=sum(o.end_chapter - o.start_chapter + 1 for o in tl.outlines),
+        words_per_chapter=tl.words_per_chapter,
+    )
+    engine.start_new_book(config)
+
+    temp_id = f"tl_{engine.state.pen_name}"
+    _engines[temp_id] = engine
+    return redirect(url_for("new_book_workflow", engine_id=temp_id))
+
+
+
 
 
 # ═══════════════════════════════════════════

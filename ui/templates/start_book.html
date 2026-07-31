@@ -40,17 +40,36 @@
                 <option value="fanqie" {% if request.form.get('platform')=='fanqie' %}selected{% endif %}>番茄小说</option>
                 <option value="qidian" {% if request.form.get('platform')=='qidian' %}selected{% endif %}>起点中文网</option>
             </select>
-            <label>总章节数</label>
-            <input name="chapter_count" type="number" value="{{ request.form.get('chapter_count', 500) }}" min="10" max="2000">
+            <label>每章字数</label>
+            <input name="words_per_chapter" type="number" value="{{ request.form.get('words_per_chapter', 3000) }}" min="1000" max="10000" step="500">
         </div>
         <div class="form-row">
-            <label>笔名风格档案</label>
-            <select name="style_profile_id">
-                <option value="">跟随笔名默认风格</option>
-                {% for p in pen_names %}
-                <option value="profile_{{ '%03d' % (loop.index) }}">{{ p.pen_name }} · 风格档案</option>
-                {% endfor %}
-            </select>
+            <label>时间线描述（可选，留空由引擎自动设划）</label>
+            <textarea name="timeline_hint" rows="2" placeholder="如：开头都市爽文30章，穿越到异界接系统升级流...">{{ request.form.get('timeline_hint','') }}</textarea>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>🧑 主角设定（可选）</legend>
+        <div class="form-row half">
+            <label>主角姓名</label>
+            <input name="protag_name" placeholder="留空由 AI 生成" value="{{ request.form.get('protag_name','') }}">
+            <label>身份/职业</label>
+            <input name="protag_identity" placeholder="如：废柴家族少主、程序员" value="{{ request.form.get('protag_identity','') }}">
+        </div>
+        <div class="form-row half">
+            <label>性格特点</label>
+            <input name="protag_personality" placeholder="如：幽默自嘲、冷酷理性" value="{{ request.form.get('protag_personality','') }}">
+            <label>金手指类型</label>
+            <input name="protag_golden_finger" placeholder="如：草民系统、血脉觉醒" value="{{ request.form.get('protag_golden_finger','') }}">
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>🌍 世界观（可选）</legend>
+        <div class="form-row">
+            <label>世界观简述</label>
+            <textarea name="world_desc" rows="2" placeholder="如：灵气复苏后科技与修仙共存、异界大陆七国争霸...">{{ request.form.get('world_desc','') }}</textarea>
         </div>
     </fieldset>
 

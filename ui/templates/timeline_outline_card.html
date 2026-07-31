@@ -1,0 +1,59 @@
+<div class="outline-card" data-id="{{ o.id }}">
+    <div class="oc-header">
+        <div>
+            <div class="oc-name">{{ o.name }}</div>
+            <div style="font-size:11px;color:#484f58;margin-top:2px">
+                {{ o.template_id }} · {{ o.transition_type }}
+                {% if o.overlaps_with %}· 重叠: {{ o.overlaps_with|join(', ') }}{% endif %}
+            </div>
+        </div>
+        <div class="oc-actions">
+            <button class="btn btn-sm" style="background:#30363d;color:#c9d1d9;font-size:11px" onclick="moveOutline('{{ o.id }}','up')">↑</button>
+            <button class="btn btn-sm" style="background:#30363d;color:#c9d1d9;font-size:11px" onclick="moveOutline('{{ o.id }}','down')">↓</button>
+            <button class="btn btn-sm danger" style="font-size:11px" onclick="deleteOutline('{{ o.id }}')">删除</button>
+        </div>
+    </div>
+    <div class="oc-range">
+        <label>第</label>
+        <input type="number" value="{{ o.start_chapter }}" onchange="updateOutline('{{ o.id }}','start_chapter',this.value)">
+        <label>章 — 第</label>
+        <input type="number" value="{{ o.end_chapter }}" onchange="updateOutline('{{ o.id }}','end_chapter',this.value)">
+        <label>章</label>
+        <span style="color:#484f58">（{{ o.end_chapter - o.start_chapter + 1 }}章）</span>
+    </div>
+    {% if o.stages %}
+    <div class="oc-stages">
+        {% for s in o.stages %}
+        <span class="oc-stage">{{ s.name }} ({{ s.min_ch }}-{{ s.max_ch }}章)</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if o.notes %}
+    <div style="font-size:11px;color:#8b949e;margin-top:6px">📝 {{ o.notes }}</div>
+    {% endif %}
+</div>
+{% if o.start_chapter <= timeline.outlines[(loop.index0 if loop else 0)] if o.overlaps_with and not loop.first %}
+<div class="outline-overlap"></div>
+{% endif %}
+
+<script>
+function updateOutline(id, field, val) {
+    fetch('/api/timeline/' + timelineId + '/update-outline', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id, field: field, value: parseInt(val)})
+    }).then(r => r.json()).then(d => { if (!d.ok) location.reload(); });
+}
+function moveOutline(id, dir) {
+    fetch('/api/timeline/' + timelineId + '/move-outline', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id, direction: dir})
+    }).then(r => r.json()).then(d => { if (d.ok) location.reload(); });
+}
+function deleteOutline(id) {
+    if (!confirm('删除这个大纲？')) return;
+    fetch('/api/timeline/' + timelineId + '/delete-outline', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id})
+    }).then(r => r.json()).then(d => { if (d.ok) location.reload(); });
+}
+</script>

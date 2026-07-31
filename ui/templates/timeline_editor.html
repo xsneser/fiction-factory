@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}时间线编辑 — {{ timeline.book_title or timeline.pen_name }}{% endblock %}
+{% block content %}
+<h1>🔰 新书规划：时间线编辑器</h1>
+<div class="info-bar">
+    <span>笔名：<strong>{{ timeline.pen_name }}</strong></span>
+    <span>流派：<strong>{{ timeline.genre }}{% if timeline.sub_genre %}/{{ timeline.sub_genre }}{% endif %}</strong></span>
+    <span>每章：<strong>{{ timeline.words_per_chapter }}字</strong></span>
+</div>
+
+{# ─── 步骤指示器 ─── #}
+<div class="flow-steps" style="margin-bottom:24px">
+    <div class="step {% if timeline.phase in ('config','outlines') %}active{% endif %}" id="step-outlines">
+        <div class="step-num">1</div>
+        <div class="step-label">大纲时间线</div>
+        <div class="step-status" id="status-outlines">{{ '✅' if timeline.outlines and timeline.phase != 'config' else '等待中' }}</div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step {% if timeline.phase in ('plots','gags') %}active{% endif %}" id="step-plots">
+        <div class="step-num">2</div>
+        <div class="step-label">桥段编排</div>
+        <div class="step-status" id="status-plots">{{ '✅' if timeline.phase in ('gags','ready') else '等待中' }}</div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step {% if timeline.phase == 'gags' %}active{% endif %}" id="step-gags">
+        <div class="step-num">3</div>
+        <div class="step-label">加料注入</div>
+        <div class="step-status" id="status-gags">{{ '✅' if timeline.phase == 'ready' else '等待中' }}</div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step" id="step-write">
+        <div class="step-num">4</div>
+        <div class="step-label">开始写作</div>
+        <div class="step-status">➡️</div>
+    </div>
+</div>
+
+{# ─── Phase 1: 大纲时间线 ─── #}
+<div id="phase-outlines" class="phase-panel" {% if timeline.phase not in ('config','outlines') %}style="display:none"{% endif %}>
+    <div class="phase-header">
+        <h2>📋 大纲时间线</h2>
+        <div style="display:flex;gap:8px">
+            <button class="btn-primary btn-sm" onclick="generateOutlines()">🤖 AI 生成大纲序列</button>
+            <button class="btn btn-sm" style="background:#30363d;color:#c9d1d9" onclick="addOutline()">+ 手动添加</button>
+            <button class="btn-primary btn-sm" onclick="confirmOutlines()" id="btn-confirm-outlines" style="background:#1f6feb">✅ 确认大纲 → 编排桥段</button>
+        </div>
+    </div>
+
+    <div id="outline-list" class="outline-list">
+        {% for o in timeline.outlines %}
+        {% include "timeline_outline_card.html" %}
+        {% endfor %}
+    </div>
+    <div id="outline-empty" class="empty" {% if timeline.outlines %}style="display:none"{% endif %}>
+        <div class="icon" style="font-size:36px">📋</div>
+        <p style="color:#8b949e;margin-top:12px">还没有大纲配置</p>
+        <p style="color:#484f58;font-size:12px;margin-top:6px">点击"AI 生成大纲序列"让引擎自动规划，或手动添加大纲</p>
+    </div>
+</div>
+
+{# ─── Phase 2: 桥段编排 ─── #}
+<div id="phase-plots" class="phase-panel" {% if timeline.phase != 'plots' %}style="display:none"{% endif %}>
+    <div class="phase-header">
+        <h2>🧩 桥段编排</h2>
+        <div style="display:flex;gap:8px">
+            <button class="btn-primary btn-sm" onclick="fillPlots()">🤖 AI 填充桥段</button>
+            <button class="btn-primary btn-sm" onclick="confirmPlots()" id="btn-confirm-plots" style="background:#1f6feb">✅ 确认桥段 → 加料注入</button>
+        </div>
+    </div>
+    <div id="plot-list">
+        {% for o in timeline.outlines %}
+        <div class="outline-plot-group" data-outline-id="{{ o.id }}">
+            <h3 style="margin:16px 0 8px;color:#58a6ff">{{ o.name }} <span style="font-size:12px;color:#8b949e">第{{ o.start_chapter }}-{{ o.end_chapter }}章</span></h3>
+            {% for p in timeline.plots if p.outline_id == o.id %}
+            <div class="plot-card card">
+                <div style="display:flex;justify-content:space-between;align-items:start">
+                    <div>
+                        <code>{{ p.category }}</code>
+                        <strong>{{ p.name }}</strong>
+                        <span class="tag">{{ p.cover_beats }}节拍</span>
+                        {% if p.parent_plot_id %}<span class="tag blue">嵌套</span>{% endif %}
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <label style="font-size:12px;color:#8b949e;cursor:pointer">
+                            <input type="checkbox" {% if p.confirmed %}checked{% endif %} onchange="togglePlotConfirm('{{ p.id }}', this.checked)"> 确认
+                        </label>
+                    </div>
+                </div>
+                {% if p.template_structure %}
+                <div style="font-size:12px;color:#484f58;margin-top:4px">{{ p.template_structure[:120] }}</div>
+                {% endif %}
+                {% if p.gag_ids %}
+                <div style="font-size:11px;color:#3fb950;margin-top:4px">🎭 笑点: {{ p.gag_ids|join(', ') }}</div>
+                {% endif %}
+                {% if p.hook_points %}
+                <div style="font-size:11px;color:#d29922;margin-top:2px">⚡ 吸睛: {{ p.hook_points|join(', ') }}</div>
+                {% endif %}
+            </div>
+            {% else %}
+            <div class="empty" style="padding:20px"><p style="color:#484f58;font-size:12px">该大纲尚未填充桥段</p></div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+{# ─── Phase 3: 加料注入 ─── #}
+<div id="phase-gags" class="phase-panel" {% if timeline.phase != 'gags' %}style="display:none"{% endif %}>
+    <div class="phase-header">
+        <h2>🎭 加料注入</h2>
+        <button class="btn-primary" onclick="injectGags()">🤖 AI 注入笑点+吸睛点</button>
+    </div>
+    <div id="gag-result"></div>
+    <div style="margin-top:20px">
+        <button class="btn-primary" onclick="startWriting()" style="background:#1f6feb;font-size:16px;padding:12px 32px">🚀 确认全部 → 开始写作</button>
+    </div>
+</div>
+
+<style>
+.info-bar { display:flex; gap:20px; padding:12px 16px; background:#161b22; border-radius:8px; margin-bottom:20px; color:#8b949e; font-size:13px; }
+.info-bar strong { color:#f0f6fc; }
+.flow-steps { display:flex; align-items:flex-start; gap:0; margin-bottom:24px; overflow-x:auto; padding:12px 0; }
+.step { text-align:center; min-width:90px; padding:10px; background:#161b22; border:2px solid #30363d; border-radius:8px; transition:all .3s; }
+.step.active { border-color:#58a6ff; background:#1a2332; }
+.step-num { font-size:20px; font-weight:bold; color:#58a6ff; margin-bottom:4px; }
+.step-label { font-size:11px; color:#c9d1d9; line-height:1.3; }
+.step-status { font-size:11px; margin-top:4px; color:#8b949e; }
+.step-arrow { font-size:16px; color:#484f58; padding:14px 4px; }
+.phase-panel { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
+.phase-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+.phase-header h2 { margin:0; color:#f0f6fc; font-size:18px; }
+.outline-list { display:flex; flex-direction:column; gap:12px; }
+.outline-card { background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:16px; position:relative; }
+.outline-card .oc-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.outline-card .oc-name { font-size:16px; font-weight:600; color:#58a6ff; }
+.outline-card .oc-range { display:flex; align-items:center; gap:8px; font-size:12px; color:#8b949e; }
+.outline-card .oc-range input { width:55px; text-align:center; padding:4px 6px; background:#0d1117; border:1px solid #30363d; border-radius:4px; color:#f0f6fc; font-size:12px; }
+.outline-card .oc-stages { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+.outline-card .oc-stage { background:#161b22; border:1px solid #30363d; border-radius:4px; padding:4px 10px; font-size:11px; color:#c9d1d9; }
+.outline-card .oc-actions { display:flex; gap:6px; }
+.outline-overlap { position:relative; height:24px; margin:-8px 0; }
+.outline-overlap::before { content:'重叠过渡区'; position:absolute; left:50%; transform:translateX(-50%); top:2px; font-size:9px; color:#d29922; background:#332b0d; padding:2px 8px; border-radius:10px; }
+.plot-card { background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:12px; margin:8px 0; font-size:13px; }
+.btn-sm { padding:6px 14px; font-size:12px; }
+</style>
+
+<script>
+var timelineId = "{{ timeline_id }}";
+
+function generateOutlines() {
+    var btn = event.target;
+    btn.disabled = true; btn.textContent = '生成中...';
+    fetch('/api/timeline/' + timelineId + '/generate-outlines', { method: 'POST' })
+        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); })
+        .catch(e => alert('失败: ' + e.message))
+        .finally(() => { btn.disabled = false; btn.textContent = '🤖 AI 生成大纲序列'; });
+}
+
+function addOutline() {
+    fetch('/api/timeline/' + timelineId + '/generate-outlines?mode=rule', { method: 'POST' })
+        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); })
+        .catch(e => alert('失败: ' + e.message));
+}
+
+function confirmOutlines() {
+    if (!confirm('确认大纲时间线？确认后进入桥段编排阶段。')) return;
+    var btn = document.getElementById('btn-confirm-outlines');
+    btn.disabled = true; btn.textContent = '处理中...';
+    fetch('/api/timeline/' + timelineId + '/confirm-outlines', { method: 'POST' })
+        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); })
+        .catch(e => alert('失败: ' + e.message));
+}
+
+function fillPlots() {
+    var btn = event.target;
+    btn.disabled = true; btn.textContent = '填充中...';
+    fetch('/api/timeline/' + timelineId + '/fill-plots', { method: 'POST' })
+        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); })
+        .catch(e => alert('失败: ' + e.message))
+        .finally(() => { btn.disabled = false; btn.textContent = '🤖 AI 填充桥段'; });
+}
+
+function confirmPlots() {
+    if (!confirm('确认桥段编排？确认后进入加料注入阶段。')) return;
+    fetch('/api/timeline/' + timelineId + '/fill-gags', { method: 'POST' })
+        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); });
+}
+
+function togglePlotConfirm(plotId, checked) {
+    fetch('/api/timeline/' + timelineId + '/plot-confirm', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({plot_id: plotId, confirmed: checked})
+    });
+}
+
+function injectGags() {
+    var btn = event.target;
+    btn.disabled = true; btn.textContent = '注入中...';
+    fetch('/api/timeline/' + timelineId + '/fill-gags', { method: 'POST' })
+        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); });
+}
+
+function startWriting() {
+    location.href = '/books/start/timeline/' + timelineId + '/write';
+}
+</script>
+{% endblock %}
