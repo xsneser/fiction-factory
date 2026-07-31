@@ -32,6 +32,9 @@
 </style>
 
 <script>
+// 单工具互斥代际计数器：新分析任务替代旧任务后，旧请求的返回结果被丢弃
+var _extractGen = 0;
+
 function switchExtractTab(key) {
     document.querySelectorAll('.extract-tab').forEach(function(t) { t.classList.remove('active'); });
     document.querySelectorAll('.extract-panel').forEach(function(p) { p.style.display = 'none'; });
@@ -86,81 +89,91 @@ function loadNovelsForExtract(mode) {
 }
 
 function extractLibrary(platform, folder, btn) {
+    // 单工具互斥：新任务替代旧任务，旧请求返回后不再渲染
+    var gen = ++_extractGen;
     btn.disabled = true;
     btn.textContent = '提取中...';
     document.getElementById('extract-result-area').style.display = 'none';
-
-    fetch('/api/scout/analyze', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({platform: platform, folder: folder}),
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        if (d.ok) {
-            showAlert('✅ 分析完成: ' + d.title + ' (' + (d.plot_details||[]).length + '桥段 ' + (d.structure_details||[]).length + '大纲 ' + (d.gag_details||[]).length + '笑点 ' + (d.theme_details||[]).length + '内涵)', 'success');
-            showReviewCards(d);
-        } else {
-            showAlert('❌ 分析失败: ' + (d.error||''), 'error');
-        }
-    })
-    .catch(function(e) { showAlert('❌ 请求失败: ' + e.message, 'error'); })
-    .finally(function() { btn.disabled = false; btn.textContent = '🗂️ 提取资产库'; });
+    readAnalyzeStream(gen, btn, '🗂️ 提取资产库', platform, folder, 'library');
 }
 
 function extractStyle(platform, folder, btn) {
+    // 单工具互斥：新任务替代旧任务，旧请求返回后不再渲染
+    var gen = ++_extractGen;
     btn.disabled = true;
     btn.textContent = '分析中...';
     document.getElementById('extract-result-area').style.display = 'none';
+    readAnalyzeStream(gen, btn, '✍️ 分析写作风格', platform, folder, 'style');
+}
 
+// SSE 读取分析流：进度日志由后端 task_manager 驱动右侧状态栏，
+// 前端只等 done 事件渲染结果卡片
+function readAnalyzeStream(gen, btn, btnText, platform, folder, mode) {
     fetch('/api/scout/analyze', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({platform: platform, folder: folder}),
+        body: JSON.stringify({platform: platform, folder: folder, mode: mode}),
     })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        if (d.ok && d.writing_style) {
-            var s = d.writing_style;
-            var html = '<div class="style-result">';
-            html += '<h3>✍️ ' + d.title + ' — 写作风格分析</h3>';
-            html += '<div class="field"><div class="field-label">📝 风格概要</div><div class="field-value">' + (s.summary || '') + '</div></div>';
-            html += '<div class="field"><div class="field-label">句子节奏</div><div class="field-value">' + (s.sentence_rhythm || '') + '</div></div>';
-            html += '<div class="field"><div class="field-label">对话风格</div><div class="field-value">' + (s.dialogue_style || '') + '</div></div>';
-            html += '<div class="field"><div class="field-label">描写偏好</div><div class="field-value">' + (s.description_focus || '') + '</div></div>';
-            html += '<div class="field"><div class="field-label">情绪表达</div><div class="field-value">' + (s.emotional_expression || '') + '</div></div>';
-            if (s.common_words && s.common_words.length) html += '<div class="field"><div class="field-label">常用词</div><div class="field-value">' + s.common_words.join('、') + '</div></div>';
-            if (s.avoid_words && s.avoid_words.length) html += '<div class="field"><div class="field-label">禁用词</div><div class="field-value">' + s.avoid_words.join('、') + '</div></div>';
-            html += '<div class="field"><div class="field-label">叙事视角</div><div class="field-value">' + (s.narrative_perspective || '') + '</div></div>';
-            html += '<div class="field"><div class="field-label">开篇风格</div><div class="field-value">' + (s.opening_style || '') + '</div></div>';
-            html += '<div class="field"><div class="field-label">节奏把控</div><div class="field-value">' + (s.pacing || '') + '</div></div>';
-            html += '</div>';
-            document.getElementById('extract-result-area').innerHTML = html;
-            document.getElementById('extract-result-area').style.display = 'block';
-            showAlert('✅ 风格分析完成', 'success');
-        } else {
-            showAlert('❌ 分析失败: ' + ((d.error)||'无结果'), 'error');
+    .then(function(r) {
+        if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || ('HTTP ' + r.status)); });
+        var reader = r.body.getReader();
+        var decoder = new TextDecoder();
+        function read() {
+            return reader.read().then(function(res) {
+                if (res.done) return;
+                var raw = decoder.decode(res.value, {stream: true});
+                var lines = raw.split('\n');
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i].trim();
+                    if (line.startsWith('data: ')) {
+                        try {
+                            var d = JSON.parse(line.slice(6));
+                            if (d.event === 'done') {
+                                if (gen === _extractGen) {
+                                    if (mode === 'library') showReviewCards(d);
+                                    else showStyleResult(d);
+                                }
+                                return;
+                            }
+                            if (d.event === 'error') {
+                                if (gen === _extractGen) alert('❌ 分析失败: ' + (d.message||'未知错误'));
+                                return;
+                            }
+                            if (d.event === 'cancelled') {
+                                // 被新任务替代，静默结束
+                                return;
+                            }
+                        } catch(e) {}
+                    }
+                }
+                return read();
+            });
         }
+        return read();
     })
-    .catch(function(e) { showAlert('❌ 请求失败: ' + e.message, 'error'); })
-    .finally(function() { btn.disabled = false; btn.textContent = '✍️ 分析写作风格'; });
+    .catch(function(e) { if (gen === _extractGen) alert('❌ 请求失败: ' + e.message); })
+    .finally(function() { if (gen === _extractGen) { btn.disabled = false; btn.textContent = btnText; } });
 }
 
 function showAlert(msg, type) {
-    var t = document.createElement('div');
-    t.className = 'alert ' + (type || 'info');
-    t.textContent = msg;
-    t.style.cssText = 'position:fixed;top:20px;right:20px;z-index:1000';
-    document.body.appendChild(t);
-    setTimeout(function(){ t.remove(); }, 3000);
+    // 不再使用右上角绿色弹框，日志统一走右侧状态栏（task_manager）
 }
 
 // ─── 审核入库（复用scout的逻辑） ───
 
 var _lastReviewData = null;
+var EXTRACT_RESULT_KEY = 'novelengine_extract_result';
 
 function showReviewCards(d) {
     _lastReviewData = d;
+    // 持久化结果到 sessionStorage：切换页面后回来仍能查看
+    try { sessionStorage.setItem(EXTRACT_RESULT_KEY, JSON.stringify({mode:'library', data:d})); } catch(e) {}
+    renderReviewCards(d);
+    var area = document.getElementById('extract-result-area');
+    area.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function renderReviewCards(d) {
     var area = document.getElementById('extract-result-area');
     area.style.display = 'block';
 
@@ -218,7 +231,34 @@ function showReviewCards(d) {
 
     // 滚动到结果区域
     area.innerHTML = html;
+}
+
+function showStyleResult(d) {
+    // 持久化结果到 sessionStorage：切换页面后回来仍能查看
+    try { sessionStorage.setItem(EXTRACT_RESULT_KEY, JSON.stringify({mode:'style', data:d})); } catch(e) {}
+    renderStyleResult(d);
+    var area = document.getElementById('extract-result-area');
     area.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function renderStyleResult(d) {
+    var area = document.getElementById('extract-result-area');
+    area.style.display = 'block';
+    var s = d.writing_style || {};
+    var html = '<div class="style-result">';
+    html += '<h3>✍️ ' + d.title + ' — 写作风格分析</h3>';
+    html += '<div class="field"><div class="field-label">📝 风格概要</div><div class="field-value">' + (s.summary || '') + '</div></div>';
+    html += '<div class="field"><div class="field-label">句子节奏</div><div class="field-value">' + (s.sentence_rhythm || '') + '</div></div>';
+    html += '<div class="field"><div class="field-label">对话风格</div><div class="field-value">' + (s.dialogue_style || '') + '</div></div>';
+    html += '<div class="field"><div class="field-label">描写偏好</div><div class="field-value">' + (s.description_focus || '') + '</div></div>';
+    html += '<div class="field"><div class="field-label">情绪表达</div><div class="field-value">' + (s.emotional_expression || '') + '</div></div>';
+    if (s.common_words && s.common_words.length) html += '<div class="field"><div class="field-label">常用词</div><div class="field-value">' + s.common_words.join('、') + '</div></div>';
+    if (s.avoid_words && s.avoid_words.length) html += '<div class="field"><div class="field-label">禁用词</div><div class="field-value">' + s.avoid_words.join('、') + '</div></div>';
+    html += '<div class="field"><div class="field-label">叙事视角</div><div class="field-value">' + (s.narrative_perspective || '') + '</div></div>';
+    html += '<div class="field"><div class="field-label">开篇风格</div><div class="field-value">' + (s.opening_style || '') + '</div></div>';
+    html += '<div class="field"><div class="field-label">节奏把控</div><div class="field-value">' + (s.pacing || '') + '</div></div>';
+    html += '</div>';
+    area.innerHTML = html;
 }
 
 function switchReviewTab(key) {
@@ -272,12 +312,12 @@ async function doIngest(items) {
         });
         var d = await r.json();
         if (d.ok) {
-            showAlert('✅ ' + d.message, 'success');
+            // 日志统一在右侧状态栏显示（后端 task_manager 已记录）
         } else {
-            showAlert('❌ 入库失败: ' + (d.error||''), 'error');
+            alert('❌ 入库失败: ' + (d.error||''));
         }
     } catch(e) {
-        showAlert('❌ 入库失败: ' + e.message, 'error');
+        alert('❌ 入库失败: ' + e.message);
     }
     if (btn) { btn.disabled = false; btn.textContent = orig; }
 }
@@ -298,5 +338,23 @@ document.addEventListener('click', function(e) {
 
 // 页面加载
 loadNovelsForExtract('library');
+
+// 恢复上次的分析结果（sessionStorage 持久化，切换页面后不丢失）
+(function(){
+    try {
+        var saved = sessionStorage.getItem(EXTRACT_RESULT_KEY);
+        if (saved) {
+            var obj = JSON.parse(saved);
+            if (obj && obj.data) {
+                if (obj.mode === 'style') {
+                    renderStyleResult(obj.data);
+                } else {
+                    _lastReviewData = obj.data;
+                    renderReviewCards(obj.data);
+                }
+            }
+        }
+    } catch(e) {}
+})();
 </script>
 {% endblock %}

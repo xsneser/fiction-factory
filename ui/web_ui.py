@@ -144,19 +144,46 @@ def new_book_workflow(engine_id):
 @app.route("/api/engine/<engine_id>/step", methods=["POST"])
 def engine_step(engine_id):
     """执行引擎一步"""
+    from plugins import task_manager
+
     engine = _engines.get(engine_id)
     if not engine:
         return jsonify({"error": "not found"}), 404
 
+    # 首次调用时注册任务（用 engine_id 去重）
+    task_id = f"engine_{engine_id}"
+
     inst = engine.route()
     if inst.op in (Op.COMPLETE, Op.PAUSE, Op.CONFIRM_CHAPTER):
         return jsonify({"status": inst.op.value, "reason": inst.reason, "done": True})
+
+    # 在 execute 之前注册任务，确保侧边栏能看到
+    if inst.op == Op.PLAN_BOOK:
+        # 单任务互斥：同一工具（新书生成）同时只允许一个任务
+        task_manager.ensure_single("新书生成")
+        task_manager.start(task_id, name="新书生成",
+                          title=engine.state.pen_name or "",
+                          total=5, phase="规划全书...", url="/books/start")
+        task_manager.log(task_id, f"开始新书: {engine.state.pen_name or ''} {engine.state.genre or ''}", "info")
+    elif inst.op == Op.WRITE_CH1:
+        task_manager.progress(task_id, current=1, phase="第一章...")
+        task_manager.log(task_id, "第一章：钩子+金手指", "info")
+    elif inst.op == Op.WRITE_CH2:
+        task_manager.progress(task_id, current=2, phase="第二章...")
+        task_manager.log(task_id, "第二章：世界观展开", "info")
+    elif inst.op == Op.WRITE_CH3:
+        task_manager.progress(task_id, current=3, phase="第三章...")
+        task_manager.log(task_id, "第三章：首次核心冲突", "info")
+    elif inst.op == Op.GENERATE_TITLE:
+        task_manager.progress(task_id, current=4, phase="生成书名...")
+        task_manager.log(task_id, "生成书名+简介", "info")
 
     result = engine.execute(inst)
 
     # 检查是否转入续写
     if inst.op == Op.GENERATE_TITLE and result.get("status") == "title_generated":
         # 新书启动完成，创建正式图书记录
+        task_manager.done(task_id, message=f"新书完成: {result.get('best_title','')}")
         book = engine.finalize_new_book()
         return jsonify({
             **result,
@@ -797,10 +824,12 @@ def scout_run():
         })
 
         # 注册到全局任务管理器（跨页面可见）
+        # 单任务互斥：同一工具（小说抓取）同时只允许一个任务，新任务替代旧任务
         from plugins import task_manager
+        task_manager.ensure_single("小说抓取")
         task_id = f"fetch_{novel.title}"
         task_manager.start(task_id, name="小说抓取", title=novel.title,
-                          total=chapters, phase="搜索")
+                          total=chapters, phase="搜索", url="/scout")
         task_manager.register_cancel(task_id)
         task_manager.log(task_id, f"找到: {novel.title}", "success")
 
@@ -815,10 +844,13 @@ def scout_run():
             # 同步更新全局任务管理器
             if phase == "search":
                 task_manager.progress(task_id, current, total, "搜索", message)
+                task_manager.log(task_id, message, "info")
             elif phase == "download":
                 task_manager.progress(task_id, current, total, "下载", message)
+                task_manager.log(task_id, message, "info")
             elif phase == "analysis_done":
                 task_manager.progress(task_id, 0, 1, "完成", "分析完成")
+                task_manager.log(task_id, "分析完成", "success")
 
         def worker():
             try:
@@ -891,6 +923,7 @@ def scout_run():
 def scout_ingest():
     """入库选中的分析结果"""
     from plugins.fanqie_scout import FanqieScoutAgent
+    from plugins import task_manager
     data = request.json or {}
     title = data.get("title", "")
     plots = data.get("plots", [])
@@ -905,11 +938,20 @@ def scout_ingest():
     if not llm:
         return jsonify({"ok": False, "error": "LLM 未配置"}), 500
 
+    # 单任务互斥：资产入库同一时间只允许一个
+    task_manager.ensure_single("资产入库")
+    task_id = f"ingest_{title}_{int(__import__('time').time())}"
+    task_manager.start(task_id, name="资产入库", title=title, total=1, phase="入库中...", url="/extract")
+    task_manager.log(task_id, f"入库: {len(plots)}桥段 {len(structures)}大纲 {len(gags)}笑点 {len(themes)}内涵", "info")
+
     scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib, theme_lib)
     stats = scout.ingest_selected(
         plots=plots, structures=structures,
         gags=gags, themes=themes, source="fanqie",
     )
+
+    task_manager.done(task_id, message=f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲")
+    task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 +{stats['gags']}笑点 +{stats['themes']}内涵", "success")
 
     return jsonify({
         "ok": True,
@@ -943,15 +985,17 @@ def scout_novels():
 
 @app.route("/api/scout/analyze", methods=["POST"])
 def scout_analyze():
-    """分析已下载的小说"""
+    """分析已下载的小说（后台线程 + SSE 流式，支持单任务互斥/取消）"""
     from plugins.novel_storage import load_novel
     from plugins.style_analyzer import extract_writing_style
-    from plugins.fanqie_scout import FanqieScoutAgent, NovelAnalyzer
+    from plugins.fanqie_scout import NovelAnalyzer
+    from plugins import task_manager
 
     data = request.json or {}
     platform = data.get("platform", "")
     folder = data.get("folder", "")
     profile_id = data.get("profile_id", "")
+    mode = data.get("mode", "library")  # library | style
 
     if not platform or not folder:
         return jsonify({"ok": False, "error": "参数缺失"}), 400
@@ -966,53 +1010,138 @@ def scout_analyze():
 
     info = novel_data["info"]
     chapters = novel_data["chapters"]
+    title = info.get("title", folder)
 
-    from libraries.plot import PlotTemplate
+    # 单任务互斥：同一工具（内容分析）同时只允许一个任务，新任务替代旧任务
+    task_manager.ensure_single("内容分析")
+    task_id = f"analyze_{title}_{int(__import__('time').time())}"
+    task_manager.start(task_id, name="内容分析", title=title, total=50, phase="准备中", url="/extract")
+    task_manager.register_cancel(task_id)
+    task_manager.log(task_id, f"开始分析: {title} ({len(chapters)}章)", "info")
+
     from pathlib import Path
+    _cancel_exception = Exception("__CANCELLED__")
 
-    # Step 1: 分析四大库
-    analyzer = NovelAnalyzer(llm)
-    analysis = analyzer.analyze_book(
-        type("obj", (object,), {
-            "title": info.get("title", ""),
-            "genre": info.get("genre", ""),
-            "sub_genre": "",
-            "chapter_count": len(chapters),
-        })(),
-        chapters
+    def on_progress(phase, current, total, message):
+        if task_manager.is_cancelled(task_id):
+            raise _cancel_exception
+        task_manager.progress(task_id, current=current, total=total,
+                              phase=message, message=message)
+        task_manager.log(task_id, f"LLM 分析：{message}", "info")
+
+    def generate():
+        import json as _json
+        import queue as _queue
+        import threading as _threading
+
+        def send_event(event, d):
+            return f"data: {_json.dumps({'event': event, **d}, ensure_ascii=False)}\n\n"
+
+        yield send_event("start", {"title": title})
+
+        evt_queue = _queue.Queue()
+
+        def worker():
+            try:
+                analysis = {}
+                if mode == "library":
+                    # Step 1: 分析四大库
+                    analyzer = NovelAnalyzer(llm)
+                    analysis = analyzer.analyze_book(
+                        type("obj", (object,), {
+                            "title": title,
+                            "genre": info.get("genre", ""),
+                            "sub_genre": "",
+                            "chapter_count": len(chapters),
+                        })(),
+                        chapters, on_progress=on_progress,
+                    )
+                    if task_manager.is_cancelled(task_id):
+                        return
+                    task_manager.progress(task_id, current=45, phase="分析完成", message="四大库提取完毕")
+                    task_manager.log(task_id,
+                        f"桥段: {len(analysis.get('plots',[]))}个 大纲: {len(analysis.get('structures',[]))}个 "
+                        f"笑点: {len(analysis.get('gags',[]))}个 内涵: {len(analysis.get('themes',[]))}个", "success")
+                else:
+                    # Step 2: 分析写作风格
+                    task_manager.progress(task_id, current=30, phase="LLM 分析写作风格...", message="正在分析写作风格")
+                    task_manager.log(task_id, "LLM 分析：写作风格...", "info")
+                    style = extract_writing_style(llm, title, chapters)
+                    analysis = {"writing_style": style}
+                    if task_manager.is_cancelled(task_id):
+                        return
+
+                # 如果指定了笔名，自动生成风格档案
+                profile_ready = False
+                if profile_id and profiles.get(profile_id):
+                    profile = profiles.get(profile_id)
+                    style_words = (analysis.get("writing_style") or {}).get("common_words", [])
+                    avoid_words = (analysis.get("writing_style") or {}).get("avoid_words", [])
+                    if style_words or avoid_words:
+                        wp = profile.word_print or {}
+                        wp["common_words"] = list(set(wp.get("common_words", []) + style_words))
+                        wp["avoid_words"] = list(set(wp.get("avoid_words", []) + avoid_words))
+                        profile.word_print = wp
+                        profile.save()
+                        profile_ready = True
+
+                if task_manager.is_cancelled(task_id):
+                    return
+
+                # 标记已分析
+                novel_path = Path(__file__).parent.parent / "storage" / "novels" / platform / folder
+                (novel_path / ".analyzed").touch()
+
+                task_manager.done(task_id, message=f"分析完成: {title}")
+                task_manager.log(task_id, f"✅ 分析完成: {title}", "success")
+                evt_queue.put(("done", {
+                    "title": info.get("title", ""),
+                    "mode": mode,
+                    "plot_details": analysis.get("plots", []),
+                    "structure_details": analysis.get("structures", []),
+                    "gag_details": analysis.get("gags", []),
+                    "theme_details": analysis.get("themes", []),
+                    "writing_style": analysis.get("writing_style"),
+                    "profile_ready": profile_ready,
+                }))
+            except Exception as e:
+                err_msg = str(e)
+                if str(e) == "__CANCELLED__":
+                    return
+                if "NoneType" in err_msg and "subscriptable" in err_msg:
+                    err_msg = "LLM 返回格式异常，请重试"
+                elif "timeout" in err_msg.lower() or "timed out" in err_msg.lower():
+                    err_msg = "LLM 请求超时，请稍后重试"
+                elif "Connection" in err_msg:
+                    err_msg = "网络连接失败，请检查网络"
+                task_manager.fail(task_id, err_msg)
+                evt_queue.put(("error", err_msg))
+
+        t = _threading.Thread(target=worker, daemon=True, name="scout-analyze")
+        t.start()
+
+        # 从队列读取事件，实时 yield
+        while t.is_alive() or not evt_queue.empty():
+            if task_manager.is_cancelled(task_id):
+                yield send_event("cancelled", {"message": "任务已被新任务替代"})
+                break
+            try:
+                item = evt_queue.get(timeout=0.3)
+                kind = item[0]
+                if kind == "done":
+                    yield send_event("done", item[1])
+                elif kind == "error":
+                    yield send_event("error", {"message": item[1]})
+            except _queue.Empty:
+                pass
+
+    resp = Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"},
     )
-
-    # Step 2: 分析写作风格
-    style = extract_writing_style(llm, info.get("title", ""), chapters)
-
-    # 如果指定了笔名，自动生成风格档案
-    profile_ready = False
-    if profile_id and profiles.get(profile_id):
-        profile = profiles.get(profile_id)
-        style_words = style.get("common_words", [])
-        avoid_words = style.get("avoid_words", [])
-        if style_words or avoid_words:
-            wp = profile.word_print or {}
-            wp["common_words"] = list(set(wp.get("common_words", []) + style_words))
-            wp["avoid_words"] = list(set(wp.get("avoid_words", []) + avoid_words))
-            profile.word_print = wp
-            profile.save()
-            profile_ready = True
-
-    # 标记已分析
-    novel_path = Path(__file__).parent.parent / "storage" / "novels" / platform / folder
-    (novel_path / ".analyzed").touch()
-
-    return jsonify({
-        "ok": True,
-        "title": info.get("title", ""),
-        "plot_details": analysis.get("plots", []),
-        "structure_details": analysis.get("structures", []),
-        "gag_details": analysis.get("gags", []),
-        "theme_details": analysis.get("themes", []),
-        "writing_style": style,
-        "profile_updated": profile_ready,
-    })
+    return resp
 
 
 @app.route("/api/status/tasks")

@@ -106,18 +106,6 @@ function switchPlatform(pid) {
     currentPlatform = pid;
 }
 
-function sideLog(msg, level) {
-    var logList = document.getElementById('task-log-list');
-    var logArea = document.getElementById('task-log');
-    if (!logList || !logArea) return;
-    logArea.style.display = 'block';
-    var div = document.createElement('div');
-    div.style.cssText = 'padding:2px 0;border-left:2px solid ' + (level==='error'?'#f85149':level==='success'?'#3fb950':'#30363d') + ';padding-left:6px;margin:2px 0';
-    div.textContent = new Date().toLocaleTimeString() + ' ' + msg;
-    logList.appendChild(div);
-    logList.scrollTop = logList.scrollHeight;
-}
-
 function startScout() {
     if (currentPlatform !== 'fanqie') return;
     var title = document.getElementById('book-title').value.trim();
@@ -130,10 +118,7 @@ function startScout() {
     document.getElementById('btn-scout').disabled = true;
     document.getElementById('btn-scout').textContent = '抓取中...';
     document.getElementById('result-area').style.display = 'none';
-    // 清空侧边栏日志
-    document.getElementById('task-log-list').innerHTML = '';
-    document.getElementById('task-log').style.display = 'none';
-    sideLog('开始抓取: ' + (title || directId), 'info');
+    // 不再清空侧边栏日志（会误清其它任务的日志），日志统一由后端 task_manager 驱动
 
     sessionStorage.removeItem(STORAGE_KEY);
     lastResult = null;
@@ -164,45 +149,40 @@ function startScout() {
         }
         read();
     }).catch(function(e) {
-        sideLog('连接失败: ' + e.message, 'error');
+        alert('连接失败: ' + e.message);
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
     });
 }
 
 function handleEvent(d) {
-    if (d.event === 'log') { sideLog(d.message, d.level||'info'); return; }
+    // 日志统一由后端 task_manager 驱动（pollStatus 渲染到右侧边栏），
+    // 前端 SSE 只负责更新按钮状态和结果卡片，不再写日志，避免双通道重复
+    if (d.event === 'log') { return; }
     if (d.event === 'progress') {
-        // 任务卡片由后端 task_manager 维护，pollStatus 自动渲染；日志贴近展示
-        if (d.phase === 'download') {
-            sideLog('下载: ' + (d.message || '第' + d.current + '章'), 'info');
-        }
         return;
     }
     if (d.event === 'found') {
-        sideLog('找到: 「' + d.title + '」(' + d.author + ') ' + (d.chapters||'') + '章', 'success');
+        // 后端已记录 task_manager.log，这里仅更新按钮状态
         return;
     }
     if (d.event === 'fetch_done') {
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
-        sideLog('✅ 下载完成: 「' + d.title + '」(' + d.saved_chapters + '章)', 'success');
+        // 下载完成，日志由后端 task_manager 写入侧边栏
         return;
     }
     if (d.event === 'cancelled') {
-        sideLog('⏹️ 任务已取消', 'info');
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
         return;
     }
     if (d.event === 'error') {
-        sideLog('❌ ' + (d.message||'未知错误'), 'error');
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
         return;
     }
     if (d.event === 'start') {
-        sideLog('开始抓取: ' + d.title, 'info');
         return;
     }
 }
@@ -328,25 +308,16 @@ async function doIngest(items) {
         });
         var d = await r.json();
         if (d.ok) {
-            sideLog('✅ ' + d.message, 'success');
-            showToast(d.message, 'success');
+            // 日志统一在右侧状态栏显示（后端 task_manager 已记录）
         } else {
-            sideLog('❌ 入库失败: ' + (d.error||''), 'error');
+            alert('❌ 入库失败: ' + (d.error||''));
         }
     } catch(e) {
-        sideLog('❌ 入库失败: ' + e.message, 'error');
+        alert('❌ 入库失败: ' + e.message);
     }
     btn.disabled = false;
     btn.textContent = orig;
 }
 
-function showToast(msg, type) {
-    var t = document.createElement('div');
-    t.className = 'alert ' + (type||'info');
-    t.textContent = msg;
-    t.style.cssText = 'position:fixed;top:20px;right:20px;z-index:1000';
-    document.body.appendChild(t);
-    setTimeout(function(){ t.remove(); }, 3000);
-}
 </script>
 {% endblock %}
