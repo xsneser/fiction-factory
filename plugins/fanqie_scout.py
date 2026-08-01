@@ -4,6 +4,15 @@
 
 流程：
   热榜发现 → 下载前N章 → 逐书分析 → 提取桥段/大纲/笑点/内涵 → 入库
+
+⚠️ 合规声明：
+  本模块仅供个人学习、研究网文结构技巧使用。请遵守目标网站的服务条款与
+  相关法律法规：
+  - 番茄小说等内容平台的服务协议普遍禁止自动化数据采集，请勿用于商业用途
+  - 请勿大量下载并二次传播受著作权保护的正文内容，分析应以「模式/结构/
+    桥段」等抽象技巧为主，避免全文存储与转载
+  - PUA 字体解码属于对技术保护措施的绕过，请仅用于个人学习研究
+  使用本模块产生的任何法律风险由使用者自行承担。
 """
 import json
 import os
@@ -64,6 +73,10 @@ class FanqieCrawler:
     BASE_URL = "https://fanqienovel.com"
     API_BASE = "https://fanqienovel.com/api"
 
+    # 超时设置：搜索类请求允许较短重试，详情/下载类给足时间避免网络抖动误判
+    SEARCH_TIMEOUT = 5
+    DETAIL_TIMEOUT = 15
+
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                       "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -81,13 +94,15 @@ class FanqieCrawler:
         9: "短篇", 10: "现实",
     }
 
-    def __init__(self, cache_dir: str = "storage/fanqie_cache"):
+    def __init__(self, cache_dir: str = "storage/fanqie_cache", verify: bool = True):
+        # verify 默认校验 TLS 证书（安全）；旧证书环境可显式传 verify=False
         self.session = requests.Session()
         self.session.headers.update(self.HEADERS)
-        self.session.verify = False  # 跳过SSL验证（Windows旧证书兼容）
+        self.session.verify = verify
         self.session.trust_env = False  # 不用系统代理，直连访问
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        if not verify:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._decoder = None  # lazy init
@@ -95,10 +110,11 @@ class FanqieCrawler:
     def _init_decoder(self):
         if self._decoder is None:
             from plugins.font_decoder import FanqieDecoder, load_mapping
-            self._decoder = FanqieDecoder()
+            self._decoder = FanqieDecoder(verify=self.session.verify)
             self._cached_mapping = {}
-            # 加载预生成的映射表（可能有多个字体）
-            for mp in Path("storage").glob("font_mapping*.json"):
+            # 加载预生成的映射表（可能有多个字体），锚定项目根避免依赖 CWD
+            storage_dir = Path(__file__).resolve().parent.parent / "storage"
+            for mp in storage_dir.glob("font_mapping*.json"):
                 try:
                     self._cached_mapping.update(load_mapping(str(mp)))
                 except Exception:
@@ -168,7 +184,7 @@ class FanqieCrawler:
         try:
             import urllib.parse as _up
             search_url = f"https://fanqienovel.com/search/{_up.quote(title)}"
-            r = self.session.get(search_url, timeout=2,
+            r = self.session.get(search_url, timeout=self.SEARCH_TIMEOUT,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
             ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
             if ids:
@@ -192,7 +208,7 @@ class FanqieCrawler:
                 try:
                     r = self.session.get(
                         f"{host}/search?q={_up2.quote(query)}",
-                        timeout=2,
+                        timeout=self.SEARCH_TIMEOUT,
                             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
                     if r.status_code != 200:
                         continue
@@ -220,16 +236,21 @@ class FanqieCrawler:
         if len(unique_queries) > 1:
             def _parallel_search():
                 import requests as _req
+                import threading as _threading
                 import urllib3 as _urllib3
-                _urllib3.disable_warnings(_urllib3.exceptions.InsecureRequestWarning)
+                if not self.session.verify:
+                    _urllib3.disable_warnings(_urllib3.exceptions.InsecureRequestWarning)
                 # 每个线程独立 session
                 local_session = _req.Session()
                 local_session.headers.update(self.HEADERS)
-                local_session.verify = False
+                local_session.verify = self.session.verify
                 local_session.trust_env = False
-                
+                # 共享限流锁：并行查询互斥节流，降低对 Bing 的请求频率（防反爬/防滥用）
+                search_lock = _threading.Lock()
                 bing_hosts = ["https://cn.bing.com", "https://www.bing.com"]
                 for host in bing_hosts:
+                    with search_lock:
+                        time.sleep(0.3)  # 每次 Bing 请求间隔 300ms
                     try:
                         r = local_session.get(
                             f"{host}/search?q={_up2.quote(query)}",
@@ -269,7 +290,7 @@ class FanqieCrawler:
         # 全部失败则兜底番茄搜索页
         try:
             search_url = f"https://fanqienovel.com/search/{_up2.quote(title)}"
-            r = self.session.get(search_url, timeout=2,
+            r = self.session.get(search_url, timeout=self.SEARCH_TIMEOUT,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
             ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
             if ids:
@@ -290,7 +311,7 @@ class FanqieCrawler:
         try:
             r = self.session.get(
                 f"{self.BASE_URL}/page/{book_id}",
-                timeout=15,
+                timeout=self.DETAIL_TIMEOUT,
                 headers={"Accept": "text/html,application/xhtml+xml"})
             if r.status_code != 200:
                 return None
@@ -350,7 +371,7 @@ class FanqieCrawler:
         if genre_id > 0:
             params["genre_type"] = genre_id
 
-        resp = self.session.get(url, params=params, timeout=15)
+        resp = self.session.get(url, params=params, timeout=self.DETAIL_TIMEOUT)
         data = resp.json()
 
         novels = []
@@ -373,7 +394,7 @@ class FanqieCrawler:
     def _web_hot_list(self, genre_id: int, count: int) -> list[NovelInfo]:
         """网页抓取热榜（备用方案）"""
         url = f"{self.BASE_URL}/rank/hot"
-        resp = self.session.get(url, timeout=15)
+        resp = self.session.get(url, timeout=self.DETAIL_TIMEOUT)
         text = resp.text
 
         novels = []
@@ -392,7 +413,7 @@ class FanqieCrawler:
         """获取单本书详细信息"""
         try:
             url = f"{self.API_BASE}/reader/book_info/v0"
-            resp = self.session.get(url, params={"book_id": book_id}, timeout=3)
+            resp = self.session.get(url, params={"book_id": book_id}, timeout=self.DETAIL_TIMEOUT)
             data = resp.json()
             info = data.get("data", {})
 
@@ -416,7 +437,7 @@ class FanqieCrawler:
 
         # 方法1: 书籍页SSR → page.chapterListWithVolume
         try:
-            r = self.session.get(f"{self.BASE_URL}/page/{book_id}", timeout=15,
+            r = self.session.get(f"{self.BASE_URL}/page/{book_id}", timeout=self.DETAIL_TIMEOUT,
                 headers={"Accept": "text/html,application/xhtml+xml"})
             if r.status_code == 200:
                 m = re.search(r'window\.__INITIAL_STATE__\s*=\s*({.+?});', r.text, re.DOTALL)
@@ -449,7 +470,7 @@ class FanqieCrawler:
             r = self.session.get(
                 "https://novel.snssdk.com/api/novel/book/directory/list/v1/",
                 params={"book_id": book_id, "offset": 0, "count": max_count},
-                timeout=15,
+                timeout=self.DETAIL_TIMEOUT,
                 headers={"Referer": "https://novel.snssdk.com/"})
             if r.status_code == 200:
                 data = r.json()
@@ -471,7 +492,7 @@ class FanqieCrawler:
         try:
             r = self.session.get(
                 f"{self.BASE_URL}/reader/{chapter_id}",
-                timeout=15,
+                timeout=self.DETAIL_TIMEOUT,
                 headers={"Accept": "text/html,application/xhtml+xml"})
             if r.status_code != 200:
                 return ""
@@ -869,8 +890,8 @@ class FanqieScoutAgent:
     """
 
     def __init__(self, llm_client=None, plot_lib=None, struct_lib=None,
-                 gag_lib=None, theme_lib=None):
-        self.crawler = FanqieCrawler()
+                 gag_lib=None, theme_lib=None, verify: bool = True):
+        self.crawler = FanqieCrawler(verify=verify)
         self.analyzer = NovelAnalyzer(llm_client)
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
@@ -940,7 +961,7 @@ class FanqieScoutAgent:
         return result
 
     def fetch_novel(self, title: str, chapters: int = 50,
-                    on_progress=None) -> tuple:
+                    on_progress=None, download_delay: float = 1.0) -> tuple:
         """仅下载（不分析不入库），返回 (NovelInfo, downloaded_chapters)"""
         result = ScoutResult()
 
@@ -972,7 +993,7 @@ class FanqieScoutAgent:
             if on_progress:
                 on_progress("download", i+1, total_ch, ch["title"][:30])
             if i < total_ch - 1:
-                import time as _t; _t.sleep(1.0)
+                time.sleep(download_delay)  # 礼貌爬取间隔
 
         if on_progress:
             on_progress("download", total_ch, total_ch, f"下载完成 {len(downloaded)}章")
@@ -988,7 +1009,7 @@ class FanqieScoutAgent:
         return novel, {"folder": folder, "chapters": len(downloaded)}
 
     def scout_single_book(self, title: str, chapters: int = 50,
-                          on_progress=None) -> ScoutResult:
+                          on_progress=None, download_delay: float = 1.0) -> ScoutResult:
         """
         侦察单本书——按书名搜索 → 下载 → 分析 → 入库
 
@@ -1025,7 +1046,7 @@ class FanqieScoutAgent:
                 })
             if on_progress:
                 on_progress("download", i+1, total_ch, ch["title"][:30])
-            time.sleep(1.0)
+            time.sleep(download_delay)  # 礼貌爬取间隔
 
         result.downloaded_chapters = len(downloaded)
         if on_progress:

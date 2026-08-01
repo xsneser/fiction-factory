@@ -20,10 +20,13 @@ class FanqieDecoder:
     3. 解码：下载字体 → 提取 glyph → 用字体名称/OCR 还原真实汉字
     """
 
-    def __init__(self, cache_dir: str = "storage/font_cache"):
-        self.cache_dir = Path(cache_dir)
+    def __init__(self, cache_dir: str = "storage/font_cache", verify: bool = True):
+        # 锚定项目根目录，避免依赖 CWD
+        base = Path(__file__).resolve().parent.parent
+        self.cache_dir = Path(cache_dir) if Path(cache_dir).is_absolute() else base / cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._mapping_cache: dict[str, dict] = {}
+        self.verify = verify
 
     def decode_page(self, html: str) -> str:
         """解码页面中 PUA 编码的内容"""
@@ -61,7 +64,7 @@ class FanqieDecoder:
         font_path = self.cache_dir / font_key
         if not font_path.exists():
             try:
-                r = requests.get(font_url, timeout=30,
+                r = requests.get(font_url, timeout=30, verify=self.verify,
                                  headers={"User-Agent": "Mozilla/5.0"})
                 font_path.write_bytes(r.content)
             except Exception:
