@@ -40,3 +40,4 @@ app_output.log
 # Claude Code 本地会话设置
 .claude/settings.local.json
 e2e_server.log
+ui_server.log
