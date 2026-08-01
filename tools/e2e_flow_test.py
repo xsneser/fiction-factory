@@ -137,7 +137,7 @@ def step_generator(page, genre="都市", sub_genre="系统流"):
 
     # 选流派
     page.select_option("#ggenre", genre)
-    page.fill("#gsubgenre", sub_genre)
+    page.select_option("#gsub", sub_genre)
     shot(page, "08_gen_filled")
 
     # 点击生成（找到提交按钮）
