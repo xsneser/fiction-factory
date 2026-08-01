@@ -262,11 +262,19 @@
                             document.body.appendChild(newScript);
                             document.body.removeChild(newScript);
                         });
-                        // 更新侧边栏 active 状态
-                        document.querySelectorAll('nav a').forEach(function(a) {
-                            var h = a.getAttribute('href');
-                            a.classList.toggle('active', h === target || (target.startsWith(h) && h !== '/'));
-                        });
+                        // 更新侧边栏 active 状态：以服务端渲染的 nav 为准
+                        // （服务端按 request.path 精确判断，避免 /books/start 误高亮 /books）
+                        var newNav = doc.querySelector('nav');
+                        var oldNav = document.querySelector('nav');
+                        if (newNav && oldNav) {
+                            var navLinks = oldNav.querySelectorAll('a[href]');
+                            for (var i = 0; i < navLinks.length; i++) {
+                                var href = navLinks[i].getAttribute('href');
+                                var match = newNav.querySelector('a[href="' + href + '"]');
+                                navLinks[i].classList.toggle('active',
+                                    !!(match && match.classList.contains('active')));
+                            }
+                        }
                     }
                     history.pushState(null, '', target);
                 })
