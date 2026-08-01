@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 import time
+import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -118,8 +119,13 @@ def _ensure():
 def _check(): 
     if state.task_running: raise HTTPException(409, "AI任务运行中")
 
-def _json(data, code=200): 
+def _json(data, code=200):
     return JSONResponse(data, status_code=code)
+
+
+async def _run_blocking(fn, *args, **kwargs):
+    """在后台线程执行阻塞函数，避免占用事件循环（LLM 调用最长 300s）"""
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 # ─── Pydantic Models for Request Bodies ───
@@ -205,20 +211,20 @@ def get_postprocess(): return {"phase": "", "diagnosis": "", "roadmap": {"items"
 
 # ─── Svelte 前端路径别名 (单数/复数兼容) ───
 @app.post("/api/chapter/generate")
-def chapter_generate_singular():
-    return generate_chapter_api()
+async def chapter_generate_singular():
+    return await generate_chapter_api()
 
 @app.post("/api/chapter/confirm")
 def chapter_confirm_singular():
     return confirm_chapter_api()
 
 @app.post("/api/chapter/revise")
-def chapter_revise_singular(req: Feedback):
-    return revise_chapter_api(req)
+async def chapter_revise_singular(req: Feedback):
+    return await revise_chapter_api(req)
 
 @app.post("/api/outline/generate-continuation")
-def outline_continue_alias(req: OutlineContinue):
-    return outline_continuation(req)
+async def outline_continue_alias(req: OutlineContinue):
+    return await outline_continuation(req)
 
 @app.get("/api/events")
 def events_sse(request: Request):
@@ -299,9 +305,9 @@ def put_api(req: APIUp):
     return {"status": "saved"}
 
 @app.post("/api/config/api/test")
-def test_api(req: APITest):
+async def test_api(req: APITest):
     c = LLMClient(APIConfig(api_key=req.api_key, base_url=req.base_url, model=req.model))
-    r = c.test_connection()
+    r = await _run_blocking(c.test_connection)
     if r["success"]: return {"success": True, "message": "连接成功", "sample": r["sample"]}
     return {"success": False, "error": r["error"]}  # 返回200让前端看到错误详情
 
@@ -339,7 +345,7 @@ def delete_progress():
 # ─── Outline ───
 
 @app.post("/api/outline/generate")
-def generate_outline_api():
+async def generate_outline_api():
     _ensure(); _check()
     for ch in state.state.chapters:
         if ch.status in (ChapterStatus.WRITING, ChapterStatus.REVIEW):
@@ -349,8 +355,8 @@ def generate_outline_api():
 
     state.task_running = True
     try:
-        title, core_prompt, synopsis, chapters = generate_outline(
-            state.llm_client, state.cfg, state.settings, state.state)
+        title, core_prompt, synopsis, chapters = await _run_blocking(
+            generate_outline, state.llm_client, state.cfg, state.settings, state.state)
         state.state.title = title; state.state.core_prompt = core_prompt
         state.state.story_synopsis = synopsis; state.state.chapters = chapters
         state.state.phase = "outline"
@@ -372,12 +378,12 @@ def confirm_outline_api():
     return state.state.to_dict()
 
 @app.post("/api/outline/revise")
-def revise_outline_api(req: Feedback):
+async def revise_outline_api(req: Feedback):
     _ensure(); _check()
     state.task_running = True
     try:
-        title, core_prompt, synopsis, chapters = generate_outline(
-            state.llm_client, state.cfg, state.settings, state.state)
+        title, core_prompt, synopsis, chapters = await _run_blocking(
+            generate_outline, state.llm_client, state.cfg, state.settings, state.state)
         state.state.chapters = chapters
         storage.save_progress(state.progress_path, state.state)
         return state.state.to_dict()
@@ -394,7 +400,7 @@ def delete_outline_api():
     return state.state.to_dict()
 
 @app.post("/api/outline/continuation")
-def outline_continuation(req: OutlineContinue):
+async def outline_continuation(req: OutlineContinue):
     """生成后续大纲（已有章节后追加）"""
     _ensure(); _check()
     if not state.state.chapters:
@@ -405,8 +411,8 @@ def outline_continuation(req: OutlineContinue):
         # 重新生成更多章节
         story = state.cfg.get("story", {})
         story["chapter_count"] = existing + req.chapter_count
-        title, core_prompt, synopsis, chapters = generate_outline(
-            state.llm_client, state.cfg, state.settings, state.state)
+        title, core_prompt, synopsis, chapters = await _run_blocking(
+            generate_outline, state.llm_client, state.cfg, state.settings, state.state)
         # 只保留新的
         new_chapters = [c for c in chapters if c.num > existing]
         state.state.chapters.extend(new_chapters)
@@ -443,18 +449,19 @@ def get_chapter(num: int):
     raise HTTPException(404, "章节不存在")
 
 @app.post("/api/chapters/generate")
-def generate_chapter_api():
+async def generate_chapter_api():
     _ensure(); _check()
     if state.state.phase != "writing": raise HTTPException(400, "不在写作阶段")
     state.task_running = True
     try:
-        result = generate_chapter_full_pipeline(
-            state.llm_client, state.cfg, state.state, state.settings,
-            state.progress_path, state.project_dir())
+        result = await _run_blocking(
+            generate_chapter_full_pipeline, state.llm_client, state.cfg, state.state,
+            state.settings, state.progress_path, state.project_dir())
         # 写完更新伏笔
         idx = state.state.current_chapter_index
         if state.state.foreshadows:
-            foreshadow.update_foreshadows_after_chapter(
+            await _run_blocking(
+                foreshadow.update_foreshadows_after_chapter,
                 state.llm_client, state.state, idx)
             foreshadow_roadmap = foreshadow.build_foreshadow_roadmap(state.state)
             Path(state.project_dir(), "Foreshadows.md").write_text(foreshadow_roadmap, encoding='utf-8')
@@ -475,13 +482,13 @@ def confirm_chapter_api():
     return state.state.to_dict()
 
 @app.post("/api/chapters/revise")
-def revise_chapter_api(req: Feedback):
+async def revise_chapter_api(req: Feedback):
     _ensure(); _check()
     state.task_running = True
     try:
-        result = generate_chapter_full_pipeline(
-            state.llm_client, state.cfg, state.state, state.settings,
-            state.progress_path, state.project_dir())
+        result = await _run_blocking(
+            generate_chapter_full_pipeline, state.llm_client, state.cfg, state.state,
+            state.settings, state.progress_path, state.project_dir())
         return {"status": "revised"}
     finally: state.task_running = False
 
@@ -602,12 +609,13 @@ def get_roadmap():
     return {"markdown": md}
 
 @app.post("/api/foreshadows/suggest")
-def suggest_foreshadows():
+async def suggest_foreshadows():
     _ensure(); _check()
     if not state.state.chapters: raise HTTPException(400, "请先生成大纲")
     state.task_running = True
     try:
-        suggestions = foreshadow.suggest_foreshadows(state.llm_client, state.state)
+        suggestions = await _run_blocking(
+            foreshadow.suggest_foreshadows, state.llm_client, state.state)
         return {"foreshadows": suggestions}
     except Exception as e: raise HTTPException(500, str(e))
     finally: state.task_running = False
@@ -716,14 +724,15 @@ def sse_stream(request: Request):
 # ─── Arc/卷系统 ───
 
 @app.post("/api/arcs/skeleton")
-def arc_skeleton():
+async def arc_skeleton():
     _ensure(); _check()
     for ch in state.state.chapters:
         if ch.status in (ChapterStatus.ACCEPTED, ChapterStatus.WRITING, ChapterStatus.REVIEW):
             raise HTTPException(409, "存在已确认/写作中的章节")
     state.task_running = True
     try:
-        state.state.arcs = arcs.generate_arc_skeleton(state.llm_client, state.cfg, state.state, state.settings)
+        state.state.arcs = await _run_blocking(
+            arcs.generate_arc_skeleton, state.llm_client, state.cfg, state.state, state.settings)
         state.state.chapters = []
         state.state.current_chapter_index = 0
         state.state.phase = "outline"
@@ -733,12 +742,14 @@ def arc_skeleton():
     finally: state.task_running = False
 
 @app.post("/api/arcs/{arc_id}/outline")
-def arc_outline(arc_id: int, req: dict = None):
+async def arc_outline(arc_id: int, req: dict = None):
     _ensure(); _check()
     body = req or {}
     state.task_running = True
     try:
-        chapters = arcs.generate_arc_outline(state.llm_client, state.cfg, state.state, state.settings, arc_id, body.get("requirements", ""))
+        chapters = await _run_blocking(
+            arcs.generate_arc_outline, state.llm_client, state.cfg, state.state,
+            state.settings, arc_id, body.get("requirements", ""))
         # 替换该卷范围内的章节
         arc_obj = state.state.arcs[arcs.arc_index_by_id(state.state, arc_id)]
         kept = [c for c in state.state.chapters if c.num < arc_obj.start_ch or c.num > arc_obj.end_ch]
@@ -751,12 +762,14 @@ def arc_outline(arc_id: int, req: dict = None):
     finally: state.task_running = False
 
 @app.post("/api/arcs/append")
-def arc_append(req: dict = None):
+async def arc_append(req: dict = None):
     _ensure(); _check()
     body = req or {}
     state.task_running = True
     try:
-        arc = arcs.append_arc(state.llm_client, state.cfg, state.state, state.settings, body.get("title",""), body.get("goal",""), body.get("chapter_count", 20))
+        arc = await _run_blocking(
+            arcs.append_arc, state.llm_client, state.cfg, state.state, state.settings,
+            body.get("title",""), body.get("goal",""), body.get("chapter_count", 20))
         storage.save_progress(state.progress_path, state.state)
         return {"id": arc.id, "title": arc.title, "start_ch": arc.start_ch, "end_ch": arc.end_ch}
     except Exception as e: raise HTTPException(500, str(e))
@@ -788,11 +801,12 @@ def toggle_skill(skill_id: str, req: dict = None):
 # ─── 大纲角色检查 ───
 
 @app.post("/api/outline/characters/check")
-def outline_character_check():
+async def outline_character_check():
     _ensure(); _check()
     state.task_running = True
     try:
-        report = reconcile.check_outline_characters(state.llm_client, state.state, state.settings, state.cfg)
+        report = await _run_blocking(
+            reconcile.check_outline_characters, state.llm_client, state.state, state.settings, state.cfg)
         return {"has_suggestions": report.has_suggestions, "suggestions": [{"name": s.name, "chapter_num": s.chapter_num, "description": s.description, "role": s.role} for s in report.suggestions], "summary": report.summary}
     except Exception as e: raise HTTPException(500, str(e))
     finally: state.task_running = False
@@ -801,12 +815,13 @@ def outline_character_check():
 # ─── 设定协调 ───
 
 @app.post("/api/settings/reconcile")
-def settings_reconcile(req: StoryUp):
+async def settings_reconcile(req: StoryUp):
     _ensure(); _check()
     state.task_running = True
     try:
         new_cfg = {"type": req.type, "title": req.title, "writing_style": req.writing_style, "writing_pov": req.writing_pov, "story_synopsis": req.story_synopsis}
-        explanation = reconcile.reconcile_settings(state.llm_client, state.cfg, state.state, new_cfg, state.settings)
+        explanation = await _run_blocking(
+            reconcile.reconcile_settings, state.llm_client, state.cfg, state.state, new_cfg, state.settings)
         story = state.cfg.setdefault("story", {})
         for k, v in new_cfg.items():
             if v: story[k] = v
@@ -819,32 +834,35 @@ def settings_reconcile(req: StoryUp):
 # ─── 全书优化 ───
 
 @app.post("/api/book/diagnosis")
-def book_diagnosis_api():
+async def book_diagnosis_api():
     _ensure(); _check()
     state.task_running = True
     try:
-        diag = reconcile.book_diagnosis(state.llm_client, state.state, state.settings, state.cfg)
+        diag = await _run_blocking(
+            reconcile.book_diagnosis, state.llm_client, state.state, state.settings, state.cfg)
         return {"diagnosis": diag}
     except Exception as e: raise HTTPException(500, str(e))
     finally: state.task_running = False
 
 @app.post("/api/book/consistency")
-def book_consistency_api():
+async def book_consistency_api():
     _ensure(); _check()
     state.task_running = True
     try:
-        check = reconcile.book_consistency_check(state.llm_client, state.state, state.settings, state.cfg)
+        check = await _run_blocking(
+            reconcile.book_consistency_check, state.llm_client, state.state, state.settings, state.cfg)
         return {"consistency": check}
     except Exception as e: raise HTTPException(500, str(e))
     finally: state.task_running = False
 
 @app.post("/api/book/roadmap")
-def book_roadmap_api(req: dict = None):
+async def book_roadmap_api(req: dict = None):
     _ensure(); _check()
     body = req or {}
     state.task_running = True
     try:
-        roadmap = reconcile.book_roadmap(state.llm_client, body.get("diagnosis", ""), body.get("consistency", ""))
+        roadmap = await _run_blocking(
+            reconcile.book_roadmap, state.llm_client, body.get("diagnosis", ""), body.get("consistency", ""))
         return {"items": [{"chapter_num": i.chapter_num, "type": i.type, "priority": i.priority, "feedback": i.feedback, "selected": i.selected} for i in roadmap.items]}
     except Exception as e: raise HTTPException(500, str(e))
     finally: state.task_running = False
@@ -853,7 +871,7 @@ def book_roadmap_api(req: dict = None):
 # ─── 写作增强 ───
 
 @app.post("/api/chapters/polish")
-def polish_chapter(req: dict = None):
+async def polish_chapter(req: dict = None):
     """单章润色（去AI味）"""
     _ensure(); _check()
     body = req or {}
@@ -879,7 +897,10 @@ def polish_chapter(req: dict = None):
 ## 待处理正文
 
 {ch.content}"""
-                result = state.llm_client.call("你是一位专业小说润色编辑。请只输出润色后的正文。", user_prompt, temperature=0.3, max_tokens=8192)
+                result = await _run_blocking(
+                    state.llm_client.call,
+                    "你是一位专业小说润色编辑。请只输出润色后的正文。",
+                    user_prompt, temperature=0.3, max_tokens=8192)
                 ch.content = inject.strip_chapter_meta(result)
                 storage.save_chapter_markdown(state.project_dir(), ch, state.state.title)
                 storage.save_progress(state.progress_path, state.state)
