@@ -10,6 +10,7 @@ import os
 import re
 import time
 import logging
+from plugins import font_decoder
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -503,7 +504,7 @@ class FanqieCrawler:
                 self._init_decoder()
                 if any(0xE000 <= ord(c) <= 0xF8FF for c in content[:100]):
                     if self._cached_mapping:
-                        content = __import__('plugins.font_decoder', fromlist=['decode_with_mapping']).decode_with_mapping(
+                        content = font_decoder.decode_with_mapping(
                             content, self._cached_mapping)
                     else:
                         content = self._decoder.decode_page(r.text)
@@ -962,7 +963,7 @@ class FanqieScoutAgent:
         for i, ch in enumerate(chapter_list):
             content = self.crawler.download_chapter(novel.book_id, ch["id"])
             if content.strip():
-                imported_re = __import__("re")
+                imported_re = re
                 downloaded.append({
                     "index": ch["index"], "title": ch["title"],
                     "content": content,
@@ -1016,7 +1017,7 @@ class FanqieScoutAgent:
         for i, ch in enumerate(chapter_list):
             content = self.crawler.download_chapter(novel.book_id, ch["id"])
             if content.strip():
-                imported_re = __import__('re')
+                imported_re = re
                 downloaded.append({
                     "index": ch["index"], "title": ch["title"],
                     "content": content,

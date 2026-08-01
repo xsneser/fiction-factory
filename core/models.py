@@ -135,17 +135,6 @@ class OutlineCharacterReport:
 # ─── 项目进度 ───
 
 @dataclass
-class StoryConfig:
-    type: str = ""
-    title: str = ""
-    chapter_count: int = 12
-    target_words_per_chapter: int = 3000
-    writing_style: str = ""
-    writing_pov: str = ""
-    story_synopsis: str = ""
-
-
-@dataclass
 class Progress:
     phase: str = "outline"
     title: str = ""
@@ -154,7 +143,6 @@ class Progress:
     chapters: list[ChapterState] = field(default_factory=list)
     arcs: list[Arc] = field(default_factory=list)
     current_chapter_index: int = 0
-    story_config_snapshot: Optional[StoryConfig] = None
     foreshadows: list[Foreshadow] = field(default_factory=list)
     last_foreshadow_outline_report: Optional[ForeshadowOutlineReport] = None
     last_outline_character_report: Optional[OutlineCharacterReport] = None

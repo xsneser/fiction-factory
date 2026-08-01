@@ -4,8 +4,6 @@
 """
 import json
 import logging
-import threading
-from datetime import datetime
 from core.models import (
     Progress, ChapterState, ChapterStatus, ProjectSettings, Character,
     OutlineCharacterReport, OutlineCharacterSuggestion, PostProcessState,
@@ -165,44 +163,4 @@ def _build_full_text(state: Progress) -> str:
 
 # ─── SSE 日志 ───
 
-class SSELogger:
-    """SSE 日志广播 — 对齐 sse/logger.go"""
-    def __init__(self):
-        self._clients: list[callable] = []
-        self._lock = threading.Lock()
 
-    def subscribe(self, callback):
-        with self._lock:
-            self._clients.append(callback)
-
-    def unsubscribe(self, callback):
-        with self._lock:
-            if callback in self._clients:
-                self._clients.remove(callback)
-
-    def log(self, event: str, data: dict):
-        with self._lock:
-            for cb in self._clients[:]:
-                try: cb(event, data)
-                except: pass
-
-    def info(self, text: str):
-        self.log("info", {"message": text, "time": datetime.now().isoformat()})
-
-    def progress(self, progress: dict):
-        self.log("progress", progress)
-
-    def content_chunk(self, chapter_idx: int, chunk: str):
-        self.log("content_chunk", {"chapter": chapter_idx, "chunk": chunk})
-
-    def stream_start(self, chapter_idx: int):
-        self.log("stream_start", {"chapter": chapter_idx})
-
-    def task_start(self, name: str):
-        self.log("task_start", {"name": name})
-
-    def task_end(self, name: str, success: bool = True):
-        self.log("task_end", {"name": name, "success": success})
-
-    def error(self, text: str):
-        self.log("error", {"message": text})

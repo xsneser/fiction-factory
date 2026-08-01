@@ -6,9 +6,19 @@ import json
 import time
 import re
 import ssl
+import urllib3
 from typing import Callable, Optional
 from urllib3 import PoolManager
 from urllib3.util import create_urllib3_context
+
+# 进程级复用连接池（保留 HTTP keep-alive / TLS 会话）。
+# verify=True（默认安全）走共享池；verify=False（仅旧证书环境）按需新建。
+_SSL_CTX_VERIFY = _make_ssl_context(True)
+_SSL_CTX_INSECURE = _make_ssl_context(False)
+_POOL = PoolManager(
+    ssl_context=_SSL_CTX_VERIFY,
+    retries=urllib3.Retry(3, backoff_factor=0.5),
+)
 
 
 def _make_ssl_context(verify: bool = True):
@@ -30,19 +40,19 @@ def _make_ssl_context(verify: bool = True):
 def _http_post(url: str, headers: dict, json_data: dict, timeout: int = 300,
                stream: bool = False, verify: bool = True):
     """使用 urllib3 做 HTTP POST（绕过 requests/httpx 的SSL问题）"""
-    import urllib3
-    if not verify:
-        urllib3.disable_warnings()
-    http = PoolManager(
-        timeout=urllib3.Timeout(connect=10, read=timeout),
-        ssl_context=_make_ssl_context(verify),
+    http = _POOL if verify else PoolManager(
+        ssl_context=_SSL_CTX_INSECURE,
         retries=urllib3.Retry(3, backoff_factor=0.5),
     )
+    if not verify:
+        urllib3.disable_warnings()
+    req_timeout = urllib3.Timeout(connect=10, read=timeout)
     body = json.dumps(json_data).encode('utf-8')
     headers = {**headers, 'Content-Type': 'application/json'}
     if stream:
-        return http.request('POST', url, body=body, headers=headers, preload_content=False)
-    resp = http.request('POST', url, body=body, headers=headers)
+        return http.request('POST', url, body=body, headers=headers,
+                            timeout=req_timeout, preload_content=False)
+    resp = http.request('POST', url, body=body, headers=headers, timeout=req_timeout)
     if resp.status != 200:
         raise IOError(f"HTTP {resp.status}: {resp.data.decode('utf-8', errors='replace')[:500]}")
     return resp.data.decode('utf-8')
@@ -110,6 +120,9 @@ class LLMClient:
                 return json.loads(data)["choices"][0]["message"]["content"]
             except Exception as e:
                 last_err = e
+                # 401/403/404/连接类错误重试无意义，立即抛出
+                if is_fatal_error(e):
+                    raise
                 if attempt < 2:
                     time.sleep(2 ** attempt)
         raise last_err
@@ -175,16 +188,10 @@ def render_prompt(template: str, variables: dict) -> str:
 
 
 def is_fatal_error(err: Exception) -> bool:
+    """判定错误是否属于「重试无意义」的致命错误（认证/权限/不存在/连接类）"""
     msg = str(err).lower()
     if "401" in msg or "403" in msg or "404" in msg:
         return True
     if "connection refused" in msg or "no such host" in msg:
         return True
     return False
-
-def estimate_tokens(text: str) -> int:
-    """估算token数：每字符约1.5个token"""
-    return int(len(text) * 1.5)
-
-def estimate_tokens_from_runes(runes: int) -> int:
-    return int(runes * 1.5)

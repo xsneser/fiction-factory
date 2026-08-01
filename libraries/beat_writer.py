@@ -8,6 +8,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 import re
+import json
 
 
 # ═══════════════════════════════════════════
@@ -362,7 +363,7 @@ class ChapterPlanner:
             raw = self.llm.call(
                 "你是专业的网文章节策划。只返回JSON。", prompt,
                 temperature=0.5, max_tokens=2048)
-            data = __import__('json').loads(extract_json(raw))
+            data = json.loads(extract_json(raw))
             beats = []
             for b in data.get("beats", []):
                 beats.append(Beat(
@@ -655,7 +656,7 @@ class ChapterAssembler:
             from core.llm_client import extract_json
             raw = self.llm.call("你是专业的小说编辑。只返回JSON。", prompt,
                                 temperature=0.3, max_tokens=1024)
-            data = __import__('json').loads(extract_json(raw))
+            data = json.loads(extract_json(raw))
             if data.get("needs_fix") and data.get("fixed_opening"):
                 # 替换前500字
                 return data["fixed_opening"] + full_text[500:]

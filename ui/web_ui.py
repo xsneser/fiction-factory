@@ -3,7 +3,7 @@ NovelEngine — 完整 Web UI v2.0 (Flask + Jinja2)
 引擎集成版：新书启动 / 续写 / 管理面板
 """
 from flask import Flask, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
-import sys, os, json, threading, logging
+import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from libraries.plot import PlotLibrary
@@ -60,6 +60,17 @@ def get_llm():
         _llm_client = LLMClient(api_cfg)
         return _llm_client
     return None
+
+
+def sse_stream_response(gen):
+    """包装 SSE 流式响应（统一 headers，避免各端点重复）"""
+    return Response(
+        stream_with_context(gen),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"},
+    )
+
 
 # ─── 引擎实例缓存 ───
 _engines: dict[str, NovelEngine] = {}
@@ -140,7 +151,7 @@ def start_new_book():
             timeline.phase = "outlines"
 
         # 保存并跳转
-        timeline_id = f"tl_{pen_name}_{int(__import__('time').time())}"
+        timeline_id = f"tl_{pen_name}_{int(time.time())}"
         _timelines[timeline_id] = timeline
         save_timeline(timeline, f"books/timelines/{timeline_id}.json")
 
@@ -500,12 +511,7 @@ def api_build_timeline(timeline_id):
         except Exception as e:
             yield send("error", str(e))
 
-    resp = Response(
-        stream_with_context(generate()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                 "Connection": "keep-alive"},
-    )
+    resp = sse_stream_response(generate())
     return resp
 
 
@@ -523,7 +529,7 @@ def timeline_start_writing(timeline_id):
     engine = NovelEngine(llm_client=llm)
     engine.start_new_book_timeline(tl)
 
-    temp_id = f"tlw_{tl.pen_name}_{int(__import__('time').time())}"
+    temp_id = f"tlw_{tl.pen_name}_{int(time.time())}"
     _engines[temp_id] = engine
     return redirect(url_for("timeline_write_flow", engine_id=temp_id))
 
@@ -725,78 +731,69 @@ def plot_detail_api(plot_id):
     return jsonify(t.to_dict())
 
 
-# ─── 库启用/禁用/删除 ───
+# ─── 库启用/禁用/删除（四大库共用一套逻辑） ───
+
+# kind → (库实例, 条目列表属性名)
+_LIB_TABLE = {
+    "plots": (plot_lib, "templates"),
+    "structures": (struct_lib, "templates"),
+    "gags": (gag_lib, "patterns"),
+    "themes": (theme_lib, "entries"),
+}
+
+
+def _lib_toggle(kind: str, item_id: str):
+    """按 kind 切换某库条目的 enabled 状态"""
+    lib, attr = _LIB_TABLE[kind]
+    item = next((x for x in getattr(lib, attr) if x.id == item_id), None)
+    if not item:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    item.enabled = not item.enabled
+    lib._save()
+    return jsonify({"ok": True, "enabled": item.enabled})
+
+
+def _lib_delete(kind: str, item_id: str):
+    """按 kind 删除某库条目"""
+    lib, attr = _LIB_TABLE[kind]
+    items = getattr(lib, attr)
+    if not any(x.id == item_id for x in items):
+        return jsonify({"ok": False, "error": "not found"}), 404
+    setattr(lib, attr, [x for x in items if x.id != item_id])
+    lib._save()
+    return jsonify({"ok": True})
+
 
 @app.route("/api/plots/<plot_id>/toggle", methods=["POST"])
-def plot_toggle(plot_id):
-    t = plot_lib.get_by_id(plot_id)
-    if not t: return jsonify({"ok": False, "error": "not found"}), 404
-    t.enabled = not t.enabled
-    plot_lib._save()
-    return jsonify({"ok": True, "enabled": t.enabled})
+def plot_toggle(plot_id): return _lib_toggle("plots", plot_id)
 
 
 @app.route("/api/plots/<plot_id>/delete", methods=["POST"])
-def plot_delete(plot_id):
-    t = plot_lib.get_by_id(plot_id)
-    if not t: return jsonify({"ok": False, "error": "not found"}), 404
-    plot_lib.templates = [x for x in plot_lib.templates if x.id != plot_id]
-    plot_lib._save()
-    return jsonify({"ok": True})
+def plot_delete(plot_id): return _lib_delete("plots", plot_id)
 
 
 @app.route("/api/structures/<struct_id>/toggle", methods=["POST"])
-def struct_toggle(struct_id):
-    t = struct_lib.get_by_id(struct_id)
-    if not t: return jsonify({"ok": False, "error": "not found"}), 404
-    t.enabled = not t.enabled
-    struct_lib._save()
-    return jsonify({"ok": True, "enabled": t.enabled})
+def struct_toggle(struct_id): return _lib_toggle("structures", struct_id)
 
 
 @app.route("/api/structures/<struct_id>/delete", methods=["POST"])
-def struct_delete(struct_id):
-    t = struct_lib.get_by_id(struct_id)
-    if not t: return jsonify({"ok": False, "error": "not found"}), 404
-    struct_lib.templates = [x for x in struct_lib.templates if x.id != struct_id]
-    struct_lib._save()
-    return jsonify({"ok": True})
+def struct_delete(struct_id): return _lib_delete("structures", struct_id)
 
 
 @app.route("/api/gags/<gag_id>/toggle", methods=["POST"])
-def gag_toggle(gag_id):
-    p = gag_lib.get_by_id(gag_id)
-    if not p: return jsonify({"ok": False, "error": "not found"}), 404
-    p.enabled = not p.enabled
-    gag_lib._save()
-    return jsonify({"ok": True, "enabled": p.enabled})
+def gag_toggle(gag_id): return _lib_toggle("gags", gag_id)
 
 
 @app.route("/api/gags/<gag_id>/delete", methods=["POST"])
-def gag_delete(gag_id):
-    p = gag_lib.get_by_id(gag_id)
-    if not p: return jsonify({"ok": False, "error": "not found"}), 404
-    gag_lib.patterns = [x for x in gag_lib.patterns if x.id != gag_id]
-    gag_lib._save()
-    return jsonify({"ok": True})
+def gag_delete(gag_id): return _lib_delete("gags", gag_id)
 
 
 @app.route("/api/themes/<theme_id>/toggle", methods=["POST"])
-def theme_toggle(theme_id):
-    e = theme_lib.get_by_id(theme_id)
-    if not e: return jsonify({"ok": False, "error": "not found"}), 404
-    e.enabled = not e.enabled
-    theme_lib._save()
-    return jsonify({"ok": True, "enabled": e.enabled})
+def theme_toggle(theme_id): return _lib_toggle("themes", theme_id)
 
 
 @app.route("/api/themes/<theme_id>/delete", methods=["POST"])
-def theme_delete(theme_id):
-    e = theme_lib.get_by_id(theme_id)
-    if not e: return jsonify({"ok": False, "error": "not found"}), 404
-    theme_lib.entries = [x for x in theme_lib.entries if x.id != theme_id]
-    theme_lib._save()
-    return jsonify({"ok": True})
+def theme_delete(theme_id): return _lib_delete("themes", theme_id)
 
 
 @app.route("/structures")
@@ -907,7 +904,7 @@ def scout_debug():
         # 先访问首页拿数据
         r = crawler.session.get("https://fanqienovel.com/rank/hot", timeout=15)
         # 从页面中提取 book_id 列表
-        ids = __import__('re').findall(r'"book_id"\s*:\s*"?(\d+)"?', r.text)
+        ids = re.findall(r'"book_id"\s*:\s*"?(\d+)"?', r.text)
         results.append({"method": "rank_page_ids", "status": r.status_code,
                         "found_ids": ids[:10]})
     except Exception as e:
@@ -920,7 +917,7 @@ def scout_debug():
         bing_url = f"https://www.bing.com/search?q={urllib.parse.quote(bing_query)}"
         r = crawler.session.get(bing_url, timeout=15,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        ids = __import__('re').findall(r'fanqienovel\.com/page/(\d+)', r.text)
+        ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
         results.append({"method": "bing_search", "status": r.status_code,
                         "found_ids": ids[:5]})
     except Exception as e:
@@ -929,7 +926,7 @@ def scout_debug():
     # 方案D: 番茄分类页
     try:
         r = crawler.session.get("https://fanqienovel.com/category/1", timeout=15)
-        ids = __import__('re').findall(r'book_id["\']?\s*[:=]\s*["\']?(\d+)', r.text)
+        ids = re.findall(r'book_id["\']?\s*[:=]\s*["\']?(\d+)', r.text)
         results.append({"method": "category_page", "status": r.status_code,
                         "found_ids": ids[:10]})
     except Exception as e:
@@ -1027,9 +1024,9 @@ def scout_debug():
             # 1. 书籍页SSR
             r = c.session.get(f"https://fanqienovel.com/page/{bid}", timeout=15,
                 headers={"Accept": "text/html,application/xhtml+xml"})
-            m = __import__('re').search(r'window\.__INITIAL_STATE__\s*=\s*({.+?});', r.text, __import__('re').DOTALL)
+            m = re.search(r'window\.__INITIAL_STATE__\s*=\s*({.+?});', r.text, re.DOTALL)
             if m:
-                ssr = __import__('json').loads(m.group(1))
+                ssr = json.loads(m.group(1))
                 # 深度扫描找章节相关数据
                 def find_chapters(obj, path="", depth=0):
                     if depth > 5: return
@@ -1205,12 +1202,7 @@ def scout_run():
             except _queue.Empty:
                 pass
 
-    resp = Response(
-        stream_with_context(generate()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                 "Connection": "keep-alive"},
-    )
+    resp = sse_stream_response(generate())
     return resp
 
 
@@ -1237,7 +1229,7 @@ def scout_ingest():
 
     # 单任务互斥：资产入库同一时间只允许一个
     task_manager.ensure_single("资产入库")
-    task_id = f"ingest_{title}_{int(__import__('time').time())}"
+    task_id = f"ingest_{title}_{int(time.time())}"
     task_manager.start(task_id, name="资产入库", title=title, total=1, phase="入库中...", url="/extract")
     task_manager.log(task_id, f"入库: {len(plots)}桥段 {len(structures)}大纲 {len(gags)}笑点 {len(themes)}内涵", "info")
 
@@ -1311,7 +1303,7 @@ def scout_analyze():
 
     # 单任务互斥：同一工具（内容分析）同时只允许一个任务，新任务替代旧任务
     task_manager.ensure_single("内容分析")
-    task_id = f"analyze_{title}_{int(__import__('time').time())}"
+    task_id = f"analyze_{title}_{int(time.time())}"
     task_manager.start(task_id, name="内容分析", title=title, total=50, phase="准备中", url="/extract")
     task_manager.register_cancel(task_id)
     task_manager.log(task_id, f"开始分析: {title} ({len(chapters)}章)", "info")
@@ -1432,12 +1424,7 @@ def scout_analyze():
             except _queue.Empty:
                 pass
 
-    resp = Response(
-        stream_with_context(generate()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                 "Connection": "keep-alive"},
-    )
+    resp = sse_stream_response(generate())
     return resp
 
 
@@ -1677,12 +1664,7 @@ def generator_build():
             import traceback
             yield f"data: {json.dumps({'event': 'error', 'message': str(e), 'traceback': traceback.format_exc()}, ensure_ascii=False)}\n\n"
 
-    return Response(
-        stream_with_context(generate()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                 "Connection": "keep-alive"},
-    )
+    return sse_stream_response(generate())
 
 
 @app.route("/api/generator/save", methods=["POST"])

@@ -3,6 +3,7 @@
 分层处理：规则替换 → 句式打散 → LLM 重写 → 人工瑕疵注入
 """
 import re
+import random
 from dataclasses import dataclass
 from typing import Optional
 
@@ -101,7 +102,7 @@ def add_human_imperfections(text: str, typo_rate: float = 0.001) -> str:
 
     result = list(text)
     for i, char in enumerate(result):
-        if char in common_typos and __import__('random').random() < typo_rate:
+        if char in common_typos and random.random() < typo_rate:
             result[i] = common_typos[char]
     return ''.join(result)
 
