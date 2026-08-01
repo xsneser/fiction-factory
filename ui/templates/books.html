@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>📚 书库 <a href="/books/new" class="btn" style="float:right">+ 新书</a></h1>
+<h1>📚 书库 <a href="/books/start" class="btn" style="float:right">+ 新书</a></h1>
 
 {% if books %}
 <table>
@@ -26,6 +26,6 @@
     </tbody>
 </table>
 {% else %}
-<div class="empty"><div class="icon">📚</div><p>书库为空</p><a href="/books/new" class="btn">创建新书</a></div>
+<div class="empty"><div class="icon">📚</div><p>书库为空</p><a href="/books/start" class="btn">创建新书</a></div>
 {% endif %}
 {% endblock %}

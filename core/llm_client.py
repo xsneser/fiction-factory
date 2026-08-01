@@ -11,15 +11,6 @@ from typing import Callable, Optional
 from urllib3 import PoolManager
 from urllib3.util import create_urllib3_context
 
-# 进程级复用连接池（保留 HTTP keep-alive / TLS 会话）。
-# verify=True（默认安全）走共享池；verify=False（仅旧证书环境）按需新建。
-_SSL_CTX_VERIFY = _make_ssl_context(True)
-_SSL_CTX_INSECURE = _make_ssl_context(False)
-_POOL = PoolManager(
-    ssl_context=_SSL_CTX_VERIFY,
-    retries=urllib3.Retry(3, backoff_factor=0.5),
-)
-
 
 def _make_ssl_context(verify: bool = True):
     """创建 SSL 上下文。
@@ -35,6 +26,16 @@ def _make_ssl_context(verify: bool = True):
     ctx.verify_mode = ssl.CERT_NONE
     ctx.set_ciphers('DEFAULT@SECLEVEL=1')
     return ctx
+
+
+# 进程级复用连接池（保留 HTTP keep-alive / TLS 会话）。
+# verify=True（默认安全）走共享池；verify=False（仅旧证书环境）按需新建。
+_SSL_CTX_VERIFY = _make_ssl_context(True)
+_SSL_CTX_INSECURE = _make_ssl_context(False)
+_POOL = PoolManager(
+    ssl_context=_SSL_CTX_VERIFY,
+    retries=urllib3.Retry(3, backoff_factor=0.5),
+)
 
 
 def _http_post(url: str, headers: dict, json_data: dict, timeout: int = 300,

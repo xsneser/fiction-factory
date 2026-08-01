@@ -101,7 +101,7 @@ async function writeChapter() {
     const data = await resp.json();
 
     if (data.error) {
-        showMsg('❌ ' + data.error);
+        showMsg('❌ ' + escapeHtml(data.error));
         return;
     }
     if (data.flow_complete) {
@@ -119,7 +119,7 @@ async function writeChapter() {
     document.getElementById('cur-blueprint').textContent = '🎯 ' + bpText;
 
     // 等 2 秒让内容刷出来（简单轮询读取实际章节内容由后端保存）
-    showMsg(`<span style="color:#3fb950">✅ 第${data.chapter_num}章完成</span> · ${data.word_count}字 · ${data.beats}节拍\n\n蓝图：${bpText}\n\n<span style="color:#484f58">（正文已保存，可在书库中查看）</span>`);
+    showMsg(`<span style="color:#3fb950">✅ 第${data.chapter_num}章完成</span> · ${data.word_count}字 · ${data.beats}节拍\n\n蓝图：${escapeHtml(bpText)}\n\n<span style="color:#484f58">（正文已保存，可在书库中查看）</span>`);
 }
 
 function stopFlow() {

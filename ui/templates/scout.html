@@ -83,6 +83,7 @@
 .review-panel { margin-top:8px; }
 </style>
 
+<script src="/static/js/library_review.js"></script>
 <script>
 var STORAGE_KEY = 'ne_scout';
 var lastResult = null;
@@ -193,131 +194,9 @@ var _lastReviewData = null;
 
 function showReviewCards(d) {
     _lastReviewData = d;
+    renderReviewCards(d, 'result-area');
     var area = document.getElementById('result-area');
-    area.style.display = 'block';
-
-    var html = '<div class="card" style="margin-bottom:16px">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center">';
-    html += '<span style="font-size:18px;font-weight:600">📖 ' + d.title + '</span>';
-    html += '<span style="color:#8b949e">已下载 ' + (d.downloaded_chapters||0) + ' 章</span>';
-    html += '</div>';
-    html += '<div style="margin-top:16px;display:flex;gap:10px">';
-    html += '<button class="btn-primary" onclick="ingestAll()">📦 全部入库</button>';
-    html += '<button class="btn" style="background:#30363d;color:#f0f6fc" onclick="ingestSelected()">✅ 入库选中</button>';
-    html += '</div>';
-    html += '</div>';
-
-    // 分类标签 + 内容
-    var cats = [
-        {key:'plot', label:'🧩 桥段', items: d.plot_details || [], fields:['category','name','description','structure']},
-        {key:'structure', label:'📋 大纲', items: d.structure_details || [], fields:['name','description','stages']},
-        {key:'gag', label:'😂 笑点', items: d.gag_details || [], fields:['category','name','pattern_description']},
-        {key:'theme', label:'💡 内涵', items: d.theme_details || [], fields:['name','description','techniques']},
-    ];
-
-    html += '<div class="tabs" style="margin-bottom:12px">';
-    cats.forEach(function(c, i) {
-        var active = i === 0 ? 'active' : '';
-        html += '<a href="javascript:;" class="review-tab ' + active + '" data-tab="' + c.key + '" onclick="switchReviewTab(\'' + c.key + '\')">' + c.label + ' (' + c.items.length + ')</a>';
-    });
-    html += '</div>';
-
-    cats.forEach(function(c) {
-        var show = c.key === 'plot' ? '' : ' style="display:none"';
-        html += '<div class="review-panel" id="review-' + c.key + '"' + show + '>';
-        if (c.items.length === 0) {
-            html += '<div class="empty" style="padding:30px"><p style="color:#484f58">无提取结果</p></div>';
-        } else {
-            c.items.forEach(function(item, idx) {
-                html += '<label class="review-item">';
-                html += '<input type="checkbox" class="review-cb" data-cat="' + c.key + '" data-idx="' + idx + '" checked>';
-                html += '<div class="review-content">';
-                if (c.key === 'plot') {
-                    html += '<div><code>' + (item.category||'') + '</code> <strong>' + (item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
-                    if (item.structure) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">结构: ' + item.structure.slice(0,100) + '</div>';
-                } else if (c.key === 'structure') {
-                    html += '<div><strong>' + (item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
-                    if (item.stages) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">阶段: ' + (item.stages.join(' → ')).slice(0,100) + '</div>';
-                } else if (c.key === 'gag') {
-                    html += '<div><code>' + (item.category||'') + '</code> <strong>' + (item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.pattern_description||'').slice(0,120) + '</div>';
-                } else if (c.key === 'theme') {
-                    html += '<div><strong>' + (item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
-                }
-                html += '</div></label>';
-            });
-        }
-        html += '</div>';
-    });
-
-    area.innerHTML = html;
+    area.scrollIntoView({behavior:'smooth', block:'start'});
 }
-
-function switchReviewTab(key) {
-    document.querySelectorAll('.review-tab').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('.review-panel').forEach(function(p) { p.style.display = 'none'; });
-    var tab = document.querySelector('.review-tab[data-tab="' + key + '"]');
-    if (tab) tab.classList.add('active');
-    var panel = document.getElementById('review-' + key);
-    if (panel) panel.style.display = 'block';
-}
-
-function getCheckedItems() {
-    var result = {plots:[], structures:[], gags:[], themes:[]};
-    if (!_lastReviewData) return result;
-    var cbs = document.querySelectorAll('.review-cb:checked');
-    cbs.forEach(function(cb) {
-        var cat = cb.getAttribute('data-cat');
-        var idx = parseInt(cb.getAttribute('data-idx'));
-        if (cat === 'plot' && _lastReviewData.plot_details[idx]) result.plots.push(_lastReviewData.plot_details[idx]);
-        if (cat === 'structure' && _lastReviewData.structure_details[idx]) result.structures.push(_lastReviewData.structure_details[idx]);
-        if (cat === 'gag' && _lastReviewData.gag_details[idx]) result.gags.push(_lastReviewData.gag_details[idx]);
-        if (cat === 'theme' && _lastReviewData.theme_details[idx]) result.themes.push(_lastReviewData.theme_details[idx]);
-    });
-    return result;
-}
-
-async function ingestAll() {
-    var items = getCheckedItems();
-    var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
-    if (total === 0) return alert('没有可入库的条目');
-    await doIngest(items);
-}
-
-async function ingestSelected() {
-    var items = getCheckedItems();
-    var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
-    if (total === 0) return alert('请勾选要入库的条目');
-    await doIngest(items);
-}
-
-async function doIngest(items) {
-    var title = _lastReviewData ? _lastReviewData.title : '';
-    var btn = document.querySelector('.btn-primary');
-    var orig = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = '入库中...';
-    try {
-        var r = await fetch('/api/scout/ingest', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({title: title, plots: items.plots, structures: items.structures, gags: items.gags, themes: items.themes}),
-        });
-        var d = await r.json();
-        if (d.ok) {
-            // 日志统一在右侧状态栏显示（后端 task_manager 已记录）
-        } else {
-            alert('❌ 入库失败: ' + (d.error||''));
-        }
-    } catch(e) {
-        alert('❌ 入库失败: ' + e.message);
-    }
-    btn.disabled = false;
-    btn.textContent = orig;
-}
-
 </script>
 {% endblock %}

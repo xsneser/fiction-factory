@@ -72,7 +72,7 @@
 function renderStatus(type, msg) {
     var el = document.getElementById('status-card');
     var icons = { info: '📋', success: '✅', warning: '⚠️', error: '❌' };
-    el.innerHTML = '<div class="card"><h2>连接状态</h2><div class="alert ' + type + '">' + (icons[type]||'') + ' ' + msg + '</div></div>';
+    el.innerHTML = '<div class="card"><h2>连接状态</h2><div class="alert ' + type + '">' + (icons[type]||'') + ' ' + escapeHtml(msg) + '</div></div>';
 }
 
 function showToast(msg, type) {

@@ -149,8 +149,8 @@ function handleEvent(d) {
                 var html = '';
                 d.chapters_data.forEach(function(ch) {
                     html += '<div class="chapter-block">';
-                    html += '<h4>第' + ch.num + '章 ' + (ch.title||'') + ' (' + ch.word_count + '字)</h4>';
-                    html += '<div class="ch-text">' + (ch.text||'').replace(/\n/g,'<br>') + '</div>';
+                    html += '<h4>第' + ch.num + '章 ' + escapeHtml(ch.title||'') + ' (' + ch.word_count + '字)</h4>';
+                    html += '<div class="ch-text">' + escapeHtml(ch.text||'').replace(/\n/g,'<br>') + '</div>';
                     html += '</div>';
                 });
                 document.getElementById('done-area').innerHTML = html;
@@ -176,7 +176,7 @@ function mergeToDone(title, text) {
     // 追加到上方
     var block = document.createElement('div');
     block.className = 'chapter-block';
-    block.innerHTML = '<h4>' + title + '</h4><div class="ch-text" style="font-size:13px;color:#8b949e">' + (text||'') + '</div>';
+    block.innerHTML = '<h4>' + escapeHtml(title) + '</h4><div class="ch-text" style="font-size:13px;color:#8b949e">' + escapeHtml(text||'').replace(/\n/g,'<br>') + '</div>';
     doneArea.appendChild(block);
     doneArea.scrollTop = doneArea.scrollHeight;
 }

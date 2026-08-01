@@ -89,7 +89,7 @@ async function startFlow() {
         const data = await resp.json();
 
         if (data.error) {
-            document.getElementById('output-body').innerHTML = '<div class="error">❌ ' + data.error + '</div>';
+            document.getElementById('output-body').innerHTML = '<div class="error">❌ ' + escapeHtml(data.error) + '</div>';
             break;
         }
 
@@ -150,29 +150,29 @@ function showPlanOutput(data) {
         <div class="result-card">
             <h3>📋 规划完成</h3>
             <table>
-                <tr><td>大纲结构</td><td>${data.structure || '自动匹配'} · ${data.total_chapters}章</td></tr>
+                <tr><td>大纲结构</td><td>${escapeHtml(data.structure || '自动匹配')} · ${data.total_chapters}章</td></tr>
                 <tr><td>初始角色</td><td>${data.characters} 个</td></tr>
                 <tr><td>伏笔方案</td><td>${data.foreshadows} 条</td></tr>
-                <tr><td>开篇桥段</td><td>${data.opening_plot || '自动匹配'}</td></tr>
+                <tr><td>开篇桥段</td><td>${escapeHtml(data.opening_plot || '自动匹配')}</td></tr>
             </table>
         </div>`;
 }
 
 function showOutput(title, meta) {
     document.getElementById('output-title').textContent = title;
-    document.getElementById('output-body').innerHTML = '<div class="result-card"><p>✅ 生成完成 · ' + meta + '</p></div>';
+    document.getElementById('output-body').innerHTML = '<div class="result-card"><p>✅ 生成完成 · ' + escapeHtml(meta) + '</p></div>';
 }
 
 function showTitleOutput(data) {
     const el = document.getElementById('output-body');
-    let titlesHtml = (data.options || []).map(t => '<li>' + t + '</li>').join('');
+    let titlesHtml = (data.options || []).map(t => '<li>' + escapeHtml(t) + '</li>').join('');
     el.innerHTML = `
         <div class="result-card">
-            <h3>🏆 推荐书名：${data.best_title}</h3>
+            <h3>🏆 推荐书名：${escapeHtml(data.best_title || '')}</h3>
             <h4>备选：</h4>
             <ul>${titlesHtml || '<li>（无）</li>'}</ul>
             <h4>简介：</h4>
-            <p class="synopsis">${data.synopsis || '（生成中...）'}</p>
+            <p class="synopsis">${escapeHtml(data.synopsis || '（生成中...）')}</p>
         </div>`;
 }
 
@@ -180,10 +180,10 @@ function showComplete(data) {
     document.getElementById('output-body').innerHTML += `
         <div class="result-card success">
             <h3>🎉 新书启动完成！</h3>
-            <p>书名：<strong>${data.best_title || ''}</strong></p>
-            <p>已自动转入续写模式。书库 ID：<code>${data.book_id}</code></p>
-            <a href="/books/${data.book_id}/continue" class="btn-primary">▶ 开始续写</a>
-            <a href="/books/${data.book_id}" class="btn-secondary">📖 查看详情</a>
+            <p>书名：<strong>${escapeHtml(data.best_title || '')}</strong></p>
+            <p>已自动转入续写模式。书库 ID：<code>${escapeHtml(data.book_id || '')}</code></p>
+            <a href="/books/${escapeHtml(data.book_id || '')}/continue" class="btn-primary">▶ 开始续写</a>
+            <a href="/books/${escapeHtml(data.book_id || '')}" class="btn-secondary">📖 查看详情</a>
         </div>`;
 }
 </script>

@@ -151,7 +151,7 @@ function gLog(msg, cls){
     var p = document.getElementById('glog');
     var d = document.createElement('div');
     d.className = 'log-line ' + (cls||'');
-    d.innerHTML = '<span class="log-time">' + gNow() + '</span>' + msg;
+    d.innerHTML = '<span class="log-time">' + gNow() + '</span>' + escapeHtml(msg);
     p.appendChild(d);
     p.scrollTop = p.scrollHeight;
 }

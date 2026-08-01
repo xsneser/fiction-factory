@@ -104,6 +104,19 @@
         .accordion-body { padding:0 16px 16px; display:none; }
         .accordion-body.show { display:block; }
     </style>
+    <script>
+        // 通用 HTML 转义工具：所有动态插入 innerHTML 的数据必须过一遍。
+        // 放在 <head> 保证各子模板脚本执行前已可用。
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+    </script>
 </head>
 <body>
     <nav>
@@ -175,7 +188,7 @@
             sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
         });
         var STATUS_EMPTY = '<div class="status-empty">暂无运行中的任务</div>';
-        
+
         function clearLogs() {
             var list = document.getElementById('task-log-list');
             if (list) list.innerHTML = '';
@@ -189,14 +202,14 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({id: taskId})
             }).then(function() {
-                var card = document.querySelector('#status-tasks .status-card[data-id="' + taskId + '"]');
+                var card = document.querySelector('#status-tasks .status-card[data-id="' + CSS.escape(taskId || '') + '"]');
                 if (card) card.remove();
                 if (!document.querySelector('#status-tasks .status-card')) {
                     document.getElementById('status-tasks').innerHTML = STATUS_EMPTY;
                 }
             });
         }
-        
+
         function renderTaskCards(taskArray) {
             if (!taskArray || taskArray.length === 0) {
                 return STATUS_EMPTY;
@@ -205,19 +218,21 @@
             for (var i = 0; i < taskArray.length; i++) {
                 var t = taskArray[i];
                 var pct = t.total > 0 ? Math.round((t.current/t.total)*100) : 0;
-                html += '<div class="status-card" data-id="' + t.id + '">';
+                var safeId = escapeHtml(t.id || '');
+                var safeUrl = escapeHtml(t.url || '');
+                html += '<div class="status-card" data-id="' + safeId + '">';
                 // 第一行：工具名（在干什么操作）
-                html += '<div class="task-name">' + (t.name || '任务') + '</div>';
+                html += '<div class="task-name">' + escapeHtml(t.name || '任务') + '</div>';
                 // 第二行：对象 + 具体阶段（对谁、干到哪）
-                var detail = (t.title ? t.title + ' · ' : '') + (t.phase||'');
+                var detail = (t.title ? escapeHtml(t.title) + ' · ' : '') + escapeHtml(t.phase || '');
                 html += '<div class="task-phase">' + detail + '</div>';
                 if (t.total > 0) html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
-                if (t.time) html += '<div class="task-time">' + t.time + '</div>';
+                if (t.time) html += '<div class="task-time">' + escapeHtml(t.time) + '</div>';
                 html += '<div class="task-actions" style="margin-top:6px;display:flex;gap:6px;align-items:center">';
                 // 查看按钮：低调灰色小按钮，hover 提亮
-                if (t.url) html += '<button onclick="navigateTo(\'' + t.url + '\')" style="flex:1;background:transparent;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;transition:all .2s" onmouseover="this.style.color=\'#f0f6fc\';this.style.borderColor=\'#58a6ff\'" onmouseout="this.style.color=\'#8b949e\';this.style.borderColor=\'#30363d\'" title="去查看">查看</button>';
+                if (t.url) html += '<button onclick="navigateTo(this.dataset.url)" data-url="' + safeUrl + '" style="flex:1;background:transparent;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;transition:all .2s" onmouseover="this.style.color=\'#f0f6fc\';this.style.borderColor=\'#58a6ff\'" onmouseout="this.style.color=\'#8b949e\';this.style.borderColor=\'#30363d\'" title="去查看">查看</button>';
                 // 所有任务（运行中/完成/失败）都可以关闭：大一点更显眼，hover 变红
-                html += '<button onclick="closeTask(\'' + t.id.replace(/'/g, '') + '\')" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px;line-height:1;padding:0 2px;transition:color .2s" onmouseover="this.style.color=\'#f85149\'" onmouseout="this.style.color=\'#8b949e\'" title="关闭">✕</button>';
+                html += '<button onclick="closeTask(this.dataset.id)" data-id="' + safeId + '" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px;line-height:1;padding:0 2px;transition:color .2s" onmouseover="this.style.color=\'#f85149\'" onmouseout="this.style.color=\'#8b949e\'" title="关闭">✕</button>';
                 html += '</div>';
                 html += '</div>';
             }

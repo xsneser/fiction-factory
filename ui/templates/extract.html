@@ -31,6 +31,7 @@
 .style-result .field-value { font-size:14px;margin-top:2px }
 </style>
 
+<script src="/static/js/library_review.js"></script>
 <script>
 // 单工具互斥代际计数器：新分析任务替代旧任务后，旧请求的返回结果被丢弃
 var _extractGen = 0;
@@ -168,69 +169,9 @@ function showReviewCards(d) {
     _lastReviewData = d;
     // 持久化结果到 sessionStorage：切换页面后回来仍能查看
     try { sessionStorage.setItem(EXTRACT_RESULT_KEY, JSON.stringify({mode:'library', data:d})); } catch(e) {}
-    renderReviewCards(d);
+    renderReviewCards(d, 'extract-result-area');
     var area = document.getElementById('extract-result-area');
     area.scrollIntoView({behavior:'smooth', block:'start'});
-}
-
-function renderReviewCards(d) {
-    var area = document.getElementById('extract-result-area');
-    area.style.display = 'block';
-
-    var html = '<div class="card" style="margin-bottom:16px">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center">';
-    html += '<span style="font-size:18px;font-weight:600">📖 ' + d.title + '</span>';
-    html += '</div>';
-    html += '<div style="margin-top:16px;display:flex;gap:10px">';
-    html += '<button class="btn-primary" onclick="ingestAll()">📦 全部入库</button>';
-    html += '<button class="btn" style="background:#30363d;color:#f0f6fc" onclick="ingestSelected()">✅ 入库选中</button>';
-    html += '</div></div>';
-
-    var cats = [
-        {key:'plot', label:'🧩 桥段', items: d.plot_details || [], fields:['category','name','description','structure']},
-        {key:'structure', label:'📋 大纲', items: d.structure_details || [], fields:['name','description','stages']},
-        {key:'gag', label:'😂 笑点', items: d.gag_details || [], fields:['category','name','pattern_description']},
-        {key:'theme', label:'💡 内涵', items: d.theme_details || [], fields:['name','description','techniques']},
-    ];
-
-    html += '<div class="tabs" style="margin-bottom:12px">';
-    cats.forEach(function(c, i) {
-        html += '<a href="javascript:;" class="review-tab ' + (i===0?'active':'') + '" data-tab="' + c.key + '" onclick="switchReviewTab(\'' + c.key + '\')">' + c.label + ' (' + c.items.length + ')</a>';
-    });
-    html += '</div>';
-
-    cats.forEach(function(c) {
-        html += '<div class="review-panel" id="review-' + c.key + '"' + (c.key!=='plot'?' style="display:none"':'') + '>';
-        if (c.items.length === 0) {
-            html += '<div class="empty" style="padding:30px"><p style="color:#484f58">无提取结果</p></div>';
-        } else {
-            c.items.forEach(function(item, idx) {
-                html += '<label class="review-item">';
-                html += '<input type="checkbox" class="review-cb" data-cat="' + c.key + '" data-idx="' + idx + '" checked>';
-                html += '<div class="review-content">';
-                if (c.key === 'plot') {
-                    html += '<div><code>' + (item.category||'') + '</code> <strong>' + (item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
-                    if (item.structure) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">结构: ' + item.structure.slice(0,100) + '</div>';
-                } else if (c.key === 'structure') {
-                    html += '<div><strong>' + (item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
-                    if (item.stages) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">阶段: ' + (item.stages.join(' → ')).slice(0,100) + '</div>';
-                } else if (c.key === 'gag') {
-                    html += '<div><code>' + (item.category||'') + '</code> <strong>' + (item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.pattern_description||'').slice(0,120) + '</div>';
-                } else if (c.key === 'theme') {
-                    html += '<div><strong>' + (item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + (item.description||'').slice(0,120) + '</div>';
-                }
-                html += '</div></label>';
-            });
-        }
-        html += '</div>';
-    });
-
-    // 滚动到结果区域
-    area.innerHTML = html;
 }
 
 function showStyleResult(d) {
@@ -261,100 +202,5 @@ function renderStyleResult(d) {
     area.innerHTML = html;
 }
 
-function switchReviewTab(key) {
-    document.querySelectorAll('.review-tab').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('.review-panel').forEach(function(p) { p.style.display = 'none'; });
-    var tab = document.querySelector('.review-tab[data-tab="' + key + '"]');
-    if (tab) tab.classList.add('active');
-    var panel = document.getElementById('review-' + key);
-    if (panel) panel.style.display = 'block';
-}
-
-function getCheckedItems() {
-    var result = {plots:[], structures:[], gags:[], themes:[]};
-    if (!_lastReviewData) return result;
-    var cbs = document.querySelectorAll('.review-cb:checked');
-    cbs.forEach(function(cb) {
-        var cat = cb.getAttribute('data-cat');
-        var idx = parseInt(cb.getAttribute('data-idx'));
-        if (cat === 'plot' && _lastReviewData.plot_details[idx]) result.plots.push(_lastReviewData.plot_details[idx]);
-        if (cat === 'structure' && _lastReviewData.structure_details[idx]) result.structures.push(_lastReviewData.structure_details[idx]);
-        if (cat === 'gag' && _lastReviewData.gag_details[idx]) result.gags.push(_lastReviewData.gag_details[idx]);
-        if (cat === 'theme' && _lastReviewData.theme_details[idx]) result.themes.push(_lastReviewData.theme_details[idx]);
-    });
-    return result;
-}
-
-async function ingestAll() {
-    var items = getCheckedItems();
-    var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
-    if (total === 0) return alert('没有可入库的条目');
-    await doIngest(items);
-}
-
-async function ingestSelected() {
-    var items = getCheckedItems();
-    var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
-    if (total === 0) return alert('请勾选要入库的条目');
-    await doIngest(items);
-}
-
-async function doIngest(items) {
-    var title = _lastReviewData ? _lastReviewData.title : '';
-    var btn = document.querySelector('.btn-primary');
-    var orig = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = '入库中...'; }
-    try {
-        var r = await fetch('/api/scout/ingest', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({title: title, plots: items.plots, structures: items.structures, gags: items.gags, themes: items.themes}),
-        });
-        var d = await r.json();
-        if (d.ok) {
-            // 日志统一在右侧状态栏显示（后端 task_manager 已记录）
-        } else {
-            alert('❌ 入库失败: ' + (d.error||''));
-        }
-    } catch(e) {
-        alert('❌ 入库失败: ' + e.message);
-    }
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
-}
-
-// 事件委托处理按钮点击
-document.addEventListener('click', function(e) {
-    var btn = e.target.closest('.lib-btn');
-    if (btn) {
-        extractLibrary(btn.getAttribute('data-p'), btn.getAttribute('data-f'), btn);
-        return;
-    }
-    btn = e.target.closest('.style-btn');
-    if (btn) {
-        extractStyle(btn.getAttribute('data-p'), btn.getAttribute('data-f'), btn);
-        return;
-    }
-});
-
-// 页面加载
-loadNovelsForExtract('library');
-
-// 恢复上次的分析结果（sessionStorage 持久化，切换页面后不丢失）
-(function(){
-    try {
-        var saved = sessionStorage.getItem(EXTRACT_RESULT_KEY);
-        if (saved) {
-            var obj = JSON.parse(saved);
-            if (obj && obj.data) {
-                if (obj.mode === 'style') {
-                    renderStyleResult(obj.data);
-                } else {
-                    _lastReviewData = obj.data;
-                    renderReviewCards(obj.data);
-                }
-            }
-        }
-    } catch(e) {}
-})();
 </script>
 {% endblock %}

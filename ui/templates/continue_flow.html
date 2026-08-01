@@ -75,7 +75,7 @@ async function generateChapter() {
     const data = await resp.json();
 
     if (data.error) {
-        document.getElementById('write-output').innerHTML = '<div class="error">❌ ' + data.error + '</div>';
+        document.getElementById('write-output').innerHTML = '<div class="error">❌ ' + escapeHtml(data.error) + '</div>';
         document.getElementById('gen-status').textContent = '失败';
         resetControls();
         return;
@@ -88,7 +88,7 @@ async function generateChapter() {
     }
 
     if (data.status === 'paused') {
-        document.getElementById('write-output').innerHTML = '<div class="warning">⏸ ' + data.reason + '</div>';
+        document.getElementById('write-output').innerHTML = '<div class="warning">⏸ ' + escapeHtml(data.reason) + '</div>';
         resetControls();
         return;
     }
@@ -110,7 +110,7 @@ async function generateChapter() {
                 const humorIcon = b.humor ? '😂' : '';
                 html += '<div class="beat-chip">' +
                     '<span class="beat-idx">#' + b.index + '</span>' +
-                    '<span class="beat-info">' + b.template.replace('beat_','') + ' ' + b.words + '字 ' + humorIcon + '</span>' +
+                    '<span class="beat-info">' + escapeHtml((b.template || '').replace('beat_','')) + ' ' + b.words + '字 ' + humorIcon + '</span>' +
                     '</div>';
             });
             html += '</div>';
