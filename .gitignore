@@ -36,3 +36,6 @@ libraries/data/
 # 运行时任务缓存
 _api_tasks.json
 app_output.log
+
+# Claude Code 本地会话设置
+.claude/settings.local.json
