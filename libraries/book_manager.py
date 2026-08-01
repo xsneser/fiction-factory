@@ -47,8 +47,12 @@ class BookConfig:
 class BookManager:
     """图书管理器"""
 
-    def __init__(self, books_dir: str = "books"):
-        self.dir = Path(books_dir)
+    def __init__(self, books_dir: str | None = None):
+        # 锚定到项目根目录，避免依赖当前工作目录（从任何目录启动都找得到数据）
+        base = Path(__file__).resolve().parent.parent
+        self.dir = Path(books_dir) if books_dir else base / "books"
+        if not self.dir.is_absolute():
+            self.dir = base / self.dir
         self.dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, BookConfig] = {}
         self._load_all()

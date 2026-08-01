@@ -14,7 +14,6 @@ from libraries.profiles import ProfileManager
 from libraries.book_manager import BookManager
 from libraries.cost_tracker import CostTracker
 from libraries.de_ai import DeAIEngine
-from libraries.writing_pipeline import WritingPipeline, WritingContext
 from libraries.character_state import CharacterStateMachine
 from libraries.reviewer import ContentReviewer
 from libraries.engine import NovelEngine, BookMode, Phase, Op, Instruction
@@ -615,36 +614,6 @@ def continue_book_page(book_id):
     )
 
 
-@app.route("/api/engine/<engine_id>/chapter/preview", methods=["POST"])
-def chapter_preview(engine_id):
-    """预览写作 prompt（不生成）"""
-    engine = _engines.get(engine_id)
-    if not engine:
-        return jsonify({"error": "not found"}), 404
-
-    data = request.json or {}
-    chapter_num = data.get("chapter_num", engine.state.current_chapter + 1)
-    chapter_outline = data.get("chapter_outline", "")
-
-    ctx = WritingContext(
-        chapter_num=chapter_num,
-        chapter_outline=chapter_outline,
-        style_profile=engine.profile,
-        target_words=engine.book.words_per_chapter if engine.book else 3000,
-    )
-    ctx = engine.writing.match_templates(chapter_outline, engine.state.genre,
-                                         chapter_outline, existing_ctx=ctx)
-    system, user = engine.writing.build_prompt(ctx)
-
-    return jsonify({
-        "system": system,
-        "user": user,
-        "plot_name": ctx.plot_template.name if ctx.plot_template else "auto",
-        "gags": [g.name for g in ctx.gags],
-        "themes": [t.name for t in ctx.themes],
-    })
-
-
 @app.route("/api/engine/<engine_id>/chapter/generate", methods=["POST"])
 def chapter_generate(engine_id):
     """生成一章（流式）"""
@@ -874,37 +843,6 @@ def new_profile():
 def write():
     """旧写作台 — 已废弃，重定向到书库"""
     return redirect(url_for("books"))
-
-
-@app.route("/api/write/preview", methods=["POST"])
-def write_preview():
-    data = request.json
-    plot_id = data.get("plot_id")
-    profile_id = data.get("profile_id")
-    variables = data.get("variables", {})
-    chapter_num = data.get("chapter_num", 1)
-    chapter_outline = data.get("chapter_outline", "")
-    target_words = data.get("target_words", 3000)
-
-    plot = plot_lib.get_by_id(plot_id)
-    profile = profiles.get(profile_id) if profile_id else None
-
-    wp = WritingPipeline(profile_manager=profiles)
-    ctx = WritingContext(
-        plot_template=plot, plot_variables=variables,
-        chapter_num=chapter_num, chapter_outline=chapter_outline,
-        style_profile=profile, target_words=target_words,
-        de_ai=True,
-    )
-    ctx = wp.match_templates(chapter_outline, existing_ctx=ctx)
-    system, user = wp.build_prompt(ctx)
-
-    return jsonify({
-        "system": system, "user": user,
-        "plot_name": plot.name if plot else "",
-        "gags": [g.name for g in ctx.gags],
-        "themes": [t.name for t in ctx.themes],
-    })
 
 
 @app.route("/deai", methods=["GET","POST"])

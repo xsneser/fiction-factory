@@ -72,9 +72,9 @@ class CostTracker:
         input_tokens = estimate_tokens_chinese(input_text)
         if not output_tokens and output_text:
             output_tokens = estimate_tokens_chinese(output_text)
-        cost = estimate_cost(self.model, input_text, input_tokens=0,
-                             output_tokens=output_tokens) if 0 else \
-               self.estimate(input_text, output_tokens)
+        # estimate() 内部用 estimate_cost(self.model, ...) 重新估算输入 token，
+        # 与上面 input_tokens 计算一致，这里直接用即可
+        cost = self.estimate(input_text, output_tokens)
 
         self.spent += cost
         self.records.append(CostRecord(

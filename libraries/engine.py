@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
 import json
+import logging
 from datetime import datetime
+
+logger = logging.getLogger("novel-engine.engine")
 
 from libraries.plot import PlotLibrary, PlotTemplate
 from libraries.structure import StructureLibrary, StructureTemplate
@@ -241,13 +244,13 @@ class NovelEngine:
         if config.style_profile_id:
             try:
                 self.profile = self.profiles.get(config.style_profile_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("按 ID 加载笔名档案失败: %s", e)
         if not self.profile:
             try:
                 self.profile = self.profiles.get_by_name(config.pen_name)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("按笔名加载笔名档案失败: %s", e)
 
         # 初始化成本追踪
         self.cost_tracker = CostTracker()
@@ -298,8 +301,8 @@ class NovelEngine:
         self.profile = None
         try:
             self.profile = self.profiles.get_by_name(pen_name)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("加载笔名档案失败: %s", e)
 
         # 初始化蓝图写作器
         from .timeline_writer import TimelineChapterWriter
@@ -372,22 +375,23 @@ class NovelEngine:
         if self.book.style_profile_id:
             try:
                 self.profile = self.profiles.get(self.book.style_profile_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("按 ID 加载笔名档案失败: %s", e)
 
         # 加载角色状态
         char_path = Path("books") / book_id / "character_states.json"
         if char_path.exists():
             try:
                 self.char_states.load(str(char_path))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("加载角色状态失败 (%s): %s", char_path, e)
 
         # 加载成本
         cost_path = Path("books") / book_id / "cost.json"
         try:
             self.cost_tracker = CostTracker.load(str(cost_path))
-        except Exception:
+        except Exception as e:
+            logger.warning("加载成本失败 (%s)，使用空追踪器: %s", cost_path, e)
             self.cost_tracker = CostTracker()
         self.cost_tracker.book_id = book_id
 
@@ -754,7 +758,8 @@ class NovelEngine:
             title_data = json.loads(extract_json(raw_title))
             nb.title_options = title_data.get("titles", [])
             nb.best_title = title_data.get("best", nb.title_options[0] if nb.title_options else config.title)
-        except Exception:
+        except Exception as e:
+            logger.warning("书名 LLM 输出解析失败，使用默认标题: %s", e)
             nb.title_options = [config.title] if config.title else ["未命名"]
             nb.best_title = nb.title_options[0]
 
@@ -766,7 +771,8 @@ class NovelEngine:
         try:
             syn_data = json.loads(extract_json(raw_syn))
             nb.synopsis = syn_data.get("synopsis", "")
-        except Exception:
+        except Exception as e:
+            logger.warning("简介 LLM 输出解析失败: %s", e)
             nb.synopsis = ""
 
         self.cost_tracker.record("title_synopsis", title_prompt + synopsis_prompt,
@@ -820,7 +826,8 @@ class NovelEngine:
                     power_level=c.get("power_level", ""),
                 )
             return chars
-        except Exception:
+        except Exception as e:
+            logger.warning("角色 LLM 输出解析失败，返回空列表: %s", e)
             return []
 
     def _generate_foreshadows(self, config: NewBookConfig) -> list[dict]:
@@ -848,7 +855,8 @@ class NovelEngine:
             from core.llm_client import extract_json
             data = json.loads(extract_json(raw))
             return data.get("foreshadows", [])
-        except Exception:
+        except Exception as e:
+            logger.warning("伏笔 LLM 输出解析失败，返回空列表: %s", e)
             return []
 
     def _save_new_book_chapter(self, ch_num: int, title: str, content: str):
@@ -1055,15 +1063,15 @@ class NovelEngine:
                     self.state.book_id, chapter_num - 1)
                 if prev_ch:
                     prev_ending = prev_ch.get("content", "")[-500:]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("加载上一章结尾失败（继续写作）: %s", e)
 
         # 角色状态
         char_states = ""
         try:
             char_states = self.char_states.build_context_prompt(chapter_num=chapter_num)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("构建角色上下文失败（继续写作）: %s", e)
 
         result = self.timeline_writer.write_chapter(
             chapter_num=chapter_num,
@@ -1078,8 +1086,8 @@ class NovelEngine:
         # 更新角色状态
         try:
             self.char_states.update_from_chapter(chapter_num, full_text)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("更新角色状态失败: %s", e)
 
         self._save_continue_state()
 
@@ -1089,8 +1097,8 @@ class NovelEngine:
                 self.book_mgr.save_chapter(
                     self.state.book_id, chapter_num,
                     f"第{chapter_num}章", full_text)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("保存章节失败: %s", e)
 
         # 记录成本
         self.cost_tracker.record(f"ch{chapter_num}_timeline", "", full_text)

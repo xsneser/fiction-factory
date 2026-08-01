@@ -51,9 +51,18 @@ class ThemeEntry:
 
 
 class ThemeLibrary:
-    """内涵库管理器"""
+    """内涵库管理器（进程内单例，避免每实例重复读 JSON）"""
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(self):
+        if getattr(self, "_initialized", False):
+            return
+        self._initialized = True
         self.entries: list[ThemeEntry] = []
         self._save_path = _DEFAULT_DATA_DIR / "themes.json"
         self._load()

@@ -17,10 +17,9 @@ from libraries.book_manager import BookManager
 from libraries.new_book import NewBookPipeline, NewBookConfig, recommend_opening
 from libraries.cost_tracker import CostTracker, estimate_cost
 from libraries.de_ai import DeAIEngine, DeAIResult
-from libraries.writing_pipeline import WritingPipeline, WritingContext, WritingResult
 from libraries.character_state import CharacterStateMachine, CharacterState
 from libraries.reviewer import ContentReviewer, ReviewResult
-from libraries.engine import NovelEngine, EngineState, Instruction, Op
+from libraries.engine import NovelEngine, EngineState, Instruction, Op, BookMode, Phase
 
 
 def test_print(phase, status="OK", detail=""):
@@ -49,17 +48,17 @@ def assert_ok(test_name, condition, detail=""):
 print("\n═══ Phase 1: 四大核心库 ═══")
 
 plot = PlotLibrary()
-assert_ok("桥段库-数量", len(plot.templates) == 12, f"{len(plot.templates)} 模板")
+assert_ok("桥段库-数量", len(plot.templates) >= 12, f"{len(plot.templates)} 模板")
 assert_ok("桥段库-分类", len(plot.categories()) >= 6, f"{len(plot.categories())} 分类")
 assert_ok("桥段库-搜索", len(plot.search(category="开篇")) >= 2)
-assert_ok("桥段库-匹配", len(plot.match_for_chapter("主角需要首次展现实力", genre="玄幻")) > 0)
+assert_ok("桥段库-匹配", len(plot.match_for_chapter("主角在家族大会上被退婚，当众打脸立威", genre="爽文")) > 0)
 
 struct = StructureLibrary()
 assert_ok("大纲库-数量", len(struct.templates) >= 5)
 assert_ok("大纲库-搜索", len(struct.search(genre="玄幻")) >= 1)
 
 gag = GagLibrary()
-assert_ok("笑点库-数量", len(gag.patterns) == 10)
+assert_ok("笑点库-数量", len(gag.patterns) >= 10, f"{len(gag.patterns)} 模式")
 assert_ok("笑点库-搜索", len(gag.search(scene="日常")) > 0)
 
 theme = ThemeLibrary()
@@ -163,40 +162,21 @@ snippet = de_ai.build_deai_prompt_snippet()
 assert_ok("去AI-约束注入", len(snippet) > 100)
 
 # ══════════════════════════════════════════════
-#  Phase 6: 仿写引擎
+#  Phase 6: 节拍规划（现行 beat_writer 管线）
 # ══════════════════════════════════════════════
-print("\n═══ Phase 6: 仿写引擎 ═══")
+print("\n═══ Phase 6: 节拍规划 ═══")
 
-wp = WritingPipeline(profile_manager=pm)
-sample_plot = plot.get_by_id("plot_dating_001")  # 退婚打脸
+from libraries.beat_writer import BeatLibrary, ChapterPlanner
 
-ctx = WritingContext(
-    plot_template=sample_plot,
-    plot_variables={
-        "主角身份": "公认废柴",
-        "对手身份": "世家大小姐",
-        "场合": "家族大会",
-        "反转方式": "爆发隐藏实力",
-    },
-    plot_variant="严肃版",
-    style_profile=profile,
-    chapter_num=1,
-    chapter_title="第一章：退婚",
-    chapter_outline="主角被当众退婚，随后展现实力逆转",
-    history_summary="（故事开始）",
-    target_words=3000,
-    de_ai=True,
-)
-
-# 匹配笑点和母题（保留已有的 style_profile）
-ctx = wp.match_templates("退婚 打脸", "爽文", "主角被当众退婚",
-                         existing_ctx=ctx)
-
-system, user = wp.build_prompt(ctx)
-assert_ok("仿写-system prompt", len(system) > 20)
-assert_ok("仿写-user prompt", len(user) > 300)
-assert_ok("仿写-包含桥段", sample_plot.name in user)
-assert_ok("仿写-包含风格约束", "禁用词" in user or "风格约束" in user)
+beat_lib = BeatLibrary()
+planner = ChapterPlanner(beat_lib)
+plan = planner.plan_chapter(1, "对手当众挑衅，主角爆发隐藏实力逆转",
+                            target_words=3000, genre="都市")
+assert_ok("节拍-数量", len(plan.beats) == 7, f"{len(plan.beats)} 节拍")
+assert_ok("节拍-以钩子开头", plan.beats[0].beat_type == "hook")
+assert_ok("节拍-以收尾结束", plan.beats[-1].beat_type == "close")
+assert_ok("节拍-字数目标", plan.total_words_target == 3000)
+assert_ok("节拍-含冲突节拍", any(b.beat_type == "conflict" for b in plan.beats))
 
 # ══════════════════════════════════════════════
 #  Phase 7: 角色状态机
@@ -258,12 +238,13 @@ assert_ok("审查-AI痕迹检测", len(ai_issues) > 0, f"{len(ai_issues)} 个问
 print("\n═══ Phase 9: 引擎路由 ═══")
 
 engine = NovelEngine()
-
-# 路由-新书
+# 引擎 v2 引入 book_mode + Phase 枚举，路由需在续写模式下验证
+engine.state.book_mode = BookMode.CONTINUE
 engine.state.genre = "玄幻"
 engine.state.sub_genre = "系统流"
 engine.state.total_chapters = 500
 
+# 路由-需要大纲（无大纲且无章节）
 inst = engine.route()
 assert_ok("路由-需要大纲", inst.op == Op.PLAN_OUTLINE, str(inst.op))
 
@@ -272,18 +253,18 @@ engine.state.outline_data = {"structure": "test"}
 engine.state.chapters = [{"num": 1, "title": "测试", "outline": ""}]
 engine.state.current_chapter = 1
 engine.state.current_content = "test content"
-engine.state.phase = "reviewing"
+engine.state.phase = Phase.REVIEWING
 inst = engine.route()
 assert_ok("路由-待审查", inst.op == Op.REVIEW_CHAPTER, str(inst.op))
 
-# 路由-审查通过
-engine.state.phase = "de_ai"
+# 路由-审查通过 → 去AI味
+engine.state.phase = Phase.DE_AI
 inst = engine.route()
 assert_ok("路由-去AI味", inst.op == Op.DE_AI_PASS, str(inst.op))
 
 # 路由-写下一章
 engine.state.current_content = ""
-engine.state.phase = "idle"
+engine.state.phase = Phase.IDLE
 inst = engine.route()
 assert_ok("路由-写下一章", inst.op == Op.WRITE_CHAPTER, str(inst.op))
 

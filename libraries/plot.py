@@ -76,9 +76,18 @@ class PlotTemplate:
 
 
 class PlotLibrary:
-    """桥段库管理器"""
+    """桥段库管理器（进程内单例，避免每实例重复读 JSON）"""
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(self, data_dir: str = ""):
+        if getattr(self, "_initialized", False):
+            return
+        self._initialized = True
         self.path = Path(data_dir) if data_dir else None
         # 修复: 使用脚本所在目录的 data/ 子目录，避免CWD问题
         base = Path(__file__).parent / "data"
@@ -128,13 +137,15 @@ class PlotLibrary:
                           genre: str = "") -> list[PlotTemplate]:
         """根据章节上下文智能匹配桥段"""
         # 纯规则匹配（后续可升级为语义匹配）
+        # 流派与分类双向包含：category 是内容分类（爽文/战斗…），genre 是流派（玄幻/都市…），
+        # 只要任意方向包含即视为相关；context 同样做双向包含，避免措辞差异导致匹配落空。
         scored = []
         for t in self.templates:
             score = 0
-            if genre and genre in t.category:
+            if genre and (genre in t.category or t.category in genre):
                 score += 3
             for ctx in t.fit_contexts:
-                if ctx in chapter_context:
+                if ctx and (ctx in chapter_context or chapter_context in ctx):
                     score += 2
             if score > 0:
                 scored.append((score, t))
