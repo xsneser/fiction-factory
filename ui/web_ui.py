@@ -1694,5 +1694,8 @@ def generator_save():
 if __name__ == "__main__":
     os.makedirs("ui/templates", exist_ok=True)
     os.makedirs("ui/static", exist_ok=True)
-    print("NovelEngine Web UI v2.0: http://localhost:58080")
-    app.run(host="0.0.0.0", port=58080, debug=True)
+    # debug 由环境变量控制：开发用 NOVEL_DEBUG=1，默认关闭（避免 reloader 干扰自动化）
+    debug = os.environ.get("NOVEL_DEBUG") == "1"
+    host = os.environ.get("NOVEL_HOST", "127.0.0.1")
+    print(f"NovelEngine Web UI v2.0: http://localhost:58080")
+    app.run(host=host, port=58080, debug=debug, use_reloader=debug)
