@@ -2,6 +2,16 @@
 {% block content %}
 <h1>📖 {{ book.title or '(未命名)' }}</h1>
 
+<div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+    <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 续写 / 进入写作台</a>
+    {% if basic_info.get('has_timeline') %}
+    <a href="/timeline/{{ book.book_id }}/edit" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">📋 编辑大纲</a>
+    {% endif %}
+    <form method="POST" action="/books/{{ book.book_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ book.title }}》？')">
+        <button class="small danger" style="padding:8px 16px">删除</button>
+    </form>
+</div>
+
 <div class="detail-grid">
     <div class="detail-item"><div class="label">笔名</div><div class="value">{{ book.pen_name }}</div></div>
     <div class="detail-item"><div class="label">流派</div><div class="value">{{ book.genre }}{% if book.sub_genre %} / {{ book.sub_genre }}{% endif %}</div></div>
@@ -9,8 +19,52 @@
     <div class="detail-item"><div class="label">预算</div><div class="value">¥{{ "%.2f"|format(cost.spent) }} / ¥{{ "%.2f"|format(cost.budget) }}</div></div>
 </div>
 
+{# ─── 设定（人物/世界观/配角） ─── #}
+{% set protag = basic_info.get('protagonist') or {} %}
+{% set world = basic_info.get('world_building') or {} %}
+{% if basic_info.get('has_timeline') or protag or world or basic_info.get('synopsis') %}
+<h3>🌍 设定</h3>
+<div class="detail-grid">
+    <div class="detail-item">
+        <div class="label">主角</div>
+        <div class="value" style="font-size:15px">{{ protag.get('name') or '—' }}</div>
+        <div style="font-size:12px;color:#8b949e;margin-top:4px">
+            {% if protag.get('identity') %}<div>身份：{{ protag.get('identity') }}</div>{% endif %}
+            {% if protag.get('personality') %}<div>性格：{{ protag.get('personality') }}</div>{% endif %}
+            {% if protag.get('golden_finger') %}<div>金手指：{{ protag.get('golden_finger') }}</div>{% endif %}
+        </div>
+    </div>
+    <div class="detail-item">
+        <div class="label">世界观</div>
+        <div style="font-size:13px;margin-top:4px">
+            {% if world.get('description') %}<div>{{ world.get('description') }}</div>{% endif %}
+            {% if world.get('era') %}<div style="color:#8b949e;font-size:12px">时代：{{ world.get('era') }}</div>{% endif %}
+            {% if world.get('power_system') %}<div style="color:#8b949e;font-size:12px">力量体系：{{ world.get('power_system') }}</div>{% endif %}
+        </div>
+    </div>
+    {% if basic_info.get('tone') or basic_info.get('target_audience') %}
+    <div class="detail-item">
+        <div class="label">基调 / 目标读者</div>
+        <div style="font-size:13px;margin-top:4px">{{ basic_info.get('tone') or '—' }} / {{ basic_info.get('target_audience') or '—' }}</div>
+    </div>
+    {% endif %}
+</div>
+{% if basic_info.get('supporting_cast') %}
+<h3>👥 配角</h3>
+<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+    {% for c in basic_info.get('supporting_cast') %}
+    <span class="tag blue">{{ c.get('name') if c is mapping else c }}</span>
+    {% endfor %}
+</div>
+{% endif %}
+{% if basic_info.get('synopsis') %}
+<h3>📝 简介</h3>
+<p style="color:#8b949e;margin-bottom:12px">{{ basic_info.get('synopsis') }}</p>
+{% endif %}
+{% endif %}
+
 <h3>📊 进度</h3>
-<div class="progress-bar"><div class="progress-fill" style="width:{{ (book.current_chapter/book.chapter_count*100)|int }}%"></div></div>
+<div class="progress-bar"><div class="progress-fill" style="width:{{ (book.current_chapter/book.chapter_count*100)|int if book.chapter_count else 0 }}%"></div></div>
 <p style="font-size:13px;color:#8b949e">{{ book.current_chapter }} / {{ book.chapter_count }} 章 · 状态：<span class="tag {{ 'green' if book.status=='writing' else 'yellow' }}">{{ book.status }}</span></p>
 
 {% if characters %}
@@ -32,7 +86,34 @@
 </table>
 {% endif %}
 
-{% if outline %}
+{# ─── 大纲：时间线优先，无则回退结构大纲 ─── #}
+{% if timeline and timeline.outlines %}
+<h3>📋 故事线大纲 ({{ timeline.outlines|length }})</h3>
+{% for o in timeline.outlines %}
+<div class="accordion">
+    <div class="accordion-header">
+        <span>{{ o.name }}</span>
+        <span style="color:#8b949e">第{{ o.start_chapter }}-{{ o.end_chapter }}章{% if o.predecessor %} · 承接{% endif %}</span>
+    </div>
+    <div class="accordion-body">
+        {% if o.stages %}
+        {% for s in o.stages %}
+        <p><strong>{{ s.get('name','') }}:</strong> {{ s.get('events', [])|join('、') }}</p>
+        {% endfor %}
+        {% endif %}
+        {% set ops = timeline.plots|selectattr('outline_id','equalto', o.id)|list %}
+        {% if ops %}
+        <p style="color:#8b949e;font-size:12px;margin-top:8px">桥段 ({{ ops|length }}):</p>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+            {% for p in ops %}
+            <span class="tag blue">{{ p.name }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+{% elif outline %}
 <h3>📋 大纲结构</h3>
 {% for stage in outline.get('stages', []) %}
 <div class="accordion"><div class="accordion-header"><span>{{ stage.name }} — {{ stage.description }}</span><span style="color:#8b949e">{{ stage.min_chapters }}-{{ stage.max_chapters }}章</span></div>
@@ -42,6 +123,8 @@
     </div>
 </div>
 {% endfor %}
+{% else %}
+<div class="empty"><div class="icon">📋</div><p>还没有大纲</p></div>
 {% endif %}
 
 {% if chapters %}

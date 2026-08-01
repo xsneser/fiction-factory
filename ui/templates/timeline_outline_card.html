@@ -20,6 +20,14 @@
         <input type="number" value="{{ o.end_chapter }}" onchange="updateOutline('{{ o.id }}','end_chapter',this.value)">
         <label>章</label>
         <span style="color:#484f58">（{{ o.end_chapter - o.start_chapter + 1 }}章）</span>
+        <span style="flex:1"></span>
+        <label style="font-size:11px;color:#8b949e">手法</label>
+        <select class="oc-narrative" onchange="setNarrative('{{ o.id }}', this.value, document.getElementById('nt-{{ o.id }}').value)" style="width:auto;padding:3px 6px;font-size:11px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#f0f6fc">
+            <option value="chronological" {% if o.narrative == 'chronological' %}selected{% endif %}>顺叙</option>
+            <option value="flashback" {% if o.narrative == 'flashback' %}selected{% endif %}>倒叙</option>
+            <option value="interleaved" {% if o.narrative == 'interleaved' %}selected{% endif %}>插叙</option>
+        </select>
+        <input type="text" id="nt-{{ o.id }}" placeholder="叙事目标(如:回忆第5-10章)" value="{{ o.narrative_target }}" onchange="setNarrative('{{ o.id }}', this.previousElementSibling.value, this.value)" style="width:130px;padding:3px 6px;font-size:11px">
     </div>
     {% if o.stages %}
     <div class="oc-stages">
@@ -55,5 +63,11 @@ function deleteOutline(id) {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: id})
     }).then(r => r.json()).then(d => { if (d.ok) location.reload(); });
+}
+function setNarrative(id, narrative, target) {
+    fetch('/api/timeline/' + timelineId + '/set-narrative', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: id, narrative: narrative, narrative_target: target || ''})
+    }).then(r => r.json()).then(d => { if (!d.ok) alert(d.error || '设置失败'); });
 }
 </script>

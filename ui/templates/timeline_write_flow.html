@@ -10,7 +10,7 @@
 
 {# ─── 时间线概览（大纲条） ─── #}
 <div class="timeline-overview" style="margin-bottom:20px">
-    <div class="tl-label">📋 大纲时间线</div>
+    <div class="tl-label">📋 故事线</div>
     <div class="tl-track" id="tl-track">
         {% for o in timeline.outlines %}
         <div class="tl-outline" style="left: {{ ((o.start_chapter-1) / (timeline.outlines[-1].end_chapter if timeline.outlines else 100)) * 100 }}%; width: {{ ((o.end_chapter - o.start_chapter + 1) / (timeline.outlines[-1].end_chapter if timeline.outlines else 100)) * 100 }}%">

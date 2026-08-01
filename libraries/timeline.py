@@ -34,6 +34,10 @@ class OutlineSlot:
     successor: str = ""            # 后继大纲 id
     transition_type: str = "sequential"  # sequential(顺序接续)|overlap(重叠过渡)|merge(融合)
 
+    # 叙事手法（故事线严谨性：顺叙/倒叙/插叙）
+    narrative: str = "chronological"   # chronological(顺叙)|flashback(倒叙)|interleaved(插叙)
+    narrative_target: str = ""         # flashback: 回忆的时间段/章节；interleaved: 所嵌入的主弧 id
+
 
 @dataclass
 class PlotSlot:
@@ -60,6 +64,7 @@ class PlotSlot:
     hook_points: list[str] = field(default_factory=list)  # 吸睛点
 
     confirmed: bool = False        # 用户已确认
+    written_chapter: int = 0       # 已写入第几章（0=未写，用于断点续写）
 
 
 @dataclass
@@ -108,6 +113,8 @@ class BookTimeline:
                 "overlaps_with": o.overlaps_with,
                 "predecessor": o.predecessor, "successor": o.successor,
                 "transition_type": o.transition_type,
+                "narrative": o.narrative,
+                "narrative_target": o.narrative_target,
             } for o in self.outlines],
             "plots": [{
                 "id": p.id, "template_id": p.template_id, "name": p.name,
@@ -121,6 +128,7 @@ class BookTimeline:
                 "gag_ids": p.gag_ids, "theme_hints": p.theme_hints,
                 "hook_points": p.hook_points,
                 "confirmed": p.confirmed,
+                "written_chapter": p.written_chapter,
             } for p in self.plots],
             "themes": self.themes,
             "global_gags": self.global_gags,
@@ -153,6 +161,8 @@ class BookTimeline:
             predecessor=o.get("predecessor", ""),
             successor=o.get("successor", ""),
             transition_type=o.get("transition_type", "sequential"),
+            narrative=o.get("narrative", "chronological"),
+            narrative_target=o.get("narrative_target", ""),
         ) for o in d.get("outlines", [])]
         tl.plots = [PlotSlot(
             id=p.get("id", ""), template_id=p.get("template_id", ""),
@@ -168,6 +178,7 @@ class BookTimeline:
             theme_hints=p.get("theme_hints", []),
             hook_points=p.get("hook_points", []),
             confirmed=p.get("confirmed", False),
+            written_chapter=p.get("written_chapter", 0),
         ) for p in d.get("plots", [])]
         return tl
 

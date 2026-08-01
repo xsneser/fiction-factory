@@ -84,6 +84,47 @@ def create_engine() -> NovelEngine:
     return NovelEngine(llm_client=llm)
 
 
+# ─── 时间线统一存取：草稿(tl_*) 与正式书(book_*) 两套 id 分派 ───
+
+def _timeline_filepath(timeline_id: str) -> str:
+    """按 id 前缀把时间线分派到磁盘路径：正式书在书目录内，草稿在 books/timelines/。"""
+    if timeline_id.startswith("book_"):
+        return f"books/{timeline_id}/timeline.json"
+    return f"books/timelines/{timeline_id}.json"
+
+
+def _resolve_timeline(timeline_id):
+    """从内存缓存或磁盘加载 BookTimeline，兼容 tl_* 与 book_*。"""
+    tl = _timelines.get(timeline_id)
+    if tl is None:
+        tl = load_timeline(_timeline_filepath(timeline_id))
+        if tl:
+            _timelines[timeline_id] = tl
+    return tl
+
+
+def _save_timeline(tl, timeline_id):
+    """写入内存缓存并落盘。"""
+    _timelines[timeline_id] = tl
+    save_timeline(tl, _timeline_filepath(timeline_id))
+
+
+def _max_id_suffix(ids) -> int:
+    """取 id 列表中最大数字后缀，用于 seed TimelineBuilder 计数器防碰撞。"""
+    import re as _re
+    max_n = 0
+    for i in ids:
+        m = _re.search(r"_(\d+)$", i or "")
+        if m:
+            max_n = max(max_n, int(m.group(1)))
+    return max_n
+
+
+def _seed_builder_counter(builder, ids) -> None:
+    """把 TimelineBuilder._counter 抬到现有 id 最大后缀之上，避免 outline_0001/plot_0001 碰撞。"""
+    builder._counter = _max_id_suffix(ids)
+
+
 # ═══════════════════════════════════════════
 # 首页 Dashboard
 # ═══════════════════════════════════════════
@@ -271,23 +312,20 @@ def engine_status_api(engine_id):
 @app.route("/timeline/<timeline_id>/edit")
 def timeline_edit(timeline_id):
     """时间线编辑器页面"""
-    tl_data = _timelines.get(timeline_id)
+    tl_data = _resolve_timeline(timeline_id)
     if not tl_data:
-        tl_data = load_timeline(f"books/timelines/{timeline_id}.json")
-        if tl_data:
-            _timelines[timeline_id] = tl_data
-    if not tl_data:
-        return "时间线配置不存在或已过期", 404
+        return "故事线配置不存在或已过期", 404
     return render_template("timeline_editor.html",
         timeline_id=timeline_id,
         timeline=tl_data,
+        timeline_json=tl_data.to_dict(),
     )
 
 
 @app.route("/api/timeline/<timeline_id>/generate-outlines", methods=["POST"])
 def api_generate_outlines(timeline_id):
     """AI 或规则生成大纲序列"""
-    tl = _timelines.get(timeline_id)
+    tl = _resolve_timeline(timeline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
 
@@ -307,25 +345,25 @@ def api_generate_outlines(timeline_id):
             mode="ai",
         )
     tl.phase = "outlines"
-    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    _save_timeline(tl, timeline_id)
     return jsonify({"ok": True, "count": len(tl.outlines)})
 
 
 @app.route("/api/timeline/<timeline_id>/confirm-outlines", methods=["POST"])
 def api_confirm_outlines(timeline_id):
     """确认大纲配置，进入桥段编排阶段"""
-    tl = _timelines.get(timeline_id)
+    tl = _resolve_timeline(timeline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
     tl.phase = "plots"
-    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    _save_timeline(tl, timeline_id)
     return jsonify({"ok": True, "phase": "plots"})
 
 
 @app.route("/api/timeline/<timeline_id>/fill-plots", methods=["POST"])
 def api_fill_plots(timeline_id):
     """给每个大纲填充桥段"""
-    tl = _timelines.get(timeline_id)
+    tl = _resolve_timeline(timeline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
     if not tl.outlines:
@@ -336,6 +374,8 @@ def api_fill_plots(timeline_id):
         structure_lib=struct_lib, plot_lib=plot_lib,
         gag_lib=gag_lib, theme_lib=theme_lib, llm_client=llm,
     )
+    # seed 计数器，避免新桥段 id 与已有桥段撞号（否则去重会静默丢弃）
+    _seed_builder_counter(builder, [p.id for p in tl.plots])
 
     new_plots = []
     for o in tl.outlines:
@@ -347,7 +387,7 @@ def api_fill_plots(timeline_id):
         if p.id not in existing_ids:
             tl.plots.append(p)
 
-    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    _save_timeline(tl, timeline_id)
     return jsonify({"ok": True, "plots_added": len(new_plots),
                     "total_plots": len(tl.plots)})
 
@@ -355,7 +395,7 @@ def api_fill_plots(timeline_id):
 @app.route("/api/timeline/<timeline_id>/fill-gags", methods=["POST"])
 def api_fill_gags(timeline_id):
     """注入笑点和吸睛点"""
-    tl = _timelines.get(timeline_id)
+    tl = _resolve_timeline(timeline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
 
@@ -365,14 +405,14 @@ def api_fill_gags(timeline_id):
     )
     builder.fill_gags_and_hooks(tl.plots, tl)
     tl.phase = "ready" if tl.plots else "gags"
-    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    _save_timeline(tl, timeline_id)
     return jsonify({"ok": True, "phase": tl.phase})
 
 
 @app.route("/api/timeline/<timeline_id>/plot-confirm", methods=["POST"])
 def api_plot_confirm(timeline_id):
     """切换单个桥段的确认状态"""
-    tl = _timelines.get(timeline_id)
+    tl = _resolve_timeline(timeline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
     data = request.json or {}
@@ -382,14 +422,14 @@ def api_plot_confirm(timeline_id):
         if p.id == plot_id:
             p.confirmed = confirmed
             break
-    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    _save_timeline(tl, timeline_id)
     return jsonify({"ok": True})
 
 
 @app.route("/api/timeline/<timeline_id>/update-outline", methods=["POST"])
 def api_update_outline(timeline_id):
     """更新大纲的章节范围"""
-    tl = _timelines.get(timeline_id)
+    tl = _resolve_timeline(timeline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
     data = request.json or {}
@@ -400,14 +440,35 @@ def api_update_outline(timeline_id):
         if o.id == oid:
             setattr(o, field, int(val))
             break
-    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    _save_timeline(tl, timeline_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/timeline/<timeline_id>/set-narrative", methods=["POST"])
+def api_set_narrative(timeline_id):
+    """设置大纲的叙事手法（顺叙/倒叙/插叙）+ 叙事目标"""
+    tl = _resolve_timeline(timeline_id)
+    if not tl:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    data = request.json or {}
+    oid = data.get("id", "")
+    narrative = data.get("narrative", "chronological")
+    target = data.get("narrative_target", "")
+    if narrative not in ("chronological", "flashback", "interleaved"):
+        return jsonify({"ok": False, "error": "非法叙事手法"}), 400
+    for o in tl.outlines:
+        if o.id == oid:
+            o.narrative = narrative
+            o.narrative_target = target
+            break
+    _save_timeline(tl, timeline_id)
     return jsonify({"ok": True})
 
 
 @app.route("/api/timeline/<timeline_id>/move-outline", methods=["POST"])
 def api_move_outline(timeline_id):
     """上移/下移大纲"""
-    tl = _timelines.get(timeline_id)
+    tl = _resolve_timeline(timeline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
     data = request.json or {}
@@ -419,110 +480,252 @@ def api_move_outline(timeline_id):
     new_idx = idx - 1 if direction == "up" else idx + 1
     if 0 <= new_idx < len(tl.outlines):
         tl.outlines[idx], tl.outlines[new_idx] = tl.outlines[new_idx], tl.outlines[idx]
-    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    _save_timeline(tl, timeline_id)
     return jsonify({"ok": True})
 
 
 @app.route("/api/timeline/<timeline_id>/delete-outline", methods=["POST"])
 def api_delete_outline(timeline_id):
     """删除一个大纲（同时删除其下的桥段）"""
-    tl = _timelines.get(timeline_id)
+    tl = _resolve_timeline(timeline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
     data = request.json or {}
     oid = data.get("id", "")
     tl.outlines = [o for o in tl.outlines if o.id != oid]
     tl.plots = [p for p in tl.plots if p.outline_id != oid]
-    save_timeline(tl, f"books/timelines/{timeline_id}.json")
+    _save_timeline(tl, timeline_id)
     return jsonify({"ok": True})
 
 
 # ═══════════════════════════════════════════
-# ✍️ 写作台（蓝图构建 v2）
+# 🎯 基础设定 + 一键完整大纲（启动新书/续写共用）
 # ═══════════════════════════════════════════
 
-@app.route("/desk")
-def desk_list():
-    """写作台入口 — 列出所有时间线配置"""
-    from pathlib import Path
-    from libraries.timeline import load_timeline
-    timelines = []
-    tl_dir = Path("books/timelines")
-    if tl_dir.exists():
-        for f in sorted(tl_dir.glob("tl_*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-            try:
-                tl = load_timeline(str(f))
-                if tl:
-                    timelines.append({
-                        "id": f.stem,
-                        "title": tl.book_title or "未命名",
-                        "pen_name": tl.pen_name,
-                        "genre": tl.genre,
-                        "sub_genre": tl.sub_genre,
-                        "phase": tl.phase,
-                        "updated": f.stat().st_mtime,
-                    })
-            except Exception:
-                pass
-    return render_template("desk_list.html", timelines=timelines)
+@app.route("/api/timeline/<timeline_id>/save-basic-info", methods=["POST"])
+def api_save_basic_info(timeline_id):
+    """保存基础设定（主角/世界观/配角/基调/目标读者）。
 
-
-@app.route("/timeline/<timeline_id>/desk")
-def writing_desk(timeline_id):
-    """写作台页面"""
-    tl = _timelines.get(timeline_id)
+    兼容草稿(tl_*)与正式书(book_*)；主角/世界观逐 key 深合并，保留用户已填值。
+    """
+    tl = _resolve_timeline(timeline_id)
     if not tl:
-        tl = load_timeline(f"books/timelines/{timeline_id}.json")
-    if not tl:
-        return "时间线配置不存在或已过期", 404
-    return render_template("writing_desk.html", timeline_id=timeline_id, timeline=tl)
+        return jsonify({"ok": False, "error": "not found"}), 404
+    data = request.json or {}
+    bi = tl.basic_info or {}
+
+    for section in ("protagonist", "world_building"):
+        incoming = data.get(section)
+        if isinstance(incoming, dict):
+            base = bi.get(section, {}) or {}
+            for k, v in incoming.items():
+                if v not in (None, ""):
+                    base[k] = v
+            bi[section] = base
+    for field in ("supporting_cast", "tone", "target_audience"):
+        if data.get(field) not in (None, ""):
+            bi[field] = data[field]
+
+    tl.basic_info = bi
+    tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    _save_timeline(tl, timeline_id)
+    return jsonify({"ok": True})
 
 
-@app.route("/api/timeline/<timeline_id>/build", methods=["POST"])
-def api_build_timeline(timeline_id):
-    """蓝图式构建全文（SSE 流式）— 按大纲扩写→桥段填充→笑点注入→审查→分章"""
-    tl = _timelines.get(timeline_id)
-    if not tl:
-        tl = load_timeline(f"books/timelines/{timeline_id}.json")
+def _merge_basic_info(existing, generated):
+    """以 generated 为基础，但保留 existing 里用户已填的非空字段。"""
+    existing = existing or {}
+    generated = generated or {}
+    merged = {}
+    for key, gv in generated.items():
+        ev = existing.get(key)
+        if isinstance(gv, dict) and isinstance(ev, dict):
+            sub = dict(gv)
+            for sk, sv in ev.items():
+                if sv not in (None, "", [], {}):
+                    sub[sk] = sv
+            merged[key] = sub
+        elif ev not in (None, "", [], {}):
+            merged[key] = ev
+        else:
+            merged[key] = gv
+    for key, ev in existing.items():  # generated 没覆盖的字段也保留
+        if key not in merged:
+            merged[key] = ev
+    return merged
+
+
+def _merge_generated_timeline(tl, generated):
+    """把 5 阶段生成结果合并进现有时间线，不覆盖用户已填的基础信息。"""
+    tl.basic_info = _merge_basic_info(tl.basic_info, generated.basic_info)
+    if generated.outlines:
+        tl.outlines = generated.outlines
+    if generated.plots:
+        tl.plots = generated.plots
+    if generated.themes:
+        tl.themes = generated.themes
+    if generated.global_gags:
+        tl.global_gags = generated.global_gags
+    tl.phase = "ready"
+    tl.generated_at = generated.generated_at or time.strftime("%Y-%m-%d %H:%M:%S")
+    tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _decision_log_message(kind: str, data: dict) -> str:
+    """把一条 decision 事件渲染成右侧栏日志的一句话（候选→选中→理由）。"""
+    step = data.get("step", "")
+    cands = "、".join(c.get("name", "") for c in (data.get("candidates") or [])[:6]) or "（无候选）"
+    chosen = data.get("chosen") or {}
+    if kind == "outline_choice":
+        if isinstance(chosen, dict):
+            name = chosen.get("name", "")
+        elif isinstance(chosen, list) and chosen:
+            name = chosen[0].get("name", "")
+        else:
+            name = ""
+        if name:
+            return f"📋 大纲选择[{step}]：候选 {cands} → 选中「{name}」"
+        return f"📋 大纲选择[{step}]：候选 {cands}"
+    if kind == "plot_choice":
+        if isinstance(chosen, list):
+            names = [c.get("name", "") for c in chosen if isinstance(c, dict)]
+        elif isinstance(chosen, dict):
+            names = [chosen.get("name", "")]
+        else:
+            names = []
+        if names:
+            return f"🧩 桥段选择[{step}]：候选 {cands} → 选中「{'、'.join(names)}」"
+        return f"🧩 桥段选择[{step}]：候选 {cands}"
+    if kind == "gag_review":
+        gags = "、".join((chosen.get("gags") or [])[:5]) or "无"
+        themes = "、".join((chosen.get("themes") or [])[:3]) or "无"
+        return f"🎭 笑点/内涵[{step}]：笑点 {gags}｜内涵 {themes}"
+    if kind == "validate":
+        issues = (chosen.get("issues") or [])
+        return f"✅ 一致性验证[{step}]：{len(issues)} 个建议｜{data.get('reason','')}"
+    return f"🤖 {step}：{data.get('reason','')}"
+
+
+@app.route("/api/timeline/<timeline_id>/generate-full", methods=["POST"])
+def api_generate_full(timeline_id):
+    """一键生成完整大纲（5 阶段 OutlineGenerator，SSE 流式），原地累加并逐步落盘。
+
+    - 生成器直接操作当前 timeline 对象（timeline=tl），每阶段结束 on_save 落盘，
+      实现"大纲→桥段→笑点/内涵挨个步骤写进配置文件"。
+    - 新增 SSE 事件：thinking（AI 流式思考 token）、decision（候选→选中→理由），
+      前端右侧"AI 思考过程"面板展示；decision 同时写入右侧栏任务日志。
+    - phase_done 附带 timeline 快照，前端据此实时刷新左侧故事线视图。
+    """
+    tl = _resolve_timeline(timeline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
 
     llm = get_llm()
     if not llm:
-        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+        return jsonify({"ok": False, "error": "LLM 未配置，请先在设置页配置 API"}), 500
 
-    from libraries.timeline_writer import BlueprintWritingPipeline
+    profile = None
+    if tl.pen_name:
+        try:
+            profile = profiles.get_by_name(tl.pen_name)
+        except Exception:
+            pass
+
+    from libraries.outline_generator import OutlineGenerator
+    gen = OutlineGenerator(
+        llm_client=llm,
+        structure_lib=struct_lib,
+        plot_lib=plot_lib,
+        gag_lib=gag_lib,
+        theme_lib=theme_lib,
+        profile=profile,
+    )
+
+    # 用草稿已填的基础信息做上下文（保留用户输入）
+    bi = tl.basic_info or {}
+    world = bi.get("world_building", {}) or {}
+    protag = bi.get("protagonist", {}) or {}
+    ctx_parts = []
+    if world.get("description"):
+        ctx_parts.append(f"世界观：{world['description']}")
+    if protag.get("name") or protag.get("identity"):
+        ctx_parts.append(f"主角：{protag.get('name','')}（{protag.get('identity','')}）")
+    custom_context = "；".join(ctx_parts) or (tl.book_title or "")
+
+    from plugins import task_manager
+    task_manager.ensure_single("完整大纲生成")
+    task_id = f"genfull_{timeline_id}_{int(time.time())}"
+    task_manager.start(task_id, name="完整大纲生成",
+                       title=tl.pen_name or "", total=5,
+                       phase="故事分析...", url=f"/timeline/{timeline_id}/edit")
 
     def generate():
         import json as _json
 
-        def send(event, message="", data=None):
-            d = {"event": event, "message": message}
-            if data:
-                d.update(data)
-            return f"data: {_json.dumps(d, ensure_ascii=False)}\n\n"
-
-        pipeline = BlueprintWritingPipeline(
-            timeline=tl, llm_client=llm,
-            gag_lib=gag_lib, theme_lib=theme_lib,
-        )
-
         try:
-            for event_type, message, data in pipeline.build():
-                yield send(event_type, message, data)
-        except Exception as e:
-            yield send("error", str(e))
+            for event_type, message, data_dict in gen.generate(
+                genre=tl.genre, sub_genre=tl.sub_genre,
+                custom_context=custom_context, pen_name=tl.pen_name,
+                words_per_chapter=tl.words_per_chapter,
+                timeline=tl,                       # 原地累加，可逐步落盘
+                on_save=lambda _tl: _save_timeline(_tl, timeline_id),
+            ):
+                payload = {"event": event_type, "message": message}
+                if data_dict:
+                    payload.update(data_dict)
 
-    resp = sse_stream_response(generate())
-    return resp
+                # 运行状态（右侧栏任务卡片）随阶段推进
+                if event_type == "phase" and data_dict:
+                    task_manager.progress(task_id, current=data_dict.get("phase", 0),
+                                          phase=message or "")
+                if event_type == "phase_done" and data_dict:
+                    task_manager.progress(task_id, current=data_dict.get("phase", 0),
+                                          phase="完成", message=message)
+                    task_manager.log(task_id, message, "success")
+                    # 快照：前端据此实时刷新左侧故事线视图
+                    payload["timeline"] = tl.to_dict()
+
+                # 每个决策写进右侧栏日志（用户能看到"确定了哪个大纲/桥段/笑点"）
+                if event_type == "decision" and data_dict:
+                    task_manager.log(task_id,
+                                     _decision_log_message(data_dict.get("kind", "decision"), data_dict),
+                                     "success")
+                    # 决策后也落一次盘（桥段/加料已变化）
+                    _save_timeline(tl, timeline_id)
+
+                if event_type == "done":
+                    _save_timeline(tl, timeline_id)
+                    payload["timeline"] = tl.to_dict()
+                    task_manager.done(task_id, message="完整大纲生成完成")
+
+                yield "data: " + _json.dumps(payload, ensure_ascii=False) + "\n\n"
+        except Exception as e:
+            import traceback
+            task_manager.fail(task_id, str(e))
+            err_payload = {"event": "error", "message": str(e),
+                           "traceback": traceback.format_exc()}
+            yield "data: " + _json.dumps(err_payload, ensure_ascii=False) + "\n\n"
+
+    return sse_stream_response(generate())
+
+
+# ═══════════════════════════════════════════
+# ✍️ 写作台（按书列出，进入写作/续写）
+# ═══════════════════════════════════════════
+
+@app.route("/desk")
+def desk_list():
+    """写作台 — 列出正式书籍，每本进入写作/续写（不再列游离时间线草稿）"""
+    rows = _book_rows()
+    return render_template("desk_list.html", books=rows)
 
 
 @app.route("/books/start/timeline/<timeline_id>/write")
 def timeline_start_writing(timeline_id):
     """从时间线配置启动蓝图式写作引擎（新核心）"""
-    tl = _timelines.get(timeline_id)
+    tl = _resolve_timeline(timeline_id)
     if not tl:
-        return "时间线配置不存在或已过期", 404
+        return "故事线配置不存在或已过期", 404
 
     llm = get_llm()
     if not llm:
@@ -600,10 +803,12 @@ def timeline_engine_step(engine_id):
 
 @app.route("/books/<book_id>/continue")
 def continue_book_page(book_id):
-    """续写页面"""
+    """续写页面 — 大纲调整 + 续写"""
     book = book_mgr.get(book_id)
     if not book:
         return "图书不存在", 404
+
+    timeline = book_mgr.load_timeline(book_id)
 
     engine_id = f"cont_{book_id}"
     if engine_id not in _engines:
@@ -619,7 +824,118 @@ def continue_book_page(book_id):
         engine_id=engine_id,
         book=book,
         state=engine.state,
+        timeline=timeline,
+        has_timeline=timeline is not None,
+        timeline_json=timeline.to_dict() if timeline else None,
     )
+
+
+def _build_next_arc(builder, tl, mode="rule"):
+    """在时间线末尾追加下一段大纲弧。rule=确定性模板循环；ai=单弧 LLM 再锚定。"""
+    if mode == "ai":
+        seq = builder.build_outline_sequence(
+            genre=tl.genre, sub_genre=tl.sub_genre,
+            custom_context=tl.basic_info.get("world_building", {}).get("description", ""),
+            max_outlines=1, mode="ai")
+        if not seq:
+            return None
+        arc = seq[0]
+        max_end = max((o.end_chapter for o in tl.outlines), default=0)
+        span = max(arc.end_chapter - arc.start_chapter + 1, 20)
+        arc.start_chapter = max_end + 1
+        arc.end_chapter = arc.start_chapter + span - 1
+        if tl.outlines:
+            arc.predecessor = tl.outlines[-1].id
+            tl.outlines[-1].successor = arc.id
+        return arc
+
+    # rule：按流派模板循环取下一个
+    structs = struct_lib.search(genre=tl.genre) or struct_lib.templates
+    if not structs:
+        return None
+    idx = len(tl.outlines) % len(structs)
+    tmpl = structs[idx]
+    max_end = max((o.end_chapter for o in tl.outlines), default=0)
+    start = max_end + 1
+    span = min(tmpl.total_chapters, 60)
+    from libraries.timeline import OutlineSlot
+    arc = OutlineSlot(
+        id=builder._next_id("outline"),
+        template_id=tmpl.id,
+        name=f"{tmpl.name}(第{len(tl.outlines) + 1}部分)",
+        start_chapter=start,
+        end_chapter=start + span - 1,
+        stages=[
+            {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
+             "events": s.key_events[:5]}
+            for s in tmpl.stages
+        ],
+        predecessor=tl.outlines[-1].id if tl.outlines else "",
+        transition_type="sequential",
+    )
+    if tl.outlines:
+        tl.outlines[-1].successor = arc.id
+    return arc
+
+
+@app.route("/api/books/<book_id>/extend-outline", methods=["POST"])
+def extend_outline(book_id):
+    """续写时扩展大纲：追加下一段大纲弧 + 填充桥段，并 bump 章节总数。"""
+    book = book_mgr.get(book_id)
+    if not book:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    tl = book_mgr.load_timeline(book_id)
+    if not tl or not tl.outlines:
+        return jsonify({"ok": False,
+                        "error": "该书暂无故事线大纲，请先在新书流程生成完整大纲后再续写扩展"}), 400
+
+    mode = request.args.get("mode", "rule")
+    llm = get_llm() if mode == "ai" else None
+    builder = TimelineBuilder(
+        structure_lib=struct_lib, plot_lib=plot_lib,
+        gag_lib=gag_lib, theme_lib=theme_lib, llm_client=llm,
+    )
+    _seed_builder_counter(builder,
+                          [o.id for o in tl.outlines] + [p.id for p in tl.plots])
+
+    new_arc = _build_next_arc(builder, tl, mode)
+    if new_arc is None:
+        return jsonify({"ok": False, "error": "无可用大纲模板"}), 400
+
+    tl.outlines.append(new_arc)
+    new_plots = builder.fill_plots_for_outline(new_arc, tl)
+    existing_ids = {p.id for p in tl.plots}
+    added = [p for p in new_plots if p.id not in existing_ids]
+    tl.plots.extend(added)
+    builder.fill_gags_and_hooks(added, tl)
+    tl.phase = "ready"
+    book_mgr.save_timeline(book_id, tl)
+
+    new_total = max(book.chapter_count, new_arc.end_chapter)
+    if new_total > book.chapter_count:
+        book.chapter_count = new_total
+        book_mgr.update(book)
+
+    # 使缓存引擎失效，下一章生成从磁盘重建（continue_book 重新加载 timeline）
+    _engines.pop(f"cont_{book_id}", None)
+
+    # 日志入右侧栏
+    from plugins import task_manager
+    task_manager.ensure_single("扩展故事线")
+    tid = f"extend_{book_id}_{int(time.time())}"
+    task_manager.start(tid, name="扩展故事线", title=book.title,
+                       total=1, phase="完成", url=f"/books/{book_id}/continue")
+    task_manager.log(tid, f"扩展故事线：新弧「{new_arc.name}」第{new_arc.start_chapter}-{new_arc.end_chapter}章 +{len(added)}桥段", "success")
+    task_manager.done(tid, message="扩展完成")
+
+    return jsonify({
+        "ok": True,
+        "outline": {"id": new_arc.id, "name": new_arc.name,
+                    "start_chapter": new_arc.start_chapter,
+                    "end_chapter": new_arc.end_chapter},
+        "total_chapters": new_total,
+        "plots_added": len(added),
+    })
 
 
 @app.route("/api/engine/<engine_id>/chapter/generate", methods=["POST"])
@@ -645,30 +961,56 @@ def chapter_generate(engine_id):
     if engine.state.book_mode != BookMode.CONTINUE:
         return jsonify({"error": "仅续写模式支持单章生成"}), 400
 
+    # 日志入右侧栏（task_manager）
+    from plugins import task_manager
+    book_id = engine.state.book_id or ""
+    task_id = f"write_{book_id}"
+    task_manager.ensure_single("续写写作")
+    task_manager.start(task_id, name="续写写作",
+                      title=engine.state.title or "",
+                      total=1, phase="写作中...", url=f"/books/{book_id}/continue")
+    next_ch = engine.state.current_chapter + 1
+    task_manager.log(task_id, f"开始续写 第{next_ch}章", "info")
+
+    def _preview():
+        ch = book_mgr.load_chapter(book_id, engine.state.current_chapter)
+        if ch and ch.get("content"):
+            return ch["content"][:600]
+        return ""
+
     inst = engine.route()
     if inst.op == Op.COMPLETE:
+        task_manager.done(task_id, message="全书完成")
         return jsonify({"status": "complete"})
     if inst.op == Op.PAUSE:
+        task_manager.progress(task_id, phase=inst.reason)
         return jsonify({"status": "paused", "reason": inst.reason})
 
     result = engine.execute(inst)
 
     # 如果写完了，继续审+去AI
     if result.get("status") == "chapter_written":
+        task_manager.log(task_id, f"第{result.get('chapter')}章完成 {result.get('word_count', 0)}字", "success")
         review_inst = engine.route()
         review_result = engine.execute(review_inst)
         if review_result.get("status") == "review_passed":
+            task_manager.log(task_id, f"审查通过（{review_result.get('score', '?')}/100）", "success")
             deai_inst = InstructionAdapter(Op.DE_AI_PASS, engine.state.current_chapter)
             deai_result = engine.execute(deai_inst)
+            task_manager.log(task_id, f"去AI味完成（替换 {deai_result.get('word_replacements', 0)} 处）", "success")
+            task_manager.done(task_id, message=f"第{result.get('chapter')}章全流程完成")
             return jsonify({
                 **result,
+                "preview": _preview(),
                 "review": review_result,
                 "de_ai": deai_result,
                 "cycle_complete": True,
             })
         else:
-            return jsonify({**result, "review": review_result})
+            task_manager.progress(task_id, phase=f"审查未通过，重写中...")
+            return jsonify({**result, "preview": _preview(), "review": review_result})
 
+    task_manager.done(task_id, message="生成完成")
     return jsonify(result)
 
 
@@ -689,7 +1031,66 @@ class InstructionAdapter:
 
 @app.route("/books")
 def books():
-    return render_template("books.html", books=book_mgr.list_all())
+    rows = _book_rows()
+    return render_template("books.html", books=rows)
+
+
+_book_rows_cache: dict = {}  # book_id -> (mtimes, row)
+
+def _book_sig(bid: str):
+    """books/{id} 三份关键文件的 mtime，用于判断行级缓存是否仍有效。"""
+    paths = (f"books/{bid}/book.json", f"books/{bid}/timeline.json",
+             f"books/{bid}/outline/outline.json")
+    return tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in paths)
+
+
+def _book_rows():
+    """书库/写作台共用：每本书附带时间线/大纲元数据。
+    行级缓存 key = 三份文件 mtime；后续导航只做 stat，不再 parse 大 JSON。"""
+    books = book_mgr.list_all()
+    valid_ids = set()
+    rows = []
+    for b in books:
+        valid_ids.add(b.book_id)
+        sig = _book_sig(b.book_id)
+        cached = _book_rows_cache.get(b.book_id)
+        if cached and cached[0] == sig:
+            rows.append(cached[1])
+            continue
+        tl = book_mgr.load_timeline(b.book_id)
+        outline = book_mgr.get_outline(b.book_id)
+        row = {
+            "book": b,
+            "has_timeline": tl is not None,
+            "timeline_outlines": len(tl.outlines) if tl else 0,
+            "timeline_plots": len(tl.plots) if tl else 0,
+            "outline_count": len((outline or {}).get("stages", [])) if outline else 0,
+        }
+        _book_rows_cache[b.book_id] = (sig, row)
+        rows.append(row)
+    for key in list(_book_rows_cache):
+        if key not in valid_ids:
+            del _book_rows_cache[key]
+    return rows
+
+
+def _basic_info_from_outline(outline, book):
+    """无 timeline 的书（旧引擎路径）：从结构大纲尽力还原 basic_info 供详情页展示。"""
+    bi = {"protagonist": {}, "world_building": {}, "supporting_cast": [],
+          "tone": "", "target_audience": "", "synopsis": ""}
+    if not outline:
+        return bi
+    bi["synopsis"] = outline.get("synopsis", "") or ""
+    chars = outline.get("characters", []) or []
+    if isinstance(chars, list):
+        for c in chars:
+            if not isinstance(c, dict):
+                continue
+            if not bi["protagonist"]:
+                bi["protagonist"] = c
+            else:
+                bi["supporting_cast"].append(c)
+    return bi
 
 
 @app.route("/books/<book_id>")
@@ -697,6 +1098,13 @@ def book_detail(book_id):
     book = book_mgr.get(book_id)
     if not book: return "Not found", 404
     outline = book_mgr.get_outline(book_id)
+    timeline = book_mgr.load_timeline(book_id)
+    if timeline:
+        basic_info = timeline.basic_info or {}
+        basic_info["has_timeline"] = True
+    else:
+        basic_info = _basic_info_from_outline(outline, book)
+        basic_info["has_timeline"] = False
     chapters = []
     for n in range(1, book.current_chapter + 2):
         ch = book_mgr.load_chapter(book_id, n)
@@ -708,6 +1116,8 @@ def book_detail(book_id):
     if os.path.exists(char_path): csm.load(char_path)
     return render_template("book_detail.html", book=book,
         outline=outline, chapters=chapters,
+        timeline=timeline,
+        basic_info=basic_info,
         cost=cost.summary(), characters=csm.characters)
 
 
@@ -1609,88 +2019,13 @@ def debug_search_test():
 
 
 # ═══════════════════════════════════════════
-# 大纲生成引擎页面
+# 大纲生成（已内嵌到启动新书 / 续写流程）
 # ═══════════════════════════════════════════
 
 @app.route("/books/generator")
 def outline_generator_page():
-    """大纲生成器页面 — 5 阶段 LLM 管线"""
-    pen_names = [p.pen_name for p in profiles.list_all()] if profiles else []
-    return render_template("outline_generator.html", pen_names=pen_names)
-
-
-@app.route("/api/generator/build", methods=["POST"])
-def generator_build():
-    """SSE 流式大纲生成"""
-    data = request.json or {}
-    genre = data.get("genre", "玄幻")
-    sub_genre = data.get("sub_genre", "")
-    custom = data.get("custom_context", "")
-    pen_name = data.get("pen_name", "")
-    words_per_ch = int(data.get("words_per_chapter", 3000))
-
-    llm = get_llm()
-    if not llm:
-        return jsonify({"ok": False, "error": "LLM 未配置，请先在设置页配置 API"}), 500
-
-    # 加载笔名档案
-    profile = None
-    if pen_name:
-        try:
-            profile = profiles.get_by_name(pen_name)
-        except Exception:
-            pass
-
-    from libraries.outline_generator import OutlineGenerator
-    gen = OutlineGenerator(
-        llm_client=llm,
-        structure_lib=struct_lib,
-        plot_lib=plot_lib,
-        gag_lib=gag_lib,
-        theme_lib=theme_lib,
-        profile=profile,
-    )
-
-    def generate():
-        try:
-            for event_type, message, data_dict in gen.generate(
-                genre=genre, sub_genre=sub_genre,
-                custom_context=custom, pen_name=pen_name,
-                words_per_chapter=words_per_ch,
-            ):
-                payload = {"event": event_type, "message": message}
-                if data_dict:
-                    payload.update(data_dict)
-                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            import traceback
-            yield f"data: {json.dumps({'event': 'error', 'message': str(e), 'traceback': traceback.format_exc()}, ensure_ascii=False)}\n\n"
-
-    return sse_stream_response(generate())
-
-
-@app.route("/api/generator/save", methods=["POST"])
-def generator_save():
-    """保存生成的 BookTimeline 到文件"""
-    data = request.json or {}
-    timeline_data = data.get("timeline")
-    if not timeline_data:
-        return jsonify({"ok": False, "error": "无时间线数据"}), 400
-
-    tl = BookTimeline.from_dict(timeline_data)
-    tl.phase = "ready"
-
-    # 保存到 timelines 目录
-    import os
-    os.makedirs("books/timelines", exist_ok=True)
-    tid = f"{tl.pen_name or 'gen'}_{tl.genre}_{int(time.time())}"
-    path = f"books/timelines/{tid}.json"
-    save_timeline(tl, path)
-
-    # 缓存到内存
-    _timelines[tid] = tl
-
-    return jsonify({"ok": True, "timeline_id": tid, "path": path})
+    """大纲生成器已内嵌到「启动新书」流程（时间线编辑器：一键生成完整大纲）"""
+    return redirect(url_for("start_new_book"))
 
 
 if __name__ == "__main__":

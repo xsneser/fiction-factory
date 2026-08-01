@@ -17,9 +17,14 @@ from core.storage import save_progress, save_chapter_markdown
 logger = logging.getLogger(__name__)
 
 
+# ⚠️ 遗留路径：本文件是 show-me-the-story 移植的"逐章文本大纲"引擎（chapters[].outline 为每章一段文本）。
+# 大纲的正确形态是"故事线"（BookTimeline 配置：大纲→桥段→笑点/内涵，一个 timeline.json），
+# 由 libraries/outline_generator.py 生成、libraries/timeline_writer.py / engine._storyline_chapter_context 消费。
+# 此路径仅作历史兼容保留，web_ui（主面板）不再使用。
+
 def generate_outline(client: LLMClient, story_cfg: dict, settings: ProjectSettings,
                      state: Progress) -> tuple[str, str, str, list[ChapterState]]:
-    """生成大纲 → 返回 (标题, 核心提示词, 梗概, 章节列表)"""
+    """[遗留] 生成逐章文本大纲 → 返回 (标题, 核心提示词, 梗概, 章节列表)。已被故事线大纲替代。"""
     story = story_cfg.get("story", story_cfg)
     chapter_count = story.get("chapter_count", 12)
     target_words = story.get("target_words_per_chapter", 3000)

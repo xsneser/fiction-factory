@@ -135,7 +135,6 @@
         <a href="/profiles" class="{{ 'active' if request.path.startswith('/profiles') else '' }}">👤 笔名档案</a>
         <a href="/settings" class="{{ 'active' if request.path == '/settings' else '' }}">⚙️ 设置</a>
         <div class="section">工具</div>
-        <a href="/books/generator" class="{{ 'active' if request.path == '/books/generator' else '' }}">🧬 大纲生成器</a>
         <a href="/scout" class="{{ 'active' if request.path == '/scout' else '' }}">🔍 小说抓取</a>
         <a href="/extract" class="{{ 'active' if request.path == '/extract' else '' }}">📝 内容提取</a>
         <a href="/deai" class="{{ 'active' if request.path == '/deai' else '' }}">🔄 去AI测试</a>
@@ -157,12 +156,12 @@
         </aside>
     </div>
     <script>
-        // Accordion toggle
-        document.querySelectorAll('.accordion-header').forEach(h => {
-            h.addEventListener('click', () => {
-                const body = h.nextElementSibling;
-                body.classList.toggle('show');
-            });
+        // Accordion toggle（事件委托：SPA 换入新内容后依然生效，也避免重复绑定）
+        document.addEventListener('click', function(e) {
+            var h = e.target.closest('.accordion-header');
+            if (h && h.nextElementSibling) {
+                h.nextElementSibling.classList.toggle('show');
+            }
         });
 
         // ─── SPA 导航：拦截侧边栏链接，避免整页重刷 ───

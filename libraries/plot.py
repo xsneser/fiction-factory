@@ -133,16 +133,29 @@ class PlotLibrary:
                        or context in t.description]
         return results
 
+    @staticmethod
+    def _bigrams(text: str) -> set[str]:
+        """中文字符二元组（bigram）集合，用于轻量语义相似度。"""
+        import re as _re
+        t = _re.sub(r'[\s，。、；：！？…《》【】()（）　]+', '', text or '')
+        return {t[i:i+2] for i in range(len(t) - 1) if t[i:i+2].strip()}
+
     def match_for_chapter(self, chapter_context: str,
                           genre: str = "") -> list[PlotTemplate]:
-        """根据章节上下文智能匹配桥段"""
-        # 纯规则匹配（后续可升级为语义匹配）
-        # 流派与分类双向包含：category 是内容分类（爽文/战斗…），genre 是流派（玄幻/都市…），
-        # 只要任意方向包含即视为相关；context 同样做双向包含，避免措辞差异导致匹配落空。
+        """根据章节上下文匹配桥段（轻量语义：bigram 相似度 + 分类多样性）。
+
+        相比纯子串包含，bigram 能捕捉"线索/调查/真凶"这类近义表达，
+        再按分类轮询返回多样候选池，供上层 AI 二次挑选，避免候选单一。
+        """
+        ctx_bigrams = self._bigrams(chapter_context)
         scored = []
         for t in self.templates:
-            score = 0
-            if genre and (genre in t.category or t.category in genre):
+            index_text = " ".join([t.name, t.category, t.sub_category, t.description,
+                                   " ".join(t.fit_contexts), t.template_structure])
+            idx_bigrams = self._bigrams(index_text)
+            overlap = (len(ctx_bigrams & idx_bigrams) / max(len(ctx_bigrams), 1)) if ctx_bigrams else 0.0
+            score = overlap * 10
+            if genre and (genre in t.category or t.category in genre or genre in index_text):
                 score += 3
             for ctx in t.fit_contexts:
                 if ctx and (ctx in chapter_context or chapter_context in ctx):
@@ -150,7 +163,26 @@ class PlotLibrary:
             if score > 0:
                 scored.append((score, t))
         scored.sort(key=lambda x: -x[0])
-        return [t for _, t in scored[:5]]
+
+        # 分类轮询取多样池：每类各取一个，循环至取满 8 个，避免被单一分类刷屏
+        by_cat = {}
+        for score, t in scored:
+            by_cat.setdefault(t.category or "未分类", []).append((score, t))
+        result = []
+        cats = [c for c, l in by_cat.items() if l]
+        i = 0
+        while len(result) < 8 and cats:
+            cat = cats[i % len(cats)]
+            lst = by_cat[cat]
+            if lst:
+                result.append(lst.pop(0)[1])
+            else:
+                cats.pop(i % len(cats))
+                if not cats:
+                    break
+                continue
+            i += 1
+        return result or [t for _, t in scored[:3]] or self.templates[:3]
 
     def get_by_id(self, template_id: str) -> Optional[PlotTemplate]:
         for t in self.templates:
@@ -403,5 +435,317 @@ BUILTIN_PLOTS = [
         word_range=(1500, 2500),
         source="创作积累",
         usage_notes="金手指要给限制，否则后面全无敌了没有故事可写",
+    ),
+    # ── 悬疑/推理（补充库缺口） ──
+    PlotTemplate(
+        id="plot_sus_001", name="线索追踪与调查",
+        category="悬疑", sub_category="推理调查",
+        description="主角顺着蛛丝马迹调查一桩案件或异常事件",
+        template_structure="[异常事件浮现]→[初步线索]→[走访/取证]→[线索中断/被误导]→[关键突破口]→[逼近真相]",
+        slots=[
+            PlotSlot("调查对象", "在查什么", ["离奇命案", "失踪事件", "异常死亡", "超自然现象"]),
+            PlotSlot("关键线索", "破局抓手", ["一件遗物", "目击者证词", "现场痕迹", "一段记录"]),
+            PlotSlot("误导来源", "谁在混淆视听", ["真凶伪装", "无关巧合", "内部人误导", "势力掩盖"]),
+        ],
+        variants=["硬核推理版", "灵异诡案版", "都市刑侦版"],
+        fit_contexts=["悬疑", "调查", "线索", "推理", "谜团"],
+        word_range=(2000, 4000),
+        source="创作积累",
+        usage_notes="线索要可回收：埋下的细节后文要有回应",
+    ),
+    PlotTemplate(
+        id="plot_sus_002", name="密室谜局/不可能犯罪",
+        category="悬疑", sub_category="推理诡计",
+        description="一起看似不可能完成的案件，主角揭穿手法",
+        template_structure="[案发·密室状态]→[在场者众说纷纭]→[主角提出反常细节]→[排除伪答案]→[演示真实手法]→[真凶现形]",
+        slots=[
+            PlotSlot("诡计类型", "如何制造密室", ["机关自尽", "藏匿再潜入", "替身/双胞胎", "时间差作案"]),
+            PlotSlot("揭穿方式", "主角怎么破局", ["还原现场", "心理侧写", "系统/能力辅助", "对质逼问"]),
+            PlotSlot("凶手动机", "为何行凶", ["复仇", "灭口", "争夺利益", "掩盖身份"]),
+        ],
+        variants=["本格推理版", "超能力破案版", "心理博弈版"],
+        fit_contexts=["悬疑", "密室", "命案", "诡计", "推理"],
+        word_range=(2500, 4500),
+        source="创作积累",
+        usage_notes="先给读者一个合理但错误的解释，再揭真手法",
+    ),
+    PlotTemplate(
+        id="plot_sus_003", name="推理对决/真凶反转",
+        category="悬疑", sub_category="智斗",
+        description="与对手在推理上正面交锋，最后真凶身份大反转",
+        template_structure="[两方对同一案件不同解读]→[各执证据交锋]→[主角被逼入死角]→[发现被忽略的关键点]→[真凶竟是意想不到之人]",
+        slots=[
+            PlotSlot("对手身份", "与主角对峙的人", ["名侦探", "涉案嫌疑人", "反派", "看似好人"]),
+            PlotSlot("反转方向", "真凶是谁", ["最信任的人", "已死之人", "受害者本人", "主角亲近者"]),
+            PlotSlot("决胜证据", "一击制胜的点", ["时间线漏洞", "一句话破绽", "物证矛盾", "动机盲区"]),
+        ],
+        variants=["本格反转版", "情感反转版", "多线陷阱版"],
+        fit_contexts=["悬疑", "推理对决", "反转", "高光", "谜团"],
+        word_range=(2500, 4500),
+        source="创作积累",
+        usage_notes="反转要早埋伏笔，让读者回想时觉得'原来如此'",
+    ),
+    PlotTemplate(
+        id="plot_sus_004", name="追查幕后黑手",
+        category="悬疑", sub_category="主线阴谋",
+        description="从表面事件一层层追到更大的幕后势力",
+        template_structure="[小事件入手]→[发现事件背后有人]→[顺藤摸瓜]→[黑手察觉并反扑]→[正面交锋]→[掀开冰山一角]",
+        slots=[
+            PlotSlot("表层事件", "切入的由头", ["一桩意外", "一笔异常交易", "一封密信", "一次袭击"]),
+            PlotSlot("幕后势力", "真正的黑手", ["神秘组织", "顶层权贵", "异界势力", "同伴背叛"]),
+            PlotSlot("推进方式", "怎么往上查", ["收买线人", "卧底", "反用敌人情报", "以身作饵"]),
+        ],
+        variants=["都市阴谋版", "权谋版", "超自然黑幕版"],
+        fit_contexts=["悬疑", "阴谋", "追查", "主线", "幕后"],
+        word_range=(2500, 5000),
+        source="创作积累",
+        usage_notes="黑手要分层次，先打小喽啰再一步步逼近核心",
+    ),
+    # ── 智斗/权谋 ──
+    PlotTemplate(
+        id="plot_strat_001", name="布局反杀/请君入瓮",
+        category="智斗", sub_category="布局",
+        description="主角提前布局，等对手踏入陷阱再一网打尽",
+        template_structure="[对手步步紧逼]→[主角表面退让/示弱]→[暗布棋子]→[对手自以为得手]→[收网反杀]→[对手震惊]",
+        slots=[
+            PlotSlot("布局方式", "怎么设局", ["商业陷阱", "情报诱导", "借刀杀人", "舆论反制"]),
+            PlotSlot("对手弱点", "切入的破绽", ["贪婪", "傲慢", "情报缺失", "家丑/软肋"]),
+            PlotSlot("收网时机", "何时反杀", ["对手最高兴时", "对手以为胜券在握", "对方内部最乱时"]),
+        ],
+        variants=["商战版", "权谋版", "江湖仇杀版"],
+        fit_contexts=["智斗", "布局", "反杀", "权谋", "中期"],
+        word_range=(2000, 4000),
+        source="创作积累",
+        usage_notes="主角的棋要提前几章埋，读者回头看才拍案",
+    ),
+    PlotTemplate(
+        id="plot_strat_002", name="谈判博弈",
+        category="智斗", sub_category="交锋",
+        description="在谈判桌上以智谋争取最大利益",
+        template_structure="[谈判开局·各怀心思]→[互相试探底线]→[僵局]→[亮出筹码/虚张声势]→[达成或破裂]",
+        slots=[
+            PlotSlot("谈判标的", "争的是什么", ["资源分配", "势力结盟", "人质/伙伴", "地盘划分"]),
+            PlotSlot("主角筹码", "手里有什么", ["独家情报", "对方把柄", "稀缺资源", "谈判技巧"]),
+            PlotSlot("谈判走向", "结果如何", ["大胜", "双赢", "破裂转武力", "埋下后患"]),
+        ],
+        variants=["商战版", "外交版", "江湖地盘版"],
+        fit_contexts=["智斗", "谈判", "博弈", "商战", "权谋"],
+        word_range=(1800, 3500),
+        source="创作积累",
+        usage_notes="对话要暗藏机锋，别把底牌直接摆上桌",
+    ),
+    # ── 情感（补充） ──
+    PlotTemplate(
+        id="plot_emo_001", name="误会与和解",
+        category="情感", sub_category="波折",
+        description="因误会生出裂痕，真相大白后和解",
+        template_structure="[亲密关系]→[误会产生]→[拒绝解释/越描越黑]→[裂痕加深]→[真相以意想不到方式揭开]→[和解/心结解开]",
+        slots=[
+            PlotSlot("误会内容", "误会了什么", ["被误会背叛", "被误会贪图利益", "被误会隐瞒病情", "被误会脚踏多船"]),
+            PlotSlot("揭开方式", "真相如何浮出", ["第三者作证", "当事人自证", "意外撞破", "对方醒悟"]),
+            PlotSlot("和解代价", "付出了什么", ["一方低头", "失去了一段时间", "共同经历险境", "彻底坦诚"]),
+        ],
+        variants=["虐心版", "轻喜剧版", "深沉版"],
+        fit_contexts=["情感", "误会", "和解", "关系洗牌", "波折"],
+        word_range=(2000, 4000),
+        source="创作积累",
+        usage_notes="误会导致的伤害要真实，和解才动人",
+    ),
+    PlotTemplate(
+        id="plot_emo_002", name="久别重逢",
+        category="情感", sub_category="重逢",
+        description="多年分离后重逢，物是人非却情意未改",
+        template_structure="[时过境迁]→[不期而遇]→[试探与尴尬]→[旧事浮现]→[抉择：再续或告别]",
+        slots=[
+            PlotSlot("分离原因", "当年为何分开", ["身不由己", "误会决裂", "生死相隔", "各自使命"]),
+            PlotSlot("重逢场景", "在哪里再见", ["故地", "职场", "战场上", "一场婚礼"]),
+            PlotSlot("重逢走向", "结局如何", ["破镜重圆", "彼此成全", "旧情发酵成新局", "物是人非"]),
+        ],
+        variants=["甜虐版", "洒脱版", "中年回望版"],
+        fit_contexts=["情感", "重逢", "回忆", "旧情", "转折"],
+        word_range=(2000, 3500),
+        source="创作积累",
+        usage_notes="重逢的情绪靠细节（一个动作/一句话）而非直抒",
+    ),
+    PlotTemplate(
+        id="plot_emo_003", name="表白定情",
+        category="情感", sub_category="升华",
+        description="关系推至顶点，一方主动表明心意",
+        template_structure="[日常积累的好感]→[契机到来]→[犹豫/试探]→[破釜沉舟的表白]→[对方回应]",
+        slots=[
+            PlotSlot("表白场合", "在哪里说出口", ["月下", "生死关头", "日常餐桌上", "公开场合"]),
+            PlotSlot("表白方式", "怎么说", ["直球", "借物喻情", "行动证明", "被迫摊牌"]),
+            PlotSlot("对方回应", "结果如何", ["欣然接受", "犹豫后接受", "被拒(留后手)", "反被表白"]),
+        ],
+        variants=["甜文版", "搞笑版", "悲情版"],
+        fit_contexts=["情感", "表白", "定情", "升温", "高光"],
+        word_range=(1800, 3000),
+        source="创作积累",
+        usage_notes="表白前要有足够铺垫，感情水到渠成才动人",
+    ),
+    # ── 战斗（补充） ──
+    PlotTemplate(
+        id="plot_bat_001", name="生死逃亡",
+        category="战斗", sub_category="追逐",
+        description="实力悬殊下的逃命，边逃边成长",
+        template_structure="[强敌追杀]→[断后/牺牲]→[一路奔逃]→[绝境反击机会]→[摆脱或反杀]",
+        slots=[
+            PlotSlot("追杀者", "谁在追", ["更强的高手", "军队/势力", "未知怪物", "背叛的同伴"]),
+            PlotSlot("逃亡手段", "怎么跑", ["地形利用", "伪装易容", "空间法宝", "极限速度"]),
+            PlotSlot("出路", "如何脱困", ["强援赶到", "实力突破", "进入险地借势", "计谋甩脱"]),
+        ],
+        variants=["肾上腺素版", "悲壮牺牲版", "智勇双全版"],
+        fit_contexts=["战斗", "逃亡", "追杀", "绝境", "成长"],
+        word_range=(2500, 4500),
+        source="创作积累",
+        usage_notes="逃亡中要有小胜利，不能一路挨打",
+    ),
+    PlotTemplate(
+        id="plot_bat_002", name="清理门户/师徒对决",
+        category="战斗", sub_category="对决",
+        description="面对叛徒或黑化的师长，必须正面清算",
+        template_structure="[背叛揭露]→[昔日情分挣扎]→[立场抉择]→[正面对决]→[决断与代价]",
+        slots=[
+            PlotSlot("对决对象", "清理谁", ["叛徒师兄弟", "黑化师父", "堕落同门", "昔日战友"]),
+            PlotSlot("对决理由", "为何必须打", ["清理门户", "守护大义", "为死者讨公道", "阻止阴谋"]),
+            PlotSlot("结果", "如何收场", ["正面取胜", "惨胜", "以德报怨收服", "两败俱伤"]),
+        ],
+        variants=["悲壮版", "快意版", "挣扎版"],
+        fit_contexts=["战斗", "师徒", "背叛", "清算", "后期"],
+        word_range=(2500, 4500),
+        source="创作积累",
+        usage_notes="师徒情分是情绪核心，别变成纯武力打斗",
+    ),
+    PlotTemplate(
+        id="plot_bat_003", name="围剿突围",
+        category="战斗", sub_category="混战",
+        description="陷入重重包围，绝境求生",
+        template_structure="[包围成形]→[试探性突围]→[损失与决断]→[制造突破口]→[杀出重围]",
+        slots=[
+            PlotSlot("包围者", "谁在围", ["敌军", "多方势力联手", "上古大阵", "兽潮"]),
+            PlotSlot("突破口", "怎么破", ["擒王", "声东击西", "燃烧潜能", "里应外合"]),
+            PlotSlot("代价", "付出了什么", ["有人牺牲", "主力重伤", "失去宝物", "零代价(留悬念)"]),
+        ],
+        variants=["惨烈版", "智取版", "热血版"],
+        fit_contexts=["战斗", "围剿", "突围", "危机", "高光"],
+        word_range=(3000, 5500),
+        source="创作积累",
+        usage_notes="突围后要有余波（追兵、内奸、舆论），别干净利落就完了",
+    ),
+    # ── 成长（补充） ──
+    PlotTemplate(
+        id="plot_grow_001", name="突破瓶颈/顿悟",
+        category="成长", sub_category="突破",
+        description="卡在境界/心结多年，一朝顿悟突破",
+        template_structure="[瓶颈困境]→[尝试各种办法无效]→[放下执念/触动心弦]→[顿悟]→[破境·实力质变]",
+        slots=[
+            PlotSlot("瓶颈类型", "卡在哪", ["修为境界", "心魔心结", "武学领悟", "能力上限"]),
+            PlotSlot("顿悟契机", "因何突破", ["生死关头", "旁观他人", "一句话点醒", "自我和解"]),
+            PlotSlot("突破效果", "破境后", ["实力暴涨", "掌握新能力", "解开封印", "获得新的道"]),
+        ],
+        variants=["热血版", "禅意版", "日常顿悟版"],
+        fit_contexts=["成长", "突破", "瓶颈", "顿悟", "蜕变"],
+        word_range=(2000, 4000),
+        source="创作积累",
+        usage_notes="顿悟要有铺垫，别'突然就突破了'",
+    ),
+    PlotTemplate(
+        id="plot_grow_002", name="独闯险地取机缘",
+        category="成长", sub_category="历练",
+        description="孤身深入危险之地，取回关键机缘",
+        template_structure="[得知险地有机缘]→[明知危险仍去]→[险象环生]→[获得机缘]→[活着回来(或引出新线)]",
+        slots=[
+            PlotSlot("险地", "哪里", ["禁地", "上古遗迹", "绝境", "敌方腹地"]),
+            PlotSlot("机缘", "去拿什么", ["功法传承", "神兵", "灵药", "关键情报"]),
+            PlotSlot("意外收获", "额外得到", ["结识强者", "发现阴谋", "身体蜕变", "脱胎换骨"]),
+        ],
+        variants=["苦修版", "奇遇版", "计谋版"],
+        fit_contexts=["成长", "历练", "机缘", "冒险", "蜕变"],
+        word_range=(2500, 4500),
+        source="创作积累",
+        usage_notes="险地要有规则感，不是主角光环硬闯",
+    ),
+    # ── 都市（补充） ──
+    PlotTemplate(
+        id="plot_urban_001", name="商战交锋",
+        category="都市", sub_category="商战",
+        description="商场博弈，资本与人心之战",
+        template_structure="[商业对手出招]→[主角接招/暗布]→[股价/市场动荡]→[反制手段]→[胜负分晓]",
+        slots=[
+            PlotSlot("战场", "在哪里打", ["并购战", "招标会", "股市", "新品发布会"]),
+            PlotSlot("对手", "与谁交手", ["财团", "同行巨头", "背叛的合伙人", "资本大鳄"]),
+            PlotSlot("制胜手段", "怎么赢", ["技术专利", "内幕信息", "人心背向", "釜底抽薪"]),
+        ],
+        variants=["爽文版", "写实版", "烧脑版"],
+        fit_contexts=["都市", "商战", "职场", "博弈", "资本"],
+        word_range=(2000, 4000),
+        source="创作积累",
+        usage_notes="商战要有人物动机，别只是数字上的碾压",
+    ),
+    PlotTemplate(
+        id="plot_urban_002", name="职场逆袭/背锅反杀",
+        category="都市", sub_category="职场",
+        description="被抢功背锅后，职场绝地反击",
+        template_structure="[功劳被抢/被甩锅]→[隐忍收集证据]→[对手上位得意]→[当众揭穿]→[地位反转]",
+        slots=[
+            PlotSlot("职场类型", "什么环境", ["互联网大厂", "体制内", "家族企业", "创业公司"]),
+            PlotSlot("被坑方式", "怎么被整", ["抢功", "甩锅", "PUA打压", "职场霸凌"]),
+            PlotSlot("反杀方式", "怎么翻盘", ["当众对质", "用业绩说话", "揭穿内幕", "借势上位"]),
+        ],
+        variants=["打脸版", "爽文版", "写实版"],
+        fit_contexts=["都市", "职场", "逆袭", "打脸", "现代"],
+        word_range=(1800, 3500),
+        source="创作积累",
+        usage_notes="职场情节要踩中读者痛点（加班/背锅/晋升不公）",
+    ),
+    # ── 科幻（补充） ──
+    PlotTemplate(
+        id="plot_scifi_001", name="末世求生",
+        category="科幻", sub_category="末世",
+        description="灾难降临，在崩溃的秩序中求生",
+        template_structure="[灾难爆发]→[秩序崩塌]→[资源争夺]→[生存选择]→[建立据点/发现真相]",
+        slots=[
+            PlotSlot("灾难类型", "什么末世", ["丧尸", "天灾", "灵气/异变", "外星入侵"]),
+            PlotSlot("求生方式", "怎么活", ["建立小队", "独占资源", "变异强化", "科技造物"]),
+            PlotSlot("人性考验", "考验什么", ["信任", "底线", "利益分配", "牺牲谁"]),
+        ],
+        variants=["硬核求生版", "人性拷问版", "轻松种田版"],
+        fit_contexts=["科幻", "末世", "求生", "危机", "灾难"],
+        word_range=(2500, 4500),
+        source="创作积累",
+        usage_notes="末世最抓人的是人性抉择，不是打丧尸",
+    ),
+    PlotTemplate(
+        id="plot_scifi_002", name="金手指反噬",
+        category="科幻", sub_category="代价",
+        description="外挂/系统的代价显现，主角付出惨痛代价",
+        template_structure="[依赖金手指一路顺风]→[异常信号出现]→[代价反噬]→[仓皇应对]→[被迫改变依赖方式]",
+        slots=[
+            PlotSlot("代价类型", "付出什么", ["寿命", "记忆", "身边人", "自由/人格"]),
+            PlotSlot("反噬形式", "怎么反噬", ["能力暴走", "系统失控", "付出被加倍索取", "隐藏条件触发"]),
+            PlotSlot("应对", "主角怎么选", ["戒掉依赖", "反向利用", "谈判/和解", "硬扛到底"]),
+        ],
+        variants=["悬疑版", "悲壮版", "爽文反杀版"],
+        fit_contexts=["科幻", "系统", "代价", "反噬", "转折"],
+        word_range=(2000, 4000),
+        source="创作积累",
+        usage_notes="代价要跟主角的核心欲望挂钩才疼",
+    ),
+    # ── 日常/生活流 ──
+    PlotTemplate(
+        id="plot_slice_001", name="日常经营/生活流",
+        category="日常", sub_category="生活",
+        description="种田、开店、经营一方天地的温情日常",
+        template_structure="[安身之所]→[经营/劳作]→[街坊人情]→[小危机/小确幸]→[日子越过越好]",
+        slots=[
+            PlotSlot("经营内容", "靠什么过活", ["种田", "开店", "厨艺", "医术", "手艺"]),
+            PlotSlot("邻里关系", "围绕谁", ["街坊邻居", "同行竞争", "收留的孤儿", "老手艺人家"]),
+            PlotSlot("日常插曲", "发生什么", ["一场大病", "一场喜事", "一次危机", "一个贵人"]),
+        ],
+        variants=["温馨种田版", "治愈版", "轻喜剧版"],
+        fit_contexts=["日常", "生活", "经营", "温情", "种田"],
+        word_range=(1500, 3000),
+        source="创作积累",
+        usage_notes="生活流的魅力在细节与温度，别急着推主线",
     ),
 ]

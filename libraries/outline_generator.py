@@ -1,6 +1,6 @@
 """
 大纲生成引擎（Outline Generator）
-5 阶段 LLM 管线：故事分析 → 大纲时间线规划 → 桥段编排 → 加料注入 → 一致性验证
+5 阶段 LLM 管线：故事分析 → 故事线规划 → 桥段编排 → 加料注入 → 一致性验证
 
 输入: 流派/子流派/自定义描述 + 四大库（候选池） + 笔名档案
 输出: BookTimeline JSON（多大纲+桥段+笑点+内涵+吸睛）
@@ -59,6 +59,23 @@ class OutlineGenerator:
         self._id_counter += 1
         return f"{prefix}_{self._id_counter:04d}"
 
+    def _stream_decision_content(self, kind: str, system: str, prompt: str,
+                                 temperature: float = 0.7, max_tokens: int = 8192):
+        """流式调用 LLM 并转发思考事件，返回 content 全文。
+
+        生成器：对每个 delta 块 yield ("thinking", kind, {"stream": text, "mode": delta_key})，
+        其中 reasoning = 模型内部思考（DeepSeek reasoning_content），content = 最终输出；
+        只把 content 收集起来作为返回值，供调用方解析 JSON。
+        """
+        collected = []
+        if self.llm:
+            for delta_key, text in self.llm.stream_deltas(
+                    system, prompt, temperature=temperature, max_tokens=max_tokens):
+                yield ("thinking", kind, {"stream": text, "mode": delta_key})
+                if delta_key == "content":
+                    collected.append(text)
+        return "".join(collected)
+
     # ═══════════════════════════════════════
     # 公开入口
     # ═══════════════════════════════════════
@@ -71,18 +88,29 @@ class OutlineGenerator:
         pen_name: str = "",
         words_per_chapter: int = 3000,
         max_outlines: int = 5,
+        timeline: Optional[BookTimeline] = None,
+        on_save: Optional[Callable[[BookTimeline], None]] = None,
     ):
         """
         生成器：逐步构建 BookTimeline，yield SSE 事件。
 
         事件格式: (event_type: str, message: str, data: dict)
+        新增事件：
+          ("thinking", kind, {"stream": str})  — LLM 流式思考片段
+                  kind ∈ analyze/outline_choice/plot_choice/gag_review/validate
+          ("decision", kind, {...})            — 决策完成（候选→选中→理由），
+                  让用户看到"确定了哪个大纲/桥段/笑点"及 AI 的理由
+
+        timeline: 传入现有 BookTimeline 则原地累加（供逐步落盘）；None 则新建。
+        on_save:  每阶段完成后回调 on_save(tl)，用于把大纲/桥段/笑点"挨个步骤写进配置文件"。
         """
-        tl = BookTimeline(
+        tl = timeline if timeline is not None else BookTimeline(
             genre=genre, sub_genre=sub_genre,
             words_per_chapter=words_per_chapter, pen_name=pen_name,
         )
 
         total_phases = 5
+        issues = []
         try:
             # ── Phase 1: 故事分析 ──
             yield ("phase", "故事分析", {"phase": 1, "total": total_phases,
@@ -91,21 +119,24 @@ class OutlineGenerator:
 
             basic_info = self._analyze_story(genre, sub_genre, custom_context, pen_name)
             if basic_info:
-                tl.basic_info = basic_info
+                # 原地累加：保留用户已填的基础设定（主角/世界观等非空字段不覆盖）
+                tl.basic_info = self._merge_basic_info(tl.basic_info, basic_info)
             yield ("phase_done", "故事分析完成", {
-                "phase": 1, "data": {"protagonist": basic_info.get("protagonist", {})}
+                "phase": 1, "data": {"protagonist": tl.basic_info.get("protagonist", {})}
             })
+            if on_save:
+                on_save(tl)
 
-            # ── Phase 2: 大纲时间线规划 ──
-            yield ("phase", "大纲时间线规划", {"phase": 2, "total": total_phases,
+            # ── Phase 2: 故事线规划 ──
+            yield ("phase", "故事线规划", {"phase": 2, "total": total_phases,
                    "desc": f"从大纲库选择 {max_outlines} 个模板，排布时间线..."})
             yield ("progress", "分析大纲库候选...", {})
 
-            outlines = self._plan_timeline(
+            outlines = yield from self._plan_timeline(
                 genre, sub_genre, custom_context, tl, max_outlines)
 
             tl.outlines = outlines
-            yield ("phase_done", f"大纲时间线规划完成 — {len(outlines)} 条大纲", {
+            yield ("phase_done", f"故事线规划完成 — {len(outlines)} 条大纲", {
                 "phase": 2,
                 "data": {
                     "count": len(outlines),
@@ -113,6 +144,8 @@ class OutlineGenerator:
                     "chapters": f"1–{max(o.end_chapter for o in outlines) if outlines else 0}",
                 }
             })
+            if on_save:
+                on_save(tl)
 
             # ── Phase 3: 桥段编排 ──
             total_plots_estimate = sum(len(o.stages) for o in outlines) * 2
@@ -123,7 +156,7 @@ class OutlineGenerator:
             for oi, outline in enumerate(outlines):
                 yield ("progress",
                        f"编排桥段: {outline.name} ({oi+1}/{len(outlines)})", {})
-                plots = self._arrange_plots_for_outline(outline, tl, genre)
+                plots = yield from self._arrange_plots_for_outline(outline, tl, genre)
                 all_plots.extend(plots)
                 yield ("outline_plots", outline.name, {
                     "outline_id": outline.id, "plot_count": len(plots),
@@ -134,6 +167,8 @@ class OutlineGenerator:
             yield ("phase_done", f"桥段编排完成 — {len(all_plots)} 个桥段", {
                 "phase": 3, "data": {"count": len(all_plots)},
             })
+            if on_save:
+                on_save(tl)
 
             # ── Phase 4: 加料注入 ──
             yield ("phase", "加料注入", {"phase": 4, "total": total_phases,
@@ -148,6 +183,10 @@ class OutlineGenerator:
                     yield ("progress",
                            f"注入加料: {pi+1}/{len(tl.plots)}", {})
 
+            # Phase 4.5: LLM 复查笑点/内涵（流式思考）
+            yield ("progress", "LLM 复查笑点/内涵分布...", {})
+            yield from self._review_injections(tl, genre)
+
             yield ("phase_done", "加料注入完成", {
                 "phase": 4,
                 "data": {
@@ -155,19 +194,24 @@ class OutlineGenerator:
                     "gags_total": sum(len(p.gag_ids) for p in tl.plots),
                 }
             })
+            if on_save:
+                on_save(tl)
 
             # ── Phase 5: 一致性验证 ──
             yield ("phase", "一致性验证", {"phase": 5, "total": total_phases,
                    "desc": "验证时间线合理性、桥段覆盖、笑点密度..."})
-            yield ("progress", "检查大纲时间线...", {})
+            yield ("progress", "检查故事线...", {})
 
             issues = self._validate(tl)
+            yield from self._validate_with_llm(tl)
             if issues:
                 yield ("warnings", f"发现 {len(issues)} 个建议", {
                     "issues": issues,
                 })
 
             yield ("phase_done", "验证完成", {"phase": 5, "data": {"issues": len(issues)}})
+            if on_save:
+                on_save(tl)
 
             # ── 完成 ──
             tl.phase = "ready"
@@ -259,16 +303,42 @@ class OutlineGenerator:
             "target_audience": "男频",
         }
 
+    @staticmethod
+    def _merge_basic_info(existing, generated):
+        """以 generated 为基础，但保留 existing 里用户已填的非空字段（原地累加用）。"""
+        existing = existing or {}
+        generated = generated or {}
+        merged = {}
+        for key, gv in generated.items():
+            ev = existing.get(key)
+            if isinstance(gv, dict) and isinstance(ev, dict):
+                sub = dict(gv)
+                for sk, sv in ev.items():
+                    if sv not in (None, "", [], {}):
+                        sub[sk] = sv
+                merged[key] = sub
+            elif ev not in (None, "", [], {}):
+                merged[key] = ev
+            else:
+                merged[key] = gv
+        for key, ev in existing.items():  # generated 没覆盖的字段也保留
+            if key not in merged:
+                merged[key] = ev
+        return merged
+
     # ═══════════════════════════════════════
-    # Phase 2: 大纲时间线规划
+    # Phase 2: 故事线规划
     # ═══════════════════════════════════════
 
     def _plan_timeline(
         self, genre: str, sub_genre: str,
         custom_context: str, tl: BookTimeline,
         max_outlines: int = 5,
-    ) -> list[OutlineSlot]:
-        """从大纲库选模板 → AI 排布时间线 → 展开阶段"""
+    ):
+        """从大纲库选模板 → AI 排布时间线 → 展开阶段。
+
+        生成器：AI 模式下 yield thinking/decision 事件，最终 return list[OutlineSlot]。
+        """
         if not self.structures:
             return []
 
@@ -283,7 +353,9 @@ class OutlineGenerator:
             return self._rule_sequence(candidates, max_outlines)
 
         # AI 模式：让 AI 选择合适的模板并排时间线
-        return self._ai_sequence(candidates, genre, sub_genre, custom_context, tl, max_outlines)
+        result = yield from self._ai_sequence(
+            candidates, genre, sub_genre, custom_context, tl, max_outlines)
+        return result
 
     def _rule_sequence(
         self, candidates: list, max_outlines: int,
@@ -315,8 +387,12 @@ class OutlineGenerator:
     def _ai_sequence(
         self, candidates: list, genre: str, sub_genre: str,
         custom_context: str, tl: BookTimeline, max_outlines: int,
-    ) -> list[OutlineSlot]:
-        """AI 辅助排布大纲时间线"""
+    ):
+        """AI 辅助排布故事线。
+
+        生成器：yield thinking（LLM 流式 token）+ decision（每确定一条大纲），
+        return list[OutlineSlot]。
+        """
 
         # 构建候选模板描述
         cand_text = "\n".join(
@@ -329,7 +405,7 @@ class OutlineGenerator:
         protag = tl.basic_info.get("protagonist", {})
         world = tl.basic_info.get("world_building", {})
 
-        prompt = f"""为一本{genre}/{sub_genre}网络小说设计大纲时间线。
+        prompt = f"""为一本{genre}/{sub_genre}网络小说设计故事线。
 
 【主角设定】
 名字：{protag.get('name','待定')}
@@ -367,19 +443,44 @@ class OutlineGenerator:
   ]
 }}"""
 
-        try:
-            from core.llm_client import extract_json
-            raw = self.llm.call(
-                "你是专业网文策划编辑。只返回JSON，不要加额外文字。",
-                prompt, temperature=0.7, max_tokens=2048)
-            data = json.loads(extract_json(raw))
-            outlines_data = data.get("outlines", [])
-        except Exception:
-            return self._rule_sequence(candidates, max_outlines)
+        cand_list = [{"id": c.id, "name": c.name} for c in candidates[:8]]
+
+        # 流式调用：先把候选放上桌，再逐 token 展示 AI 怎么选
+        yield ("decision", "outline_choice", {
+            "step": "候选大纲模板",
+            "candidates": cand_list,
+            "chosen": {},
+            "reason": "以下模板来自大纲库，AI 将从其中挑选并排布时间线",
+        })
+
+        outlines_data = None
+        if self.llm:
+            try:
+                from core.llm_client import extract_json
+                raw = yield from self._stream_decision_content(
+                    "outline_choice",
+                    "你是专业网文策划编辑。只返回JSON，不要加额外文字。",
+                    prompt, temperature=0.7, max_tokens=8192)
+                data = json.loads(extract_json(raw))
+                outlines_data = data.get("outlines", [])
+            except Exception:
+                outlines_data = None
+
+        if not outlines_data:
+            # 回退规则模式
+            fallback = self._rule_sequence(candidates, max_outlines)
+            if fallback:
+                yield ("decision", "outline_choice", {
+                    "step": "故事线规划（回退规则模式）",
+                    "candidates": cand_list,
+                    "chosen": {"id": fallback[0].template_id, "name": fallback[0].name},
+                    "reason": "LLM 流式输出解析失败，改用大纲库模板顺序排布",
+                })
+            return fallback
 
         outlines = []
         prev_id = ""
-        for od in outlines_data:
+        for i, od in enumerate(outlines_data):
             oid = self._next_id("outline")
             tid = od.get("template_id", "")
             # 从模板库展开阶段
@@ -415,6 +516,13 @@ class OutlineGenerator:
             outlines.append(outline)
             prev_id = oid
 
+            yield ("decision", "outline_choice", {
+                "step": f"确定第 {i+1} 条大纲",
+                "candidates": cand_list,
+                "chosen": {"id": oid, "template_id": tid, "name": outline.name},
+                "reason": od.get("reason", ""),
+            })
+
         return outlines if outlines else self._rule_sequence(candidates, max_outlines)
 
     # ═══════════════════════════════════════
@@ -423,33 +531,44 @@ class OutlineGenerator:
 
     def _arrange_plots_for_outline(
         self, outline: OutlineSlot, tl: BookTimeline, genre: str,
-    ) -> list[PlotSlot]:
-        """为一个大纲的每个阶段匹配桥段（AI 选择）"""
+    ):
+        """为一个大纲的每个阶段匹配桥段（AI 选择，避免跨阶段重复与类型错配）。
+
+        生成器：yield thinking/decision 事件，最终 return list[PlotSlot]。
+        """
         if not self.plots:
             return []
 
         new_plots = []
+        used_ids = set()   # 本大纲内已用桥段模板 id，避免跨阶段重复
         for si, stage in enumerate(outline.stages):
             stage_name = stage.get("name", "")
             events = stage.get("events", [])
             context = f"{outline.name} {stage_name} {' '.join(events)}"
 
-            # 从桥段库搜索候选
-            candidates = self.plots.match_for_chapter(context, genre)
+            # 候选池：上下文匹配 + 流派匹配 + 阶段事件关键词，去重保序
+            candidates = self._collect_plot_candidates(context, genre, stage)
             if not candidates:
-                candidates = self.plots.search(category=genre)
-            if not candidates:
-                candidates = self.plots.templates[:3]
+                candidates = self.plots.templates[:5]
+
+            # 已用桥段从候选剔除（保证弧内不重复），不足时再回填
+            unused = [t for t in candidates if t.id not in used_ids]
+            if len(unused) >= 2:
+                candidates = unused
+            elif unused:
+                candidates = unused + [t for t in candidates if t.id in used_ids]
 
             selected = candidates[:min(3, len(candidates))]  # 每阶段 1-3 个桥段
+            if self.llm and len(candidates) >= 2:
+                selected = yield from self._ai_select_plots(
+                    outline, stage, candidates, genre, used_ids)
 
-            if self.llm and len(candidates) > 3:
-                selected = self._ai_select_plots(
-                    outline, stage, candidates, genre)
-
-            # 链式嵌套
+            # 链式嵌套 + 记录已用
             parent_id = ""
             for pi, tmpl in enumerate(selected):
+                if tmpl.id in used_ids and pi > 0:
+                    continue  # 兜底：本阶段首个可复用，其余去重
+                used_ids.add(tmpl.id)
                 pid = self._next_id("plot")
                 p = PlotSlot(
                     id=pid, template_id=tmpl.id, name=tmpl.name,
@@ -473,19 +592,56 @@ class OutlineGenerator:
         outline.expanded = True
         return new_plots
 
+    def _collect_plot_candidates(self, context: str, genre: str, stage: dict) -> list:
+        """聚合桥段候选池：上下文匹配 + 流派匹配 + 阶段事件关键词，去重保序。"""
+        seen = {}
+
+        def add(t):
+            if t.id not in seen:
+                seen[t.id] = t
+
+        for t in self.plots.match_for_chapter(context, genre):
+            add(t)
+        if genre:
+            for t in self.plots.search(category=genre):
+                add(t)
+        if context:
+            for t in self.plots.search(context=context[:30]):
+                add(t)
+        for ev in (stage.get("events") or [])[:3]:
+            if ev:
+                for t in self.plots.search(context=ev[:20]):
+                    add(t)
+        # 池子太小就补全库，保证 AI 有足够多样选择
+        if len(seen) < 6:
+            for t in self.plots.templates:
+                add(t)
+        return list(seen.values())[:12]
+
     def _ai_select_plots(
         self, outline: OutlineSlot, stage: dict,
-        candidates: list, genre: str,
-    ) -> list:
-        """AI 从桥段候选中选择最合适的"""
+        candidates: list, genre: str, used_ids: set = None,
+    ):
+        """AI 从桥段候选中选择最合适的。
+
+        生成器：yield thinking（LLM 流式 token）+ decision（每确定一批桥段），
+        return list[PlotTemplate]。used_ids 为本弧已用桥段模板 id，供 AI 避免重复。
+        """
+        used_ids = used_ids or set()
         stage_name = stage.get("name", "")
         events = stage.get("events", [])
 
         cand_text = "\n".join(
             f"- {t.id}: {t.name}（{t.category}/{t.sub_category}）"
             f" | 结构: {t.template_structure[:60] if t.template_structure else '无'}"
-            for t in candidates[:8]
+            for t in candidates[:10]
         )
+
+        cand_list = [{"id": t.id, "name": t.name} for t in candidates[:10]]
+
+        used_names = "、".join(t.name for t in candidates if t.id in used_ids)
+        avoid_hint = (f"\n【已在本弧前阶段用过的桥段，请避免重复】{used_names}"
+                      if used_names else "")
 
         prompt = f"""在大纲「{outline.name}」的「{stage_name}」阶段选择合适的桥段。
 
@@ -493,29 +649,54 @@ class OutlineGenerator:
 {'、'.join(events) if events else '按流派惯例推进'}
 
 【流派】{genre}
+【本弧主题】{outline.name}
 
 【候选桥段】
 {cand_text}
+{avoid_hint}
 
 【要求】
 从候选中选择 1-3 个最匹配该阶段的桥段。需考虑：
-- 桥段类型是否契合阶段节奏（开篇用钩子类、成长用战斗/拜师类）
+- 桥段类型须契合本弧/本阶段主题（开篇用钩子/开篇类、成长用战斗/拜师类、
+  悬疑/调查类弧线用线索/推理类，避免爽文桥段乱入正剧/悬疑弧）
+- 避免与已用桥段重复
 - 桥段之间能否形成递进关系
 - 避免类型重复
 
 返回 JSON：
 {{"plot_ids": ["id1", "id2"], "reason": "简要说明选择原因"}}"""
 
-        try:
-            from core.llm_client import extract_json
-            raw = self.llm.call(
-                "你是网文编辑。只返回JSON。", prompt, temperature=0.5, max_tokens=1024)
-            data = json.loads(extract_json(raw))
-            ids = data.get("plot_ids", [])
-            selected = [t for t in candidates if t.id in ids]
-            return selected if selected else candidates[:2]
-        except Exception:
-            return candidates[:2]
+        yield ("decision", "plot_choice", {
+            "step": f"「{outline.name}」· 阶段「{stage_name}」的候选桥段",
+            "candidates": cand_list,
+            "chosen": {},
+            "reason": "以下桥段来自桥段库，AI 将按阶段节奏挑选",
+        })
+
+        reason = ""
+        selected = []
+        if self.llm:
+            try:
+                from core.llm_client import extract_json
+                raw = yield from self._stream_decision_content(
+                    "plot_choice", "你是网文编辑。只返回JSON。", prompt,
+                    temperature=0.5, max_tokens=8192)
+                data = json.loads(extract_json(raw))
+                reason = data.get("reason", "")
+                ids = data.get("plot_ids", [])
+                selected = [t for t in candidates if t.id in ids]
+            except Exception:
+                selected = []
+        if not selected:
+            selected = candidates[:2]
+
+        yield ("decision", "plot_choice", {
+            "step": f"确定「{outline.name}」· 阶段「{stage_name}」桥段",
+            "candidates": cand_list,
+            "chosen": [{"id": t.id, "name": t.name} for t in selected],
+            "reason": reason or "规则兜底",
+        })
+        return selected
 
     # ═══════════════════════════════════════
     # Phase 4: 加料注入
@@ -566,6 +747,67 @@ class OutlineGenerator:
             f"{plot.name}的高潮反转"
         ]
 
+    def _review_injections(self, tl: BookTimeline, genre: str):
+        """Phase 4 加料注入后的 LLM 复查（流式思考）。
+
+        生成器：yield thinking（token 流）+ decision（复查结论），
+        对规则注入的笑点/内涵做一次 AI 抽查修正，让"放什么笑点"也有 AI 思考可看。
+        """
+        if not self.llm or not tl.plots:
+            return
+
+        plots_snapshot = []
+        for p in tl.plots[:20]:
+            plots_snapshot.append({
+                "id": p.id, "name": p.name, "category": p.category,
+                "gag_ids": p.gag_ids[:3], "theme_hints": p.theme_hints[:2],
+            })
+
+        prompt = f"""以下是某本{genre}小说故事线的桥段加料配置（规则匹配结果）。请复查笑点与内涵是否合理、分布是否均匀、有无明显不搭。
+
+{json.dumps(plots_snapshot, ensure_ascii=False, indent=1)}
+
+返回 JSON：
+{{"corrections": [{{"plot_id": "...", "gag_ids": [...], "theme_hints": [...], "reason": "..."}}], "summary": "整体评价（一句话）"}}"""
+
+        try:
+            from core.llm_client import extract_json
+            raw = yield from self._stream_decision_content(
+                "gag_review", "你是网文编辑，负责笑点/内涵复查。只返回JSON。",
+                prompt, temperature=0.3, max_tokens=8192)
+            data = json.loads(extract_json(raw))
+
+            corrections = data.get("corrections", []) or []
+            summary = data.get("summary", "")
+            for corr in corrections:
+                plot = next((p for p in tl.plots if p.id == corr.get("plot_id", "")), None)
+                if not plot:
+                    continue
+                if corr.get("gag_ids"):
+                    valid = [g for g in corr["gag_ids"]
+                             if self.gags and self.gags.get_by_id(g)]
+                    if valid:
+                        plot.gag_ids = valid
+                if corr.get("theme_hints"):
+                    plot.theme_hints = corr["theme_hints"]
+
+            yield ("decision", "gag_review", {
+                "step": "笑点/内涵复查",
+                "candidates": [{"id": p.id, "name": p.name} for p in tl.plots[:20]],
+                "chosen": {
+                    "gags": [g for p in tl.plots[:8] for g in p.gag_ids[:1]],
+                    "themes": tl.themes[:3],
+                },
+                "reason": summary or "复查完成，未做调整",
+            })
+        except Exception:
+            yield ("decision", "gag_review", {
+                "step": "笑点/内涵复查",
+                "candidates": [{"id": p.id, "name": p.name} for p in tl.plots[:20]],
+                "chosen": {"gags": [], "themes": tl.themes[:3]},
+                "reason": "复查调用未返回有效结果，沿用规则匹配",
+            })
+
     # ═══════════════════════════════════════
     # Phase 5: 一致性验证
     # ═══════════════════════════════════════
@@ -611,6 +853,47 @@ class OutlineGenerator:
                 issues.append(f"全书{max_ch}章，建议拆分或精简")
 
         return issues
+
+    def _validate_with_llm(self, tl: BookTimeline):
+        """Phase 5 一致性验证的 LLM 复查（流式思考）。
+
+        生成器：yield thinking（token 流）+ decision（验证结论），
+        在规则校验之外再做一次 AI 抽查，输出建议与总结。
+        """
+        if not self.llm or not tl.outlines:
+            return
+
+        outlines_view = [{
+            "name": o.name,
+            "range": f"第{o.start_chapter}-{o.end_chapter}章",
+            "transition": o.transition_type,
+            "stages": [s.get("name", "") for s in (o.stages or [])],
+        } for o in tl.outlines[:10]]
+
+        prompt = f"""请审查下面这本小说故事线的合理性：
+流派：{tl.genre}
+大纲：{json.dumps(outlines_view, ensure_ascii=False, indent=1)}
+桥段总数：{len(tl.plots)}；笑点/内涵已按桥段注入。
+
+请检查：时间线重叠/间隔是否合理、桥段覆盖是否均匀、有无明显漏洞。
+
+返回 JSON：
+{{"issues": ["...", "..."], "summary": "一句话结论"}}"""
+
+        try:
+            from core.llm_client import extract_json
+            raw = yield from self._stream_decision_content(
+                "validate", "你是资深网文策划，审查故事线。只返回JSON。",
+                prompt, temperature=0.3, max_tokens=8192)
+            data = json.loads(extract_json(raw))
+            yield ("decision", "validate", {
+                "step": "一致性验证",
+                "candidates": [{"id": o.id, "name": o.name} for o in tl.outlines[:10]],
+                "chosen": {"issues": data.get("issues", []) or []},
+                "reason": data.get("summary", ""),
+            })
+        except Exception:
+            pass
 
 
 # ═══════════════════════════════════════════

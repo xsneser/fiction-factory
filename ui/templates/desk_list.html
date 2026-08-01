@@ -1,27 +1,41 @@
 {% extends "base.html" %}
-{% block title %}写作台 — 选择项目{% endblock %}
+{% block title %}写作台 — 选择书籍{% endblock %}
 {% block content %}
 <h1>✍️ 写作台</h1>
-<p style="color:#8b949e;margin-bottom:20px">选择一个时间线配置，进入写作台</p>
+<p style="color:#8b949e;margin-bottom:20px">选择一本书进入写作/续写</p>
 
-{% if timelines %}
+{% if books %}
 <div class="cards">
-    {% for t in timelines %}
-    <div class="card">
-        <div class="title">{{ t.pen_name }} · {{ t.title }}</div>
-        <div class="meta">{{ t.genre }}{% if t.sub_genre %}/{{ t.sub_genre }}{% endif %} · 状态：{{ t.phase or '未知' }}</div>
-        <div style="margin-top:12px">
-            <a href="/timeline/{{ t.id }}/desk" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none;display:inline-block">✍️ 进入写作台</a>
-            <a href="/timeline/{{ t.id }}/edit" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">🛠 编辑</a>
+    {% for r in books %}
+    {% set b = r.book %}
+    <div class="card desk-card">
+        <div class="title">{{ b.pen_name }} · {{ b.title }}</div>
+        <div class="meta">{{ b.genre }}{% if b.sub_genre %}/{{ b.sub_genre }}{% endif %} · 进度 {{ b.current_chapter }}/{{ b.chapter_count }} 章</div>
+        <div style="margin:8px 0">
+            {% if r.has_timeline %}
+            <span class="tag blue">故事线 {{ r.timeline_outlines }}大纲 · {{ r.timeline_plots }}桥段</span>
+            {% elif r.outline_count %}
+            <span class="tag green">结构 {{ r.outline_count }}阶段</span>
+            {% else %}
+            <span class="tag">无大纲</span>
+            {% endif %}
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+            <a href="/books/{{ b.book_id }}/continue" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none;display:inline-block">✍️ 进入写作</a>
+            <a href="/books/{{ b.book_id }}" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">📖 详情</a>
+            {% if r.has_timeline %}
+            <a href="/timeline/{{ b.book_id }}/edit" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">📋 大纲</a>
+            {% endif %}
         </div>
     </div>
     {% endfor %}
 </div>
 {% else %}
 <div class="empty" style="padding:60px">
-    <div class="icon" style="font-size:48px">📋</div>
-    <p style="color:#8b949e;margin-top:12px">还没有时间线配置</p>
+    <div class="icon" style="font-size:48px">✍️</div>
+    <p style="color:#8b949e;margin-top:12px">还没有可写作的书</p>
     <p style="color:#484f58;font-size:12px;margin-top:6px">先去「启动新书」创建项目</p>
+    <a href="/books/start" class="btn" style="margin-top:16px">🔰 启动新书</a>
 </div>
 {% endif %}
 {% endblock %}

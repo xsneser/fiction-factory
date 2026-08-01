@@ -1,4 +1,9 @@
-"""提示词模板 — 从 show-me-the-story config/prompts.go 提取"""
+"""提示词模板 — 从 show-me-the-story config/prompts.go 提取
+
+⚠️ 本文件中的 outline_generation / continuation_outline_generation / arc_chapter_outline
+均为"逐章文本大纲"的遗留模板（每章 outline 是一段文本）。大纲的正确形态是"故事线"
+（BookTimeline 配置，由 libraries/outline_generator.py 生成），本文件仅作历史兼容保留。
+"""
 
 
 arc_chapter_outline = """\

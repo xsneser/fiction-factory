@@ -222,6 +222,10 @@ def chapter_confirm_singular():
 async def chapter_revise_singular(req: Feedback):
     return await revise_chapter_api(req)
 
+# ⚠️ 遗留后端：main.py（FastAPI）是 show-me-the-story 移植的旧服务，大纲为"逐章文本"。
+# 大纲的正确形态是"故事线"（BookTimeline），主面板 web_ui（launch.bat 实际启动）已改用它，
+# 由 libraries/outline_generator.py 生成。以下 /api/outline/* 路由仅作历史兼容保留。
+
 @app.post("/api/outline/generate-continuation")
 async def outline_continue_alias(req: OutlineContinue):
     return await outline_continuation(req)

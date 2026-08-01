@@ -128,11 +128,23 @@ class LLMClient:
                     time.sleep(2 ** attempt)
         raise last_err
 
-    def call_stream(self, system_prompt: str, user_prompt: str,
-                    on_chunk: Callable[[str], None],
-                    temperature: float = 0.7,
-                    max_tokens: int = 4096) -> str:
-        """流式调用 LLM"""
+    def stream_deltas(self, system_prompt: str, user_prompt: str,
+                      temperature: float = 0.7,
+                      max_tokens: int = 4096):
+        """流式调用 LLM，逐个 yield (delta_key, text)。
+
+        delta_key ∈ {"reasoning", "content"}：
+          - reasoning：模型内部思考过程（DeepSeek 的 reasoning_content，链式思考）
+          - content：最终输出正文
+
+        供需要把 AI 思考过程实时转发给 UI 的调用方使用：
+            for kind, text in client.stream_deltas(sys, user):
+                if kind == "reasoning": show_thinking(text)
+                else: collect_answer(text)
+
+        read_chunked() 返回的是 HTTP chunked 编码的任意大小块，不是按行，
+        因此这里做换行缓冲，兼容"一个块含多条 SSE"与"一条 SSE 被切成多块"。
+        """
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -145,23 +157,54 @@ class LLMClient:
 
         resp = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds,
                           stream=True, verify=self.cfg.verify_ssl)
+        buf = ""
+        try:
+            for chunk in resp.read_chunked():
+                buf += chunk.decode('utf-8', errors='replace')
+                while "\n" in buf:
+                    sse_line, buf = buf.split("\n", 1)
+                    sse_line = sse_line.strip()
+                    if not sse_line or not sse_line.startswith("data:"):
+                        continue
+                    data = sse_line[5:].strip()
+                    if data == "[DONE]":
+                        return
+                    try:
+                        event = json.loads(data)
+                        delta = event["choices"][0].get("delta", {})
+                        if delta.get("reasoning_content"):
+                            yield ("reasoning", delta["reasoning_content"])
+                        if delta.get("content"):
+                            yield ("content", delta["content"])
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+        finally:
+            resp.release_conn()
+
+    def stream_chunks(self, system_prompt: str, user_prompt: str,
+                      temperature: float = 0.7,
+                      max_tokens: int = 4096):
+        """流式调用 LLM，逐个 yield content 增量（生成器版，只取最终输出）。
+
+        需要同时看到思考过程的调用方请用 stream_deltas。
+        """
+        for delta_key, text in self.stream_deltas(system_prompt, user_prompt,
+                                                  temperature=temperature,
+                                                  max_tokens=max_tokens):
+            if delta_key == "content":
+                yield text
+
+    def call_stream(self, system_prompt: str, user_prompt: str,
+                    on_chunk: Callable[[str], None],
+                    temperature: float = 0.7,
+                    max_tokens: int = 4096) -> str:
+        """流式调用 LLM（基于 stream_chunks 实现，行为不变）"""
         full_text = []
-        for line in resp.read_chunked():
-            line = line.decode('utf-8', errors='replace')
-            if line.startswith("data: "):
-                data = line[6:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(data)
-                    delta = chunk["choices"][0].get("delta", {})
-                    content = delta.get("content", "")
-                    if content:
-                        full_text.append(content)
-                        on_chunk(content)
-                except (json.JSONDecodeError, KeyError):
-                    continue
-        resp.release_conn()
+        for content in self.stream_chunks(system_prompt, user_prompt,
+                                          temperature=temperature, max_tokens=max_tokens):
+            full_text.append(content)
+            if on_chunk:
+                on_chunk(content)
         return "".join(full_text)
 
     def call_messages(self, messages: list[dict]) -> str:

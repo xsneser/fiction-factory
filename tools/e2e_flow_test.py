@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 NovelEngine 全流程浏览器自动化测试
-模拟用户点击：爬取(scout) → 提取(extract) → 大纲(generator) → 填充(写作台)
+模拟用户点击：爬取(scout) → 提取(extract) → 写作台(desk)
 
 依赖: playwright (pip install playwright && playwright install chromium)
 用法: python tools/e2e_flow_test.py [--headless] [--book 书名]
@@ -129,88 +129,32 @@ def step_extract(page):
     return done
 
 
-def step_generator(page, genre="都市", sub_genre="系统流"):
-    """③ 大纲生成：5 阶段 LLM 管线"""
-    log("═══ 步骤3: 大纲生成 /books/generator ═══")
-    page.goto(BASE + "/books/generator")
-    shot(page, "07_gen_initial")
-
-    # 选流派
-    page.select_option("#ggenre", genre)
-    page.select_option("#gsub", sub_genre)
-    shot(page, "08_gen_filled")
-
-    # 点击生成（找到提交按钮）
-    page.click("#genBtn")
-    log("已点击生成，等待 5 阶段...")
-    shot(page, "09_gen_running")
-
-    # 等待阶段推进（phase-item done）或日志出现
-    deadline = time.time() + 240
-    phases_done = 0
-    gen_stat = ""
-    while time.time() < deadline:
-        done_items = page.locator(".phase-item.done").count()
-        if done_items > phases_done:
-            phases_done = done_items
-            log(f"已完成阶段: {done_items}/5")
-        # 保存按钮出现 → 生成完成
-        if page.locator("#gSaveBtn").is_visible():
-            gen_stat = page.locator("#gStats").text_content() or ""
-            break
-        time.sleep(3)
-    shot(page, "10_gen_done")
-    log(f"大纲生成: 阶段完成 {phases_done}/5, 统计: {gen_stat[:60]}")
-    return phases_done >= 5
-
-
 def step_desk(page):
-    """④ 填充：写作台"""
-    log("═══ 步骤4: 写作台 /desk ═══")
+    """③ 写作台：列出书籍 → 进入第一本的写作/续写"""
+    log("═══ 步骤3: 写作台 /desk ═══")
     page.goto(BASE + "/desk")
-    shot(page, "11_desk_list")
+    shot(page, "07_desk_list")
 
-    # 检查是否有时间线
-    desk_items = page.locator("a[href*='/timeline/'][href*='/desk']").count()
-    log(f"写作台时间线条目: {desk_items}")
-    if desk_items == 0:
-        log("无时间线可进入，跳过填充", "skip")
+    continue_links = page.locator("a[href*='/continue']")
+    count = continue_links.count()
+    log(f"写作台书籍: {count} 本")
+    if count == 0:
+        log("无书可进入写作，跳过", "skip")
         return False
 
-    # 进入第一个写作台
-    page.locator("a[href*='/timeline/'][href*='/desk']").first.click()
+    continue_links.first.click()
     page.wait_for_load_state("load")
-    shot(page, "12_desk_entry")
+    shot(page, "08_desk_entry")
 
-    # 点击构建按钮
-    build_btns = page.locator("button[id*='build'], button[onclick*='build']")
-    log(f"构建按钮: {build_btns.count()} 个")
-    if build_btns.count() == 0:
-        # 找任何主按钮
-        build_btns = page.locator(".btn-primary")
-    if build_btns.count() == 0:
-        log("无构建按钮，跳过", "skip")
+    # 写作页应有「生成下一章」按钮（不实际生成，避免高额 LLM 消耗）
+    try:
+        wait_for(page, "#btn-generate", 20000)
+        log("写作页就绪：已找到「生成下一章」按钮", "ok")
+        shot(page, "09_desk_writing")
+        return True
+    except PWTimeout:
+        log("写作页未找到生成按钮", "fail")
         return False
-    build_btns.first.click()
-    log("已点击构建")
-    shot(page, "13_desk_building")
-
-    # 等待完成（构建按钮消失/状态显示完成）
-    deadline = time.time() + 180
-    done = False
-    while time.time() < deadline:
-        status = page.locator("#build-status, #gen-status").text_content() or ""
-        if "完成" in status or "成功" in status:
-            done = True
-            break
-        # 构建按钮重新出现
-        if build_btns.first.is_visible() and page.locator("body").text_content().count("构建完成"):
-            done = True
-            break
-        time.sleep(3)
-    shot(page, "14_desk_done")
-    log(f"写作台构建完成: {done}")
-    return done
 
 
 def main():
@@ -218,10 +162,10 @@ def main():
     parser.add_argument("--headless", action="store_true", help="无头模式")
     parser.add_argument("--book", default="十日终焉", help="要抓取的书名")
     parser.add_argument("--steps", default="all",
-                        help="运行哪些步骤: all|scout|extract|generator|desk")
+                        help="运行哪些步骤: all|scout|extract|desk")
     args = parser.parse_args()
 
-    steps = ["scout", "extract", "generator", "desk"]
+    steps = ["scout", "extract", "desk"]
     if args.steps != "all":
         steps = [s for s in args.steps.split(",") if s in steps]
 
@@ -247,8 +191,6 @@ def main():
             results["scout"] = step_scout(page, args.book)
         if "extract" in steps:
             results["extract"] = step_extract(page)
-        if "generator" in steps:
-            results["generator"] = step_generator(page)
         if "desk" in steps:
             results["desk"] = step_desk(page)
 

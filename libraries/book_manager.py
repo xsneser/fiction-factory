@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime
 import json
+import logging
+
+logger = logging.getLogger("novel-engine.book_manager")
 
 
 @dataclass
@@ -55,6 +58,7 @@ class BookManager:
             self.dir = base / self.dir
         self.dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, BookConfig] = {}
+        self._scan_sig = None  # (book 数量, book.json mtime 之和) → 磁盘是否变化
         self._load_all()
 
     def _load_all(self):
@@ -62,13 +66,32 @@ class BookManager:
             if d.is_dir():
                 cfg_path = d / "book.json"
                 if cfg_path.exists():
-                    cfg = BookConfig.from_dict(json.loads(cfg_path.read_text(encoding="utf-8")))
-                    self._cache[cfg.book_id] = cfg
+                    try:
+                        cfg = BookConfig.from_dict(json.loads(cfg_path.read_text(encoding="utf-8")))
+                        self._cache[cfg.book_id] = cfg
+                    except Exception as e:
+                        # 单本书损坏不拖垮整个书库（否则缓存为空，create 会撞号覆盖）
+                        logger.warning("跳过无法解析的图书配置 %s: %s", cfg_path, e)
 
     def list_all(self) -> list[BookConfig]:
-        # 每次重新扫描磁盘（引擎/其他实例可能新建了书）
+        # mtime 缓存：只在 book.json 有变化时重扫磁盘（避免每次导航 3N 次磁盘读）
+        count = 0
+        sig_sum = 0.0
+        for d in self.dir.iterdir():
+            if not d.is_dir():
+                continue
+            cfg_path = d / "book.json"
+            try:
+                sig_sum += cfg_path.stat().st_mtime
+                count += 1
+            except OSError:
+                pass
+        sig = (count, sig_sum)
+        if sig == self._scan_sig and self._cache:
+            return list(self._cache.values())
         self._cache = {}
         self._load_all()
+        self._scan_sig = sig
         return list(self._cache.values())
 
     def get(self, book_id: str) -> BookConfig | None:
@@ -78,12 +101,28 @@ class BookManager:
             self._load_all()
         return self._cache.get(book_id)
 
+    def _next_book_id(self) -> str:
+        """基于磁盘现有 book_* 目录取下一个可用 id。
+
+        不依赖 self._cache（缓存可能为空/过期），否则 create 会撞上已存在的
+        book_001 并覆盖其配置，导致整本书数据丢失。
+        """
+        existing = set()
+        if self.dir.is_dir():
+            for d in self.dir.iterdir():
+                if d.is_dir() and d.name.startswith("book_"):
+                    existing.add(d.name)
+        n = 1
+        while f"book_{n:03d}" in existing:
+            n += 1
+        return f"book_{n:03d}"
+
     def create(self, title: str, pen_name: str, genre: str = "",
                sub_genre: str = "", platform: str = "fanqie",
                chapter_count: int = 500,
                structure_template_id: str = "",
                style_profile_id: str = "") -> BookConfig:
-        book_id = f"book_{len(self._cache) + 1:03d}"
+        book_id = self._next_book_id()
         cfg = BookConfig(
             book_id=book_id, title=title, pen_name=pen_name,
             genre=genre, sub_genre=sub_genre, platform=platform,
@@ -161,6 +200,21 @@ class BookManager:
         outline_path = self.dir / book_id / "outline" / "outline.json"
         if outline_path.exists():
             return json.loads(outline_path.read_text(encoding="utf-8"))
+        return None
+
+    def save_timeline(self, book_id: str, timeline) -> None:
+        """把 BookTimeline 持久化到 books/{book_id}/timeline.json。
+        timeline.save_timeline 内部会调用 to_dict()，这里直接透传对象。
+        函数内 import，避免与 timeline.py 产生循环依赖。"""
+        from libraries.timeline import save_timeline as _save
+        _save(timeline, str(self.dir / book_id / "timeline.json"))
+
+    def load_timeline(self, book_id: str):
+        """加载 books/{book_id}/timeline.json，返回 BookTimeline 或 None。"""
+        from libraries.timeline import load_timeline as _load
+        path = self.dir / book_id / "timeline.json"
+        if path.exists():
+            return _load(str(path))
         return None
 
     def delete(self, book_id: str) -> bool:

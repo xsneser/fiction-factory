@@ -135,8 +135,7 @@ def run_tests():
         ("Dashboard", "/", ["NovelEngine", "仪表盘"]),
         ("Books", "/books", ["书库", "book"]),
         ("Start New Book", "/books/start", ["启动新书", "form"]),
-        ("Writing Desk", "/desk", ["写作台", "desk"]),
-        ("Outline Generator", "/books/generator", ["大纲生成器", "generator"]),
+        ("Writing Desk", "/desk", ["写作台"]),
         ("Plots", "/plots", ["桥段库", "plot"]),
         ("Structures", "/structures", ["大纲库", "structure"]),
         ("Gags", "/gags", ["笑点库", "gag"]),
@@ -162,6 +161,17 @@ def run_tests():
                       kw.lower() in r.text.lower(),
                       f"keyword '{kw}' not found")
 
+    # ═══ 大纲生成器已内嵌到启动新书：/books/generator 应重定向 ═══
+    print("\n--- Generator redirect ---")
+    r = get("/books/generator")
+    check("Generator → /books/start (302)",
+          r.status_code == 200 and "/books/start" in r.url,
+          f"final={r.url}")
+    if r.status_code == 200:
+        check("  '启动新书' in redirect target",
+              "启动新书" in r.text,
+              "keyword not found in redirect target")
+
     # ═══ API endpoints（web_ui.py 是 Flask 面板，无 /api/health） ═══
     print("\n--- API Endpoints ---")
     apis = [
@@ -182,7 +192,6 @@ def run_tests():
         ("/books/start", "启动新书"),
         ("/books", "书库"),
         ("/desk", "写作台"),
-        ("/books/generator", "大纲生成器"),
         ("/plots", "桥段库"),
         ("/structures", "大纲库"),
         ("/gags", "笑点库"),

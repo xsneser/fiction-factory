@@ -4,15 +4,23 @@
 
 {% if books %}
 <table>
-    <thead><tr><th>ID</th><th>书名</th><th>笔名</th><th>流派</th><th>平台</th><th>进度</th><th>操作</th></tr></thead>
+    <thead><tr><th>书名</th><th>笔名</th><th>流派</th><th>大纲</th><th>进度</th><th>操作</th></tr></thead>
     <tbody>
-    {% for b in books %}
+    {% for r in books %}
+    {% set b = r.book %}
     <tr>
-        <td><code>{{ b.book_id }}</code></td>
         <td><strong><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title }}</a></strong></td>
         <td>{{ b.pen_name }}</td>
         <td><span class="tag">{{ b.genre }}</span>{% if b.sub_genre %} <span class="tag blue">{{ b.sub_genre }}</span>{% endif %}</td>
-        <td><span class="tag {{ 'green' if b.platform=='fanqie' else 'blue' }}">{{ b.platform }}</span></td>
+        <td>
+            {% if r.has_timeline %}
+            <span class="tag blue">故事线 {{ r.timeline_outlines }}大纲 · {{ r.timeline_plots }}桥段</span>
+            {% elif r.outline_count %}
+            <span class="tag green">结构 {{ r.outline_count }}阶段</span>
+            {% else %}
+            <span class="tag">无大纲</span>
+            {% endif %}
+        </td>
         <td>{{ b.current_chapter }}/{{ b.chapter_count }}</td>
         <td>
             <a href="/books/{{ b.book_id }}/continue" class="btn small">续写</a>

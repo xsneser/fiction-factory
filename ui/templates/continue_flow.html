@@ -1,43 +1,46 @@
 {% extends "base.html" %}
-{% block title %}续写 — {{ book.title }}{% endblock %}
+{% block title %}写作 — {{ book.title }}{% endblock %}
 {% block content %}
+<link rel="stylesheet" href="/static/css/story_line.css">
 <h1>♻️ {{ book.title }}</h1>
 <div class="info-bar">
     <span>笔名：<strong>{{ book.pen_name }}</strong></span>
     <span>进度：<strong>{{ book.current_chapter }} / {{ book.chapter_count }} 章</strong></span>
     <span>平台：<strong>{{ book.platform }}</strong></span>
     <span>预算：<strong class="cost-display" id="cost-display">-</strong></span>
+    <span style="flex:1"></span>
+    {% if has_timeline %}
+    <button id="btn-extend-outline" class="btn small" style="background:#1f6feb;color:#fff" onclick="extendStory()">➕ 扩展故事线</button>
+    {% else %}
+    <span class="tag yellow" title="该书无故事线大纲，无法扩展">无故事线大纲</span>
+    {% endif %}
 </div>
 
-<div class="main-layout">
-    <!-- 左侧：章节列表 -->
-    <div class="chapter-list">
-        <h3>📑 章节</h3>
-        <div id="chapter-nav">
-            {% for n in range(1, book.chapter_count + 1) %}
-            <div class="ch-item {% if n <= book.current_chapter %}done{% elif n == book.current_chapter + 1 %}current{% endif %}" id="ch-{{ n }}">
-                <span class="ch-num">{{ n }}</span>
-                <span class="ch-label">
-                    {% if n <= 3 %}
-                        {{ ['钩子','世界观','冲突'][n-1] }}
-                    {% elif n <= book.current_chapter %}
-                        已完成
-                    {% elif n == book.current_chapter + 1 %}
-                        当前
-                    {% else %}
-                        待写
-                    {% endif %}
-                </span>
-            </div>
-            {% endfor %}
+{# ─── 左右对照：左故事线 | 右写作 ─── #}
+<div class="write-split">
+    <!-- 左：故事线 -->
+    <div class="storyline-col">
+        {% if has_timeline %}
+        <div id="storyline-mount" class="storyline-mount"></div>
+        {% else %}
+        <div class="storyline-fallback">
+            <h3>📋 结构大纲</h3>
+            {% if state.outline_data %}
+            <p style="color:#8b949e;font-size:13px">共 {{ state.outline_data.get('total_chapters', 0) }} 章</p>
+            {% else %}
+            <p style="color:#484f58;font-size:13px">暂无故事线。本书记录由旧流程创建，可去书库详情查看结构大纲。</p>
+            {% endif %}
         </div>
+        {% endif %}
     </div>
 
-    <!-- 右侧：写作面板 -->
+    <!-- 右：写作面板 -->
     <div class="write-panel">
         <div id="write-area">
             <h3 id="current-ch-title">准备就绪</h3>
-            <div id="write-output" class="write-output"></div>
+            <div id="write-output" class="write-output">
+                <div class="empty" style="padding:40px"><p style="color:#484f58">点击「生成下一章」开始写作。过程日志见右侧「运行状态/日志」栏。</p></div>
+            </div>
             <div id="review-result" class="review-result" style="display:none"></div>
         </div>
 
@@ -49,14 +52,34 @@
     </div>
 </div>
 
+<script src="/static/js/story_line.js"></script>
 <script>
+window.__BOOK_TIMELINE__ = {{ timeline_json | tojson if timeline_json else 'null' }};
 const engineId = "{{ engine_id }}";
+const bookId = "{{ book.book_id }}";
 let generating = false;
 let stopReq = false;
 
-function setChStatus(n, state) {
-    const el = document.getElementById('ch-' + n);
-    if (el) el.className = 'ch-item ' + state;
+// 故事线渲染
+if (window.__BOOK_TIMELINE__) {
+    window.StoryLine.init('storyline-mount', window.__BOOK_TIMELINE__, {
+        currentChapter: {{ book.current_chapter or 0 }},
+    });
+}
+
+function extendStory() {
+    var btn = document.getElementById('btn-extend-outline');
+    if (!btn || btn.disabled) return;
+    if (!confirm('扩展故事线将追加下一段剧情弧，并可用于继续写作。确定？')) return;
+    btn.disabled = true; btn.textContent = '扩展中...';
+    fetch('/api/books/' + bookId + '/extend-outline', { method: 'POST' })
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+            if (d.ok) location.reload();
+            else alert(d.error || '扩展失败');
+        })
+        .catch(function(e){ alert('失败: ' + e.message); })
+        .finally(function(){ btn.disabled = false; btn.textContent = '➕ 扩展故事线'; });
 }
 
 async function generateChapter() {
@@ -64,7 +87,7 @@ async function generateChapter() {
     stopReq = false;
     document.getElementById('btn-generate').style.display = 'none';
     document.getElementById('btn-stop').style.display = 'inline-block';
-    document.getElementById('gen-status').textContent = '⚙️ 生成中...';
+    document.getElementById('gen-status').textContent = '⚙️ 生成中...（详见右侧日志）';
     document.getElementById('review-result').style.display = 'none';
 
     const resp = await fetch('/api/engine/' + engineId + '/chapter/generate', {
@@ -99,39 +122,17 @@ async function generateChapter() {
 
     let html = '';
     if (data.status === 'chapter_written') {
-        html += '<div class="step done">✅ 写作完成 · ' + (data.word_count || '?') + '字';
-        if (data.beats) html += ' · ' + data.beats + ' 个节拍';
+        html += '<div class="step done">✅ 写作完成 · ' + (data.word_count || '?') + '字 · ' + (data.beats || 0) + ' 个节拍';
+        if (data.preview) {
+            html += ' <span style="color:#484f58;font-size:11px">（已保存，详情见书库章节）</span>';
+        }
         html += '</div>';
-
-        // 显示节拍详情
-        if (data.beat_details && data.beat_details.length > 0) {
-            html += '<div class="beat-grid">';
-            data.beat_details.forEach(b => {
-                const humorIcon = b.humor ? '😂' : '';
-                html += '<div class="beat-chip">' +
-                    '<span class="beat-idx">#' + b.index + '</span>' +
-                    '<span class="beat-info">' + escapeHtml((b.template || '').replace('beat_','')) + ' ' + b.words + '字 ' + humorIcon + '</span>' +
-                    '</div>';
-            });
-            html += '</div>';
-        }
-        if (data.review) {
-            html += '<div class="step ' + (data.review.status === 'review_passed' ? 'done' : 'warn') + '">';
-            html += data.review.status === 'review_passed' ? '✅ 审查通过' : '⚠️ 审查未通过';
-            html += ' · 评分：' + (data.review.score || '?') + '/100';
-            if (data.review.issues > 0) html += ' · 问题：' + data.review.issues + '个';
-            html += '</div>';
-        }
-        if (data.de_ai) {
-            html += '<div class="step done">✅ 去AI味完成 · 替换 ' + (data.de_ai.word_replacements || 0) + ' 处</div>';
+        if (data.preview) {
+            html += '<div class="ch-preview">' + escapeHtml(data.preview).replace(/\n/g, '<br>') + '</div>';
         }
         if (data.cycle_complete) {
-            html += '<div class="success">✅ 本章全流程完成！</div>';
-            setChStatus(ch, 'done');
-            // 更新下一个
-            setChStatus(ch + 1, 'current');
+            html += '<div class="success">✅ 本章全流程完成！详细日志见右侧栏。</div>';
             document.getElementById('gen-status').textContent = '✅ 第 ' + ch + ' 章完成';
-            // 更新成本
             updateStatus();
         }
     }
@@ -167,16 +168,14 @@ updateStatus();
 </script>
 
 <style>
-.info-bar { display:flex; gap:20px; padding:12px 16px; background:#161b22; border-radius:8px; margin-bottom:20px; color:#8b949e; font-size:13px; }
+.info-bar { display:flex; gap:20px; padding:12px 16px; background:#161b22; border-radius:8px; margin-bottom:20px; color:#8b949e; font-size:13px; align-items:center; }
 .info-bar strong { color:#f0f6fc; }
-.main-layout { display:flex; gap:20px; }
-.chapter-list { width:200px; flex-shrink:0; max-height:70vh; overflow-y:auto; }
-.chapter-list h3 { color:#8b949e; font-size:13px; margin-bottom:8px; }
-.ch-item { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:4px; margin-bottom:2px; font-size:12px; color:#484f58; transition:all .2s; }
-.ch-item.done { color:#3fb950; }
-.ch-item.current { color:#58a6ff; background:#1a2332; font-weight:600; }
-.ch-num { min-width:24px; text-align:right; }
-.write-panel { flex:1; }
+.write-split { display:flex; gap:16px; height:calc(100vh - 220px); min-height:420px; }
+.storyline-col { width:42%; flex-shrink:0; min-width:320px; }
+.storyline-mount { height:100%; min-height:0; }
+.storyline-fallback { height:100%; background:#161b22; border:1px solid #30363d; border-radius:8px; padding:20px; overflow-y:auto; }
+.write-panel { flex:1; min-width:0; display:flex; flex-direction:column; }
+#write-area { flex:1; min-height:0; overflow-y:auto; }
 .write-output { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:16px; min-height:120px; margin-bottom:16px; }
 .step { padding:8px 12px; margin-bottom:6px; border-radius:6px; font-size:13px; background:#161b22; color:#c9d1d9; }
 .step.done { border-left:3px solid #3fb950; }
@@ -184,14 +183,11 @@ updateStatus();
 .success { color:#3fb950; padding:12px; background:#0a1a0a; border-radius:8px; margin-top:8px; }
 .warning { color:#d29922; padding:12px; background:#1a1a0a; border-radius:8px; }
 .error { color:#f85149; padding:12px; background:#1a0a0a; border-radius:8px; }
-.write-controls { display:flex; align-items:center; gap:12px; }
+.ch-preview { background:#0a0d12; border:1px solid #21262d; border-radius:8px; padding:14px; margin-top:10px; font-size:13px; line-height:1.8; color:#c9d1d9; white-space:pre-wrap; word-break:break-all; max-height:320px; overflow-y:auto; }
+.write-controls { display:flex; align-items:center; gap:12px; flex-shrink:0; padding-top:8px; }
 .btn-primary { background:#238636; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:14px; cursor:pointer; }
 .btn-primary:hover { background:#2ea043; }
 .btn-danger { background:#da3633; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:14px; cursor:pointer; }
 .gen-status { color:#8b949e; font-size:13px; }
-.beat-grid { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
-.beat-chip { display:flex; align-items:center; gap:6px; background:#1a2332; border:1px solid #30363d; border-radius:6px; padding:4px 10px; font-size:11px; color:#8b949e; }
-.beat-idx { color:#58a6ff; font-weight:600; }
-.beat-info { color:#c9d1d9; }
 </style>
 {% endblock %}

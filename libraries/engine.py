@@ -9,6 +9,7 @@ from typing import Optional
 from pathlib import Path
 import json
 import logging
+import re
 from datetime import datetime
 
 logger = logging.getLogger("novel-engine.engine")
@@ -337,9 +338,8 @@ class NovelEngine:
             self.book = book
             self.state.book_id = book.book_id
             self.cost_tracker.book_id = book.book_id
-            # 保存时间线配置到图书目录
-            from .timeline import save_timeline
-            save_timeline(timeline, f"books/{book.book_id}/timeline.json")
+            # 保存时间线配置到图书目录（统一入口，确保 book.json 与 timeline.json 同目录）
+            self.book_mgr.save_timeline(book.book_id, timeline)
         except Exception as e:
             print(f"[timeline] 创建图书记录失败: {e}")
             self.book = None
@@ -402,15 +402,174 @@ class NovelEngine:
             self.state.chapters = outline.get("chapters", [])
             self.state.phase = Phase.WRITING
 
+        # 加载时间线（统一模型）：时间线书用 timeline.json 推导逐章大纲，优先于结构大纲
+        tl = self.book_mgr.load_timeline(book_id)
+        if tl and tl.outlines:
+            self.timeline = tl
+            self._derive_chapters_from_timeline(tl)
+            # 时间线书：创建桥段驱动的写作者（撰写/续写统一同一套，支持断点续写）
+            if self.timeline_writer is None:
+                from .timeline_writer import TimelineChapterWriter
+                self.timeline_writer = TimelineChapterWriter(
+                    timeline=tl, llm_client=self.llm, de_ai_engine=self.de_ai,
+                    reviewer=self.reviewer, gag_lib=self.gag_lib,
+                    plot_lib=self.plot_lib, profile=self.profile)
+
         # 确定当前阶段
         if self.book.current_chapter >= self.book.chapter_count:
             self.state.phase = Phase.COMPLETE
         elif self.state.chapters and self.book.current_chapter > 0:
             self.state.phase = Phase.WRITING
+        elif tl and tl.outlines:
+            # 时间线书即使一章未写也直接进写作（用 timeline 大纲，永不发 PLAN_OUTLINE）
+            self.state.phase = Phase.WRITING
         else:
             self.state.phase = Phase.OUTLINE
 
         return self.state
+
+    def _derive_chapters_from_timeline(self, tl) -> None:
+        """从 BookTimeline 维护"章节 → (大纲, 阶段)"索引，供续写定位使用。
+
+        大纲本身就是故事线配置（timeline.json），不在这里拍平成"每章一段文本"；
+        每章写作时由 _storyline_chapter_context 直接从故事线现算大纲/桥段/笑点。
+        """
+        max_end = max((o.end_chapter for o in tl.outlines), default=0)
+        chapters = []
+        for ch in range(1, max_end + 1):
+            owner = next(
+                (o for o in tl.outlines if o.start_chapter <= ch <= o.end_chapter),
+                None,
+            )
+            if not owner:
+                chapters.append({"num": ch, "title": f"第{ch}章",
+                                 "outline_id": "", "stage_index": -1})
+                continue
+            stage_index, _ = self._locate_stage(owner, ch)
+            chapters.append({
+                "num": ch,
+                "title": owner.name or f"第{ch}章",
+                "outline_id": owner.id,
+                "stage_index": stage_index,
+            })
+
+        self.state.chapters = chapters
+        self.state.total_chapters = max(self.state.total_chapters, max_end)
+        self.state.outline_data = {
+            "structure": "timeline",
+            "chapters": chapters,
+            "total_chapters": max_end,
+        }
+
+    @staticmethod
+    def _locate_stage(owner, ch):
+        """返回 (stage_index, stage_dict)：章节 ch 落在大纲 owner 的哪个阶段。"""
+        acc = owner.start_chapter
+        for si, s in enumerate(owner.stages or []):
+            max_ch = s.get("max_ch", 30) if isinstance(s, dict) else 30
+            if ch <= acc + max_ch - 1:
+                return si, s
+            acc += max_ch
+        stages = owner.stages or []
+        return max(0, len(stages) - 1), (stages[-1] if stages else {})
+
+    def _storyline_chapter_context(self, chapter_num: int):
+        """从故事线配置定位本章覆盖的大纲/阶段/桥段/笑点/内涵。
+
+        返回 dict（outline/stage_index/stage/plots/gags/themes/hooks），
+        无 timeline 或章节无覆盖时返回 None。
+        """
+        if not self.timeline or not self.timeline.outlines:
+            return None
+        owner = next(
+            (o for o in self.timeline.outlines if o.start_chapter <= chapter_num <= o.end_chapter),
+            None,
+        )
+        if not owner:
+            return None
+        stage_index, stage = self._locate_stage(owner, chapter_num)
+        plots = [p for p in self.timeline.plots
+                 if p.outline_id == owner.id and (p.stage_index == stage_index or stage_index < 0)]
+        gags, themes, hooks = [], [], []
+        for p in plots:
+            for gid in (p.gag_ids or []):
+                g = self.gag_lib.get_by_id(gid) if self.gag_lib else None
+                gags.append(g.name if g else gid)
+            themes.extend(p.theme_hints or [])
+            hooks.extend(p.hook_points or [])
+        gags = list(dict.fromkeys(gags))
+        themes = list(dict.fromkeys(themes))
+        hooks = list(dict.fromkeys(hooks))
+        return {
+            "outline": owner,
+            "stage_index": stage_index,
+            "stage": stage or {},
+            "plots": plots,
+            "gags": gags,
+            "themes": themes,
+            "hooks": hooks,
+        }
+
+    def _render_chapter_outline(self, ctx: dict) -> str:
+        """把故事线上下文渲染成节拍写作的 chapter_outline（内部写作提示，不是大纲本身）。"""
+        o = ctx["outline"]
+        stage = ctx.get("stage") or {}
+        stage_name = stage.get("name", "") if isinstance(stage, dict) else ""
+        events = stage.get("events", []) if isinstance(stage, dict) else []
+        parts = [f"【本章来自故事线大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）"]
+        if stage_name:
+            parts.append(f"【阶段】{stage_name}")
+        if events:
+            parts.append(f"【阶段关键事件】{'、'.join(events[:5])}")
+        if ctx.get("plots"):
+            lines = []
+            for p in ctx["plots"]:
+                seg = p.name
+                if p.template_structure:
+                    seg += f"（{p.template_structure[:80]}）"
+                lines.append(seg)
+            parts.append(f"【本章桥段】{'；'.join(lines)}")
+        if ctx.get("gags"):
+            parts.append(f"【可注入笑点】{'、'.join(ctx['gags'][:5])}")
+        if ctx.get("themes"):
+            parts.append(f"【内涵提示】{'、'.join(ctx['themes'][:3])}")
+        return "\n".join(parts)
+
+    def _inject_gags_themes_pass(self, text: str, ctx: dict) -> str:
+        """两段式写作的第二步：撰写完成后，把本章的笑点/内涵注入正文。
+
+        思路与 timeline_writer.TimelineChapterWriter._inject_gags 一致：小改、自然插入。
+        """
+        gags = ctx.get("gags") or []
+        themes = ctx.get("themes") or []
+        if not gags and not themes:
+            return text
+        if not self.llm:
+            return text
+        prompt = f"""在以下网络小说正文中，自然地注入笑点和内涵线索。不要大改原文结构，在合适位置插入/微调 2-3 处即可。
+
+【正文】
+{text[:2000]}
+
+【笑点模式】
+{'；'.join(gags[:4]) or '无特殊要求'}
+
+【内涵提示】
+{'；'.join(themes[:3]) or '无'}
+
+【要求】
+1. 笑点要自然，不能生硬插入
+2. 返回完整修改后的正文
+3. 返回 JSON：{{"text": "修改后全文"}}"""
+        try:
+            from core.llm_client import extract_json
+            raw = self.llm.call("你是专业的网文编辑。只返回JSON。", prompt,
+                                temperature=0.5, max_tokens=min(4096, len(text) * 2))
+            data = json.loads(extract_json(raw))
+            new_text = data.get("text", text)
+            return new_text if len(new_text) > len(text) * 0.5 else text
+        except Exception:
+            return text
 
     # ═══════════════════════════════════════════
     # 路由（纯函数）
@@ -981,15 +1140,27 @@ class NovelEngine:
         }
 
     def _exec_write_chapter(self, inst: Instruction) -> dict:
-        """写一章（续写模式 — 节拍级写作）"""
+        """写一章（续写模式）。
+
+        时间线书：委托给桥段驱动的 timeline_writer（撰写/续写统一同一套，按桥段生成、满章切分）；
+        旧书（无 timeline）：回退到节拍级写作 + 逐章文本大纲。
+        """
+        # 时间线书：统一走桥段驱动的同一套写作者
+        if self.timeline_writer and self.timeline and self.timeline.plots:
+            return self._exec_write_timeline_chapter(inst)
+
         chapter_num = inst.chapter_num
         self.state.current_chapter = chapter_num
 
-        # 获取本章大纲
+        # 获取本章大纲：时间线书直接从故事线配置现算（大纲=故事线），旧书回退逐章文本
+        ctx = self._storyline_chapter_context(chapter_num) if self.timeline else None
         ch_data = {}
         if 0 < chapter_num <= len(self.state.chapters):
-            ch_data = self.state.chapters[chapter_num - 1]
-        chapter_outline = ch_data.get("outline", f"第{chapter_num}章")
+            ch_data = self.state.chapters[chapter_num - 1] or {}
+        if ctx:
+            chapter_outline = self._render_chapter_outline(ctx)
+        else:
+            chapter_outline = ch_data.get("outline", f"第{chapter_num}章")
 
         # 获取上文结尾
         prev_ending = ""
@@ -1018,6 +1189,15 @@ class NovelEngine:
         )
 
         full_text = result["text"]
+
+        # 两段式：撰写完成后，把本章笑点/内涵注入正文
+        if ctx and (ctx.get("gags") or ctx.get("themes")):
+            injected = self._inject_gags_themes_pass(full_text, ctx)
+            if injected:
+                full_text = injected
+                result = {**result, "text": full_text,
+                          "word_count": len(re.findall(r'[一-鿿]', full_text))}
+
         self.state.current_content = full_text
         self.state.current_plot_id = "beat_writer"
         self.state.phase = Phase.REVIEWING
@@ -1080,6 +1260,14 @@ class NovelEngine:
         )
 
         full_text = result["text"]
+
+        # 持久化桥段写入进度（written_chapter），供断点续写
+        try:
+            if self.book and self.timeline:
+                self.book_mgr.save_timeline(self.state.book_id, self.timeline)
+        except Exception as e:
+            logger.warning("保存时间线进度失败: %s", e)
+
         self.state.current_content = full_text
         self.state.phase = Phase.REVIEWING
 

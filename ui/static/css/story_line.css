@@ -1,0 +1,107 @@
+/* ─── 故事线（Story Line）组件样式 ─── */
+/* 垂直 Gantt：章节轴 + 大纲/桥段/笑点通道。所有类以 sl- 前缀隔离，避免与 base 冲突。 */
+
+.sl-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #161822;
+  border: 1px solid #2a2d3a;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 12px;
+  color: #c9d1d9;
+}
+
+.sl-header {
+  padding: 6px 12px;
+  border-bottom: 1px solid #2a2d3a;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #1a1c2b;
+  flex-shrink: 0;
+}
+.sl-header h1 { font-size: 12px; font-weight: 600; color: #e6edf3; margin: 0; display: flex; align-items: center; gap: 6px; }
+.sl-header h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: #58a6ff; }
+.sl-header .sl-meta { font-size: 10px; color: #6e7681; }
+.sl-header .sl-meta span { color: #c9d1d9; margin: 0 4px; }
+
+.sl-main {
+  display: flex;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+/* 章节面板 */
+.sl-chapter-panel {
+  width: 52px;
+  position: relative;
+  border-right: 1px solid #2a2d3a;
+  background: #13141d;
+  flex-shrink: 0;
+}
+.sl-chapter-panel .sl-chapter-mark { position: absolute; left: 4px; right: 4px; transform: translateY(-50%); display: flex; align-items: center; gap: 4px; z-index: 2; }
+.sl-chapter-panel .sl-chapter-dot { width: 6px; height: 6px; border-radius: 50%; background: #58a6ff; flex-shrink: 0; box-shadow: 0 0 6px #58a6ff; }
+.sl-chapter-panel .sl-chapter-line { position: absolute; left: 11px; right: 0; height: 1px; background: #30363d; }
+.sl-chapter-panel .sl-chapter-num { font-size: 9px; color: #58a6ff; font-weight: 700; white-space: nowrap; }
+.sl-chapter-panel .sl-chapter-words { font-size: 8px; color: #6e7681; white-space: nowrap; }
+
+/* 轴线 */
+.sl-axis-panel { width: 14px; position: relative; flex-shrink: 0; }
+.sl-axis-panel .sl-axis-line { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: linear-gradient(to bottom, #30363d, #484f5a 20%, #484f5a 80%, #30363d); transform: translateX(-50%); }
+.sl-axis-panel .sl-tick { position: absolute; left: 50%; transform: translate(-50%, -50%); width: 8px; height: 1px; background: #30363d; }
+.sl-axis-panel .sl-tick-label { position: absolute; right: 4px; transform: translateY(-50%); font-size: 8px; color: #6e7681; white-space: nowrap; }
+
+/* 内容区 + 通道 */
+.sl-content-area { flex: 1; display: flex; position: relative; overflow: hidden; }
+.sl-lane { flex: 1; position: relative; border-left: 1px solid #2a2d3a; min-width: 0; }
+.sl-lane:first-child { border-left: none; }
+.sl-lane-header { position: absolute; top: 0; left: 0; right: 0; z-index: 10; padding: 3px 6px; font-size: 10px; font-weight: 700; color: #e6edf3; background: linear-gradient(to bottom, rgba(22,24,34,.95), rgba(22,24,34,0)); }
+.sl-lane-body { position: absolute; top: 22px; left: 4px; right: 4px; bottom: 4px; }
+
+/* 进度光标 */
+.sl-cursor { position: absolute; left: 0; right: 0; height: 2px; background: #f85149; box-shadow: 0 0 8px #f85149; z-index: 8; pointer-events: none; }
+
+/* 条 */
+.sl-bar { position: absolute; border-radius: 4px; cursor: pointer; transition: filter .15s, box-shadow .15s; display: flex; align-items: center; padding: 0 8px; overflow: hidden; min-height: 4px; }
+.sl-bar:hover { filter: brightness(1.3); z-index: 20; box-shadow: 0 0 16px rgba(0,0,0,.5); }
+.sl-bar .sl-bar-label { font-size: 9px; color: #fff; font-weight: 600; white-space: normal; word-break: break-all; line-height: 1.2; text-shadow: 0 1px 3px rgba(0,0,0,.6); pointer-events: none; }
+.sl-bar-outline { border: 1px solid rgba(255,255,255,.15); }
+
+/* 叙事手法 */
+.sl-bar.sl-flashback { border: 1px solid rgba(210,153,34,.7); box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
+.sl-bar.sl-interleaved { border: 1px dashed rgba(63,185,80,.8); box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
+
+/* 桥段层级 */
+.sl-bar-plot.level-0 { left: 0; right: 8px; z-index: 3; }
+.sl-bar-plot.level-1 { left: 14px; right: 4px; z-index: 4; }
+.sl-bar-plot.level-2 { left: 28px; right: 0; z-index: 5; }
+
+/* 笑点/内涵 */
+.sl-laugh-dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; background: #ffa657; transform: translate(-50%, -50%); cursor: pointer; transition: transform .15s, box-shadow .15s; z-index: 10; }
+.sl-laugh-dot:hover { transform: translate(-50%, -50%) scale(1.6); box-shadow: 0 0 14px #ffa657; z-index: 30; }
+.sl-theme-dot { position: absolute; width: 10px; height: 10px; background: #c084fc; transform: translate(-50%, -50%) rotate(45deg); border-radius: 2px; cursor: pointer; transition: transform .15s, box-shadow .15s; z-index: 10; }
+.sl-theme-dot:hover { transform: translate(-50%, -50%) rotate(45deg) scale(1.6); box-shadow: 0 0 14px #c084fc; z-index: 30; }
+.sl-dot-tag { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); font-size: 9px; white-space: nowrap; font-weight: 600; opacity: 0; transition: opacity .15s; pointer-events: none; }
+.sl-laugh-dot:hover .sl-dot-tag { opacity: 1; color: #ffa657; }
+.sl-theme-dot:hover .sl-dot-tag { opacity: 1; color: #c084fc; }
+
+/* 工具提示 */
+.sl-tooltip { position: fixed; pointer-events: none; background: #1e2130; border: 1px solid #2a2d3a; border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #e6edf3; z-index: 1000; opacity: 0; transition: opacity .12s; box-shadow: 0 4px 20px rgba(0,0,0,.6); max-width: 260px; }
+.sl-tooltip.show { opacity: 1; }
+.sl-tooltip .sl-tt-title { font-weight: 700; margin-bottom: 4px; font-size: 12px; }
+.sl-tooltip .sl-tt-row { display: flex; gap: 8px; color: #6e7681; font-size: 11px; }
+.sl-tooltip .sl-tt-row span { color: #c9d1d9; }
+.sl-tooltip .sl-tt-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; background: rgba(255,255,255,.08); color: #c9d1d9; margin-top: 4px; }
+
+/* 图例 */
+.sl-legend { padding: 4px 10px; border-top: 1px solid #2a2d3a; display: flex; flex-shrink: 0; gap: 10px; align-items: center; font-size: 10px; color: #6e7681; background: #1a1c2b; flex-wrap: wrap; }
+.sl-legend-item { display: flex; align-items: center; gap: 5px; }
+.sl-legend-swatch { width: 10px; height: 10px; border-radius: 2px; }
+.sl-legend-swatch.circle { border-radius: 50%; width: 8px; height: 8px; }
+.sl-legend-swatch.flashback { background: #d29922; }
+.sl-legend-swatch.interleaved { background: transparent; border: 1px dashed #3fb950; }
