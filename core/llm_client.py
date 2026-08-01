@@ -11,9 +11,16 @@ from urllib3 import PoolManager
 from urllib3.util import create_urllib3_context
 
 
-def _make_ssl_context():
-    """创建宽松SSL上下文（Windows Python 3.10 兼容）"""
+def _make_ssl_context(verify: bool = True):
+    """创建 SSL 上下文。
+
+    verify=True（默认）：启用证书/主机名校验，保证 LLM 流量不可被中间人劫持。
+    verify=False：关闭校验（仅用于兼容旧证书环境，如特定 Windows/Python 组合），
+    会同时降低 TLS 密码套件安全级别。
+    """
     ctx = create_urllib3_context()
+    if verify:
+        return ctx
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     ctx.set_ciphers('DEFAULT@SECLEVEL=1')
@@ -21,13 +28,14 @@ def _make_ssl_context():
 
 
 def _http_post(url: str, headers: dict, json_data: dict, timeout: int = 300,
-               stream: bool = False):
+               stream: bool = False, verify: bool = True):
     """使用 urllib3 做 HTTP POST（绕过 requests/httpx 的SSL问题）"""
     import urllib3
-    urllib3.disable_warnings()
+    if not verify:
+        urllib3.disable_warnings()
     http = PoolManager(
         timeout=urllib3.Timeout(connect=10, read=timeout),
-        ssl_context=_make_ssl_context(),
+        ssl_context=_make_ssl_context(verify),
         retries=urllib3.Retry(3, backoff_factor=0.5),
     )
     body = json.dumps(json_data).encode('utf-8')
@@ -97,7 +105,8 @@ class LLMClient:
         last_err = None
         for attempt in range(3):
             try:
-                data = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds)
+                data = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds,
+                                  verify=self.cfg.verify_ssl)
                 return json.loads(data)["choices"][0]["message"]["content"]
             except Exception as e:
                 last_err = e
@@ -120,7 +129,8 @@ class LLMClient:
                 "temperature": temperature, "max_tokens": max_tokens or 4096,
                 "stream": True}
 
-        resp = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds, stream=True)
+        resp = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds,
+                          stream=True, verify=self.cfg.verify_ssl)
         full_text = []
         for line in resp.read_chunked():
             line = line.decode('utf-8', errors='replace')
@@ -143,7 +153,8 @@ class LLMClient:
     def call_messages(self, messages: list[dict]) -> str:
         headers = {"Authorization": f"Bearer {self.cfg.api_key}"}
         body = {"model": self.cfg.model, "messages": messages}
-        data = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds)
+        data = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds,
+                          verify=self.cfg.verify_ssl)
         return json.loads(data)["choices"][0]["message"]["content"]
 
     def test_connection(self) -> dict:

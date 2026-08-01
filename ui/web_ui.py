@@ -1526,21 +1526,34 @@ def status_tasks_close():
     return jsonify({"ok": False, "error": "missing id"})
 
 
+def _load_api_config() -> dict:
+    """读取 api.json（不存在返回空 dict）"""
+    api_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api.json")
+    if os.path.exists(api_path):
+        with open(api_path, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def _mask_api_key(key: str) -> str:
+    """掩码 API key：保留前 8 位，其余用 **** 代替（含 **** 即视为"未修改"）"""
+    if not key:
+        return ""
+    return key[:8] + "****"
+
+
 @app.route("/settings")
 def settings_page():
     """设置页面 — 纯静态渲染，不发起 API 请求"""
-    api_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api.json")
-    cfg = {}
-    if os.path.exists(api_path):
-        with open(api_path, encoding="utf-8") as f:
-            cfg = json.load(f)
+    cfg = _load_api_config()
 
     # 不调用 LLM API，只检查本地配置是否存在（瞬间完成）
     api_configured = bool(cfg.get("api_key") and cfg.get("base_url"))
 
     return render_template("settings.html",
         config={
-            "api_key": cfg.get("api_key", ""),
+            # 只回传掩码，明文 key 不进入 HTML（防止源码泄露）
+            "api_key_masked": _mask_api_key(cfg.get("api_key", "")),
             "base_url": cfg.get("base_url", "https://api.deepseek.com"),
             "model": cfg.get("model", "deepseek-chat"),
             "http_timeout_seconds": cfg.get("http_timeout_seconds", 300),
@@ -1558,10 +1571,12 @@ def settings_save():
     api_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api.json")
 
     # 读取当前配置，只覆盖传入的字段
-    cfg = {}
-    if os.path.exists(api_path):
-        with open(api_path, encoding="utf-8") as f:
-            cfg = json.load(f)
+    cfg = _load_api_config()
+
+    # API Key 掩码值（含 ****）表示未修改，保留已保存的原 key
+    new_key = data.get("api_key", "")
+    if new_key and "****" in new_key:
+        data.pop("api_key", None)
 
     for key in ("api_key", "base_url", "model", "url_strict",
                 "http_timeout_seconds", "context_budget_tokens"):
@@ -1595,8 +1610,13 @@ def settings_test():
     from core.llm_client import LLMClient
     from core.models import APIConfig
 
+    # 前端传回掩码/空值 → 用当前已保存的 key 测试（避免 key 进入浏览器后回传）
+    api_key = data.get("api_key", "")
+    if not api_key or "****" in api_key:
+        api_key = _load_api_config().get("api_key", "")
+
     api_cfg = APIConfig(
-        api_key=data.get("api_key", ""),
+        api_key=api_key,
         base_url=data.get("base_url", "https://api.deepseek.com"),
         model=data.get("model", "deepseek-chat"),
         http_timeout_seconds=10,

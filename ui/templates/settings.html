@@ -7,7 +7,10 @@
     <form onsubmit="return false">
         <div class="form-group">
             <label for="api_key">API Key</label>
-            <input type="password" id="api_key" value="{{ config.api_key }}" placeholder="sk-...">
+            <input type="password" id="api_key" value="{{ config.api_key_masked }}" placeholder="sk-..." autocomplete="off">
+            {% if config.api_key_masked %}
+            <small class="hint">已配置（{{ config.api_key_masked }}），如需修改请整体替换为完整 key；留空提交将保留原 key</small>
+            {% endif %}
         </div>
         <div class="form-group">
             <label for="base_url">API 地址</label>
@@ -51,6 +54,13 @@
     vertical-align: middle;
     margin-right: 6px;
 }
+.hint {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: #8b949e;
+    line-height: 1.5;
+}
 </style>
 
 <script>
@@ -79,12 +89,16 @@ function getVal(id) {
 
 async function saveSettings() {
     var payload = {
-        api_key: getVal('api_key'),
         base_url: getVal('base_url'),
         model: getVal('model'),
         http_timeout_seconds: parseInt(getVal('http_timeout')) || 300,
         context_budget_tokens: parseInt(getVal('context_budget')) || 300000,
     };
+    // 掩码值（含 ****）表示未修改，不提交 api_key，后端保留原 key
+    var key = getVal('api_key');
+    if (key && key.indexOf('****') === -1) {
+        payload.api_key = key;
+    }
     try {
         var r = await fetch('/api/settings/save', {
             method: 'POST',
@@ -106,10 +120,14 @@ async function testConnection() {
     renderStatus('warning', '⏳ 正在测试连接...');
 
     var payload = {
-        api_key: getVal('api_key'),
         base_url: getVal('base_url'),
         model: getVal('model'),
     };
+    // 掩码值不回传，由后端读取已保存的 key 进行测试
+    var key = getVal('api_key');
+    if (key && key.indexOf('****') === -1) {
+        payload.api_key = key;
+    }
     try {
         var r = await fetch('/api/settings/test', {
             method: 'POST',

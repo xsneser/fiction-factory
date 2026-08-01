@@ -91,7 +91,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="NovelEngine", version="0.1.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# CORS 收窄到本地面板 + Streamlit 实验台，不再向任意来源开放
+LOCAL_ALLOWED_ORIGINS = [
+    "http://localhost:58080",
+    "http://127.0.0.1:58080",
+    "http://localhost:8501",
+    "http://127.0.0.1:8501",
+]
+app.add_middleware(CORSMiddleware,
+                   allow_origins=LOCAL_ALLOWED_ORIGINS,
+                   allow_methods=["*"],
+                   allow_headers=["*"])
 
 # 静态文件（原版 Svelte 前端）
 frontend_dir = Path(__file__).parent / "frontend"
@@ -939,4 +949,6 @@ if _has_frontend:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=58080)
+    # 默认只监听本机；如需局域网访问设置环境变量 NOVEL_HOST=0.0.0.0
+    host = os.environ.get("NOVEL_HOST", "127.0.0.1")
+    uvicorn.run(app, host=host, port=58080)

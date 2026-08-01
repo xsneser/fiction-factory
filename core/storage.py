@@ -48,6 +48,7 @@ def load_api_config(path: str) -> APIConfig:
         max_tokens=data.get("max_tokens", 0),
         http_timeout_seconds=data.get("http_timeout_seconds", 300),
         context_budget_tokens=data.get("context_budget_tokens", 300000),
+        verify_ssl=data.get("verify_ssl", True),
     )
 
 
@@ -59,6 +60,7 @@ def save_api_config(path: str, cfg: APIConfig):
         "model": cfg.model,
         "max_tokens": cfg.max_tokens,
         "http_timeout_seconds": cfg.http_timeout_seconds,
+        "verify_ssl": cfg.verify_ssl,
         "context_budget_tokens": cfg.context_budget_tokens,
     })
 

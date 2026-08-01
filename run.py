@@ -16,9 +16,11 @@ os.environ["NOVEL_ENGINE_DIR"] = ROOT
 def server():
     from main import app
     import uvicorn
+    # 默认只监听本机；如需局域网访问设置环境变量 NOVEL_HOST=0.0.0.0
+    host = os.environ.get("NOVEL_HOST", "127.0.0.1")
     print(f"🚀 API 服务器: http://localhost:58080")
     print(f"   项目目录: {ROOT}")
-    uvicorn.run(app, host="0.0.0.0", port=58080)
+    uvicorn.run(app, host=host, port=58080)
 
 def ui():
     import streamlit.web.cli as stcli
