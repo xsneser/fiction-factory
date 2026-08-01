@@ -294,6 +294,13 @@ class NovelEngine:
             started_at=datetime.now().isoformat(),
         )
 
+        # 加载笔名档案
+        self.profile = None
+        try:
+            self.profile = self.profiles.get_by_name(pen_name)
+        except Exception:
+            pass
+
         # 初始化蓝图写作器
         from .timeline_writer import TimelineChapterWriter
 
@@ -306,15 +313,6 @@ class NovelEngine:
             plot_lib=self.plot_lib,
             profile=self.profile,
         )
-
-        # 加载笔名档案
-        self.profile = None
-        try:
-            self.profile = self.profiles.get_by_name(pen_name)
-        except Exception:
-            pass
-        if self.timeline_writer:
-            self.timeline_writer.executor.profile = self.profile
 
         # 初始化成本追踪
         self.cost_tracker = CostTracker()

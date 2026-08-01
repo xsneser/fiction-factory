@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+    /* ─── 生成器专用样式 ─── */
+    .gen-container { display:flex; gap:24px; height:calc(100vh - 300px); min-height:0; }
+    .gen-form { width:340px; flex-shrink:0; overflow-y:auto; }
+    .gen-output { flex:1; display:flex; flex-direction:column; min-height:0; }
+
+    .phase-list { display:flex; flex-direction:column; gap:8px; margin:20px 0 0 0; }
+    .phase-item {
+        display:flex; align-items:center; gap:10px; padding:10px 14px;
+        background:#0d1117; border:1px solid #21262d; border-radius:6px;
+        font-size:13px; transition:all .3s;
+    }
+    .phase-item.active { border-color:#58a6ff; background:#0d1d33; }
+    .phase-item.done { border-color:#238636; }
+    .phase-item.error { border-color:#da3633; }
+    .phase-item .phase-num {
+        width:24px; height:24px; border-radius:50%; display:flex;
+        align-items:center; justify-content:center; font-size:12px;
+        background:#21262d; color:#484f58; flex-shrink:0;
+    }
+    .phase-item.active .phase-num { background:#58a6ff; color:#fff; }
+    .phase-item.done .phase-num { background:#238636; color:#fff; }
+    .phase-item.error .phase-num { background:#da3633; color:#fff; }
+    .phase-item .phase-label { color:#8b949e; }
+    .phase-item.active .phase-label { color:#58a6ff; }
+    .phase-item.done .phase-label { color:#3fb950; }
+    .phase-item .phase-desc { color:#484f58; font-size:11px; margin-left:auto; max-width:120px; text-align:right; }
+
+    .log-panel {
+        flex:1; background:#0d1117; border:1px solid #30363d; border-radius:8px;
+        padding:12px; overflow-y:auto; font-size:12px; font-family:'Cascadia Code','Consolas',monospace;
+        min-height:0; margin-bottom:12px;
+    }
+    .log-line { padding:3px 0; color:#8b949e; }
+    .log-line.info { color:#c9d1d9; }
+    .log-line.success { color:#3fb950; }
+    .log-line.warn { color:#d29922; }
+    .log-line.error { color:#f85149; }
+    .log-line .log-time { color:#484f58; margin-right:8px; }
+
+    .preview-panel {
+        background:#0d1117; border:1px solid #30363d; border-radius:8px;
+        padding:12px; max-height:260px; overflow-y:auto; display:none;
+    }
+    .preview-panel.show { display:block; }
+    .preview-panel pre { font-size:11px; color:#8b949e; white-space:pre-wrap; word-break:break-all; margin:0; }
+
+    .gen-action-bar { display:flex; gap:8px; align-items:center; margin-top:12px; flex-wrap:wrap; }
+    .gen-action-bar .gen-stats { font-size:12px; color:#8b949e; margin-left:auto; }
+    .gen-stat-value { color:#58a6ff; font-weight:600; }
+
+    @keyframes gen-spin { to { transform:rotate(360deg); } }
+    .gen-spinner { display:none; width:16px; height:16px; border:2px solid #30363d; border-top-color:#58a6ff; border-radius:50%; animation:gen-spin .8s linear infinite; vertical-align:middle; margin-right:6px; }
+    .gen-spinner.show { display:inline-block; }
+</style>
+
+<h1>📋 大纲生成器</h1>
+<p style="color:#8b949e;margin-bottom:20px;">5 阶段 LLM 管线：故事分析 → 大纲时间线 → 桥段编排 → 加料注入 → 一致性验证</p>
+
+<div class="gen-container">
+    <!-- 左侧：表单 -->
+    <div class="gen-form">
+        <form onsubmit="genStart(event)" style="margin-bottom:0;">
+            <div class="form-group">
+                <label>流派</label>
+                <select name="genre" id="ggenre">
+                    <option value="玄幻">玄幻</option>
+                    <option value="都市">都市</option>
+                    <option value="言情">言情</option>
+                    <option value="悬疑">悬疑</option>
+                    <option value="穿越">穿越</option>
+                    <option value="游戏">游戏</option>
+                    <option value="科幻">科幻</option>
+                    <option value="custom">自定义</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>子流派</label>
+                <select name="sub_genre" id="gsub">
+                    <option value="">— 不限 —</option>
+                    <option value="升级流">升级流</option>
+                    <option value="系统流">系统流</option>
+                    <option value="重生">重生</option>
+                    <option value="穿越">穿越</option>
+                    <option value="逆袭流">逆袭流</option>
+                    <option value="日常流">日常流</option>
+                    <option value="推理">推理</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>每章字数</label>
+                <input type="number" name="words_per_chapter" value="3000" min="1000" max="10000" step="500">
+            </div>
+            <div class="form-group">
+                <label>笔名（可选）</label>
+                <select name="pen_name" id="gpen">
+                    <option value="">— 无（默认风格）—</option>
+                    {% for pn in pen_names %}
+                    <option value="{{ pn }}">{{ pn }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>自定义想法（可选）</label>
+                <textarea name="custom_context" id="gctx"
+                    placeholder="描述你的故事想法、主角设定、世界观等...&#10;&#10;例如：主角是一个废柴高中生，被系统选中，在灵异复苏的世界里靠直播捉鬼成神..."></textarea>
+            </div>
+            <button type="submit" id="genBtn" style="width:100%;padding:12px;">
+                <span class="gen-spinner" id="genSpin"></span>
+                🚀 生成大纲
+            </button>
+            <div id="genStat" style="font-size:12px;color:#8b949e;margin-top:8px;text-align:center;"></div>
+        </form>
+
+        <!-- 5 阶段进度 -->
+        <div class="phase-list">
+            <div class="phase-item" id="gph1"><span class="phase-num">1</span><span class="phase-label">故事分析</span><span class="phase-desc"></span></div>
+            <div class="phase-item" id="gph2"><span class="phase-num">2</span><span class="phase-label">大纲时间线</span><span class="phase-desc"></span></div>
+            <div class="phase-item" id="gph3"><span class="phase-num">3</span><span class="phase-label">桥段编排</span><span class="phase-desc"></span></div>
+            <div class="phase-item" id="gph4"><span class="phase-num">4</span><span class="phase-label">加料注入</span><span class="phase-desc"></span></div>
+            <div class="phase-item" id="gph5"><span class="phase-num">5</span><span class="phase-label">一致性验证</span><span class="phase-desc"></span></div>
+        </div>
+    </div>
+
+    <!-- 右侧：输出 -->
+    <div class="gen-output">
+        <div class="log-panel" id="glog">
+            <div class="log-line" style="color:#484f58;">等待开始...</div>
+        </div>
+        <div class="gen-action-bar">
+            <button class="secondary small" onclick="genClearLog()">清空日志</button>
+            <button class="secondary small" id="gSaveBtn" onclick="genSave()" style="display:none;">💾 保存时间线</button>
+            <button class="secondary small" id="gPreviewBtn" onclick="genTogglePreview()" style="display:none;">👁 预览 JSON</button>
+            <span class="gen-stats" id="gStats"></span>
+        </div>
+        <div class="preview-panel" id="gPreview">
+            <pre id="gPreviewContent"></pre>
+        </div>
+    </div>
+</div>
+
+<script>
+(function(){
+var gTL = null, gPhase = 0;
+
+function gNow(){ return new Date().toTimeString().slice(0,8); }
+
+function gLog(msg, cls){
+    var p = document.getElementById('glog');
+    var d = document.createElement('div');
+    d.className = 'log-line ' + (cls||'');
+    d.innerHTML = '<span class="log-time">' + gNow() + '</span>' + msg;
+    p.appendChild(d);
+    p.scrollTop = p.scrollHeight;
+}
+
+function gPhaseActive(n){
+    for (var i=1; i<=5; i++){
+        var el = document.getElementById('gph'+i);
+        el.classList.remove('active','done','error');
+        if (i < n) el.classList.add('done');
+        if (i === n) el.classList.add('active');
+    }
+    gPhase = n;
+}
+
+window.genStart = function(e){
+    e.preventDefault();
+    var btn = document.getElementById('genBtn');
+    var spin = document.getElementById('genSpin');
+    var stat = document.getElementById('genStat');
+    btn.disabled = true;
+    spin.classList.add('show');
+    stat.textContent = '连接 LLM...';
+    gTL = null;
+
+    for (var i=1; i<=5; i++){
+        var el = document.getElementById('gph'+i);
+        el.classList.remove('active','done','error');
+        el.querySelector('.phase-desc').textContent = '';
+    }
+
+    document.getElementById('gSaveBtn').style.display = 'none';
+    document.getElementById('gPreviewBtn').style.display = 'none';
+    document.getElementById('gStats').textContent = '';
+
+    var fd = new FormData(e.target);
+    var payload = {};
+    fd.forEach(function(v,k){ payload[k] = v; });
+
+    fetch('/api/generator/build', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+    }).then(function(resp){
+        var reader = resp.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = '';
+
+        function read(){
+            reader.read().then(function(r){
+                if (r.done) {
+                    btn.disabled = false;
+                    spin.classList.remove('show');
+                    stat.textContent = '';
+                    return;
+                }
+                buf += decoder.decode(r.value, {stream: true});
+                var lines = buf.split('\n');
+                buf = lines.pop() || '';
+                for (var li = 0; li < lines.length; li++){
+                    var line = lines[li];
+                    if (!line.startsWith('data: ')) continue;
+                    try {
+                        var evt = JSON.parse(line.slice(6));
+                        gHandleEvent(evt);
+                    } catch(e){}
+                }
+                read();
+            });
+        }
+        read();
+    }).catch(function(err){
+        gLog('❌ 连接失败: ' + err.message, 'error');
+        btn.disabled = false;
+        spin.classList.remove('show');
+        stat.textContent = '';
+    });
+};
+
+function gHandleEvent(evt){
+    var type = evt.event, msg = evt.message || '';
+
+    switch(type){
+        case 'phase':
+            gPhaseActive(evt.phase || 0);
+            var desc = evt.desc || msg;
+            var el = document.getElementById('gph' + (evt.phase || 0));
+            if (el) el.querySelector('.phase-desc').textContent = desc;
+            gLog('📌 ' + msg, 'info');
+            break;
+
+        case 'progress':
+            gLog('  ⏳ ' + msg, 'info');
+            break;
+
+        case 'phase_done':
+            var pn = evt.phase || 0;
+            var doneEl = document.getElementById('gph' + pn);
+            if (doneEl) {
+                doneEl.classList.remove('active');
+                doneEl.classList.add('done');
+                doneEl.querySelector('.phase-desc').textContent = '✅';
+            }
+            gLog('✅ ' + msg, 'success');
+            break;
+
+        case 'outline_plots':
+            var names = (evt.plot_names||[]).join(', ');
+            gLog('  📦 ' + msg + ' — ' + (evt.plot_count||0) + ' 个桥段: ' + names, 'info');
+            break;
+
+        case 'warnings':
+            if (evt.issues) {
+                evt.issues.forEach(function(i){ gLog('  ⚠️ ' + i, 'warn'); });
+            }
+            break;
+
+        case 'done':
+            gTL = evt.timeline;
+            var stats = evt.stats || {};
+            document.getElementById('gSaveBtn').style.display = 'inline-block';
+            document.getElementById('gPreviewBtn').style.display = 'inline-block';
+            document.getElementById('gStats').innerHTML =
+                '<span class="gen-stat-value">' + stats.outlines + '</span> 大纲 · ' +
+                '<span class="gen-stat-value">' + stats.plots + '</span> 桥段 · ' +
+                '<span class="gen-stat-value">' + stats.total_chapters + '</span> 章 · ' +
+                '<span class="gen-stat-value">' + stats.gags_injected + '</span> 笑点' +
+                (stats.issues > 0 ? ' · <span class="gen-stat-value" style="color:#d29922">' + stats.issues + '</span> 建议' : '');
+            gPhaseActive(5);
+            var p5 = document.getElementById('gph5');
+            p5.classList.remove('active'); p5.classList.add('done');
+            p5.querySelector('.phase-desc').textContent = '✅';
+            gLog('🎉 大纲生成完成！', 'success');
+            gLog('  大纲: ' + stats.outlines + ' 条 · 桥段: ' + stats.plots + ' 个 · 总章节: ' + stats.total_chapters, 'info');
+            break;
+
+        case 'error':
+            gLog('❌ 错误: ' + msg, 'error');
+            if (evt.traceback) gLog(evt.traceback.substring(0, 500), 'error');
+            document.getElementById('genBtn').disabled = false;
+            document.getElementById('genSpin').classList.remove('show');
+            document.getElementById('genStat').textContent = '生成失败';
+            if (gPhase > 0) {
+                var errEl = document.getElementById('gph'+gPhase);
+                if (errEl) { errEl.classList.remove('active'); errEl.classList.add('error'); }
+            }
+            break;
+    }
+}
+
+window.genSave = function(){
+    if (!gTL) return;
+    fetch('/api/generator/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({timeline: gTL}),
+    }).then(function(r){ return r.json(); }).then(function(data){
+        if (data.ok) {
+            gLog('💾 已保存: ' + data.timeline_id, 'success');
+            if (confirm('时间线已保存！是否跳转到蓝图写作？')) {
+                window.location.href = '/books/writing_desk/' + data.timeline_id;
+            }
+        } else {
+            gLog('❌ 保存失败: ' + (data.error||'未知错误'), 'error');
+        }
+    });
+};
+
+window.genTogglePreview = function(){
+    var panel = document.getElementById('gPreview');
+    var content = document.getElementById('gPreviewContent');
+    if (panel.classList.contains('show')) {
+        panel.classList.remove('show');
+    } else {
+        content.textContent = JSON.stringify(gTL, null, 2);
+        panel.classList.add('show');
+    }
+};
+
+window.genClearLog = function(){
+    document.getElementById('glog').innerHTML = '<div class="log-line" style="color:#484f58;">已清空</div>';
+};
+})();
+</script>
+{% endblock %}

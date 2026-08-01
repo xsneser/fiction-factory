@@ -1661,6 +1661,96 @@ def debug_search_test():
 
 
 
+# ═══════════════════════════════════════════
+# 大纲生成引擎页面
+# ═══════════════════════════════════════════
+
+@app.route("/books/generator")
+def outline_generator_page():
+    """大纲生成器页面 — 5 阶段 LLM 管线"""
+    pen_names = [p.pen_name for p in profiles.list_all()] if profiles else []
+    return render_template("outline_generator.html", pen_names=pen_names)
+
+
+@app.route("/api/generator/build", methods=["POST"])
+def generator_build():
+    """SSE 流式大纲生成"""
+    data = request.json or {}
+    genre = data.get("genre", "玄幻")
+    sub_genre = data.get("sub_genre", "")
+    custom = data.get("custom_context", "")
+    pen_name = data.get("pen_name", "")
+    words_per_ch = int(data.get("words_per_chapter", 3000))
+
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置，请先在设置页配置 API"}), 500
+
+    # 加载笔名档案
+    profile = None
+    if pen_name:
+        try:
+            profile = profiles.get_by_name(pen_name)
+        except Exception:
+            pass
+
+    from libraries.outline_generator import OutlineGenerator
+    gen = OutlineGenerator(
+        llm_client=llm,
+        structure_lib=struct_lib,
+        plot_lib=plot_lib,
+        gag_lib=gag_lib,
+        theme_lib=theme_lib,
+        profile=profile,
+    )
+
+    def generate():
+        try:
+            for event_type, message, data_dict in gen.generate(
+                genre=genre, sub_genre=sub_genre,
+                custom_context=custom, pen_name=pen_name,
+                words_per_chapter=words_per_ch,
+            ):
+                payload = {"event": event_type, "message": message}
+                if data_dict:
+                    payload.update(data_dict)
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            import traceback
+            yield f"data: {json.dumps({'event': 'error', 'message': str(e), 'traceback': traceback.format_exc()}, ensure_ascii=False)}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Connection": "keep-alive"},
+    )
+
+
+@app.route("/api/generator/save", methods=["POST"])
+def generator_save():
+    """保存生成的 BookTimeline 到文件"""
+    data = request.json or {}
+    timeline_data = data.get("timeline")
+    if not timeline_data:
+        return jsonify({"ok": False, "error": "无时间线数据"}), 400
+
+    tl = BookTimeline.from_dict(timeline_data)
+    tl.phase = "ready"
+
+    # 保存到 timelines 目录
+    import os
+    os.makedirs("books/timelines", exist_ok=True)
+    tid = f"{tl.pen_name or 'gen'}_{tl.genre}_{int(time.time())}"
+    path = f"books/timelines/{tid}.json"
+    save_timeline(tl, path)
+
+    # 缓存到内存
+    _timelines[tid] = tl
+
+    return jsonify({"ok": True, "timeline_id": tid, "path": path})
+
+
 if __name__ == "__main__":
     os.makedirs("ui/templates", exist_ok=True)
     os.makedirs("ui/static", exist_ok=True)

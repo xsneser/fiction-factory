@@ -137,7 +137,7 @@ class OutlineExpander:
         from core.llm_client import extract_json
         raw = self.llm.call(
             "你是一位专业的网络小说作者。请根据设定展开大纲叙事稿。",
-            prompt, temperature=0.7, max_tokens=max(2048, word_target * 2))
+            prompt, temperature=0.7, max_tokens=min(8192, max(2048, word_target * 2)))
         # 尝试提取 JSON（如果 LLM 返回了 JSON 包裹），否则用原始文本
         try:
             data = json.loads(extract_json(raw))
@@ -291,7 +291,7 @@ class PlotFiller:
             return f"[桥段 - {word_target}字 - LLM 未配置]"
         raw = self.llm.call(
             "你是一位专业的网络小说作者。请按桥段骨架填充正文。",
-            prompt, temperature=0.8, max_tokens=max(1536, word_target * 2))
+            prompt, temperature=0.8, max_tokens=min(8192, max(1536, word_target * 2)))
         return raw.strip()
 
 
@@ -553,3 +553,143 @@ class BlueprintWritingPipeline:
     def _update(self, phase: str, state: str, message: str):
         self.state.phase = phase
         self.state.message = message
+
+
+# ═══════════════════════════════════════════
+# TimelineChapterWriter — 引擎桥梁
+# ═══════════════════════════════════════════
+
+class TimelineChapterWriter:
+    """
+    章节级蓝图写作器 — 引擎的章节步进接口
+
+    内部使用 BlueprintWritingPipeline 全量构建（先写全文再分章），
+    首次调用 write_chapter 时触发完整 build，缓存全部章节。
+    后续 write_chapter 直接从缓存返回。
+
+    用法:
+        writer = TimelineChapterWriter(timeline, llm_client, ...)
+        result = writer.write_chapter(chapter_num=1,
+                                       previous_chapter_ending="...",
+                                       character_states="...")
+    """
+
+    def __init__(self, timeline: BookTimeline, llm_client=None,
+                 de_ai_engine=None, reviewer=None,
+                 gag_lib=None, plot_lib=None, profile=None):
+        self.timeline = timeline
+        self.llm = llm_client
+        self.de_ai = de_ai_engine
+        self.reviewer = reviewer
+        self.gag_lib = gag_lib
+        self.plot_lib = plot_lib
+        self.profile = profile
+
+        # 懒加载缓存
+        self._built = False
+        self._build_error: Optional[str] = None
+        self._chapters: list[dict] = []
+        self._outlines_expanded: int = 0
+        self._plots_filled: int = 0
+        self._plots_skipped: int = 0
+        self._total_words: int = 0
+        self._build_events: list[tuple] = []  # 用于恢复构建进度
+
+        # 主题库引用（从外部获取）
+        self._theme_lib = None
+        try:
+            from .theme import ThemeLibrary
+            self._theme_lib = ThemeLibrary()
+        except Exception:
+            pass
+
+    def _ensure_built(self):
+        """懒加载：首次 write_chapter 时触发全量构建"""
+        if self._built:
+            return
+        try:
+            pipeline = BlueprintWritingPipeline(
+                timeline=self.timeline,
+                llm_client=self.llm,
+                gag_lib=self.gag_lib,
+                theme_lib=self._theme_lib,
+            )
+
+            for event_type, message, data in pipeline.build():
+                self._build_events.append((event_type, message, data))
+                if event_type == "done":
+                    self._chapters = data.get("chapters_data", [])
+                    self._outlines_expanded = data.get("outlines_expanded", 0)
+                    self._plots_filled = data.get("plots_filled", 0)
+                    self._plots_skipped = data.get("plots_skipped", 0)
+                    self._total_words = data.get("total_words", 0)
+        except Exception as e:
+            self._build_error = str(e)
+        finally:
+            self._built = True
+
+    def write_chapter(self, chapter_num: int,
+                      previous_chapter_ending: str = "",
+                      character_states: str = "") -> dict:
+        """
+        写一章——首次调用触发全量构建，后续直接从缓存返回。
+
+        返回 dict:
+            {"text": str, "word_count": int, "beats": int,
+             "beat_details": list, "blueprint": dict}
+        """
+        self._ensure_built()
+
+        if self._build_error:
+            return {
+                "text": f"[蓝图构建失败] {self._build_error}",
+                "word_count": 0, "beats": 0,
+                "beat_details": [], "blueprint": {},
+            }
+
+        # 从缓存查找对应章节
+        ch = next((c for c in self._chapters if c.get("num") == chapter_num), None)
+        if ch is None:
+            return {
+                "text": f"[第{chapter_num}章未生成]",
+                "word_count": 0, "beats": 0,
+                "beat_details": [],
+                "blueprint": {"chapter_title": f"", "total_chapters": len(self._chapters)},
+            }
+
+        text = ch.get("text", "")
+        import re
+        wc = ch.get("word_count") or len(re.findall(r'[\u4e00-\u9fff]', text))
+
+        return {
+            "text": text,
+            "word_count": wc,
+            "beats": 0,  # 蓝图模式不按节拍统计
+            "beat_details": [],
+            "blueprint": {
+                "chapter_title": ch.get("title", ""),
+                "chapter_num": chapter_num,
+                "total_chapters": len(self._chapters),
+                "outlines_expanded": self._outlines_expanded,
+                "plots_filled": self._plots_filled,
+                "plots_skipped": self._plots_skipped,
+                "total_words": self._total_words,
+            },
+        }
+
+    @property
+    def is_built(self) -> bool:
+        return self._built
+
+    @property
+    def chapters(self) -> list[dict]:
+        return self._chapters
+
+    @property
+    def build_events(self) -> list[tuple]:
+        """构建过程的所有事件（用于 UI 回放进度）"""
+        return self._build_events
+
+    @property
+    def error(self) -> Optional[str]:
+        return self._build_error
