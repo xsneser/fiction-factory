@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile *)",
+      "Bash(python test_all.py*)",
+      "Bash(PYTHONIOENCODING=utf-8 python test_all.py*)",
+      "Bash(python test_e2e_pages.py*)",
+      "Bash(PYTHONIOENCODING=utf-8 python test_e2e_pages.py*)",
+      "Bash(python tools/e2e_flow_test.py*)",
+      "Bash(PYTHONIOENCODING=utf-8 python tools/e2e_flow_test.py*)",
+      "Bash(curl -s http://127.0.0.1:58080/*)",
+      "Bash(curl -s -o /dev/null -w http://127.0.0.1:58080/*)",
+      "Bash(python ui/web_ui.py*)",
+      "Bash(PYTHONIOENCODING=utf-8 python ui/web_ui.py*)",
+      "Bash(nohup python ui/web_ui.py*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git rm *)",
+      "Bash(git stash *)",
+      "Bash(git log *)",
+      "Bash(git status *)",
+      "Skill(update-config)"
+    ]
+  }
+}
