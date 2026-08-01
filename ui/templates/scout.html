@@ -89,6 +89,12 @@ var STORAGE_KEY = 'ne_scout';
 var lastResult = null;
 var currentPlatform = 'fanqie';
 
+// 书名/book_id 两个输入框互斥：聚焦一个时清空另一个
+function clearOther(otherId) {
+    var el = document.getElementById(otherId);
+    if (el) el.value = '';
+}
+
 // 页面加载恢复
 (function(){
     try {

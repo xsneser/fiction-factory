@@ -56,6 +56,8 @@ def get_llm():
             base_url=cfg.get("base_url","https://api.deepseek.com"),
             model=cfg.get("model","deepseek-chat"),
             http_timeout_seconds=cfg.get("http_timeout_seconds",300),
+            # verify_ssl 跟随 api.json：默认开启；旧证书环境可显式设为 false
+            verify_ssl=cfg.get("verify_ssl", True),
         )
         _llm_client = LLMClient(api_cfg)
         return _llm_client

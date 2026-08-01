@@ -36,6 +36,27 @@
 // 单工具互斥代际计数器：新分析任务替代旧任务后，旧请求的返回结果被丢弃
 var _extractGen = 0;
 
+// 页面加载即加载默认 tab（资产库提取）的已下载小说列表，避免首屏空白
+(function(){ loadNovelsForExtract('library'); })();
+
+// 事件委托：列表卡片内的「提取资产库 / 重新提取 / 分析写作风格」按钮
+document.addEventListener('click', function(e) {
+    var libBtn = e.target.closest('.lib-btn');
+    if (libBtn) {
+        var p = libBtn.getAttribute('data-p');
+        var f = libBtn.getAttribute('data-f');
+        if (p && f) extractLibrary(p, f, libBtn);
+        return;
+    }
+    var styleBtn = e.target.closest('.style-btn');
+    if (styleBtn) {
+        var sp = styleBtn.getAttribute('data-p');
+        var sf = styleBtn.getAttribute('data-f');
+        if (sp && sf) extractStyle(sp, sf, styleBtn);
+        return;
+    }
+});
+
 function switchExtractTab(key) {
     document.querySelectorAll('.extract-tab').forEach(function(t) { t.classList.remove('active'); });
     document.querySelectorAll('.extract-panel').forEach(function(p) { p.style.display = 'none'; });
