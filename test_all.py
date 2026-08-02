@@ -77,9 +77,10 @@ assert_ok("档案-查找笔名", profile is not None, "枫落")
 assert_ok("档案-风格约束", len(profile.build_style_prompt()) > 100)
 
 bm = BookManager("books")
-# 清理残留
+# 清理残留：只删本测试曾创建的《系统修仙录》（title 唯一标识），绝不碰真实书
 for b in bm.list_all():
-    bm.delete(b.book_id)
+    if b.title == "系统修仙录":
+        bm.delete(b.book_id)
 
 cfg = bm.create("系统修仙录", "枫落", genre="玄幻", sub_genre="系统流",
                 structure_template_id="struct_xuanhuan_01",

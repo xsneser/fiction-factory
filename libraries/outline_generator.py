@@ -132,10 +132,12 @@ class OutlineGenerator:
                    "desc": f"从大纲库选择 {max_outlines} 个模板，排布时间线..."})
             yield ("progress", "分析大纲库候选...", {})
 
+            tl.outlines = []  # 原地累加：每条大纲确定后立即写入，供实时刷新
             outlines = yield from self._plan_timeline(
                 genre, sub_genre, custom_context, tl, max_outlines)
+            if not tl.outlines and outlines:
+                tl.outlines = outlines
 
-            tl.outlines = outlines
             yield ("phase_done", f"故事线规划完成 — {len(outlines)} 条大纲", {
                 "phase": 2,
                 "data": {
@@ -152,18 +154,18 @@ class OutlineGenerator:
             yield ("phase", "桥段编排", {"phase": 3, "total": total_phases,
                    "desc": f"为每阶段匹配桥段（预计 ~{total_plots_estimate} 个）..."})
 
+            tl.plots = []   # 全新排布：桥段在 _arrange_plots_for_outline 内逐个写入
             all_plots = []
             for oi, outline in enumerate(outlines):
                 yield ("progress",
                        f"编排桥段: {outline.name} ({oi+1}/{len(outlines)})", {})
                 plots = yield from self._arrange_plots_for_outline(outline, tl, genre)
-                all_plots.extend(plots)
+                all_plots = tl.plots  # 桥段已逐个落库，供实时刷新
                 yield ("outline_plots", outline.name, {
                     "outline_id": outline.id, "plot_count": len(plots),
                     "plot_names": [p.name for p in plots],
                 })
 
-            tl.plots = all_plots
             yield ("phase_done", f"桥段编排完成 — {len(all_plots)} 个桥段", {
                 "phase": 3, "data": {"count": len(all_plots)},
             })
@@ -179,9 +181,12 @@ class OutlineGenerator:
 
             for pi, plot in enumerate(tl.plots):
                 self._inject_gags_and_themes(plot, tl, genre)
-                if pi % 5 == 0:
-                    yield ("progress",
-                           f"注入加料: {pi+1}/{len(tl.plots)}", {})
+                # 每个桥段注入完成后即推送，前端据此实时刷新笑点通道
+                yield ("gag_injected", f"注入 {plot.name}", {
+                    "plot_id": plot.id,
+                    "gag_ids": plot.gag_ids,
+                    "theme_hints": plot.theme_hints,
+                })
 
             # Phase 4.5: LLM 复查笑点/内涵（流式思考）
             yield ("progress", "LLM 复查笑点/内涵分布...", {})
@@ -338,6 +343,7 @@ class OutlineGenerator:
         """从大纲库选模板 → AI 排布时间线 → 展开阶段。
 
         生成器：AI 模式下 yield thinking/decision 事件，最终 return list[OutlineSlot]。
+        每条大纲确定后立即写入 tl.outlines 并 yield outline_added，供前端实时刷新。
         """
         if not self.structures:
             return []
@@ -350,7 +356,8 @@ class OutlineGenerator:
 
         if not self.llm or len(candidates) <= 1:
             # 规则模式：直接取前几个顺序排布
-            return self._rule_sequence(candidates, max_outlines)
+            result = yield from self._rule_sequence(candidates, max_outlines, tl)
+            return result
 
         # AI 模式：让 AI 选择合适的模板并排时间线
         result = yield from self._ai_sequence(
@@ -358,14 +365,14 @@ class OutlineGenerator:
         return result
 
     def _rule_sequence(
-        self, candidates: list, max_outlines: int,
-    ) -> list[OutlineSlot]:
-        """规则模式：顺序选取大纲模板"""
+        self, candidates: list, max_outlines: int, tl: BookTimeline,
+    ):
+        """规则模式：顺序选取大纲模板（生成器，每条确定后写入 tl 并 yield outline_added）"""
         outlines = []
         ch = 1
         for i, tmpl in enumerate(candidates[:max_outlines]):
             oid = self._next_id("outline")
-            outlines.append(OutlineSlot(
+            outline = OutlineSlot(
                 id=oid, template_id=tmpl.id,
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(candidates) > 1 else ''}",
                 start_chapter=ch,
@@ -377,11 +384,17 @@ class OutlineGenerator:
                 ],
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
-            ))
+            )
             if outlines and len(outlines) >= 2:
-                outlines[-1].predecessor = outlines[-2].id
-                outlines[-2].successor = outlines[-1].id
-            ch = outlines[-1].end_chapter + 1
+                outline.predecessor = outlines[-2].id
+                outlines[-2].successor = outline.id
+            outlines.append(outline)
+            ch = outline.end_chapter + 1
+            tl.outlines.append(outline)
+            yield ("outline_added", outline.name, {
+                "outline_id": outline.id, "name": outline.name,
+                "start_chapter": outline.start_chapter, "end_chapter": outline.end_chapter,
+            })
         return outlines
 
     def _ai_sequence(
@@ -468,7 +481,7 @@ class OutlineGenerator:
 
         if not outlines_data:
             # 回退规则模式
-            fallback = self._rule_sequence(candidates, max_outlines)
+            fallback = yield from self._rule_sequence(candidates, max_outlines, tl)
             if fallback:
                 yield ("decision", "outline_choice", {
                     "step": "故事线规划（回退规则模式）",
@@ -515,6 +528,12 @@ class OutlineGenerator:
                     outline.overlaps_with.append(outlines[-1].id)
             outlines.append(outline)
             prev_id = oid
+            # 原地累加：每条大纲确定后立即写入 tl，供前端实时刷新左侧故事线
+            tl.outlines.append(outline)
+            yield ("outline_added", outline.name, {
+                "outline_id": oid, "name": outline.name,
+                "start_chapter": outline.start_chapter, "end_chapter": outline.end_chapter,
+            })
 
             yield ("decision", "outline_choice", {
                 "step": f"确定第 {i+1} 条大纲",
@@ -523,7 +542,9 @@ class OutlineGenerator:
                 "reason": od.get("reason", ""),
             })
 
-        return outlines if outlines else self._rule_sequence(candidates, max_outlines)
+        if not outlines:
+            outlines = yield from self._rule_sequence(candidates, max_outlines, tl)
+        return outlines
 
     # ═══════════════════════════════════════
     # Phase 3: 桥段编排
@@ -534,7 +555,7 @@ class OutlineGenerator:
     ):
         """为一个大纲的每个阶段匹配桥段（AI 选择，避免跨阶段重复与类型错配）。
 
-        生成器：yield thinking/decision 事件，最终 return list[PlotSlot]。
+        生成器：yield thinking/decision/plot_added 事件，最终 return list[PlotSlot]。
         """
         if not self.plots:
             return []
@@ -581,13 +602,21 @@ class OutlineGenerator:
                     slots=[{"name": s.name, "default": s.default, "options": s.options}
                            for s in tmpl.slots],
                 )
+                # 立即写入 tl.plots：左侧故事线随每个桥段逐个刷新
+                tl.plots.append(p)
                 new_plots.append(p)
                 if parent_id:
-                    for existing in (tl.plots + new_plots):
+                    for existing in tl.plots:
                         if existing.id == parent_id:
                             existing.children_plot_ids.append(pid)
                             break
                 parent_id = pid
+                yield ("plot_added", p.name, {
+                    "plot_id": p.id,
+                    "outline_id": outline.id,
+                    "outline_name": outline.name,
+                    "category": p.category,
+                })
 
         outline.expanded = True
         return new_plots

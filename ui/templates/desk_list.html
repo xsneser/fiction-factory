@@ -21,11 +21,17 @@
             {% endif %}
         </div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-            <a href="/books/{{ b.book_id }}/continue" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none;display:inline-block">✍️ 进入写作</a>
+            <a href="/timeline/{{ b.book_id }}/edit" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none;display:inline-block">📋 继续规划</a>
+            {% if r.is_timeline %}
+            <a href="/books/start/timeline/{{ b.book_id }}/write" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">✍️ 开始写作</a>
+            <a href="/timeline/{{ b.book_id }}/detail" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">📖 详情</a>
+            {% else %}
+            <a href="/books/{{ b.book_id }}/continue" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">✍️ 开始写作</a>
             <a href="/books/{{ b.book_id }}" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">📖 详情</a>
-            {% if r.has_timeline %}
-            <a href="/timeline/{{ b.book_id }}/edit" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">📋 大纲</a>
             {% endif %}
+            <form method="POST" action="{% if r.is_timeline %}/timeline/{{ b.book_id }}/delete{% else %}/books/{{ b.book_id }}/delete{% endif %}" style="display:inline" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
+                <button class="small danger" style="padding:8px 16px;background:#da3633;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">删除</button>
+            </form>
         </div>
     </div>
     {% endfor %}

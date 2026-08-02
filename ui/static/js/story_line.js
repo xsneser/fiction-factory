@@ -14,6 +14,7 @@
   var PALETTE = ['#f97583', '#79c0ff', '#56d364', '#e3b341', '#d2a8ff', '#ffa657', '#c084fc', '#7ee787'];
 
   var _lastRender = null;
+  var _lastMountId = null;
   if (!window._sl_resize_bound) {
     window.addEventListener('resize', function () { if (_lastRender) _lastRender(); });
     window._sl_resize_bound = true;
@@ -23,67 +24,78 @@
     return (TOTAL_WORDS > 0) ? (w / TOTAL_WORDS) * 100 : 0;
   }
 
-  /* ─── 数据适配：BookTimeline → 平铺数组 ─── */
+  /* 桥段预计字数 = cover_beats × 200，封顶 1200（与后端 timeline_writer.planned_words 同一公式） */
+  function plannedWords(p) {
+    var beats = Math.max(parseInt((p && p.cover_beats) || 0, 10) || 0, 2);
+    return Math.min(beats * 200, 1200);
+  }
+
+  /* ─── 数据适配：BookTimeline → 平铺数组（桥段按真实规划字数定位，预计=实际） ─── */
   function adapt(bt) {
     bt = bt || {};
     WPC = bt.words_per_chapter || 3000;
-    var total = 0;
-    (bt.outlines || []).forEach(function (o) {
-      if (o.end_chapter > total) total = o.end_chapter;
-    });
-    if (total <= 0) total = Math.max(1, (bt.total_chapters || 100));
-    TOTAL_WORDS = total * WPC;
 
-    // 章节轴（太密时抽稀，最多 ~40 个刻度）
-    chapters = [];
-    var stride = Math.max(1, Math.ceil(total / 40));
-    for (var n = 1; n <= total; n += stride) {
-      chapters.push({ num: n, words: n * WPC });
-    }
-    if (chapters.length === 0 || chapters[chapters.length - 1].num !== total) {
-      chapters.push({ num: total, words: total * WPC });
-    }
-
-    // 大纲 → 字数偏移
-    outlines = (bt.outlines || []).map(function (o, i) {
-      return {
-        id: o.id, name: o.name,
-        start: Math.max(0, (o.start_chapter || 1) - 1) * WPC,
-        end: (o.end_chapter || o.start_chapter || 1) * WPC,
-        color: PALETTE[i % PALETTE.length],
-        narrative: o.narrative || 'chronological',
-        narrative_target: o.narrative_target || '',
-      };
-    });
-    var outlineColorById = {};
-    outlines.forEach(function (o) { outlineColorById[o.id] = o.color; });
-
-    // 桥段 → 按所属大纲范围均匀估算位置
-    plots = [];
+    // 桥段按所属大纲分组
     var byOutline = {};
     (bt.plots || []).forEach(function (p) {
       var key = p.outline_id || '';
       (byOutline[key] = byOutline[key] || []).push(p);
     });
+    function sortPlots(a, b) {
+      return ((a.stage_index || 0) - (b.stage_index || 0)) || ((a.order || 0) - (b.order || 0));
+    }
+
+    // 大纲 → 按顺序纵向排列，宽度=其桥段规划字数总和（不再按章节范围均分/假大空）
+    outlines = (bt.outlines || []).map(function (o, i) {
+      var ow = 0;
+      (byOutline[o.id] || []).slice().sort(sortPlots).forEach(function (p) { ow += plannedWords(p); });
+      return {
+        id: o.id, name: o.name, ow: ow,
+        color: PALETTE[i % PALETTE.length],
+        narrative: o.narrative || 'chronological',
+        narrative_target: o.narrative_target || '',
+      };
+    });
+    var cursor = 0;
+    outlines.forEach(function (o) {
+      o.start = cursor;
+      o.end = cursor + Math.max(o.ow, WPC);   // 无桥段的大纲至少占一章宽度
+      cursor = o.end + WPC * 0.5;             // 弧间留半章空隙
+    });
+    TOTAL_WORDS = Math.max(cursor - WPC * 0.5, WPC);
+    var totalCh = Math.max(1, Math.round(TOTAL_WORDS / WPC));
+
+    // 章节轴：每章一条虚线+圆点（不再抽稀跳号），标签按空间自动省略
+    chapters = [];
+    for (var n = 1; n <= totalCh; n++) {
+      chapters.push({ num: n, words: n * WPC });
+    }
+    if (!chapters.length) chapters.push({ num: 1, words: WPC });
+
+    // 桥段 → 在大纲内按规划字数累计定位（首桥段 0—~1200字，而非 0—13517）
+    plots = [];
+    var outlineById = {};
+    outlines.forEach(function (o) { outlineById[o.id] = o; });
+    var outlineColorById = {};
+    outlines.forEach(function (o) { outlineColorById[o.id] = o.color; });
     Object.keys(byOutline).forEach(function (key) {
-      var list = byOutline[key].slice().sort(function (a, b) {
-        return ((a.stage_index || 0) - (b.stage_index || 0)) || ((a.order || 0) - (b.order || 0));
-      });
-      var o = null;
-      for (var i = 0; i < outlines.length; i++) { if (outlines[i].id === key) { o = outlines[i]; break; } }
+      var list = byOutline[key].slice().sort(sortPlots);
+      var o = outlineById[key];
       if (!o) return;
-      var span = Math.max(o.end - o.start, WPC * 3);
-      var seg = span / list.length;
       var rootColor = outlineColorById[key] || '#79c0ff';
-      list.forEach(function (p, idx) {
+      var cum = 0;
+      list.forEach(function (p) {
+        var pw = plannedWords(p);
         plots.push({
           id: p.id, name: p.name,
-          start: o.start + idx * seg,
-          end: Math.max(o.start + (idx + 1) * seg - WPC * 0.2, o.start + seg * 0.6),
+          oid: p.outline_id || '',
+          start: o.start + cum,
+          end: o.start + cum + pw,
           parent: p.parent_plot_id || null,
           color: p.parent_plot_id ? '#a5d6ff' : rootColor,
           category: p.category || '',
         });
+        cum += pw;
       });
     });
 
@@ -132,16 +144,25 @@
       label.textContent = (w / 1000) + 'k';
       axisPanel.appendChild(label);
     }
-    chapters.forEach(function (ch) {
+    // 每章一条虚线（连续，不再 1→9→17 跳号）；"第N章"标签按间距自动省略以免重叠
+    var h = chapterPanel.clientHeight || 400;
+    var minLabelGap = Math.max(1.5, (18 / Math.max(h, 120)) * 100);   // 标签间隔约 18px
+    var lastLabelY = -Infinity;
+    chapters.forEach(function (ch, idx) {
       var y = wordToPercent(ch.words);
       var line = document.createElement('div');
       line.className = 'sl-chapter-line'; line.style.top = y + '%';
       line.style.borderTop = '1px dashed rgba(88,166,255,.25)';
       chapterPanel.appendChild(line);
-      var mark = document.createElement('div');
-      mark.className = 'sl-chapter-mark'; mark.style.top = y + '%';
-      mark.innerHTML = '<div class="sl-chapter-dot"></div><div><div class="sl-chapter-num">第' + ch.num + '章</div></div>';
-      chapterPanel.appendChild(mark);
+      var isFirst = idx === 0;
+      var isLast = idx === chapters.length - 1;
+      if (isFirst || isLast || (y - lastLabelY) >= minLabelGap) {
+        var mark = document.createElement('div');
+        mark.className = 'sl-chapter-mark'; mark.style.top = y + '%';
+        mark.innerHTML = '<div class="sl-chapter-dot"></div><div><div class="sl-chapter-num">第' + ch.num + '章</div></div>';
+        chapterPanel.appendChild(mark);
+        lastLabelY = y;
+      }
     });
   }
 
@@ -159,6 +180,7 @@
       var gap = 3;
       var bar = document.createElement('div');
       bar.className = 'sl-bar sl-bar-outline';
+      bar.dataset.oid = o.id;
       bar.style.top = top + '%';
       bar.style.height = Math.max(height, 0.5) + '%';
       bar.style.left = 'calc(' + (lane * laneW) + '% + ' + (lane * gap) + 'px)';
@@ -245,6 +267,8 @@
 
       var bar = document.createElement('div');
       bar.className = 'sl-bar sl-bar-plot level-' + level;
+      bar.dataset.pid = p.id;
+      if (p.oid) bar.dataset.oid = p.oid;
       bar.style.top = top + '%';
       bar.style.height = Math.max(height, 0.4) + '%';
       bar.style.left = barLeft + '%';
@@ -374,17 +398,28 @@
       if (!mount) return;
       opts = opts || {};
       adapt(bt);
+      // 可选：按章节数拉长内容（仍是百分比渲染 → 每个百分比映射更多像素 → 条间距更大、可上下滚动）。
+      // mount 填满外层容器，长卷内容由内部 .sl-main 滚动——整块只出现这一条滚动条。
+      // 仅在调用方显式传 scrollable 时生效，避免影响 continue_flow 等「填满容器高度」的用法。
+      var scrollH = 0;
+      if (opts.scrollable) {
+        var totalCh = Math.max(1, Math.round(TOTAL_WORDS / WPC));
+        scrollH = Math.min(2400, Math.max(720, totalCh * 18));
+        mount.style.height = '100%';
+        mount.style.minHeight = '0px';
+      }
       var narrCount = { flashback: 0, interleaved: 0 };
       outlines.forEach(function (o) { if (o.narrative !== 'chronological') narrCount[o.narrative] = (narrCount[o.narrative] || 0) + 1; });
 
+      var hstyle = scrollH ? (' style="height:' + scrollH + 'px"') : '';
       var html =
         '<div class="sl-root">' +
         '<div class="sl-header"><h1><span class="dot"></span>故事线</h1>' +
         '<div class="sl-meta">总字数 <span>' + (TOTAL_WORDS).toLocaleString() + '</span> · 章节 <span>' + (TOTAL_WORDS / WPC | 0) + '</span> · 大纲 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span></div></div>' +
         '<div class="sl-main">' +
-        '<div class="sl-chapter-panel" id="' + mountId + '-ch"></div>' +
-        '<div class="sl-axis-panel" id="' + mountId + '-ax"></div>' +
-        '<div class="sl-content-area" id="' + mountId + '-ct">' +
+        '<div class="sl-chapter-panel"' + hstyle + ' id="' + mountId + '-ch"></div>' +
+        '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
+        '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
         '<div class="sl-lane" style="flex:3"><div class="sl-lane-header">📋 大纲</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
         '<div class="sl-lane" style="flex:7"><div class="sl-lane-header">🔗 桥段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
         '<div class="sl-lane" style="flex:2"><div class="sl-lane-header">😂💡 笑点·内涵</div><div class="sl-lane-body" id="' + mountId + '-lb"></div></div>' +
@@ -424,7 +459,32 @@
         renderCursor(contentArea, opts.currentChapter);
       }
       _lastRender = renderAll;
+      _lastMountId = mountId;
       renderAll();
+    },
+
+    /* 高亮：按 outline_id / plot_id 给故事线里对应的大纲/桥段条加高亮并滚动到可见位置。
+       写作流页面在 plot_start / plot_done 时调用。 */
+    highlight: function (target) {
+      var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
+      if (!mount) return;
+      var main = mount.querySelector('.sl-main');
+      var prev = mount.querySelectorAll('.sl-bar.sl-highlight');
+      for (var i = 0; i < prev.length; i++) prev[i].classList.remove('sl-highlight');
+      var sel = [];
+      // 用类限定：大纲条只匹配 sl-bar-outline；桥段条只匹配 sl-bar-plot（避免 data-oid 把整个大纲的桥段全点亮）
+      if (target && target.outline_id) sel.push('.sl-bar-outline[data-oid="' + target.outline_id + '"]');
+      if (target && target.plot_id) sel.push('.sl-bar-plot[data-pid="' + target.plot_id + '"]');
+      if (!sel.length) return;
+      var els = mount.querySelectorAll(sel.join(','));
+      var anchor = null;
+      for (var j = 0; j < els.length; j++) {
+        els[j].classList.add('sl-highlight');
+        if (!anchor) anchor = els[j];
+      }
+      if (anchor && main) {
+        main.scrollTop = Math.max(0, anchor.offsetTop - main.clientHeight * 0.3);
+      }
     },
   };
 })();

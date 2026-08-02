@@ -13,9 +13,8 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse, FileResponse
+from fastapi.responses import JSONResponse, StreamingResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core.models import (
@@ -103,13 +102,6 @@ app.add_middleware(CORSMiddleware,
                    allow_origins=LOCAL_ALLOWED_ORIGINS,
                    allow_methods=["*"],
                    allow_headers=["*"])
-
-# 静态文件（原版 Svelte 前端）
-frontend_dir = Path(__file__).parent / "frontend"
-_has_frontend = frontend_dir.exists()
-if _has_frontend:
-    app.mount("/assets", StaticFiles(directory=str(frontend_dir / "assets")), name="assets")
-
 
 # ─── Helpers ───
 
@@ -955,19 +947,6 @@ def resolve_chapter_conflict(num: int, req: ConflictR):
         return {"status": "retry"}
     raise HTTPException(400, "不支持的操作")
 
-
-# ─── SPA 兜底（必须在所有 API 路由之后）───
-
-if _has_frontend:
-    @app.get("/{full_path:path}")
-    async def serve_frontend(full_path: str):
-        """Serve Svelte SPA for all non-API/non-asset routes"""
-        if full_path.startswith("api/"):
-            raise HTTPException(404)
-        fp = frontend_dir / (full_path or "index.html")
-        if fp.exists() and fp.is_file():
-            return FileResponse(str(fp))
-        return FileResponse(str(frontend_dir / "index.html"))
 
 
 # ─── Run ───

@@ -30,6 +30,7 @@ class BookConfig:
     assigned_gags: list[str] = field(default_factory=list)      # 使用的笑点列表
     assigned_themes: list[str] = field(default_factory=list)    # 使用的内涵主题
     opening_template_id: str = ""          # 开篇模板ID
+    source_timeline_id: str = ""           # 源自哪个故事线草稿（tl_*/gen_*），用于「开始写作」去重
     # 前三章特殊配置
     first_three_chapters: dict = field(default_factory=dict)
     style_profile_id: str = ""             # 笔名风格档案ID
@@ -121,7 +122,8 @@ class BookManager:
                sub_genre: str = "", platform: str = "fanqie",
                chapter_count: int = 500,
                structure_template_id: str = "",
-               style_profile_id: str = "") -> BookConfig:
+               style_profile_id: str = "",
+               source_timeline_id: str = "") -> BookConfig:
         book_id = self._next_book_id()
         cfg = BookConfig(
             book_id=book_id, title=title, pen_name=pen_name,
@@ -129,6 +131,7 @@ class BookManager:
             chapter_count=chapter_count,
             structure_template_id=structure_template_id,
             style_profile_id=style_profile_id,
+            source_timeline_id=source_timeline_id,
             created_at=datetime.now().isoformat(),
         )
         # 创建目录

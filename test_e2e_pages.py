@@ -175,7 +175,6 @@ def run_tests():
     # ═══ API endpoints（web_ui.py 是 Flask 面板，无 /api/health） ═══
     print("\n--- API Endpoints ---")
     apis = [
-        ("Engine Status", "/api/engine/status"),
         ("Tasks", "/api/status/tasks"),
     ]
 
@@ -215,24 +214,24 @@ def run_tests():
 
     # ═══ Book workflow consistency ═══
     print("\n--- Book Workflow ---")
-    r = get("/api/engine/status")
-    books = r.json() if r.status_code == 200 else []
+    import glob
+    book_ids = sorted(os.path.basename(p.rstrip('/\\'))
+                      for p in glob.glob("books/book_*"))
 
-    if books:
-        for book in books[:3]:
-            bid = book["book_id"]
+    if book_ids:
+        for bid in book_ids[:3]:
             r = get(f"/books/{bid}")
             check(f"Book detail ({bid})", r.status_code == 200,
                   f"got {r.status_code}")
 
             r = get(f"/books/{bid}/continue")
-            check(f"Continue page ({bid})", r.status_code == 200,
+            check(f"Write flow page ({bid})", r.status_code == 200,
                   f"got {r.status_code}")
 
             if r.status_code == 200:
-                check(f"Book title in continue page",
-                      book["title"] in r.text or bid in r.text,
-                      f"'{book['title']}' not found")
+                check(f"Write flow title in page",
+                      "蓝图式写作" in r.text or bid in r.text,
+                      f"write flow marker not found for {bid}")
     else:
         print("  (no books found - skipping book tests)")
 

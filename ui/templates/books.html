@@ -22,12 +22,21 @@
             {% endif %}
         </td>
         <td>{{ b.current_chapter }}/{{ b.chapter_count }}</td>
-        <td>
-            <a href="/books/{{ b.book_id }}/continue" class="btn small">续写</a>
-            <a href="/books/{{ b.book_id }}" class="btn small secondary">详情</a>
+        <td style="white-space:nowrap">
+            <a href="/timeline/{{ b.book_id }}/edit" class="btn small">📋 继续规划</a>
+            {% if r.is_timeline %}
+            <a href="/books/start/timeline/{{ b.book_id }}/write" class="btn small secondary">✍️ 开始写作</a>
+            <a href="/timeline/{{ b.book_id }}/detail" class="btn small secondary">📖 详情</a>
+            <form method="POST" action="/timeline/{{ b.book_id }}/delete" style="display:inline" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
+                <button class="small danger">删除</button>
+            </form>
+            {% else %}
+            <a href="/books/{{ b.book_id }}/continue" class="btn small secondary">✍️ 开始写作</a>
+            <a href="/books/{{ b.book_id }}" class="btn small secondary">📖 详情</a>
             <form method="POST" action="/books/{{ b.book_id }}/delete" style="display:inline" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
                 <button class="small danger">删除</button>
             </form>
+            {% endif %}
         </td>
     </tr>
     {% endfor %}
