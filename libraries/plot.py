@@ -2,10 +2,10 @@
 桥段库（Plot Device Library）
 网文经典桥段的结构化模板 — 模板 + 变量槽位 + 变体
 """
-import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
+
+from .base_library import JsonLibrary
 
 
 @dataclass
@@ -75,50 +75,25 @@ class PlotTemplate:
         )
 
 
-class PlotLibrary:
+class PlotLibrary(JsonLibrary):
     """桥段库管理器（进程内单例，避免每实例重复读 JSON）"""
     _instance = None
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    _list_attr = "templates"
+    _key = "templates"
+    _file_name = "plots.json"
 
     def __init__(self, data_dir: str = ""):
         if getattr(self, "_initialized", False):
             return
-        self._initialized = True
-        self.path = Path(data_dir) if data_dir else None
-        # 修复: 使用脚本所在目录的 data/ 子目录，避免CWD问题
-        base = Path(__file__).parent / "data"
-        self.save_path = Path(data_dir) / "plots.json" if data_dir else base / "plots.json"
-        self.templates: list[PlotTemplate] = []
-        self._load()
+        super().__init__(data_dir)
 
-    def _load(self):
-        """加载：优先从持久文件，否则内置"""
-        if self.save_path.exists():
-            with open(self.save_path, encoding="utf-8") as f:
-                data = json.load(f)
-            self.templates = [PlotTemplate.from_dict(d) for d in data.get("templates", [])]
-        else:
-            self.templates = BUILTIN_PLOTS
+    @classmethod
+    def _from_dict(cls, d: dict) -> "PlotTemplate":
+        return PlotTemplate.from_dict(d)
 
-    def _save(self):
-        self.save_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.save_path, "w", encoding="utf-8") as f:
-            json.dump({"templates": [t.to_dict() for t in self.templates]},
-                      f, ensure_ascii=False, indent=2)
-
-    def load(self, path: str):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        self.templates = [PlotTemplate.from_dict(d) for d in data.get("templates", [])]
-
-    def save(self, path: str):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"templates": [t.to_dict() for t in self.templates]},
-                      f, ensure_ascii=False, indent=2)
+    @classmethod
+    def _builtin(cls) -> list:
+        return BUILTIN_PLOTS
 
     def search(self, category: str = "", context: str = "",
                min_rating: int = 0) -> list[PlotTemplate]:

@@ -242,13 +242,15 @@ def run_tests():
     # ═══ CSS/JS consistency ═══
     print("\n--- Style Consistency ---")
     css_classes = ['.card', '.btn-primary', '.tag', '.progress-bar', '.accordion']
-    for page_path in ["/", "/books", "/scout"]:
-        r = get(page_path)
-        if r.status_code == 200:
-            for cls in css_classes:
-                check(f"  {page_path} has {cls}",
-                      cls in r.text,
-                      f"missing {cls}")
+    r = get("/static/css/base.css")
+    check("base.css served", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        for cls in css_classes:
+            check(f"  base.css has {cls}", cls in r.text, f"missing {cls}")
+    r = get("/static/js/base.js")
+    check("base.js served", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        check("  base.js has escapeHtml", "escapeHtml" in r.text)
 
 
 if __name__ == "__main__":

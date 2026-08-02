@@ -93,8 +93,20 @@ function getCheckedItems() {
     return result;
 }
 
+// 收集全部条目（“全部入库”用，忽略勾选状态）
+function getAllItems() {
+    var result = {plots:[], structures:[], gags:[], themes:[]};
+    var d = window._lastReviewData;
+    if (!d) return result;
+    result.plots = d.plot_details || [];
+    result.structures = d.structure_details || [];
+    result.gags = d.gag_details || [];
+    result.themes = d.theme_details || [];
+    return result;
+}
+
 async function ingestAll() {
-    var items = getCheckedItems();
+    var items = getAllItems();
     var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
     if (total === 0) return alert('没有可入库的条目');
     await doIngest(items);

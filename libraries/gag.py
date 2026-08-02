@@ -3,10 +3,7 @@
 网文高频搞笑模式的结构化模板
 """
 from dataclasses import dataclass, field
-from pathlib import Path
-import json
-
-_DEFAULT_DATA_DIR = Path(__file__).parent / "data"
+from .base_library import JsonLibrary
 
 
 @dataclass
@@ -43,48 +40,20 @@ class GagPattern:
                              if k in GagPattern.__dataclass_fields__})
 
 
-class GagLibrary:
+class GagLibrary(JsonLibrary):
     """笑点库管理器（进程内单例，避免每实例重复读 JSON）"""
     _instance = None
+    _list_attr = "patterns"
+    _key = "patterns"
+    _file_name = "gags.json"
 
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    @classmethod
+    def _from_dict(cls, d: dict) -> "GagPattern":
+        return GagPattern.from_dict(d)
 
-    def __init__(self):
-        if getattr(self, "_initialized", False):
-            return
-        self._initialized = True
-        self.patterns: list[GagPattern] = []
-        self._save_path = _DEFAULT_DATA_DIR / "gags.json"
-        self._load()
-
-    def _load(self):
-        if self._save_path.exists():
-            with open(self._save_path, encoding="utf-8") as f:
-                data = json.load(f)
-            self.patterns = [GagPattern.from_dict(d)
-                             for d in data.get("patterns", [])]
-        else:
-            self.patterns = BUILTIN_GAGS
-
-    def _save(self):
-        self._save_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._save_path, "w", encoding="utf-8") as f:
-            json.dump({"patterns": [p.to_dict() for p in self.patterns]},
-                      f, ensure_ascii=False, indent=2)
-
-    def load(self, path: str):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        self.patterns = [GagPattern.from_dict(d)
-                         for d in data.get("patterns", [])]
-
-    def save(self, path: str):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"patterns": [p.to_dict() for p in self.patterns]},
-                      f, ensure_ascii=False, indent=2)
+    @classmethod
+    def _builtin(cls) -> list:
+        return BUILTIN_GAGS
 
     def get_by_id(self, gag_id: str):
         for p in self.patterns:

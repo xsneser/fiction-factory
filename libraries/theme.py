@@ -3,10 +3,7 @@
 故事背后要传达的核心主题与讨论母题
 """
 from dataclasses import dataclass, field
-from pathlib import Path
-import json
-
-_DEFAULT_DATA_DIR = Path(__file__).parent / "data"
+from .base_library import JsonLibrary
 
 
 @dataclass
@@ -50,48 +47,20 @@ class ThemeEntry:
                              if k in ThemeEntry.__dataclass_fields__})
 
 
-class ThemeLibrary:
+class ThemeLibrary(JsonLibrary):
     """内涵库管理器（进程内单例，避免每实例重复读 JSON）"""
     _instance = None
+    _list_attr = "entries"
+    _key = "entries"
+    _file_name = "themes.json"
 
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    @classmethod
+    def _from_dict(cls, d: dict) -> "ThemeEntry":
+        return ThemeEntry.from_dict(d)
 
-    def __init__(self):
-        if getattr(self, "_initialized", False):
-            return
-        self._initialized = True
-        self.entries: list[ThemeEntry] = []
-        self._save_path = _DEFAULT_DATA_DIR / "themes.json"
-        self._load()
-
-    def _load(self):
-        if self._save_path.exists():
-            with open(self._save_path, encoding="utf-8") as f:
-                data = json.load(f)
-            self.entries = [ThemeEntry.from_dict(d)
-                            for d in data.get("entries", [])]
-        else:
-            self.entries = BUILTIN_THEMES
-
-    def _save(self):
-        self._save_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._save_path, "w", encoding="utf-8") as f:
-            json.dump({"entries": [e.to_dict() for e in self.entries]},
-                      f, ensure_ascii=False, indent=2)
-
-    def load(self, path: str):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        self.entries = [ThemeEntry.from_dict(d)
-                        for d in data.get("entries", [])]
-
-    def save(self, path: str):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"entries": [e.to_dict() for e in self.entries]},
-                      f, ensure_ascii=False, indent=2)
+    @classmethod
+    def _builtin(cls) -> list:
+        return BUILTIN_THEMES
 
     def get_by_id(self, theme_id: str):
         for e in self.entries:
