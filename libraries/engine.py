@@ -9,7 +9,6 @@ from typing import Optional
 from pathlib import Path
 import json
 import logging
-import re
 from datetime import datetime
 
 logger = logging.getLogger("novel-engine.engine")
@@ -27,6 +26,7 @@ from libraries.reviewer import ContentReviewer, ReviewResult
 from libraries.new_book import NewBookPipeline, NewBookConfig, Chapter3Result, recommend_opening
 from libraries.beat_writer import ChapterWriter, BeatLibrary
 from libraries.assembler import BookAssembler, BookAssemblerPlan, PlanInjector
+from core.inject import count_prose_units
 
 
 # ═══════════════════════════════════════════════
@@ -549,6 +549,8 @@ class NovelEngine:
         """两段式写作的第二步：撰写完成后，把本章的笑点/内涵注入正文。
 
         思路与 timeline_writer.TimelineChapterWriter._inject_gags 一致：小改、自然插入。
+        注意：必须把完整正文交给 LLM，绝不能只传截断片段（否则模型无法返回全文，
+        会把章节截短造成正文丢失）。
         """
         gags = ctx.get("gags") or []
         themes = ctx.get("themes") or []
@@ -556,10 +558,13 @@ class NovelEngine:
             return text
         if not self.llm:
             return text
+        if len(text) > 8000:
+            logger.warning("章节过长（%d字），跳过笑点注入以免截断正文", len(text))
+            return text
         prompt = f"""在以下网络小说正文中，自然地注入笑点和内涵线索。不要大改原文结构，在合适位置插入/微调 2-3 处即可。
 
 【正文】
-{text[:2000]}
+{text}
 
 【笑点模式】
 {'；'.join(gags[:4]) or '无特殊要求'}
@@ -577,8 +582,12 @@ class NovelEngine:
                                 temperature=0.5, max_tokens=min(4096, len(text) * 2))
             data = json.loads(extract_json(raw))
             new_text = data.get("text", text)
-            return new_text if len(new_text) > len(text) * 0.5 else text
-        except Exception:
+            if len(new_text) >= len(text) * 0.9:
+                return new_text
+            logger.warning("笑点注入输出过短（%d/%d字），保留原文", len(new_text), len(text))
+            return text
+        except Exception as e:
+            logger.warning("笑点注入失败，保留原文: %s", e)
             return text
 
     # ═══════════════════════════════════════════
@@ -1206,7 +1215,7 @@ class NovelEngine:
             if injected:
                 full_text = injected
                 result = {**result, "text": full_text,
-                          "word_count": len(re.findall(r'[一-鿿]', full_text))}
+                          "word_count": count_prose_units(full_text)}
 
         self.state.current_content = full_text
         self.state.current_plot_id = "beat_writer"
@@ -1535,7 +1544,7 @@ class NovelEngine:
             return
         buffer = draft.get("buffer", []) or []
         text = "\n\n".join(buffer)
-        words = len(re.findall(r'[一-鿿]', text))
+        words = count_prose_units(text)
         try:
             self._finalize_written_chapter(ch, {
                 "text": text, "word_count": words, "beats": 0,

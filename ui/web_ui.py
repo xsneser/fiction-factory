@@ -511,9 +511,22 @@ def api_update_outline(timeline_id):
     oid = data.get("id", "")
     field = data.get("field", "")
     val = data.get("value", 0)
+    # 字段白名单：只允许改章节范围，避免任意字段被客户端 setattr
+    if field not in ("start_chapter", "end_chapter"):
+        return jsonify({"ok": False, "error": "非法字段"}), 400
+    try:
+        val = int(val)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "章节号必须是整数"}), 400
+    if val < 1:
+        return jsonify({"ok": False, "error": "章节号必须 ≥ 1"}), 400
     for o in tl.outlines:
         if o.id == oid:
-            setattr(o, field, int(val))
+            if field == "end_chapter" and val < o.start_chapter:
+                return jsonify({"ok": False, "error": "结束章节不能小于起始章节"}), 400
+            if field == "start_chapter" and o.end_chapter and val > o.end_chapter:
+                return jsonify({"ok": False, "error": "起始章节不能大于结束章节"}), 400
+            setattr(o, field, val)
             break
     _save_timeline(tl, timeline_id)
     return jsonify({"ok": True})
@@ -555,6 +568,10 @@ def api_move_outline(timeline_id):
     new_idx = idx - 1 if direction == "up" else idx + 1
     if 0 <= new_idx < len(tl.outlines):
         tl.outlines[idx], tl.outlines[new_idx] = tl.outlines[new_idx], tl.outlines[idx]
+        # 换序后重建前后驱链，保持 predecessor/successor 一致
+        for i, o in enumerate(tl.outlines):
+            o.predecessor = tl.outlines[i - 1].id if i > 0 else ""
+            o.successor = tl.outlines[i + 1].id if i + 1 < len(tl.outlines) else ""
     _save_timeline(tl, timeline_id)
     return jsonify({"ok": True})
 
@@ -1852,7 +1869,7 @@ def scout_analyze():
                         wp["common_words"] = list(set(wp.get("common_words", []) + style_words))
                         wp["avoid_words"] = list(set(wp.get("avoid_words", []) + avoid_words))
                         profile.word_print = wp
-                        profile.save()
+                        profiles.update(profile)
                         profile_ready = True
 
                 if task_manager.is_cancelled(task_id):

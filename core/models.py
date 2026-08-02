@@ -89,6 +89,7 @@ class WritingConflict:
     summary: str = ""
     root_cause: str = ""
     reconcilable: bool = False
+    extra_constraints: str = ""  # 可注入写作 prompt 的补充约束（reconcilable 为 true 时由 LLM 给出）
     suggested_actions: list[ConflictActionOption] = field(default_factory=list)
 
 

@@ -25,7 +25,9 @@ from core.models import (
 )
 from core.llm_client import LLMClient
 from core import storage, writing, inject, foreshadow, skills as skills_mod, arcs, reconcile
-from core.writing import generate_outline, generate_chapter_full_pipeline, confirm_chapter
+from core.writing import (
+    generate_outline, generate_chapter_full_pipeline, confirm_chapter, revise_chapter,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("novel-engine")
@@ -483,10 +485,16 @@ async def revise_chapter_api(req: Feedback):
     state.task_running = True
     try:
         result = await _run_blocking(
-            generate_chapter_full_pipeline, state.llm_client, state.cfg, state.state,
-            state.settings, state.progress_path, state.project_dir())
-        return {"status": "revised"}
-    finally: state.task_running = False
+            revise_chapter, state.llm_client, state.cfg, state.state,
+            state.settings, state.progress_path,
+            state.state.current_chapter_index + 1, req.feedback)
+        return {"status": "revised", "num": result.num,
+                "word_count": result.word_count}
+    except Exception as e:
+        logger.error(f"章节修订失败: {e}")
+        raise HTTPException(500, str(e))
+    finally:
+        state.task_running = False
 
 
 # ─── Characters ───

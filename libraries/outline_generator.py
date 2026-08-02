@@ -385,9 +385,8 @@ class OutlineGenerator:
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
             )
-            if outlines and len(outlines) >= 2:
-                outline.predecessor = outlines[-2].id
-                outlines[-2].successor = outline.id
+            if outlines:
+                outlines[-1].successor = outline.id
             outlines.append(outline)
             ch = outline.end_chapter + 1
             tl.outlines.append(outline)

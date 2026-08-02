@@ -3,6 +3,7 @@
 """
 import json
 import math
+import logging
 from datetime import datetime
 from core.models import (
     Progress, Foreshadow, ForeshadowStatus, ForeshadowEvent,
@@ -11,6 +12,8 @@ from core.models import (
 from core.llm_client import LLMClient, extract_json, render_prompt
 from core import prompts
 from core.inject import build_history_summary, build_outline_constraints
+
+logger = logging.getLogger(__name__)
 
 
 def suggest_foreshadows(client: LLMClient, state: Progress, language: str = "zh") -> list[dict]:
@@ -49,7 +52,11 @@ def update_foreshadows_after_chapter(client: LLMClient, state: Progress,
     })
     system = "你是一位严谨的小说伏笔追踪员。请以JSON格式返回：{\"updates\": [...]}"
     raw = client.call(system, user_prompt, temperature=0.3, max_tokens=2048)
-    data = json.loads(extract_json(raw))
+    try:
+        data = json.loads(extract_json(raw))
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning("伏笔更新输出解析失败，跳过本章更新: %s", e)
+        return
     _apply_foreshadow_updates(state, data.get("updates", []), ch.num)
 
 
@@ -62,7 +69,10 @@ def _apply_foreshadow_updates(state: Progress, updates: list[dict], chapter_num:
         if u.get("event"):
             fs.events.append(ForeshadowEvent(chapter=chapter_num, note=u["event"]))
         if u.get("status"):
-            fs.status = ForeshadowStatus(u["status"])
+            try:
+                fs.status = ForeshadowStatus(u["status"])
+            except ValueError as e:
+                logger.warning("非法伏笔状态 %r 已忽略: %s", u["status"], e)
         if u.get("resolution"):
             fs.resolution = u["resolution"]
 

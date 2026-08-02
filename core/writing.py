@@ -189,6 +189,7 @@ def analyze_writing_conflict(client: LLMClient, state: Progress, idx: int,
         summary=data.get("summary", ""),
         root_cause=data.get("root_cause", "other"),
         reconcilable=data.get("reconcilable", False),
+        extra_constraints=data.get("extra_constraints", ""),
         suggested_actions=[
             ConflictActionOption(id=a.get("id", ""), label=a.get("label", ""),
                                  description=a.get("description", ""))
@@ -280,9 +281,10 @@ def generate_chapter_full_pipeline(client: LLMClient, story_cfg: dict,
                                             issues_accumulated, issues_accumulated)
         state.pending_writing_conflict = conflict
 
-        if conflict.reconcilable and extra_constraints:
+        # 调和可行且 LLM 给出了补充约束：带着约束重写一次正文
+        if conflict.reconcilable and conflict.extra_constraints:
             ch = generate_chapter(client, story_cfg, state, settings,
-                                  progress_path, extra_constraints, on_chunk)
+                                  progress_path, conflict.extra_constraints, on_chunk)
             ch.summary = generate_summary(client, ch.content)
             passed, _ = fact_check_chapter(client, state, idx, ch.content, story_cfg)
             if passed:
@@ -308,6 +310,38 @@ def confirm_chapter(state: Progress, progress_path: str):
     save_progress(progress_path, state)
 
 
-def reset_progress_files(progress_path: str):
-    from core.storage import reset_progress
-    reset_progress(progress_path)
+def revise_chapter(client: LLMClient, story_cfg: dict, state: Progress,
+                   settings: ProjectSettings, progress_path: str,
+                   chapter_num: int, feedback: str) -> ChapterState:
+    """按用户反馈定向修订一章：仅修改涉及部分，其余原文保持不变。
+
+    使用 prompts.chapter_revision 模板（局部修订，不是整章重写）。
+    """
+    idx = next((i for i, c in enumerate(state.chapters) if c.num == chapter_num), -1)
+    if idx < 0:
+        raise ValueError(f"章节 {chapter_num} 不存在")
+    ch = state.chapters[idx]
+    if not ch.content:
+        raise ValueError(f"章节 {chapter_num} 无正文可修订")
+
+    story = story_cfg.get("story", story_cfg)
+    user_prompt = render_prompt(prompts.chapter_revision, {
+        "ChapterNum": str(ch.num),
+        "ChapterTitle": ch.title,
+        "CorePrompt": state.core_prompt,
+        "HistorySummary": build_history_summary(state, idx),
+        "WritingStyle": story.get("writing_style", ""),
+        "WritingPOV": story.get("writing_pov", ""),
+        "CharacterContext": build_character_context(settings, ch.outline),
+        "WorldviewContext": build_worldview_context(settings, ch.outline),
+        "OriginalContent": ch.content,
+        "UserFeedback": feedback,
+    })
+    system = state.core_prompt or "你是一位专业的小说作者。请只输出修订后的章节正文。"
+    content = client.call(system, user_prompt, temperature=0.5, max_tokens=8192)
+
+    ch.content = strip_chapter_meta(content)
+    ch.word_count = count_prose_units(ch.content)
+    ch.status = ChapterStatus.REVIEW
+    save_progress(progress_path, state)
+    return ch

@@ -627,17 +627,29 @@ class ChapterAssembler:
         return False
 
     def _insert_transition(self, prev_end: str, curr_start: str, curr_text: str) -> str:
-        """插入过渡句"""
-        # 用简单的时间/空间过渡
-        transitions = [
-            "\n\n转眼间，",
-            "\n\n与此同时，",
-            "\n\n另一边，",
-            "\n\n不多时，",
-            "\n\n镜头一转，",
-        ]
-        import random
-        return random.choice(transitions) + curr_text.lstrip()
+        """插入过渡句。
+
+        优先用 LLM 生成贴合上下文的短过渡；无 LLM 或失败时仅用空行分隔。
+        禁止硬插『与此同时/转眼间/另一边』等 AI 高频套话——它们正是
+        de_ai / reviewer 要消灭的 AI 痕迹，插入等于自相矛盾。
+        """
+        if self.llm:
+            try:
+                prompt = (
+                    f"上一段结尾：{prev_end}\n\n下一段开头：{curr_start}\n\n"
+                    "请写一句不超过20字的过渡句，自然衔接两段。"
+                    "禁止使用『与此同时、转眼间、另一边、镜头一转』等套话。"
+                    "只输出过渡句正文，不要任何解释。"
+                )
+                raw = self.llm.call(
+                    "你是一位专业的小说编辑。只输出过渡句。",
+                    prompt, temperature=0.5, max_tokens=64)
+                trans = raw.strip().strip('"“”')
+                if trans and len(trans) <= 40:
+                    return f"\n\n{trans}\n\n{curr_text.lstrip()}"
+            except Exception:
+                pass
+        return f"\n\n{curr_text.lstrip()}"
 
     def _continuity_check(self, full_text: str, prev_ending: str) -> str:
         """LLM 做前后章连续性检查"""

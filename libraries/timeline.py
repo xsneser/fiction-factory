@@ -245,7 +245,7 @@ class TimelineBuilder:
                 template_id=tid,
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(template_ids)>1 else ''}",
                 start_chapter=ch,
-                end_chapter=ch + tmpl.total_chapters,
+                end_chapter=ch + tmpl.total_chapters - 1,
                 stages=[
                     {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
                      "events": s.key_events[:5]}
@@ -254,7 +254,8 @@ class TimelineBuilder:
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
             ))
-            outlines[-1].successor = outlines[-2].id if len(outlines) > 1 else ""
+            if len(outlines) > 1:
+                outlines[-2].successor = outlines[-1].id
             ch = outlines[-1].end_chapter + 1
         return outlines
 

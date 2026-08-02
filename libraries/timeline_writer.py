@@ -16,6 +16,7 @@ import json
 import re
 
 from .timeline import BookTimeline, OutlineSlot, PlotSlot
+from core.inject import count_prose_units
 
 CHARS_PER_BEAT = 200          # 每个节拍预计写多少个汉字（用于桥段字数规划）
 MAX_BRIDGE_WORDS = 1200       # 单个桥段字数上限（与 frontend story_line.js 共用同一公式）
@@ -166,7 +167,7 @@ class TimelineChapterWriter:
             text = raw.strip().lstrip('"“')
             if not text:
                 break
-            words = len(re.findall(r'[一-鿿]', text))
+            words = count_prose_units(text)
             if words <= 0:
                 break
             bridge_text += text
@@ -175,7 +176,7 @@ class TimelineChapterWriter:
             if words > 120:
                 for sent in _split_sentences(text):
                     if sent:
-                        yield sent, len(re.findall(r'[一-鿿]', sent))
+                        yield sent, count_prose_units(sent)
             else:
                 yield text, words
             if bridge_words >= budget:
@@ -234,7 +235,7 @@ class TimelineChapterWriter:
         seg = "\n\n".join(seg_parts)
 
         p.written_chapter = chapter_num
-        seg_wc = len(re.findall(r'[一-鿿]', seg))
+        seg_wc = count_prose_units(seg)
         new_chapter_words = chapter_words + seg_wc
         cut_chapter = new_chapter_words >= target
         yield {"type": "bridge_done",
@@ -284,7 +285,7 @@ class TimelineChapterWriter:
                 break
 
         text = "\n\n".join(buffer)
-        wc = len(re.findall(r'[一-鿿]', text))
+        wc = count_prose_units(text)
         return {
             "text": text,
             "word_count": wc,
@@ -321,41 +322,3 @@ class TimelineChapterWriter:
         except StopIteration as si:
             result = si.value
         return result
-
-    def _inject_gags(self, text, item):
-        """桥段写完后，注入该桥段的笑点/内涵（旧版整桥段一次生成时用）。
-        新「短句组」流已把笑点/内涵注入到每次写作 prompt，此方法仅兼容保留。"""
-        p = item["plot"]
-        gags, themes = [], []
-        for gid in (p.gag_ids or []):
-            g = self.gag_lib.get_by_id(gid) if self.gag_lib else None
-            gags.append(g.name if g else gid)
-        themes = p.theme_hints or []
-        if not gags and not themes:
-            return text
-        if not self.llm:
-            return text
-        prompt = f"""在以下网络小说正文中，自然地注入笑点和内涵线索。不要大改原文结构，在合适位置插入/微调 2-3 处即可。
-
-【正文】
-{text[:2000]}
-
-【笑点模式】
-{'；'.join(gags[:4]) or '无特殊要求'}
-
-【内涵提示】
-{'；'.join(themes[:3]) or '无'}
-
-【要求】
-1. 笑点要自然，不能生硬插入
-2. 返回完整修改后的正文
-3. 返回 JSON：{{"text": "修改后全文"}}"""
-        try:
-            from core.llm_client import extract_json
-            raw = self.llm.call("你是专业的网文编辑。只返回JSON。", prompt,
-                                temperature=0.5, max_tokens=min(4096, len(text) * 2))
-            data = json.loads(extract_json(raw))
-            new_text = data.get("text", text)
-            return new_text if len(new_text) > len(text) * 0.5 else text
-        except Exception:
-            return text
