@@ -15,7 +15,7 @@ from typing import Callable
 import json, time
 
 from .timeline import (
-    BookTimeline, OutlineSlot, PlotSlot,
+    BookTimeline, OutlineSlot, PlotSlot, merge_basic_info,
 )
 from .structure import StructureLibrary
 from .plot import PlotLibrary
@@ -118,7 +118,7 @@ class OutlineGenerator:
             basic_info = self._analyze_story(genre, sub_genre, custom_context, pen_name)
             if basic_info:
                 # 原地累加：保留用户已填的基础设定（主角/世界观等非空字段不覆盖）
-                tl.basic_info = self._merge_basic_info(tl.basic_info, basic_info)
+                tl.basic_info = merge_basic_info(tl.basic_info, basic_info)
             yield ("phase_done", "故事分析完成", {
                 "phase": 1, "data": {"protagonist": tl.basic_info.get("protagonist", {})}
             })
@@ -305,29 +305,6 @@ class OutlineGenerator:
             "tone": "轻松爽文",
             "target_audience": "男频",
         }
-
-    @staticmethod
-    def _merge_basic_info(existing, generated):
-        """以 generated 为基础，但保留 existing 里用户已填的非空字段（原地累加用）。"""
-        existing = existing or {}
-        generated = generated or {}
-        merged = {}
-        for key, gv in generated.items():
-            ev = existing.get(key)
-            if isinstance(gv, dict) and isinstance(ev, dict):
-                sub = dict(gv)
-                for sk, sv in ev.items():
-                    if sv not in (None, "", [], {}):
-                        sub[sk] = sv
-                merged[key] = sub
-            elif ev not in (None, "", [], {}):
-                merged[key] = ev
-            else:
-                merged[key] = gv
-        for key, ev in existing.items():  # generated 没覆盖的字段也保留
-            if key not in merged:
-                merged[key] = ev
-        return merged
 
     # ═══════════════════════════════════════
     # Phase 2: 故事线规划

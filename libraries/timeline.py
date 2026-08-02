@@ -446,3 +446,29 @@ def load_timeline(path: str) -> Optional[BookTimeline]:
         return BookTimeline.from_dict(data)
     except Exception:
         return None
+
+
+def merge_basic_info(existing: dict, generated: dict) -> dict:
+    """以 generated 为基础，保留 existing 里用户已填的非空字段（原地累加用）。
+
+    供大纲生成器与 web_ui 共用，避免同一逻辑两份拷贝。
+    """
+    existing = existing or {}
+    generated = generated or {}
+    merged = {}
+    for key, gv in generated.items():
+        ev = existing.get(key)
+        if isinstance(gv, dict) and isinstance(ev, dict):
+            sub = dict(gv)
+            for sk, sv in ev.items():
+                if sv not in (None, "", [], {}):
+                    sub[sk] = sv
+            merged[key] = sub
+        elif ev not in (None, "", [], {}):
+            merged[key] = ev
+        else:
+            merged[key] = gv
+    for key, ev in existing.items():  # generated 没覆盖的字段也保留
+        if key not in merged:
+            merged[key] = ev
+    return merged

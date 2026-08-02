@@ -3,7 +3,7 @@ NovelEngine — 完整 Web UI v2.0 (Flask + Jinja2)
 引擎集成版：新书启动 / 续写 / 管理面板
 """
 from flask import Flask, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
-import sys, os, json, logging, time, re
+import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from libraries.plot import PlotLibrary
@@ -76,7 +76,10 @@ def sse_stream_response(gen):
 # ─── 引擎实例缓存 ───
 _engines: dict[str, NovelEngine] = {}
 _timelines: dict[str, dict] = {}  # 时间线配置缓存
-from libraries.timeline import BookTimeline, save_timeline, load_timeline, TimelineBuilder
+_timeline_lock = threading.Lock()  # 保护时间线缓存读写（Flask 多线程）
+from libraries.timeline import (
+    BookTimeline, save_timeline, load_timeline, TimelineBuilder, merge_basic_info,
+)
 
 
 # ─── 时间线统一存取：草稿(tl_*) 与正式书(book_*) 两套 id 分派 ───
@@ -90,17 +93,19 @@ def _timeline_filepath(timeline_id: str) -> str:
 
 def _resolve_timeline(timeline_id):
     """从内存缓存或磁盘加载 BookTimeline，兼容 tl_* 与 book_*。"""
-    tl = _timelines.get(timeline_id)
-    if tl is None:
-        tl = load_timeline(_timeline_filepath(timeline_id))
-        if tl:
-            _timelines[timeline_id] = tl
+    with _timeline_lock:
+        tl = _timelines.get(timeline_id)
+        if tl is None:
+            tl = load_timeline(_timeline_filepath(timeline_id))
+            if tl:
+                _timelines[timeline_id] = tl
     return tl
 
 
 def _save_timeline(tl, timeline_id):
     """写入内存缓存并落盘。"""
-    _timelines[timeline_id] = tl
+    with _timeline_lock:
+        _timelines[timeline_id] = tl
     save_timeline(tl, _timeline_filepath(timeline_id))
 
 
@@ -631,32 +636,9 @@ def api_save_basic_info(timeline_id):
     return jsonify({"ok": True})
 
 
-def _merge_basic_info(existing, generated):
-    """以 generated 为基础，但保留 existing 里用户已填的非空字段。"""
-    existing = existing or {}
-    generated = generated or {}
-    merged = {}
-    for key, gv in generated.items():
-        ev = existing.get(key)
-        if isinstance(gv, dict) and isinstance(ev, dict):
-            sub = dict(gv)
-            for sk, sv in ev.items():
-                if sv not in (None, "", [], {}):
-                    sub[sk] = sv
-            merged[key] = sub
-        elif ev not in (None, "", [], {}):
-            merged[key] = ev
-        else:
-            merged[key] = gv
-    for key, ev in existing.items():  # generated 没覆盖的字段也保留
-        if key not in merged:
-            merged[key] = ev
-    return merged
-
-
 def _merge_generated_timeline(tl, generated):
     """把 5 阶段生成结果合并进现有时间线，不覆盖用户已填的基础信息。"""
-    tl.basic_info = _merge_basic_info(tl.basic_info, generated.basic_info)
+    tl.basic_info = merge_basic_info(tl.basic_info, generated.basic_info)
     if generated.outlines:
         tl.outlines = generated.outlines
     if generated.plots:

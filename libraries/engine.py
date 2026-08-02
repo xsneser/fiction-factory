@@ -845,91 +845,79 @@ class NovelEngine:
 
     def _exec_write_ch1(self, inst: Instruction) -> dict:
         """第一章：钩子 + 金手指激活 + 首个危机（节拍级写作）"""
-        config = self._new_book_config
-        nb = self.state.new_book
-
-        ch1_outline = (
-            f"第一章：钩子+金手指+首个危机\n"
-            f"流派：{config.genre}/{config.sub_genre}\n"
-            f"任务：前200字有强烈钩子→介绍主角处境→触发第一个危机→激活金手指\n"
-            f"核心要求：主角用幽默自嘲面对困境，奠定网文爽感基调"
-        )
-
-        self.chapter_writer.executor.profile = self.profile
-        result = self.chapter_writer.write_chapter(
-            chapter_num=1, chapter_outline=ch1_outline,
-            target_words=config.words_per_chapter or 3000,
-            genre=config.genre, pen_name=config.pen_name,
-            assembler_plan=self.state.assembler_plan,
-            stage_index=self._get_stage_index(1))
-
-        nb.chapter1 = result["text"]
-        self.cost_tracker.record("ch1_draft", "", result["text"])
-        self._save_new_book_chapter(1, "钩子·金手指·首次危机", nb.chapter1)
-        self.state.updated_at = datetime.now().isoformat()
-
-        return {"status": "ch1_done", "chapter": 1,
-                "word_count": result["word_count"], "beats": result["beats"]}
+        return self._exec_write_opening_chapter(1, inst)
 
     def _exec_write_ch2(self, inst: Instruction) -> dict:
         """第二章：世界观展开 + 能力初试（节拍级写作）"""
-        config = self._new_book_config
-        nb = self.state.new_book
-        prev_end = nb.chapter1[-500:] if nb.chapter1 else ""
-
-        ch2_outline = (
-            f"第二章：世界观展开+能力初试\n"
-            f"流派：{config.genre}/{config.sub_genre}\n"
-            f"任务：展示世界观→第一次使用金手指→建立日常节奏→章末中等钩子\n"
-            f"承接上文：{nb.chapter1[-200:] if nb.chapter1 else ''}..."
-        )
-
-        self.chapter_writer.executor.profile = self.profile
-        result = self.chapter_writer.write_chapter(
-            chapter_num=2, chapter_outline=ch2_outline,
-            target_words=config.words_per_chapter or 3000,
-            genre=config.genre, pen_name=config.pen_name,
-            previous_chapter_ending=prev_end,
-            assembler_plan=self.state.assembler_plan,
-            stage_index=self._get_stage_index(2))
-
-        nb.chapter2 = result["text"]
-        self.cost_tracker.record("ch2_draft", "", result["text"])
-        self._save_new_book_chapter(2, "世界观展开", nb.chapter2)
-        self.state.updated_at = datetime.now().isoformat()
-
-        return {"status": "ch2_done", "chapter": 2,
-                "word_count": result["word_count"], "beats": result["beats"]}
+        return self._exec_write_opening_chapter(2, inst)
 
     def _exec_write_ch3(self, inst: Instruction) -> dict:
         """第三章：首次核心冲突 + 展现实力（节拍级写作）"""
+        return self._exec_write_opening_chapter(3, inst)
+
+    # 前三章共用写手：仅大纲模板/承接方式不同，统一走同一管线
+    _OPENING_CHAPTER_META = {
+        1: {"cost_key": "ch1_draft", "save_title": "钩子·金手指·首次危机"},
+        2: {"cost_key": "ch2_draft", "save_title": "世界观展开"},
+        3: {"cost_key": "ch3_draft", "save_title": "首次核心冲突"},
+    }
+
+    @staticmethod
+    def _opening_chapter_outline(num: int, config) -> str:
+        base = {
+            1: (
+                "第一章：钩子+金手指+首个危机\n"
+                f"流派：{config.genre}/{config.sub_genre}\n"
+                "任务：前200字有强烈钩子→介绍主角处境→触发第一个危机→激活金手指\n"
+                "核心要求：主角用幽默自嘲面对困境，奠定网文爽感基调"
+            ),
+            2: (
+                "第二章：世界观展开+能力初试\n"
+                f"流派：{config.genre}/{config.sub_genre}\n"
+                "任务：展示世界观→第一次使用金手指→建立日常节奏→章末中等钩子"
+            ),
+            3: (
+                "第三章：首次核心冲突+展现实力\n"
+                f"流派：{config.genre}/{config.sub_genre}\n"
+                "任务：主角面临第一个真正的对手→展现实力→冲突解决→获得认可→\n"
+                "      埋更大世界的伏笔→章末强钩子"
+            ),
+        }
+        return base[num]
+
+    def _exec_write_opening_chapter(self, num: int, inst: Instruction) -> dict:
+        """新书前三章统一写手（承接/摘要差异按章号处理）。"""
         config = self._new_book_config
         nb = self.state.new_book
-        prev_end = nb.chapter2[-500:] if nb.chapter2 else ""
+        meta = self._OPENING_CHAPTER_META[num]
 
-        ch3_outline = (
-            f"第三章：首次核心冲突+展现实力\n"
-            f"流派：{config.genre}/{config.sub_genre}\n"
-            f"任务：主角面临第一个真正的对手→展现实力→冲突解决→获得认可→\n"
-            f"      埋更大世界的伏笔→章末强钩子"
-        )
+        outline = self._opening_chapter_outline(num, config)
+        prev_ending = ""
+        prev_summary = ""
+        if num == 2:
+            prev_ending = nb.chapter1[-500:] if nb.chapter1 else ""
+            if nb.chapter1:
+                outline += f"\n承接上文：{nb.chapter1[-200:]}..."
+        elif num == 3:
+            prev_ending = nb.chapter2[-500:] if nb.chapter2 else ""
+            prev_summary = f"前两章概要：{nb.chapter1[:200]}... → {nb.chapter2[:200]}..."
 
         self.chapter_writer.executor.profile = self.profile
         result = self.chapter_writer.write_chapter(
-            chapter_num=3, chapter_outline=ch3_outline,
+            chapter_num=num, chapter_outline=outline,
             target_words=config.words_per_chapter or 3000,
             genre=config.genre, pen_name=config.pen_name,
-            previous_chapter_ending=prev_end,
-            previous_summary=f"前两章概要：{nb.chapter1[:200]}... → {nb.chapter2[:200]}...",
+            previous_chapter_ending=prev_ending,
+            previous_summary=prev_summary,
             assembler_plan=self.state.assembler_plan,
-            stage_index=self._get_stage_index(3))
+            stage_index=self._get_stage_index(num))
 
-        nb.chapter3 = result["text"]
-        self.cost_tracker.record("ch3_draft", "", result["text"])
-        self._save_new_book_chapter(3, "首次核心冲突", nb.chapter3)
+        setattr(nb, f"chapter{num}", result["text"])
+        self.cost_tracker.record(meta["cost_key"], "", result["text"])
+        self._save_new_book_chapter(num, meta["save_title"], result["text"])
         self.state.updated_at = datetime.now().isoformat()
 
-        return {"status": "ch3_done", "chapter": 3,
+        return {"status": f"ch{num}_done", "chapter": num,
                 "word_count": result["word_count"], "beats": result["beats"]}
 
     def _exec_generate_title(self, inst: Instruction) -> dict:
