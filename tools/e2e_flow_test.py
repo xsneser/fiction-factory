@@ -7,7 +7,6 @@ NovelEngine 全流程浏览器自动化测试
 用法: python tools/e2e_flow_test.py [--headless] [--book 书名]
 """
 import argparse
-import json
 import sys
 import time
 from pathlib import Path

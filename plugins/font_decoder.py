@@ -7,7 +7,6 @@ import json
 import requests
 from pathlib import Path
 from fontTools.ttLib import TTFont
-from fontTools.pens.recordingPen import RecordingPen
 
 
 class FanqieDecoder:

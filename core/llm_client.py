@@ -7,7 +7,7 @@ import time
 import re
 import ssl
 import urllib3
-from typing import Callable, Optional
+from typing import Callable
 from urllib3 import PoolManager
 from urllib3.util import create_urllib3_context
 

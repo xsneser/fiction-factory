@@ -13,19 +13,19 @@ from datetime import datetime
 
 logger = logging.getLogger("novel-engine.engine")
 
-from libraries.plot import PlotLibrary, PlotTemplate
-from libraries.structure import StructureLibrary, StructureTemplate
+from libraries.plot import PlotLibrary
+from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
 from libraries.theme import ThemeLibrary
 from libraries.profiles import PenNameProfile, ProfileManager
 from libraries.book_manager import BookManager, BookConfig
 from libraries.cost_tracker import CostTracker
 from libraries.de_ai import DeAIEngine
-from libraries.character_state import CharacterStateMachine, CharacterState
-from libraries.reviewer import ContentReviewer, ReviewResult
-from libraries.new_book import NewBookPipeline, NewBookConfig, Chapter3Result, recommend_opening
-from libraries.beat_writer import ChapterWriter, BeatLibrary
-from libraries.assembler import BookAssembler, BookAssemblerPlan, PlanInjector
+from libraries.character_state import CharacterStateMachine
+from libraries.reviewer import ContentReviewer
+from libraries.new_book import NewBookPipeline, NewBookConfig
+from libraries.beat_writer import ChapterWriter
+from libraries.assembler import BookAssembler, BookAssemblerPlan
 from core.inject import count_prose_units
 
 
@@ -404,6 +404,21 @@ class NovelEngine:
             self.state.outline_data = outline
             self.state.chapters = outline.get("chapters", [])
             self.state.phase = Phase.WRITING
+
+        # 恢复组装计划（桥段/笑点/内涵注入），保证重启后旧书写作不丢失
+        plan_path = Path("books") / book_id / "assembler_plan.json"
+        if plan_path.exists():
+            try:
+                from libraries.assembler import load_plan
+                self.state.assembler_plan = BookAssemblerPlan.from_dict(
+                    load_plan(str(plan_path)),
+                    structure_lib=self.struct_lib,
+                    plot_lib=self.plot_lib,
+                    gag_lib=self.gag_lib,
+                    theme_lib=self.theme_lib,
+                )
+            except Exception as e:
+                logger.warning("恢复组装计划失败 (%s): %s", plan_path, e)
 
         # 加载时间线（统一模型）：时间线书用 timeline.json 推导逐章大纲，优先于结构大纲
         tl = self.book_mgr.load_timeline(book_id)

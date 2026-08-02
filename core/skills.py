@@ -1,7 +1,6 @@
 """
 技能系统 — 对齐 show-me-the-story skills.go + embeds/skills/*.md
 """
-import os
 import logging
 from pathlib import Path
 from core.models import Skill

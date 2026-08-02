@@ -11,15 +11,13 @@
         # event = ("phase"|"progress"|"done"|"error", message, data_dict)
         yield sse_event(event)
 """
-from dataclasses import dataclass, field
-from typing import Optional, Callable
-import json, re, time
+from typing import Callable
+import json, time
 
 from .timeline import (
-    BookTimeline, OutlineSlot, PlotSlot, TimelineBuilder,
-    save_timeline, load_timeline,
+    BookTimeline, OutlineSlot, PlotSlot,
 )
-from .structure import StructureLibrary, StructureTemplate
+from .structure import StructureLibrary
 from .plot import PlotLibrary
 from .gag import GagLibrary
 from .theme import ThemeLibrary

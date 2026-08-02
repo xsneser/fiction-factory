@@ -3,11 +3,10 @@
 前三章决定一切：钩子→世界观→首次冲突
 + 书名生成 + 简介生成
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 from libraries.plot import PlotLibrary, PlotTemplate
 from libraries.structure import StructureLibrary, StructureTemplate
-from libraries.gag import GagLibrary
 from libraries.profiles import PenNameProfile
 
 
@@ -27,25 +26,6 @@ class NewBookConfig:
     structure_template_id: str = ""    # 大纲结构ID
     # 风格
     style_profile_id: str = ""         # 笔名档案ID
-
-
-@dataclass
-class Chapter1Result:
-    """第一章结果"""
-    hook_text: str = ""                # 第一章正文
-    hook_type: str = ""                # 钩子类型
-    golden_finger_intro: str = ""      # 金手指引入
-    initial_conflict: str = ""         # 初始冲突
-
-
-@dataclass
-class Chapter3Result:
-    """前三章完整结果"""
-    chapter1: str = ""                 # 第一章：钩子+金手指
-    chapter2: str = ""                 # 第二章：世界观展开
-    chapter3: str = ""                 # 第三章：首次核心冲突
-    titles: list[str] = field(default_factory=list)  # 建议书名（3-5个）
-    synopsis: str = ""                 # 简介
 
 
 class NewBookPipeline:

@@ -12,10 +12,9 @@
 
 旧"整本先写全文再分章"（BlueprintWritingPipeline）已废弃删除。
 """
-import json
 import re
 
-from .timeline import BookTimeline, OutlineSlot, PlotSlot
+from .timeline import BookTimeline
 from core.inject import count_prose_units
 
 CHARS_PER_BEAT = 200          # 每个节拍预计写多少个汉字（用于桥段字数规划）

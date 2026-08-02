@@ -5,7 +5,6 @@
 import re
 import random
 from dataclasses import dataclass
-from typing import Optional
 
 
 # ─── AI 高频词替换表 ───
@@ -71,21 +70,6 @@ def apply_word_replacements(text: str) -> tuple[str, int]:
                 result = result.replace(old, replacement, 1)
                 count += 1
     return result, count
-
-
-def split_long_sentences(text: str, max_chars: int = 40) -> str:
-    """句式层：拆分过长的句子"""
-    # 在逗号、句号处拆分超长句
-    parts = re.split(r'([。！？；])', text)
-    result = []
-    for part in parts:
-        if len(part) <= max_chars or part in '。！？；':
-            result.append(part)
-        else:
-            # 在逗号处拆分
-            sub_parts = re.split(r'([，])', part)
-            result.extend(sub_parts)
-    return ''.join(result)
 
 
 def add_human_imperfections(text: str, typo_rate: float = 0.001) -> str:
@@ -161,8 +145,6 @@ class DeAIEngine:
 
     def __init__(self, llm_client=None):
         self.llm = llm_client
-        # 反向统计：每个替换词被用了多少次（在一本书里不能总用同一个替换）
-        self.usage_counter: dict[str, int] = {}
 
     def process_rule_based(self, text: str, style: str = "chatty") -> DeAIResult:
         """纯规则去 AI 味（不需要 LLM，速度快）"""

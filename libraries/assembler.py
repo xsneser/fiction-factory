@@ -88,14 +88,47 @@ class BookAssemblerPlan:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "BookAssemblerPlan":
+    def from_dict(
+        cls,
+        d: dict,
+        structure_lib=None,
+        plot_lib=None,
+        gag_lib=None,
+        theme_lib=None,
+    ) -> "BookAssemblerPlan":
+        """从磁盘 dict 完整还原计划；库对象由调用方注入（Structure/Plot/Gag/Theme Library）。"""
         plan = cls(
             book_title=d.get("book_title", ""),
             genre=d.get("genre", ""),
             theme_hints=d.get("theme_hints", []),
             generated_at=d.get("generated_at", ""),
         )
-        # 反序列化 structure 需要 StructureLibrary，由调用方注入
+        if structure_lib:
+            plan.structure = structure_lib.get_by_id(d.get("structure_id", "")) or None
+        for t in d.get("themes", []):
+            if theme_lib:
+                theme = theme_lib.get_by_id(t.get("id", ""))
+                if theme:
+                    plan.themes.append(theme)
+        for s in d.get("stages", []):
+            sp = StageWritingPlan(
+                stage_index=s.get("stage_index", 0),
+                stage_name=s.get("stage_name", ""),
+                stage_description=s.get("stage_description", ""),
+                chapter_range=tuple(s.get("chapter_range", [0, 0])),
+                plot_match_reason=s.get("plot_match_reason", ""),
+            )
+            pd = s.get("plot") or {}
+            if pd and plot_lib:
+                sp.plot = plot_lib.get_by_id(pd.get("id", "")) or None
+            for g in s.get("gags", []):
+                if gag_lib:
+                    gp = gag_lib.get_by_id(g.get("id", ""))
+                    if gp:
+                        sp.gags.append(gp)
+            sp.gag_slot_assignments = s.get("gag_slot_assignments", [])
+            sp.theme_hints = s.get("theme_hints", [])
+            plan.stages.append(sp)
         return plan
 
 

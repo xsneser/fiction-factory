@@ -10,7 +10,6 @@
 import time
 import threading
 from datetime import datetime
-from typing import Optional
 
 _lock = threading.Lock()
 _tasks: dict[str, dict] = {}

@@ -8,18 +8,18 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(__file__))
 
-from libraries.plot import PlotLibrary, PlotTemplate
+from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
 from libraries.theme import ThemeLibrary
-from libraries.profiles import ProfileManager, PenNameProfile, PRESET_PROFILES
+from libraries.profiles import ProfileManager
 from libraries.book_manager import BookManager
 from libraries.new_book import NewBookPipeline, NewBookConfig, recommend_opening
-from libraries.cost_tracker import CostTracker, estimate_cost
-from libraries.de_ai import DeAIEngine, DeAIResult
-from libraries.character_state import CharacterStateMachine, CharacterState
-from libraries.reviewer import ContentReviewer, ReviewResult
-from libraries.engine import NovelEngine, EngineState, Instruction, Op, BookMode, Phase
+from libraries.cost_tracker import CostTracker
+from libraries.de_ai import DeAIEngine
+from libraries.character_state import CharacterStateMachine
+from libraries.reviewer import ContentReviewer
+from libraries.engine import NovelEngine, Op, BookMode, Phase
 
 
 def test_print(phase, status="OK", detail=""):

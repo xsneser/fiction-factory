@@ -7,7 +7,6 @@ import logging
 from core.models import Progress, Arc, ChapterState, ChapterStatus, ProjectSettings
 from core.llm_client import LLMClient, extract_json, render_prompt
 from core import prompts
-from core.inject import build_history_summary
 
 logger = logging.getLogger(__name__)
 

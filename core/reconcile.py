@@ -5,13 +5,12 @@
 import json
 import logging
 from core.models import (
-    Progress, ChapterState, ChapterStatus, ProjectSettings, Character,
-    OutlineCharacterReport, OutlineCharacterSuggestion, PostProcessState,
+    Progress, ChapterStatus, ProjectSettings,
+    OutlineCharacterReport, OutlineCharacterSuggestion,
     BookDiagnosis, BookDiagnosisItem
 )
 from core.llm_client import LLMClient, extract_json, render_prompt
 from core import prompts
-from core.inject import build_history_summary, build_outline_constraints
 
 logger = logging.getLogger(__name__)
 
@@ -162,5 +161,3 @@ def _build_full_text(state: Progress) -> str:
 
 
 # ─── SSE 日志 ───
-
-

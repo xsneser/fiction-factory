@@ -13,7 +13,6 @@ import subprocess
 import sys
 import time
 import re
-import signal
 from urllib.parse import urljoin
 
 import requests

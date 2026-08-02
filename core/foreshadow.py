@@ -2,7 +2,6 @@
 伏笔系统 — 对齐 show-me-the-story foreshadow.go
 """
 import json
-import math
 import logging
 from datetime import datetime
 from core.models import (
@@ -11,7 +10,7 @@ from core.models import (
 )
 from core.llm_client import LLMClient, extract_json, render_prompt
 from core import prompts
-from core.inject import build_history_summary, build_outline_constraints
+from core.inject import build_history_summary
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@
 上下文注入 — 对齐 show-me-the-story inject.go
 将项目状态（前情、大纲、角色、伏笔、记忆）注入写作 prompt
 """
-from core.models import Progress, ProjectSettings, ChapterState, ForeshadowStatus
+from core.models import Progress, ProjectSettings, ForeshadowStatus
 
 
 def build_history_summary(state: Progress, idx: int) -> str:

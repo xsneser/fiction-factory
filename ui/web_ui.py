@@ -3,7 +3,7 @@ NovelEngine — 完整 Web UI v2.0 (Flask + Jinja2)
 引擎集成版：新书启动 / 续写 / 管理面板
 """
 from flask import Flask, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
-import sys, os, json, threading, logging, time, re
+import sys, os, json, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from libraries.plot import PlotLibrary
@@ -17,7 +17,6 @@ from libraries.de_ai import DeAIEngine
 from libraries.character_state import CharacterStateMachine
 from libraries.reviewer import ContentReviewer
 from libraries.engine import NovelEngine, BookMode, Op, Instruction
-from libraries.new_book import NewBookConfig, NewBookPipeline, recommend_opening
 from core.llm_client import LLMClient
 from core.models import APIConfig
 

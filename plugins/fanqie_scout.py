@@ -15,7 +15,6 @@
   使用本模块产生的任何法律风险由使用者自行承担。
 """
 import json
-import os
 import re
 import time
 import logging
@@ -23,11 +22,7 @@ from plugins import font_decoder
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urljoin
-
 import requests
-
-from plugins import BasePlugin, ScrapedMaterial
 
 logger = logging.getLogger("fanqie-scout")
 
@@ -141,7 +136,7 @@ class FanqieCrawler:
 
     def search_novel(self, title: str) -> Optional[NovelInfo]:
         """按书名搜索——Bing搜索 + 页面解析 + fanqie搜索页兜底"""
-        import urllib.parse, unicodedata
+        import unicodedata
         
         # 生成多级搜索查询
         queries = []

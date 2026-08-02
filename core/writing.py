@@ -3,7 +3,7 @@
 """
 import json
 import logging
-from core.models import Progress, ChapterState, ChapterStatus, ProjectSettings, APIConfig, WritingConflict, ConflictActionOption
+from core.models import Progress, ChapterState, ChapterStatus, ProjectSettings, WritingConflict, ConflictActionOption
 from core.llm_client import LLMClient, extract_json, render_prompt
 from core.inject import (
     build_history_summary, build_previous_chapter_tail,
@@ -308,7 +308,6 @@ def confirm_chapter(state: Progress, progress_path: str):
     ch.status = ChapterStatus.ACCEPTED
     state.current_chapter_index = idx + 1
     save_progress(progress_path, state)
-
 
 def revise_chapter(client: LLMClient, story_cfg: dict, state: Progress,
                    settings: ProjectSettings, progress_path: str,

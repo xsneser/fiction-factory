@@ -2,9 +2,8 @@
 角色状态自动机（Character State Machine）
 追踪每个角色在每章后的动态状态变化
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import json
-from datetime import datetime
 
 
 @dataclass

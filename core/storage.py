@@ -8,7 +8,7 @@ from typing import Optional
 from core.models import (
     Progress, ChapterState, ChapterStatus,
     ProjectSettings, Character, WorldviewEntry, Organization,
-    APIConfig, Arc, Foreshadow
+    APIConfig, Arc
 )
 
 
