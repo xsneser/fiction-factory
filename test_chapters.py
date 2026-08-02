@@ -1,4 +1,11 @@
+import sys
 from plugins.fanqie_scout import FanqieCrawler
+
+# Windows 控制台默认 GBK，直接 print 中文/emoji/PUA 会崩，强制走 UTF-8
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 c = FanqieCrawler()
 
 # Test download first chapter

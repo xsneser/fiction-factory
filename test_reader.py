@@ -4,9 +4,15 @@
 """
 import sys, json, re, requests
 
+# Windows 控制台默认 GBK，直接 print 中文/emoji 会崩，强制走 UTF-8
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 url = sys.argv[1] if len(sys.argv) > 1 else "https://fanqienovel.com/reader/7173216089122439711"
 
 s = requests.Session()
+s.trust_env = False  # 与 FanqieCrawler 一致：直连不走系统代理
 s.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "text/html,application/xhtml+xml,*/*",

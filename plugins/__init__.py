@@ -2,8 +2,18 @@
 外部采集插件系统
 从小说平台、社交媒体获取桥段/笑点/梗素材
 """
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+
+
+def _has_pua_chars(text: str) -> bool:
+    """检测文本是否残留 PUA 私用区字符（字体加密未解码的乱码）。
+
+    番茄等平台的正文用自定义字体把汉字映射到 U+E000-U+F8FF，
+    解码失败时正文会整段变成这类私用区乱码，不能直接入库。
+    """
+    return any(0xE000 <= ord(c) <= 0xF8FF for c in text)
 
 
 @dataclass
@@ -98,7 +108,11 @@ class FanqiePlugin(BasePlugin):
             materials = []
             for ch in chapter_list[:max_items]:
                 content = crawler.download_chapter(novel.book_id, ch.get("id", ""))
+                time.sleep(0.8)  # 礼貌爬取：章节请求间留间隔
                 if not content:
+                    continue
+                # 解码后仍残留 PUA 乱码的内容跳过，避免脏数据入库
+                if _has_pua_chars(content):
                     continue
                 materials.append(ScrapedMaterial(
                     source="fanqie",
