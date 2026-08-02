@@ -26,7 +26,7 @@ from libraries.reviewer import ContentReviewer
 from libraries.new_book import NewBookPipeline, NewBookConfig
 from libraries.beat_writer import ChapterWriter
 from libraries.assembler import BookAssembler, BookAssemblerPlan
-from core.inject import count_prose_units
+from core.text_utils import count_prose_units
 
 
 # ═══════════════════════════════════════════════

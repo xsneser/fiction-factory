@@ -15,7 +15,7 @@
 import re
 
 from .timeline import BookTimeline
-from core.inject import count_prose_units
+from core.text_utils import count_prose_units
 
 CHARS_PER_BEAT = 200          # 每个节拍预计写多少个汉字（用于桥段字数规划）
 MAX_BRIDGE_WORDS = 1200       # 单个桥段字数上限（与 frontend story_line.js 共用同一公式）

@@ -33,7 +33,6 @@ fi
 echo ""
 echo "📦 检查依赖..."
 python3 -c "import flask" 2>/dev/null || pip install flask -q
-python3 -c "import fastapi" 2>/dev/null || pip install fastapi uvicorn -q
 python3 -c "import requests" 2>/dev/null || pip install requests -q
 python3 -c "import fontTools" 2>/dev/null || pip install fonttools -q
 [ -f "requirements.txt" ] && pip install -r requirements.txt -q 2>/dev/null || true

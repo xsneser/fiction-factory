@@ -54,7 +54,6 @@ cp api.example.json api.json
 
 # 3. 启动
 python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
-# 旧版 FastAPI 兼容后端：python run.py server（与主面板同端口，二选一启动）
 ```
 
 ---
@@ -152,8 +151,6 @@ PUA 字体解码器 `plugins/font_decoder.py` 内置 362 条映射表，支持�
 
 ```
 D:\NovelEngine/
-├── main.py                 # FastAPI 后端入口 (58080)
-├── run.py                  # 命令行入口（server / ui / dev）
 ├── launch.bat / launch.sh  # 一键启动脚本
 │
 ├── libraries/              # 核心业务逻辑
@@ -178,18 +175,10 @@ D:\NovelEngine/
 │   ├── gag.py              # 笑点库（10模式）
 │   └── theme.py            # 内涵库（6母题）
 │
-├── core/                   # LLM 引擎（show-me-the-story Python 移植）
+├── core/                   # LLM 基础设施（v2 引擎共用）
 │   ├── llm_client.py       # API 调用封装
-│   ├── writing.py          # 写作引擎
-│   ├── prompts.py          # 提示词模板
-│   ├── models.py           # 数据模型
-│   ├── storage.py          # 存储层
-│   ├── inject.py           # 上下文注入
-│   ├── foreshadow.py       # 伏笔系统
-│   ├── arcs.py             # 卷/Arc 系统
-│   ├── reconcile.py        # 结果修正与后处理
-│   ├── skills.py           # 技能嵌入系统
-│   └── embeds/skills/      # 内置技能（写作技巧/人设/剧情发展）
+│   ├── models.py           # APIConfig 数据模型
+│   └── text_utils.py       # 文本工具（字数统计）
 │
 ├── plugins/                # 外部采集插件
 │   ├── fanqie_scout.py     # 番茄侦察兵（搜/下/析）
@@ -238,7 +227,6 @@ D:\NovelEngine/
 │       └── cost.json
 │
 ├── profiles/               # 笔名档案 JSON（.gitignore）
-├── storys/                 # 旧引擎（FastAPI 兼容）项目数据（.gitignore）
 ├── storage/                # 运行时缓存（.gitignore）
 ├── api.json                # API 配置（.gitignore）
 ├── api.example.json        # 配置模板
@@ -264,11 +252,11 @@ NovelEngine 的开发参考了以下开源项目：
 
 ### [Nigh/show-me-the-story](https://github.com/Nigh/show-me-the-story) ⭐ 398+
 
-**核心架构参考。** 整个 `core/` 模块（LLM 客户端、写作引擎、提示词系统、伏笔系统、卷弧管理、上下文注入、结果修正等）是对 show-me-the-story Go 架构的完整 Python 移植。其大纲→逐章→伏笔→打磨的流程设计是 NovelEngine 的架构基石。
+**核心架构参考。** 早期的 `core/` 模块（LLM 客户端、写作引擎、伏笔系统、卷弧管理等）曾是对 show-me-the-story Go 架构的 Python 移植，其流程设计是 NovelEngine 的架构基石。现已收敛为纯 LLM 基础设施层（客户端/配置/文本工具），业务全部由 `libraries/` 的 v2 引擎承载。
 
 ### [qiuxinyuan321/novel-writer-master](https://github.com/qiuxinyuan321/novel-writer-master)
 
-**流式 UI + AI 降重参考。** Streamlit 实验台的设计灵感来源于此项目，AI 降重模块 `de_ai.py` 的思路也受其启发。
+**流式 UI + AI 降重参考。** AI 降重模块 `de_ai.py` 的思路受其启发。
 
 > *"从 show-me-the-story 的架构思想出发，走向真正的网文工业量产。"*
 
@@ -279,9 +267,7 @@ NovelEngine 的开发参考了以下开源项目：
 - **语言**: Python 3.10+
 - **LLM**: DeepSeek API（兼容 OpenAI 格式）
 - **存储**: JSON 文件系统
-- **后台**: FastAPI (58080)
-- **管理面板**: Flask + Jinja2 (58080)
-- **实验台**: Streamlit (8501)
+- **Web 面板**: Flask + Jinja2 (58080)
 
 ---
 
