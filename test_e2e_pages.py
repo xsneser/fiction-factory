@@ -17,6 +17,11 @@ from urllib.parse import urljoin
 
 import requests
 
+# Windows 控制台默认 GBK，直接 print 中文/emoji 会崩，强制走 UTF-8
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 BASE = "http://localhost:58080"
 HOST = os.environ.get("NOVEL_HOST", "127.0.0.1")
 PORT = 58080

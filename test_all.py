@@ -6,7 +6,15 @@ NovelEngine 集成测试
 """
 import sys
 import os
+import tempfile
 sys.path.insert(0, os.path.dirname(__file__))
+
+# Windows 控制台默认 GBK，直接 print 中文/emoji 会崩，强制走 UTF-8
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+TMP_DIR = tempfile.gettempdir()
 
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
@@ -281,14 +289,14 @@ assert_ok("路由-完本", inst.op == Op.COMPLETE, str(inst.op))
 print("\n═══ Phase 10: 数据持久化 ═══")
 
 # 成本序列化
-tracker.save("/tmp/test_cost.json")
-loaded = CostTracker.load("/tmp/test_cost.json")
+tracker.save(os.path.join(TMP_DIR, "test_cost.json"))
+loaded = CostTracker.load(os.path.join(TMP_DIR, "test_cost.json"))
 assert_ok("持久-成本", loaded.spent == tracker.spent)
 
 # 角色状态序列化
-csm.save("/tmp/test_chars.json")
+csm.save(os.path.join(TMP_DIR, "test_chars.json"))
 loaded_csm = CharacterStateMachine()
-loaded_csm.load("/tmp/test_chars.json")
+loaded_csm.load(os.path.join(TMP_DIR, "test_chars.json"))
 assert_ok("持久-角色", len(loaded_csm.characters) == 3)
 
 # ══════════════════════════════════════════════
@@ -307,7 +315,8 @@ print(f"{'='*55}")
 # 清理
 bm.delete(cfg.book_id)
 import os
-for f in ["/tmp/test_cost.json", "/tmp/test_chars.json"]:
+for f in [os.path.join(TMP_DIR, "test_cost.json"),
+          os.path.join(TMP_DIR, "test_chars.json")]:
     if os.path.exists(f):
         os.remove(f)
 

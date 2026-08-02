@@ -47,10 +47,10 @@ if not exist "api.json" (
 
 :: --- Install deps ---
 echo [INFO] Checking packages...
-%PYTHON% -c "import flask, fastapi, openai" >nul 2>&1
+%PYTHON% -c "import flask, fastapi, requests, fontTools" >nul 2>&1
 if %errorlevel% neq 0 (
     echo [INFO] Installing...
-    %PYTHON% -m pip install flask fastapi uvicorn openai -q 2>nul
+    %PYTHON% -m pip install flask fastapi uvicorn requests fonttools -q 2>nul
     if exist "requirements.txt" %PYTHON% -m pip install -r requirements.txt -q 2>nul
 )
 
