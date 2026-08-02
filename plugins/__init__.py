@@ -80,14 +80,37 @@ class FanqiePlugin(BasePlugin):
 
     def is_available(self) -> bool:
         try:
-            import requests
+            from .fanqie_scout import FanqieCrawler
+            FanqieCrawler()
             return True
-        except ImportError:
+        except Exception:
             return False
 
     def scrape(self, keyword: str = "", max_items: int = 20) -> list[ScrapedMaterial]:
-        # TODO: 实现番茄小说爬虫
-        return []
+        """按书名搜索并下载前若干章，包装成可入库素材。"""
+        try:
+            from .fanqie_scout import FanqieCrawler
+            crawler = FanqieCrawler()
+            novel = crawler.search_novel(keyword)
+            if not novel:
+                return []
+            chapter_list = crawler.get_chapter_list(novel.book_id, max_items)
+            materials = []
+            for ch in chapter_list[:max_items]:
+                content = crawler.download_chapter(novel.book_id, ch.get("id", ""))
+                if not content:
+                    continue
+                materials.append(ScrapedMaterial(
+                    source="fanqie",
+                    material_type="plot",
+                    raw_content=content,
+                    cleaned_content=content[:500],
+                    url=f"https://fanqienovel.com/page/{novel.book_id}",
+                    title=ch.get("title", ""),
+                ))
+            return materials
+        except Exception:
+            return []
 
 
 class QidianPlugin(BasePlugin):

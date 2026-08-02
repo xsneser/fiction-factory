@@ -53,9 +53,8 @@ cp api.example.json api.json
 # 编辑 api.json 填入你的 DeepSeek API Key
 
 # 3. 启动
-python main.py          # FastAPI 后端 (58080)
-python ui/web_ui.py     # Flask 管理面板 (58080)
-python run.py ui        # [旧] Streamlit 实验台 (8501)
+python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
+# 旧版 FastAPI 兼容后端：python run.py server（与主面板同端口，二选一启动）
 ```
 
 ---
@@ -160,7 +159,12 @@ D:\NovelEngine/
 ├── libraries/              # 核心业务逻辑
 │   ├── engine.py           # 引擎（新书/续写双模式）
 │   ├── beat_writer.py      # 节拍级写作（14微模板）
-│   ├── writing_pipeline.py # [旧] 写作流水线
+│   ├── outline_generator.py# 故事线大纲生成（5阶段管线）
+│   ├── timeline.py         # 时间线数据模型 + TimelineBuilder
+│   ├── timeline_writer.py  # 桥段驱动的逐章增量写作
+│   ├── assembler.py        # 书籍组装器（库材料→写作计划）
+│   ├── outline_agent.py    # 大纲助手（自然语言调整故事线）
+│   ├── base_library.py     # 四大库共用基类（单例+读写）
 │   ├── new_book.py         # 新书模块（前三章生成）
 │   ├── book_manager.py     # 图书管理器
 │   ├── profiles.py         # 笔名风格档案
@@ -168,6 +172,7 @@ D:\NovelEngine/
 │   ├── reviewer.py         # 审阅模块
 │   ├── cost_tracker.py     # API 费用追踪
 │   ├── character_state.py  # 角色状态跟踪
+│   ├── reset_data.py       # 一键重置四大库
 │   ├── plot.py             # 桥段库（12模板）
 │   ├── structure.py        # 大纲库（5模板）
 │   ├── gag.py              # 笑点库（10模式）
@@ -189,21 +194,25 @@ D:\NovelEngine/
 ├── plugins/                # 外部采集插件
 │   ├── fanqie_scout.py     # 番茄侦察兵（搜/下/析）
 │   ├── font_decoder.py     # PUA 字体解码器
-│   ├── sites/              # 其他小说站点
-│   └── social/             # 社交媒体采集
+│   ├── novel_storage.py    # 已下载小说管理
+│   ├── style_analyzer.py   # 写作风格分析
+│   └── task_manager.py     # 全局任务管理器
 │
 ├── ui/                     # Web 用户界面
 │   ├── web_ui.py           # Flask 管理面板
-│   ├── streamlit_app.py    # [旧] Streamlit 实验台
-│   └── templates/          # Jinja2 模板（15个）
+│   ├── templates/          # Jinja2 模板（20个）
 │       ├── base.html       # 布局骨架
 │       ├── dashboard.html  # 仪表盘
 │       ├── books.html      # 图书列表
 │       ├── book_detail.html# 单书详情
 │       ├── start_book.html # 新书启动 ① 选择笔名/流派
-│       ├── new_book_flow.html # 新书启动 ② 流程进度
-│       ├── continue_flow.html # 续写面板
-│       ├── write.html      # 写作面板
+│       ├── timeline_editor.html # 故事线编辑器（时间线）
+│       ├── timeline_detail.html # 故事线草稿详情
+│       ├── timeline_outline_card.html # 大纲卡片组件
+│       ├── timeline_write_flow.html # 蓝图式写作台
+│       ├── desk_list.html  # 写作台列表
+│       ├── extract.html    # 内容提取
+│       ├── settings.html   # 设置
 │       ├── review_test.html# 审阅测试
 │       ├── deai.html       # 降重测试
 │       ├── plots.html      # 桥段库
@@ -213,18 +222,23 @@ D:\NovelEngine/
 │       ├── profiles.html   # 笔名管理
 │       ├── new_profile.html# 新建笔名
 │       └── scout.html      # 番茄侦察兵
-│
-├── frontend/               # [旧] show-me-the-story 前端产物
+│   └── static/             # CSS / JS
+│       ├── css/            # base.css / story_line.css
+│       └── js/             # base.js / story_line.js / library_review.js
 │
 ├── books/                  # 图书数据（.gitignore）
 │   └── {book_id}/
 │       ├── book.json       # 图书配置
 │       ├── chapters/       # 章节 JSON
 │       ├── outline/        # 大纲
+│       ├── timeline.json   # 故事线配置
+│       ├── assembler_plan.json # 写作计划（桥段/笑点注入）
+│       ├── draft_chapter.json  # 进行中章节草稿
 │       ├── character_states.json
 │       └── cost.json
 │
 ├── profiles/               # 笔名档案 JSON（.gitignore）
+├── storys/                 # 旧引擎（FastAPI 兼容）项目数据（.gitignore）
 ├── storage/                # 运行时缓存（.gitignore）
 ├── api.json                # API 配置（.gitignore）
 ├── api.example.json        # 配置模板
@@ -238,7 +252,6 @@ D:\NovelEngine/
 │   ├── 项目规划.md
 │   └── 开源调研.md
 │
-├── AGENTS.md               # [过期] 原 show-me-the-story 项目指南
 ├── requirements.txt
 └── LICENSE
 ```

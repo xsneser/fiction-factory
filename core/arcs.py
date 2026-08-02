@@ -4,7 +4,7 @@
 """
 import json
 import logging
-from core.models import Progress, Arc, ChapterState, ChapterStatus, ProjectSettings
+from core.models import Progress, Arc, ChapterState, ProjectSettings
 from core.llm_client import LLMClient, extract_json, render_prompt
 from core import prompts
 
@@ -154,28 +154,3 @@ def append_arc(client: LLMClient, story_cfg: dict, state: Progress,
     kept.sort(key=lambda c: c.num)
     state.chapters = kept
     return arc
-
-
-def ensure_arc_summaries(client: LLMClient, story_cfg: dict, state: Progress):
-    """为已完成的卷生成摘要（懒加载，写作时调用）"""
-    for i, arc in enumerate(state.arcs):
-        if arc.summary:
-            continue
-        chs = [c for c in state.chapters if arc.start_ch <= c.num <= arc.end_ch]
-        if len(chs) != arc.end_ch - arc.start_ch + 1:
-            continue
-        if not all(c.status == ChapterStatus.ACCEPTED for c in chs):
-            continue
-        sums = "\n".join(f"[{c.num}] {c.summary}" for c in chs if c.summary)
-        if not sums:
-            continue
-        user_prompt = render_prompt(prompts.arc_summary, {
-            "Title": state.title, "ArcIndex": str(i + 1),
-            "ArcTitle": arc.title, "ArcGoal": arc.goal,
-            "StartNum": str(arc.start_ch), "EndNum": str(arc.end_ch),
-            "ChapterSummaries": sums,
-        })
-        resp = client.call("你是一位专业小说编辑。请输出卷摘要。", user_prompt,
-                           temperature=0.5, max_tokens=2048)
-        if resp.strip():
-            arc.summary = resp.strip()
