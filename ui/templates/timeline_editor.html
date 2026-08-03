@@ -185,9 +185,7 @@
                         {% if p.template_structure %}
                         <div style="font-size:12px;color:#484f58;margin-top:4px">{{ p.template_structure[:120] }}</div>
                         {% endif %}
-                        {% if p.gag_ids %}
-                        <div style="font-size:11px;color:#3fb950;margin-top:4px">🎭 笑点: {{ p.gag_ids|join(', ') }}</div>
-                        {% endif %}
+                        <div style="font-size:11px;color:#3fb950;margin-top:4px">🎭 笑点: 写作时灵机一动（不预设）</div>
                         {% if p.hook_points %}
                         <div style="font-size:11px;color:#d29922;margin-top:2px">⚡ 吸睛: {{ p.hook_points|join(', ') }}</div>
                         {% endif %}
@@ -203,8 +201,8 @@
         {# ─── Phase 3: 加料注入 ─── #}
         <div id="phase-gags" class="phase-panel" {% if timeline.phase != 'gags' %}style="display:none"{% endif %}>
             <div class="phase-header">
-                <h2>🎭 加料注入</h2>
-                <button class="btn-primary" onclick="injectGags()">🤖 AI 注入笑点+吸睛点</button>
+                <h2>🎭 内涵挂载</h2>
+                <button class="btn-primary" onclick="injectGags()">🤖 AI 挂载内涵+吸睛点</button>
             </div>
             <div id="gag-result"></div>
             <div style="margin-top:20px">
@@ -436,7 +434,7 @@ function genFeedDecision(evt) {
     var text = '';
     if (evt.kind === 'outline_choice') text = (chosen && chosen.name) || '';
     else if (evt.kind === 'plot_choice') text = (Array.isArray(chosen) ? chosen.map(function(x){ return x.name || x; }).join('、') : (chosen && chosen.name)) || '';
-    else if (evt.kind === 'gag_review') text = '笑点 ' + ((chosen.gags||[]).join('、') || '—') + '｜内涵 ' + ((chosen.themes||[]).join('、') || '—');
+    else if (evt.kind === 'theme_review') text = '内涵 ' + ((chosen.themes||[]).join('、') || '—');
     else if (evt.kind === 'validate') text = ((chosen.issues||[]).length) + ' 条建议';
     if (!text && evt.candidates && evt.candidates.length) {
         text = '候选 ' + evt.candidates.slice(0, 6).map(function(x){ return x.name || x; }).join('、');
@@ -463,8 +461,8 @@ function genFullHandle(evt) {
         genFeedAction('plot', '🧩 添加桥段：『' + (evt.message || '') + '』' + (evt.outline_name ? '（大纲「' + evt.outline_name + '」）' : ''));
     } else if (type === 'outline_plots') {
         genFullLog('🧩 ' + (evt.message || '') + ' → ' + (evt.plot_count || 0) + ' 个桥段', 'info');
-    } else if (type === 'gag_injected') {
-        genFeedAction('gag', '🎭 为『' + (evt.message || '') + '』注入笑点 ×' + ((evt.gag_ids || []).length));
+    } else if (type === 'theme_injected') {
+        genFeedAction('gag', '💡 为『' + (evt.message || '') + '』挂载内涵 ×' + ((evt.theme_hints || []).length));
     } else if (type === 'decision') {
         genFeedDecision(evt);
     } else if (type === 'warnings') {
@@ -479,7 +477,7 @@ function genFullHandle(evt) {
         return;
     }
     // 逐条实时刷新左侧故事线：大纲 / 桥段 / 笑点 / 阶段完成时
-    if (['outline_added','outline_plots','plot_added','gag_injected','phase_done','done'].indexOf(type) >= 0 && evt.timeline) {
+    if (['outline_added','outline_plots','plot_added','theme_injected','phase_done','done'].indexOf(type) >= 0 && evt.timeline) {
         refreshStoryline(evt.timeline);
     }
 }
@@ -725,7 +723,7 @@ function renderPlotList(container, tl) {
     var html = outlines.map(function(o) {
         var groupPlots = plots.filter(function(p) { return p.outline_id === o.id; });
         var cards = groupPlots.map(function(p) {
-            var gag = (p.gag_ids && p.gag_ids.length) ? '<div style="font-size:11px;color:#3fb950;margin-top:4px">🎭 笑点: ' + esc(p.gag_ids.join(', ')) + '</div>' : '';
+            var gag = '<div style="font-size:11px;color:#3fb950;margin-top:4px">🎭 笑点: 写作时灵机一动（不预设）</div>';
             var theme = (p.theme_hints && p.theme_hints.length) ? '<div style="font-size:11px;color:#c084fc;margin-top:2px">💡 内涵: ' + esc(p.theme_hints.join(', ')) + '</div>' : '';
             var hook = (p.hook_points && p.hook_points.length) ? '<div style="font-size:11px;color:#d29922;margin-top:2px">⚡ 吸睛: ' + esc(p.hook_points.join(', ')) + '</div>' : '';
             var structure = p.template_structure ? '<div style="font-size:12px;color:#484f58;margin-top:4px">' + esc(String(p.template_structure).slice(0,120)) + '</div>' : '';
@@ -755,7 +753,7 @@ function renderGagResult(container, tl) {
     var html = outlines.map(function(o) {
         var groupPlots = plots.filter(function(p) { return p.outline_id === o.id; });
         var items = groupPlots.map(function(p) {
-            var gags = (p.gag_ids && p.gag_ids.length) ? p.gag_ids.join('、') : '—';
+            var gags = '写作时灵机一动（不预设）';
             var themes = (p.theme_hints && p.theme_hints.length) ? p.theme_hints.join('、') : '—';
             var hooks = (p.hook_points && p.hook_points.length) ? p.hook_points.join('、') : '—';
             return '<div class="plot-card card" style="font-size:12px">' +

@@ -22,7 +22,6 @@ from libraries.gag import GagLibrary
 from libraries.theme import ThemeLibrary
 from libraries.profiles import ProfileManager
 from libraries.book_manager import BookManager
-from libraries.new_book import NewBookPipeline, NewBookConfig, recommend_opening
 from libraries.cost_tracker import CostTracker
 from libraries.de_ai import DeAIEngine
 from libraries.character_state import CharacterStateMachine
@@ -103,34 +102,39 @@ bm.save_outline(cfg.book_id, {"structure": "struct_xuanhuan_01"})
 assert_ok("图书-大纲", bm.get_outline(cfg.book_id) is not None)
 
 # ══════════════════════════════════════════════
-#  Phase 3: 新书流程
+#  Phase 3: 写作核心统一（桥段写作 + 书名简介 + 开场模式，无 LLM）
 # ══════════════════════════════════════════════
-print("\n═══ Phase 3: 新书专项流程 ═══")
+print("\n═══ Phase 3: 写作核心统一（无 LLM）═══")
 
-pipeline = NewBookPipeline()
-config = NewBookConfig(
-    title="测试书名", pen_name="枫落", genre="玄幻",
-    sub_genre="系统流", platform="fanqie",
-    opening_template_id="plot_dating_011",
-    golden_finger_template_id="plot_dating_012",
-    structure_template_id="struct_xuanhuan_01",
-)
+from libraries.book_meta import build_title_prompt, build_synopsis_prompt, platform_constraints
+from libraries.timeline_writer import opening_mode_active
+from libraries.prompt_harness import PromptHarness
+from libraries.timeline import OutlineSlot, PlotSlot
 
-plan = pipeline.plan_opening(config)
-assert_ok("新书-开篇方案", plan["opening_plot"] is not None, plan["opening_plot"].name)
-assert_ok("新书-大纲匹配", plan["structure"] is not None, plan["structure"].name)
+title_p = build_title_prompt("玄幻", "系统流", "fanqie", "正文占位" * 50)
+assert_ok("书名-含流派", "玄幻" in title_p and "系统流" in title_p)
+assert_ok("书名-含平台", "fanqie" in title_p)
+syn_p = build_synopsis_prompt("都市", "重生", "fanqie", "正文占位" * 50)
+assert_ok("简介-含流派", "都市" in syn_p and "重生" in syn_p)
+pc = platform_constraints("fanqie")
+assert_ok("平台-番茄约束", "开篇前 500 字必须有冲突或危机" in pc)
+assert_ok("平台-未知平台", platform_constraints("xxx") == "")
 
-ch1_prompt = pipeline.build_chapter1_prompt(config, plan, profile)
-assert_ok("新书-第一章prompt", len(ch1_prompt["user"]) > 200)
+assert_ok("开场-第1章前3桥段内", opening_mode_active(1, 0, 0) is True)
+assert_ok("开场-超800字关闭", opening_mode_active(1, 800, 0) is False)
+assert_ok("开场-超3桥段关闭", opening_mode_active(1, 0, 3) is False)
+assert_ok("开场-非第1章关闭", opening_mode_active(2, 0, 0) is False)
 
-ch2_prompt = pipeline.build_chapter2_prompt(config, "（第一章正文占位）", profile)
-assert_ok("新书-第二章prompt", len(ch2_prompt["user"]) > 100)
-
-ch3_prompt = pipeline.build_chapter3_prompt(config, "（前两章正文占位）", profile)
-assert_ok("新书-第三章prompt", len(ch3_prompt["user"]) > 100)
-
-recs = recommend_opening("玄幻", "系统流")
-assert_ok("新书-推荐方案", len(recs) >= 2, f"{len(recs)} 个方案")
+h = PromptHarness(timeline=None, profile=None)
+_o = OutlineSlot(id="o1", template_id="struct_urban_01", name="开篇",
+                 start_chapter=1, end_chapter=3, stages=[{"name": "开局", "events": ["x"]}])
+_p = PlotSlot(id="p1", template_id="plot_dating_011", name="开篇桥段", category="开篇",
+              outline_id="o1", stage_index=0)
+_item = {"outline": _o, "stage": {"name": "开局", "events": ["x"]}, "plot": _p}
+open_p = h.render_bridge_prompt(_item, "", "", "", 300, is_opening=True)
+assert_ok("开场-注入铁律", "开场模式" in open_p)
+normal_p = h.render_bridge_prompt(_item, "", "", "", 300, is_opening=False)
+assert_ok("非开场-不含铁律", "开场模式" not in normal_p)
 
 # ══════════════════════════════════════════════
 #  Phase 4: 成本追踪
@@ -169,23 +173,6 @@ assert_ok("去AI-结果不同", result.processed != sample, "文本已变化")
 # 注入约束
 snippet = de_ai.build_deai_prompt_snippet()
 assert_ok("去AI-约束注入", len(snippet) > 100)
-
-# ══════════════════════════════════════════════
-#  Phase 6: 节拍规划（现行 beat_writer 管线）
-# ══════════════════════════════════════════════
-print("\n═══ Phase 6: 节拍规划 ═══")
-
-from libraries.beat_writer import BeatLibrary, ChapterPlanner
-
-beat_lib = BeatLibrary()
-planner = ChapterPlanner(beat_lib)
-plan = planner.plan_chapter(1, "对手当众挑衅，主角爆发隐藏实力逆转",
-                            target_words=3000, genre="都市")
-assert_ok("节拍-数量", len(plan.beats) == 7, f"{len(plan.beats)} 节拍")
-assert_ok("节拍-以钩子开头", plan.beats[0].beat_type == "hook")
-assert_ok("节拍-以收尾结束", plan.beats[-1].beat_type == "close")
-assert_ok("节拍-字数目标", plan.total_words_target == 3000)
-assert_ok("节拍-含冲突节拍", any(b.beat_type == "conflict" for b in plan.beats))
 
 # ══════════════════════════════════════════════
 #  Phase 7: 角色状态机

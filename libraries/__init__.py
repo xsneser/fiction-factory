@@ -8,7 +8,6 @@ from .gag import GagLibrary, GagPattern
 from .theme import ThemeLibrary, ThemeEntry
 from .profiles import PenNameProfile, ProfileManager, PRESET_PROFILES
 from .book_manager import BookConfig, BookManager
-from .new_book import NewBookPipeline, NewBookConfig, recommend_opening
 from .cost_tracker import CostTracker, CostRecord, estimate_cost
 from .de_ai import DeAIEngine, DeAIResult
 from .character_state import CharacterStateMachine, CharacterState

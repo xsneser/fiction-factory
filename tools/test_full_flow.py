@@ -89,7 +89,7 @@ def main():
         r = engine.execute(inst)
         wc = r.get("word_count", 0)
         bp = r.get("blueprint", {})
-        print(f"  第{ch}章: {wc}字 | 蓝图: 扩写{bp.get('outlines_expanded')} 填充{bp.get('plots_filled')} 跳过{bp.get('plots_skipped')}")
+        print(f"  第{ch}章: {wc}字 | 桥段: {len(bp.get('plots', []) or [])} 大纲: {len(bp.get('outlines', []) or [])}")
         if r.get("status") != "chapter_written":
             print("  ⚠️", r); return 1
 
@@ -97,11 +97,11 @@ def main():
     engine.book.current_chapter = 3
     engine.book_mgr.update(engine.book)
 
-    # ═══ ③ 续写：continue_book → beat_writer 写第 4 章 ═══
-    stage("续写", "continue_book → _exec_write_chapter（节拍级）")
+    # ═══ ③ 续写：continue_book → 桥段级写第 4 章（唯一写作核心）═══
+    stage("续写", "continue_book → _exec_write_timeline_chapter（桥段级）")
     engine2 = NovelEngine(llm_client=llm)
     engine2.continue_book(book_id)
-    r = engine2._exec_write_chapter(Instruction(Op.WRITE_CHAPTER, 4))
+    r = engine2._exec_write_timeline_chapter(Instruction(Op.WRITE_TIMELINE_CHAPTER, 4))
     wc = r.get("word_count", 0)
     print(f"  第4章: {wc}字 | status={r.get('status')} | 用了故事线上下文: "
           f"{'是' if engine2.state.current_content else '否'}")

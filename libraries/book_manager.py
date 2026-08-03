@@ -171,6 +171,40 @@ class BookManager:
             return read_json(chapter_file)
         return None
 
+    def update_chapter_summary(self, book_id: str, chapter_num: int, summary: str):
+        """补写/更新章节摘要（原子回写，供语义摘要管线用）。"""
+        chapter_file = self.dir / book_id / "chapters" / f"{chapter_num:04d}.json"
+        if not chapter_file.exists():
+            return
+        data = read_json(chapter_file)
+        if not isinstance(data, dict):
+            return
+        data["summary"] = summary
+        write_json_atomic(chapter_file, data)
+
+    def load_chapter_summaries(self, book_id: str, before_chapter: int,
+                               limit: int = 5) -> list[dict]:
+        """返回最近的 [{num, summary}]，仅含 summary 非空、num < before_chapter 的章节，按 num 降序。
+
+        作为跨章长程记忆注入后续写作 prompt。
+        """
+        chapters_dir = self.dir / book_id / "chapters"
+        if not chapters_dir.exists():
+            return []
+        results = []
+        for f in chapters_dir.glob("[0-9]*.json"):
+            try:
+                num = int(f.stem)
+            except ValueError:
+                continue
+            if num >= before_chapter:
+                continue
+            data = read_json(f)
+            if isinstance(data, dict) and data.get("summary"):
+                results.append({"num": num, "summary": data["summary"]})
+        results.sort(key=lambda x: x["num"], reverse=True)
+        return results[:limit]
+
     def save_outline(self, book_id: str, outline_data: dict):
         """保存大纲"""
         outline_dir = self.dir / book_id / "outline"

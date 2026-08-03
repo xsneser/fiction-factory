@@ -1,9 +1,9 @@
 """
 大纲生成引擎（Outline Generator）
-5 阶段 LLM 管线：故事分析 → 故事线规划 → 桥段编排 → 加料注入 → 一致性验证
+5 阶段 LLM 管线：故事分析 → 故事线规划 → 桥段编排 → 内涵挂载 → 一致性验证
 
 输入: 流派/子流派/自定义描述 + 四大库（候选池） + 笔名档案
-输出: BookTimeline JSON（多大纲+桥段+笑点+内涵+吸睛）
+输出: BookTimeline JSON（多大纲+桥段+内涵+吸睛；笑点完全涌现、不写入大纲）
 
 用法:
     gen = OutlineGenerator(llm, structure_lib, plot_lib, gag_lib, theme_lib)
@@ -11,7 +11,7 @@
         # event = ("phase"|"progress"|"done"|"error", message, data_dict)
         yield sse_event(event)
 """
-from typing import Callable
+from typing import Callable, Optional
 import json, time
 
 from .timeline import (
@@ -42,6 +42,7 @@ class OutlineGenerator:
         gag_lib: Optional[GagLibrary] = None,
         theme_lib: Optional[ThemeLibrary] = None,
         profile: Optional[dict] = None,
+        harness=None,
     ):
         self.llm = llm_client
         self.structures = structure_lib
@@ -49,6 +50,7 @@ class OutlineGenerator:
         self.gags = gag_lib
         self.themes = theme_lib
         self.profile = profile
+        self.harness = harness   # PromptHarness：为各 phase 前置书级设定卡
 
         # 用于生成唯一 ID
         self._id_counter = 0
@@ -95,17 +97,19 @@ class OutlineGenerator:
         事件格式: (event_type: str, message: str, data: dict)
         新增事件：
           ("thinking", kind, {"stream": str})  — LLM 流式思考片段
-                  kind ∈ analyze/outline_choice/plot_choice/gag_review/validate
+                  kind ∈ analyze/outline_choice/plot_choice/theme_review/validate
           ("decision", kind, {...})            — 决策完成（候选→选中→理由），
-                  让用户看到"确定了哪个大纲/桥段/笑点"及 AI 的理由
+                  让用户看到"确定了哪个大纲/桥段/内涵"及 AI 的理由
 
         timeline: 传入现有 BookTimeline 则原地累加（供逐步落盘）；None 则新建。
-        on_save:  每阶段完成后回调 on_save(tl)，用于把大纲/桥段/笑点"挨个步骤写进配置文件"。
+        on_save:  每阶段完成后回调 on_save(tl)，用于把大纲/桥段/内涵"挨个步骤写进配置文件"。
         """
         tl = timeline if timeline is not None else BookTimeline(
             genre=genre, sub_genre=sub_genre,
             words_per_chapter=words_per_chapter, pen_name=pen_name,
         )
+        if self.harness:
+            self.harness.timeline = tl
 
         total_phases = 5
         issues = []
@@ -170,31 +174,30 @@ class OutlineGenerator:
             if on_save:
                 on_save(tl)
 
-            # ── Phase 4: 加料注入 ──
-            yield ("phase", "加料注入", {"phase": 4, "total": total_phases,
-                   "desc": "匹配笑点模式、分配内涵提示、标注吸睛点..."})
+            # ── Phase 4: 内涵挂载（笑点完全涌现，不在此分配）──
+            yield ("phase", "内涵挂载", {"phase": 4, "total": total_phases,
+                   "desc": "把母题挂到能承载它的桥段、标注吸睛点（笑点在写作时涌现）..."})
 
-            tl.themes = self._select_book_themes(genre)
+            tl.themes = self._select_book_themes(genre, tl)
             yield ("progress", f"全书母题: {'、'.join(tl.themes[:3])}", {})
 
             for pi, plot in enumerate(tl.plots):
-                self._inject_gags_and_themes(plot, tl, genre)
-                # 每个桥段注入完成后即推送，前端据此实时刷新笑点通道
-                yield ("gag_injected", f"注入 {plot.name}", {
+                self._inject_themes_and_hooks(plot, tl)
+                # 每个桥段挂载完成后即推送，前端据此实时刷新内涵通道
+                yield ("theme_injected", f"挂载 {plot.name}", {
                     "plot_id": plot.id,
-                    "gag_ids": plot.gag_ids,
                     "theme_hints": plot.theme_hints,
                 })
 
-            # Phase 4.5: LLM 复查笑点/内涵（流式思考）
-            yield ("progress", "LLM 复查笑点/内涵分布...", {})
-            yield from self._review_injections(tl, genre)
+            # Phase 4.5: LLM 复查内涵挂载（流式思考）
+            yield ("progress", "LLM 复查母题挂载...", {})
+            yield from self._review_theme_assignments(tl, genre)
 
-            yield ("phase_done", "加料注入完成", {
+            yield ("phase_done", "内涵挂载完成", {
                 "phase": 4,
                 "data": {
                     "themes": tl.themes,
-                    "gags_total": sum(len(p.gag_ids) for p in tl.plots),
+                    "themes_total": sum(len(p.theme_hints) for p in tl.plots),
                 }
             })
             if on_save:
@@ -202,7 +205,7 @@ class OutlineGenerator:
 
             # ── Phase 5: 一致性验证 ──
             yield ("phase", "一致性验证", {"phase": 5, "total": total_phases,
-                   "desc": "验证时间线合理性、桥段覆盖、笑点密度..."})
+                   "desc": "验证时间线合理性、桥段覆盖、内涵挂载..."})
             yield ("progress", "检查故事线...", {})
 
             issues = self._validate(tl)
@@ -226,7 +229,7 @@ class OutlineGenerator:
                     "outlines": len(tl.outlines),
                     "plots": len(tl.plots),
                     "total_chapters": max(o.end_chapter for o in tl.outlines) if tl.outlines else 0,
-                    "gags_injected": sum(len(p.gag_ids) for p in tl.plots),
+                    "themes_total": sum(len(p.theme_hints) for p in tl.plots),
                     "themes": len(tl.themes),
                     "issues": len(issues),
                 }
@@ -392,7 +395,9 @@ class OutlineGenerator:
         protag = tl.basic_info.get("protagonist", {})
         world = tl.basic_info.get("world_building", {})
 
-        prompt = f"""为一本{genre}/{sub_genre}网络小说设计故事线。
+        bible_block = self.harness.render_outline_context("sequence", tl) if self.harness else ""
+
+        prompt = f"""{bible_block}为一本{genre}/{sub_genre}网络小说设计故事线。
 
 【主角设定】
 名字：{protag.get('name','待定')}
@@ -646,7 +651,9 @@ class OutlineGenerator:
         avoid_hint = (f"\n【已在本弧前阶段用过的桥段，请避免重复】{used_names}"
                       if used_names else "")
 
-        prompt = f"""在大纲「{outline.name}」的「{stage_name}」阶段选择合适的桥段。
+        bible_block = self.harness.render_outline_context("select_plots") if self.harness else ""
+
+        prompt = f"""{bible_block}在大纲「{outline.name}」的「{stage_name}」阶段选择合适的桥段。
 
 【阶段事件】
 {'、'.join(events) if events else '按流派惯例推进'}
@@ -702,39 +709,47 @@ class OutlineGenerator:
         return selected
 
     # ═══════════════════════════════════════
-    # Phase 4: 加料注入
+    # Phase 4: 内涵挂载
     # ═══════════════════════════════════════
 
-    def _select_book_themes(self, genre: str) -> list[str]:
-        """选定全书母题"""
+    def _select_book_themes(self, genre: str,
+                            tl: Optional[BookTimeline] = None) -> list[str]:
+        """选定全书母题（内涵跟随桥段的前提：母题必须来自库内，才能按 compatible_plots 挂桥段）。
+
+        优先级：流派匹配 → 按本书已选桥段模板命中 compatible_plots 的母题 →
+        库内前几个启用的母题 → 兜底默认。
+        """
         default_themes = ["成长蜕变", "命运抗争"]
+        entries = []
         if self.themes and hasattr(self.themes, 'search'):
-            # ThemeLibrary.search 用 name 参数
             entries = self.themes.search(name=genre)
-            if entries:
-                return [e.name for e in entries[:2]]
-        return default_themes
+        if not entries and self.themes and tl:
+            plot_tids = {p.template_id for p in tl.plots if p.template_id}
+            if plot_tids:
+                entries = [e for e in self.themes.entries
+                           if (set(e.compatible_plots or []) & plot_tids)]
+        if not entries and self.themes:
+            entries = [e for e in self.themes.entries if getattr(e, "enabled", True)]
+        return [e.name for e in entries[:2]] if entries else default_themes
 
-    def _inject_gags_and_themes(
-        self, plot: PlotSlot, tl: BookTimeline, genre: str,
+    def _inject_themes_and_hooks(
+        self, plot: PlotSlot, tl: BookTimeline,
     ):
-        """为一个桥段注入笑点和内涵"""
-        # 笑点匹配
-        if self.gags:
-            candidates = self.gags.search(scene=plot.category)
-            if candidates:
-                plot.gag_ids = [g.id for g in candidates[:2]]
-            else:
-                # 随机取 1-2 个不同分类的笑点
-                all_gags = self.gags.patterns if hasattr(self.gags, 'patterns') else []
-                if all_gags:
-                    import random
-                    picked = random.sample(all_gags, min(2, len(all_gags)))
-                    plot.gag_ids = [g.id for g in picked]
+        """为一个桥段匹配内涵（跟随桥段）并标注吸睛点。
 
+        笑点不再在此分配（完全涌现，交给写作时的灵机一动探测器）；
+        PlotSlot.gag_ids 字段保留仅兼容旧数据，不再写入。
+        内涵只挂到能承载它的桥段（ThemeEntry.compatible_plots 命中），不强挂；
+        未命中的母题仍作为书级可用线索随「书级设定卡」注入写作。
+        """
         # 内涵匹配
-        if tl.themes:
-            plot.theme_hints = tl.themes[:2]
+        theme_hints = []
+        if self.themes:
+            for name in tl.themes:
+                entry = next((e for e in self.themes.entries if e.name == name), None)
+                if entry and plot.template_id in (entry.compatible_plots or []):
+                    theme_hints.append(entry.name)
+        plot.theme_hints = theme_hints[:2]
 
         # 吸睛点
         hook_candidates = []
@@ -750,11 +765,12 @@ class OutlineGenerator:
             f"{plot.name}的高潮反转"
         ]
 
-    def _review_injections(self, tl: BookTimeline, genre: str):
-        """Phase 4 加料注入后的 LLM 复查（流式思考）。
+    def _review_theme_assignments(self, tl: BookTimeline, genre: str):
+        """Phase 4 内涵挂载后的 LLM 复查（流式思考）。
 
         生成器：yield thinking（token 流）+ decision（复查结论），
-        对规则注入的笑点/内涵做一次 AI 抽查修正，让"放什么笑点"也有 AI 思考可看。
+        复查"母题是否挂到了能承载它的桥段、分布是否均匀、有无硬挂"。
+        笑点已完全涌现（不在此复查）。
         """
         if not self.llm or not tl.plots:
             return
@@ -763,20 +779,20 @@ class OutlineGenerator:
         for p in tl.plots[:20]:
             plots_snapshot.append({
                 "id": p.id, "name": p.name, "category": p.category,
-                "gag_ids": p.gag_ids[:3], "theme_hints": p.theme_hints[:2],
+                "template_id": p.template_id, "theme_hints": p.theme_hints[:2],
             })
 
-        prompt = f"""以下是某本{genre}小说故事线的桥段加料配置（规则匹配结果）。请复查笑点与内涵是否合理、分布是否均匀、有无明显不搭。
+        prompt = f"""以下是某本{genre}小说故事线的桥段内涵挂载配置（规则匹配结果）。请复查母题是否挂到了能承载它的桥段、分布是否均匀、有无明显硬挂（桥段承载不了某个母题却挂着）。
 
 {json.dumps(plots_snapshot, ensure_ascii=False, indent=1)}
 
 返回 JSON：
-{{"corrections": [{{"plot_id": "...", "gag_ids": [...], "theme_hints": [...], "reason": "..."}}], "summary": "整体评价（一句话）"}}"""
+{{"corrections": [{{"plot_id": "...", "theme_hints": [...], "reason": "..."}}], "summary": "整体评价（一句话）"}}"""
 
         try:
             from core.llm_client import extract_json
             raw = yield from self._stream_decision_content(
-                "gag_review", "你是网文编辑，负责笑点/内涵复查。只返回JSON。",
+                "theme_review", "你是网文编辑，负责内涵/母题复查。只返回JSON。",
                 prompt, temperature=0.3, max_tokens=8192)
             data = json.loads(extract_json(raw))
 
@@ -786,28 +802,23 @@ class OutlineGenerator:
                 plot = next((p for p in tl.plots if p.id == corr.get("plot_id", "")), None)
                 if not plot:
                     continue
-                if corr.get("gag_ids"):
-                    valid = [g for g in corr["gag_ids"]
-                             if self.gags and self.gags.get_by_id(g)]
-                    if valid:
-                        plot.gag_ids = valid
                 if corr.get("theme_hints"):
-                    plot.theme_hints = corr["theme_hints"]
+                    # 只接受书级母题库内的名字
+                    valid = [t for t in corr["theme_hints"] if t in tl.themes]
+                    if valid:
+                        plot.theme_hints = valid[:2]
 
-            yield ("decision", "gag_review", {
-                "step": "笑点/内涵复查",
+            yield ("decision", "theme_review", {
+                "step": "内涵挂载复查",
                 "candidates": [{"id": p.id, "name": p.name} for p in tl.plots[:20]],
-                "chosen": {
-                    "gags": [g for p in tl.plots[:8] for g in p.gag_ids[:1]],
-                    "themes": tl.themes[:3],
-                },
+                "chosen": {"themes": tl.themes[:3]},
                 "reason": summary or "复查完成，未做调整",
             })
         except Exception:
-            yield ("decision", "gag_review", {
-                "step": "笑点/内涵复查",
+            yield ("decision", "theme_review", {
+                "step": "内涵挂载复查",
                 "candidates": [{"id": p.id, "name": p.name} for p in tl.plots[:20]],
-                "chosen": {"gags": [], "themes": tl.themes[:3]},
+                "chosen": {"themes": tl.themes[:3]},
                 "reason": "复查调用未返回有效结果，沿用规则匹配",
             })
 
@@ -841,11 +852,11 @@ class OutlineGenerator:
             if stage_count > 0 and len(o_plots) < stage_count:
                 issues.append(f"大纲「{o.name}」有{stage_count}个阶段但只有{len(o_plots)}个桥段，建议补全")
 
-        # 4. 笑点密度
-        total_gags = sum(len(p.gag_ids) for p in tl.plots)
+        # 4. 内涵覆盖率（母题跟随桥段，建议性，不强求）
         total_plots = len(tl.plots)
-        if total_plots > 0 and total_gags / total_plots < 0.5:
-            issues.append(f"笑点覆盖率偏低（{total_gags}/{total_plots}），建议增加笑点注入")
+        theme_plots = sum(1 for p in tl.plots if p.theme_hints)
+        if tl.themes and total_plots > 0 and theme_plots / total_plots < 0.3:
+            issues.append(f"内涵覆盖率偏低（{theme_plots}/{total_plots}），建议把母题挂到更多能承载的桥段")
 
         # 5. 总章节合理性
         if tl.outlines:
@@ -876,7 +887,7 @@ class OutlineGenerator:
         prompt = f"""请审查下面这本小说故事线的合理性：
 流派：{tl.genre}
 大纲：{json.dumps(outlines_view, ensure_ascii=False, indent=1)}
-桥段总数：{len(tl.plots)}；笑点/内涵已按桥段注入。
+桥段总数：{len(tl.plots)}；内涵已按桥段挂载。
 
 请检查：时间线重叠/间隔是否合理、桥段覆盖是否均匀、有无明显漏洞。
 

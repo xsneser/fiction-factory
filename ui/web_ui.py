@@ -320,7 +320,7 @@ def extend_outline(timeline_id):
     existing_ids = {p.id for p in tl.plots}
     added = [p for p in new_plots if p.id not in existing_ids]
     tl.plots.extend(added)
-    builder.fill_gags_and_hooks(added, tl)
+    builder.fill_themes_and_hooks(added, tl)
     tl.phase = "ready"
     _save_timeline(tl, timeline_id)
 
@@ -484,7 +484,7 @@ def api_fill_gags(timeline_id):
         structure_lib=struct_lib, plot_lib=plot_lib,
         gag_lib=gag_lib, theme_lib=theme_lib,
     )
-    builder.fill_gags_and_hooks(tl.plots, tl)
+    builder.fill_themes_and_hooks(tl.plots, tl)
     tl.phase = "ready" if tl.plots else "gags"
     _save_timeline(tl, timeline_id)
     return jsonify({"ok": True, "phase": tl.phase})
@@ -679,10 +679,9 @@ def _decision_log_message(kind: str, data: dict) -> str:
         if names:
             return f"🧩 桥段选择[{step}]：候选 {cands} → 选中「{'、'.join(names)}」"
         return f"🧩 桥段选择[{step}]：候选 {cands}"
-    if kind == "gag_review":
-        gags = "、".join((chosen.get("gags") or [])[:5]) or "无"
+    if kind == "theme_review":
         themes = "、".join((chosen.get("themes") or [])[:3]) or "无"
-        return f"🎭 笑点/内涵[{step}]：笑点 {gags}｜内涵 {themes}"
+        return f"🎭 内涵挂载[{step}]：母题 {themes}"
     if kind == "validate":
         issues = (chosen.get("issues") or [])
         return f"✅ 一致性验证[{step}]：{len(issues)} 个建议｜{data.get('reason','')}"
@@ -715,6 +714,9 @@ def api_generate_full(timeline_id):
             pass
 
     from libraries.outline_generator import OutlineGenerator
+    from libraries.prompt_harness import PromptHarness
+    harness = PromptHarness(timeline=tl, profile=profile,
+                            gag_lib=gag_lib, theme_lib=theme_lib, plot_lib=plot_lib)
     gen = OutlineGenerator(
         llm_client=llm,
         structure_lib=struct_lib,
@@ -722,6 +724,7 @@ def api_generate_full(timeline_id):
         gag_lib=gag_lib,
         theme_lib=theme_lib,
         profile=profile,
+        harness=harness,
     )
 
     # 用草稿已填的基础信息做上下文（保留用户输入）
@@ -771,7 +774,7 @@ def api_generate_full(timeline_id):
                     task_manager.log(task_id, message, "success")
                 # 快照：内容已变化的 SSE 事件附带 timeline，前端据此逐条实时刷新左侧故事线
                 if event_type in ("outline_added", "outline_plots", "plot_added",
-                                  "gag_injected", "phase_done", "done"):
+                                  "theme_injected", "phase_done", "done"):
                     payload["timeline"] = tl.to_dict()
 
                 # 每个决策写进右侧栏日志（用户能看到"确定了哪个大纲/桥段/笑点"）
@@ -1159,6 +1162,9 @@ def book_detail(book_id):
     else:
         basic_info = _basic_info_from_outline(outline, book)
         basic_info["has_timeline"] = False
+    # 简介存在 outline.json，合并进 basic_info 供详情页显示
+    if outline and (outline.get("synopsis") or ""):
+        basic_info.setdefault("synopsis", outline["synopsis"])
     chapters = []
     for n in range(1, book.current_chapter + 2):
         ch = book_mgr.load_chapter(book_id, n)

@@ -51,7 +51,7 @@ def main():
 
     t0 = time.time()
     phase_log = []
-    decision_count = {"outline_choice": 0, "plot_choice": 0, "gag_review": 0, "validate": 0}
+    decision_count = {"outline_choice": 0, "plot_choice": 0, "theme_review": 0, "validate": 0}
     total_thinking_chars = 0
     result_timeline = None
     issues = None

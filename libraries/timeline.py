@@ -405,19 +405,23 @@ class TimelineBuilder:
         outline.expanded = True
         return new_plots
 
-    def fill_gags_and_hooks(self, plots: list[PlotSlot], timeline: BookTimeline):
-        """给桥段注入笑点和吸睛点"""
-        if not self.gags or not self.themes:
+    def fill_themes_and_hooks(self, plots: list[PlotSlot], timeline: BookTimeline):
+        """给桥段挂载内涵（跟随桥段）并标注吸睛点。笑点完全涌现，不在此分配。
+
+        内涵只挂到能承载它的桥段（ThemeEntry.compatible_plots 命中），不强挂；
+        未命中的母题仍作为书级可用线索随「书级设定卡」注入写作。
+        """
+        if not self.themes:
             return
 
         for p in plots:
-            # 笑点匹配
-            candidates = self.gags.search(scene=p.category)
-            p.gag_ids = [g.id for g in candidates[:2]]
-
             # 内涵匹配
-            if timeline.themes:
-                p.theme_hints = timeline.themes[:2]
+            theme_hints = []
+            for name in timeline.themes:
+                entry = next((e for e in self.themes.entries if e.name == name), None)
+                if entry and p.template_id in (entry.compatible_plots or []):
+                    theme_hints.append(entry.name)
+            p.theme_hints = theme_hints[:2]
 
             # 吸睛点
             p.hook_points = [

@@ -23,9 +23,9 @@ from libraries.cost_tracker import CostTracker
 from libraries.de_ai import DeAIEngine
 from libraries.character_state import CharacterStateMachine
 from libraries.reviewer import ContentReviewer
-from libraries.new_book import NewBookPipeline, NewBookConfig
-from libraries.beat_writer import ChapterWriter
 from libraries.assembler import BookAssembler, BookAssemblerPlan
+from libraries.prompt_harness import PromptHarness
+from libraries.gag_injector import GagInjector
 from core.text_utils import count_prose_units
 
 
@@ -35,19 +35,11 @@ from core.text_utils import count_prose_units
 
 class BookMode(Enum):
     """图书模式"""
-    NEW = "new"            # 新书启动
     CONTINUE = "continue"  # 现有续写
 
 
 class Phase(Enum):
     """引擎阶段"""
-    # 新书启动阶段
-    NEW_PLANNING = "new_planning"       # 规划：大纲+角色+伏笔+书名方案
-    NEW_CHAPTER1 = "new_chapter1"       # 第一章：钩子+金手指
-    NEW_CHAPTER2 = "new_chapter2"       # 第二章：世界观展开
-    NEW_CHAPTER3 = "new_chapter3"       # 第三章：首次冲突
-    NEW_TITLE = "new_title"             # 书名+简介生成
-
     # 通用阶段
     IDLE = "idle"
     OUTLINE = "outline"
@@ -61,13 +53,6 @@ class Op(Enum):
     """操作指令"""
     COMPLETE = "complete"              # 全书完成
     PAUSE = "pause"                    # 暂停（预算不足等）
-
-    # 新书启动专用
-    PLAN_BOOK = "plan_book"            # 规划全书
-    WRITE_CH1 = "write_ch1"            # 写第一章
-    WRITE_CH2 = "write_ch2"            # 写第二章
-    WRITE_CH3 = "write_ch3"            # 写第三章
-    GENERATE_TITLE = "generate_title"  # 生成书名+简介
 
     # 续写专用
     PLAN_OUTLINE = "plan_outline"      # 生成大纲
@@ -94,31 +79,10 @@ class Instruction:
 # ═══════════════════════════════════════════════
 
 @dataclass
-class NewBookState:
-    """新书启动的中间状态"""
-    # 规划产物
-    outline_generated: bool = False
-    characters_created: list[dict] = field(default_factory=list)   # [{name, identity, ...}]
-    foreshadows_planned: list[dict] = field(default_factory=list)  # [{desc, plant_ch, resolve_ch, ...}]
-    opening_plan: dict = field(default_factory=dict)               # plan_opening 返回的结果
-
-    # 前三章产物
-    chapter1: str = ""
-    chapter2: str = ""
-    chapter3: str = ""
-
-    # 书名+简介
-    title_options: list[str] = field(default_factory=list)
-    best_title: str = ""
-    synopsis: str = ""
-    title_finalized: bool = False
-
-
-@dataclass
 class EngineState:
     """引擎全局状态"""
     book_id: str = ""
-    book_mode: BookMode = BookMode.NEW        # 当前模式
+    book_mode: BookMode = BookMode.CONTINUE   # 当前模式
     phase: Phase = Phase.IDLE
 
     # 书目信息
@@ -149,9 +113,6 @@ class EngineState:
     started_at: str = ""
     updated_at: str = ""
 
-    # 新书子状态（仅在 NEW 模式下使用）
-    new_book: NewBookState = field(default_factory=NewBookState)
-
 
 # ═══════════════════════════════════════════════
 # 总引擎
@@ -159,19 +120,13 @@ class EngineState:
 
 class NovelEngine:
     """
-    小说工厂总引擎 v2.0
+    小说工厂总引擎 v2.0 — 唯一写作核心 = 桥段写作（timeline_writer）
 
-    两个入口：
-        engine.start_new_book(config)   → 新书启动流程
-        engine.continue_book(book_id)   → 现有续写流程
+    入口：
+        engine.start_new_book_timeline(timeline, config)  → 时间线书启动（桥段写作）
+        engine.continue_book(book_id)                     → 续写（桥段写作）
 
-    新书启动流程：
-        选题 → 规划(大纲+角色+伏笔+书名) → 第一章(钩子+金手指)
-        → 第二章(世界观) → 第三章(首次冲突) → 书名简介定稿
-        → 自动转入续写循环
-
-    续写流程：
-        恢复状态 → 写→审→去AI→下一章 → 循环
+    流程：时间线书按桥段逐章写作（大纲=故事线）→ 第1章写完自动生成书名/简介。
     """
 
     def __init__(self, llm_client=None):
@@ -183,11 +138,9 @@ class NovelEngine:
         self.theme_lib = ThemeLibrary()
         self.profiles = ProfileManager("profiles")
         self.book_mgr = BookManager("books")
-        self.new_book_pipeline = NewBookPipeline(llm_client)
         self.de_ai = DeAIEngine(llm_client)
         self.reviewer = ContentReviewer(llm_client)
         self.profile: Optional[PenNameProfile] = None
-        self.chapter_writer = ChapterWriter(llm_client, self.de_ai, self.reviewer, self.gag_lib, self.profile)
         self.char_states = CharacterStateMachine()
 
         # 书籍组装器（连接四大库与生成管线）
@@ -209,55 +162,12 @@ class NovelEngine:
         self.cost_tracker = CostTracker()
         self.book: Optional[BookConfig] = None
 
-        # 新书配置（start_new_book 时设置）
-        self._new_book_config: Optional[NewBookConfig] = None
+        # 书名/简介生成标志（第 1 章写完触发一次）
+        self._book_meta_done = False
 
     # ═══════════════════════════════════════════
     # 入口
     # ═══════════════════════════════════════════
-
-    def start_new_book(self, config: NewBookConfig) -> EngineState:
-        """
-        🔰 新书启动入口
-
-        设置所有初始状态，进入规划阶段。
-        后续调用 run() 或 step() 逐步推进。
-        """
-        if not self.llm:
-            raise RuntimeError("LLM 未配置，无法启动新书")
-
-        self._new_book_config = config
-        self.state = EngineState(
-            book_mode=BookMode.NEW,
-            phase=Phase.NEW_PLANNING,
-            title=config.title or "(待定)",
-            pen_name=config.pen_name,
-            genre=config.genre,
-            sub_genre=config.sub_genre,
-            platform=config.platform,
-            total_chapters=config.chapter_count,
-            current_chapter=0,
-            started_at=datetime.now().isoformat(),
-        )
-
-        # 加载笔名档案
-        self.profile = None
-        if config.style_profile_id:
-            try:
-                self.profile = self.profiles.get(config.style_profile_id)
-            except Exception as e:
-                logger.warning("按 ID 加载笔名档案失败: %s", e)
-        if not self.profile:
-            try:
-                self.profile = self.profiles.get_by_name(config.pen_name)
-            except Exception as e:
-                logger.warning("按笔名加载笔名档案失败: %s", e)
-
-        # 初始化成本追踪
-        self.cost_tracker = CostTracker()
-        self.cost_tracker.book_id = "new_book"
-
-        return self.state
 
     def start_new_book_timeline(self, timeline: dict, config: dict = None,
                                 source_timeline_id: str = "") -> EngineState:
@@ -307,6 +217,13 @@ class NovelEngine:
         except Exception as e:
             logger.warning("加载笔名档案失败: %s", e)
 
+        # 初始化集中式 harness 与灵机一动探测环
+        self.harness = PromptHarness(timeline=timeline, profile=self.profile,
+                                     gag_lib=self.gag_lib, theme_lib=self.theme_lib,
+                                     plot_lib=self.plot_lib)
+        self.gag_injector = GagInjector(llm=self.llm, harness=self.harness,
+                                        gag_lib=self.gag_lib)
+
         # 初始化蓝图写作器
         from .timeline_writer import TimelineChapterWriter
 
@@ -318,6 +235,8 @@ class NovelEngine:
             gag_lib=self.gag_lib,
             plot_lib=self.plot_lib,
             profile=self.profile,
+            harness=self.harness,
+            gag_injector=self.gag_injector,
         )
 
         # 初始化成本追踪
@@ -420,8 +339,11 @@ class NovelEngine:
             except Exception as e:
                 logger.warning("恢复组装计划失败 (%s): %s", plan_path, e)
 
-        # 加载时间线（统一模型）：时间线书用 timeline.json 推导逐章大纲，优先于结构大纲
+        # 加载时间线（唯一写作核心 = 桥段写作）：无故事线直接报错
         tl = self.book_mgr.load_timeline(book_id)
+        if tl is None or not tl.outlines:
+            raise ValueError(
+                "该书未生成故事线（timeline）。请先在时间线编辑器生成并确认故事线，再进行写作。")
         if tl and tl.outlines:
             self.timeline = tl
             self._derive_chapters_from_timeline(tl)
@@ -435,10 +357,17 @@ class NovelEngine:
             # 时间线书：创建桥段驱动的写作者（撰写/续写统一同一套，支持断点续写）
             if self.timeline_writer is None:
                 from .timeline_writer import TimelineChapterWriter
+                self.harness = PromptHarness(timeline=tl, profile=self.profile,
+                                             gag_lib=self.gag_lib,
+                                             theme_lib=self.theme_lib,
+                                             plot_lib=self.plot_lib)
+                self.gag_injector = GagInjector(llm=self.llm, harness=self.harness,
+                                                gag_lib=self.gag_lib)
                 self.timeline_writer = TimelineChapterWriter(
                     timeline=tl, llm_client=self.llm, de_ai_engine=self.de_ai,
                     reviewer=self.reviewer, gag_lib=self.gag_lib,
-                    plot_lib=self.plot_lib, profile=self.profile)
+                    plot_lib=self.plot_lib, profile=self.profile,
+                    harness=self.harness, gag_injector=self.gag_injector)
 
         # 确定当前阶段
         if self.book.current_chapter >= self.book.chapter_count:
@@ -560,113 +489,15 @@ class NovelEngine:
             parts.append(f"【内涵提示】{'、'.join(ctx['themes'][:3])}")
         return "\n".join(parts)
 
-    def _inject_gags_themes_pass(self, text: str, ctx: dict) -> str:
-        """两段式写作的第二步：撰写完成后，把本章的笑点/内涵注入正文。
-
-        思路与 timeline_writer.TimelineChapterWriter._inject_gags 一致：小改、自然插入。
-        注意：必须把完整正文交给 LLM，绝不能只传截断片段（否则模型无法返回全文，
-        会把章节截短造成正文丢失）。
-        """
-        gags = ctx.get("gags") or []
-        themes = ctx.get("themes") or []
-        if not gags and not themes:
-            return text
-        if not self.llm:
-            return text
-        if len(text) > 8000:
-            logger.warning("章节过长（%d字），跳过笑点注入以免截断正文", len(text))
-            return text
-        prompt = f"""在以下网络小说正文中，自然地注入笑点和内涵线索。不要大改原文结构，在合适位置插入/微调 2-3 处即可。
-
-【正文】
-{text}
-
-【笑点模式】
-{'；'.join(gags[:4]) or '无特殊要求'}
-
-【内涵提示】
-{'；'.join(themes[:3]) or '无'}
-
-【要求】
-1. 笑点要自然，不能生硬插入
-2. 返回完整修改后的正文
-3. 返回 JSON：{{"text": "修改后全文"}}"""
-        try:
-            from core.llm_client import extract_json
-            raw = self.llm.call("你是专业的网文编辑。只返回JSON。", prompt,
-                                temperature=0.5, max_tokens=min(4096, len(text) * 2))
-            data = json.loads(extract_json(raw))
-            new_text = data.get("text", text)
-            if len(new_text) >= len(text) * 0.9:
-                return new_text
-            logger.warning("笑点注入输出过短（%d/%d字），保留原文", len(new_text), len(text))
-            return text
-        except Exception as e:
-            logger.warning("笑点注入失败，保留原文: %s", e)
-            return text
-
     # ═══════════════════════════════════════════
     # 路由（纯函数）
     # ═══════════════════════════════════════════
 
     def route(self) -> Instruction:
         """
-        纯函数路由：根据 book_mode 和 phase 决定下一步
+        纯函数路由：统一走续写路由（唯一写作核心 = 桥段写作）
         """
-        if self.state.book_mode == BookMode.NEW:
-            return self._route_new_book()
-        else:
-            return self._route_continue()
-
-    def _route_new_book(self) -> Instruction:
-        """🔰 新书启动路由"""
-        s = self.state
-        nb = s.new_book
-        phase = s.phase
-
-        # 1. 规划阶段
-        if phase == Phase.NEW_PLANNING:
-            if not nb.outline_generated:
-                return Instruction(Op.PLAN_BOOK, reason="规划全书：大纲+角色+伏笔+书名方案")
-            # 规划完成 → 开始写第一章
-            s.phase = Phase.NEW_CHAPTER1
-            return Instruction(Op.WRITE_CH1, chapter_num=1, reason="第一章：钩子+金手指+首次危机")
-
-        # 2. 第一章
-        if phase == Phase.NEW_CHAPTER1:
-            if not nb.chapter1:
-                return Instruction(Op.WRITE_CH1, chapter_num=1, reason="第一章：钩子+金手指+首次危机")
-            s.phase = Phase.NEW_CHAPTER2
-            return Instruction(Op.WRITE_CH2, chapter_num=2, reason="第二章：世界观展开")
-
-        # 3. 第二章
-        if phase == Phase.NEW_CHAPTER2:
-            if not nb.chapter2:
-                return Instruction(Op.WRITE_CH2, chapter_num=2, reason="第二章：世界观展开")
-            s.phase = Phase.NEW_CHAPTER3
-            return Instruction(Op.WRITE_CH3, chapter_num=3, reason="第三章：首次核心冲突")
-
-        # 4. 第三章
-        if phase == Phase.NEW_CHAPTER3:
-            if not nb.chapter3:
-                return Instruction(Op.WRITE_CH3, chapter_num=3, reason="第三章：首次核心冲突")
-            s.phase = Phase.NEW_TITLE
-            return Instruction(Op.GENERATE_TITLE, reason="生成书名+简介")
-
-        # 5. 书名+简介
-        if phase == Phase.NEW_TITLE:
-            if not nb.title_finalized:
-                return Instruction(Op.GENERATE_TITLE, reason="生成书名+简介")
-
-            # 新书启动完成 → 转入续写模式
-            s.book_mode = BookMode.CONTINUE
-            s.phase = Phase.WRITING
-            s.current_chapter = 3  # 从第4章开始续写
-            return Instruction(Op.WRITE_CHAPTER, chapter_num=4,
-                               reason="新书启动完成，开始续写")
-
-        # 不应该到这里
-        return Instruction(Op.COMPLETE, reason="未知状态")
+        return self._route_continue()
 
     def _route_continue(self) -> Instruction:
         """♻️ 续写路由"""
@@ -709,11 +540,6 @@ class NovelEngine:
         handlers = {
             Op.COMPLETE:        self._exec_complete,
             Op.PAUSE:           self._exec_pause,
-            Op.PLAN_BOOK:       self._exec_plan_book,
-            Op.WRITE_CH1:       self._exec_write_ch1,
-            Op.WRITE_CH2:       self._exec_write_ch2,
-            Op.WRITE_CH3:       self._exec_write_ch3,
-            Op.GENERATE_TITLE:  self._exec_generate_title,
             Op.PLAN_OUTLINE:    self._exec_plan_outline,
             Op.WRITE_CHAPTER:   self._exec_write_chapter,
             Op.REVIEW_CHAPTER:  self._exec_review_current,
@@ -736,11 +562,7 @@ class NovelEngine:
         if not plan or not plan.stages:
             return 0
 
-        # 新书前三章 → 阶段 0（觉醒/重生）
-        if self.state.book_mode == BookMode.NEW and chapter_num <= 3:
-            return 0
-
-        # 续写模式：累计章节数反查阶段
+        # 累计章节数反查阶段
         accumulated = 0
         for i, sp in enumerate(plan.stages):
             min_ch, max_ch = sp.chapter_range
@@ -758,361 +580,6 @@ class NovelEngine:
 
     # ═══════════════════════════════════════════
     # 🔰 新书启动执行器
-    # ═══════════════════════════════════════════
-
-    def _exec_plan_book(self, inst: Instruction) -> dict:
-        """
-        Phase: 规划全书
-
-        完成：
-        1. 开篇方案推荐（选桥段+大纲模板）
-        2. 展开大纲结构（卷/弧/章层级）
-        3. 创建初始角色（主角+反派+主要配角）
-        4. 规划伏笔方案
-        5. 生成书名方案（先占位，等前三章写好再精调）
-        """
-        config = self._new_book_config
-        if not config:
-            raise RuntimeError("没有新书配置，请先调用 start_new_book()")
-
-        nb = self.state.new_book
-
-        # ── 1. 开篇方案 ──
-        nb.opening_plan = self.new_book_pipeline.plan_opening(config)
-
-        # ── 2. 大纲结构 ──
-        struct = self.struct_lib.search(
-            genre=config.genre,
-            sub_genre=config.sub_genre,
-            chapter_count=config.chapter_count)
-        template = struct[0] if struct else None
-
-        if template:
-            self.state.structure_template_id = template.id
-            self.state.outline_data = {
-                "structure": template.id,
-                "structure_name": template.name,
-                "stages": [s.__dict__ for s in template.stages],
-                "total_chapters": template.total_chapters,
-            }
-            # 从 stages 生成章节列表
-            ch_num = 1
-            self.state.chapters = []
-            for stage in template.stages:
-                for _ in range(stage.min_chapters):
-                    self.state.chapters.append({
-                        "num": ch_num,
-                        "title": f"{stage.name} ({ch_num})",
-                        "stage": stage.name,
-                        "outline": "",
-                    })
-                    ch_num += 1
-            self.state.total_chapters = len(self.state.chapters)
-
-        # ── 3. 初始角色创建 ──
-        nb.characters_created = self._generate_initial_characters(config)
-
-        # ── 4. 伏笔规划 ──
-        nb.foreshadows_planned = self._generate_foreshadows(config)
-
-        # ── 5. 书名占位（等前三章写好再精调） ──
-        nb.title_options = [config.title] if config.title else [f"{config.genre}之{config.pen_name}"]
-
-        nb.outline_generated = True
-
-        # ── 6. 组装计划：按大纲逐阶段匹配桥段/笑点/内涵 ──
-        self.state.assembler_plan = self.assembler.assemble_book(
-            genre=config.genre,
-            sub_genre=config.sub_genre,
-            title_hint=config.title,
-        )
-
-        self.state.updated_at = datetime.now().isoformat()
-
-        return {
-            "status": "book_planned",
-            "phase": "new_planning",
-            "structure": self.state.structure_template_id,
-            "total_chapters": self.state.total_chapters,
-            "characters": len(nb.characters_created),
-            "foreshadows": len(nb.foreshadows_planned),
-            "opening_plot": nb.opening_plan.get("opening_plot").name
-                             if nb.opening_plan.get("opening_plot") else "auto",
-            "book_title": self.state.assembler_plan.book_title,
-            "themes": [t.name for t in self.state.assembler_plan.themes],
-            "stages_matched": len(self.state.assembler_plan.stages),
-        }
-
-    def _exec_write_ch1(self, inst: Instruction) -> dict:
-        """第一章：钩子 + 金手指激活 + 首个危机（节拍级写作）"""
-        return self._exec_write_opening_chapter(1, inst)
-
-    def _exec_write_ch2(self, inst: Instruction) -> dict:
-        """第二章：世界观展开 + 能力初试（节拍级写作）"""
-        return self._exec_write_opening_chapter(2, inst)
-
-    def _exec_write_ch3(self, inst: Instruction) -> dict:
-        """第三章：首次核心冲突 + 展现实力（节拍级写作）"""
-        return self._exec_write_opening_chapter(3, inst)
-
-    # 前三章共用写手：仅大纲模板/承接方式不同，统一走同一管线
-    _OPENING_CHAPTER_META = {
-        1: {"cost_key": "ch1_draft", "save_title": "钩子·金手指·首次危机"},
-        2: {"cost_key": "ch2_draft", "save_title": "世界观展开"},
-        3: {"cost_key": "ch3_draft", "save_title": "首次核心冲突"},
-    }
-
-    @staticmethod
-    def _opening_chapter_outline(num: int, config) -> str:
-        base = {
-            1: (
-                "第一章：钩子+金手指+首个危机\n"
-                f"流派：{config.genre}/{config.sub_genre}\n"
-                "任务：前200字有强烈钩子→介绍主角处境→触发第一个危机→激活金手指\n"
-                "核心要求：主角用幽默自嘲面对困境，奠定网文爽感基调"
-            ),
-            2: (
-                "第二章：世界观展开+能力初试\n"
-                f"流派：{config.genre}/{config.sub_genre}\n"
-                "任务：展示世界观→第一次使用金手指→建立日常节奏→章末中等钩子"
-            ),
-            3: (
-                "第三章：首次核心冲突+展现实力\n"
-                f"流派：{config.genre}/{config.sub_genre}\n"
-                "任务：主角面临第一个真正的对手→展现实力→冲突解决→获得认可→\n"
-                "      埋更大世界的伏笔→章末强钩子"
-            ),
-        }
-        return base[num]
-
-    def _exec_write_opening_chapter(self, num: int, inst: Instruction) -> dict:
-        """新书前三章统一写手（承接/摘要差异按章号处理）。"""
-        config = self._new_book_config
-        nb = self.state.new_book
-        meta = self._OPENING_CHAPTER_META[num]
-
-        outline = self._opening_chapter_outline(num, config)
-        prev_ending = ""
-        prev_summary = ""
-        if num == 2:
-            prev_ending = nb.chapter1[-500:] if nb.chapter1 else ""
-            if nb.chapter1:
-                outline += f"\n承接上文：{nb.chapter1[-200:]}..."
-        elif num == 3:
-            prev_ending = nb.chapter2[-500:] if nb.chapter2 else ""
-            prev_summary = f"前两章概要：{nb.chapter1[:200]}... → {nb.chapter2[:200]}..."
-
-        self.chapter_writer.executor.profile = self.profile
-        result = self.chapter_writer.write_chapter(
-            chapter_num=num, chapter_outline=outline,
-            target_words=config.words_per_chapter or 3000,
-            genre=config.genre, pen_name=config.pen_name,
-            previous_chapter_ending=prev_ending,
-            previous_summary=prev_summary,
-            assembler_plan=self.state.assembler_plan,
-            stage_index=self._get_stage_index(num))
-
-        setattr(nb, f"chapter{num}", result["text"])
-        self.cost_tracker.record(meta["cost_key"], "", result["text"])
-        self._save_new_book_chapter(num, meta["save_title"], result["text"])
-        self.state.updated_at = datetime.now().isoformat()
-
-        return {"status": f"ch{num}_done", "chapter": num,
-                "word_count": result["word_count"], "beats": result["beats"]}
-
-    def _exec_generate_title(self, inst: Instruction) -> dict:
-        """
-        书名 + 简介生成（基于前三章内容）
-        """
-        config = self._new_book_config
-        nb = self.state.new_book
-
-        ch123 = nb.chapter1 + "\n\n" + nb.chapter2 + "\n\n" + nb.chapter3
-
-        # 书名
-        title_prompt = self.new_book_pipeline.build_title_prompt(config, ch123)
-        from core.llm_client import extract_json
-        raw_title = self.llm.call(
-            "你是一位专业的网文编辑。请只返回JSON，不要加任何额外文字。",
-            title_prompt, temperature=0.8, max_tokens=512)
-        try:
-            title_data = json.loads(extract_json(raw_title))
-            nb.title_options = title_data.get("titles", [])
-            nb.best_title = title_data.get("best", nb.title_options[0] if nb.title_options else config.title)
-        except Exception as e:
-            logger.warning("书名 LLM 输出解析失败，使用默认标题: %s", e)
-            nb.title_options = [config.title] if config.title else ["未命名"]
-            nb.best_title = nb.title_options[0]
-
-        # 简介
-        synopsis_prompt = self.new_book_pipeline.build_synopsis_prompt(config, ch123)
-        raw_syn = self.llm.call(
-            "你是一位专业的网文编辑。请只返回JSON，不要加任何额外文字。",
-            synopsis_prompt, temperature=0.8, max_tokens=512)
-        try:
-            syn_data = json.loads(extract_json(raw_syn))
-            nb.synopsis = syn_data.get("synopsis", "")
-        except Exception as e:
-            logger.warning("简介 LLM 输出解析失败: %s", e)
-            nb.synopsis = ""
-
-        self.cost_tracker.record("title_synopsis", title_prompt + synopsis_prompt,
-                                 raw_title + raw_syn)
-
-        # 更新书籍信息
-        self.state.title = nb.best_title
-        nb.title_finalized = True
-        self.state.updated_at = datetime.now().isoformat()
-
-        return {
-            "status": "title_generated",
-            "best_title": nb.best_title,
-            "options": nb.title_options,
-            "synopsis": nb.synopsis[:100] + "..." if len(nb.synopsis) > 100 else nb.synopsis,
-        }
-
-    # ─── 新书辅助方法 ───
-
-    def _generate_initial_characters(self, config: NewBookConfig) -> list[dict]:
-        """AI 生成初始角色设定"""
-        if not self.llm:
-            return []
-
-        prompt = (
-            f"为一本{config.genre}/{config.sub_genre}类网络小说设计核心角色阵容。\n"
-            f"平台：{config.platform}\n"
-            f"总章节：约{config.chapter_count}章\n\n"
-            "请设计：\n"
-            "1. 主角（姓名、性格、背景、金手指类型、成长路线）\n"
-            "2. 1-2个反派\n"
-            "3. 3-5个主要配角（伙伴/导师/红颜/对手）\n"
-            "4. 每个角色的核心冲突和弧线\n\n"
-            "以JSON返回：{\"characters\": [{"
-            "\"name\": \"\", \"identity\": \"\", \"personality\": \"\", "
-            "\"background\": \"\", \"arc\": \"\", \"role\": \"protagonist/antagonist/supporting\""
-            "}]}"
-        )
-        raw = self.llm.call(
-            "你是一位专业的网络小说设定师。请只返回JSON。",
-            prompt, temperature=0.7, max_tokens=4096)
-        try:
-            from core.llm_client import extract_json
-            data = json.loads(extract_json(raw))
-            chars = data.get("characters", [])
-            # 注册到状态机
-            for c in chars:
-                self.char_states.register(
-                    name=c.get("name", ""),
-                    identity=c.get("identity", ""),
-                    power_level=c.get("power_level", ""),
-                )
-            return chars
-        except Exception as e:
-            logger.warning("角色 LLM 输出解析失败，返回空列表: %s", e)
-            return []
-
-    def _generate_foreshadows(self, config: NewBookConfig) -> list[dict]:
-        """AI 规划伏笔方案"""
-        if not self.llm:
-            return []
-
-        prompt = (
-            f"为一本{config.genre}/{config.sub_genre}类网络小说规划伏笔方案。\n"
-            f"总章节：约{config.chapter_count if config.chapter_count else 500}章\n\n"
-            "请设计 5-8 条伏笔，覆盖不同层级：\n"
-            "- 全局伏笔（贯穿全书的大谜团）\n"
-            "- 弧级伏笔（每个卷/弧的关键线索）\n"
-            "- 章级伏笔（单章内的悬念设置）\n\n"
-            "每条伏笔标注：描述、建议埋设章节、预计回收章节、重要程度(major/minor/background)\n\n"
-            "以JSON返回：{\"foreshadows\": [{"
-            "\"description\": \"\", \"plant_chapter\": 0, \"resolve_chapter\": 0, "
-            "\"importance\": \"major|minor|background\""
-            "}]}"
-        )
-        raw = self.llm.call(
-            "你是一位专业的小说策划编辑。请只返回JSON。",
-            prompt, temperature=0.7, max_tokens=2048)
-        try:
-            from core.llm_client import extract_json
-            data = json.loads(extract_json(raw))
-            return data.get("foreshadows", [])
-        except Exception as e:
-            logger.warning("伏笔 LLM 输出解析失败，返回空列表: %s", e)
-            return []
-
-    def _save_new_book_chapter(self, ch_num: int, title: str, content: str):
-        """保存新书启动阶段的章节到临时路径"""
-        save_dir = Path("books") / "new_book_temp"
-        save_dir.mkdir(parents=True, exist_ok=True)
-        (save_dir / f"chapter_{ch_num:04d}.json").write_text(
-            json.dumps({
-                "num": ch_num, "title": title, "content": content,
-                "created_at": datetime.now().isoformat(),
-            }, ensure_ascii=False, indent=2),
-            encoding="utf-8")
-
-    def finalize_new_book(self) -> BookConfig:
-        """
-        新书启动完成后，正式创建图书记录。
-
-        将临时数据迁移到 books/ 目录，返回 BookConfig。
-        """
-        nb = self.state.new_book
-
-        # 创建正式图书
-        book = self.book_mgr.create(
-            title=nb.best_title or self.state.title,
-            pen_name=self.state.pen_name,
-            genre=self.state.genre,
-            sub_genre=self.state.sub_genre,
-            platform=self.state.platform,
-            chapter_count=self.state.total_chapters,
-            structure_template_id=self.state.structure_template_id,
-            style_profile_id=self._new_book_config.style_profile_id if self._new_book_config else "",
-        )
-        book.first_three_chapters = {
-            "chapter1": nb.chapter1[:500] + "...",
-            "chapter2": nb.chapter2[:500] + "...",
-            "chapter3": nb.chapter3[:500] + "...",
-        }
-        book.synopsis_ = nb.synopsis  # 非 dataclass 字段暂存
-
-        # 保存前三章
-        self.book_mgr.save_chapter(book.book_id, 1, "钩子·金手指·首次危机", nb.chapter1)
-        self.book_mgr.save_chapter(book.book_id, 2, "世界观展开", nb.chapter2)
-        self.book_mgr.save_chapter(book.book_id, 3, "首次核心冲突", nb.chapter3)
-        book.current_chapter = 3
-
-        # 保存大纲
-        self.book_mgr.save_outline(book.book_id, {
-            "structure": self.state.structure_template_id,
-            "chapters": self.state.chapters,
-            "characters": nb.characters_created,
-            "foreshadows": nb.foreshadows_planned,
-            "synopsis": nb.synopsis,
-        })
-
-        # 保存组装计划
-        if self.state.assembler_plan:
-            from libraries.assembler import save_plan
-            plan_path = Path("books") / book.book_id / "assembler_plan.json"
-            save_plan(self.state.assembler_plan, str(plan_path))
-
-        # 保存角色状态
-        self.char_states.save(str(Path("books") / book.book_id / "character_states.json"))
-
-        # 保存成本
-        cost_path = Path("books") / book.book_id / "cost.json"
-        self.cost_tracker.save(str(cost_path))
-
-        self.book_mgr.update(book)
-        self.state.book_id = book.book_id
-        self.book = book
-
-        return book
-
-    # ═══════════════════════════════════════════
-    # ♻️ 续写执行器
     # ═══════════════════════════════════════════
 
     def _exec_plan_outline(self, inst: Instruction) -> dict:
@@ -1162,97 +629,20 @@ class NovelEngine:
         }
 
     def _exec_write_chapter(self, inst: Instruction) -> dict:
-        """写一章（续写模式）。
+        """写一章（唯一写作核心 = 桥段写作）。
 
-        时间线书：委托给桥段驱动的 timeline_writer（撰写/续写统一同一套，按桥段生成、满章切分）；
-        旧书（无 timeline）：回退到节拍级写作 + 逐章文本大纲。
+        统一委托给桥段驱动的 timeline_writer（按桥段生成、满章切分）；
+        无故事线桥段时报错（需先在时间线编辑器生成并确认桥段）。
         """
-        # 时间线书：统一走桥段驱动的同一套写作者
-        if self.timeline_writer and self.timeline and self.timeline.plots:
-            return self._exec_write_timeline_chapter(inst)
-
-        chapter_num = inst.chapter_num
-        self.state.current_chapter = chapter_num
-
-        # 获取本章大纲：时间线书直接从故事线配置现算（大纲=故事线），旧书回退逐章文本
-        ctx = self._storyline_chapter_context(chapter_num) if self.timeline else None
-        ch_data = {}
-        if 0 < chapter_num <= len(self.state.chapters):
-            ch_data = self.state.chapters[chapter_num - 1] or {}
-        if ctx:
-            chapter_outline = self._render_chapter_outline(ctx)
-        else:
-            chapter_outline = ch_data.get("outline", f"第{chapter_num}章")
-
-        # 获取上文结尾
-        prev_ending = ""
-        if chapter_num > 1 and self.book:
-            prev_ch = self.book_mgr.load_chapter(self.state.book_id, chapter_num - 1)
-            if prev_ch:
-                prev_ending = prev_ch.get("content", "")[-500:]
-
-        # 角色状态
-        char_states = self.char_states.build_context_prompt(chapter_num=chapter_num)
-
-        # 使用节拍级写作管线
-        target_words = self.book.words_per_chapter if self.book else 3000
-        self.chapter_writer.executor.profile = self.profile  # 更新 profile
-
-        result = self.chapter_writer.write_chapter(
-            chapter_num=chapter_num,
-            chapter_outline=chapter_outline,
-            target_words=target_words,
-            genre=self.state.genre,
-            pen_name=self.state.pen_name,
-            previous_chapter_ending=prev_ending,
-            character_states=char_states,
-            assembler_plan=self.state.assembler_plan,
-            stage_index=self._get_stage_index(chapter_num),
-        )
-
-        full_text = result["text"]
-
-        # 两段式：撰写完成后，把本章笑点/内涵注入正文
-        if ctx and (ctx.get("gags") or ctx.get("themes")):
-            injected = self._inject_gags_themes_pass(full_text, ctx)
-            if injected:
-                full_text = injected
-                result = {**result, "text": full_text,
-                          "word_count": count_prose_units(full_text)}
-
-        self.state.current_content = full_text
-        self.state.current_plot_id = "beat_writer"
-        self.state.phase = Phase.REVIEWING
-
-        # 更新角色状态
-        self.char_states.update_from_chapter(chapter_num, full_text)
-
-        self._save_continue_state()
-
-        # 保存章节
-        if self.book:
-            self.book_mgr.save_chapter(
-                self.state.book_id, chapter_num,
-                ch_data.get("title", f"第{chapter_num}章"),
-                full_text)
-
-        # 记录成本
-        self.cost_tracker.record(f"ch{chapter_num}_beat", "", full_text)
-
-        return {
-            "status": "chapter_written",
-            "chapter": chapter_num,
-            "word_count": result["word_count"],
-            "plot_used": "beat_writer",
-            "beats": result["beats"],
-            "beat_details": result.get("beat_details", []),
-            "cost": round(self.cost_tracker.spent, 4),
-        }
+        if not (self.timeline_writer and self.timeline and self.timeline.plots):
+            raise RuntimeError(
+                "该书未生成故事线桥段（timeline.plots 为空）。请先在时间线编辑器生成并确认桥段，再进行写作。")
+        return self._exec_write_timeline_chapter(inst)
 
     def _prepare_chapter_context(self, chapter_num: int):
-        """取本章写作上下文：上文结尾 + 角色状态 + 进行中章节草稿（桥段累计）。
+        """取本章写作上下文：上文结尾 + 角色状态 + 进行中章节草稿 + 已完成章节语义摘要。
 
-        返回 (prev_ending, char_states, chapter_buffer, chapter_words)。
+        返回 (prev_ending, char_states, chapter_buffer, chapter_words, summaries_context)。
         """
         prev_ending = ""
         if chapter_num > 1:
@@ -1278,12 +668,134 @@ class NovelEngine:
                 words = int(draft.get("words", 0) or 0)
         except Exception as e:
             logger.warning("恢复章节草稿失败: %s", e)
-        return prev_ending, char_states, buffer, words
+
+        # 跨章长程记忆：最近 3-5 章语义摘要（升序，从旧到新）
+        summaries_context = ""
+        if self.book:
+            try:
+                summaries = self.book_mgr.load_chapter_summaries(
+                    self.state.book_id, chapter_num, limit=5)
+                if summaries:
+                    lines = [f"- 第{s['num']}章：{s['summary']}" for s in reversed(summaries)]
+                    summaries_context = "\n".join(lines)
+            except Exception as e:
+                logger.warning("加载章节摘要失败（继续写作）: %s", e)
+        return prev_ending, char_states, buffer, words, summaries_context
+
+    def _summarize_chapter(self, chapter_num: int, full_text: str, ctx=None) -> str:
+        """为刚写完的一章生成 80-150 字语义摘要（跨章长程记忆）。
+
+        ctx：_storyline_chapter_context 的结果（含本桥段名），可为 None。
+        输入 ≤500 token、输出 ≤256、temperature 0.3；失败返回空串。
+        """
+        if not self.llm or not full_text or not self.harness:
+            return ""
+        content_tail = full_text[-600:]
+        bridge_line = ""
+        if ctx:
+            outline_name = ctx.get("outline").name if ctx.get("outline") else ""
+            plot_names = "；".join(p.name for p in (ctx.get("plots") or [])[:3])
+            bridge_line = " / ".join(x for x in [outline_name, plot_names] if x)
+        d = self.harness.render_summary_prompt(content_tail, bridge_line)
+        try:
+            from core.llm_client import extract_json
+            raw = self.llm.call(d["system"], d["user"],
+                                temperature=0.3, max_tokens=1024)
+            data = json.loads(extract_json(raw))
+            s = (data.get("summary") or "").strip()
+            return s[:150] if s else ""
+        except Exception as e:
+            logger.warning("生成章节摘要失败: %s", e)
+            return ""
+
+    def _generate_book_meta(self, chapter1_text: str) -> dict:
+        """第 1 章写完后自动生成书名+简介，落盘 book.json / timeline.json / outline.json。
+
+        从老书名生成器抢救改造，去掉旧新书状态依赖，接入时间线流。
+        异常兜底为 best-effort：书名缺省保留原标题，简介缺省为空。
+        """
+        if not self.llm or not self.book:
+            return {"status": "skip"}
+        genre = self.state.genre or ""
+        sub_genre = self.state.sub_genre or ""
+        platform = self.state.platform or "fanqie"
+        ch1 = chapter1_text or ""
+
+        from core.llm_client import extract_json
+        import libraries.book_meta as book_meta
+
+        best = self.book.title or ""
+        synopsis = ""
+        raw_title = raw_syn = ""
+        title_prompt = synopsis_prompt = ""
+        # 书名
+        try:
+            title_prompt = book_meta.build_title_prompt(genre, sub_genre, platform, ch1)
+            raw_title = self.llm.call(
+                "你是一位专业的网文编辑。请只返回JSON，不要加任何额外文字。",
+                title_prompt, temperature=0.8, max_tokens=1024)
+            title_data = json.loads(extract_json(raw_title))
+            best = (title_data.get("best") or "").strip() or best
+        except Exception as e:
+            logger.warning("书名生成失败，沿用原标题: %s", e)
+        # 简介
+        try:
+            synopsis_prompt = book_meta.build_synopsis_prompt(genre, sub_genre, platform, ch1)
+            raw_syn = self.llm.call(
+                "你是一位专业的网文编辑。请只返回JSON，不要加任何额外文字。",
+                synopsis_prompt, temperature=0.8, max_tokens=1024)
+            syn_data = json.loads(extract_json(raw_syn))
+            synopsis = (syn_data.get("synopsis") or "").strip()
+        except Exception as e:
+            logger.warning("简介生成失败: %s", e)
+
+        if raw_title or raw_syn:
+            self.cost_tracker.record("book_meta", (title_prompt or "") + (synopsis_prompt or ""),
+                                     raw_title + raw_syn)
+
+        # 落盘
+        if best:
+            self.state.title = best
+            if self.book.title != best:
+                self.book.title = best
+                try:
+                    self.book_mgr.update(self.book)
+                except Exception as e:
+                    logger.warning("更新 book.title 失败: %s", e)
+            if self.timeline and self.timeline.book_title != best:
+                try:
+                    self.timeline.book_title = best
+                    self.book_mgr.save_timeline(self.state.book_id, self.timeline)
+                except Exception as e:
+                    logger.warning("更新 timeline.book_title 失败: %s", e)
+        if synopsis:
+            try:
+                outline = self.book_mgr.get_outline(self.state.book_id) or {}
+                outline["synopsis"] = synopsis
+                self.book_mgr.save_outline(self.state.book_id, outline)
+            except Exception as e:
+                logger.warning("保存简介失败: %s", e)
+
+        return {"status": "book_meta_generated", "title": best, "synopsis": synopsis}
 
     def _finalize_written_chapter(self, chapter_num: int, result: dict) -> dict:
         """桥段写完后的收尾：持久化进度/角色/章节/成本。"""
         full_text = result["text"]
+        # timeline 路径补一次免费规则层去AI味（词替换+段落节奏），与节拍路径行为一致；
+        # 仅在桥段写完落盘前处理，word_count 仍以写作时统计为准。
+        try:
+            full_text = self.de_ai.process_rule_based(full_text).processed
+        except Exception as e:
+            logger.warning("去AI味失败: %s", e)
         self.state.current_chapter = chapter_num
+        # 进度写回 book.json：否则书库/详情页看不到已写章节与进度
+        if self.book and self.book.current_chapter < chapter_num:
+            try:
+                self.book.current_chapter = chapter_num
+                self.book.status = "writing"
+                self.book_mgr.update(self.book)
+            except Exception as e:
+                logger.warning("更新图书进度失败: %s", e)
 
         # 持久化桥段写入进度（written_chapter），供断点续写
         try:
@@ -1303,14 +815,31 @@ class NovelEngine:
 
         self._save_continue_state()
 
+        # 生成章节语义摘要（跨章长程记忆），随章节一起落盘
+        summary = ""
+        try:
+            ctx = self._storyline_chapter_context(chapter_num) if self.timeline else None
+            summary = self._summarize_chapter(chapter_num, full_text, ctx)
+        except Exception as e:
+            logger.warning("生成章节摘要失败: %s", e)
+
         # 保存章节
         if self.book:
             try:
                 self.book_mgr.save_chapter(
                     self.state.book_id, chapter_num,
-                    f"第{chapter_num}章", full_text)
+                    f"第{chapter_num}章", full_text, summary)
             except Exception as e:
                 logger.warning("保存章节失败: %s", e)
+
+        # 第 1 章写完后自动生成书名/简介（每本书只触发一次）
+        if chapter_num == 1 and not self._book_meta_done:
+            try:
+                self._generate_book_meta(full_text)
+            except Exception as e:
+                logger.warning("书名/简介生成失败: %s", e)
+            finally:
+                self._book_meta_done = True
 
         # 记录成本
         self.cost_tracker.record(f"ch{chapter_num}_timeline", "", full_text)
@@ -1332,11 +861,12 @@ class NovelEngine:
         if not self.timeline_writer:
             raise RuntimeError("蓝图写作器未初始化，请先调用 start_new_book_timeline()")
         self.state.current_chapter = chapter_num
-        prev_ending, char_states, buffer, words = self._prepare_chapter_context(chapter_num)
+        prev_ending, char_states, buffer, words, summaries = self._prepare_chapter_context(chapter_num)
 
         gen = self.timeline_writer.write_chapter_stepwise(
             chapter_num, prev_ending, char_states,
-            chapter_buffer="\n\n".join(buffer), chapter_words=words)
+            chapter_buffer="\n\n".join(buffer), chapter_words=words,
+            summaries_context=summaries)
         result = None
         try:
             while True:
@@ -1375,11 +905,12 @@ class NovelEngine:
         if chapter_num > total_ch:
             yield {"type": "complete", "message": "已写完全部章节"}
             return
-        prev_ending, char_states, buffer, words = self._prepare_chapter_context(chapter_num)
+        prev_ending, char_states, buffer, words, summaries = self._prepare_chapter_context(chapter_num)
 
         gen = self.timeline_writer.write_bridge_stepwise(
             chapter_num, prev_ending, char_states,
-            chapter_buffer="\n\n".join(buffer), chapter_words=words)
+            chapter_buffer="\n\n".join(buffer), chapter_words=words,
+            summaries_context=summaries)
         result = None
         try:
             while True:
@@ -1428,13 +959,14 @@ class NovelEngine:
         if not self.timeline_writer:
             return {"error": "蓝图写作器未初始化，请先调用 start_new_book_timeline()"}
         chapter_num = inst.chapter_num
-        prev_ending, char_states, buffer, words = self._prepare_chapter_context(chapter_num)
+        prev_ending, char_states, buffer, words, summaries = self._prepare_chapter_context(chapter_num)
         result = self.timeline_writer.write_chapter(
             chapter_num=chapter_num,
             previous_chapter_ending=prev_ending,
             character_states=char_states,
             chapter_buffer="\n\n".join(buffer),
             chapter_words=words,
+            summaries_context=summaries,
         )
         final = self._finalize_written_chapter(chapter_num, result)
         self._clear_draft()
@@ -1640,36 +1172,3 @@ class NovelEngine:
                 return {"write": write_result, "review": review_result}
 
         return {"status": inst.op.value, "reason": inst.reason}
-
-    def run_new_book_full(self) -> dict:
-        """
-        一键跑完新书启动全流程：
-        规划 → 第一章 → 第二章 → 第三章 → 书名简介
-
-        返回完整结果，包含所有中间产物。
-        """
-        if self.state.book_mode != BookMode.NEW:
-            return {"status": "error", "reason": "当前不是新书模式"}
-
-        results = []
-        for _ in range(10):
-            inst = self.route()
-            if inst.op == Op.WRITE_CHAPTER:
-                # 新书启动完成，转入续写模式
-                results.append({"status": "new_book_startup_complete"})
-                break
-            result = self.execute(inst)
-            results.append(result)
-
-        return {
-            "status": "new_book_complete",
-            "steps": len(results),
-            "results": results,
-            "summary": {
-                "title": self.state.title,
-                "chapters": [1, 2, 3],
-                "characters": len(self.state.new_book.characters_created),
-                "foreshadows": len(self.state.new_book.foreshadows_planned),
-                "title_options": self.state.new_book.title_options,
-            },
-        }

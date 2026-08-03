@@ -5,7 +5,7 @@
 流程：
   选定大纲 → 逐阶段匹配桥段 → 逐桥段匹配笑点 → 选定全书母题 → 生成计划 → 起名
 
-写作时：ChapterWriter 读写作计划 → LLM 看到 "这个节拍要用的桥段模板 + 笑点模式 + 内涵锚点"
+（桥段写作 timeline_writer 不再依赖 assembler_plan；本模块保留 BookAssembler 供大纲阶段匹配材料与 stage 索引反查）
 """
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -422,111 +422,6 @@ class BookAssembler:
         b = random.choice(suffixes)
         return f"{a}{b}"
 
-
-# ═══════════════════════════════════════════
-# 写作计划注入器
-# ═══════════════════════════════════════════
-
-class PlanInjector:
-    """
-    将 BookAssemblerPlan 注入到 LLM 写作 prompt 中。
-
-    职责：把数据库中选定的大纲/桥段/笑点/内涵，转化为 LLM 能理解
-    并执行的写作指令。这是连接"库"和"生成管线"的桥梁。
-    """
-
-    @staticmethod
-    def get_stage_context(
-        plan: BookAssemblerPlan, stage_index: int,
-    ) -> dict:
-        """获取指定阶段写作时要注入的上下文"""
-        if 0 <= stage_index < len(plan.stages):
-            sp = plan.stages[stage_index]
-        else:
-            return {}
-
-        ctx = {
-            "stage_name": sp.stage_name,
-            "stage_description": sp.stage_description,
-        }
-
-        # 桥段结构
-        if sp.plot:
-            ctx["plot_name"] = sp.plot.name
-            ctx["plot_structure"] = sp.plot.template_structure
-            ctx["plot_slots"] = [
-                {"name": s.name, "options": s.options, "default": s.default}
-                for s in sp.plot.slots
-            ]
-            ctx["plot_usage_notes"] = sp.plot.usage_notes
-
-        # 笑点
-        if sp.gags:
-            ctx["gags"] = [
-                {
-                    "name": g.name,
-                    "pattern": g.pattern_description,
-                    "template": g.template,
-                }
-                for g in sp.gags
-            ]
-
-        # 内涵
-        ctx["theme_hints"] = plan.theme_hints + sp.theme_hints
-
-        return ctx
-
-    @staticmethod
-    def build_chapter_prompt_enrichment(
-        plan: BookAssemblerPlan, stage_index: int,
-    ) -> str:
-        """
-        生成一段注入到章节写作 prompt 中的库材料文本。
-
-        这段文本会被追加到 BeatExecutor 的 prompt 中，告诉 LLM：
-        - 这一章的桥段结构是什么
-        - 笑点在哪个位置插入
-        - 要体现什么内涵
-        """
-        ctx = PlanInjector.get_stage_context(plan, stage_index)
-        if not ctx:
-            return ""
-
-        parts = []
-
-        # 1. 桥段注入
-        if ctx.get("plot_structure"):
-            parts.append("【本章桥段模板】")
-            parts.append(f"桥段：{ctx.get('plot_name', '')}")
-            parts.append(f"结构骨架：{ctx['plot_structure']}")
-            if ctx.get("plot_slots"):
-                slots_text = "、".join(
-                    f"{s['name']}={s['default']}"
-                    for s in ctx["plot_slots"]
-                )
-                parts.append(f"变量槽位：{slots_text}")
-            if ctx.get("plot_usage_notes"):
-                parts.append(f"使用方法：{ctx['plot_usage_notes']}")
-
-        # 2. 笑点注入
-        if ctx.get("gags"):
-            gags_text = "\n".join(
-                f"- [{g['name']}] {g['pattern']} → 例句模式：{g['template']}"
-                for g in ctx["gags"]
-            )
-            parts.append(f"\n【本章笑点模式（在自然位置融入1-2个）】\n{gags_text}")
-
-        # 3. 内涵注入
-        if ctx.get("theme_hints"):
-            hints_text = "\n".join(f"- {h}" for h in ctx["theme_hints"])
-            parts.append(f"\n【本章要体现的内涵】\n{hints_text}")
-
-        return "\n".join(parts)
-
-
-# ═══════════════════════════════════════════
-# 便捷工厂
-# ═══════════════════════════════════════════
 
 def create_assembler(llm_client=None):
     """创建组装器的便捷工厂"""
