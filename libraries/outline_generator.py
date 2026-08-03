@@ -804,10 +804,23 @@ class OutlineGenerator:
             p.thread_id = self._default_thread_for_category(p.category)
             p.thread_seq = 0
 
+    _THREAD_ID_NORM = {
+        "main": "主线", "side": "副线", "sub": "副线",
+        "hidden": "伏笔阴谋线", "mystery": "伏笔阴谋线", "foreshadow": "伏笔阴谋线",
+    }
+
+    def _normalize_thread_id(self, tid) -> str:
+        tid = (tid or "主线").strip()
+        if not tid:
+            return "主线"
+        return self._THREAD_ID_NORM.get(tid.lower(), tid)
+
     def _apply_thread_assignments(self, tl: BookTimeline, threads, assignments):
-        """把 LLM 的线程分配应用到 plots（未分配的按分类兜底）。"""
+        """把 LLM 的线程分配应用到 plots（未分配的按分类兜底；英文 id 规范化为中文）。"""
         if isinstance(threads, list) and threads:
-            tl.threads = [t for t in threads if isinstance(t, dict)]
+            tl.threads = [{"id": self._normalize_thread_id(t.get("id")),
+                           "name": t.get("name") or self._normalize_thread_id(t.get("id")),
+                           "desc": t.get("desc", "")} for t in threads if isinstance(t, dict)]
         if not tl.threads:
             tl.threads = [{"id": "主线", "name": "主线", "desc": "主角核心推进线"}]
         if not any(t.get("id") == "主线" for t in tl.threads):
@@ -823,7 +836,7 @@ class OutlineGenerator:
             if not plot:
                 continue
             assigned_ids.add(pid)
-            tid = a.get("thread", "主线") or "主线"
+            tid = self._normalize_thread_id(a.get("thread", "主线"))
             if tid not in thread_ids:
                 tl.threads.append({"id": tid, "name": tid, "desc": ""})
                 thread_ids.add(tid)
@@ -931,18 +944,27 @@ class OutlineGenerator:
   "splits": [{{"plot_id":"","payoff_after_stage":2,"payoff_name":"","payoff_thread":""}}],
   "reason": "一句话说明线程/拆分思路"}}"""
 
-        try:
-            from core.llm_client import extract_json
-            raw = yield from self._stream_decision_content(
-                "thread_split", "你是网文策划编辑，负责叙事线程与钩子呼应规划。只返回JSON。",
-                prompt, temperature=0.5, max_tokens=8192)
-            data = json.loads(extract_json(raw))
-        except Exception as e:
+        # 非流式 + 空响应重试：max_tokens 必须留足推理余量（该任务输出含全部桥段分配，
+        # 8192 会被推理+正文吃满导致 content 空；16384 实测稳定）。
+        data = None
+        for _attempt in range(3):
+            try:
+                from core.llm_client import extract_json
+                raw = self.llm.call(
+                    "你是网文策划编辑，负责叙事线程与钩子呼应规划。只返回JSON。",
+                    prompt, temperature=0.3, max_tokens=16384)
+                if not raw or not raw.strip():
+                    continue  # flash 偶发空返回 → 重试
+                data = json.loads(extract_json(raw))
+                break
+            except Exception:
+                continue
+        if data is None:
             self._apply_thread_fallback(tl)
             yield ("decision", "thread_split", {
                 "step": "线程与呼应（解析失败回退）",
                 "candidates": [], "chosen": {"threads": [], "splits": 0},
-                "reason": f"LLM 输出解析失败，按分类规则回退: {e}",
+                "reason": "LLM 多次空返回/解析失败，按分类规则回退",
             })
             return
 
