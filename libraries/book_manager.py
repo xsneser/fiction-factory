@@ -8,6 +8,8 @@ from datetime import datetime
 import json
 import logging
 
+from core.json_store import read_json, write_json_atomic
+
 logger = logging.getLogger("novel-engine.book_manager")
 
 
@@ -68,7 +70,7 @@ class BookManager:
                 cfg_path = d / "book.json"
                 if cfg_path.exists():
                     try:
-                        cfg = BookConfig.from_dict(json.loads(cfg_path.read_text(encoding="utf-8")))
+                        cfg = BookConfig.from_dict(read_json(cfg_path, {}))
                         self._cache[cfg.book_id] = cfg
                     except Exception as e:
                         # 单本书损坏不拖垮整个书库（否则缓存为空，create 会撞号覆盖）
@@ -140,18 +142,14 @@ class BookManager:
         (book_dir / "chapters").mkdir(exist_ok=True)
         (book_dir / "outline").mkdir(exist_ok=True)
         # 写配置
-        (book_dir / "book.json").write_text(
-            json.dumps(cfg.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8")
+        write_json_atomic(book_dir / "book.json", cfg.to_dict())
         self._cache[book_id] = cfg
         return cfg
 
     def update(self, cfg: BookConfig):
         cfg.updated_at = datetime.now().isoformat()
         book_dir = self.dir / cfg.book_id
-        (book_dir / "book.json").write_text(
-            json.dumps(cfg.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8")
+        write_json_atomic(book_dir / "book.json", cfg.to_dict())
         self._cache[cfg.book_id] = cfg
 
     def save_chapter(self, book_id: str, chapter_num: int,
@@ -160,25 +158,23 @@ class BookManager:
         book_dir = self.dir / book_id / "chapters"
         book_dir.mkdir(parents=True, exist_ok=True)
         chapter_file = book_dir / f"{chapter_num:04d}.json"
-        chapter_file.write_text(json.dumps({
+        write_json_atomic(chapter_file, {
             "num": chapter_num, "title": title,
             "content": content, "summary": summary,
             "created_at": datetime.now().isoformat(),
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        })
 
     def load_chapter(self, book_id: str, chapter_num: int) -> dict | None:
         chapter_file = self.dir / book_id / "chapters" / f"{chapter_num:04d}.json"
         if chapter_file.exists():
-            return json.loads(chapter_file.read_text(encoding="utf-8"))
+            return read_json(chapter_file)
         return None
 
     def save_outline(self, book_id: str, outline_data: dict):
         """保存大纲"""
         outline_dir = self.dir / book_id / "outline"
         outline_dir.mkdir(parents=True, exist_ok=True)
-        (outline_dir / "outline.json").write_text(
-            json.dumps(outline_data, ensure_ascii=False, indent=2),
-            encoding="utf-8")
+        write_json_atomic(outline_dir / "outline.json", outline_data)
 
     def export_chapter_markdown(self, book_id: str, chapter_num: int,
                                  output_dir: str = "exports") -> str:
@@ -202,7 +198,7 @@ class BookManager:
         """加载大纲"""
         outline_path = self.dir / book_id / "outline" / "outline.json"
         if outline_path.exists():
-            return json.loads(outline_path.read_text(encoding="utf-8"))
+            return read_json(outline_path)
         return None
 
     def save_timeline(self, book_id: str, timeline) -> None:
@@ -228,3 +224,5 @@ class BookManager:
             self._cache.pop(book_id, None)
             return True
         return False
+
+

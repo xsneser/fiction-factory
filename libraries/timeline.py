@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 import json
 
+from core.json_store import read_json, write_json_atomic
+
 
 # ═══════════════════════════════════════════
 # 数据结构
@@ -431,8 +433,7 @@ def save_timeline(timeline: BookTimeline, path: str):
     """保存时间线到文件"""
     from pathlib import Path
     p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(timeline.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(p, timeline.to_dict())
 
 
 def load_timeline(path: str) -> Optional[BookTimeline]:
@@ -442,7 +443,7 @@ def load_timeline(path: str) -> Optional[BookTimeline]:
     if not p.exists():
         return None
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        data = read_json(p, {})
         return BookTimeline.from_dict(data)
     except Exception:
         return None
@@ -472,3 +473,4 @@ def merge_basic_info(existing: dict, generated: dict) -> dict:
         if key not in merged:
             merged[key] = ev
     return merged
+
