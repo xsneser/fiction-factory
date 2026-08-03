@@ -19,6 +19,7 @@ from libraries.reviewer import ContentReviewer
 from libraries.engine import NovelEngine, BookMode, Op, Instruction
 from core.llm_client import LLMClient
 from core.models import APIConfig
+from core.json_store import read_json, write_json_atomic
 
 # 设置日志级别以便调试搜索
 for name in ["fanqie-scout", "__main__"]:
@@ -49,7 +50,7 @@ def get_llm():
         return _llm_client
     api_path = "api.json"
     if os.path.exists(api_path):
-        cfg = json.loads(open(api_path, encoding="utf-8").read())
+        cfg = read_json(api_path, {})
         api_cfg = APIConfig(
             api_key=cfg.get("api_key",""),
             base_url=cfg.get("base_url","https://api.deepseek.com"),
@@ -1934,8 +1935,7 @@ def _load_api_config() -> dict:
     """读取 api.json（不存在返回空 dict）"""
     api_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api.json")
     if os.path.exists(api_path):
-        with open(api_path, encoding="utf-8") as f:
-            return json.load(f)
+        return read_json(api_path, {})
     return {}
 
 
@@ -1994,8 +1994,7 @@ def settings_save():
         return jsonify({"ok": False, "error": "API 地址不能为空"}), 400
 
     try:
-        with open(api_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        write_json_atomic(api_path, cfg)
     except Exception as e:
         return jsonify({"ok": False, "error": f"写入失败: {e}"}), 500
 
