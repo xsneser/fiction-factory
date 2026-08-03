@@ -9,6 +9,7 @@ import json
 import logging
 
 from core.json_store import read_json, write_json_atomic
+from core.safe_paths import ensure_child_path, is_safe_book_id
 
 logger = logging.getLogger("novel-engine.book_manager")
 
@@ -218,11 +219,14 @@ class BookManager:
 
     def delete(self, book_id: str) -> bool:
         import shutil
-        book_dir = self.dir / book_id
-        if book_dir.exists():
-            shutil.rmtree(book_dir)
-            self._cache.pop(book_id, None)
-            return True
-        return False
+        if not is_safe_book_id(book_id):
+            logger.warning("拒绝删除非法 book_id: %s", book_id)
+            return False
+        book_dir = ensure_child_path(self.dir, self.dir / book_id)
+        if not (book_dir / "book.json").exists():
+            return False
+        shutil.rmtree(book_dir)
+        self._cache.pop(book_id, None)
+        return True
 
 

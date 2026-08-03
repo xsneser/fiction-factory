@@ -20,6 +20,7 @@ from libraries.engine import NovelEngine, BookMode, Op, Instruction
 from core.llm_client import LLMClient
 from core.models import APIConfig
 from core.json_store import read_json, write_json_atomic
+from core.safe_paths import ensure_child_path, is_safe_timeline_id, parse_int
 
 # 设置日志级别以便调试搜索
 for name in ["fanqie-scout", "__main__"]:
@@ -164,7 +165,7 @@ def start_new_book():
             book_title=request.form.get("title", ""),
             genre=genre,
             sub_genre=sub_genre,
-            words_per_chapter=int(request.form.get("words_per_chapter", 3000)),
+            words_per_chapter=parse_int(request.form.get("words_per_chapter"), 3000, min_value=500, max_value=20000),
             pen_name=pen_name,
             basic_info={
                 "protagonist": {
@@ -1185,10 +1186,12 @@ def timeline_delete(timeline_id):
     """删除故事线草稿（tl_*/gen_*）。正式书 book_* 请走 /books/<id>/delete。"""
     if timeline_id.startswith("book_"):
         return jsonify({"ok": False, "error": "正式书请从书库删除"}), 400
+    if not is_safe_timeline_id(timeline_id):
+        return jsonify({"ok": False, "error": "非法故事线 ID"}), 400
     _timelines.pop(timeline_id, None)
-    path = _timeline_filepath(timeline_id)
+    path = ensure_child_path("books/timelines", _timeline_filepath(timeline_id))
     try:
-        if os.path.exists(path):
+        if path.exists():
             os.remove(path)
         return jsonify({"ok": True})
     except OSError as e:
@@ -1986,6 +1989,11 @@ def settings_save():
                 "http_timeout_seconds", "context_budget_tokens"):
         if key in data:
             cfg[key] = data[key]
+
+    cfg["http_timeout_seconds"] = parse_int(
+        cfg.get("http_timeout_seconds"), 300, min_value=5, max_value=1800)
+    cfg["context_budget_tokens"] = parse_int(
+        cfg.get("context_budget_tokens"), 300000, min_value=8000, max_value=2000000)
 
     # 校验
     if not cfg.get("api_key"):
