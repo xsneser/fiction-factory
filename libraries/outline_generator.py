@@ -871,7 +871,7 @@ class OutlineGenerator:
             order = max([p.order for p in tl.plots
                          if p.outline_id == setup.outline_id
                          and p.stage_index == payoff_stage] or [-1]) + 1
-            tid = s.get("payoff_thread", "") or setup.thread_id
+            tid = self._normalize_thread_id(s.get("payoff_thread", "") or setup.thread_id)
             payoff = PlotSlot(
                 id=self._next_id("plot"), template_id=setup.template_id,
                 name=s.get("payoff_name", "") or (setup.name + "·收局"),
