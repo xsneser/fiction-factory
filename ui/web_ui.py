@@ -1181,6 +1181,34 @@ def book_detail(book_id):
         cost=cost.summary(), characters=csm.characters)
 
 
+@app.route("/api/book/<book_id>/generate-meta", methods=["POST"])
+def api_book_generate_meta(book_id):
+    """书库详情页：手动生成书名+简介（基于第 1 章内容）。
+
+    从"第 1 章写完自动触发"改为详情页独立动作。
+    生成结果写 book.json（title）/ timeline.json（book_title）/ outline.json（synopsis）。
+    """
+    if not book_mgr.get(book_id):
+        return jsonify({"ok": False, "error": "not found"}), 404
+    ch1 = book_mgr.load_chapter(book_id, 1)
+    if not ch1 or not ch1.get("content"):
+        return jsonify({"ok": False, "error": "尚无第 1 章正文，请先写作再生成书名/简介"}), 400
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+    try:
+        from libraries.engine import NovelEngine
+        engine = NovelEngine(llm_client=llm)
+        engine.continue_book(book_id)   # 恢复 book/timeline（无 timeline 会报错）
+        result = engine._generate_book_meta(ch1["content"])
+        # 使 web_ui 的 book 缓存失效，下次详情页加载读到磁盘新值
+        book_mgr._cache.pop(book_id, None)
+        _engines.pop(f"cont_{book_id}", None)
+        return jsonify({"ok": True, **result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/books/<book_id>/delete", methods=["POST"])
 def delete_book(book_id):
     book_mgr.delete(book_id)

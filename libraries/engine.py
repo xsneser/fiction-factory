@@ -162,9 +162,6 @@ class NovelEngine:
         self.cost_tracker = CostTracker()
         self.book: Optional[BookConfig] = None
 
-        # 书名/简介生成标志（第 1 章写完触发一次）
-        self._book_meta_done = False
-
     # ═══════════════════════════════════════════
     # 入口
     # ═══════════════════════════════════════════
@@ -831,15 +828,6 @@ class NovelEngine:
                     f"第{chapter_num}章", full_text, summary)
             except Exception as e:
                 logger.warning("保存章节失败: %s", e)
-
-        # 第 1 章写完后自动生成书名/简介（每本书只触发一次）
-        if chapter_num == 1 and not self._book_meta_done:
-            try:
-                self._generate_book_meta(full_text)
-            except Exception as e:
-                logger.warning("书名/简介生成失败: %s", e)
-            finally:
-                self._book_meta_done = True
 
         # 记录成本
         self.cost_tracker.record(f"ch{chapter_num}_timeline", "", full_text)

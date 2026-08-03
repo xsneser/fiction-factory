@@ -4,6 +4,7 @@
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
     <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 续写 / 进入写作台</a>
+    <a href="#" class="btn" style="background:#8957e5;color:#fff;text-decoration:none" onclick="generateMeta()">🎬 生成书名/简介</a>
     {% if basic_info.get('has_timeline') %}
     <a href="/timeline/{{ book.book_id }}/edit" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">📋 编辑大纲</a>
     {% endif %}
@@ -140,4 +141,23 @@
 {% else %}
 <div class="empty"><div class="icon">✍️</div><p>还没有生成章节</p></div>
 {% endif %}
+<script>
+function generateMeta() {
+    if (!confirm('用第 1 章内容生成书名和简介？将覆盖当前书名/简介。')) return;
+    var btn = event.target;
+    btn.textContent = '⏳ 生成中...';
+    fetch('/api/book/{{ book.book_id }}/generate-meta', {method: 'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (d.ok) {
+                alert('✅ 已生成书名：' + d.title + (d.synopsis ? '\n简介：' + d.synopsis : ''));
+                location.reload();
+            } else {
+                alert('生成失败：' + (d.error || '未知错误'));
+                btn.textContent = '🎬 生成书名/简介';
+            }
+        })
+        .catch(function(e){ alert('生成失败：' + e); btn.textContent = '🎬 生成书名/简介'; });
+}
+</script>
 {% endblock %}
