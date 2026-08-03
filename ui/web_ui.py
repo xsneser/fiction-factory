@@ -1165,10 +1165,13 @@ def book_detail(book_id):
     # 简介存在 outline.json，合并进 basic_info 供详情页显示
     if outline and (outline.get("synopsis") or ""):
         basic_info.setdefault("synopsis", outline["synopsis"])
+    from core.text_utils import count_prose_units
     chapters = []
     for n in range(1, book.current_chapter + 2):
         ch = book_mgr.load_chapter(book_id, n)
-        if ch: chapters.append(ch)
+        if ch:
+            ch["word_count"] = count_prose_units(ch.get("content") or "")
+            chapters.append(ch)
     cost_path = f"books/{book_id}/cost.json"
     cost = CostTracker.load(cost_path) if os.path.exists(cost_path) else CostTracker()
     csm = CharacterStateMachine()
