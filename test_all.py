@@ -137,6 +137,60 @@ normal_p = h.render_bridge_prompt(_item, "", "", "", 300, is_opening=False)
 assert_ok("非开场-不含铁律", "开场模式" not in normal_p)
 
 # ══════════════════════════════════════════════
+#  Phase 3.5: 线程穿插 + 桥段拆分（无 LLM）
+# ══════════════════════════════════════════════
+print("\n═══ Phase 3.5: 线程穿插 + 桥段拆分（无 LLM）═══")
+
+from libraries.timeline import BookTimeline, OutlineSlot, PlotSlot
+from libraries.timeline_writer import TimelineChapterWriter
+from libraries.outline_generator import OutlineGenerator
+
+_p0 = PlotSlot(id="x", template_id="t", name="n")
+assert_ok("线程-缺省主线", _p0.thread_id == "主线" and _p0.resolves_plot_id == "")
+_tlA = BookTimeline(); _tlA.plots = [_p0]
+assert_ok("线程-往返一致", BookTimeline.from_dict(_tlA.to_dict()).plots[0].thread_id == "主线")
+_tlA2 = BookTimeline.from_dict({"plots": [{"id": "y", "template_id": "t", "name": "n"}]})
+assert_ok("线程-旧数据兼容", _tlA2.plots[0].thread_id == "主线")
+
+# 线程轮流排序（主线2:1；数据刻意按"先主线后副线"构造，穿插后顺序改变）
+_tlB = BookTimeline()
+_oB = OutlineSlot(id="o1", template_id="t", name="弧", start_chapter=1, end_chapter=30,
+                  stages=[{"name": "s%d" % i, "events": ["e"]} for i in range(6)])
+_tlB.outlines = [_oB]
+def _mk(pid, st, order, tid):
+    return PlotSlot(id=pid, template_id="t", name=pid, outline_id="o1", stage_index=st, order=order, thread_id=tid)
+_tlB.plots = [
+    _mk("M1",0,0,"主线"),_mk("M2",0,1,"主线"),_mk("M3",1,0,"主线"),_mk("M4",1,1,"主线"),
+    _mk("M5",2,0,"主线"),_mk("M6",2,1,"主线"),
+    _mk("S1",3,0,"副线"),_mk("S2",3,1,"副线"),_mk("S3",4,0,"副线"),
+    _mk("V1",4,1,"伏笔"),_mk("V2",5,0,"伏笔"),_mk("V3",5,1,"伏笔"),
+]
+_wB = TimelineChapterWriter(timeline=_tlB)
+_seqB = [p.id for p in _wB._threaded_ordered_plots()]
+assert_ok("线程-轮流前7", _seqB[:7] == ["M1","M2","S1","V1","M3","M4","S2"], " ".join(_seqB[:7]))
+for p in _tlB.plots: p.thread_id = "主线"
+_strict = [p.id for p in sorted(_tlB.plots, key=lambda p: (0, p.stage_index, p.order))]
+_seqB2 = [p.id for p in _wB._threaded_ordered_plots()]
+assert_ok("线程-全主线=旧严格顺序", _seqB2 == _strict, " ".join(_seqB2))
+
+# 收局创建（设局→收局两槽位）
+_genB = OutlineGenerator(llm_client=None)
+_setupB = PlotSlot(id="setup1", template_id="t", name="阴谋·设局", category="悬疑",
+                   outline_id="o1", stage_index=0, order=0)
+_tlC = BookTimeline(); _tlC.outlines = [_oB]; _tlC.plots = [_setupB]
+_evtsB = list(_genB._apply_split_payoffs(
+    _tlC, [{"plot_id": "setup1", "payoff_after_stage": 2, "payoff_name": "阴谋·收局"}]))
+_payoffsB = [p for p in _tlC.plots if p.resolves_plot_id]
+assert_ok("线程-收局创建", len(_payoffsB) == 1, str(len(_payoffsB)))
+assert_ok("线程-收局晚于设局", _payoffsB[0].stage_index > _setupB.stage_index, str(_payoffsB[0].stage_index))
+assert_ok("线程-收局 plot_added 事件", len(_evtsB) == 1 and _evtsB[0][0] == "plot_added")
+
+assert_ok("线程-分类兜底",
+          _genB._default_thread_for_category("悬疑") == "伏笔阴谋线"
+          and _genB._default_thread_for_category("情感") == "副线"
+          and _genB._default_thread_for_category("爽文") == "主线")
+
+# ══════════════════════════════════════════════
 #  Phase 4: 成本追踪
 # ══════════════════════════════════════════════
 print("\n═══ Phase 4: 成本追踪 ═══")

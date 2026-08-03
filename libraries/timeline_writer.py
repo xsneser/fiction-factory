@@ -13,6 +13,7 @@
 旧"整本先写全文再分章"（BlueprintWritingPipeline）已废弃删除。
 """
 import re
+from collections import OrderedDict
 
 from .timeline import BookTimeline
 from core.text_utils import count_prose_units
@@ -76,20 +77,73 @@ class TimelineChapterWriter:
                                 if timeline else 0)
 
     # ── 桥段按故事顺序（上→下）与层次（左→右：大纲→阶段→桥段）排列 ──
-    def _story_ordered_plots(self):
-        """返回按 (大纲顺序, 阶段顺序, 桥段顺序) 排列的 [(outline, stage, plot), ...]。"""
+    def _threaded_ordered_plots(self):
+        """按叙事线程轮流排列桥段（主线加权 2:1，副线/伏笔线各 1）。
+
+        线程内按 (大纲, stage, order, thread_seq) 排序；主线每轮取 2 个、其他线程各 1 个。
+        向后兼容：全部 thread_id="主线" 时退化为原严格顺序（单组顺序取）。
+        """
         outlines = self.timeline.outlines
-        order = {o.id: i for i, o in enumerate(outlines)}
-        plots = sorted(self.timeline.plots, key=lambda p: (
-            order.get(p.outline_id, 99), p.stage_index, p.order))
+        o_pos = {o.id: i for i, o in enumerate(outlines)}
+
+        def base_key(p):
+            return (o_pos.get(p.outline_id, 99), p.stage_index, p.order,
+                    getattr(p, "thread_seq", 0) or 0)
+
+        groups = OrderedDict()
+        for p in sorted(self.timeline.plots, key=base_key):
+            tid = (getattr(p, "thread_id", "") or "主线")
+            groups.setdefault(tid, []).append(p)
+
+        # 线程顺序：主线恒首，其余按各自首个 plot 的 base_key 排（稳定可复现）
+        thread_order = sorted((t for t in groups if t != "主线"),
+                              key=lambda t: base_key(groups[t][0]))
+        if "主线" in groups:
+            thread_order = ["主线"] + thread_order
+
+        weights = {"主线": 2}
+        idx = {t: 0 for t in groups}
+        result = []
+        remaining = True
+        while remaining:
+            remaining = False
+            for t in thread_order:
+                w = weights.get(t, 1)
+                for _ in range(w):
+                    if idx[t] < len(groups[t]):
+                        result.append(groups[t][idx[t]])
+                        idx[t] += 1
+                        remaining = True
+        return result
+
+    def _story_ordered_plots(self):
+        """返回按叙事线程轮流排列的 [(outline, stage, plot), ...]。
+
+        线程穿插（主线/副线/伏笔线轮流取）保证第 1 章即多线并进；
+        收局槽位（resolves_plot_id 非空）天然落在线程后段、被其他线程穿插。
+        """
+        outlines = self.timeline.outlines
+        plots = self._threaded_ordered_plots()
         result = []
         for p in plots:
             o = next((x for x in outlines if x.id == p.outline_id), None)
             stage = {}
             if o and 0 <= p.stage_index < len(o.stages or []):
                 stage = o.stages[p.stage_index]
-            result.append({"outline": o, "stage": stage, "plot": p})
+            item = {"outline": o, "stage": stage, "plot": p,
+                    "is_payoff": bool(getattr(p, "resolves_plot_id", "")),
+                    "resolver_name": self._find_resolver_name(p.id)}
+            result.append(item)
         return result
+
+    def _find_resolver_name(self, plot_id: str) -> str:
+        """返回引用 plot_id 的收局桥段名（设局提示用），无则空。"""
+        if not self.timeline:
+            return ""
+        for q in self.timeline.plots:
+            if getattr(q, "resolves_plot_id", "") == plot_id:
+                return getattr(q, "name", "")
+        return ""
 
     def _bridge_gag_names(self, item) -> list:
         """解析桥段挂载的笑点 id → 名称（用于注入写作 prompt）。"""

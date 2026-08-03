@@ -1,6 +1,6 @@
 """
 大纲生成引擎（Outline Generator）
-5 阶段 LLM 管线：故事分析 → 故事线规划 → 桥段编排 → 内涵挂载 → 一致性验证
+6 阶段 LLM 管线：故事分析 → 故事线规划 → 桥段编排 → 线程与呼应 → 内涵挂载 → 一致性验证
 
 输入: 流派/子流派/自定义描述 + 四大库（候选池） + 笔名档案
 输出: BookTimeline JSON（多大纲+桥段+内涵+吸睛；笑点完全涌现、不写入大纲）
@@ -111,7 +111,7 @@ class OutlineGenerator:
         if self.harness:
             self.harness.timeline = tl
 
-        total_phases = 5
+        total_phases = 6
         issues = []
         try:
             # ── Phase 1: 故事分析 ──
@@ -174,8 +174,23 @@ class OutlineGenerator:
             if on_save:
                 on_save(tl)
 
-            # ── Phase 4: 内涵挂载（笑点完全涌现，不在此分配）──
-            yield ("phase", "内涵挂载", {"phase": 4, "total": total_phases,
+            # ── Phase 4: 线程与呼应（线程穿插 + 桥段拆分设局→收局）──
+            yield ("phase", "线程与呼应", {"phase": 4, "total": total_phases,
+                   "desc": "规划叙事线程（主线/副线/伏笔线）与设局→收局呼应..."})
+            yield ("progress", "分析桥段线程归属与设局收局...", {})
+            yield from self._plan_threads_and_splits(tl, genre)
+            yield ("phase_done", "线程与呼应规划完成", {
+                "phase": 4,
+                "data": {
+                    "threads": [t.get("id", "") for t in tl.threads],
+                    "splits": sum(1 for p in tl.plots if p.resolves_plot_id),
+                }
+            })
+            if on_save:
+                on_save(tl)
+
+            # ── Phase 5: 内涵挂载（笑点完全涌现，不在此分配）──
+            yield ("phase", "内涵挂载", {"phase": 5, "total": total_phases,
                    "desc": "把母题挂到能承载它的桥段、标注吸睛点（笑点在写作时涌现）..."})
 
             tl.themes = self._select_book_themes(genre, tl)
@@ -194,7 +209,7 @@ class OutlineGenerator:
             yield from self._review_theme_assignments(tl, genre)
 
             yield ("phase_done", "内涵挂载完成", {
-                "phase": 4,
+                "phase": 5,
                 "data": {
                     "themes": tl.themes,
                     "themes_total": sum(len(p.theme_hints) for p in tl.plots),
@@ -203,8 +218,8 @@ class OutlineGenerator:
             if on_save:
                 on_save(tl)
 
-            # ── Phase 5: 一致性验证 ──
-            yield ("phase", "一致性验证", {"phase": 5, "total": total_phases,
+            # ── Phase 6: 一致性验证 ──
+            yield ("phase", "一致性验证", {"phase": 6, "total": total_phases,
                    "desc": "验证时间线合理性、桥段覆盖、内涵挂载..."})
             yield ("progress", "检查故事线...", {})
 
@@ -215,7 +230,7 @@ class OutlineGenerator:
                     "issues": issues,
                 })
 
-            yield ("phase_done", "验证完成", {"phase": 5, "data": {"issues": len(issues)}})
+            yield ("phase_done", "验证完成", {"phase": 6, "data": {"issues": len(issues)}})
             if on_save:
                 on_save(tl)
 
@@ -764,6 +779,188 @@ class OutlineGenerator:
             f"{plot.name}的开场",
             f"{plot.name}的高潮反转"
         ]
+
+    # ═══════════════════════════════════════
+    # Phase 4: 线程与呼应（线程穿插 + 桥段拆分设局→收局）
+    # ═══════════════════════════════════════
+
+    def _default_thread_for_category(self, cat: str) -> str:
+        """桥段分类 → 默认线程（规则兜底）。"""
+        c = (cat or "")
+        if any(k in c for k in ("悬疑", "阴谋", "调查", "推理", "诡计")):
+            return "伏笔阴谋线"
+        if any(k in c for k in ("情感", "日常", "羁绊", "成长")):
+            return "副线"
+        return "主线"
+
+    def _apply_thread_fallback(self, tl: BookTimeline):
+        """LLM 线程规划失败时回退：按分类归线程，不拆。"""
+        tl.threads = [
+            {"id": "主线", "name": "主线", "desc": "主角核心推进线"},
+            {"id": "副线", "name": "副线", "desc": "情感/日常/配角线"},
+            {"id": "伏笔阴谋线", "name": "伏笔阴谋线", "desc": "悬疑/阴谋暗线，早埋晚收"},
+        ]
+        for p in tl.plots:
+            p.thread_id = self._default_thread_for_category(p.category)
+            p.thread_seq = 0
+
+    def _apply_thread_assignments(self, tl: BookTimeline, threads, assignments):
+        """把 LLM 的线程分配应用到 plots（未分配的按分类兜底）。"""
+        if isinstance(threads, list) and threads:
+            tl.threads = [t for t in threads if isinstance(t, dict)]
+        if not tl.threads:
+            tl.threads = [{"id": "主线", "name": "主线", "desc": "主角核心推进线"}]
+        if not any(t.get("id") == "主线" for t in tl.threads):
+            tl.threads.insert(0, {"id": "主线", "name": "主线", "desc": "主角核心推进线"})
+        thread_ids = {t.get("id") for t in tl.threads if t.get("id")}
+
+        assigned_ids = set()
+        for a in assignments or []:
+            pid = a.get("plot_id", "")
+            if not pid:
+                continue
+            plot = next((p for p in tl.plots if p.id == pid), None)
+            if not plot:
+                continue
+            assigned_ids.add(pid)
+            tid = a.get("thread", "主线") or "主线"
+            if tid not in thread_ids:
+                tl.threads.append({"id": tid, "name": tid, "desc": ""})
+                thread_ids.add(tid)
+            plot.thread_id = tid
+            try:
+                plot.thread_seq = int(a.get("seq", 0) or 0)
+            except (TypeError, ValueError):
+                plot.thread_seq = 0
+
+        for p in tl.plots:
+            if p.id not in assigned_ids:
+                p.thread_id = self._default_thread_for_category(p.category)
+                p.thread_seq = 0
+
+    def _apply_split_payoffs(self, tl: BookTimeline, splits):
+        """为选中的设局桥段创建收局槽位（resolves_plot_id=设局.id），放后几个 stage。
+
+        生成器：每个收局 yield plot_added 供前端实时刷新。
+        """
+        for s in splits or []:
+            setup = next((p for p in tl.plots if p.id == s.get("plot_id", "")), None)
+            if not setup:
+                continue
+            outline = next((o for o in tl.outlines if o.id == setup.outline_id), None)
+            n_stages = len(outline.stages) if outline else 0
+            try:
+                gap = max(int(s.get("payoff_after_stage", 2) or 2), 1)
+            except (TypeError, ValueError):
+                gap = 2
+            payoff_stage = min(setup.stage_index + gap,
+                               max(n_stages - 1, setup.stage_index + 1))
+            order = max([p.order for p in tl.plots
+                         if p.outline_id == setup.outline_id
+                         and p.stage_index == payoff_stage] or [-1]) + 1
+            tid = s.get("payoff_thread", "") or setup.thread_id
+            payoff = PlotSlot(
+                id=self._next_id("plot"), template_id=setup.template_id,
+                name=s.get("payoff_name", "") or (setup.name + "·收局"),
+                category=setup.category, sub_category=setup.sub_category,
+                outline_id=setup.outline_id, stage_index=payoff_stage,
+                order=order, cover_beats=setup.cover_beats,
+                template_structure=setup.template_structure,
+                thread_id=tid, thread_seq=setup.thread_seq,
+                resolves_plot_id=setup.id, resolves_name=setup.name,
+            )
+            tl.plots.append(payoff)
+            yield ("plot_added", payoff.name, {
+                "plot_id": payoff.id,
+                "outline_id": payoff.outline_id,
+                "outline_name": next((o.name for o in tl.outlines
+                                      if o.id == payoff.outline_id), ""),
+                "category": payoff.category,
+            })
+
+    def _plan_threads_and_splits(self, tl: BookTimeline, genre: str):
+        """Phase 4：LLM 规划叙事线程 + 桥段拆分设局→收局。
+
+        生成器：yield thinking/decision/plot_added；失败回退规则。
+        """
+        if not self.llm or not tl.plots:
+            self._apply_thread_fallback(tl)
+            yield ("decision", "thread_split", {
+                "step": "线程与呼应（规则兜底）",
+                "candidates": [], "chosen": {"threads": [], "splits": 0},
+                "reason": "LLM 未配置或无桥段，按分类规则归线程",
+            })
+            return
+
+        outlines_view = [{
+            "id": o.id, "name": o.name,
+            "range": f"第{o.start_chapter}-{o.end_chapter}章",
+            "stages": [s.get("name", "") for s in (o.stages or [])],
+        } for o in tl.outlines[:10]]
+        o_pos = {o.id: i for i, o in enumerate(tl.outlines)}
+        ordered = sorted(tl.plots,
+                         key=lambda p: (o_pos.get(p.outline_id, 99), p.stage_index, p.order))
+        plots_snapshot = [{
+            "id": p.id, "name": p.name, "category": p.category,
+            "outline_id": p.outline_id, "stage": p.stage_index, "order": p.order,
+        } for p in ordered[:60]]
+
+        bible_block = self.harness.render_outline_context("thread_split", tl) if self.harness else ""
+        prompt = f"""{bible_block}为以下{genre}小说的时间线规划「叙事线程」和「桥段拆分设局→收局」。
+
+【大纲】
+{json.dumps(outlines_view, ensure_ascii=False)}
+
+【全部桥段（按大纲顺序）】
+{json.dumps(plots_snapshot, ensure_ascii=False)}
+
+【叙事线程】
+- 主线：主角当前最核心推进目标（职场反击/修炼升级/权谋等）；主角可有多条线并存。
+- 副线：情感、日常、配角、成长线。
+- 伏笔线：悬疑、阴谋、暗线，早埋晚收。
+- 每条桥段必须归入一个线程；第1章附近应多线程并进（主线2步+其他线各1步节奏）。
+
+【桥段拆分】
+- 选中适合"设局→收局"的桥段（阴谋/悬疑/智斗/成长转折），生成一个"收局"槽位，
+  放回同一大纲的后几个 stage（payoff_after_stage≥2），中间被其他线程/桥段穿插，早埋钩子晚回收。
+- 纯即时爽点（打脸/战斗/开篇）不要拆。
+
+返回 JSON：
+{{"threads": [{{"id":"主线","name":"","desc":""}}],
+  "assignments": [{{"plot_id":"","thread":"","seq":1}}],
+  "splits": [{{"plot_id":"","payoff_after_stage":2,"payoff_name":"","payoff_thread":""}}],
+  "reason": "一句话说明线程/拆分思路"}}"""
+
+        try:
+            from core.llm_client import extract_json
+            raw = yield from self._stream_decision_content(
+                "thread_split", "你是网文策划编辑，负责叙事线程与钩子呼应规划。只返回JSON。",
+                prompt, temperature=0.5, max_tokens=8192)
+            data = json.loads(extract_json(raw))
+        except Exception as e:
+            self._apply_thread_fallback(tl)
+            yield ("decision", "thread_split", {
+                "step": "线程与呼应（解析失败回退）",
+                "candidates": [], "chosen": {"threads": [], "splits": 0},
+                "reason": f"LLM 输出解析失败，按分类规则回退: {e}",
+            })
+            return
+
+        self._apply_thread_assignments(tl, data.get("threads"), data.get("assignments"))
+        split_count = 0
+        for evt in self._apply_split_payoffs(tl, data.get("splits")):
+            split_count += 1
+            yield evt
+
+        yield ("decision", "thread_split", {
+            "step": "线程与呼应",
+            "candidates": [{"id": p.id, "name": p.name} for p in tl.plots[:20]],
+            "chosen": {
+                "threads": [t.get("id", "") for t in tl.threads],
+                "splits": split_count,
+            },
+            "reason": data.get("reason", "") or "规划完成",
+        })
 
     def _review_theme_assignments(self, tl: BookTimeline, genre: str):
         """Phase 4 内涵挂载后的 LLM 复查（流式思考）。

@@ -1,6 +1,6 @@
 /*
  * 故事线（Story Line）组件 — 垂直 Gantt
- * 从 BookTimeline dict 渲染：章节轴 + 大纲/桥段/笑点·内涵通道。
+ * 从 BookTimeline dict 渲染：章节轴 + 大纲/桥段/线程通道。
  * 支持叙事手法视觉区分：顺叙(chronological)/倒叙(flashback)/插叙(interleaved)。
  *
  * 用法：StoryLine.init('mount-id', bookTimelineDict, {currentChapter: N})
@@ -10,8 +10,9 @@
 
   var TOTAL_WORDS = 0;
   var WPC = 3000;
-  var chapters = [], outlines = [], plots = [], laughPoints = [], themePoints = [];
+  var chapters = [], outlines = [], plots = [], threads = [];
   var PALETTE = ['#f97583', '#79c0ff', '#56d364', '#e3b341', '#d2a8ff', '#ffa657', '#c084fc', '#7ee787'];
+  var THREAD_PALETTE = ['#ffa657', '#79c0ff', '#d2a8ff', '#56d364', '#e3b341', '#ff7b72', '#7ee787'];
 
   var _lastRender = null;
   var _lastMountId = null;
@@ -28,6 +29,12 @@
   function plannedWords(p) {
     var beats = Math.max(parseInt((p && p.cover_beats) || 0, 10) || 0, 2);
     return Math.min(beats * 200, 1200);
+  }
+
+  /* 线程 id → 颜色 */
+  function threadColor(tid) {
+    for (var i = 0; i < threads.length; i++) { if (threads[i].id === tid) return threads[i].color; }
+    return '#ffa657';
   }
 
   /* ─── 数据适配：BookTimeline → 平铺数组（桥段按真实规划字数定位，预计=实际） ─── */
@@ -94,25 +101,33 @@
           parent: p.parent_plot_id || null,
           color: p.parent_plot_id ? '#a5d6ff' : rootColor,
           category: p.category || '',
+          thread: p.thread_id || '主线',
+          resolves: p.resolves_plot_id || '',
+          resolves_name: p.resolves_name || '',
         });
         cum += pw;
       });
     });
 
-    // 笑点/内涵点 → 从桥段的 gag_ids / theme_hints 推导（取桥段中点）
-    laughPoints = []; themePoints = [];
-    var flatById = {};
-    plots.forEach(function (p) { flatById[p.id] = p; });
-    (bt.plots || []).forEach(function (bp) {
-      var fp = flatById[bp.id];
-      if (!fp) return;
-      var mid = (fp.start + fp.end) / 2;
-      (bp.gag_ids || []).slice(0, 1).forEach(function (g) {
-        laughPoints.push({ word: mid, type: '笑点', desc: '匹配笑点模板 ' + g });
-      });
-      (bp.theme_hints || []).slice(0, 1).forEach(function (t) {
-        themePoints.push({ word: mid, name: String(t), technique: '呼应', desc: '' });
-      });
+    // 叙事线程 → 横带区间（书级 threads 定义 + 桥段 thread_id 推导，多线重叠=穿插可视）
+    threads = [];
+    var tIdx = {};
+    (bt.threads || []).forEach(function (t) {
+      tIdx[t.id] = threads.length;
+      threads.push({ id: t.id, name: t.name || t.id, desc: t.desc || '', start: Infinity, end: -Infinity, color: THREAD_PALETTE[threads.length % THREAD_PALETTE.length] });
+    });
+    plots.forEach(function (fp) {
+      var tid = fp.thread || '主线';
+      if (!(tid in tIdx)) {
+        tIdx[tid] = threads.length;
+        threads.push({ id: tid, name: tid, desc: '', start: Infinity, end: -Infinity, color: THREAD_PALETTE[threads.length % THREAD_PALETTE.length] });
+      }
+      var idx = tIdx[tid];
+      if (fp.start < threads[idx].start) threads[idx].start = fp.start;
+      if (fp.end > threads[idx].end) threads[idx].end = fp.end;
+    });
+    threads.forEach(function (t) {
+      if (t.start === Infinity) { t.start = 0; t.end = Math.max(t.end, WPC); }
     });
   }
 
@@ -290,7 +305,9 @@
         rows: [
           ['层级', level === 0 ? '主桥段' : '子桥段 L' + level],
           ['范围', (p.start).toLocaleString() + ' — ' + p.end.toLocaleString() + ' 字'],
-        ],
+          ['线程', p.thread || '主线'],
+          p.resolves ? ['收局', '解决「' + p.resolves_name + '」'] : null,
+        ].filter(Boolean),
         tag: '桥段',
       });
       if (height > 1.0) {
@@ -299,6 +316,17 @@
         label.textContent = p.name;
         label.style.fontSize = Math.min(9, Math.max(7, height * 0.3)) + 'px';
         bar.appendChild(label);
+      }
+      var tdot = document.createElement('span');
+      tdot.className = 'sl-thread-dot';
+      tdot.style.background = threadColor(p.thread);
+      tdot.title = '线程：' + (p.thread || '主线');
+      bar.appendChild(tdot);
+      if (p.resolves) {
+        var pbadge = document.createElement('span');
+        pbadge.className = 'sl-payoff-badge';
+        pbadge.textContent = '↪ 收局';
+        bar.appendChild(pbadge);
       }
       bar.addEventListener('mouseenter', showTooltip);
       bar.addEventListener('mousemove', moveTooltip);
@@ -337,30 +365,48 @@
     plotBody.appendChild(svg);
   }
 
-  /* ─── 渲染：笑点 + 内涵 ─── */
-  function renderLaughs(laughBody, tooltip, showTooltip, moveTooltip, hideTooltip) {
-    laughBody.innerHTML = '';
-    laughPoints.forEach(function (lp) {
-      var dot = document.createElement('div');
-      dot.className = 'sl-laugh-dot';
-      dot.style.left = '35%'; dot.style.top = wordToPercent(lp.word) + '%';
-      dot.innerHTML = '<span class="sl-dot-tag">' + lp.type + '</span>';
-      dot.dataset.tooltip = JSON.stringify({ title: '😂 ' + lp.type, rows: [['位置', Math.round(lp.word).toLocaleString() + ' 字']], desc: lp.desc, tag: '笑点' });
-      dot.addEventListener('mouseenter', showTooltip);
-      dot.addEventListener('mousemove', moveTooltip);
-      dot.addEventListener('mouseleave', hideTooltip);
-      laughBody.appendChild(dot);
-    });
-    themePoints.forEach(function (tp) {
-      var dot = document.createElement('div');
-      dot.className = 'sl-theme-dot';
-      dot.style.left = '65%'; dot.style.top = wordToPercent(tp.word) + '%';
-      dot.innerHTML = '<span class="sl-dot-tag">' + tp.name + '</span>';
-      dot.dataset.tooltip = JSON.stringify({ title: '💡 ' + tp.name, rows: [['位置', Math.round(tp.word).toLocaleString() + ' 字']], desc: tp.desc, tag: '内涵' });
-      dot.addEventListener('mouseenter', showTooltip);
-      dot.addEventListener('mousemove', moveTooltip);
-      dot.addEventListener('mouseleave', hideTooltip);
-      laughBody.appendChild(dot);
+  /* ─── 渲染：叙事线程横带（多线重叠=穿插可视） ─── */
+  function renderThreads(threadBody, tooltip, showTooltip, moveTooltip, hideTooltip) {
+    threadBody.innerHTML = '';
+    var h = threadBody.clientHeight;
+    if (!h || h < 40) h = 400;
+    var res = assignLanes(threads);
+    threads.forEach(function (t, i) {
+      var lane = res.assignments[i];
+      var top = wordToPercent(t.start);
+      var height = wordToPercent(t.end - t.start);
+      var laneW = 100 / res.totalLanes;
+      var gap = 3;
+      var band = document.createElement('div');
+      band.className = 'sl-bar sl-bar-thread';
+      band.dataset.tid = t.id;
+      band.style.top = top + '%';
+      band.style.height = Math.max(height, 0.8) + '%';
+      band.style.left = 'calc(' + (lane * laneW) + '% + ' + (lane * gap) + 'px)';
+      band.style.width = 'calc(' + laneW + '% - ' + (res.totalLanes * gap) + 'px)';
+      band.style.right = 'auto';
+      band.style.background = 'linear-gradient(135deg,' + t.color + '44,' + t.color + '22)';
+      band.style.borderLeft = '2px solid ' + t.color;
+      band.dataset.tooltip = JSON.stringify({
+        title: '🧵 ' + t.name,
+        rows: [
+          ['范围', (t.start).toLocaleString() + ' — ' + (t.end).toLocaleString() + ' 字'],
+        ],
+        desc: t.desc || '',
+        tag: '线程',
+      });
+      if (height > 1.0) {
+        var label = document.createElement('span');
+        label.className = 'sl-bar-label';
+        label.textContent = t.name;
+        label.style.fontSize = '9px';
+        label.style.color = t.color;
+        band.appendChild(label);
+      }
+      band.addEventListener('mouseenter', showTooltip);
+      band.addEventListener('mousemove', moveTooltip);
+      band.addEventListener('mouseleave', hideTooltip);
+      threadBody.appendChild(band);
     });
   }
 
@@ -412,24 +458,26 @@
       outlines.forEach(function (o) { if (o.narrative !== 'chronological') narrCount[o.narrative] = (narrCount[o.narrative] || 0) + 1; });
 
       var hstyle = scrollH ? (' style="height:' + scrollH + 'px"') : '';
+      var threadLegendHtml = threads.map(function (t) {
+        return '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:' + t.color + '"></span> ' + t.name + '</div>';
+      }).join('');
       var html =
         '<div class="sl-root">' +
         '<div class="sl-header"><h1><span class="dot"></span>故事线</h1>' +
-        '<div class="sl-meta">总字数 <span>' + (TOTAL_WORDS).toLocaleString() + '</span> · 章节 <span>' + (TOTAL_WORDS / WPC | 0) + '</span> · 大纲 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span></div></div>' +
+        '<div class="sl-meta">总字数 <span>' + (TOTAL_WORDS).toLocaleString() + '</span> · 章节 <span>' + (TOTAL_WORDS / WPC | 0) + '</span> · 大纲 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div>' +
         '<div class="sl-main">' +
         '<div class="sl-chapter-panel"' + hstyle + ' id="' + mountId + '-ch"></div>' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
         '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
         '<div class="sl-lane" style="flex:3"><div class="sl-lane-header">📋 大纲</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
         '<div class="sl-lane" style="flex:7"><div class="sl-lane-header">🔗 桥段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
-        '<div class="sl-lane" style="flex:2"><div class="sl-lane-header">😂💡 笑点·内涵</div><div class="sl-lane-body" id="' + mountId + '-lb"></div></div>' +
+        '<div class="sl-lane" style="flex:2"><div class="sl-lane-header">🧵 线程</div><div class="sl-lane-body" id="' + mountId + '-tb"></div></div>' +
         '</div></div>' +
         '<div class="sl-legend">' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#f97583"></span> 大纲</div>' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#79c0ff"></span> 主桥段</div>' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#a5d6ff"></span> 子桥段</div>' +
-        '<div class="sl-legend-item"><span class="sl-legend-swatch circle" style="background:#ffa657"></span> 笑点</div>' +
-        '<div class="sl-legend-item"><span class="sl-legend-swatch circle" style="background:#c084fc;transform:rotate(45deg);border-radius:2px"></span> 内涵</div>' +
+        threadLegendHtml +
         (narrCount.flashback ? '<div class="sl-legend-item"><span class="sl-legend-swatch flashback"></span> 倒叙</div>' : '') +
         (narrCount.interleaved ? '<div class="sl-legend-item"><span class="sl-legend-swatch interleaved"></span> 插叙</div>' : '') +
         '<div class="sl-legend-item"><span class="sl-legend-swatch circle" style="background:#58a6ff"></span> 章节</div>' +
@@ -446,14 +494,14 @@
       var axisPanel = document.getElementById(mountId + '-ax');
       var outlineBody = document.getElementById(mountId + '-ob');
       var plotBody = document.getElementById(mountId + '-pb');
-      var laughBody = document.getElementById(mountId + '-lb');
+      var threadBody = document.getElementById(mountId + '-tb');
       var contentArea = document.getElementById(mountId + '-ct');
 
       function renderAll() {
         renderChapters(chapterPanel, axisPanel);
         renderOutlines(outlineBody, tooltip, tt.show, tt.move, tt.hide);
         renderPlots(plotBody, tooltip, tt.show, tt.move, tt.hide);
-        renderLaughs(laughBody, tooltip, tt.show, tt.move, tt.hide);
+        renderThreads(threadBody, tooltip, tt.show, tt.move, tt.hide);
         var existing = contentArea.querySelector('.sl-cursor');
         if (existing) existing.remove();
         renderCursor(contentArea, opts.currentChapter);

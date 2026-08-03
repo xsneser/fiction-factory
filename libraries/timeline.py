@@ -67,6 +67,12 @@ class PlotSlot:
     confirmed: bool = False        # 用户已确认
     written_chapter: int = 0       # 已写入第几章（0=未写，用于断点续写）
 
+    # 叙事线程（主线/副线/伏笔线；主角可多线并存）
+    thread_id: str = "主线"          # 所属线程
+    thread_seq: int = 0              # 线程内序号（组内 tie-break）
+    resolves_plot_id: str = ""       # 收局槽位：解决/呼应哪个设局桥段 id（非空=收局）
+    resolves_name: str = ""          # 冗余存设局桥段名，供 prompt/前端免查
+
 
 @dataclass
 class BookTimeline:
@@ -89,6 +95,9 @@ class BookTimeline:
     # 时间线
     outlines: list[OutlineSlot] = field(default_factory=list)
     plots: list[PlotSlot] = field(default_factory=list)
+
+    # 叙事线程定义（[{"id","name","desc"}, ...]）
+    threads: list[dict] = field(default_factory=list)
 
     # 全书贯穿元素
     themes: list[str] = field(default_factory=list)
@@ -130,7 +139,11 @@ class BookTimeline:
                 "hook_points": p.hook_points,
                 "confirmed": p.confirmed,
                 "written_chapter": p.written_chapter,
+                "thread_id": p.thread_id, "thread_seq": p.thread_seq,
+                "resolves_plot_id": p.resolves_plot_id,
+                "resolves_name": p.resolves_name,
             } for p in self.plots],
+            "threads": self.threads,
             "themes": self.themes,
             "global_gags": self.global_gags,
             "phase": self.phase,
@@ -180,7 +193,12 @@ class BookTimeline:
             hook_points=p.get("hook_points", []),
             confirmed=p.get("confirmed", False),
             written_chapter=p.get("written_chapter", 0),
+            thread_id=p.get("thread_id", "主线"),
+            thread_seq=p.get("thread_seq", 0),
+            resolves_plot_id=p.get("resolves_plot_id", ""),
+            resolves_name=p.get("resolves_name", ""),
         ) for p in d.get("plots", [])]
+        tl.threads = d.get("threads", [])
         return tl
 
 

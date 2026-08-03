@@ -288,6 +288,18 @@ class PromptHarness:
         if inspiration_hint:
             inspiration_block = "\n【灵机一动】顺势落地\n" + inspiration_hint.strip()
 
+        # 收局槽位：解决/呼应更早埋下的设局钩子（桥段拆分）
+        payoff_block = ""
+        if getattr(p, "resolves_plot_id", ""):
+            rname = getattr(p, "resolves_name", "") or "前文埋下的钩子"
+            payoff_block = ("\n【本桥段收束】解决/呼应『" + rname +
+                            "』（其钩子在更早处埋下），给出结果/反转，补上闭环。")
+        # 设局槽位：为某收局桥段埋钩子
+        setup_block = ""
+        if item.get("resolver_name"):
+            setup_block = ("\n【设局桥段】为『" + str(item.get("resolver_name")) +
+                           "』埋钩子，结尾留一个明确未解决的悬念。")
+
         bible = self.build_book_bible_condensed()
         bible_block = f"【书级设定（简）】\n{bible}\n\n" if bible else ""
 
@@ -302,6 +314,8 @@ class PromptHarness:
 【桥段骨架】{structure}
 【变量槽位】{slots_text or '跟随上下文自由发挥'}
 {theme_block}
+{payoff_block}
+{setup_block}
 {inspiration_block}
 
 {summaries_block}【前文上下文】
@@ -389,7 +403,7 @@ class PromptHarness:
             if phase_kind in ("sequence", "validate"):
                 bible = self.build_book_bible(max_chars=900)
                 return f"【书级设定】\n{bible}\n" if bible else ""
-            if phase_kind == "select_plots":
+            if phase_kind in ("select_plots", "thread_split"):
                 bible = self.build_book_bible_condensed(max_chars=500)
                 return f"【书级设定（简）】\n{bible}\n" if bible else ""
             if phase_kind == "theme_review":

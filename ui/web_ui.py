@@ -682,6 +682,10 @@ def _decision_log_message(kind: str, data: dict) -> str:
     if kind == "theme_review":
         themes = "、".join((chosen.get("themes") or [])[:3]) or "无"
         return f"🎭 内涵挂载[{step}]：母题 {themes}"
+    if kind == "thread_split":
+        threads = "、".join((chosen.get("threads") or [])[:3]) or "—"
+        splits = chosen.get("splits", 0)
+        return f"🧵 线程与呼应[{step}]：线程 {threads}｜拆分 {splits} 处"
     if kind == "validate":
         issues = (chosen.get("issues") or [])
         return f"✅ 一致性验证[{step}]：{len(issues)} 个建议｜{data.get('reason','')}"
@@ -742,7 +746,7 @@ def api_generate_full(timeline_id):
     task_manager.ensure_single("完整大纲生成")
     task_id = f"genfull_{timeline_id}_{int(time.time())}"
     task_manager.start(task_id, name="完整大纲生成",
-                       title=tl.pen_name or "", total=5,
+                       title=tl.pen_name or "", total=6,
                        phase="故事分析...", url=f"/timeline/{timeline_id}/edit")
 
     def generate():

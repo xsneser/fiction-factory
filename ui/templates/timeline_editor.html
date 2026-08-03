@@ -119,8 +119,9 @@
                     <div class="gen-full-phase" id="gf-1"><span>1 故事分析</span><span class="gfp-status"></span></div>
                     <div class="gen-full-phase" id="gf-2"><span>2 故事线</span><span class="gfp-status"></span></div>
                     <div class="gen-full-phase" id="gf-3"><span>3 桥段编排</span><span class="gfp-status"></span></div>
-                    <div class="gen-full-phase" id="gf-4"><span>4 加料注入</span><span class="gfp-status"></span></div>
-                    <div class="gen-full-phase" id="gf-5"><span>5 一致性验证</span><span class="gfp-status"></span></div>
+                    <div class="gen-full-phase" id="gf-4"><span>4 线程与呼应</span><span class="gfp-status"></span></div>
+                    <div class="gen-full-phase" id="gf-5"><span>5 内涵挂载</span><span class="gfp-status"></span></div>
+                    <div class="gen-full-phase" id="gf-6"><span>6 一致性验证</span><span class="gfp-status"></span></div>
                 </div>
                 <div class="gen-split-title" style="margin-top:10px">🤖 生成动态</div>
                 <div id="gen-feed" class="gen-feed"></div>
@@ -370,10 +371,9 @@ function genFullStart() {
     btn.disabled = true; btn.textContent = '⏳ 生成中...';
     var box = document.getElementById('gen-full-box');
     box.style.display = 'block';
-    for (var i = 1; i <= 5; i++) {
+    for (var i = 1; i <= 6; i++) {
         var el = document.getElementById('gf-' + i);
-        el.className = 'gen-full-phase';
-        el.querySelector('.gfp-status').textContent = '';
+        if (el) { el.className = 'gen-full-phase'; el.querySelector('.gfp-status').textContent = ''; }
     }
     var feed = document.getElementById('gen-feed');
     if (feed) feed.innerHTML = '';
@@ -435,6 +435,7 @@ function genFeedDecision(evt) {
     if (evt.kind === 'outline_choice') text = (chosen && chosen.name) || '';
     else if (evt.kind === 'plot_choice') text = (Array.isArray(chosen) ? chosen.map(function(x){ return x.name || x; }).join('、') : (chosen && chosen.name)) || '';
     else if (evt.kind === 'theme_review') text = '内涵 ' + ((chosen.themes||[]).join('、') || '—');
+    else if (evt.kind === 'thread_split') text = '线程 ' + ((chosen.threads||[]).join('、') || '—') + ' · 拆分 ' + (chosen.splits||0) + ' 处';
     else if (evt.kind === 'validate') text = ((chosen.issues||[]).length) + ' 条建议';
     if (!text && evt.candidates && evt.candidates.length) {
         text = '候选 ' + evt.candidates.slice(0, 6).map(function(x){ return x.name || x; }).join('、');
@@ -727,9 +728,12 @@ function renderPlotList(container, tl) {
             var theme = (p.theme_hints && p.theme_hints.length) ? '<div style="font-size:11px;color:#c084fc;margin-top:2px">💡 内涵: ' + esc(p.theme_hints.join(', ')) + '</div>' : '';
             var hook = (p.hook_points && p.hook_points.length) ? '<div style="font-size:11px;color:#d29922;margin-top:2px">⚡ 吸睛: ' + esc(p.hook_points.join(', ')) + '</div>' : '';
             var structure = p.template_structure ? '<div style="font-size:12px;color:#484f58;margin-top:4px">' + esc(String(p.template_structure).slice(0,120)) + '</div>' : '';
+            var threadB = (p.thread_id) ? '<span class="tag" style="margin-left:6px">线程:' + esc(p.thread_id) + '</span>' : '';
+            var payoffB = (p.resolves_plot_id) ? '<span class="tag" style="color:#f85149;margin-left:6px">↪ 收局·' + esc(p.resolves_name || '') + '</span>' : '';
             return '<div class="plot-card card">' +
                 '<div style="display:flex;justify-content:space-between;align-items:start">' +
                   '<div><code>' + esc(p.category || '') + '</code> <strong>' + esc(p.name) + '</strong> ' +
+                  threadB + payoffB +
                   '<span class="tag">' + (p.cover_beats || 0) + '节拍</span>' +
                   (p.parent_plot_id ? '<span class="tag blue">嵌套</span>' : '') + '</div>' +
                   '<div style="display:flex;gap:8px;align-items:center">' +

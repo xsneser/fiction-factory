@@ -1,5 +1,5 @@
 /* ─── 故事线（Story Line）组件样式 ─── */
-/* 垂直 Gantt：章节轴 + 大纲/桥段/笑点通道。所有类以 sl- 前缀隔离，避免与 base 冲突。 */
+/* 垂直 Gantt：章节轴 + 大纲/桥段/线程通道。所有类以 sl- 前缀隔离，避免与 base 冲突。 */
 
 .sl-root {
   display: flex;
@@ -82,14 +82,10 @@
 .sl-bar-plot.level-1 { left: 14px; right: 4px; z-index: 4; }
 .sl-bar-plot.level-2 { left: 28px; right: 0; z-index: 5; }
 
-/* 笑点/内涵 */
-.sl-laugh-dot { position: absolute; width: 10px; height: 10px; border-radius: 50%; background: #ffa657; transform: translate(-50%, -50%); cursor: pointer; transition: transform .15s, box-shadow .15s; z-index: 10; }
-.sl-laugh-dot:hover { transform: translate(-50%, -50%) scale(1.6); box-shadow: 0 0 14px #ffa657; z-index: 30; }
-.sl-theme-dot { position: absolute; width: 10px; height: 10px; background: #c084fc; transform: translate(-50%, -50%) rotate(45deg); border-radius: 2px; cursor: pointer; transition: transform .15s, box-shadow .15s; z-index: 10; }
-.sl-theme-dot:hover { transform: translate(-50%, -50%) rotate(45deg) scale(1.6); box-shadow: 0 0 14px #c084fc; z-index: 30; }
-.sl-dot-tag { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); font-size: 9px; white-space: nowrap; font-weight: 600; opacity: 0; transition: opacity .15s; pointer-events: none; }
-.sl-laugh-dot:hover .sl-dot-tag { opacity: 1; color: #ffa657; }
-.sl-theme-dot:hover .sl-dot-tag { opacity: 1; color: #c084fc; }
+/* 叙事线程横带 + 桥段线程/收局徽标 */
+.sl-bar-thread { border: 1px solid rgba(255,255,255,.08); }
+.sl-thread-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; pointer-events: none; }
+.sl-payoff-badge { position: absolute; bottom: 2px; right: 3px; font-size: 8px; color: #f85149; font-weight: 700; pointer-events: none; }
 
 /* 工具提示 */
 .sl-tooltip { position: fixed; pointer-events: none; background: #1e2130; border: 1px solid #2a2d3a; border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #e6edf3; z-index: 1000; opacity: 0; transition: opacity .12s; box-shadow: 0 4px 20px rgba(0,0,0,.6); max-width: 260px; }
