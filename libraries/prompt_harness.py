@@ -44,6 +44,14 @@ OPENING_MODE_RULES = """【开场模式 — 炸裂开场（第一章开篇桥段
 8. 禁止：天气/环境长铺垫、「他醒来，阳光洒在脸上」式平淡开头。"""
 
 
+# 全书一致性铁律 —— 防 E2E 评审硬伤：系统重复绑定、数值不闭环、时间线穿帮、无时间过渡
+CONSISTENCY_RULES = """【全书一致性铁律】
+1. 系统/金手指的"激活/绑定"全书只发生一次；此后同类事件用"新模块/新功能解锁"，禁止重复出现"绑定成功"。
+2. 引入的数值（压迫值/劳动值/经验值/属性点等）必须在后续情节有回响闭环，禁止只出现一次再无下文。
+3. 对话中的身份/背景/时间线信息严格符合当前时间线，禁止把前世/未来记忆混进当前对话。
+4. 跨场景/跨天的事件之间要有自然时间过渡（如"当天夜里""三天后"），禁止无衔接跳转。"""
+
+
 def _profile_style_text(profile) -> str:
     """从 PenNameProfile 或 dict 生成风格 bullet 文本（去掉标题行）。"""
     if profile is None:
@@ -284,10 +292,11 @@ class PromptHarness:
         bible_block = f"【书级设定（简）】\n{bible}\n\n" if bible else ""
 
         opening_block = (OPENING_MODE_RULES + "\n\n") if is_opening else ""
+        consistency_block = CONSISTENCY_RULES + "\n\n"
 
-        return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个短句。
+        return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个句子。
 
-{bible_block}{opening_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
+{bible_block}{opening_block}{consistency_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
 【当前阶段】{stage_name}
 【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按大纲自然推进'}
 【桥段骨架】{structure}
@@ -299,7 +308,7 @@ class PromptHarness:
 {context_text}
 
 【写作要求】
-1. 只输出下一段正文：3-5 个短句（总共约 150-250 个汉字），一句一行。
+1. 只输出下一段正文：3-5 个句子（总共约 150-250 个汉字），一句一行；短句为基干，句长需长短交错（8-15字为主、穿插25-45字），避免全文句式单一。
 2. 画面优先：用动作、对话、感官细节推进，不要堆形容词、不要抽象抒情。
 3. 每组至少含一句对话或一个动作；对话独立成段并带简短神态/动作。
 4. 围绕上方的"要推动的事件"制造推进感：埋冲突、留张力，组尾留一个"接下来会怎样"的悬念钩子（本桥段最后一组可自然收束）。
