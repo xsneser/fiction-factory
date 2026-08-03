@@ -510,6 +510,20 @@ _ROLE_STOPWORDS = {
     "他们", "我们", "你们", "老板", "经理", "同事", "身份", "金手指",
 }
 
+# 分类启发式兜底：桥段模板文本是泛化的，名字规则匹配常落空；
+# 按桥段 category 推断该出现的配角类型（凭 role/relation 关键词匹配）
+_CATEGORY_RELATION = {
+    "职场": ("同事", "上司", "老板", "主管", "员工", "老员工"),
+    "爽文": ("同事", "上司", "老板", "主管"),
+    "打脸": ("同事", "上司", "老板", "主管"),
+    "都市": ("同事", "房东", "邻居"),
+    "情感": ("家人", "房东", "朋友", "恋人", "邻里", "青梅"),
+    "日常": ("家人", "房东", "朋友", "邻居", "邻里"),
+    "羁绊": ("家人", "朋友", "恋人"),
+    "战斗": ("师兄", "师叔", "对手", "同伴"),
+    "悬疑": ("对手", "主管", "同事"),
+}
+
 
 def annotate_plot_roles(tl: BookTimeline) -> int:
     """规则标注每个桥段的出场人物（主角恒在首位；配角名出现在桥段事件/骨架/槽位/吸睛文本 → 出场）。
@@ -550,9 +564,21 @@ def annotate_plot_roles(tl: BookTimeline) -> int:
         roles = []
         if protag_name:
             roles.append(protag_name)
+        # 1. 名字规则匹配（主角恒首）
         for n in names:
             if n != protag_name and n in text:
                 roles.append(n)
+        # 2. 分类启发式兜底：名字没命中时，按桥段 category 推断出场配角
+        if len(roles) <= 1:
+            rel_kws = _CATEGORY_RELATION.get(str(getattr(p, "category", "") or ""), ())
+            for n, c in cast_map.items():
+                if n == protag_name or n in roles:
+                    continue
+                role_relation = str(c.get("role", "")) + str(c.get("relation", ""))
+                if any(k in role_relation for k in rel_kws):
+                    roles.append(n)
+                    if len(roles) >= 3:
+                        break
         p.roles = roles
         if roles:
             annotated += 1
