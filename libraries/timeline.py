@@ -73,6 +73,9 @@ class PlotSlot:
     resolves_plot_id: str = ""       # 收局槽位：解决/呼应哪个设局桥段 id（非空=收局）
     resolves_name: str = ""          # 冗余存设局桥段名，供 prompt/前端免查
 
+    # 出场人物（主角恒在；配角按名规则匹配到桥段事件/骨架/槽位）
+    roles: list[str] = field(default_factory=list)
+
 
 @dataclass
 class BookTimeline:
@@ -90,6 +93,8 @@ class BookTimeline:
         "supporting_cast": [],
         "tone": "",        # 轻松/沉重/热血/幽默
         "target_audience": "",
+        "pov": "第三人称",  # 第一人称/第三人称（全篇统一，防人称漂移）
+        "era_language": "",  # 时代语言约束（禁止晚于该时代的网络新词）
     })
 
     # 时间线
@@ -142,6 +147,7 @@ class BookTimeline:
                 "thread_id": p.thread_id, "thread_seq": p.thread_seq,
                 "resolves_plot_id": p.resolves_plot_id,
                 "resolves_name": p.resolves_name,
+                "roles": p.roles,
             } for p in self.plots],
             "threads": self.threads,
             "themes": self.themes,
@@ -197,6 +203,7 @@ class BookTimeline:
             thread_seq=p.get("thread_seq", 0),
             resolves_plot_id=p.get("resolves_plot_id", ""),
             resolves_name=p.get("resolves_name", ""),
+            roles=p.get("roles", []),
         ) for p in d.get("plots", [])]
         tl.threads = d.get("threads", [])
         return tl
@@ -495,4 +502,59 @@ def merge_basic_info(existing: dict, generated: dict) -> dict:
         if key not in merged:
             merged[key] = ev
     return merged
+
+
+# 常见词过滤，防角色名误判（如"主角""大家"）
+_ROLE_STOPWORDS = {
+    "这个", "那个", "什么", "怎么", "一个", "一下", "主角", "大家", "系统",
+    "他们", "我们", "你们", "老板", "经理", "同事", "身份", "金手指",
+}
+
+
+def annotate_plot_roles(tl: BookTimeline) -> int:
+    """规则标注每个桥段的出场人物（主角恒在首位；配角名出现在桥段事件/骨架/槽位/吸睛文本 → 出场）。
+
+    幂等：重跑覆盖。返回标注到出场人物的桥段数。
+    """
+    if not tl or not tl.plots:
+        return 0
+    bi = tl.basic_info or {}
+    protag_name = str((bi.get("protagonist") or {}).get("name", "") or "").strip()
+    cast_map = {}
+    for c in (bi.get("supporting_cast") or []):
+        if isinstance(c, dict) and c.get("name"):
+            cast_map[str(c["name"]).strip()] = c
+    names = [n for n in cast_map if len(n) >= 2 and n not in _ROLE_STOPWORDS]
+    if protag_name:
+        names.insert(0, protag_name)
+
+    outline_map = {o.id: o for o in (tl.outlines or [])}
+    annotated = 0
+    for p in tl.plots:
+        parts = [str(getattr(p, "name", "") or "")]
+        if getattr(p, "template_structure", ""):
+            parts.append(str(p.template_structure))
+        for s in (getattr(p, "slots", None) or []):
+            if isinstance(s, dict):
+                parts.append(str(s.get("name", "")) + str(s.get("default", "")))
+                parts.append("".join(str(x) for x in (s.get("options") or [])))
+        for h in (getattr(p, "hook_points", None) or []):
+            parts.append(str(h))
+        o = outline_map.get(p.outline_id)
+        if o and 0 <= p.stage_index < len(o.stages or []):
+            stage = o.stages[p.stage_index]
+            if isinstance(stage, dict) and stage.get("events"):
+                parts.extend(str(e) for e in stage["events"])
+        text = "".join(parts)
+
+        roles = []
+        if protag_name:
+            roles.append(protag_name)
+        for n in names:
+            if n != protag_name and n in text:
+                roles.append(n)
+        p.roles = roles
+        if roles:
+            annotated += 1
+    return annotated
 

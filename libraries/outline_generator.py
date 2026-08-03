@@ -15,7 +15,7 @@ from typing import Callable, Optional
 import json, time
 
 from .timeline import (
-    BookTimeline, OutlineSlot, PlotSlot, merge_basic_info,
+    BookTimeline, OutlineSlot, PlotSlot, merge_basic_info, annotate_plot_roles,
 )
 from .structure import StructureLibrary
 from .plot import PlotLibrary
@@ -113,6 +113,7 @@ class OutlineGenerator:
 
         total_phases = 6
         issues = []
+        timeline_warnings = []
         try:
             # ── Phase 1: 故事分析 ──
             yield ("phase", "故事分析", {"phase": 1, "total": total_phases,
@@ -123,6 +124,12 @@ class OutlineGenerator:
             if basic_info:
                 # 原地累加：保留用户已填的基础设定（主角/世界观等非空字段不覆盖）
                 tl.basic_info = merge_basic_info(tl.basic_info, basic_info)
+            # 时间线规则校验（重生/年龄/年份自洽）
+            timeline_warnings.extend(self._validate_timeline_math(tl.basic_info))
+            if timeline_warnings:
+                yield ("warnings", f"时间线校验发现 {len(timeline_warnings)} 个问题", {
+                    "issues": list(timeline_warnings), "phase": 1,
+                })
             yield ("phase_done", "故事分析完成", {
                 "phase": 1, "data": {"protagonist": tl.basic_info.get("protagonist", {})}
             })
@@ -179,6 +186,8 @@ class OutlineGenerator:
                    "desc": "规划叙事线程（主线/副线/伏笔线）与设局→收局呼应..."})
             yield ("progress", "分析桥段线程归属与设局收局...", {})
             yield from self._plan_threads_and_splits(tl, genre)
+            # 出场人物规则标注（主角恒在 + 配角按名匹配；含新增的收局槽位）
+            annotate_plot_roles(tl)
             yield ("phase_done", "线程与呼应规划完成", {
                 "phase": 4,
                 "data": {
@@ -223,7 +232,7 @@ class OutlineGenerator:
                    "desc": "验证时间线合理性、桥段覆盖、内涵挂载..."})
             yield ("progress", "检查故事线...", {})
 
-            issues = self._validate(tl)
+            issues = self._validate(tl) + timeline_warnings
             yield from self._validate_with_llm(tl)
             if issues:
                 yield ("warnings", f"发现 {len(issues)} 个建议", {
@@ -269,12 +278,22 @@ class OutlineGenerator:
             return self._default_basic_info(genre)
 
         style_hint = ""
+        pov_pref = ""
         if self.profile:
-            fp = self.profile.get("style_fingerprint", {}) if isinstance(self.profile, dict) else {}
-            sname = self.profile.get("pen_name", pen_name) if isinstance(self.profile, dict) else pen_name
+            if isinstance(self.profile, dict):
+                fp = self.profile.get("style_fingerprint", {}) or {}
+                sname = self.profile.get("pen_name", pen_name)
+            elif hasattr(self.profile, "style_fingerprint"):
+                fp = self.profile.style_fingerprint or {}
+                sname = getattr(self.profile, "pen_name", pen_name)
+            else:
+                fp = {}
+                sname = pen_name
+            pov_pref = fp.get("pov_preference", "")
             style_hint = (
                 f"笔名「{sname}」风格偏好：句子长度={fp.get('sentence_length','中')}，"
                 f"幽默风格={fp.get('humor_style','无')}"
+                + (f"，视角偏好={pov_pref}" if pov_pref else "")
             )
 
         prompt = f"""你是一位资深网文策划编辑。请为以下小说构思基础设定。
@@ -288,19 +307,23 @@ class OutlineGenerator:
 {custom_context or '按该流派标准开局'}
 
 【要求】
-1. 主角设定：名字（2-3字中文）、身份（穿越前/重生前是什么人）、性格特征、背景故事、金手指
-2. 世界观：时代背景、力量体系、主要势力派系（2-4个）、世界规则
+1. 主角设定：名字（2-3字中文）、身份（穿越前/重生前是什么人）、性格特征、背景故事、金手指、性别、当前年龄、死亡年份（若重生设定）
+2. 世界观：时代背景（含年份）、力量体系、主要势力派系（2-4个）、世界规则
 3. 故事基调：轻松/沉重/热血/幽默中选择
 4. 目标读者：男频/女频
-5. 配角建议：2-3个关键配角（名字+身份+与主角关系）
+5. 写作视角：第一人称/第三人称（默认第三人称，全书统一，禁止漂移）
+6. 配角建议：2-3个关键配角（名字+身份+与主角关系+性别+称呼+性格+惯用语句+一句话简介）
+7. 时代语言约束：根据世界观时代给出"禁止晚于该时代的网络新词"（如 2008 语境禁"搭子/内卷/PUA"）
 
 返回 JSON：
 {{
-  "protagonist": {{"name": "", "identity": "", "personality": "", "background": "", "golden_finger": ""}},
+  "protagonist": {{"name": "", "identity": "", "personality": "", "background": "", "golden_finger": "", "gender": "", "age": 0, "death_year": 0}},
   "world_building": {{"era": "", "power_system": "", "factions": [], "rules": []}},
-  "supporting_cast": [{{"name":"","role":"","relation":""}}],
+  "supporting_cast": [{{"name":"","role":"","relation":"","gender":"男/女","title":"","personality":"","catchphrase":"","brief":""}}],
   "tone": "",
-  "target_audience": ""
+  "target_audience": "",
+  "pov": "第三人称",
+  "era_language": ""
 }}"""
 
         try:
@@ -316,13 +339,50 @@ class OutlineGenerator:
     def _default_basic_info(self, genre: str) -> dict:
         return {
             "protagonist": {"name": "", "identity": "", "personality": "",
-                            "background": "", "golden_finger": ""},
+                            "background": "", "golden_finger": "",
+                            "gender": "", "age": 0, "death_year": 0},
             "world_building": {"era": "异世界", "power_system": "等级制",
                                "factions": [], "rules": []},
             "supporting_cast": [],
             "tone": "轻松爽文",
             "target_audience": "男频",
+            "pov": "第三人称",
+            "era_language": "",
         }
+
+    def _validate_timeline_math(self, basic_info: dict) -> list[str]:
+        """Phase 1 后规则校验：重生/年龄/年份关系自洽（纯规则，不调 LLM）。"""
+        warnings = []
+        bi = basic_info or {}
+        protag = bi.get("protagonist") or {}
+        world = bi.get("world_building") or {}
+        import re as _re
+        m = _re.search(r'(19|20)\d{2}', str(world.get("era", "") or ""))
+        story_year = int(m.group(0)) if m else 0
+        try:
+            age = int(protag.get("age", 0) or 0)
+        except (TypeError, ValueError):
+            age = 0
+        try:
+            death_year = int(protag.get("death_year", 0) or 0)
+        except (TypeError, ValueError):
+            death_year = 0
+
+        if death_year and story_year and story_year >= death_year:
+            warnings.append(
+                f"重生时间线矛盾：主角死亡于 {death_year} 年，故事却设定在 {story_year} 年（重生应回到死亡之前）")
+        if story_year and age > 0 and story_year - age < 1900:
+            warnings.append(
+                f"年龄/年份不自洽：{story_year} 年主角 {age} 岁（出生年 {story_year - age} 过晚）")
+        if age <= 0 and protag.get("birth_year"):
+            try:
+                by = int(protag["birth_year"])
+            except (TypeError, ValueError):
+                by = 0
+            if story_year and by:
+                protag["age"] = story_year - by
+                warnings.append(f"已按出生年 {by} 补齐主角年龄 {story_year - by}")
+        return warnings
 
     # ═══════════════════════════════════════
     # Phase 2: 故事线规划

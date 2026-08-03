@@ -173,14 +173,52 @@ class PromptHarness:
         lines = []
         for c in cast[:3]:
             name = c.get("name", "") if isinstance(c, dict) else str(c)
+            gender = c.get("gender", "") if isinstance(c, dict) else ""
+            title = c.get("title", "") if isinstance(c, dict) else ""
             role = c.get("role", "") if isinstance(c, dict) else ""
             rel = c.get("relation", "") if isinstance(c, dict) else ""
+            personality = (c.get("personality", "") if isinstance(c, dict) else "")[:40]
+            catchphrase = (c.get("catchphrase", "") if isinstance(c, dict) else "")[:40]
             seg = f"- 配角：{name}"
+            if title:
+                seg += f"（{title}）"
+            if gender:
+                seg += f"[{gender}]"
             if role:
-                seg += f"（{role}）"
+                seg += f"，{role}"
             if rel:
                 seg += f"，与主角{rel}"
+            if personality:
+                seg += f"，性格{personality}"
+            if catchphrase:
+                seg += f"，口头禅「{catchphrase}」"
             lines.append(seg)
+        return "\n".join(lines)
+
+    def _pov_bullets(self) -> str:
+        tl = self.timeline
+        if not tl:
+            return ""
+        pov = str((tl.basic_info or {}).get("pov", "") or "").strip()
+        if not pov:
+            return ""
+        return f"- 视角：{pov}（全篇统一该人称，禁止第一/第三人称混用）"
+
+    def _era_language_bullets(self) -> str:
+        tl = self.timeline
+        if not tl:
+            return ""
+        bi = tl.basic_info or {}
+        explicit = str(bi.get("era_language", "") or "").strip()
+        lines = []
+        if explicit:
+            lines.append("- 时代语言：" + explicit[:80])
+        # 自动兜底：era 年份 ≤2015 → 禁现代网络词
+        era = str((bi.get("world_building") or {}).get("era", "") or "")
+        import re as _re
+        m = _re.search(r'(19|20)\d{2}', era)
+        if m and int(m.group(0)) <= 2015:
+            lines.append("- 时代语言：背景约" + m.group(0) + "年，禁止晚于该时代的网络新词/梗（如：搭子、内卷、PUA、破防、摆烂、躺平、绝绝子、yyds）")
         return "\n".join(lines)
 
     def _style_bullets(self) -> str:
@@ -193,12 +231,16 @@ class PromptHarness:
                 ("主角", self._protagonist_bullets()),
                 ("世界观", self._world_bullets()),
                 ("风格", self._style_bullets()),
+                ("视角", self._pov_bullets()),
+                ("时代语言", self._era_language_bullets()),
                 ("母题", self._theme_bullets()),
             ]
         return [
             ("主角", self._protagonist_bullets()),
             ("世界观", self._world_bullets()),
             ("风格", self._style_bullets()),
+            ("视角", self._pov_bullets()),
+            ("时代语言", self._era_language_bullets()),
             ("配角", self._supporting_cast_bullets()),
             ("母题", self._theme_bullets()),
             ("基调", self._tone_bullets()),
@@ -300,6 +342,18 @@ class PromptHarness:
             setup_block = ("\n【设局桥段】为『" + str(item.get("resolver_name")) +
                            "』埋钩子，结尾留一个明确未解决的悬念。")
 
+        # 视角铁律（防人称漂移：显式重申，不让模型自己定）
+        _pov = str((self.timeline.basic_info or {}).get("pov", "") if self.timeline else "").strip()
+        if _pov == "第一人称":
+            pov_block = "【视角铁律】全篇第一人称「我」叙事；禁止叙事段落跳出第三人称「他/她」；对话内人物称谓不受限。\n\n"
+        elif _pov == "第三人称":
+            pov_block = "【视角铁律】全篇第三人称（他/她/名字）叙事；禁止叙事段落突现第一人称「我」（内心独白可保留）；一段内严禁「他」「我」混用。\n\n"
+        else:
+            pov_block = "【视角铁律】全篇统一人称，禁止第一/第三人称混用。\n\n"
+
+        # 本桥段出场人物（性格/性别/口头禅，防"她"字错误、保持声线）
+        roles_block = self._roles_block(p) if getattr(p, "roles", None) else ""
+
         bible = self.build_book_bible_condensed()
         bible_block = f"【书级设定（简）】\n{bible}\n\n" if bible else ""
 
@@ -308,11 +362,12 @@ class PromptHarness:
 
         return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个句子。
 
-{bible_block}{opening_block}{consistency_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
+{bible_block}{opening_block}{consistency_block}{pov_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
 【当前阶段】{stage_name}
 【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按大纲自然推进'}
 【桥段骨架】{structure}
 【变量槽位】{slots_text or '跟随上下文自由发挥'}
+{roles_block}
 {theme_block}
 {payoff_block}
 {setup_block}
@@ -329,6 +384,45 @@ class PromptHarness:
 5. 必须紧接上文继续，人物、视角、设定保持一致，视角始终跟随主角；绝不重开新故事、不换主角。
 6. 严禁出现：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。
 7. 不写章节标题、不标注步骤、不加解释性文字。本桥段还剩约 {budget_remaining} 字预算，控制篇幅。"""
+
+    def _roles_block(self, p) -> str:
+        """本桥段出场人物：性别/性格/惯用语句/简介（防性别指代错、保持角色声线）。"""
+        if not self.timeline:
+            return ""
+        bi = self.timeline.basic_info or {}
+        protag = bi.get("protagonist") or {}
+        cast_map = {}
+        for c in (bi.get("supporting_cast") or []):
+            if isinstance(c, dict) and c.get("name"):
+                cast_map[str(c["name"]).strip()] = c
+        lines = []
+        for rname in (p.roles or [])[:4]:
+            if rname == protag.get("name"):
+                seg = f"- {rname}（主角）"
+                if protag.get("gender"):
+                    seg += f"[{protag['gender']}]"
+                if protag.get("personality"):
+                    seg += f"，性格{str(protag['personality'])[:40]}"
+                lines.append(seg)
+            else:
+                c = cast_map.get(rname)
+                seg = f"- {rname}"
+                if c:
+                    if c.get("title"):
+                        seg += f"（{c['title']}）"
+                    if c.get("gender"):
+                        seg += f"[{c['gender']}]"
+                    if c.get("personality"):
+                        seg += f"，性格{str(c['personality'])[:40]}"
+                    if c.get("catchphrase"):
+                        seg += f"，口头禅「{str(c['catchphrase'])[:40]}」"
+                    if c.get("brief"):
+                        seg += f"，{str(c['brief'])[:40]}"
+                lines.append(seg)
+        if not lines:
+            return ""
+        return ("\n【本桥段出场人物——严格保持其性别/声线/口头禅，人称别写错】\n"
+                + "\n".join(lines))
 
     # ═══════════════════════════════════════════
     # 场景 C：笑点探测器 prompt（gag_injector 用）

@@ -49,14 +49,32 @@
         <div style="font-size:13px;margin-top:4px">{{ basic_info.get('tone') or '—' }} / {{ basic_info.get('target_audience') or '—' }}</div>
     </div>
     {% endif %}
+    {% if basic_info.get('pov') or basic_info.get('era_language') %}
+    <div class="detail-item">
+        <div class="label">视角 / 时代语言</div>
+        <div style="font-size:13px;margin-top:4px">{{ basic_info.get('pov') or '—' }}
+            {% if basic_info.get('era_language') %}<div style="color:#8b949e;font-size:12px">{{ basic_info.get('era_language') }}</div>{% endif %}
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% if basic_info.get('supporting_cast') %}
 <h3>👥 配角</h3>
-<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+<table>
+    <thead><tr><th>角色</th><th>性别</th><th>称呼</th><th>身份</th><th>与主角</th><th>性格/口头禅</th></tr></thead>
+    <tbody>
     {% for c in basic_info.get('supporting_cast') %}
-    <span class="tag blue">{{ c.get('name') if c is mapping else c }}</span>
+    <tr>
+        <td><strong>{{ c.get('name') if c is mapping else c }}</strong></td>
+        <td>{{ c.get('gender') or '-' }}</td>
+        <td>{{ c.get('title') or '-' }}</td>
+        <td>{{ c.get('role') or '-' }}</td>
+        <td>{{ c.get('relation') or '-' }}</td>
+        <td style="font-size:12px;color:#8b949e">{{ c.get('personality') or '' }}{% if c.get('catchphrase') %}「{{ c.get('catchphrase') }}」{% endif %}</td>
+    </tr>
     {% endfor %}
-</div>
+    </tbody>
+</table>
 {% endif %}
 {% if basic_info.get('synopsis') %}
 <h3>📝 简介</h3>
@@ -71,11 +89,13 @@
 {% if characters %}
 <h3>👤 角色状态</h3>
 <table>
-    <thead><tr><th>角色</th><th>位置</th><th>情绪</th><th>实力</th><th>最近出场</th><th>离线</th></tr></thead>
+    <thead><tr><th>角色</th><th>性别</th><th>性格</th><th>位置</th><th>情绪</th><th>实力</th><th>最近出场</th><th>离线</th></tr></thead>
     <tbody>
     {% for c in characters %}
     <tr>
         <td><strong>{{ c.name }}</strong></td>
+        <td>{{ c.gender or '-' }}</td>
+        <td style="font-size:12px;color:#8b949e">{{ c.personality or '-' }}{% if c.catchphrase %}「{{ c.catchphrase }}」{% endif %}</td>
         <td>{{ c.location or '-' }}</td>
         <td>{{ c.mood or '-' }}</td>
         <td>{{ c.power_level or '-' }}</td>

@@ -321,6 +321,8 @@ def extend_outline(timeline_id):
     added = [p for p in new_plots if p.id not in existing_ids]
     tl.plots.extend(added)
     builder.fill_themes_and_hooks(added, tl)
+    from libraries.timeline import annotate_plot_roles
+    annotate_plot_roles(tl)
     tl.phase = "ready"
     _save_timeline(tl, timeline_id)
 
@@ -468,6 +470,8 @@ def api_fill_plots(timeline_id):
         if p.id not in existing_ids:
             tl.plots.append(p)
 
+    from libraries.timeline import annotate_plot_roles
+    annotate_plot_roles(tl)
     _save_timeline(tl, timeline_id)
     return jsonify({"ok": True, "plots_added": len(new_plots),
                     "total_plots": len(tl.plots)})
@@ -485,6 +489,8 @@ def api_fill_gags(timeline_id):
         gag_lib=gag_lib, theme_lib=theme_lib,
     )
     builder.fill_themes_and_hooks(tl.plots, tl)
+    from libraries.timeline import annotate_plot_roles
+    annotate_plot_roles(tl)
     tl.phase = "ready" if tl.plots else "gags"
     _save_timeline(tl, timeline_id)
     return jsonify({"ok": True, "phase": tl.phase})
@@ -620,7 +626,8 @@ def api_save_basic_info(timeline_id):
                 if v not in (None, ""):
                     base[k] = v
             bi[section] = base
-    for field in ("supporting_cast", "tone", "target_audience"):
+    for field in ("supporting_cast", "tone", "target_audience",
+                  "pov", "era_language"):
         if data.get(field) not in (None, ""):
             bi[field] = data[field]
 

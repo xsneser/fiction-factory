@@ -191,6 +191,67 @@ assert_ok("线程-分类兜底",
           and _genB._default_thread_for_category("爽文") == "主线")
 
 # ══════════════════════════════════════════════
+#  Phase 3.6: 叙事纪律 + 角色档案（无 LLM）
+# ══════════════════════════════════════════════
+print("\n═══ Phase 3.6: 叙事纪律 + 角色档案（无 LLM）═══")
+
+from libraries.character_state import CharacterStateMachine
+from libraries.timeline import annotate_plot_roles
+from libraries.prompt_harness import PromptHarness
+from libraries.timeline_writer import has_repeated_token
+
+_csm = CharacterStateMachine()
+_csm.register("李哥", "同事", gender="男", personality="老油条",
+              catchphrase="这破公司", brief="工位老同事")
+_ctx = _csm.build_context_prompt()
+assert_ok("角色-注册性别性格", "性别：男" in _ctx and "性格：老油条" in _ctx)
+assert_ok("角色-惯用语句", "这破公司" in _ctx)
+import json as _json
+_csm2 = CharacterStateMachine.from_dict(_json.loads(_json.dumps(_csm.to_dict())))
+assert_ok("角色-序列化往返", _csm2.get("李哥").gender == "男" and _csm2.get("李哥").catchphrase == "这破公司")
+
+_tlR = BookTimeline()
+_tlR.plots = [PlotSlot(id="p1", template_id="t", name="退婚", outline_id="o1", stage_index=0, order=0, roles=["陈默", "赵婶"])]
+assert_ok("roles-往返", BookTimeline.from_dict(_tlR.to_dict()).plots[0].roles == ["陈默", "赵婶"])
+
+_tlA = BookTimeline()
+_tlA.basic_info = {"protagonist": {"name": "陈默"},
+                   "supporting_cast": [{"name": "李哥"}, {"name": "赵婶"}, {"name": "周磊"}]}
+_oA = OutlineSlot(id="o1", template_id="t", name="弧", start_chapter=1, end_chapter=30,
+                  stages=[{"name": "开局", "events": ["李哥堵门", "退婚"]}])
+_tlA.outlines = [_oA]
+_tlA.plots = [PlotSlot(id="a", template_id="t", name="退婚", outline_id="o1", stage_index=0, order=0,
+                       slots=[{"name": "对象", "default": "赵婶"}]),
+              PlotSlot(id="b", template_id="t", name="职场", outline_id="o1", stage_index=0, order=1)]
+annotate_plot_roles(_tlA)
+assert_ok("annotate-主角恒首", _tlA.plots[0].roles[0] == "陈默")
+assert_ok("annotate-配角按名命中", "赵婶" in _tlA.plots[0].roles and "李哥" in _tlA.plots[0].roles)
+assert_ok("annotate-无关缺席", "周磊" not in _tlA.plots[0].roles and "周磊" not in _tlA.plots[1].roles)
+
+assert_ok("重复词-底下底下", has_repeated_token("底下底下弹出一条灰字") is True)
+assert_ok("重复词-正常", has_repeated_token("他猛地站起来") is False)
+assert_ok("重复词-哈哈哈放行", has_repeated_token("哈哈哈，你逗我") is False)
+assert_ok("重复词-的的的", has_repeated_token("的的的") is True)
+
+_tlBible = BookTimeline()
+_tlBible.basic_info = {"protagonist": {"name": "陈默", "identity": "重生程序员"},
+                       "world_building": {"era": "现代都市 2008", "power_system": "系统"},
+                       "supporting_cast": [{"name": "李哥", "gender": "男", "title": "李哥", "personality": "老油条", "catchphrase": "这破公司"}],
+                       "pov": "第三人称", "era_language": ""}
+_hB = PromptHarness(timeline=_tlBible, profile=None)
+_cond = _hB.build_book_bible_condensed()
+assert_ok("bible-视角", "视角：第三人称" in _cond and "禁止" in _cond)
+assert_ok("bible-时代语言", "搭子" in _cond and "内卷" in _cond)
+_full = _hB.build_book_bible()
+assert_ok("bible-配角性别口头禅", "男" in _full and "这破公司" in _full)
+
+_tw = _genB._validate_timeline_math({"protagonist": {"death_year": 2010, "age": 25},
+                                     "world_building": {"era": "现代都市 2015"}})
+assert_ok("时间线-矛盾警告", any("重生时间线矛盾" in w for w in _tw))
+_tw2 = _genB._validate_timeline_math({"protagonist": {"age": 25}, "world_building": {"era": "2008年"}})
+assert_ok("时间线-自洽无警告", not any("矛盾" in w or "不自洽" in w for w in _tw2))
+
+# ══════════════════════════════════════════════
 #  Phase 4: 成本追踪
 # ══════════════════════════════════════════════
 print("\n═══ Phase 4: 成本追踪 ═══")

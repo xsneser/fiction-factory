@@ -236,6 +236,10 @@ class NovelEngine:
             gag_injector=self.gag_injector,
         )
 
+        # 注册主角/配角到角色状态机（含性别/性格/惯用语句/简介；重置防引擎实例复用残留）
+        self.char_states = CharacterStateMachine()
+        self._register_timeline_characters(timeline)
+
         # 初始化成本追踪
         self.cost_tracker = CostTracker()
         self.cost_tracker.book_id = "timeline_book"
@@ -264,6 +268,35 @@ class NovelEngine:
             self.book = None
 
         return self.state
+
+    def _register_timeline_characters(self, tl):
+        """从 timeline.basic_info 注册主角与配角到 char_states（性别/性格/惯用语句/简介）。
+
+        register 重名去重保证续写不覆盖动态状态（location/mood/goal）。
+        """
+        if not tl:
+            return
+        bi = tl.basic_info or {}
+        protag = bi.get("protagonist") or {}
+        if protag.get("name"):
+            self.char_states.register(
+                protag["name"], identity=protag.get("identity", ""),
+                gender=protag.get("gender", ""),
+                personality=protag.get("personality", ""),
+                brief=protag.get("background", ""),
+                relationship_to_mc="主角",
+            )
+        for c in (bi.get("supporting_cast") or []):
+            if not isinstance(c, dict) or not c.get("name"):
+                continue
+            self.char_states.register(
+                c["name"], identity=c.get("role", ""),
+                gender=c.get("gender", ""),
+                personality=c.get("personality", ""),
+                catchphrase=c.get("catchphrase", ""),
+                brief=c.get("brief", ""),
+                relationship_to_mc=c.get("relation", ""),
+            )
 
     def continue_book(self, book_id: str) -> EngineState:
         """
@@ -365,6 +398,8 @@ class NovelEngine:
                     reviewer=self.reviewer, gag_lib=self.gag_lib,
                     plot_lib=self.plot_lib, profile=self.profile,
                     harness=self.harness, gag_injector=self.gag_injector)
+            # 注册主角/配角（续写：register 重名去重，不覆盖已存的动态状态）
+            self._register_timeline_characters(tl)
 
         # 确定当前阶段
         if self.book.current_chapter >= self.book.chapter_count:

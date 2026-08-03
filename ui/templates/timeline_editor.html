@@ -67,10 +67,19 @@
             <label>目标读者
                 <input id="bi_audience" value="{{ timeline.basic_info.get('target_audience','') }}">
             </label>
+            <label>视角
+                <select id="bi_pov">
+                    <option value="第三人称" {{ 'selected' if timeline.basic_info.get('pov','第三人称') == '第三人称' }}>第三人称</option>
+                    <option value="第一人称" {{ 'selected' if timeline.basic_info.get('pov','第三人称') == '第一人称' }}>第一人称</option>
+                </select>
+            </label>
+            <label>时代语言约束
+                <input id="bi_era_language" placeholder="如：2008年语境，禁止现代网络词" value="{{ timeline.basic_info.get('era_language','') }}">
+            </label>
         </div>
         <div class="form-row">
             <label>配角（JSON 数组，可选）
-                <textarea id="bi_supporting_cast" rows="3" placeholder='[{"name":"...","role":"..."}]'>{{ (timeline.basic_info.get('supporting_cast') or []) | tojson }}</textarea>
+                <textarea id="bi_supporting_cast" rows="3" placeholder='[{"name":"...","role":"...","relation":"...","gender":"男/女","title":"...","personality":"...","catchphrase":"..."}]'>{{ (timeline.basic_info.get('supporting_cast') or []) | tojson }}</textarea>
             </label>
         </div>
         <button class="btn-primary btn-sm" id="btn-save-basic" onclick="saveBasicInfo()">💾 保存设定</button>
@@ -185,6 +194,9 @@
                         </div>
                         {% if p.template_structure %}
                         <div style="font-size:12px;color:#484f58;margin-top:4px">{{ p.template_structure[:120] }}</div>
+                        {% endif %}
+                        {% if p.roles %}
+                        <div style="font-size:11px;color:#58a6ff;margin-top:2px">👤 出场: {{ p.roles|join('、') }}</div>
                         {% endif %}
                         <div style="font-size:11px;color:#3fb950;margin-top:4px">🎭 笑点: 写作时灵机一动（不预设）</div>
                         {% if p.hook_points %}
@@ -345,6 +357,8 @@ function saveBasicInfo() {
         },
         tone: document.getElementById('bi_tone').value,
         target_audience: document.getElementById('bi_audience').value,
+        pov: document.getElementById('bi_pov').value,
+        era_language: document.getElementById('bi_era_language').value,
     };
     var sc = document.getElementById('bi_supporting_cast').value.trim();
     if (sc) {
@@ -730,6 +744,7 @@ function renderPlotList(container, tl) {
             var structure = p.template_structure ? '<div style="font-size:12px;color:#484f58;margin-top:4px">' + esc(String(p.template_structure).slice(0,120)) + '</div>' : '';
             var threadB = (p.thread_id) ? '<span class="tag" style="margin-left:6px">线程:' + esc(p.thread_id) + '</span>' : '';
             var payoffB = (p.resolves_plot_id) ? '<span class="tag" style="color:#f85149;margin-left:6px">↪ 收局·' + esc(p.resolves_name || '') + '</span>' : '';
+            var rolesB = (p.roles && p.roles.length) ? '<div style="font-size:11px;color:#58a6ff;margin-top:2px">👤 出场: ' + esc(p.roles.join('、')) + '</div>' : '';
             return '<div class="plot-card card">' +
                 '<div style="display:flex;justify-content:space-between;align-items:start">' +
                   '<div><code>' + esc(p.category || '') + '</code> <strong>' + esc(p.name) + '</strong> ' +
@@ -739,7 +754,7 @@ function renderPlotList(container, tl) {
                   '<div style="display:flex;gap:8px;align-items:center">' +
                     '<label style="font-size:12px;color:#8b949e;cursor:pointer"><input type="checkbox" ' + (p.confirmed ? 'checked' : '') + ' onchange="togglePlotConfirm(\'' + esc(p.id) + '\', this.checked)"> 确认</label>' +
                   '</div>' +
-                '</div>' + structure + gag + theme + hook +
+                '</div>' + structure + rolesB + gag + theme + hook +
               '</div>';
         }).join('');
         if (!cards) {

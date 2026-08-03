@@ -16,6 +16,10 @@ class CharacterState:
     goal: str = ""                    # 当前目标
     power_level: str = ""             # 当前实力/境界
     relationship_to_mc: str = ""      # 与主角关系
+    gender: str = ""                  # 性别（男/女，防"她"字错误）
+    personality: str = ""             # 性格
+    catchphrase: str = ""             # 惯用语句/口头禅
+    brief: str = ""                   # 简介
     last_appeared_chapter: int = 0    # 最近出场章节
     offline_chapters: int = 0         # 连续离线章节数
     arc_stage: str = ""               # 弧线阶段
@@ -29,17 +33,28 @@ class CharacterStateMachine:
         self.characters: list[CharacterState] = []
 
     def register(self, name: str, identity: str = "",
-                 initial_location: str = "", power_level: str = "") -> CharacterState:
-        """注册新角色"""
-        # 去重
+                 initial_location: str = "", power_level: str = "",
+                 gender: str = "", personality: str = "",
+                 catchphrase: str = "", brief: str = "",
+                 relationship_to_mc: str = "") -> CharacterState:
+        """注册新角色（重名返回已有，不覆盖动态状态）"""
         for c in self.characters:
             if c.name == name:
+                # 只填空字段（不覆盖已有动态状态）
+                if gender and not c.gender: c.gender = gender
+                if personality and not c.personality: c.personality = personality
+                if catchphrase and not c.catchphrase: c.catchphrase = catchphrase
+                if brief and not c.brief: c.brief = brief
+                if relationship_to_mc and not c.relationship_to_mc: c.relationship_to_mc = relationship_to_mc
                 return c
 
         cs = CharacterState(
             name=name, identity=identity,
             location=initial_location, power_level=power_level,
-            mood="正常", goal=""
+            mood="正常", goal="",
+            gender=gender, personality=personality,
+            catchphrase=catchphrase, brief=brief,
+            relationship_to_mc=relationship_to_mc,
         )
         self.characters.append(cs)
         return cs
@@ -126,8 +141,14 @@ class CharacterStateMachine:
         parts = ["【角色当前状态——写作时注意维持一致性】"]
         for c in chars:
             parts.append(f"\n--- {c.name} ---")
+            if c.gender:
+                parts.append(f"性别：{c.gender}")
             if c.identity:
                 parts.append(f"身份：{c.identity}")
+            if c.personality:
+                parts.append(f"性格：{c.personality}")
+            if c.catchphrase:
+                parts.append(f"惯用语句：{c.catchphrase}")
             if c.location:
                 parts.append(f"位置：{c.location}")
             if c.mood:

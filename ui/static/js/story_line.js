@@ -104,6 +104,7 @@
           thread: p.thread_id || '主线',
           resolves: p.resolves_plot_id || '',
           resolves_name: p.resolves_name || '',
+          roles: p.roles || [],
         });
         cum += pw;
       });
@@ -307,6 +308,7 @@
           ['范围', (p.start).toLocaleString() + ' — ' + p.end.toLocaleString() + ' 字'],
           ['线程', p.thread || '主线'],
           p.resolves ? ['收局', '解决「' + p.resolves_name + '」'] : null,
+          (p.roles && p.roles.length) ? ['出场', p.roles.join('、')] : null,
         ].filter(Boolean),
         tag: '桥段',
       });
