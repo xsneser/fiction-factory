@@ -31,7 +31,7 @@ class OutlineGenerator:
     """
     大纲生成引擎 — 从用户想法到 BookTimeline JSON 的完整 LLM 管线。
 
-    5 个阶段，每个阶段 yiled SSE 事件，UI 实时显示进度。
+    6 个阶段，每个阶段 yield SSE 事件，UI 实时显示进度。
     """
 
     def __init__(
