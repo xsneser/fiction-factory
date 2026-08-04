@@ -27,33 +27,6 @@
     </div>
 </div>
 
-{# ─── 网页抓取面板（占位） ─── #}
-<div id="platform-web" class="platform-panel" style="display:none">
-    <div class="empty" style="padding:40px 20px">
-        <div class="icon" style="font-size:36px">🌐</div>
-        <p style="color:#8b949e;font-size:14px;margin-top:12px">网页抓取功能正在开发中</p>
-        <p style="color:#484f58;font-size:12px;margin-top:6px">支持从任意小说网站抓取章节数据</p>
-    </div>
-</div>
-
-{# ─── 起点面板（占位） ─── #}
-<div id="platform-qidian" class="platform-panel" style="display:none">
-    <div class="empty" style="padding:40px 20px">
-        <div class="icon" style="font-size:36px">📖</div>
-        <p style="color:#8b949e;font-size:14px;margin-top:12px">起点中文网抓取功能正在开发中</p>
-        <p style="color:#484f58;font-size:12px;margin-top:6px">敬请期待</p>
-    </div>
-</div>
-
-{# ─── 晋江面板（占位） ─── #}
-<div id="platform-jinjiang" class="platform-panel" style="display:none">
-    <div class="empty" style="padding:40px 20px">
-        <div class="icon" style="font-size:36px">🌸</div>
-        <p style="color:#8b949e;font-size:14px;margin-top:12px">晋江文学城抓取功能正在开发中</p>
-        <p style="color:#484f58;font-size:12px;margin-top:6px">敬请期待</p>
-    </div>
-</div>
-
 <div id="result-area" style="display:none"></div>
 
 <style>
@@ -103,14 +76,20 @@ function clearOther(otherId) {
     } catch(e) {}
 })();
 
+var PLATFORM_NAMES = {web: '🌐 网页抓取', qidian: '📖 起点中文', jinjiang: '🌸 晋江文学城'};
 function switchPlatform(pid) {
+    // 未上线平台：只提示，不切面板（面板已精简删除）
+    if (pid !== 'fanqie') {
+        showToast((PLATFORM_NAMES[pid] || '该平台') + ' 抓取功能即将推出', 'info');
+        return;
+    }
     document.querySelectorAll('.platform-tab').forEach(function(t) { t.classList.remove('active'); });
     document.querySelectorAll('.platform-panel').forEach(function(p) { p.style.display = 'none'; });
-    var tab = document.querySelector('.platform-tab[data-platform="' + pid + '"]');
+    var tab = document.querySelector('.platform-tab[data-platform="fanqie"]');
     if (tab) tab.classList.add('active');
-    var panel = document.getElementById('platform-' + pid);
+    var panel = document.getElementById('platform-fanqie');
     if (panel) panel.style.display = 'block';
-    currentPlatform = pid;
+    currentPlatform = 'fanqie';
 }
 
 function startScout() {
