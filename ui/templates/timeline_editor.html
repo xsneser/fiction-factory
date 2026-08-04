@@ -332,10 +332,10 @@ function generateTitle() {
         .then(r => r.json()).then(d => {
             if (d.ok) {
                 document.getElementById('bi_title').value = d.chosen || '';
-                alert('✨ 书名候选：' + (d.titles || []).join('、') + '\n\n已选用：「' + (d.chosen || '') + '」，保存设定后生效。');
-            } else alert(d.error || '书名生成失败');
+                showToast('✨ 书名候选：' + (d.titles || []).join('、') + '\n\n已选用：「' + (d.chosen || '') + '」，保存设定后生效。', 'success');
+            } else showToast(d.error || '书名生成失败', 'error');
         })
-        .catch(e => alert('失败: ' + e.message))
+        .catch(e => showToast('失败: ' + e.message, 'error'))
         .finally(function(){ btn.disabled = false; btn.textContent = '✨ 生成书名'; });
 }
 
@@ -363,7 +363,7 @@ function saveBasicInfo() {
     var sc = document.getElementById('bi_supporting_cast').value.trim();
     if (sc) {
         try { payload.supporting_cast = JSON.parse(sc); }
-        catch (e) { alert('配角 JSON 格式有误: ' + e.message); return; }
+        catch (e) { showToast('配角 JSON 格式有误: ' + e.message, 'warning'); return; }
     }
     var btn = document.getElementById('btn-save-basic');
     btn.disabled = true; btn.textContent = '保存中...';
@@ -371,8 +371,8 @@ function saveBasicInfo() {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload)
     }).then(function(r){ return r.json(); }).then(function(d) {
-        if (d.ok) location.reload(); else alert(d.error || '保存失败');
-    }).catch(function(e){ alert('失败: ' + e.message); })
+        if (d.ok) { flashToast('✅ 设定已保存', 'success'); location.reload(); } else showToast(d.error || '保存失败', 'error');
+    }).catch(function(e){ showToast('失败: ' + e.message, 'error'); })
       .finally(function(){ btn.disabled = false; btn.textContent = '💾 保存设定'; });
 }
 
@@ -514,15 +514,15 @@ function generateOutlines() {
     var btn = event.target;
     btn.disabled = true; btn.textContent = '生成中...';
     fetch('/api/timeline/' + timelineId + '/generate-outlines', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); })
-        .catch(e => alert('失败: ' + e.message))
+        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 大纲序列已生成', 'success'); location.reload(); } else showToast(d.error, 'error'); })
+        .catch(e => showToast('失败: ' + e.message, 'error'))
         .finally(() => { btn.disabled = false; btn.textContent = '🤖 AI 生成大纲序列'; });
 }
 
 function addOutline() {
     fetch('/api/timeline/' + timelineId + '/generate-outlines?mode=rule', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); })
-        .catch(e => alert('失败: ' + e.message));
+        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 已添加大纲', 'success'); location.reload(); } else showToast(d.error, 'error'); })
+        .catch(e => showToast('失败: ' + e.message, 'error'));
 }
 
 function extendOutline() {
@@ -531,10 +531,10 @@ function extendOutline() {
     btn.disabled = true; btn.textContent = '扩展中...';
     fetch('/api/timeline/' + timelineId + '/extend-outline', { method: 'POST' })
         .then(r => r.json()).then(d => {
-            if (d.ok) { location.reload(); }
-            else alert(d.error || '扩展失败');
+            if (d.ok) { flashToast('✅ 故事线已扩展', 'success'); location.reload(); }
+            else showToast(d.error || '扩展失败', 'error');
         })
-        .catch(e => alert('失败: ' + e.message));
+        .catch(e => showToast('失败: ' + e.message, 'error'));
 }
 
 function confirmOutlines() {
@@ -542,23 +542,23 @@ function confirmOutlines() {
     var btn = document.getElementById('btn-confirm-outlines');
     btn.disabled = true; btn.textContent = '处理中...';
     fetch('/api/timeline/' + timelineId + '/confirm-outlines', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); })
-        .catch(e => alert('失败: ' + e.message));
+        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 已确认故事线', 'success'); location.reload(); } else showToast(d.error, 'error'); })
+        .catch(e => showToast('失败: ' + e.message, 'error'));
 }
 
 function fillPlots() {
     var btn = event.target;
     btn.disabled = true; btn.textContent = '填充中...';
     fetch('/api/timeline/' + timelineId + '/fill-plots', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); })
-        .catch(e => alert('失败: ' + e.message))
+        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 桥段已填充', 'success'); location.reload(); } else showToast(d.error, 'error'); })
+        .catch(e => showToast('失败: ' + e.message, 'error'))
         .finally(() => { btn.disabled = false; btn.textContent = '🤖 AI 填充桥段'; });
 }
 
 function confirmPlots() {
     if (!confirm('确认桥段编排？确认后进入加料注入阶段。')) return;
     fetch('/api/timeline/' + timelineId + '/fill-gags', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); });
+        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 已进入加料注入', 'success'); location.reload(); } else showToast(d.error, 'error'); });
 }
 
 function togglePlotConfirm(plotId, checked) {
@@ -572,7 +572,7 @@ function injectGags() {
     var btn = event.target;
     btn.disabled = true; btn.textContent = '注入中...';
     fetch('/api/timeline/' + timelineId + '/fill-gags', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) location.reload(); else alert(d.error); });
+        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 内涵已挂载', 'success'); location.reload(); } else showToast(d.error, 'error'); });
 }
 
 function startWriting() {

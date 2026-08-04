@@ -179,14 +179,14 @@ function generateMeta() {
         .then(function(r){ return r.json(); })
         .then(function(d){
             if (d.ok) {
-                alert('✅ 已生成书名：' + d.title + (d.synopsis ? '\n简介：' + d.synopsis : ''));
+                flashToast('✅ 已生成书名：' + d.title + (d.synopsis ? '\n简介：' + d.synopsis : ''), 'success');
                 location.reload();
             } else {
-                alert('生成失败：' + (d.error || '未知错误'));
+                showToast('生成失败：' + (d.error || '未知错误'), 'error');
                 btn.textContent = '🎬 生成书名/简介';
             }
         })
-        .catch(function(e){ alert('生成失败：' + e); btn.textContent = '🎬 生成书名/简介'; });
+        .catch(function(e){ showToast('生成失败：' + e, 'error'); btn.textContent = '🎬 生成书名/简介'; });
 }
 </script>
 {% endblock %}

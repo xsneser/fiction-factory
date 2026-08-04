@@ -33,14 +33,14 @@ async function toggleStruct(id) {
     const r = await fetch('/api/structures/' + id + '/toggle', {method:'POST'});
     const d = await r.json();
     if (d.ok) location.reload();
-    else alert('操作失败: ' + (d.error||''));
+    else showToast('操作失败: ' + (d.error||''), 'error');
 }
 async function deleteStruct(id) {
     if (!confirm('确认删除大纲「' + id + '」？')) return;
     const r = await fetch('/api/structures/' + id + '/delete', {method:'POST'});
     const d = await r.json();
     if (d.ok) location.reload();
-    else alert('删除失败: ' + (d.error||''));
+    else showToast('删除失败: ' + (d.error||''), 'error');
 }
 </script>
 {% endblock %}

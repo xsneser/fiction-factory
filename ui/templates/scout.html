@@ -120,7 +120,7 @@ function startScout() {
     var chapters = parseInt(document.getElementById('chapters').value) || 30;
     var directId = '';
     if (bookId) { var m = bookId.match(/(\\d{15,})/); directId = m ? m[1] : bookId; }
-    if (!title && !directId) return alert('请输入书名或 book_id');
+    if (!title && !directId) return showToast('请输入书名或 book_id', 'warning');
 
     document.getElementById('btn-scout').disabled = true;
     document.getElementById('btn-scout').textContent = '抓取中...';
@@ -156,7 +156,7 @@ function startScout() {
         }
         read();
     }).catch(function(e) {
-        alert('连接失败: ' + e.message);
+        showToast('连接失败: ' + e.message, 'error');
         document.getElementById('btn-scout').disabled = false;
         document.getElementById('btn-scout').textContent = '🍅 开始抓取';
     });

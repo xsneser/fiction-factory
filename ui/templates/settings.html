@@ -40,8 +40,6 @@
     <button id="btn-test" class="btn" style="background:#30363d;color:#f0f6fc" onclick="testConnection()">🔌 测试连接</button>
 </div>
 
-<div id="settings-toast" style="display:none;position:fixed;top:20px;right:20px;z-index:1000" class="alert"></div>
-
 <style>
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinner {
@@ -73,14 +71,6 @@ function renderStatus(type, msg) {
     var el = document.getElementById('status-card');
     var icons = { info: '📋', success: '✅', warning: '⚠️', error: '❌' };
     el.innerHTML = '<div class="card"><h2>连接状态</h2><div class="alert ' + type + '">' + (icons[type]||'') + ' ' + escapeHtml(msg) + '</div></div>';
-}
-
-function showToast(msg, type) {
-    var t = document.getElementById('settings-toast');
-    t.textContent = msg;
-    t.className = 'alert ' + type;
-    t.style.display = 'block';
-    setTimeout(function(){ t.style.display = 'none'; }, 3000);
 }
 
 function getVal(id) {

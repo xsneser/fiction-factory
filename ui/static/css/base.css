@@ -97,4 +97,13 @@
         .accordion-header:hover { background:#1f2937; }
         .accordion-body { padding:0 16px 16px; display:none; }
         .accordion-body.show { display:block; }
-    
+        /* Toast */
+        #toast-root { position:fixed; top:20px; right:20px; z-index:2000; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+        .toast { background:#1e2130; border:1px solid #2a2d3a; border-radius:8px; padding:10px 16px; font-size:13px; color:#e6edf3; box-shadow:0 4px 20px rgba(0,0,0,.5); max-width:380px; white-space:pre-line; animation:toast-in .2s ease; pointer-events:auto; }
+        .toast.success { border-color:#238636; color:#3fb950; }
+        .toast.error { border-color:#da3633; color:#f85149; }
+        .toast.warning { border-color:#d29922; color:#d29922; }
+        .toast.info { border-color:#1f6feb; color:#58a6ff; }
+        .toast-out { opacity:0; transition:opacity .3s; }
+        @keyframes toast-in { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
+

@@ -36,14 +36,14 @@ async function toggleGag(id) {
     const r = await fetch('/api/gags/' + id + '/toggle', {method:'POST'});
     const d = await r.json();
     if (d.ok) location.reload();
-    else alert('操作失败: ' + (d.error||''));
+    else showToast('操作失败: ' + (d.error||''), 'error');
 }
 async function deleteGag(id) {
     if (!confirm('确认删除笑点「' + id + '」？')) return;
     const r = await fetch('/api/gags/' + id + '/delete', {method:'POST'});
     const d = await r.json();
     if (d.ok) location.reload();
-    else alert('删除失败: ' + (d.error||''));
+    else showToast('删除失败: ' + (d.error||''), 'error');
 }
 </script>
 {% endblock %}

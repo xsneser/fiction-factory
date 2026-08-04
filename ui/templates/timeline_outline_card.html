@@ -68,6 +68,6 @@ function setNarrative(id, narrative, target) {
     fetch('/api/timeline/' + timelineId + '/set-narrative', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: id, narrative: narrative, narrative_target: target || ''})
-    }).then(r => r.json()).then(d => { if (!d.ok) alert(d.error || '设置失败'); });
+    }).then(r => r.json()).then(d => { if (!d.ok) showToast(d.error || '设置失败', 'error'); });
 }
 </script>

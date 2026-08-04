@@ -10,6 +10,34 @@
                 .replace(/'/g, '&#39;');
         }
 
+// 全局 toast：showToast 即时弹出；flashToast 存 sessionStorage，配合 location.reload() 在下次加载后弹出。
+// 各子模板 script 直接在 <body> 尾部执行，此时 #toast-root 已渲染，无需等 DOMContentLoaded。
+        function showToast(msg, type) {
+            var root = document.getElementById('toast-root');
+            if (!root) { alert(msg); return; }
+            var t = document.createElement('div');
+            t.className = 'toast ' + (type || 'info');
+            t.textContent = msg;
+            root.appendChild(t);
+            setTimeout(function() {
+                t.classList.add('toast-out');
+                setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 350);
+            }, 3400);
+        }
+        function flashToast(msg, type) {
+            try { sessionStorage.setItem('ne_toast', JSON.stringify({m: msg, t: type || 'success'})); } catch(e) {}
+        }
+        (function() {
+            try {
+                var f = sessionStorage.getItem('ne_toast');
+                if (f) {
+                    sessionStorage.removeItem('ne_toast');
+                    var d = JSON.parse(f);
+                    if (d && d.m) showToast(d.m, d.t);
+                }
+            } catch(e) {}
+        })();
+
 // Accordion toggle（事件委托：SPA 换入新内容后依然生效，也避免重复绑定）
         document.addEventListener('click', function(e) {
             var h = e.target.closest('.accordion-header');

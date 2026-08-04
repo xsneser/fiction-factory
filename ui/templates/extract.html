@@ -158,7 +158,7 @@ function readAnalyzeStream(gen, btn, btnText, platform, folder, mode) {
                                 return;
                             }
                             if (d.event === 'error') {
-                                if (gen === _extractGen) alert('❌ 分析失败: ' + (d.message||'未知错误'));
+                                if (gen === _extractGen) showToast('❌ 分析失败: ' + (d.message||'未知错误'), 'error');
                                 return;
                             }
                             if (d.event === 'cancelled') {
@@ -173,7 +173,7 @@ function readAnalyzeStream(gen, btn, btnText, platform, folder, mode) {
         }
         return read();
     })
-    .catch(function(e) { if (gen === _extractGen) alert('❌ 请求失败: ' + e.message); })
+    .catch(function(e) { if (gen === _extractGen) showToast('❌ 请求失败: ' + e.message, 'error'); })
     .finally(function() { if (gen === _extractGen) { btn.disabled = false; btn.textContent = btnText; } });
 }
 

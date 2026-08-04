@@ -108,14 +108,14 @@ function getAllItems() {
 async function ingestAll() {
     var items = getAllItems();
     var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
-    if (total === 0) return alert('没有可入库的条目');
+    if (total === 0) return showToast('没有可入库的条目', 'warning');
     await doIngest(items);
 }
 
 async function ingestSelected() {
     var items = getCheckedItems();
     var total = items.plots.length + items.structures.length + items.gags.length + items.themes.length;
-    if (total === 0) return alert('请勾选要入库的条目');
+    if (total === 0) return showToast('请勾选要入库的条目', 'warning');
     await doIngest(items);
 }
 
@@ -132,12 +132,15 @@ async function doIngest(items) {
         });
         var d = await r.json();
         if (d.ok) {
-            // 日志统一在右侧状态栏显示（后端 task_manager 已记录）
+            // 成功反馈：toast（后端 task_manager 另记日志到右侧状态栏）
+            var n = (items.plots || []).length + (items.structures || []).length
+                    + (items.gags || []).length + (items.themes || []).length;
+            showToast('✅ 已入库 ' + n + ' 条', 'success');
         } else {
-            alert('❌ 入库失败: ' + (d.error||''));
+            showToast('❌ 入库失败: ' + (d.error||''), 'error');
         }
     } catch(e) {
-        alert('❌ 入库失败: ' + e.message);
+        showToast('❌ 入库失败: ' + e.message, 'error');
     }
     if (btn) { btn.disabled = false; btn.textContent = orig; }
 }
