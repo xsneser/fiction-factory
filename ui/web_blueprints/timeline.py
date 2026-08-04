@@ -26,7 +26,14 @@ def timeline_edit(timeline_id):
 
 @bp.route("/timeline/<timeline_id>/detail")
 def timeline_detail(timeline_id):
-    """故事线草稿详情页（世界观/主角/配角/故事线/桥段）"""
+    """故事线草稿详情页（世界观/主角/配角/故事线/桥段）。
+
+    book_* 时间线本身已是正式书 → 直接跳书详情（书详情已含完整大纲/设定/章节）；
+    tl_* 草稿若已建书（source_timeline_id 关联）→ 同样跳书详情。
+    """
+    # book_* 时间线 = 正式书，详情一律收敛到书详情页，避免双页冗余
+    if timeline_id.startswith("book_"):
+        return redirect(url_for("books.book_detail", book_id=timeline_id))
     tl_data = _resolve_timeline(timeline_id)
     if not tl_data:
         return "故事线配置不存在或已过期", 404

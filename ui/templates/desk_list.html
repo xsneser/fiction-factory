@@ -24,7 +24,7 @@
             <a href="/timeline/{{ b.book_id }}/edit" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none;display:inline-block">📋 继续规划</a>
             {% if r.is_timeline %}
             <a href="/books/start/timeline/{{ b.book_id }}/write" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">✍️ 开始写作</a>
-            <a href="/timeline/{{ b.book_id }}/detail" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">📖 详情</a>
+            <a href="/books/{{ b.book_id }}" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">📖 详情</a>
             {% else %}
             <a href="/books/{{ b.book_id }}/continue" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">✍️ 开始写作</a>
             <a href="/books/{{ b.book_id }}" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">📖 详情</a>
