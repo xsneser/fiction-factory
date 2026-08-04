@@ -5,7 +5,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime
-import json
 import logging
 
 from core.json_store import read_json, write_json_atomic
@@ -210,24 +209,6 @@ class BookManager:
         outline_dir = self.dir / book_id / "outline"
         outline_dir.mkdir(parents=True, exist_ok=True)
         write_json_atomic(outline_dir / "outline.json", outline_data)
-
-    def export_chapter_markdown(self, book_id: str, chapter_num: int,
-                                 output_dir: str = "exports") -> str:
-        """导出章节为 Markdown"""
-        chapter = self.load_chapter(book_id, chapter_num)
-        if not chapter:
-            return ""
-        cfg = self._cache.get(book_id)
-        title = cfg.title if cfg else ""
-        md = f"# 第 {chapter_num} 章: {chapter.get('title', '')}\n\n"
-        if chapter.get("summary"):
-            md += f"> **本章摘要**：{chapter['summary']}\n\n---\n\n"
-        md += chapter.get("content", "")
-        export_dir = Path(output_dir) / book_id
-        export_dir.mkdir(parents=True, exist_ok=True)
-        md_path = export_dir / f"Chapter_{chapter_num:04d}.md"
-        md_path.write_text(md, encoding="utf-8")
-        return str(md_path)
 
     def get_outline(self, book_id: str) -> dict | None:
         """加载大纲"""

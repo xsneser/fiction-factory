@@ -61,7 +61,6 @@ def apply_word_replacements(text: str) -> tuple[str, int]:
     result = text
     for old, options in AI_WORD_MAP.items():
         if old in result:
-            import random
             replacement = random.choice(options)
             # 只替换部分出现（不是全部）
             occurrences = result.count(old)
@@ -161,51 +160,6 @@ class DeAIEngine:
         processed = add_human_imperfections(processed, typo_rate=0.0005)
 
         result.processed = processed
-        return result
-
-    def process_llm(self, text: str, pen_name_profile=None) -> DeAIResult:
-        """LLM 去 AI 味（语境感知，更自然但更贵）"""
-        if not self.llm:
-            return DeAIResult(original=text, processed=text)
-
-        system = """你是一位经验丰富的网络小说编辑助手。
-你的任务是把 AI 生成的小说段落改得像真人作者写的。
-
-改写原则：
-1. 保持原意和情节不变
-2. 用更口语化、更自然的表达替换生硬的句式
-3. 对话中加入日常语气（如"啧""嗨""那叫一个"等）
-4. 不要所有句子都主谓宾完整——偶尔留半截话、省略主语
-5. 避免"首先""其次""最后"这种列举句式
-6. 不要把所有情绪都写出来——留白比说透更有力量
-
-请只输出改写后的文本，不要加任何说明。"""
-
-        constraints = ""
-        if pen_name_profile:
-            constraints = pen_name_profile.build_style_prompt()
-
-        user = f"请改写以下小说段落，使其读起来更像真人作者写的：\n\n{text}"
-        if constraints:
-            user = constraints + "\n\n" + user
-
-        try:
-            rewritten = self.llm.call(system, user, temperature=0.6, max_tokens=4096)
-            return DeAIResult(original=text, processed=rewritten.strip(),
-                              llm_rewritten=True)
-        except Exception:
-            return DeAIResult(original=text, processed=text)
-
-    def process_full(self, text: str, pen_name_profile=None,
-                     use_llm: bool = True) -> DeAIResult:
-        """完整去 AI 味管线：规则 → LLM（可选）"""
-        # 第一步：规则层（免费，先过一遍）
-        result = self.process_rule_based(text)
-
-        # 第二步：LLM 层（可选，更自然但花钱）
-        if use_llm and self.llm:
-            result = self.process_llm(result.processed, pen_name_profile)
-
         return result
 
     def build_deai_prompt_snippet(self) -> str:

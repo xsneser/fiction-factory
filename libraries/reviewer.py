@@ -216,42 +216,6 @@ class ContentReviewer:
 
         return result
 
-    def llm_review(self, content: str, context: str = "") -> ReviewResult:
-        """LLM 深层审查（更全面但更贵）"""
-        if not self.llm:
-            return ReviewResult(passed=True, score=80, summary="跳过 LLM 审查")
-
-        prompt = f"""请审查以下小说章节的质量，从以下维度评估：
-
-1. 叙事连贯性：前后是否衔接自然
-2. 角色行为一致性：角色行为是否符合设定
-3. 节奏感：是否有张有弛
-4. 对话质量：对话是否自然、符合角色性格
-5. 是否有明显的AI生成痕迹
-
-{context}
-
-章节内容：
-{content[:3000]}
-
-请以 JSON 返回：
-{{"score": 0-100, "passed": true/false, "issues": ["问题1", "问题2"], "suggestions": ["建议1"]}}"""
-
-        try:
-            from core.llm_client import extract_json
-            raw = self.llm.call("你是一位专业的网文编辑。", prompt,
-                                temperature=0.3, max_tokens=2048)
-            data = json.loads(extract_json(raw))
-            return ReviewResult(
-                score=data.get("score", 80),
-                passed=data.get("passed", True),
-                issues=[ReviewIssue(description=i, severity="info")
-                        for i in data.get("issues", [])],
-                summary=", ".join(data.get("suggestions", [])),
-            )
-        except Exception:
-            return ReviewResult(passed=True, score=80, summary="LLM 审查异常")
-
     def _get_replacements(self, word: str) -> str:
         mapping = {
             "仿佛": "像、好像、跟……似的",

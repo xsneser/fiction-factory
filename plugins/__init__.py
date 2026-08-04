@@ -127,58 +127,10 @@ class FanqiePlugin(BasePlugin):
             return []
 
 
-class QidianPlugin(BasePlugin):
-    """起点中文网采集插件"""
-    name = "qidian"
-    description = "从起点中文网采集热门桥段和章节结构"
-
-    def is_available(self) -> bool:
-        return False  # 需要反爬手段
-
-    def scrape(self, keyword: str = "", max_items: int = 20) -> list[ScrapedMaterial]:
-        return []
-
-
-class WeiboPlugin(BasePlugin):
-    """微博热搜/热梗采集"""
-    name = "weibo"
-    description = "从微博热搜采集最新网络热梗和流行语"
-
-    def is_available(self) -> bool:
-        try:
-            import requests
-            return True
-        except ImportError:
-            return False
-
-    def scrape(self, keyword: str = "", max_items: int = 20) -> list[ScrapedMaterial]:
-        # TODO: 实现微博热搜采集
-        return []
-
-
-class BilibiliPlugin(BasePlugin):
-    """B站弹幕/热词采集"""
-    name = "bilibili"
-    description = "从B站采集弹幕热词和流行文化梗"
-
-    def is_available(self) -> bool:
-        try:
-            import requests
-            return True
-        except ImportError:
-            return False
-
-    def scrape(self, keyword: str = "", max_items: int = 20) -> list[ScrapedMaterial]:
-        return []
-
-
 # ─── 插件注册表 ───
 
 PLUGIN_REGISTRY: dict[str, type[BasePlugin]] = {
     "fanqie": FanqiePlugin,
-    "qidian": QidianPlugin,
-    "weibo": WeiboPlugin,
-    "bilibili": BilibiliPlugin,
 }
 
 

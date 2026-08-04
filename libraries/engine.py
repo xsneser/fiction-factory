@@ -23,7 +23,7 @@ from libraries.cost_tracker import CostTracker
 from libraries.de_ai import DeAIEngine
 from libraries.character_state import CharacterStateMachine
 from libraries.reviewer import ContentReviewer
-from libraries.assembler import BookAssembler, BookAssemblerPlan
+from libraries.assembler import BookAssemblerPlan
 from libraries.prompt_harness import PromptHarness
 from libraries.gag_injector import GagInjector
 from core.text_utils import count_prose_units
@@ -142,15 +142,6 @@ class NovelEngine:
         self.reviewer = ContentReviewer(llm_client)
         self.profile: Optional[PenNameProfile] = None
         self.char_states = CharacterStateMachine()
-
-        # 书籍组装器（连接四大库与生成管线）
-        self.assembler = BookAssembler(
-            plot_lib=self.plot_lib,
-            structure_lib=self.struct_lib,
-            gag_lib=self.gag_lib,
-            theme_lib=self.theme_lib,
-            llm_client=llm_client,
-        )
 
         # 蓝图式写作（时间线驱动，新核心）
         self.timeline: Optional[dict] = None          # BookTimeline
@@ -572,11 +563,7 @@ class NovelEngine:
         handlers = {
             Op.COMPLETE:        self._exec_complete,
             Op.PAUSE:           self._exec_pause,
-            Op.PLAN_OUTLINE:    self._exec_plan_outline,
             Op.WRITE_CHAPTER:   self._exec_write_chapter,
-            Op.REVIEW_CHAPTER:  self._exec_review_current,
-            Op.DE_AI_PASS:      self._exec_de_ai_current,
-            Op.CONFIRM_CHAPTER: self._exec_confirm_current,
             Op.WRITE_TIMELINE_CHAPTER: self._exec_write_timeline_chapter,
         }
         handler = handlers.get(inst.op)
@@ -586,80 +573,11 @@ class NovelEngine:
 
     # ─── 通用 ───
 
-    def _get_stage_index(self, chapter_num: int) -> int:
-        """
-        根据章节号反查当前属于哪个大纲阶段（用于给组装计划取材料）。
-        """
-        plan = self.state.assembler_plan
-        if not plan or not plan.stages:
-            return 0
-
-        # 累计章节数反查阶段
-        accumulated = 0
-        for i, sp in enumerate(plan.stages):
-            min_ch, max_ch = sp.chapter_range
-            accumulated += min_ch
-            if chapter_num <= accumulated:
-                return i
-        # 超出范围的取最后一个阶段
-        return len(plan.stages) - 1
-
     def _exec_complete(self, inst: Instruction) -> dict:
         return {"status": "complete", "message": "全书完成"}
 
     def _exec_pause(self, inst: Instruction) -> dict:
         return {"status": "paused", "reason": inst.reason}
-
-    # ═══════════════════════════════════════════
-    # 🔰 新书启动执行器
-    # ═══════════════════════════════════════════
-
-    def _exec_plan_outline(self, inst: Instruction) -> dict:
-        """生成大纲（续写模式下首次使用或重置大纲）"""
-        if not self.llm:
-            raise RuntimeError("LLM 未配置")
-
-        struct = self.struct_lib.search(
-            genre=self.state.genre,
-            sub_genre=self.state.sub_genre,
-            chapter_count=self.state.total_chapters)
-        template = struct[0] if struct else None
-
-        if template:
-            self.state.structure_template_id = template.id
-            self.state.outline_data = {
-                "structure": template.id,
-                "stages": [s.__dict__ for s in template.stages],
-                "total_chapters": template.total_chapters,
-            }
-            ch_num = 1
-            self.state.chapters = []
-            for stage in template.stages:
-                for _ in range(stage.min_chapters):
-                    self.state.chapters.append({
-                        "num": ch_num,
-                        "title": f"{stage.name} ({ch_num})",
-                        "stage": stage.name,
-                        "outline": "",
-                    })
-                    ch_num += 1
-            self.state.total_chapters = len(self.state.chapters)
-
-        # 生成组装计划（桥段/笑点/内涵匹配）
-        if not self.state.assembler_plan:
-            self.state.assembler_plan = self.assembler.assemble_book(
-                genre=self.state.genre,
-                sub_genre=self.state.sub_genre,
-            )
-
-        self.state.phase = Phase.WRITING
-        return {
-            "status": "outline_planned",
-            "structure": self.state.structure_template_id,
-            "chapters": len(self.state.chapters),
-            "book_title": self.state.assembler_plan.book_title if self.state.assembler_plan else "",
-        }
-
     def _exec_write_chapter(self, inst: Instruction) -> dict:
         """写一章（唯一写作核心 = 桥段写作）。
 
@@ -995,52 +913,6 @@ class NovelEngine:
         self._clear_draft()
         return final
 
-    def _exec_review_current(self, inst: Instruction) -> dict:
-        """审查当前章"""
-        result = self.reviewer.review(
-            self.state.current_content,
-            self.state.current_chapter,
-            target_words=self.book.words_per_chapter if self.book else 3000,
-        )
-
-        if result.passed:
-            self.state.phase = Phase.DE_AI
-            return {
-                "status": "review_passed",
-                "score": result.score,
-                "issues": len(result.issues),
-            }
-        else:
-            return {
-                "status": "review_failed",
-                "score": result.score,
-                "issues": [i.description for i in result.issues],
-            }
-
-    def _exec_de_ai_current(self, inst: Instruction) -> dict:
-        """去 AI 味处理"""
-        result = self.de_ai.process_rule_based(self.state.current_content)
-        self.state.current_content = result.processed
-        self.state.phase = Phase.IDLE
-
-        # 更新进度
-        if self.book:
-            self.book.current_chapter = self.state.current_chapter
-            self.book_mgr.update(self.book)
-
-        self._save_continue_state()
-        return {
-            "status": "de_ai_done",
-            "word_replacements": result.word_replacements,
-            "processed_chars": len(result.processed),
-        }
-
-    def _exec_confirm_current(self, inst: Instruction) -> dict:
-        """确认当前章"""
-        self.state.current_content = ""
-        self._save_continue_state()
-        return {"status": "confirmed", "chapter": self.state.current_chapter}
-
     def _save_continue_state(self):
         """保存续写状态"""
         if not self.state.book_id:
@@ -1131,67 +1003,3 @@ class NovelEngine:
         except Exception as e:
             logger.warning("重算总章节数失败: %s", e)
             return None
-
-    # ═══════════════════════════════════════════
-    # 自动运行
-    # ═══════════════════════════════════════════
-
-    def step(self) -> dict:
-        """执行一步（route → execute）"""
-        inst = self.route()
-        return {"instruction": inst.op.value, "reason": inst.reason,
-                **self.execute(inst)}
-
-    def run(self, max_steps: int = 10) -> list[dict]:
-        """
-        自动跑最多 max_steps 步。
-
-        对于新书模式：会跑完规划→前三章→书名
-        对于续写模式：会跑写→审→去AI 循环
-        """
-        results = []
-        for _ in range(max_steps):
-            inst = self.route()
-            if inst.op in (Op.COMPLETE, Op.PAUSE):
-                results.append({
-                    "status": inst.op.value,
-                    "reason": inst.reason,
-                })
-                break
-            result = self.execute(inst)
-            results.append(result)
-
-            # 审查失败 → 暂停等人工干预
-            if result.get("status") == "review_failed":
-                break
-
-        return results
-
-    def run_full_cycle(self) -> dict:
-        """
-        跑完一章的完整周期：写 → 审 → 去AI
-        （仅适用于续写模式）
-        """
-        if self.state.book_mode != BookMode.CONTINUE:
-            return {"status": "error", "reason": "run_full_cycle 仅适用于续写模式"}
-
-        inst = self.route()
-
-        if inst.op == Op.WRITE_CHAPTER:
-            write_result = self.execute(inst)
-
-            review_inst = self.route()
-            review_result = self.execute(review_inst)
-
-            if review_result.get("status") == "review_passed":
-                deai_inst = Instruction(Op.DE_AI_PASS, self.state.current_chapter)
-                deai_result = self.execute(deai_inst)
-                return {
-                    "write": write_result,
-                    "review": review_result,
-                    "de_ai": deai_result,
-                }
-            else:
-                return {"write": write_result, "review": review_result}
-
-        return {"status": inst.op.value, "reason": inst.reason}

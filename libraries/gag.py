@@ -74,15 +74,6 @@ class GagLibrary(JsonLibrary):
         results.sort(key=lambda p: p.usage_count)
         return results
 
-    def mark_used(self, pattern_id: str, book_id: str):
-        for p in self.patterns:
-            if p.id == pattern_id:
-                p.usage_count += 1
-                if book_id not in p.banned_in:
-                    p.banned_in.append(book_id)
-                break
-
-
 # ─── 内置笑点模式 ───
 
 BUILTIN_GAGS = [

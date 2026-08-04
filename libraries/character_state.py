@@ -66,8 +66,7 @@ class CharacterStateMachine:
         return None
 
     def update_from_chapter(self, chapter_num: int,
-                             chapter_content: str,
-                             llm_client=None) -> list[CharacterState]:
+                             chapter_content: str) -> list[CharacterState]:
         """
         根据章节内容更新所有角色的状态
 
@@ -84,46 +83,7 @@ class CharacterStateMachine:
             else:
                 cs.offline_chapters += 1
 
-        # 如有 LLM，可以提取更多状态变化
-        if llm_client and updated:
-            self._llm_extract_states(chapter_content, updated, llm_client)
-
         return updated
-
-    def _llm_extract_states(self, content: str, characters: list[CharacterState],
-                            llm_client):
-        """用 LLM 从章节中提取角色状态变化"""
-        char_names = [c.name for c in characters]
-        prompt = f"""从以下章节中提取各角色的状态变化：
-
-章节内容：
-{content[:2000]}
-
-需要追踪的角色：{', '.join(char_names)}
-
-请以 JSON 格式返回：
-{{"updates": [
-  {{"name": "角色名", "location": "当前位置", "mood": "情绪",
-    "goal": "当前目标", "power_level": "实力变化",
-    "relationship_change": "与主角关系变化"}}
-]}}"""
-
-        try:
-            from core.llm_client import extract_json
-            raw = llm_client.call("你是一位精准的小说角色状态追踪员。",
-                                  prompt, temperature=0.2, max_tokens=1024)
-            data = json.loads(extract_json(raw))
-            update_map = {u["name"]: u for u in data.get("updates", [])}
-
-            for cs in characters:
-                u = update_map.get(cs.name)
-                if u:
-                    if u.get("location"): cs.location = u["location"]
-                    if u.get("mood"): cs.mood = u["mood"]
-                    if u.get("goal"): cs.goal = u["goal"]
-                    if u.get("power_level"): cs.power_level = u["power_level"]
-        except Exception:
-            pass
 
     def build_context_prompt(self, active_only: bool = True,
                              chapter_num: int = 0) -> str:

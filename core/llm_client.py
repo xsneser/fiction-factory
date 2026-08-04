@@ -7,7 +7,6 @@ import time
 import re
 import ssl
 import urllib3
-from typing import Callable
 from urllib3 import PoolManager
 from urllib3.util import create_urllib3_context
 
@@ -181,54 +180,12 @@ class LLMClient:
         finally:
             resp.release_conn()
 
-    def stream_chunks(self, system_prompt: str, user_prompt: str,
-                      temperature: float = 0.7,
-                      max_tokens: int = 4096):
-        """流式调用 LLM，逐个 yield content 增量（生成器版，只取最终输出）。
-
-        需要同时看到思考过程的调用方请用 stream_deltas。
-        """
-        for delta_key, text in self.stream_deltas(system_prompt, user_prompt,
-                                                  temperature=temperature,
-                                                  max_tokens=max_tokens):
-            if delta_key == "content":
-                yield text
-
-    def call_stream(self, system_prompt: str, user_prompt: str,
-                    on_chunk: Callable[[str], None],
-                    temperature: float = 0.7,
-                    max_tokens: int = 4096) -> str:
-        """流式调用 LLM（基于 stream_chunks 实现，行为不变）"""
-        full_text = []
-        for content in self.stream_chunks(system_prompt, user_prompt,
-                                          temperature=temperature, max_tokens=max_tokens):
-            full_text.append(content)
-            if on_chunk:
-                on_chunk(content)
-        return "".join(full_text)
-
-    def call_messages(self, messages: list[dict]) -> str:
-        headers = {"Authorization": f"Bearer {self.cfg.api_key}"}
-        body = {"model": self.cfg.model, "messages": messages}
-        data = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds,
-                          verify=self.cfg.verify_ssl)
-        return json.loads(data)["choices"][0]["message"]["content"]
-
     def test_connection(self) -> dict:
         try:
             result = self.call("", "Hi", max_tokens=50)
             return {"success": True, "sample": result[:100]}
         except Exception as e:
             return {"success": False, "error": str(e)}
-
-
-def render_prompt(template: str, variables: dict) -> str:
-    """安全渲染模板：只替换提供了的变量，丢失的保持原样"""
-    import re
-    def replacer(m):
-        key = m.group(1)
-        return str(variables.get(key, m.group(0)))
-    return re.sub(r'\{(\w+)\}', replacer, template)
 
 
 def is_fatal_error(err: Exception) -> bool:
