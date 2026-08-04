@@ -206,7 +206,7 @@ class TimelineChapterWriter:
         """短句组生成 prompt：让 LLM 只输出下一小段正文（3-5 个短句）。
 
         有 harness 时委托 render_bridge_prompt（集中式模板：书级设定卡 + 语义摘要
-        + 角色状态 + 灵机一动 + 炸裂开场）；无 harness 时回退内联模板（便于单测）。
+        + 角色状态 + 灵机一动 + 炸裂开场）；无 harness 时回退极简模板（仅单测/兜底用，生产恒走 harness）。
         """
         if self.harness:
             return self.harness.render_bridge_prompt(
@@ -216,37 +216,16 @@ class TimelineChapterWriter:
                 inspiration_hint=inspiration_hint,
                 is_opening=is_opening)
 
-        # ── 回退：无 harness 的内联模板（保持原行为）──
-        o = item["outline"]
-        stage = item["stage"] or {}
+        # ── 回退：无 harness 时极简兜底（只保上下文+核心约束，防止双份模板漂移）──
         p = item["plot"]
-        stage_name = stage.get("name", "") if isinstance(stage, dict) else ""
-        events = stage.get("events", []) if isinstance(stage, dict) else []
-        structure = p.template_structure or p.name
-        slots_text = ""
-        if p.slots:
-            slots_text = chr(10).join(
-                f"  {s.get('name','?')} = {s.get('default','?')}（可选: {'、'.join(s.get('options',[])[:3])}）"
-                for s in p.slots[:4])
-
         ctx = []
         if prev_ending:
             ctx.append("【上一章结尾】" + prev_ending[-200:])
         if chapter_buffer:
-            ctx.append("【本章已写正文】" + chapter_buffer[-2600:])
+            ctx.append("【本章已写正文】" + chapter_buffer[-2000:])
         if bridge_text:
-            ctx.append("【本桥段已写】" + bridge_text[-800:])
+            ctx.append("【本桥段已写】" + bridge_text[-600:])
         context_text = "\n".join(ctx) if ctx else "（本章开头，尚无前文）"
-
-        gags = self._bridge_gag_names(item)
-        themes = p.theme_hints or []
-
-        inject = []
-        if gags:
-            inject.append(f"笑点模式：{'；'.join(gags[:4])}")
-        if themes:
-            inject.append(f"内涵线索：{'；'.join(themes[:3])}")
-        inject_text = ("\n【加料】\n" + "\n".join(inject)) if inject else ""
 
         opening_block = ""
         if is_opening:
@@ -256,26 +235,17 @@ class TimelineChapterWriter:
             except Exception:
                 opening_block = ""
 
-        return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个短句。
+        return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个短句（约 150-250 个汉字），一句一行。
 
-{opening_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
-【当前阶段】{stage_name}
-【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按大纲自然推进'}
-【桥段骨架】{structure}
-【变量槽位】{slots_text or '跟随上下文自由发挥'}
-{inject_text}
-
+{opening_block}【桥段】{p.name}
 【前文上下文】
 {context_text}
 
 【写作要求】
-1. 只输出下一段正文：3-5 个短句（总共约 150-250 个汉字），一句一行。
-2. 画面优先：用动作、对话、感官细节推进，不要堆形容词、不要抽象抒情。
-3. 每组至少含一句对话或一个动作；对话独立成段并带简短神态/动作。
-4. 围绕上方的"要推动的事件"制造推进感：埋冲突、留张力，组尾留一个"接下来会怎样"的悬念钩子（本桥段最后一组可自然收束）。
-5. 必须紧接上文继续，人物、视角、设定保持一致，视角始终跟随主角；绝不重开新故事、不换主角。
-6. 严禁出现：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。
-7. 不写章节标题、不标注步骤、不加解释性文字。本桥段还剩约 {budget_remaining} 字预算，控制篇幅。"""
+1. 画面优先，用动作、对话、感官细节推进；短句为基干、句长长短交错。
+2. 每组至少含一句对话或一个动作；组尾留一个"接下来会怎样"的悬念。
+3. 严禁出现：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。
+4. 只输出正文，不写标题、不加解释。本桥段还剩约 {budget_remaining} 字预算，控制篇幅。"""
 
     def _write_plot_segment_groups(self, item, chapter_buffer, prev_ending,
                                    budget, character_states="", summaries_context="",

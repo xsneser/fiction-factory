@@ -6,6 +6,7 @@ from flask import Blueprint, render_template, request, jsonify, redirect, url_fo
 from .ctx import *
 
 bp = Blueprint("books", __name__)
+logger = logging.getLogger("novel-engine.web")
 
 # ═══════════════════════════════════════════
 # 原有路由（保留兼容）
@@ -153,11 +154,27 @@ def book_detail(book_id):
     csm = CharacterStateMachine()
     char_path = f"books/{book_id}/character_states.json"
     if os.path.exists(char_path): csm.load(char_path)
+    # 进行中章节草稿（按桥段撰写中断时落盘；详情页展示未固化内容，写作台才有写入）
+    draft = None
+    draft_path = f"books/{book_id}/draft_chapter.json"
+    if os.path.exists(draft_path):
+        try:
+            with open(draft_path, encoding="utf-8") as f:
+                _d = json.load(f)
+            _buf = _d.get("buffer") or []
+            if _buf:
+                draft = {
+                    "chapter_num": _d.get("chapter_num", 0),
+                    "text": "\n\n".join(_buf),
+                    "words": count_prose_units("\n\n".join(_buf)),
+                }
+        except Exception as e:
+            logger.warning("读取章节草稿失败: %s", e)
     return render_template("book_detail.html", book=book,
         outline=outline, chapters=chapters,
         timeline=timeline,
         basic_info=basic_info,
-        cost=cost.summary(), characters=csm.characters)
+        cost=cost.summary(), characters=csm.characters, draft=draft)
 
 
 @bp.route("/api/book/<book_id>/generate-meta", methods=["POST"])

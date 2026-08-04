@@ -266,7 +266,7 @@ class NovelEngine:
             # 保存时间线配置到图书目录（统一入口，确保 book.json 与 timeline.json 同目录）
             self.book_mgr.save_timeline(book.book_id, timeline)
         except Exception as e:
-            print(f"[timeline] 创建图书记录失败: {e}")
+            logger.error("创建图书记录失败: %s", e)
             self.book = None
 
         return self.state

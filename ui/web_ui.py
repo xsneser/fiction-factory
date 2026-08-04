@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from flask import Flask
 
 # 设置日志级别以便调试搜索
-for name in ["fanqie-scout", "__main__"]:
+for name in ["novel-engine", "fanqie-scout", "__main__"]:
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
     if not logger.handlers:

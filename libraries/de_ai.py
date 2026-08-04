@@ -71,8 +71,8 @@ def apply_word_replacements(text: str) -> tuple[str, int]:
     return result, count
 
 
-def add_human_imperfections(text: str, typo_rate: float = 0.001) -> str:
-    """人为瑕疵注入：极低概率的'错字'模拟"""
+def add_human_imperfections(text: str, typo_rate: float = 0) -> str:
+    """人为瑕疵注入：极低概率的'错字'模拟（默认关闭，调用方显式开启）"""
     # 只处理中文，极低概率
     if typo_rate <= 0:
         return text
