@@ -12,83 +12,6 @@
     <span>每章：<strong>{{ timeline.words_per_chapter }}字</strong></span>
 </div>
 
-{# ─── 基础设定（人物/世界观/配角） ─── #}
-<div class="accordion" style="margin-bottom:20px">
-    <div class="accordion-header">
-        <span>🎯 基础设定（主角 / 世界观 / 配角）</span>
-        <span style="color:#8b949e;font-size:12px">展开编辑 · 保存后用于生成完整大纲
-            <span id="bi-dirty-badge" style="display:none;color:#d29922;font-weight:600;margin-left:6px">● 未保存</span>
-        </span>
-    </div>
-    <div class="accordion-body">
-        <div class="form-row" style="margin-bottom:14px">
-            <label>书名
-                <div style="display:flex;gap:8px">
-                    <input id="bi_title" value="{{ timeline.book_title or '' }}" placeholder="留空可让 AI 生成书名">
-                    <button type="button" class="btn-primary btn-sm" style="background:#6f42c1;flex-shrink:0;width:auto" id="btn-gen-title" onclick="generateTitle()">✨ 生成书名</button>
-                </div>
-            </label>
-        </div>
-        <div class="form-row half">
-            <label>主角姓名
-                <input id="bi_protag_name" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('name','')) }}">
-            </label>
-            <label>身份/职业
-                <input id="bi_protag_identity" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('identity','')) }}">
-            </label>
-        </div>
-        <div class="form-row half">
-            <label>性格特点
-                <input id="bi_protag_personality" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('personality','')) }}">
-            </label>
-            <label>背景
-                <input id="bi_protag_background" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('background','')) }}">
-            </label>
-        </div>
-        <div class="form-row">
-            <label>金手指
-                <input id="bi_protag_golden" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('golden_finger','')) }}">
-            </label>
-        </div>
-        <div class="form-row">
-            <label>世界观简述
-                <textarea id="bi_world_desc" rows="2">{{ ((timeline.basic_info.get('world_building') or {}).get('description','')) }}</textarea>
-            </label>
-        </div>
-        <div class="form-row half">
-            <label>时代背景
-                <input id="bi_world_era" value="{{ ((timeline.basic_info.get('world_building') or {}).get('era','')) }}">
-            </label>
-            <label>力量体系
-                <input id="bi_world_power" value="{{ ((timeline.basic_info.get('world_building') or {}).get('power_system','')) }}">
-            </label>
-        </div>
-        <div class="form-row half">
-            <label>基调
-                <input id="bi_tone" placeholder="轻松/沉重/热血/幽默" value="{{ timeline.basic_info.get('tone','') }}">
-            </label>
-            <label>目标读者
-                <input id="bi_audience" value="{{ timeline.basic_info.get('target_audience','') }}">
-            </label>
-            <label>视角
-                <select id="bi_pov">
-                    <option value="第三人称" {{ 'selected' if timeline.basic_info.get('pov','第三人称') == '第三人称' }}>第三人称</option>
-                    <option value="第一人称" {{ 'selected' if timeline.basic_info.get('pov','第三人称') == '第一人称' }}>第一人称</option>
-                </select>
-            </label>
-            <label>时代语言约束
-                <input id="bi_era_language" placeholder="如：2008年语境，禁止现代网络词" value="{{ timeline.basic_info.get('era_language','') }}">
-            </label>
-        </div>
-        <div class="form-row">
-            <label>配角（JSON 数组，可选）
-                <textarea id="bi_supporting_cast" rows="3" placeholder='[{"name":"...","role":"...","relation":"...","gender":"男/女","title":"...","personality":"...","catchphrase":"..."}]'>{{ (timeline.basic_info.get('supporting_cast') or []) | tojson }}</textarea>
-            </label>
-        </div>
-        <button class="btn-primary btn-sm" id="btn-save-basic" onclick="saveBasicInfo()">💾 保存设定</button>
-    </div>
-</div>
-
 {# ─── 步骤指示器 ─── #}
 <div class="flow-steps" style="margin-bottom:24px">
     <div class="step {% if timeline.phase in ('config','outlines') %}active{% endif %}" id="step-outlines">
@@ -254,6 +177,83 @@
                 <button class="btn-primary btn-sm" onclick="agentSend()">发送</button>
             </div>
         </div>
+    </div>
+</div>
+
+{# ─── 基础设定（人物/世界观/配角）：收起于工作台下方，首屏聚焦可视化分栏 ─── #}
+<div class="accordion" style="margin-bottom:0">
+    <div class="accordion-header">
+        <span>🎯 基础设定（主角 / 世界观 / 配角）</span>
+        <span style="color:#8b949e;font-size:12px">展开编辑 · 保存后用于生成完整大纲
+            <span id="bi-dirty-badge" style="display:none;color:#d29922;font-weight:600;margin-left:6px">● 未保存</span>
+        </span>
+    </div>
+    <div class="accordion-body">
+        <div class="form-row" style="margin-bottom:14px">
+            <label>书名
+                <div style="display:flex;gap:8px">
+                    <input id="bi_title" value="{{ timeline.book_title or '' }}" placeholder="留空可让 AI 生成书名">
+                    <button type="button" class="btn-primary btn-sm" style="background:#6f42c1;flex-shrink:0;width:auto" id="btn-gen-title" onclick="generateTitle()">✨ 生成书名</button>
+                </div>
+            </label>
+        </div>
+        <div class="form-row half">
+            <label>主角姓名
+                <input id="bi_protag_name" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('name','')) }}">
+            </label>
+            <label>身份/职业
+                <input id="bi_protag_identity" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('identity','')) }}">
+            </label>
+        </div>
+        <div class="form-row half">
+            <label>性格特点
+                <input id="bi_protag_personality" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('personality','')) }}">
+            </label>
+            <label>背景
+                <input id="bi_protag_background" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('background','')) }}">
+            </label>
+        </div>
+        <div class="form-row">
+            <label>金手指
+                <input id="bi_protag_golden" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('golden_finger','')) }}">
+            </label>
+        </div>
+        <div class="form-row">
+            <label>世界观简述
+                <textarea id="bi_world_desc" rows="2">{{ ((timeline.basic_info.get('world_building') or {}).get('description','')) }}</textarea>
+            </label>
+        </div>
+        <div class="form-row half">
+            <label>时代背景
+                <input id="bi_world_era" value="{{ ((timeline.basic_info.get('world_building') or {}).get('era','')) }}">
+            </label>
+            <label>力量体系
+                <input id="bi_world_power" value="{{ ((timeline.basic_info.get('world_building') or {}).get('power_system','')) }}">
+            </label>
+        </div>
+        <div class="form-row half">
+            <label>基调
+                <input id="bi_tone" placeholder="轻松/沉重/热血/幽默" value="{{ timeline.basic_info.get('tone','') }}">
+            </label>
+            <label>目标读者
+                <input id="bi_audience" value="{{ timeline.basic_info.get('target_audience','') }}">
+            </label>
+            <label>视角
+                <select id="bi_pov">
+                    <option value="第三人称" {{ 'selected' if timeline.basic_info.get('pov','第三人称') == '第三人称' }}>第三人称</option>
+                    <option value="第一人称" {{ 'selected' if timeline.basic_info.get('pov','第三人称') == '第一人称' }}>第一人称</option>
+                </select>
+            </label>
+            <label>时代语言约束
+                <input id="bi_era_language" placeholder="如：2008年语境，禁止现代网络词" value="{{ timeline.basic_info.get('era_language','') }}">
+            </label>
+        </div>
+        <div class="form-row">
+            <label>配角（JSON 数组，可选）
+                <textarea id="bi_supporting_cast" rows="3" placeholder='[{"name":"...","role":"...","relation":"...","gender":"男/女","title":"...","personality":"...","catchphrase":"..."}]'>{{ (timeline.basic_info.get('supporting_cast') or []) | tojson }}</textarea>
+            </label>
+        </div>
+        <button class="btn-primary btn-sm" id="btn-save-basic" onclick="saveBasicInfo()">💾 保存设定</button>
     </div>
 </div>
 </div>
