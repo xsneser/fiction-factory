@@ -52,6 +52,7 @@ main { overflow: hidden; }
 .gf-item.info { background:transparent; border:none; padding:2px 10px; color:#8b949e; }
 .gf-item.success { color:#3fb950; border-color:#238636; }
 .gf-item.error { color:#f85149; border-color:#f85149; }
+.gf-item.warn { color:#d29922; border-color:#9e6a03; }
 .wf-card { background:#0d1117; border:1px solid #21262d; border-radius:8px; overflow:hidden; }
 .wf-card-head { font-size:12px; font-weight:600; color:#79c0ff; padding:8px 12px; border-bottom:1px solid #21262d; background:#161b22; }
 .wf-card-body { margin:0; padding:12px; font-size:12px; line-height:1.7; color:#c9d1d9; white-space:pre-wrap; word-break:break-word; max-height:340px; overflow-y:auto; }
@@ -175,6 +176,10 @@ async function writeBridge() {
                     updateProg();
                     updateChWords(0, document.getElementById('chp-target').textContent);
                     feedItem('success', '✅ 第' + evt.chapter + '章完成 · ' + evt.word_count + '字 · 花费 ¥' + (evt.cost || 0));
+                } else if (evt.type === 'budget_paused') {
+                    feedItem('warn', '⛔ ' + (evt.message || '预算耗尽，暂停写作') + '——请到「设置」调高单书预算后继续写');
+                } else if (evt.type === 'bridge_skip') {
+                    feedItem('info', '⏭️ ' + (evt.reason || '桥段跳过'));
                 } else if (evt.type === 'complete') {
                     feedItem('success', '🎉 ' + (evt.message || '全书完成'));
                 } else if (evt.type === 'error') {

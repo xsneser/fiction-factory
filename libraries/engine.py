@@ -828,12 +828,24 @@ class NovelEngine:
             chapter_buffer="\n\n".join(buffer), chapter_words=words,
             summaries_context=summaries)
         result = None
+        last_skip = {}
         try:
             while True:
                 evt = next(gen)
+                if evt.get("type") == "bridge_skip":
+                    last_skip = evt
                 yield evt
         except StopIteration as si:
             result = si.value
+
+        # 预算耗尽 = 暂停待续：本批次已写内容存为草稿（不固化），与桥段端点行为一致
+        if last_skip.get("code") == "budget_exhausted":
+            if result and result.get("text"):
+                self._save_draft(chapter_num, result["text"].split("\n\n"),
+                                 result.get("word_count", 0))
+            yield {"type": "budget_paused",
+                   "message": last_skip.get("reason", "预算耗尽，暂停写作")}
+            return
 
         # 无剩余桥段 → 全书完成
         if not result or not result.get("text") or result["text"].startswith("["):
