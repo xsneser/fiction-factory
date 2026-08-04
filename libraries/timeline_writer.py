@@ -85,7 +85,8 @@ class TimelineChapterWriter:
     def __init__(self, timeline: BookTimeline, llm_client=None,
                  de_ai_engine=None, reviewer=None,
                  gag_lib=None, plot_lib=None, profile=None,
-                 harness=None, gag_injector=None):
+                 harness=None, gag_injector=None, book_id: str = "",
+                 detector_frequency: int = 1):
         self.timeline = timeline
         self.llm = llm_client
         self.de_ai = de_ai_engine
@@ -95,6 +96,11 @@ class TimelineChapterWriter:
         self.profile = profile
         self.harness = harness          # PromptHarness：集中式提示词模板（可为 None）
         self.gag_injector = gag_injector  # GagInjector：灵机一动探测环（可为 None）
+        self.book_id = book_id
+        self.detector_frequency = detector_frequency
+        # 本章输入 prompt 累计（供成本计量）；跨桥段累计、跨章重置
+        self._input_chapter = 0
+        self._input_texts: list = []
         self._total_chapters = (max((o.end_chapter for o in timeline.outlines), default=0)
                                 if timeline else 0)
 
@@ -264,7 +270,7 @@ class TimelineChapterWriter:
         每写完一组跑一次"灵机一动"探测器：命中 → 把提示注入下一组写作 prompt。
         """
         if not self.llm:
-            yield f"[桥段:{item['plot'].name} - LLM未配置]", 0
+            yield "group", f"[桥段:{item['plot'].name} - LLM未配置]", 0
             return
         bridge_text = ""
         bridge_words = 0
@@ -274,12 +280,12 @@ class TimelineChapterWriter:
         pool = []
         humor_style = ""
         if self.gag_injector:
-            pool = self.gag_injector.prescreen_pool(item["plot"])
+            pool = self.gag_injector.prescreen_pool(item["plot"], self.book_id)
             humor_style = self._profile_humor_style()
         last_groups = []
         pending_inspiration = ""
 
-        for _ in range(max_groups):
+        for group_no in range(1, max_groups + 1):
             remaining = budget - bridge_words
             if remaining <= 0:
                 break
@@ -295,6 +301,7 @@ class TimelineChapterWriter:
                 p_attempt = prompt
                 if attempt > 0:
                     p_attempt = prompt + "\n【重写提示】上一组出现连续重复词，请完全重写本组，任何词不得连续重复两次以上。"
+                self._input_texts.append(p_attempt)
                 raw = self.llm.call(
                     ("你是一位专业的中文网络小说作者，擅长对话、动作驱动的快节奏网文，正在逐段续写一章正文。"
                      "每轮只输出 3-5 个句子（约 150-250 个汉字），只输出正文，不要任何解释。"
@@ -323,15 +330,19 @@ class TimelineChapterWriter:
             if words > 120:
                 for sent in _split_sentences(text):
                     if sent:
-                        yield sent, count_prose_units(sent)
+                        yield "group", sent, count_prose_units(sent)
             else:
-                yield text, words
+                yield "group", text, words
             # 灵机一动探测：本组写完、预算未用尽、有探测器与候选池时运行
-            if remaining - words > 100 and self.gag_injector and pool:
+            if (self.detector_frequency
+                    and group_no % self.detector_frequency == 0
+                    and remaining - words > 100
+                    and self.gag_injector and pool):
                 recent = "\n".join(last_groups[-2:])
                 hit = self.gag_injector.detect(item, recent, humor_style, pool)
                 if hit.get("has_opportunity"):
                     pending_inspiration = self.gag_injector.build_inspiration_hint(hit, pool)
+                    yield "gag_hit", hit, 0
             if bridge_words >= budget:
                 break
 
@@ -371,6 +382,9 @@ class TimelineChapterWriter:
             yield {"type": "complete", "message": "没有剩余桥段可写（全书完成）"}
             return
         item = queue[0]
+        if chapter_num != self._input_chapter:
+            self._input_chapter = chapter_num
+            self._input_texts = []
         o = item["outline"]
         p = item["plot"]
         stage = item["stage"] or {}
@@ -393,9 +407,15 @@ class TimelineChapterWriter:
 
         seg_parts = []
         seg_words = 0
-        for text, words in self._write_plot_segment_groups(
+        for kind, text, words in self._write_plot_segment_groups(
                 item, chapter_buffer, prev_ending, budget, character_states,
                 summaries_context=summaries_context, is_opening=is_opening):
+            if kind == "gag_hit":
+                yield {"type": "gag_hit",
+                       "gag_ids": text.get("gag_ids", []),
+                       "reason": text.get("reason", ""),
+                       "deploy_hint": text.get("deploy_hint", "")}
+                continue
             seg_parts.append(text)
             seg_words += words
             yield {"type": "group_chunk", "plot_id": p.id, "text": text, "words": words,
@@ -423,6 +443,7 @@ class TimelineChapterWriter:
             "outline_name": o.name if o else "",
             "gag_ids": p.gag_ids or [],
             "theme_hints": p.theme_hints or [],
+            "input_text": "\n".join(self._input_texts),
         }
 
     # ── 写一章（兼容：循环桥段直至满章，供批处理/自动跑）──
@@ -464,6 +485,7 @@ class TimelineChapterWriter:
         return {
             "text": text,
             "word_count": wc,
+            "input_text": "\n".join(c.get("input_text", "") for c in consumed if c.get("input_text")),
             "beats": 0,
             "beat_details": [],
             "blueprint": {

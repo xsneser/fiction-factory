@@ -138,6 +138,7 @@ class NovelEngine:
         self.theme_lib = ThemeLibrary()
         self.profiles = ProfileManager("profiles")
         self.book_mgr = BookManager("books")
+        self._books_dir = self.book_mgr.dir
         self.de_ai = DeAIEngine(llm_client)
         self.reviewer = ContentReviewer(llm_client)
         self.profile: Optional[PenNameProfile] = None
@@ -225,6 +226,8 @@ class NovelEngine:
             profile=self.profile,
             harness=self.harness,
             gag_injector=self.gag_injector,
+            book_id="",
+            detector_frequency=int((config or {}).get("detector_frequency", 1) or 1),
         )
 
         # 注册主角/配角到角色状态机（含性别/性格/惯用语句/简介；重置防引擎实例复用残留）
@@ -252,6 +255,8 @@ class NovelEngine:
             self.book = book
             self.state.book_id = book.book_id
             self.cost_tracker.book_id = book.book_id
+            if self.timeline_writer:
+                self.timeline_writer.book_id = book.book_id
             # 保存时间线配置到图书目录（统一入口，确保 book.json 与 timeline.json 同目录）
             self.book_mgr.save_timeline(book.book_id, timeline)
         except Exception as e:
@@ -322,7 +327,7 @@ class NovelEngine:
                 logger.warning("按 ID 加载笔名档案失败: %s", e)
 
         # 加载角色状态
-        char_path = Path("books") / book_id / "character_states.json"
+        char_path = self._books_dir / book_id / "character_states.json"
         if char_path.exists():
             try:
                 self.char_states.load(str(char_path))
@@ -330,7 +335,7 @@ class NovelEngine:
                 logger.warning("加载角色状态失败 (%s): %s", char_path, e)
 
         # 加载成本
-        cost_path = Path("books") / book_id / "cost.json"
+        cost_path = self._books_dir / book_id / "cost.json"
         try:
             self.cost_tracker = CostTracker.load(str(cost_path))
         except Exception as e:
@@ -346,7 +351,7 @@ class NovelEngine:
             self.state.phase = Phase.WRITING
 
         # 恢复组装计划（桥段/笑点/内涵注入），保证重启后旧书写作不丢失
-        plan_path = Path("books") / book_id / "assembler_plan.json"
+        plan_path = self._books_dir / book_id / "assembler_plan.json"
         if plan_path.exists():
             try:
                 from libraries.assembler import load_plan
@@ -388,7 +393,8 @@ class NovelEngine:
                     timeline=tl, llm_client=self.llm, de_ai_engine=self.de_ai,
                     reviewer=self.reviewer, gag_lib=self.gag_lib,
                     plot_lib=self.plot_lib, profile=self.profile,
-                    harness=self.harness, gag_injector=self.gag_injector)
+                    harness=self.harness, gag_injector=self.gag_injector,
+                    book_id=book_id)
             # 注册主角/配角（续写：register 重名去重，不覆盖已存的动态状态）
             self._register_timeline_characters(tl)
 
@@ -783,7 +789,7 @@ class NovelEngine:
                 logger.warning("保存章节失败: %s", e)
 
         # 记录成本
-        self.cost_tracker.record(f"ch{chapter_num}_timeline", "", full_text)
+        self.cost_tracker.record(f"ch{chapter_num}_timeline", (result.get("input_text") or ""), full_text)
 
         return {
             "status": "chapter_written",
@@ -877,6 +883,7 @@ class NovelEngine:
                 "word_count": result["chapter_words"],
                 "beats": 0,
                 "beat_details": [],
+                "input_text": result.get("input_text", ""),
                 "blueprint": {
                     "chapter_title": f"第{chapter_num}章",
                     "chapter_num": chapter_num,
@@ -917,7 +924,7 @@ class NovelEngine:
         """保存续写状态"""
         if not self.state.book_id:
             return
-        book_dir = Path("books") / self.state.book_id
+        book_dir = self._books_dir / self.state.book_id
 
         # 角色状态
         self.char_states.save(str(book_dir / "character_states.json"))
@@ -932,7 +939,7 @@ class NovelEngine:
     def _draft_path(self) -> Optional[Path]:
         if not self.state.book_id:
             return None
-        return Path("books") / self.state.book_id / "draft_chapter.json"
+        return self._books_dir / self.state.book_id / "draft_chapter.json"
 
     def _load_draft(self) -> Optional[dict]:
         p = self._draft_path()

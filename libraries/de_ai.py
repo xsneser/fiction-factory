@@ -157,7 +157,7 @@ class DeAIEngine:
         processed = adjust_paragraph_rhythm(processed, style)
 
         # 3. 极低概率人为瑕疵
-        processed = add_human_imperfections(processed, typo_rate=0.0005)
+        processed = add_human_imperfections(processed, typo_rate=0)
 
         result.processed = processed
         return result
