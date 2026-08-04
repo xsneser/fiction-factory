@@ -184,6 +184,8 @@
                             <div>
                                 <code>{{ p.category }}</code>
                                 <strong>{{ p.name }}</strong>
+                                {% if p.thread_id %}<span class="tag" style="margin-left:6px">线程:{{ p.thread_id }}</span>{% endif %}
+                                {% if p.resolves_plot_id %}<span class="tag" style="color:#f85149;margin-left:6px">↪ 收局·{{ p.resolves_name or '' }}</span>{% endif %}
                                 <span class="tag">{{ p.cover_beats }}节拍</span>
                                 {% if p.parent_plot_id %}<span class="tag blue">嵌套</span>{% endif %}
                             </div>
@@ -200,6 +202,9 @@
                         <div style="font-size:11px;color:#58a6ff;margin-top:2px">👤 出场: {{ p.roles|join('、') }}</div>
                         {% endif %}
                         <div style="font-size:11px;color:#3fb950;margin-top:4px">🎭 笑点: 写作时灵机一动（不预设）</div>
+                        {% if p.theme_hints %}
+                        <div style="font-size:11px;color:#c084fc;margin-top:2px">💡 内涵: {{ p.theme_hints|join(', ') }}</div>
+                        {% endif %}
                         {% if p.hook_points %}
                         <div style="font-size:11px;color:#d29922;margin-top:2px">⚡ 吸睛: {{ p.hook_points|join(', ') }}</div>
                         {% endif %}
@@ -218,7 +223,21 @@
                 <h2>🎭 内涵挂载</h2>
                 <button class="btn-primary" onclick="injectGags()">🤖 AI 挂载内涵+吸睛点</button>
             </div>
-            <div id="gag-result"></div>
+            <div id="gag-result">
+                {% for o in timeline.outlines %}
+                <h3 style="margin:12px 0 6px;color:#58a6ff;font-size:14px">{{ o.name }}</h3>
+                {% for p in timeline.plots if p.outline_id == o.id %}
+                <div class="plot-card card" style="font-size:12px">
+                    <strong>{{ p.name }}</strong>
+                    <div style="color:#3fb950;margin-top:4px">🎭 笑点: 写作时灵机一动（不预设）</div>
+                    <div style="color:#c084fc;margin-top:2px">💡 内涵: {{ (p.theme_hints or [])|join('、') or '—' }}</div>
+                    <div style="color:#d29922;margin-top:2px">⚡ 吸睛: {{ (p.hook_points or [])|join('、') or '—' }}</div>
+                </div>
+                {% endfor %}
+                {% else %}
+                <p style="color:#484f58">暂无桥段</p>
+                {% endfor %}
+            </div>
             <div style="margin-top:20px">
                 <button class="btn-primary" onclick="startWriting()" style="background:#1f6feb;font-size:16px;padding:12px 32px">🚀 确认全部 → 开始写作</button>
             </div>
