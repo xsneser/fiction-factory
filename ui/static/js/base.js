@@ -93,7 +93,7 @@
         window.addEventListener('beforeunload', function() {
             sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
         });
-        var STATUS_EMPTY = '<div class="status-empty">暂无运行中的任务</div>';
+        var STATUS_EMPTY = '<div class="status-empty">⏳ 空闲 · 无运行中的任务</div>';
 
         function clearLogs() {
             var list = document.getElementById('task-log-list');
