@@ -16,7 +16,9 @@
 <div class="accordion" style="margin-bottom:20px">
     <div class="accordion-header">
         <span>🎯 基础设定（主角 / 世界观 / 配角）</span>
-        <span style="color:#8b949e;font-size:12px">展开编辑 · 保存后用于生成完整大纲</span>
+        <span style="color:#8b949e;font-size:12px">展开编辑 · 保存后用于生成完整大纲
+            <span id="bi-dirty-badge" style="display:none;color:#d29922;font-weight:600;margin-left:6px">● 未保存</span>
+        </span>
     </div>
     <div class="accordion-body">
         <div class="form-row" style="margin-bottom:14px">
@@ -257,13 +259,13 @@
 </div>
 
 <style>
-.flow-steps { display:flex; align-items:flex-start; gap:0; margin-bottom:24px; overflow-x:auto; padding:12px 0; }
-.step { text-align:center; min-width:90px; padding:10px; background:#161b22; border:2px solid #30363d; border-radius:8px; transition:all .3s; }
+.flow-steps { display:flex; align-items:flex-start; gap:0; margin-bottom:16px; overflow-x:auto; padding:8px 0; }
+.step { text-align:center; min-width:84px; padding:6px 8px; background:#161b22; border:1px solid #30363d; border-radius:8px; transition:all .3s; }
 .step.active { border-color:#58a6ff; background:#1a2332; }
-.step-num { font-size:20px; font-weight:bold; color:#58a6ff; margin-bottom:4px; }
-.step-label { font-size:11px; color:#c9d1d9; line-height:1.3; }
-.step-status { font-size:11px; margin-top:4px; color:#8b949e; }
-.step-arrow { font-size:16px; color:#484f58; padding:14px 4px; }
+.step-num { font-size:15px; font-weight:bold; color:#58a6ff; margin-bottom:2px; }
+.step-label { font-size:11px; color:#c9d1d9; line-height:1.2; }
+.step-status { font-size:10px; margin-top:2px; color:#8b949e; }
+.step-arrow { font-size:13px; color:#484f58; padding:8px 2px; }
 .phase-panel { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
 .phase-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
 .phase-header h2 { margin:0; color:#f0f6fc; font-size:18px; }
@@ -317,6 +319,17 @@ function refreshStoryline(timeline) {
 }
 (function initStoryline() {
     refreshStoryline(window.__BOOK_TIMELINE__);
+})();
+
+// 基础设定未保存徽标：任一 bi_* 字段改动即显示「● 未保存」
+(function() {
+    var badge = document.getElementById('bi-dirty-badge');
+    if (!badge) return;
+    var fields = document.querySelectorAll('input[id^="bi_"], textarea[id^="bi_"], select[id^="bi_"]');
+    for (var i = 0; i < fields.length; i++) {
+        fields[i].addEventListener('input', function() { badge.style.display = 'inline'; });
+        fields[i].addEventListener('change', function() { badge.style.display = 'inline'; });
+    }
 })();
 
 // ─── 生成书名 ───
