@@ -19,6 +19,11 @@
       "Bash(git stash *)",
       "Bash(git log *)",
       "Bash(git status *)",
+      "Bash(git *)",
+      "Bash(python *)",
+      "Bash(node *)",
+      "Bash(powershell *)",
+      "Bash(curl *)",
       "Skill(update-config)"
     ]
   }
