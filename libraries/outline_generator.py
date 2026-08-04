@@ -16,6 +16,7 @@ import json, time
 
 from .timeline import (
     BookTimeline, OutlineSlot, PlotSlot, merge_basic_info, annotate_plot_roles,
+    structure_to_stages, mount_themes_and_hooks,
 )
 from .structure import StructureLibrary
 from .plot import PlotLibrary
@@ -430,11 +431,7 @@ class OutlineGenerator:
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(candidates) > 1 else ''}",
                 start_chapter=ch,
                 end_chapter=ch + min(tmpl.total_chapters, 50) - 1,
-                stages=[
-                    {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
-                     "events": s.key_events[:5]}
-                    for s in tmpl.stages
-                ],
+                stages=structure_to_stages(tmpl),
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
             )
@@ -554,11 +551,7 @@ class OutlineGenerator:
             stages = []
             tmpl = next((t for t in candidates if t.id == tid), None)
             if tmpl:
-                stages = [
-                    {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
-                     "events": s.key_events[:5]}
-                    for s in tmpl.stages
-                ]
+                stages = structure_to_stages(tmpl)
 
             start = od.get("start_chapter", outlines[-1].end_chapter - 2 if outlines else 1)
             end = od.get("end_chapter", start + (tmpl.total_chapters if tmpl else 30) - 1)
@@ -810,35 +803,9 @@ class OutlineGenerator:
     def _inject_themes_and_hooks(
         self, plot: PlotSlot, tl: BookTimeline,
     ):
-        """为一个桥段匹配内涵（跟随桥段）并标注吸睛点。
-
-        笑点不再在此分配（完全涌现，交给写作时的灵机一动探测器）；
-        PlotSlot.gag_ids 字段保留仅兼容旧数据，不再写入。
-        内涵只挂到能承载它的桥段（ThemeEntry.compatible_plots 命中），不强挂；
-        未命中的母题仍作为书级可用线索随「书级设定卡」注入写作。
-        """
-        # 内涵匹配
-        theme_hints = []
-        if self.themes:
-            for name in tl.themes:
-                entry = next((e for e in self.themes.entries if e.name == name), None)
-                if entry and plot.template_id in (entry.compatible_plots or []):
-                    theme_hints.append(entry.name)
-        plot.theme_hints = theme_hints[:2]
-
-        # 吸睛点
-        hook_candidates = []
-        for slot in plot.slots[:3]:
-            sname = slot.get("name", "") if isinstance(slot, dict) else getattr(slot, 'name', '')
-            opts = (slot.get("options", []) if isinstance(slot, dict)
-                    else getattr(slot, 'options', []))
-            if sname and opts:
-                hook_candidates.append(f"{plot.name}「{sname}」的{opts[0]}")
-
-        plot.hook_points = hook_candidates[:2] if hook_candidates else [
-            f"{plot.name}的开场",
-            f"{plot.name}的高潮反转"
-        ]
+        """为一个桥段匹配内涵（跟随桥段）并标注吸睛点（委托共享 mount_themes_and_hooks）。"""
+        mount_themes_and_hooks(
+            plot, self.themes.entries if self.themes else [], tl.themes)
 
     # ═══════════════════════════════════════
     # Phase 4: 线程与呼应（线程穿插 + 桥段拆分设局→收局）

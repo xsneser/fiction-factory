@@ -213,6 +213,41 @@ class BookTimeline:
 # 时间线生成器
 # ═══════════════════════════════════════════
 
+def structure_to_stages(tmpl) -> list[dict]:
+    """把结构模板的阶段展开为 stage dict（name/min_ch/max_ch/events）——多实现共用防漂移。"""
+    return [
+        {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
+         "events": s.key_events[:5]}
+        for s in tmpl.stages
+    ]
+
+
+def mount_themes_and_hooks(plot: "PlotSlot", theme_entries: list, timeline_themes: list) -> None:
+    """给桥段挂载内涵（跟随桥段）并标注吸睛点 —— TimelineBuilder/OutlineGenerator 共用，单一实现防漂移。
+
+    内涵只挂到能承载它的桥段（ThemeEntry.compatible_plots 命中），不强挂；
+    未命中的母题仍作为书级可用线索随「书级设定卡」注入写作；笑点完全涌现，不在此分配。
+    """
+    theme_hints = []
+    for name in timeline_themes:
+        entry = next((e for e in theme_entries if e.name == name), None)
+        if entry and plot.template_id in (entry.compatible_plots or []):
+            theme_hints.append(entry.name)
+    plot.theme_hints = theme_hints[:2]
+
+    hook_candidates = []
+    for slot in plot.slots[:3]:
+        sname = slot.get("name", "") if isinstance(slot, dict) else getattr(slot, "name", "")
+        opts = (slot.get("options", []) if isinstance(slot, dict)
+                else getattr(slot, "options", []))
+        if sname and opts:
+            hook_candidates.append(f"{plot.name}「{sname}」的{opts[0]}")
+    plot.hook_points = hook_candidates[:2] if hook_candidates else [
+        f"{plot.name}的开场",
+        f"{plot.name}的高潮反转",
+    ]
+
+
 class TimelineBuilder:
     """根据流派和用户需求，生成大纲时间线 + 桥段配置"""
 
@@ -272,11 +307,7 @@ class TimelineBuilder:
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(template_ids)>1 else ''}",
                 start_chapter=ch,
                 end_chapter=ch + tmpl.total_chapters - 1,
-                stages=[
-                    {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
-                     "events": s.key_events[:5]}
-                    for s in tmpl.stages
-                ],
+                stages=structure_to_stages(tmpl),
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
             ))
@@ -346,11 +377,7 @@ class TimelineBuilder:
             if self.structures:
                 tmpl = self.structures.get_by_id(tid)
                 if tmpl:
-                    stages = [
-                        {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
-                         "events": s.key_events[:5]}
-                        for s in tmpl.stages
-                    ]
+                    stages = structure_to_stages(tmpl)
             outline = OutlineSlot(
                 id=oid,
                 template_id=tid,
@@ -431,27 +458,10 @@ class TimelineBuilder:
         return new_plots
 
     def fill_themes_and_hooks(self, plots: list[PlotSlot], timeline: BookTimeline):
-        """给桥段挂载内涵（跟随桥段）并标注吸睛点。笑点完全涌现，不在此分配。
-
-        内涵只挂到能承载它的桥段（ThemeEntry.compatible_plots 命中），不强挂；
-        未命中的母题仍作为书级可用线索随「书级设定卡」注入写作。
-        """
-        if not self.themes:
-            return
-
+        """给桥段挂载内涵（跟随桥段）并标注吸睛点（委托共享 mount_themes_and_hooks）。"""
         for p in plots:
-            # 内涵匹配
-            theme_hints = []
-            for name in timeline.themes:
-                entry = next((e for e in self.themes.entries if e.name == name), None)
-                if entry and p.template_id in (entry.compatible_plots or []):
-                    theme_hints.append(entry.name)
-            p.theme_hints = theme_hints[:2]
-
-            # 吸睛点
-            p.hook_points = [
-                f"{p.name}的{slot.get('name','?')}" for slot in p.slots[:2]
-            ]
+            mount_themes_and_hooks(p, self.themes.entries if self.themes else [],
+                                   timeline.themes)
 
 
 # ═══════════════════════════════════════════
