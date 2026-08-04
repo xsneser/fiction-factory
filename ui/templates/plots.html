@@ -19,7 +19,6 @@
 
             {% if not t.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
         </span>
-        <span style="color:#8b949e;font-size:12px">{{ t.word_range[0] }}-{{ t.word_range[1] }}字</span>
     </div>
     <div class="accordion-body">
         <p>{{ t.description }}</p>
@@ -35,8 +34,9 @@
         {% if t.variants %}<p><strong>变体:</strong> {% for v in t.variants %}<span class="tag green">{{ v }}</span>{% endfor %}</p>{% endif %}
         {% if t.fit_contexts %}<p><strong>适用场景:</strong> {% for c in t.fit_contexts %}<span class="tag">{{ c }}</span>{% endfor %}</p>{% endif %}
         {% if t.usage_notes %}<p style="color:#d29922">⚠️ {{ t.usage_notes }}</p>{% endif %}
-        <p style="color:#484f58;font-size:11px">
-            ID: <code>{{ t.id }}</code>
+        <p style="color:#6e7681;font-size:11px">
+            {{ t.word_range[0] }}-{{ t.word_range[1] }}字
+            · ID: <code>{{ t.id }}</code>
             · 收录: {{ t.created_at }}
             · 来源: {{ t.source or '创作积累' }}
         </p>

@@ -11,7 +11,7 @@
             --fg: #e1e4e8;
             --fg-strong: #f0f6fc;
             --fg-muted: #8b949e;
-            --fg-dim: #484f58;
+            --fg-dim: #6e7681;
             --accent: #58a6ff;
             --success: #238636;
             --success-fg: #3fb950;
@@ -34,7 +34,7 @@
         nav .logo { padding:0 20px 20px; font-size:20px; font-weight:bold; color:#58a6ff; border-bottom:1px solid #30363d; margin-bottom:10px; }
         nav a { display:block; padding:10px 20px; color:#8b949e; text-decoration:none; font-size:14px; transition:all .2s; }
         nav a:hover, nav a.active { color:#f0f6fc; background:#1f2937; }
-        nav .section { padding:12px 20px 4px; color:#484f58; font-size:11px; text-transform:uppercase; letter-spacing:1px; }
+        nav .section { padding:12px 20px 4px; color:var(--fg-dim); font-size:11px; text-transform:uppercase; letter-spacing:1px; }
         /* Main */
         .main-wrapper { flex:1; display:flex; overflow:hidden; min-height:0; }
         main { flex:1; padding:30px; overflow-y:auto; min-height:0; }
@@ -46,9 +46,9 @@
         }
         aside#status-bar.collapsed { width:0; padding:0; border-left:none; overflow:hidden; }
         aside#status-bar .status-head { display:flex; align-items:center; justify-content:space-between; }
-        aside#status-bar .status-title { font-size:12px; color:#484f58; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
+        aside#status-bar .status-title { font-size:12px; color:var(--fg-dim); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
         aside#status-bar .status-toggle {
-            background:none; border:none; color:#484f58; cursor:pointer; font-size:11px; padding:0 2px 8px; line-height:1;
+            background:none; border:none; color:var(--fg-dim); cursor:pointer; font-size:11px; padding:0 2px 8px; line-height:1;
         }
         aside#status-bar .status-toggle:hover { color:#f0f6fc; }
         button.status-reopen {
@@ -57,7 +57,7 @@
             border-radius:8px 0 0 8px; padding:12px 5px; font-size:11px; cursor:pointer; z-index:100;
         }
         button.status-reopen:hover { color:#58a6ff; }
-        aside#status-bar .status-empty { font-size:12px; color:#484f58; text-align:center; padding:20px 0; }
+        aside#status-bar .status-empty { font-size:12px; color:var(--fg-dim); text-align:center; padding:20px 0; }
         aside#status-bar .status-card {
             background:#0d1117; border:1px solid #21262d; border-radius:6px;
             padding:10px 12px; font-size:12px; position:relative;
@@ -66,7 +66,7 @@
         aside#status-bar .status-card .task-phase { color:#8b949e; font-size:11px; margin-top:2px; }
         aside#status-bar .status-card .task-progress { margin-top:6px; height:4px; background:#21262d; border-radius:2px; overflow:hidden; }
         aside#status-bar .status-card .task-progress-fill { height:100%; background:#238636; border-radius:2px; transition:width .3s; }
-        aside#status-bar .status-card .task-time { color:#484f58; font-size:10px; margin-top:4px; }
+        aside#status-bar .status-card .task-time { color:var(--fg-dim); font-size:11px; margin-top:4px; }
         h1 { font-size:24px; margin-bottom:20px; color:#f0f6fc; }
         h2 { font-size:18px; margin:20px 0 12px; color:#c9d1d9; }
         h3 { font-size:15px; margin:12px 0 8px; color:#8b949e; }
@@ -89,6 +89,7 @@
         label { display:block; margin-bottom:4px; font-size:13px; color:#c9d1d9; font-weight:500; }
         input, select, textarea { width:100%; padding:8px 12px; background:#0d1117; border:1px solid #30363d; border-radius:6px; color:#f0f6fc; font-size:13px; font-family:inherit; }
         input:focus, select:focus, textarea:focus { border-color:#58a6ff; outline:none; }
+        input::placeholder, textarea::placeholder { color:var(--fg-dim); opacity:1; }
         textarea { min-height:80px; resize:vertical; }
         .form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
         .form-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
@@ -120,7 +121,7 @@
         pre { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:16px; overflow-x:auto; font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-all; }
         code { font-family:'Fira Code', monospace; }
         /* Empty state */
-        .empty { text-align:center; padding:60px 20px; color:#484f58; }
+        .empty { text-align:center; padding:60px 20px; color:var(--fg-dim); }
         .empty .icon { font-size:48px; margin-bottom:12px; }
         /* Detail grid */
         .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
