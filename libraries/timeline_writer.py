@@ -86,7 +86,7 @@ class TimelineChapterWriter:
                  de_ai_engine=None, reviewer=None,
                  gag_lib=None, plot_lib=None, profile=None,
                  harness=None, gag_injector=None, book_id: str = "",
-                 detector_frequency: int = 1):
+                 detector_frequency: int = 1, budget_checker=None):
         self.timeline = timeline
         self.llm = llm_client
         self.de_ai = de_ai_engine
@@ -98,6 +98,7 @@ class TimelineChapterWriter:
         self.gag_injector = gag_injector  # GagInjector：灵机一动探测环（可为 None）
         self.book_id = book_id
         self.detector_frequency = detector_frequency
+        self.budget_checker = budget_checker  # 预算门控：callable 返回剩余预算（元），None=不限制
         # 本章输入 prompt 累计（供成本计量）；跨桥段累计、跨章重置
         self._input_chapter = 0
         self._input_texts: list = []
@@ -397,6 +398,12 @@ class TimelineChapterWriter:
         budget = min(planned, max(target - chapter_words, 0))
         if budget <= 0:
             yield {"type": "bridge_skip", "plot_id": p.id, "reason": "本章已满"}
+            return
+
+        # 预算门控：LLM 费用预算耗尽时跳过本桥段（engine 侧由 cost_tracker.remaining() 提供）
+        if self.budget_checker is not None and self.budget_checker() <= 0:
+            yield {"type": "bridge_skip", "plot_id": p.id,
+                   "reason": "预算耗尽，暂停写作（可调高单书预算后继续）"}
             return
 
         yield {"type": "bridge_start",

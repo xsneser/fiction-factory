@@ -2,8 +2,21 @@
 内容审查引擎（Content Reviewer）
 本地规则 + LLM 二次确认的质量把关
 """
-import re
 from dataclasses import dataclass, field
+
+from core.text_utils import count_prose_units
+from .de_ai import AI_WORD_MAP
+
+
+# AI 痕迹词的展示文案（仅文案；词表本体单一来源 = de_ai.AI_WORD_MAP）
+_AI_TELL_DESCRIPTIONS = {
+    "仿佛": "AI高频修饰词",
+    "似乎": "AI高频修饰词",
+    "不禁": "AI高频修饰词",
+    "只见": "AI高频叙述",
+    "但见": "AI高频叙述",
+    "不由得": "AI高频修饰词",
+}
 
 
 @dataclass
@@ -36,7 +49,7 @@ class ContentReviewer:
     def check_word_count(self, content: str, min_words: int = 2000,
                          max_words: int = 5000) -> tuple[bool, int]:
         """字数检查"""
-        chinese = len(re.findall(r'[\u4e00-\u9fff]', content))
+        chinese = count_prose_units(content)
         if chinese < min_words:
             return False, chinese
         if chinese > max_words:
@@ -47,17 +60,11 @@ class ContentReviewer:
         """AI 痕迹检测"""
         issues = []
 
-        # 高频 AI 词汇检测
-        ai_tells = {
-            "仿佛": "AI高频修饰词",
-            "似乎": "AI高频修饰词",
-            "不禁": "AI高频修饰词",
-            "只见": "AI高频叙述",
-            "但见": "AI高频叙述",
-            "不由得": "AI高频修饰词",
-        }
+        # 高频 AI 词汇检测（词表单一来源 = de_ai.AI_WORD_MAP，此处仅保留展示文案）
+        ai_tells = {word: _AI_TELL_DESCRIPTIONS.get(word, "AI高频词")
+                    for word in AI_WORD_MAP}
 
-        word_count = len(re.findall(r'[\u4e00-\u9fff]', content))
+        word_count = count_prose_units(content)
         for word, desc in ai_tells.items():
             count = content.count(word)
             if count > 0:
@@ -217,12 +224,5 @@ class ContentReviewer:
         return result
 
     def _get_replacements(self, word: str) -> str:
-        mapping = {
-            "仿佛": "像、好像、跟……似的",
-            "似乎": "好像、感觉、看着像",
-            "不禁": "忍不住、下意识地、不由自主",
-            "只见": "看到、眼前、",
-            "但见": "看到、",
-            "不由得": "忍不住、下意识",
-        }
-        return mapping.get(word, "")
+        options = AI_WORD_MAP.get(word, [])
+        return "、".join(o for o in options if o)

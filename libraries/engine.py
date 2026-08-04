@@ -228,6 +228,7 @@ class NovelEngine:
             gag_injector=self.gag_injector,
             book_id="",
             detector_frequency=int((config or {}).get("detector_frequency", 1) or 1),
+            budget_checker=self._remaining_budget,
         )
 
         # 注册主角/配角到角色状态机（含性别/性格/惯用语句/简介；重置防引擎实例复用残留）
@@ -394,7 +395,7 @@ class NovelEngine:
                     reviewer=self.reviewer, gag_lib=self.gag_lib,
                     plot_lib=self.plot_lib, profile=self.profile,
                     harness=self.harness, gag_injector=self.gag_injector,
-                    book_id=book_id)
+                    book_id=book_id, budget_checker=self._remaining_budget)
             # 注册主角/配角（续写：register 重名去重，不覆盖已存的动态状态）
             self._register_timeline_characters(tl)
 
@@ -527,6 +528,12 @@ class NovelEngine:
         纯函数路由：统一走续写路由（唯一写作核心 = 桥段写作）
         """
         return self._route_continue()
+
+    def _remaining_budget(self) -> float:
+        """剩余 LLM 费用预算（元）；成本追踪器未就绪时不限制。"""
+        if not self.cost_tracker:
+            return -1.0
+        return self.cost_tracker.remaining()
 
     def _route_continue(self) -> Instruction:
         """♻️ 续写路由"""
