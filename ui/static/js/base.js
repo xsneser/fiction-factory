@@ -10,6 +10,31 @@
                 .replace(/'/g, '&#39;');
         }
 
+        // 右侧状态栏折叠：localStorage 持久化，折叠时露出右侧 ▶ 展开按钮
+        function toggleStatusBar() {
+            var bar = document.getElementById('status-bar');
+            var reopen = document.getElementById('status-reopen');
+            if (!bar) return;
+            var collapsed = bar.classList.toggle('collapsed');
+            if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
+            try { localStorage.setItem('ne_status_collapsed', collapsed ? '1' : '0'); } catch(e) {}
+        }
+        function restoreStatusBar() {
+            try {
+                if (localStorage.getItem('ne_status_collapsed') === '1') {
+                    var bar = document.getElementById('status-bar');
+                    var reopen = document.getElementById('status-reopen');
+                    if (bar) bar.classList.add('collapsed');
+                    if (reopen) reopen.style.display = 'block';
+                }
+            } catch(e) {}
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', restoreStatusBar);
+        } else {
+            restoreStatusBar();
+        }
+
 // 全局 toast：showToast 即时弹出；flashToast 存 sessionStorage，配合 location.reload() 在下次加载后弹出。
 // 各子模板 script 直接在 <body> 尾部执行，此时 #toast-root 已渲染，无需等 DOMContentLoaded。
         function showToast(msg, type) {

@@ -34,7 +34,10 @@
             {% block content %}{% endblock %}
         </main>
         <aside id="status-bar">
-            <div class="status-title">⏳ 运行状态</div>
+            <div class="status-head">
+                <div class="status-title">⏳ 运行状态</div>
+                <button class="status-toggle" onclick="toggleStatusBar()" title="折叠运行状态" aria-label="折叠运行状态">◀</button>
+            </div>
             <div id="status-tasks"></div>
             <div id="task-log" style="display:none">
                 <div class="status-title" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">📋 日志
@@ -44,6 +47,7 @@
             </div>
         </aside>
     </div>
+    <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开运行状态" aria-label="展开运行状态">▶</button>
 
     <div id="toast-root"></div>
 </body>
