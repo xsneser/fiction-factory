@@ -37,6 +37,7 @@ class BookConfig:
     first_three_chapters: dict = field(default_factory=dict)
     style_profile_id: str = ""             # 笔名风格档案ID
     budget: float = 50.0                   # API 花费预算
+    detector_frequency: int = 1            # 灵机一动探测频率（每 N 短句组探测一次）
     current_cost: float = 0.0
     created_at: str = ""
     updated_at: str = ""

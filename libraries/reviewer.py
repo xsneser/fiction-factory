@@ -60,9 +60,9 @@ class ContentReviewer:
         """AI 痕迹检测"""
         issues = []
 
-        # 高频 AI 词汇检测（词表单一来源 = de_ai.AI_WORD_MAP，此处仅保留展示文案）
-        ai_tells = {word: _AI_TELL_DESCRIPTIONS.get(word, "AI高频词")
-                    for word in AI_WORD_MAP}
+        # 高频 AI 词汇检测：只查高置信度展示文案词（_AI_TELL_DESCRIPTIONS 6 词），
+        # 词表与替换建议单一来源 = de_ai.AI_WORD_MAP，避免两份清单漂移
+        ai_tells = dict(_AI_TELL_DESCRIPTIONS)
 
         word_count = count_prose_units(content)
         for word, desc in ai_tells.items():

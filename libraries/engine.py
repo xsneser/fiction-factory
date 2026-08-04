@@ -213,6 +213,9 @@ class NovelEngine:
         self.gag_injector = GagInjector(llm=self.llm, harness=self.harness,
                                         gag_lib=self.gag_lib)
 
+        # 灵机一动探测频率旋钮（每 N 短句组探测一次）；持久化到 book.json 供续写读取
+        detector_frequency = int((config or {}).get("detector_frequency", 1) or 1)
+
         # 初始化蓝图写作器
         from .timeline_writer import TimelineChapterWriter
 
@@ -227,7 +230,7 @@ class NovelEngine:
             harness=self.harness,
             gag_injector=self.gag_injector,
             book_id="",
-            detector_frequency=int((config or {}).get("detector_frequency", 1) or 1),
+            detector_frequency=detector_frequency,
             budget_checker=self._remaining_budget,
         )
 
@@ -256,6 +259,8 @@ class NovelEngine:
             self.book = book
             self.state.book_id = book.book_id
             self.cost_tracker.book_id = book.book_id
+            book.detector_frequency = detector_frequency
+            self.book_mgr.update(book)
             if self.timeline_writer:
                 self.timeline_writer.book_id = book.book_id
             # 保存时间线配置到图书目录（统一入口，确保 book.json 与 timeline.json 同目录）
@@ -395,7 +400,8 @@ class NovelEngine:
                     reviewer=self.reviewer, gag_lib=self.gag_lib,
                     plot_lib=self.plot_lib, profile=self.profile,
                     harness=self.harness, gag_injector=self.gag_injector,
-                    book_id=book_id, budget_checker=self._remaining_budget)
+                    book_id=book_id, budget_checker=self._remaining_budget,
+                    detector_frequency=getattr(self.book, "detector_frequency", 1) or 1)
             # 注册主角/配角（续写：register 重名去重，不覆盖已存的动态状态）
             self._register_timeline_characters(tl)
 
@@ -532,7 +538,7 @@ class NovelEngine:
     def _remaining_budget(self) -> float:
         """剩余 LLM 费用预算（元）；成本追踪器未就绪时不限制。"""
         if not self.cost_tracker:
-            return -1.0
+            return float("inf")
         return self.cost_tracker.remaining()
 
     def _route_continue(self) -> Instruction:
@@ -866,16 +872,23 @@ class NovelEngine:
             chapter_buffer="\n\n".join(buffer), chapter_words=words,
             summaries_context=summaries)
         result = None
+        last_skip = {}
         try:
             while True:
                 evt = next(gen)
+                if evt.get("type") == "bridge_skip":
+                    last_skip = evt
                 yield evt
         except StopIteration as si:
             result = si.value
 
         if result is None:
-            # complete / bridge_skip 事件已由 writer 发出（无剩余桥段，或本章已满）
-            # 若还有进行中的草稿，收尾固化为最后一章，避免半章文本丢失
+            # 预算耗尽 = 暂停待续：保留进行中草稿（不固化），调高预算后可继续 write-bridge
+            if last_skip.get("code") == "budget_exhausted":
+                yield {"type": "budget_paused",
+                       "message": last_skip.get("reason", "预算耗尽，暂停写作")}
+                return
+            # complete / 本章已满：若还有进行中的草稿，收尾固化为最后一章，避免半章文本丢失
             self._finalize_leftover_draft()
             return
 
@@ -993,6 +1006,8 @@ class NovelEngine:
             self._finalize_written_chapter(ch, {
                 "text": text, "word_count": words, "beats": 0,
                 "beat_details": [],
+                "input_text": "\n".join(
+                    getattr(self.timeline_writer, "_input_texts", []) or []),
                 "blueprint": {
                     "chapter_title": f"第{ch}章",
                     "chapter_num": ch,

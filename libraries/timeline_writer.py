@@ -403,6 +403,7 @@ class TimelineChapterWriter:
         # 预算门控：LLM 费用预算耗尽时跳过本桥段（engine 侧由 cost_tracker.remaining() 提供）
         if self.budget_checker is not None and self.budget_checker() <= 0:
             yield {"type": "bridge_skip", "plot_id": p.id,
+                   "code": "budget_exhausted",
                    "reason": "预算耗尽，暂停写作（可调高单书预算后继续）"}
             return
 
