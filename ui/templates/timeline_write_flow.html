@@ -2,6 +2,7 @@
 {% block title %}蓝图写作 — {{ state.title or state.pen_name }}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css">
+<link rel="stylesheet" href="/static/css/workspace.css">
 <script>window.__BOOK_TIMELINE__ = {{ timeline.to_dict() | tojson if timeline else 'null' }};</script>
 <div class="tle-layout">
 <h1>🔰 蓝图式写作（新核心）</h1>
@@ -33,31 +34,10 @@
 </div>
 
 <style>
-.info-bar { display:flex; gap:20px; padding:12px 16px; background:#161b22; border-radius:8px; margin-bottom:16px; color:#8b949e; font-size:13px; }
-.info-bar strong { color:#f0f6fc; }
-
-/* ─── 工作台布局：页面不滚动，左/右各自内部滚动 ─── */
-main { overflow: hidden; }
-.tle-layout { display:flex; flex-direction:column; height:100%; min-height:0; }
-.editor-split { flex:1; min-height:0; display:flex; gap:16px; align-items:stretch; }
-.editor-left { width:55%; min-width:340px; flex-shrink:0; display:flex; flex-direction:column; min-height:0; }
-.editor-scroll { flex:1; min-height:0; overflow:hidden; }
-.editor-storyline { height:100%; min-height:0; background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:12px; }
-.editor-right { flex:1; min-width:0; overflow-y:auto; min-height:0; padding-right:4px; }
-.gen-split-title { font-size:12px; color:#8b949e; margin-bottom:8px; }
-
-/* ─── 写作动态 ─── */
-.gen-feed { display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.5; }
-.gf-item { background:#0d1117; border:1px solid #21262d; border-radius:6px; padding:6px 10px; color:#c9d1d9; }
-.gf-item.info { background:transparent; border:none; padding:2px 10px; color:#8b949e; }
-.gf-item.success { color:#3fb950; border-color:#238636; }
-.gf-item.error { color:#f85149; border-color:#f85149; }
-.gf-item.warn { color:#d29922; border-color:#9e6a03; }
+/* 写作桥段卡片（仅写作流页面用，保留在本页） */
 .wf-card { background:#0d1117; border:1px solid #21262d; border-radius:8px; overflow:hidden; }
 .wf-card-head { font-size:12px; font-weight:600; color:#79c0ff; padding:8px 12px; border-bottom:1px solid #21262d; background:#161b22; }
 .wf-card-body { margin:0; padding:12px; font-size:12px; line-height:1.7; color:#c9d1d9; white-space:pre-wrap; word-break:break-word; max-height:340px; overflow-y:auto; }
-.btn-primary { background:#238636; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:14px; cursor:pointer; }
-.btn-primary:hover { background:#2ea043; }
 </style>
 
 <script src="/static/js/story_line.js"></script>
