@@ -71,6 +71,22 @@ def has_repeated_token(text: str) -> bool:
     return False
 
 
+# 疑似错词规则检测（评审实测："婚事先轻轻" 应为 "缓一缓"）—— 命中重写一档
+_TYPO_PATTERNS = [
+    (re.compile(r'先轻轻(?=[，。！？…；：、\s]|$)'), "「先轻轻」疑为错词（应为「先缓一缓」），请修正后重写本组"),
+]
+
+
+def _typo_issue(text: str) -> str:
+    """规则检测疑似错词，返回重写提示（无命中返回空串）。"""
+    if not text:
+        return ""
+    for pat, hint in _TYPO_PATTERNS:
+        if pat.search(text):
+            return hint
+    return ""
+
+
 class TimelineChapterWriter:
     """
     章节级蓝图写作器 — 桥段驱动的逐章增量写作。
@@ -297,11 +313,12 @@ class TimelineChapterWriter:
                                         is_opening=is_opening)
             pending_inspiration = ""  # 命中只注入下一组，用完即清
             # 空响应重试：flash 先推理再输出，推理过长会吃掉 max_tokens 导致 content 为空
+            retry_hint = "上一组输出为空，请重新输出本组正文。"
             text = ""
             for attempt in range(WRITER_EMPTY_RETRIES + 1):
                 p_attempt = prompt
                 if attempt > 0:
-                    p_attempt = prompt + "\n【重写提示】上一组出现连续重复词，请完全重写本组，任何词不得连续重复两次以上。"
+                    p_attempt = prompt + "\n【重写提示】" + retry_hint
                 self._input_texts.append(p_attempt)
                 raw = self.llm.call(
                     ("你是一位专业的中文网络小说作者，擅长对话、动作驱动的快节奏网文，正在逐段续写一章正文。"
@@ -314,9 +331,15 @@ class TimelineChapterWriter:
                     p_attempt, temperature=0.7, max_tokens=WRITER_MAX_TOKENS)
                 text = (raw or "").strip().lstrip('"“')
                 if not text:
+                    retry_hint = "上一组输出为空，请重新输出本组正文。"
                     continue          # 空响应 → 重试
                 if has_repeated_token(text) and attempt < WRITER_EMPTY_RETRIES:
+                    retry_hint = "上一组出现连续重复词，请完全重写本组，任何词不得连续重复两次以上。"
                     continue          # 连续重复词 → 仅重试（不打断续写）
+                typo_hint = _typo_issue(text)
+                if typo_hint and attempt < WRITER_EMPTY_RETRIES:
+                    retry_hint = typo_hint
+                    continue          # 疑似错词 → 重写一档
                 break
             if not text:
                 break

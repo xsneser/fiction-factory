@@ -41,7 +41,8 @@ OPENING_MODE_RULES = """【开场模式 — 炸裂开场（第一章开篇桥段
 5. 若设定中有金手指/能力，本章内必须引入或激活。
 6. 参考微观结构：[冲击性画面/对话] → [快速解释发生了什么] → [抛出问题]。
 7. 示例节奏：「闹钟响的时候，萧晨正梦见自己站在纳斯达克敲钟。底下掌声雷动。然后他就被人一脚踹下了台。」
-8. 禁止：天气/环境长铺垫、「他醒来，阳光洒在脸上」式平淡开头。"""
+8. 禁止：天气/环境长铺垫、「他醒来，阳光洒在脸上」式平淡开头。
+9. 冲突线前置铁律：开篇直接把核心冲突（退婚短信/嘲讽打压/走投无路/系统激活）拍在读者脸上，与主角困境同屏立起，禁止先铺身份背景再讲冲突。"""
 
 
 # 全书一致性铁律 —— 防 E2E 评审硬伤：系统重复绑定、数值不闭环、时间线穿帮、无时间过渡
@@ -138,9 +139,10 @@ class PromptHarness:
         factions = [str(f) for f in (wb.get("factions") or [])][:4]
         if factions:
             parts.append("  势力：" + "、".join(factions))
-        rules = [str(r) for r in (wb.get("rules") or [])][:3]
+        rules = [str(r) for r in (wb.get("rules") or [])][:5]
         if rules:
-            parts.append("  规则：" + "；".join(r[:40] for r in rules))
+            parts.append("  规则：" + "；".join(r[:60] for r in rules))
+        parts.append("  设定铁律：数值/技能语义全书唯一口径（如『效率×2』指同一件事），禁止每章换一种解释。")
         return "\n".join(parts)
 
     def _tone_bullets(self) -> str:
@@ -224,6 +226,24 @@ class PromptHarness:
     def _style_bullets(self) -> str:
         return _profile_style_text(self.profile)
 
+    def _rebirth_time_bullets(self) -> str:
+        """重生文时间词纪律：前世经历禁止用当前时间线近指词。"""
+        tl = self.timeline
+        if not tl:
+            return ""
+        bi = tl.basic_info or {}
+        protag = bi.get("protagonist") or {}
+        identity = str(protag.get("identity", "") or "")
+        try:
+            death_year = int(protag.get("death_year", 0) or 0)
+        except (TypeError, ValueError):
+            death_year = 0
+        era = str((bi.get("world_building") or {}).get("era", "") or "")
+        if not (death_year > 0 or "重生" in identity or "重生" in era):
+            return ""
+        return ("- 时间纪律（重生文）：指代前世/上辈子的经历一律用「上辈子/前世/当年」，"
+                "禁止用「上周/上个月/去年/昨天/那年」等近指词（那属于当前时间线）。")
+
     def _bible_sections(self, condensed: bool = False):
         """按优先级返回 [(标题, 文本), ...]。condensed 时只留写作必需段。"""
         if condensed:
@@ -233,6 +253,7 @@ class PromptHarness:
                 ("风格", self._style_bullets()),
                 ("视角", self._pov_bullets()),
                 ("时代语言", self._era_language_bullets()),
+                ("时间纪律", self._rebirth_time_bullets()),
                 ("母题", self._theme_bullets()),
             ]
         return [
@@ -241,6 +262,7 @@ class PromptHarness:
             ("风格", self._style_bullets()),
             ("视角", self._pov_bullets()),
             ("时代语言", self._era_language_bullets()),
+            ("时间纪律", self._rebirth_time_bullets()),
             ("配角", self._supporting_cast_bullets()),
             ("母题", self._theme_bullets()),
             ("基调", self._tone_bullets()),
