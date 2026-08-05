@@ -3,7 +3,7 @@
  * 从 BookStoryline dict 渲染：章节轴 + 大纲/桥段/线程通道。
  * 支持叙事手法视觉区分：顺叙(chronological)/倒叙(flashback)/插叙(interleaved)。
  *
- * 用法：StoryLine.init('mount-id', bookTimelineDict, {currentChapter: N})
+ * 用法：StoryLine.init('mount-id', bookStorylineDict, {currentChapter: N})
  */
 (function () {
   'use strict';
@@ -11,6 +11,7 @@
   var TOTAL_WORDS = 0;
   var WPC = 3000;
   var chapters = [], outlines = [], plots = [], threads = [];
+  var promises = [], promiseByPlot = {};   // 读者承诺台账：桥段id → [{kind:setup/payoff, pr}]
   var PALETTE = ['#f97583', '#79c0ff', '#56d364', '#e3b341', '#d2a8ff', '#ffa657', '#c084fc', '#7ee787'];
   var THREAD_PALETTE = ['#ffa657', '#79c0ff', '#d2a8ff', '#56d364', '#e3b341', '#ff7b72', '#7ee787'];
 
@@ -139,6 +140,18 @@
     });
     threads.forEach(function (t) {
       if (t.start === Infinity) { t.start = 0; t.end = Math.max(t.end, WPC); }
+    });
+
+    // 读者承诺台账：设局桥段→⏳待兑现，收局桥段→✅已兑现；映射到对应桥段条
+    promises = (bt.promises || []);
+    promiseByPlot = {};
+    promises.forEach(function (pr) {
+      if (pr.setup_plot_id) {
+        (promiseByPlot[pr.setup_plot_id] = promiseByPlot[pr.setup_plot_id] || []).push({ kind: 'setup', pr: pr });
+      }
+      if (pr.payoff_plot_id) {
+        (promiseByPlot[pr.payoff_plot_id] = promiseByPlot[pr.payoff_plot_id] || []).push({ kind: 'payoff', pr: pr });
+      }
     });
   }
 
@@ -311,6 +324,14 @@
         bar.style.background = 'linear-gradient(135deg,' + p.color + '77,' + p.color + '55)';
         bar.style.borderLeft = '2px solid rgba(255,255,255,.2)';
       }
+      var pms = promiseByPlot[p.id] || [];
+      var promiseRows = pms.map(function (pm) {
+        var tag = pm.kind === 'payoff' ? '✅ 已兑现' : '⏳ 待兑现';
+        var txt = pm.pr.desc || '钩子';
+        if (pm.kind === 'setup' && pm.pr.deadline_chapter) txt += '（约第' + pm.pr.deadline_chapter + '章）';
+        if (pm.kind === 'payoff' && pm.pr.payoff_chapter) txt += '（第' + pm.pr.payoff_chapter + '章）';
+        return [tag, txt];
+      });
       bar.dataset.tooltip = JSON.stringify({
         title: p.name,
         rows: [
@@ -319,7 +340,7 @@
           ['线程', p.thread || '主线'],
           p.resolves ? ['收局', '解决「' + p.resolves_name + '」'] : null,
           (p.roles && p.roles.length) ? ['出场', p.roles.join('、')] : null,
-        ].filter(Boolean),
+        ].filter(Boolean).concat(promiseRows),
         tag: '桥段',
       });
       if (height > 1.0) {
@@ -340,6 +361,14 @@
         pbadge.textContent = '↪ 收局';
         bar.appendChild(pbadge);
       }
+      // 读者承诺标记：设局⏳(待兑现) / 收局✅(已兑现)，直接画在桥段条上
+      pms.forEach(function (pm) {
+        var badge = document.createElement('span');
+        badge.className = 'sl-promise ' + (pm.kind === 'payoff' ? 'ok' : 'pending');
+        badge.textContent = pm.kind === 'payoff' ? '✅' : '⏳';
+        badge.title = (pm.kind === 'payoff' ? '已兑现' : '待兑现') + '：' + (pm.pr.desc || '钩子');
+        bar.appendChild(badge);
+      });
       bar.addEventListener('mouseenter', showTooltip);
       bar.addEventListener('mousemove', moveTooltip);
       bar.addEventListener('mouseleave', hideTooltip);
