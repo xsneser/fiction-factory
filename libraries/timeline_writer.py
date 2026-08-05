@@ -407,12 +407,20 @@ class TimelineChapterWriter:
                    "reason": "预算耗尽，暂停写作（可调高单书预算后继续）"}
             return
 
+        diagnosis = ""
+        if self.harness and hasattr(self.harness, "_pre_write_diagnosis"):
+            try:
+                diagnosis = self.harness._pre_write_diagnosis(
+                    p, stage.get("name", "") if isinstance(stage, dict) else "")
+            except Exception:
+                diagnosis = ""
         yield {"type": "bridge_start",
                "plot_id": p.id, "plot_name": p.name,
                "outline_id": o.id if o else "", "outline_name": o.name if o else "",
                "stage_name": stage.get("name", "") if isinstance(stage, dict) else "",
                "planned_words": planned,
-               "hook_points": list(getattr(p, "hook_points", None) or [])}
+               "hook_points": list(getattr(p, "hook_points", None) or []),
+               "diagnosis": diagnosis}
 
         seg_parts = []
         seg_words = 0

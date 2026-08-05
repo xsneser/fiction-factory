@@ -31,6 +31,31 @@ CATEGORY_GAG_SCENES = {
 DEFAULT_GAG_SCENES = ["日常对话", "日常互动"]
 
 
+# 写前编辑诊断（模拟人类作者开写前想清楚"这一节要达到什么"）—— 免费规则映射
+CATEGORY_READER_DESIRE = {
+    "爽文": "打脸快感与身份抬升",
+    "打脸": "对手当众出丑、主角反超",
+    "战斗": "战斗胜负与实力印证",
+    "都市": "现实利益争夺与身份翻盘",
+    "情感": "关系推进与情感张力",
+    "日常": "轻松互动与人物魅力",
+    "悬疑": "解谜欲与真相逼近",
+    "成长": "变强确认与突破快感",
+    "开篇": "悬念钩子与代入感",
+}
+DEFAULT_READER_DESIRE = "情节推进与情绪满足"
+CATEGORY_ENEMY_LOSS = {
+    "爽文": "面子/地位受损",
+    "打脸": "脸面当场落地",
+    "战斗": "落败/实力被否定",
+    "都市": "利益/资源被夺",
+    "悬疑": "露出破绽/计划受挫",
+    "成长": "威压被打破",
+    "职场": "被当众驳倒/失去主动权",
+}
+DEFAULT_ENEMY_LOSS = "对手付出代价或计划受挫"
+
+
 # 炸裂开场（第一章前 N 桥段强制）—— 番茄/飞卢式冷开场铁律
 # 素材来源：beat_writer 危机/悬念开场、build_chapter1_prompt、番茄平台约束、开篇桥段 usage_notes
 OPENING_MODE_RULES = """【开场模式 — 炸裂开场（第一章开篇桥段强制）】
@@ -379,6 +404,8 @@ class PromptHarness:
                            "』埋钩子，结尾留一个明确未解决的悬念。")
         # 读者承诺台账：本桥段要兑现的 / 已逾期的 / 活跃可推进的（免费规则）
         promises_block = self._promises_block(p, chapter_num) if chapter_num else ""
+        # 写前编辑诊断：本节要达到什么（读者欲望/爽点/敌人损失/追更理由）
+        diag_block = self._pre_write_diagnosis(p, stage_name)
 
         # 视角铁律（防人称漂移：显式重申，不让模型自己定）
         _pov = str((self.timeline.basic_info or {}).get("pov", "") if self.timeline else "").strip()
@@ -415,6 +442,7 @@ class PromptHarness:
 【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按大纲自然推进'}
 【桥段骨架】{structure}
 【变量槽位】{slots_text or '跟随上下文自由发挥'}
+{diag_block}
 {hook_block}
 {roles_block}
 {theme_block}
@@ -434,6 +462,29 @@ class PromptHarness:
 5. 必须紧接上文继续，人物、视角、设定保持一致，视角始终跟随主角；绝不重开新故事、不换主角。
 6. 严禁出现：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。
 7. 不写章节标题、不标注步骤、不加解释性文字。本桥段还剩约 {budget_remaining} 字预算，控制篇幅。"""
+
+    def _pre_write_diagnosis(self, p, stage_name: str = "") -> str:
+        """写前编辑诊断：这一节要达到什么（读者欲望/最强爽点/敌人损失/章尾追更理由）。
+
+        免费规则，模拟人类作者开写前的瞬间框架；对应人类创作思考路线第 6 步。
+        """
+        category = str(getattr(p, "category", "") or "")
+        desire = CATEGORY_READER_DESIRE.get(category, DEFAULT_READER_DESIRE)
+        enemy_loss = CATEGORY_ENEMY_LOSS.get(category, DEFAULT_ENEMY_LOSS)
+        payoff = ""
+        if getattr(p, "hook_points", None):
+            payoff = p.hook_points[0]
+        elif stage_name:
+            payoff = f"{stage_name}的高潮"
+        else:
+            payoff = getattr(p, "name", "") + "的高潮"
+        return (
+            "【写前诊断——本节要达到什么】\n"
+            f"- 读者此刻欲望：{desire}\n"
+            f"- 本节最强可见爽点：{payoff}\n"
+            f"- 敌人/阻力可见损失：{enemy_loss}\n"
+            f"- 章尾追更理由：本节结尾留一个具体悬念，让读者想知道「接下来会怎样」\n\n"
+        )
 
     def _promises_block(self, p, chapter_num: int) -> str:
         """读者承诺台账块：本桥段要兑现的、已逾期的、活跃可推进的（免费规则，从 timeline.promises 现算）。

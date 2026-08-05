@@ -97,6 +97,11 @@ function feedCardStart(evt) {
     const body = document.createElement('pre');
     body.className = 'wf-card-body';
     body.textContent = '⏳ 生成中...';
+    if (evt.diagnosis) {
+        body.textContent = evt.diagnosis.trim();
+        body.dataset.placeholder = '1';
+        body.style.color = '#8b949e';
+    }
     card.appendChild(head); card.appendChild(body);
     feed.appendChild(card);
     feedRight();
@@ -108,7 +113,11 @@ function feedCardChunk(evt) {
     if (!card) return;
     const body = card.querySelector('.wf-card-body');
     if (!body) return;
-    if (body.textContent === '⏳ 生成中...') body.textContent = '';
+    if (body.textContent === '⏳ 生成中...' || body.dataset.placeholder === '1') {
+        body.textContent = '';
+        body.style.color = '';
+        body.dataset.placeholder = '';
+    }
     body.textContent += evt.text || '';
     feedRight();
 }
