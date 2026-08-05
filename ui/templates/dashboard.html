@@ -37,7 +37,7 @@
     {% for r in books %}
     {% set b = r.book %}
     <tr>
-        <td><a href="{% if r.is_timeline %}/timeline/{{ b.book_id }}/edit{% else %}/books/{{ b.book_id }}{% endif %}" style="color:#58a6ff">{{ b.title or '(未命名)' }}</a></td>
+        <td style="color:#c9d1d9">{{ b.title or '(未命名)' }}</td>
         <td>{{ b.pen_name }}</td>
         <td><span class="tag">{{ b.genre }}</span>{% if b.sub_genre %} <span class="tag blue">{{ b.sub_genre }}</span>{% endif %}</td>
         <td>
@@ -45,9 +45,7 @@
             <small>{{ b.current_chapter }}/{{ b.chapter_count }} 章</small>
         </td>
         <td>{{ status_badge(b.status) }}</td>
-        <td>
-            {% if r.next %}<a href="{{ r.next.href }}" class="btn small" style="background:#1f6feb;color:#fff">{{ r.next.label }}</a>{% endif %}
-        </td>
+        <td><a href="{% if r.is_timeline %}/timeline/{{ b.book_id }}/edit{% else %}/books/{{ b.book_id }}{% endif %}" class="btn small">查看详情</a></td>
     </tr>
     {% endfor %}
     </tbody>
