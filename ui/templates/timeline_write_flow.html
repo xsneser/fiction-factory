@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}蓝图写作 — {{ state.title or state.pen_name }}{% endblock %}
+{% block title %}写作台 — {{ state.title or state.pen_name }}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css">
 <link rel="stylesheet" href="/static/css/workspace.css">
 {% from "_flow_stepper.html" import flow_stepper, status_badge %}
 <script>window.__BOOK_TIMELINE__ = {{ timeline.to_dict() | tojson if timeline else 'null' }};</script>
 <div class="tle-layout">
-<h1>🔰 蓝图式写作（新核心）</h1>
+<h1>✍️ 写作台</h1>
 <div class="info-bar">
     <span>书名：<strong>{{ state.title or '(待定)' }}</strong></span>
     <span>笔名：<strong>{{ state.pen_name }}</strong></span>
