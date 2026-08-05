@@ -26,8 +26,6 @@
         <td>{{ status_badge(b.status) }}</td>
         <td style="white-space:nowrap">
             {% if r.next %}<a href="{{ r.next.href }}" class="btn small" style="background:#1f6feb;color:#fff">{{ r.next.label }}</a>{% endif %}
-            <a href="/storyline/{{ b.book_id }}/edit" class="btn small">✍️ 写作台</a>
-            <a href="/books/{{ b.book_id }}/continue" class="btn small secondary">✍️ 开始写作</a>
             <a href="/books/{{ b.book_id }}" class="btn small secondary">📖 详情</a>
             <form method="POST" action="/books/{{ b.book_id }}/delete" style="display:inline" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
                 <button class="small danger">删除</button>

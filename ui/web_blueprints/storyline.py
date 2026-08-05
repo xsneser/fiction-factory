@@ -13,27 +13,10 @@ bp = Blueprint("storyline", __name__)
 # ═══════════════════════════════════════════
 
 def storyline_edit(storyline_id):
-    """故事线编辑器页面"""
-    tl_data = _resolve_storyline(storyline_id)
-    if not tl_data:
-        return "故事线配置不存在或已过期", 404
-    # 供顶部流程步骤条 / ready 面板使用：
-    #   total_ch     = 大纲规划总章数（Python 侧算，避免 Jinja max 对空列表报错）
-    #   book_current = 该书已写章节数
-    total_ch = max((o.end_chapter for o in tl_data.outlines), default=0)
-    book_current = 0
-    try:
-        _book = book_mgr.get(storyline_id)
-        book_current = _book.current_chapter if _book else 0
-    except Exception:
-        book_current = 0
-    return render_template("storyline_editor.html",
-        storyline_id=storyline_id,
-        storyline=tl_data,
-        storyline_json=tl_data.to_dict(),
-        total_ch=total_ch,
-        book_current=book_current,
-    )
+    """故事线规划已并入统一写作台（storyline_write_flow 三栏页），此入口重定向。"""
+    if storyline_id.startswith("book_"):
+        return redirect(url_for("desk.continue_book_page", book_id=storyline_id), 302)
+    return redirect(url_for("desk._compat_storyline_start_writing", timeline_id=storyline_id), 302)
 
 
 @bp.route("/storyline/<storyline_id>/detail")

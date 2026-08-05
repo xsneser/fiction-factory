@@ -59,12 +59,20 @@ def storyline_write_flow(engine_id):
                     })
         except Exception as e:
             logger.warning("加载已写章节失败: %s", e)
+    sl = getattr(engine, "storyline", None)
+    total_ch = 0
+    if sl:
+        try:
+            total_ch = max((o.end_chapter for o in sl.outlines), default=0)
+        except Exception:
+            total_ch = 0
     return render_template("storyline_write_flow.html",
         engine_id=engine_id,
         state=engine.state,
-        storyline=engine.storyline,
+        storyline=sl,
         book=book,
         chapters=chapters,
+        total_ch=total_ch,
     )
 
 

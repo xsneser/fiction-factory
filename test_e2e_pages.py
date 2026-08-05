@@ -246,7 +246,8 @@ def run_tests():
     tl_editor = None
     for cand in book_ids[:3] if book_ids else []:
         r = get(f"/storyline/{cand}/edit")
-        if r.status_code == 200 and "故事线编辑器" in r.text:
+        # 规划已并入统一写作台（/storyline/<id>/edit 重定向到三栏页）；用「✍️ 写作台」标记匹配
+        if r.status_code == 200 and "✍️ 写作台" in r.text:
             tl_editor = r
             break
     if tl_editor is None:
