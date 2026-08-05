@@ -27,6 +27,13 @@
 .sl-header h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: #58a6ff; }
 .sl-header .sl-meta { font-size: 10px; color: #6e7681; }
 .sl-header .sl-meta span { color: #c9d1d9; margin: 0 4px; }
+.sl-header-right { display: flex; align-items: center; gap: 8px; }
+
+/* 纵向缩放控件 */
+.sl-zoom { display: flex; align-items: center; gap: 3px; margin-right: 2px; }
+.sl-zoom-btn { width: 22px; height: 20px; border: 1px solid #30363d; background: #161822; color: #c9d1d9; border-radius: 4px; font-size: 13px; line-height: 1; cursor: pointer; padding: 0; }
+.sl-zoom-btn:hover { background: #1f2937; border-color: #58a6ff; }
+.sl-zoom-label { font-size: 10px; color: #6e7681; min-width: 34px; text-align: center; }
 
 .sl-main {
   display: flex;

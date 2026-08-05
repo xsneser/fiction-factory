@@ -21,6 +21,16 @@
     window._sl_resize_bound = true;
   }
 
+  /* ─── 纵向缩放：调整内容高度 → 百分比映射更多像素 → 条间距更大/更紧凑 ─── */
+  var _zoom = 1;            // 缩放倍率（0.4x ~ 4x，步进 0.25）
+  var _baseScrollH = 720;   // scrollable 模式下未缩放的基准内容高度
+  var _panels = [];         // 需随缩放改高度的三个面板（章节/轴/内容区）
+  var _scrollableMode = false;
+
+  function zoomHeight() {
+    return Math.max(300, Math.min(8000, Math.round((_baseScrollH || 720) * _zoom)));
+  }
+
   function wordToPercent(w) {
     return (TOTAL_WORDS > 0) ? (w / TOTAL_WORDS) * 100 : 0;
   }
@@ -452,7 +462,8 @@
       var scrollH = 0;
       if (opts.scrollable) {
         var totalCh = Math.max(1, Math.round(TOTAL_WORDS / WPC));
-        scrollH = Math.min(2400, Math.max(720, totalCh * 18));
+        _baseScrollH = Math.min(2400, Math.max(720, totalCh * 18));
+        scrollH = zoomHeight();
         mount.style.height = '100%';
         mount.style.minHeight = '0px';
       }
@@ -463,10 +474,19 @@
       var threadLegendHtml = threads.map(function (t) {
         return '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:' + t.color + '"></span> ' + t.name + '</div>';
       }).join('');
+      var zoomHtml = opts.scrollable
+        ? '<div class="sl-zoom">' +
+          '<button type="button" class="sl-zoom-btn" data-zoom="-1" title="缩小">−</button>' +
+          '<span class="sl-zoom-label">' + Math.round(_zoom * 100) + '%</span>' +
+          '<button type="button" class="sl-zoom-btn" data-zoom="1" title="放大">+</button>' +
+          '<button type="button" class="sl-zoom-btn" data-zoom="0" title="重置 100%">1x</button>' +
+          '</div>'
+        : '';
       var html =
         '<div class="sl-root">' +
         '<div class="sl-header"><h1><span class="dot"></span>故事线</h1>' +
-        '<div class="sl-meta">总字数 <span>' + (TOTAL_WORDS).toLocaleString() + '</span> · 章节 <span>' + (TOTAL_WORDS / WPC | 0) + '</span> · 大纲 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div>' +
+        '<div class="sl-header-right">' + zoomHtml +
+        '<div class="sl-meta">总字数 <span>' + (TOTAL_WORDS).toLocaleString() + '</span> · 章节 <span>' + (TOTAL_WORDS / WPC | 0) + '</span> · 大纲 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
         '<div class="sl-main">' +
         '<div class="sl-chapter-panel"' + hstyle + ' id="' + mountId + '-ch"></div>' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
@@ -498,6 +518,19 @@
       var plotBody = document.getElementById(mountId + '-pb');
       var threadBody = document.getElementById(mountId + '-tb');
       var contentArea = document.getElementById(mountId + '-ct');
+
+      // 纵向缩放控件：记录需改高度的面板 + 绑定 + / − / 1x 按钮
+      _scrollableMode = !!opts.scrollable;
+      _panels = [chapterPanel, axisPanel, contentArea];
+      var zoomBtns = mount.querySelectorAll('.sl-zoom-btn');
+      for (var zb = 0; zb < zoomBtns.length; zb++) {
+        (function (btn) {
+          btn.addEventListener('click', function () {
+            var d = parseFloat(btn.getAttribute('data-zoom') || '0');
+            window.StoryLine.setZoom(d === 0 ? 1 : (_zoom + d * 0.25));
+          });
+        })(zoomBtns[zb]);
+      }
 
       function renderAll() {
         renderChapters(chapterPanel, axisPanel);
@@ -535,6 +568,21 @@
       if (anchor && main) {
         main.scrollTop = Math.max(0, anchor.offsetTop - main.clientHeight * 0.3);
       }
+    },
+
+    /* 纵向缩放：调整内容高度（放大=条间距更大可细看，缩小=更紧凑看全貌）。
+       仅 scrollable 模式生效；改动面板高度后整卷重渲染。 */
+    setZoom: function (factor) {
+      if (!_scrollableMode) return;
+      _zoom = Math.max(0.4, Math.min(4, factor));
+      var h = zoomHeight();
+      for (var i = 0; i < _panels.length; i++) {
+        if (_panels[i]) _panels[i].style.height = h + 'px';
+      }
+      var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
+      var label = mount ? mount.querySelector('.sl-zoom-label') : null;
+      if (label) label.textContent = Math.round(_zoom * 100) + '%';
+      if (_lastRender) _lastRender();
     },
   };
 })();
