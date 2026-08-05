@@ -24,6 +24,28 @@ from .gag import GagLibrary
 from .theme import ThemeLibrary
 
 
+def basic_info_is_rich(basic_info: dict) -> bool:
+    """基础设定是否已由世界观生成器充实（可跳过 Phase 1 LLM 分析）。
+
+    条件：显式打了 _world_generated 标记；或世界观填充维度 ≥4 且主角名非空（双保险）。
+    """
+    bi = basic_info or {}
+    if bi.get("_world_generated"):
+        return True
+    wb = bi.get("world_building") or {}
+    if not isinstance(wb, dict):
+        wb = {}
+    keys = ["era", "power_system", "factions", "rules", "geography", "culture",
+            "history", "social_structure", "core_conflict"]
+    filled = 0
+    for k in keys:
+        v = wb.get(k)
+        if (isinstance(v, list) and v) or str(v or "").strip():
+            filled += 1
+    protag_name = str((bi.get("protagonist") or {}).get("name", "") or "").strip()
+    return filled >= 4 and bool(protag_name)
+
+
 # ═══════════════════════════════════════════
 # 生成器
 # ═══════════════════════════════════════════
@@ -359,25 +381,8 @@ class OutlineGenerator:
         }
 
     def _basic_info_is_rich(self, basic_info: dict) -> bool:
-        """判断基础设定是否已由世界观生成器充实（可跳过 Phase 1 LLM 分析）。
-
-        条件：显式打了 _world_generated 标记；或世界观填充维度 ≥4 且主角名非空（双保险）。
-        """
-        bi = basic_info or {}
-        if bi.get("_world_generated"):
-            return True
-        wb = bi.get("world_building") or {}
-        if not isinstance(wb, dict):
-            wb = {}
-        keys = ["era", "power_system", "factions", "rules", "geography", "culture",
-                "history", "social_structure", "core_conflict"]
-        filled = 0
-        for k in keys:
-            v = wb.get(k)
-            if (isinstance(v, list) and v) or str(v or "").strip():
-                filled += 1
-        protag_name = str((bi.get("protagonist") or {}).get("name", "") or "").strip()
-        return filled >= 4 and bool(protag_name)
+        """薄委托：模块级 basic_info_is_rich（供 web 层 confirm 复用）。"""
+        return basic_info_is_rich(basic_info)
 
     def _validate_storyline_math(self, basic_info: dict) -> list[str]:
         """Phase 1 后规则校验：重生/年龄/年份关系自洽（纯规则，不调 LLM）。"""

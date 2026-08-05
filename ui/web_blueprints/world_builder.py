@@ -178,12 +178,20 @@ def api_world_borrow_preview(book_id):
 
 @bp.route("/api/world-builder/<book_id>/confirm", methods=["POST"])
 def api_world_confirm(book_id):
-    """打 _world_generated 标记并落盘，返回下一步跳转（故事线编辑器）。"""
+    """确认设定并落盘，返回下一步跳转。
+
+    防误标：仅当 basic_info 够充实（≥4 维度+主角名，或已打标）才置 _world_generated，
+    否则不置——让「一键生成完整大纲」的 Phase 1 正常跑 LLM 故事分析，避免薄设定跳过。
+    """
     tl = _resolve_storyline(book_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
     tl.basic_info = tl.basic_info or {}
-    tl.basic_info["_world_generated"] = True
+    from libraries.outline_generator import basic_info_is_rich
+    if basic_info_is_rich(tl.basic_info):
+        tl.basic_info["_world_generated"] = True
+    else:
+        tl.basic_info.pop("_world_generated", None)
     tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
     _save_storyline(tl, book_id)
     return jsonify({"ok": True, "redirect": f"/storyline/{book_id}/edit"})

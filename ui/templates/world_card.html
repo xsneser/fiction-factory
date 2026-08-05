@@ -40,6 +40,15 @@
 
 <form id="world-form" class="form-grid">
     <fieldset>
+        <legend>📖 书名</legend>
+        <div class="form-row" style="display:flex;gap:8px;align-items:center">
+            <input id="bi_book_title" placeholder="留空则确认时自动生成" value="{{ storyline.book_title or '' }}" style="flex:1">
+            <button type="button" class="btn-secondary" onclick="generateBookTitle()">✨ 生成书名</button>
+        </div>
+        <div class="form-row hint">由世界观/主角/基调生成候选；确认进入大纲前若仍为空会自动补一个。</div>
+    </fieldset>
+
+    <fieldset>
         <legend>🗺️ 世界观（设定圣经）</legend>
         <div class="form-row">
             <label>设定概述 world_summary（一段话整体设定）</label>
@@ -170,6 +179,7 @@ legend { color:#58a6ff; font-weight:600; padding:0 8px; }
 <script>
 var BOOK_ID = "{{ book_id }}";
 var __BI__ = {{ basic_info|tojson }};
+var __BOOK_TITLE__ = {{ (storyline.book_title or '') | tojson }};
 
 function $(id){ return document.getElementById(id); }
 
@@ -211,6 +221,7 @@ function formToBi() {
     var sc = [];
     try { sc = JSON.parse($('sc-json').value || '[]'); } catch(e) { alert('配角 JSON 格式不对'); return null; }
     var payload = {
+        book_title: ($('bi_book_title').value || '').trim(),
         protagonist: proto, world_building: wb, supporting_cast: sc,
         tone: $('bi-tone').value, target_audience: $('bi-target_audience').value,
         pov: $('bi-pov').value, era_language: $('bi-era_language').value,
@@ -335,21 +346,52 @@ function saveWorld() {
         statusShow(data.ok ? '✅ 设定已保存' : '❌ 保存失败: ' + (data.error || ''), data.ok ? '' : 'err');
     }).catch(function(err){ statusShow('❌ 保存失败: ' + err.message, 'err'); });
 }
+function generateBookTitle() {
+    var btn = event.target;
+    if (btn.disabled) return;
+    btn.disabled = true; btn.textContent = '生成中...';
+    fetch('/api/storyline/' + BOOK_ID + '/generate-title', {method: 'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (d.ok) {
+                $('bi_book_title').value = d.chosen || '';
+                statusShow('✨ 书名候选：' + (d.titles || []).join('、') + '；已选用「' + (d.chosen || '') + '」。确认后生效。');
+            } else statusShow('❌ ' + (d.error || '书名生成失败'), 'err');
+        })
+        .catch(function(err){ statusShow('❌ ' + err.message, 'err'); })
+        .finally(function(){ btn.disabled = false; btn.textContent = '✨ 生成书名'; });
+}
 function confirmWorld() {
     var payload = formToBi();
     if (!payload) return;
-    // 先把当前表单改动保存，再确认进入大纲生成
-    fetch('/api/storyline/' + BOOK_ID + '/save-basic-info', {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
-    }).then(function(r){ return r.json(); }).then(function() {
-        return fetch('/api/world-builder/' + BOOK_ID + '/confirm', {method: 'POST'});
-    }).then(function(r){ return r.json(); }).then(function(data) {
-        if (data.ok && data.redirect) { window.location.href = data.redirect; }
-        else { statusShow('❌ ' + (data.error || '确认失败'), 'err'); }
-    }).catch(function(err){ statusShow('❌ 确认失败: ' + err.message, 'err'); });
+    // 书名为空或 (待定) 时先自动生成（LLM 失败不阻塞），再保存设定并确认进入大纲生成
+    function ensureTitle() {
+        var t = ($('bi_book_title').value || '').trim();
+        if (t && t !== '(待定)') return Promise.resolve(true);
+        return fetch('/api/storyline/' + BOOK_ID + '/generate-title', {method: 'POST'})
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+                if (d.ok) { $('bi_book_title').value = d.chosen || ''; payload.book_title = d.chosen || ''; }
+                return true;
+            })
+            .catch(function(){ return false; });
+    }
+    ensureTitle()
+        .then(function(){ return fetch('/api/storyline/' + BOOK_ID + '/save-basic-info', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+        }); })
+        .then(function(r){ return r.json(); })
+        .then(function(){ return fetch('/api/world-builder/' + BOOK_ID + '/confirm', {method: 'POST'}); })
+        .then(function(r){ return r.json(); })
+        .then(function(data) {
+            if (data.ok && data.redirect) { window.location.href = data.redirect; }
+            else { statusShow('❌ ' + (data.error || '确认失败'), 'err'); }
+        })
+        .catch(function(err){ statusShow('❌ 确认失败: ' + err.message, 'err'); });
 }
 
 /* 初始化：渲染已有设定到表单 */
 biToForm(__BI__);
+$('bi_book_title').value = __BOOK_TITLE__ || '';
 </script>
 {% endblock %}
