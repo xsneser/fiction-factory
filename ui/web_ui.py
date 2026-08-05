@@ -1,7 +1,7 @@
 """
 NovelEngine — 完整 Web UI v2.0 (Flask + Jinja2)
 引擎集成版：新书启动 / 续写 / 管理面板
-路由已按域拆分到 ui/web_blueprints/（dashboard/timeline/desk/books/libraries/tools/settings），
+路由已按域拆分到 ui/web_blueprints/（dashboard/storyline/desk/books/libraries/tools/settings），
 本文件只负责 app 创建、日志配置与蓝图注册。
 """
 import sys, os, logging
