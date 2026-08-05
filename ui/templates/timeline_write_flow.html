@@ -28,7 +28,9 @@
             <button id="btn-start" class="btn-primary" onclick="startFlow()">▶ 写下一个桥段</button>
             <button id="btn-stop" class="btn-danger" style="display:none;background:#da3633;color:white;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer" onclick="stopFlow()">⏹ 停止</button>
         </div>
-        <div class="gen-split-title">🖋 写作动态</div>
+        <div class="gen-split-title">📌 读者承诺台账 <span style="font-weight:normal;color:#484f58;font-size:11px">（设局→待兑现 · 收局→已兑现 · 逾期标红）</span></div>
+        <div id="wf-promises" class="gen-feed" style="max-height:150px;overflow-y:auto;font-size:11px;color:#8b949e"></div>
+        <div class="gen-split-title" style="margin-top:12px">🖋 写作动态</div>
         <div id="wf-feed" class="gen-feed"></div>
     </div>
 </div>
@@ -53,6 +55,8 @@ let controller = null;
 if (window.__BOOK_TIMELINE__ && window.StoryLine) {
     window.StoryLine.init('editor-storyline', window.__BOOK_TIMELINE__, {scrollable: true});
 }
+// 初始化读者承诺台账（已有写入的承诺）
+renderPromises(window.__BOOK_TIMELINE__ ? window.__BOOK_TIMELINE__.promises : null);
 
 function feedRight() {
     const right = document.querySelector('.editor-right');
@@ -117,6 +121,26 @@ function feedCardText(evt) {
     if (evt.chapter_words !== undefined) updateChWords(evt.chapter_words, evt.chapter_target);
     feedRight();
 }
+// 读者承诺台账渲染（pending=黄 / fulfilled=绿 / 逾期=红）
+function renderPromises(promises) {
+    const box = document.getElementById('wf-promises');
+    if (!box) return;
+    if (!promises || !promises.length) {
+        box.textContent = '暂无登记 —— 写到设局桥段后自动登记';
+        box.innerHTML = '<span style="color:#484f58">暂无登记 —— 写到设局桥段后自动登记</span>';
+        return;
+    }
+    box.innerHTML = promises.map(function(pr) {
+        let badge;
+        if (pr.status === 'fulfilled') {
+            badge = '<span class="tag green" style="margin-left:6px">✅ 已兑现 第' + (pr.payoff_chapter || '?') + '章</span>';
+        } else {
+            const overdue = (pr.deadline_chapter && pr.deadline_chapter < currentChapter) ? 'color:#f85149;' : '';
+            badge = '<span class="tag yellow" style="margin-left:6px;' + overdue + '">⏳ 待兑现（预计第' + (pr.deadline_chapter || '?') + '章）</span>';
+        }
+        return '<div style="padding:4px 0;border-bottom:1px solid #21262d">' + escapeHtml(pr.desc || '钩子') + badge + '</div>';
+    }).join('');
+}
 function updateChWords(words, target) {
     const w = document.getElementById('chp-words');
     const t = document.getElementById('chp-target');
@@ -175,6 +199,7 @@ async function writeBridge() {
                         }
                         feedItem(r.passed ? 'info' : 'warn', txt);
                     }
+                    renderPromises(evt.promises);
                 } else if (evt.type === 'budget_paused') {
                     feedItem('warn', '⛔ ' + (evt.message || '预算耗尽，暂停写作') + '——请到「设置」调高单书预算后继续写');
                 } else if (evt.type === 'bridge_skip') {

@@ -565,6 +565,83 @@ class NovelEngine:
         hints = [i.description.strip() for i in issues[:3] if (i.description or "").strip()]
         return "；".join(hints)
 
+    @staticmethod
+    def _promise_type(category: str) -> str:
+        """桥段 category → 承诺类型（免费规则）。"""
+        c = category or ""
+        if any(k in c for k in ("悬疑", "阴谋", "诡计", "调查")):
+            return "mystery"
+        if "复仇" in c or "打脸" in c:
+            return "payback"
+        if "成长" in c or "拜师" in c:
+            return "growth"
+        if any(k in c for k in ("情感", "羁绊", "日常")):
+            return "relationship"
+        return "hook"
+
+    def _estimate_bridge_chapter(self, plot) -> int:
+        """估算桥段所在章节：大纲起始 + 前面各阶段 max_ch 累计（免费规则，粗略即可）。"""
+        o = next((x for x in self.timeline.outlines if x.id == plot.outline_id),
+                 None) if self.timeline else None
+        if not o:
+            return 0
+        acc = o.start_chapter
+        for si, s in enumerate(o.stages or []):
+            if si >= plot.stage_index:
+                break
+            acc += (s.get("max_ch", 30) if isinstance(s, dict) else 30)
+        return acc
+
+    def _build_promise_from_setup(self, p) -> dict:
+        """为设局桥段生成读者承诺条目（免费规则）：desc 从桥段名+吸睛点推导，deadline 用收局桥段估算章。"""
+        payoff = next((q for q in self.timeline.plots if q.resolves_plot_id == p.id), None)
+        desc = f"「{p.name}」埋下的钩子"
+        if getattr(p, "hook_points", None):
+            desc += "（" + p.hook_points[0] + "）"
+        return {
+            "id": f"promise_{len(getattr(self.timeline, 'promises', None) or []) + 1:04d}",
+            "setup_plot_id": p.id,
+            "type": self._promise_type(p.category),
+            "desc": desc,
+            "status": "pending",
+            "setup_chapter": getattr(p, "written_chapter", 0) or 0,
+            "deadline_chapter": self._estimate_bridge_chapter(payoff) if payoff else 0,
+            "payoff_plot_id": payoff.id if payoff else "",
+            "payoff_chapter": 0,
+        }
+
+    def _update_promises_ledger(self, chapter_num: int) -> None:
+        """桥段写完后的免费规则承诺登记：设局桥段 → 新增 pending；收局桥段 → 标记 fulfilled。
+
+        模拟人类作者的"伏笔账本"：埋了记下，还了勾销；逾期由 render_bridge_prompt 注入提醒。
+        """
+        if not self.timeline:
+            return
+        promises = list(getattr(self.timeline, "promises", None) or [])
+        by_setup = {p.get("setup_plot_id", ""): p for p in promises if p.get("setup_plot_id")}
+        changed = False
+        for p in self.timeline.plots:
+            if (getattr(p, "written_chapter", 0) or 0) != chapter_num:
+                continue
+            rpid = getattr(p, "resolves_plot_id", "") or ""
+            # 收局：兑现对应承诺
+            if rpid and rpid in by_setup and by_setup[rpid].get("status") != "fulfilled":
+                by_setup[rpid]["status"] = "fulfilled"
+                by_setup[rpid]["payoff_plot_id"] = p.id
+                by_setup[rpid]["payoff_chapter"] = chapter_num
+                changed = True
+            # 设局：被收局桥段引用且未登记 → 新增 pending 承诺
+            if (not rpid and p.id not in by_setup
+                    and any(q.resolves_plot_id == p.id for q in self.timeline.plots if q.id != p.id)):
+                promises.append(self._build_promise_from_setup(p))
+                changed = True
+        if changed:
+            self.timeline.promises = promises
+            try:
+                self.book_mgr.save_timeline(self.state.book_id, self.timeline)
+            except Exception as e:
+                logger.warning("保存读者承诺台账失败: %s", e)
+
     def _route_continue(self) -> Instruction:
         """♻️ 续写路由"""
         s = self.state
@@ -833,6 +910,12 @@ class NovelEngine:
             logger.warning("章节规则审查失败: %s", e)
         review_dict = self._review_to_dict(review) if review else None
 
+        # 读者承诺台账登记：设局→pending、收局→fulfilled（免费规则）
+        try:
+            self._update_promises_ledger(chapter_num)
+        except Exception as e:
+            logger.warning("更新读者承诺台账失败: %s", e)
+
         # 保存章节
         if self.book:
             try:
@@ -902,6 +985,7 @@ class NovelEngine:
                "word_count": final.get("word_count"),
                "beats": final.get("beats"),
                "review": final.get("review"),
+               "promises": self.timeline.promises if self.timeline else None,
                "cost": final.get("cost")}
 
     def _write_next_bridge_stream(self):
@@ -972,6 +1056,7 @@ class NovelEngine:
                    "word_count": final.get("word_count"),
                    "beats": final.get("beats"),
                    "review": final.get("review"),
+                   "promises": self.timeline.promises if self.timeline else None,
                    "cost": final.get("cost")}
         else:
             yield {"type": "chapter_progress",

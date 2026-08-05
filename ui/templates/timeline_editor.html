@@ -168,6 +168,30 @@
             </div>
         </div>
 
+        {# ─── 读者承诺台账（设局→收局伏笔生命周期，写作时免费规则自动登记） ─── #}
+        <div class="phase-panel" style="margin-top:20px">
+            <div class="phase-header">
+                <h2>📌 读者承诺台账</h2>
+                <span style="font-size:11px;color:#8b949e">设局桥段写出→待兑现，收局桥段写出→已兑现；逾期会在写作 prompt 提醒</span>
+            </div>
+            <div id="promise-ledger">
+                {% if timeline.promises %}
+                {% for pr in timeline.promises %}
+                <div class="plot-card card" style="font-size:12px">
+                    <span style="color:#c9d1d9">{{ pr.desc }}</span>
+                    {% if pr.status == 'fulfilled' %}
+                    <span class="tag green" style="margin-left:8px">✅ 已兑现 第{{ pr.payoff_chapter }}章</span>
+                    {% else %}
+                    <span class="tag yellow" style="margin-left:8px">⏳ 待兑现（预计第{{ pr.deadline_chapter }}章）</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+                {% else %}
+                <p style="color:#484f58">暂无已登记承诺 —— 写作到设局桥段后会自动登记</p>
+                {% endif %}
+            </div>
+        </div>
+
         {# ─── 大纲助手：常驻聊天面板 ─── #}
         <div id="agent-panel" class="agent-panel">
             <div class="agent-header">🤖 大纲助手 <span class="agent-hint">改桥段 / 加笑点 / 改大纲，直接对我说</span></div>
@@ -696,6 +720,29 @@ function renderPhaseLists(tl) {
     if (pList) renderPlotList(pList, tl);
     var gRes = document.getElementById('gag-result');
     if (gRes) renderGagResult(gRes, tl);
+    var pLedger = document.getElementById('promise-ledger');
+    if (pLedger) renderPromises(pLedger, tl);
+}
+
+// 读者承诺台账渲染（pending=黄/fulfilled=绿，逾期标红）
+function renderPromises(container, tl) {
+    var promises = (tl && tl.promises) || [];
+    if (!promises.length) {
+        container.innerHTML = '<p style="color:#484f58">暂无已登记承诺 —— 写作到设局桥段后会自动登记</p>';
+        return;
+    }
+    var curCh = (typeof currentChapter !== 'undefined' && currentChapter) ? currentChapter : 0;
+    container.innerHTML = promises.map(function(pr) {
+        var badge;
+        if (pr.status === 'fulfilled') {
+            badge = '<span class="tag green" style="margin-left:8px">✅ 已兑现 第' + esc(pr.payoff_chapter || '?') + '章</span>';
+        } else {
+            var overdue = (pr.deadline_chapter && curCh && pr.deadline_chapter < curCh) ? ' style="color:#f85149" ' : '';
+            badge = '<span class="tag yellow"' + overdue + ' style="margin-left:8px">⏳ 待兑现（预计第' + esc(pr.deadline_chapter || '?') + '章）</span>';
+        }
+        return '<div class="plot-card card" style="font-size:12px">' +
+            '<span style="color:#c9d1d9">' + esc(pr.desc || '钩子') + '</span>' + badge + '</div>';
+    }).join('');
 }
 
 function renderOutlineList(container, tl) {

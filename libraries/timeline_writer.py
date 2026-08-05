@@ -203,7 +203,7 @@ class TimelineChapterWriter:
     def _group_prompt(self, item, chapter_buffer, prev_ending, bridge_text,
                       budget_remaining, character_states="",
                       summaries_context="", inspiration_hint="",
-                      is_opening=False):
+                      is_opening=False, chapter_num=0):
         """短句组生成 prompt：让 LLM 只输出下一小段正文（3-5 个短句）。
 
         有 harness 时委托 render_bridge_prompt（集中式模板：书级设定卡 + 语义摘要
@@ -219,7 +219,8 @@ class TimelineChapterWriter:
                 summaries_context=summaries_context,
                 inspiration_hint=inspiration_hint,
                 is_opening=is_opening,
-                review_hint=review_hint)
+                review_hint=review_hint,
+                chapter_num=chapter_num)
 
         # ── 回退：无 harness 时极简兜底（只保上下文+核心约束，防止双份模板漂移）──
         p = item["plot"]
@@ -254,7 +255,7 @@ class TimelineChapterWriter:
 
     def _write_plot_segment_groups(self, item, chapter_buffer, prev_ending,
                                    budget, character_states="", summaries_context="",
-                                   is_opening=False):
+                                   is_opening=False, chapter_num=0):
         """生成一个桥段正文：逐短句组调用 LLM，直到桥段字数预算用尽。
 
         yield (text, words)：text 为 1-3 句的一组（可能是被拆分的短句）。
@@ -285,7 +286,8 @@ class TimelineChapterWriter:
                                         bridge_text, remaining, character_states,
                                         summaries_context=summaries_context,
                                         inspiration_hint=pending_inspiration,
-                                        is_opening=is_opening)
+                                        is_opening=is_opening,
+                                        chapter_num=chapter_num)
             pending_inspiration = ""  # 命中只注入下一组，用完即清
             # 空响应重试：flash 先推理再输出，推理过长会吃掉 max_tokens 导致 content 为空
             retry_hint = "上一组输出为空，请重新输出本组正文。"
@@ -416,7 +418,8 @@ class TimelineChapterWriter:
         seg_words = 0
         for kind, text, words in self._write_plot_segment_groups(
                 item, chapter_buffer, prev_ending, budget, character_states,
-                summaries_context=summaries_context, is_opening=is_opening):
+                summaries_context=summaries_context, is_opening=is_opening,
+                chapter_num=chapter_num):
             if kind == "gag_hit":
                 yield {"type": "gag_hit",
                        "gag_ids": text.get("gag_ids", []),

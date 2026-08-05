@@ -105,6 +105,11 @@ class BookTimeline:
     # 叙事线程定义（[{"id","name","desc"}, ...]）
     threads: list[dict] = field(default_factory=list)
 
+    # 读者承诺台账（设局→收局的伏笔生命周期，写作时免费规则登记/兑现）
+    # 每项: {id, setup_plot_id, type, desc, status: pending|advanced|fulfilled,
+    #        setup_chapter, deadline_chapter, payoff_plot_id, payoff_chapter}
+    promises: list[dict] = field(default_factory=list)
+
     # 全书贯穿元素
     themes: list[str] = field(default_factory=list)
     global_gags: list[str] = field(default_factory=list)
@@ -152,6 +157,7 @@ class BookTimeline:
                 "roles": p.roles,
             } for p in self.plots],
             "threads": self.threads,
+            "promises": self.promises,
             "themes": self.themes,
             "global_gags": self.global_gags,
             "phase": self.phase,
@@ -209,6 +215,7 @@ class BookTimeline:
             roles=p.get("roles", []),
         ) for p in d.get("plots", [])]
         tl.threads = d.get("threads", [])
+        tl.promises = d.get("promises", [])
         return tl
 
 

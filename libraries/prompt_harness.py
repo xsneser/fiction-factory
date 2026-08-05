@@ -305,12 +305,14 @@ class PromptHarness:
                              summaries_context: str = "",
                              inspiration_hint: str = "",
                              is_opening: bool = False,
-                             review_hint: str = "") -> str:
+                             review_hint: str = "",
+                             chapter_num: int = 0) -> str:
         """返回 user prompt 字符串（system 沿用 timeline_writer 的铁律，不在本方法内）。
 
         item = {"outline": OutlineSlot, "stage": dict, "plot": PlotSlot}
         is_opening=True 时注入炸裂开场铁律（第一章前 N 桥段）。
         review_hint：上一章规则审查（reviewer）未过的修复提示，一次性注入首个桥段。
+        chapter_num：当前写作章节号（读者承诺台账判断逾期用）。
         """
         o = item["outline"]
         stage = item["stage"] or {}
@@ -375,6 +377,8 @@ class PromptHarness:
         if item.get("resolver_name"):
             setup_block = ("\n【设局桥段】为『" + str(item.get("resolver_name")) +
                            "』埋钩子，结尾留一个明确未解决的悬念。")
+        # 读者承诺台账：本桥段要兑现的 / 已逾期的 / 活跃可推进的（免费规则）
+        promises_block = self._promises_block(p, chapter_num) if chapter_num else ""
 
         # 视角铁律（防人称漂移：显式重申，不让模型自己定）
         _pov = str((self.timeline.basic_info or {}).get("pov", "") if self.timeline else "").strip()
@@ -416,6 +420,7 @@ class PromptHarness:
 {theme_block}
 {payoff_block}
 {setup_block}
+{promises_block}
 {inspiration_block}
 
 {summaries_block}【前文上下文】
@@ -429,6 +434,38 @@ class PromptHarness:
 5. 必须紧接上文继续，人物、视角、设定保持一致，视角始终跟随主角；绝不重开新故事、不换主角。
 6. 严禁出现：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。
 7. 不写章节标题、不标注步骤、不加解释性文字。本桥段还剩约 {budget_remaining} 字预算，控制篇幅。"""
+
+    def _promises_block(self, p, chapter_num: int) -> str:
+        """读者承诺台账块：本桥段要兑现的、已逾期的、活跃可推进的（免费规则，从 timeline.promises 现算）。
+
+        模拟人类作者的"伏笔账本"：写前扫一眼还有哪些欠读者没还、哪个逾期了。
+        """
+        if not self.timeline:
+            return ""
+        promises = getattr(self.timeline, "promises", None) or []
+        active = [q for q in promises if q.get("status") == "pending"]
+        if not active:
+            return ""
+        resolving = [q for q in active
+                     if q.get("setup_plot_id") and q.get("setup_plot_id") == getattr(p, "resolves_plot_id", "")]
+        overdue = [q for q in active
+                   if (q.get("deadline_chapter") or 0) and (q.get("deadline_chapter") or 0) < chapter_num]
+        reserved = {id(q) for q in resolving} | {id(q) for q in overdue}
+        others = [q for q in active if id(q) not in reserved][:2]
+
+        lines = []
+        if resolving:
+            lines.append("本桥段收束：兑现读者承诺「" + (resolving[0].get("desc", "") or "前文钩子")
+                         + "」，给出结果/反转、补上闭环。")
+        if overdue:
+            lines.append("已逾期读者承诺（本章内请推进或兑现其一）："
+                         + "；".join((q.get("desc", "") or "钩子") for q in overdue[:2]))
+        if others:
+            lines.append("活跃读者承诺（可择机自然推进）："
+                         + "；".join((q.get("desc", "") or "钩子") for q in others))
+        if not lines:
+            return ""
+        return "【读者承诺台账】\n" + "\n".join(lines) + "\n\n"
 
     def _roles_block(self, p) -> str:
         """本桥段出场人物：性别/性格/惯用语句/简介（防性别指代错、保持角色声线）。"""
