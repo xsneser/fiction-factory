@@ -59,11 +59,27 @@ def timeline_write_flow(engine_id):
     engine = _engines.get(engine_id)
     if not engine:
         return "引擎会话已过期", 404
+    # 已写章节（供中栏「章节正文」预载，作为书目内容连续展示）
+    chapters = []
+    book = getattr(engine, "book", None)
+    if book and (book.current_chapter or 0) >= 1:
+        try:
+            for n in range(1, book.current_chapter + 1):
+                ch = book_mgr.load_chapter(book.book_id, n)
+                if ch and ch.get("content"):
+                    chapters.append({
+                        "num": n,
+                        "title": ch.get("title") or f"第{n}章",
+                        "content": ch.get("content") or "",
+                    })
+        except Exception as e:
+            logger.warning("加载已写章节失败: %s", e)
     return render_template("timeline_write_flow.html",
         engine_id=engine_id,
         state=engine.state,
         timeline=engine.timeline,
-        book=getattr(engine, "book", None),
+        book=book,
+        chapters=chapters,
     )
 
 

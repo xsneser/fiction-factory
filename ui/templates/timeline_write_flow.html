@@ -22,11 +22,21 @@
                  phase='ready', current_chapter=state.current_chapter,
                  status=(book.status if book else 'writing')) }}
 
-{# ─── 左右分栏：左=故事线（随写作高亮）| 右=写作动态 ─── #}
+{# ─── 三栏：左=故事线 | 中=章节正文（连续） | 右=写作动态+控制 ─── #}
 <div class="editor-split">
     <div class="editor-left">
         <div class="gen-split-title">📋 故事线 · 写作中实时高亮</div>
         <div class="editor-scroll"><div id="editor-storyline" class="editor-storyline"></div></div>
+    </div>
+
+    <div class="editor-mid">
+        <div class="gen-split-title">📖 章节正文（连续，不按桥段分卡）</div>
+        <div id="wf-manuscript" class="manuscript">
+            {% for c in chapters %}
+            {% if not loop.first %}<div class="m-chapter-divider">────────</div>{% endif %}
+            <div class="m-chapter-title">第{{ c.num }}章 {{ c.title }}</div>{{ c.content }}
+            {% endfor %}
+        </div>
     </div>
 
     <div class="editor-right">
@@ -43,10 +53,6 @@
 </div>
 
 <style>
-/* 写作桥段卡片（仅写作流页面用，保留在本页） */
-.wf-card { background:#0d1117; border:1px solid #21262d; border-radius:8px; overflow:hidden; }
-.wf-card-head { font-size:12px; font-weight:600; color:#79c0ff; padding:8px 12px; border-bottom:1px solid #21262d; background:#161b22; }
-.wf-card-body { margin:0; padding:12px; font-size:12px; line-height:1.7; color:#c9d1d9; white-space:pre-wrap; word-break:break-word; max-height:340px; overflow-y:auto; }
 .wf-link { color:#3fb950; text-decoration:none; font-size:13px; }
 .wf-link:hover { text-decoration:underline; }
 </style>
@@ -67,6 +73,34 @@ if (window.__BOOK_TIMELINE__ && window.StoryLine) {
 // 初始化读者承诺台账（已有写入的承诺）
 renderPromises(window.__BOOK_TIMELINE__ ? window.__BOOK_TIMELINE__.promises : null);
 
+/* ─── 中栏：章节正文（连续文本） ─── */
+function scrollManuscript() {
+    const mid = document.querySelector('.editor-mid');
+    if (mid) mid.scrollTop = mid.scrollHeight;
+}
+function manuscriptAppend(text) {
+    const m = document.getElementById('wf-manuscript');
+    if (!m || !text) return;
+    m.appendChild(document.createTextNode(text));
+    scrollManuscript();
+}
+function manuscriptEnsureBreak() {
+    const m = document.getElementById('wf-manuscript');
+    if (!m || !m.lastChild) return;
+    const last = m.lastChild.textContent || '';
+    if (last && !/\n$/.test(last)) manuscriptAppend('\n\n');
+}
+function manuscriptDivider(text) {
+    const m = document.getElementById('wf-manuscript');
+    if (!m) return;
+    const d = document.createElement('div');
+    d.className = 'm-chapter-divider';
+    d.textContent = text;
+    m.appendChild(d);
+    scrollManuscript();
+}
+
+/* ─── 右栏：写作动态（紧凑日志，不再承载正文卡片） ─── */
 function feedRight() {
     const right = document.querySelector('.editor-right');
     if (right && right.scrollHeight - right.scrollTop - right.clientHeight < 80) {
@@ -82,69 +116,40 @@ function feedItem(cls, text) {
     feed.appendChild(d);
     feedRight();
 }
-function feedCardStart(evt) {
-    const feed = document.getElementById('wf-feed');
-    if (!feed) return;
-    const card = document.createElement('div');
-    card.className = 'wf-card';
-    card.id = 'wf-plot-' + (evt.plot_id || '');
-    const head = document.createElement('div');
-    head.className = 'wf-card-head';
-    head.textContent = '🧩 写桥段『' + (evt.plot_name || '') + '』' +
+function feedBridgeStart(evt) {
+    // 压缩为事件行；写前诊断作为 info 小字
+    feedItem('action plot', '▶ 写桥段『' + (evt.plot_name || '') + '』' +
         (evt.outline_name ? '（大纲「' + evt.outline_name + '」）' : '') +
         (evt.stage_name ? ' · ' + evt.stage_name : '') +
-        '　预计' + (evt.planned_words || '?') + '字';
-    if (evt.hook_points && evt.hook_points.length) {
-        const hook = document.createElement('div');
-        hook.style.fontWeight = 'normal';
-        hook.style.color = '#d29922';
-        hook.style.fontSize = '11px';
-        hook.style.marginTop = '2px';
-        hook.textContent = '⚡ 吸睛：' + evt.hook_points.join('、');
-        head.appendChild(hook);
-    }
-    const body = document.createElement('pre');
-    body.className = 'wf-card-body';
-    body.textContent = '⏳ 生成中...';
+        '　预计' + (evt.planned_words || '?') + '字');
     if (evt.diagnosis) {
-        body.textContent = evt.diagnosis.trim();
-        body.dataset.placeholder = '1';
-        body.style.color = '#8b949e';
+        const diag = document.createElement('div');
+        diag.className = 'gf-item info';
+        diag.style.fontSize = '11px';
+        diag.textContent = evt.diagnosis.trim();
+        document.getElementById('wf-feed').appendChild(diag);
+        feedRight();
     }
-    card.appendChild(head); card.appendChild(body);
-    feed.appendChild(card);
-    feedRight();
     // 高亮左侧对应大纲 + 桥段
     if (window.StoryLine) window.StoryLine.highlight({outline_id: evt.outline_id, plot_id: evt.plot_id});
 }
-function feedCardChunk(evt) {
-    const card = document.getElementById('wf-plot-' + (evt.plot_id || ''));
-    if (!card) return;
-    const body = card.querySelector('.wf-card-body');
-    if (!body) return;
-    if (body.textContent === '⏳ 生成中...' || body.dataset.placeholder === '1') {
-        body.textContent = '';
-        body.style.color = '';
-        body.dataset.placeholder = '';
-    }
-    body.textContent += evt.text || '';
-    feedRight();
+function feedBridgeChunk(evt) {
+    // 正文连续流入中栏（不再按桥段分卡）
+    manuscriptAppend(evt.text || '');
 }
-function feedCardText(evt) {
-    // bridge_done/plot_done：最终正文（含短句组段落）直接替换，保证与落盘一致
-    const card = document.getElementById('wf-plot-' + (evt.plot_id || ''));
-    if (!card) return;
-    const body = card.querySelector('.wf-card-body');
-    if (body) body.textContent = evt.text || '';
+function feedBridgeDone(evt) {
+    // 正文已通过 group_chunk 连续流入中栏；此处仅记完成与段落分隔
+    manuscriptEnsureBreak();
+    feedItem('success', '✅ 桥段完成');
     if (evt.chapter_words !== undefined) updateChWords(evt.chapter_words, evt.chapter_target);
     feedRight();
 }
+
 // 读者承诺台账渲染（pending=黄 / fulfilled=绿 / 逾期=红）
 function renderPromises(promises) {
     const box = document.getElementById('wf-promises');
     if (!box) return;
     if (!promises || !promises.length) {
-        box.textContent = '暂无登记 —— 写到设局桥段后自动登记';
         box.innerHTML = '<span style="color:#484f58">暂无登记 —— 写到设局桥段后自动登记</span>';
         return;
     }
@@ -196,19 +201,19 @@ async function writeBridge() {
                 if (line.indexOf('data: ') !== 0) continue;
                 let evt; try { evt = JSON.parse(line.slice(6)); } catch (e) { continue; }
                 if (evt.type === 'bridge_start' || evt.type === 'plot_start') {
-                    feedCardStart(evt);
+                    feedBridgeStart(evt);
                 } else if (evt.type === 'group_chunk' || evt.type === 'plot_chunk') {
-                    feedCardChunk(evt);
+                    feedBridgeChunk(evt);
                 } else if (evt.type === 'bridge_done' || evt.type === 'plot_done') {
-                    feedCardText(evt);
+                    feedBridgeDone(evt);
                 } else if (evt.type === 'chapter_progress') {
                     updateChWords(evt.words, evt.target);
                 } else if (evt.type === 'chapter_done') {
                     currentChapter = evt.chapter || currentChapter;
                     updateProg();
                     updateChWords(0, document.getElementById('chp-target').textContent);
+                    manuscriptDivider('──────── 第' + evt.chapter + '章 完（' + evt.word_count + '字）────────');
                     feedItem('success', '✅ 第' + evt.chapter + '章完成 · ' + evt.word_count + '字 · 花费 ¥' + (evt.cost || 0));
-                    // 断点2修复：写完后提供「查看本章 / 去书详情」跳转
                     if (bookId) {
                         const links = document.createElement('div');
                         links.style.margin = '4px 0 8px';
@@ -232,7 +237,6 @@ async function writeBridge() {
                     feedItem('info', '⏭️ ' + (evt.reason || '桥段跳过'));
                 } else if (evt.type === 'complete') {
                     feedItem('success', '🎉 ' + (evt.message || '全书完成'));
-                    // 断点3修复：全书完成 → 提供上架/导出与书详情入口
                     if (evt.book_id) {
                         const d = document.createElement('div');
                         d.style.margin = '4px 0 8px';
