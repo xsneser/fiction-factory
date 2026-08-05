@@ -4,7 +4,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from flask import Blueprint, render_template, render_template_string, request, jsonify, redirect, url_for, Response, stream_with_context
 from .ctx import *
-from .books import _book_rows
 bp = Blueprint("desk", __name__)
 
 # ═══════════════════════════════════════════
@@ -13,9 +12,12 @@ bp = Blueprint("desk", __name__)
 # ═══════════════════════════════════════════
 
 def desk_list():
-    """写作台 — 列出正式书籍，每本进入写作/续写（不再列游离时间线草稿）"""
-    rows = _book_rows()
-    return render_template("desk_list.html", books=rows)
+    """写作台 — 故事线编辑器（从书库带书进入）。
+
+    写作台按书进入：书库每本书的「✍️ 写作台」入口打开 /timeline/<id>/edit；
+    直接访问 /desk（无书上下文）显示空界面，引导回书库选书。
+    """
+    return render_template("desk_empty.html")
 
 
 @bp.route("/books/start/timeline/<timeline_id>/write")

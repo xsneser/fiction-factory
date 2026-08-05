@@ -200,7 +200,7 @@ D:\NovelEngine/
 │       ├── timeline_detail.html # 故事线草稿详情
 │       ├── timeline_outline_card.html # 大纲卡片组件
 │       ├── timeline_write_flow.html # 蓝图式写作台
-│       ├── desk_list.html  # 写作台列表
+│       ├── desk_empty.html # 写作台空界面（从书库选书进入）
 │       ├── extract.html    # 内容提取
 │       ├── settings.html   # 设置
 │       ├── review_test.html# 审阅测试

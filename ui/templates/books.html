@@ -26,7 +26,7 @@
         <td>{{ status_badge(b.status) }}</td>
         <td style="white-space:nowrap">
             {% if r.next %}<a href="{{ r.next.href }}" class="btn small" style="background:#1f6feb;color:#fff">{{ r.next.label }}</a>{% endif %}
-            <a href="/timeline/{{ b.book_id }}/edit" class="btn small">📋 继续规划</a>
+            <a href="/timeline/{{ b.book_id }}/edit" class="btn small">✍️ 写作台</a>
             {% if r.is_timeline %}
             <a href="/books/start/timeline/{{ b.book_id }}/write" class="btn small secondary">✍️ 开始写作</a>
             <a href="/books/{{ b.book_id }}" class="btn small secondary">📖 详情</a>
