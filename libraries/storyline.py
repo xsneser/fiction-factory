@@ -17,6 +17,22 @@ from core.json_store import read_json, write_json_atomic
 # 数据结构
 # ═══════════════════════════════════════════
 
+# 世界观「设定圣经」默认结构 —— 由 WorldBuildingGenerator 填充，写作时经 prompt_harness 注入。
+# description 是"一句话种子"老字段（新书启动页写入），结构化维度全空时作兜底注入。
+DEFAULT_WORLD_BUILDING = {
+    "description": "",        # 一句话设定种子（老字段，保持兼容）
+    "era": "",                # 时代背景（含年份/纪元，如"灵气复苏后2030年"）
+    "power_system": "",       # 力量体系（数值/技能语义全书唯一口径）
+    "factions": [],           # 势力派系 [str] 或 [{name, stance, ...}]
+    "rules": [],              # 世界规则（系统/金手指的数值语义写死）
+    "geography": "",          # 地理：主要地域/大陆/城市/秘境/势力地盘
+    "culture": "",            # 文化：宗门/家族/流派/风俗/价值观
+    "history": "",            # 历史：背景大事件/时代断层/被掩盖的秘密
+    "social_structure": "",   # 社会结构：阶级划分/权力架构/晋升与压制规则
+    "core_conflict": "",      # 核心矛盾：驱动全书的根本冲突
+    "world_summary": "",      # 设定文：一段整体世界观概述（200-300 字）
+}
+
 @dataclass
 class OutlineSlot:
     """一个大纲在故事线上的位置"""
@@ -89,8 +105,9 @@ class BookStoryline:
 
     # 基础信息库（参考 show-me-the-story 的设定体系）
     basic_info: dict = field(default_factory=lambda: {
-        "protagonist": {"name": "", "identity": "", "personality": "", "background": "", "golden_finger": ""},
-        "world_building": {"era": "", "power_system": "", "factions": [], "rules": []},
+        "protagonist": {"name": "", "identity": "", "personality": "", "background": "",
+                        "golden_finger": "", "gender": "", "age": 0, "death_year": 0},
+        "world_building": dict(DEFAULT_WORLD_BUILDING),
         "supporting_cast": [],
         "tone": "",        # 轻松/沉重/热血/幽默
         "target_audience": "",

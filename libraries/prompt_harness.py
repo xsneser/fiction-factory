@@ -78,6 +78,34 @@ CONSISTENCY_RULES = """【全书一致性铁律】
 4. 跨场景/跨天的事件之间要有自然时间过渡（如"当天夜里""三天后"），禁止无衔接跳转。"""
 
 
+# ── 世界观/设定生成（启动新书前置）──
+WORLD_BUILD_SYSTEM = (
+    "你是一位资深中文网文世界观策划编辑。"
+    "你的任务是先构思一个完整自洽的世界，再让笔下人物活在这个世界里。"
+    "文字要具体、有画面、有网文味，不要空泛说教。"
+)
+WORLD_BUILD_STRUCT_SYSTEM = (
+    "你是资深网文策划编辑，负责把世界观设定文结构化并推导主角配角。"
+    "严格以 JSON 格式返回，不要任何额外文字。"
+)
+WORLD_CANDIDATES_SYSTEM = (
+    "你是网文策划编辑，擅长从同一句话发散出几个截然不同的世界观方向。"
+    "只返回 JSON。"
+)
+
+# 世界观各维度要求 —— 每次生成都注入，确保产出"可写的设定圣经"而非空话
+WORLD_BUILDING_SCHEMA_HINT = """世界观各维度要求（每一项都要具体可写，避免空泛）：
+- era 时代背景：含年份/纪元（如"灵气复苏后2030年"）
+- power_system 力量体系：体系名+层级+晋升路径；金手指的数值/技能语义必须写死（如"效率×2"具体指什么翻倍），全书口径唯一
+- factions 势力派系：2-4 个，每个给名称+立场
+- geography 地理：主要地域/大陆/城市/秘境/势力地盘
+- culture 文化：宗门/家族/流派/风俗/价值观/流行事物
+- history 历史：背景大事件/时代断层/被掩盖的秘密
+- social_structure 社会结构：阶级划分/权力架构/晋升与压制规则
+- core_conflict 核心矛盾：驱动全书的根本冲突（1-2 句）
+- world_summary 设定文：一段 200-300 字整体设定概述"""
+
+
 def _profile_style_text(profile) -> str:
     """从 PenNameProfile 或 dict 生成风格 bullet 文本（去掉标题行）。"""
     if profile is None:
@@ -156,19 +184,40 @@ class PromptHarness:
         if not tl:
             return ""
         wb = (tl.basic_info or {}).get("world_building", {}) or {}
-        if not wb.get("era") and not wb.get("power_system"):
-            return ""
+        # 老字段兜底：结构化维度全空时，用一句话种子 description 撑住注入
+        structured_keys = ("era", "power_system", "geography", "culture", "history",
+                           "social_structure", "core_conflict")
+        if not any(str(wb.get(k, "") or "").strip() for k in structured_keys) \
+                and not (wb.get("factions") or wb.get("rules") or wb.get("world_summary")):
+            desc = str(wb.get("description", "") or "").strip()
+            return f"- 世界观：{desc[:120]}" if desc else ""
+
         parts = ["- 世界观："]
+        summary = str(wb.get("world_summary", "") or "").strip()
+        if summary:
+            parts.append(f"  概览：{summary[:120]}")
         if wb.get("era"):
             parts.append(f"  时代：{str(wb['era'])[:40]}")
         if wb.get("power_system"):
             parts.append(f"  力量体系：{str(wb['power_system'])[:60]}")
-        factions = [str(f) for f in (wb.get("factions") or [])][:4]
+        for key, label in (("geography", "地理"), ("culture", "文化"),
+                           ("history", "历史"), ("social_structure", "社会结构")):
+            val = str(wb.get(key, "") or "").strip()
+            if val:
+                parts.append(f"  {label}：{val[:50]}")
+        factions = []
+        for f in (wb.get("factions") or [])[:4]:
+            if isinstance(f, dict):
+                f = f.get("name", str(f))
+            factions.append(str(f))
         if factions:
             parts.append("  势力：" + "、".join(factions))
         rules = [str(r) for r in (wb.get("rules") or [])][:5]
         if rules:
             parts.append("  规则：" + "；".join(r[:60] for r in rules))
+        conflict = str(wb.get("core_conflict", "") or "").strip()
+        if conflict:
+            parts.append(f"  核心矛盾：{conflict[:60]}")
         parts.append("  设定铁律：数值/技能语义全书唯一口径（如『效率×2』指同一件事），禁止每章换一种解释。")
         return "\n".join(parts)
 
@@ -666,3 +715,80 @@ class PromptHarness:
                 pool.append(g)
         pool.sort(key=lambda g: getattr(g, "usage_count", 0))
         return pool[:6]
+
+    # ═══════════════════════════════════════════
+    # 场景 D：世界观/设定生成（启动新书前置；集中式 prompt）
+    # ═══════════════════════════════════════════
+
+    def _seed_block(self, seed_basic_info: dict) -> str:
+        """把借鉴种子格式化为 prompt 硬约束块（懒 import 避免与 world_builder 循环）。"""
+        if not seed_basic_info:
+            return ""
+        from .world_builder import WorldBuildingGenerator
+        text = WorldBuildingGenerator.seed_to_text(seed_basic_info)
+        return f"【已借鉴设定 —— 新书必须继承，仅按微调句改变】\n{text}\n" if text else ""
+
+    def render_world_build_draft_prompt(self, idea: str, genre: str = "",
+                                        sub_genre: str = "", seed_basic_info=None,
+                                        platform: str = "") -> str:
+        """Call A：一句话 → 世界观设定短文（非 JSON，300-500 字叙事化覆盖各维度）。"""
+        style = _profile_style_text(self.profile)
+        parts = [
+            "请根据以下一句话设定，构思一段【世界观设定短文】（300-500 字叙事化文字，不要列条目）：",
+            "",
+            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
+            f"【一句话设定】{idea or '（请按该流派标准开局自由构思）'}",
+        ]
+        if platform:
+            parts.append(f"【目标平台】{platform}")
+        if style:
+            parts.append(f"【风格偏好】\n{style}")
+        if seed_basic_info:
+            parts.append(self._seed_block(seed_basic_info))
+        parts.append("")
+        parts.append("短文要用叙事化的语言把这个世界讲清楚，覆盖：时代、力量体系、地理、文化、历史、社会结构、核心矛盾。具体有画面，禁止空泛说教。")
+        return "\n".join(parts)
+
+    def render_world_build_struct_prompt(self, world_summary: str, idea: str,
+                                         genre: str = "", sub_genre: str = "",
+                                         seed_basic_info=None, profile=None) -> str:
+        """Call B：设定短文 → 结构化 JSON（扩展世界观 + 主角/配角推导）。"""
+        style = _profile_style_text(profile if profile is not None else self.profile)
+        parts = [
+            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
+            f"【一句话设定】{idea or ''}",
+        ]
+        if str(world_summary or "").strip():
+            parts.append(f"\n【已构思的世界观设定文】\n{str(world_summary).strip()}")
+        if style:
+            parts.append(f"\n【风格偏好】\n{style}")
+        parts.append(
+            "\n【任务】先审视上面的世界观设定文，再在其上完成以下结构化提取，严格返回 JSON（不要任何额外文字）：\n"
+            "1. 先确认/补全世界观各维度（与设定文一致，可适度延伸）。\n"
+            "2. 再据此推导主角：身份、性格、背景、金手指必须与世界观自洽（主角诞生于这个世界/这个时代）。\n"
+            "3. 再推导 2-3 个关键配角：与主角关系明确，称谓/口头禅具体。\n"
+            "4. 金手指的数值/技能语义写死（如\"效率×2\"指具体什么翻倍），全书口径唯一。\n"
+            "5. 基调/目标读者/视角/时代语言约束与世界观时代匹配。\n\n"
+            + WORLD_BUILDING_SCHEMA_HINT
+            + "\n\n返回 JSON：\n"
+            + '{\n'
+            + '  "world_building": {"era":"","power_system":"","factions":[{"name":"","stance":""}],"rules":[],"geography":"","culture":"","history":"","social_structure":"","core_conflict":"","world_summary":""},\n'
+            + '  "protagonist": {"name":"","identity":"","personality":"","background":"","golden_finger":"","gender":"","age":0,"death_year":0},\n'
+            + '  "supporting_cast": [{"name":"","role":"","relation":"","gender":"男/女","title":"","personality":"","catchphrase":"","brief":""}],\n'
+            + '  "tone": "",\n'
+            + '  "target_audience": "",\n'
+            + '  "pov": "第三人称",\n'
+            + '  "era_language": ""\n'
+            + '}'
+        )
+        return "\n".join(parts)
+
+    def render_world_candidates_prompt(self, idea: str, genre: str = "",
+                                       sub_genre: str = "", count: int = 3) -> str:
+        """示例候选：一次产出 count 个差异化世界观候选。"""
+        return "\n".join([
+            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
+            f"【一句话设定】{idea or '（无，按流派自由发散）'}",
+            f"【要求】从这句话/流派发散出 {count} 个截然不同的世界观方向，方向之间差异要明显（如：废土系统流 / 灵气复苏权谋流 / 异界学院召唤流）。",
+            '返回 JSON：{"candidates":[{"title":"候选名/书名","one_liner":"一句话核心设定（可直接作为新书的一句话种子）","world_brief":"120-200字世界观简述","genre_hint":"子流派标签"}]}',
+        ])
