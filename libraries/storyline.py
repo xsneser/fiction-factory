@@ -541,6 +541,30 @@ def merge_basic_info(existing: dict, generated: dict) -> dict:
     return merged
 
 
+def basic_info_world_done(basic_info) -> bool:
+    """basic_info 是否已具备世界观设定（宽松判定）。
+
+    供引擎规划态进入 + 步骤条「世界观」done 态共用。
+    - _world_generated 标记（世界卡已确认）→ True
+    - world_building 任一维度（含 description 一句话种子）填充 或 主角名非空 → True
+    - 空 basic_info → False（无设定也无大纲的老书走报错路径）
+    """
+    bi = basic_info or {}
+    if bi.get("_world_generated"):
+        return True
+    wb = bi.get("world_building") or {}
+    if not isinstance(wb, dict):
+        wb = {}
+    filled = 0
+    for k in ("era", "power_system", "geography", "culture", "history",
+              "social_structure", "core_conflict", "world_summary", "description"):
+        v = wb.get(k)
+        if (isinstance(v, list) and v) or str(v or "").strip():
+            filled += 1
+    protag_name = str((bi.get("protagonist") or {}).get("name", "") or "").strip()
+    return filled >= 1 or bool(protag_name)
+
+
 # 常见词过滤，防角色名误判（如"主角""大家"）
 _ROLE_STOPWORDS = {
     "这个", "那个", "什么", "怎么", "一个", "一下", "主角", "大家", "系统",

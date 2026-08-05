@@ -271,10 +271,14 @@
                 <button class="btn-primary btn-sm" onclick="agentSend()">发送</button>
             </div>
         </div>
+        {% if storyline and storyline.outlines %}
         <div style="display:flex;gap:12px;margin:12px 0;align-items:center">
             <button id="btn-start" class="btn-primary" onclick="startFlow()">▶ 写下一个桥段</button>
             <button id="btn-stop" class="btn-danger" style="display:none;background:#da3633;color:white;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer" onclick="stopFlow()">⏹ 停止</button>
         </div>
+        {% else %}
+        <div style="margin:12px 0;color:#8b949e;font-size:13px">先生成大纲后再开始写作。</div>
+        {% endif %}
         <div class="gen-split-title">🖋 写作动态</div>
         <div id="wf-feed" class="gen-feed"></div>
     </div>

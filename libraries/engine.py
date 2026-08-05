@@ -26,6 +26,7 @@ from libraries.reviewer import ContentReviewer
 from libraries.assembler import BookAssemblerPlan
 from libraries.prompt_harness import PromptHarness
 from libraries.gag_injector import GagInjector
+from libraries.storyline import basic_info_world_done
 from core.text_utils import count_prose_units
 
 
@@ -256,13 +257,14 @@ class NovelEngine:
             except Exception as e:
                 logger.warning("恢复组装计划失败 (%s): %s", plan_path, e)
 
-        # 加载故事线（唯一写作核心 = 桥段写作）：无故事线直接报错
+        # 加载故事线（唯一写作核心 = 桥段写作）：无 storyline 直接报错
         tl = self.book_mgr.load_storyline(book_id)
-        if tl is None or not tl.outlines:
+        if tl is None:
             raise ValueError(
-                "该书未生成故事线（storyline）。请先在故事线编辑器生成并确认故事线，再进行写作。")
-        if tl and tl.outlines:
-            self.storyline = tl
+                "该书未生成故事线（storyline）。请先启动新书生成世界观设定并确认，再进行写作。")
+        self.storyline = tl
+
+        if tl.outlines:
             self._derive_chapters_from_storyline(tl)
             # 总章节数按桥段真实规划重算（让书库/详情/写作台进度与实际写作计划一致）
             planned_total = self._planned_total_chapters()
@@ -290,13 +292,19 @@ class NovelEngine:
                     detector_frequency=getattr(self.book, "detector_frequency", 1) or 1)
             # 注册主角/配角（续写：register 重名去重，不覆盖已存的动态状态）
             self._register_storyline_characters(tl)
+        else:
+            # 规划态：世界观设定已生成但 outlines 为空 → 允许进写作台点「一键生成完整大纲」。
+            # 不初始化写作者；gen-full 落盘后由引擎缓存失效 + reload 重建（届时 outlines 已有 → 建写作者）。
+            if not basic_info_world_done(tl.basic_info):
+                raise ValueError(
+                    "该书未生成故事线（storyline）且无基础设定。请先在世界观设定卡完成设定并确认，再进行写作。")
 
         # 确定当前阶段
         if self.book.current_chapter >= self.book.chapter_count:
             self.state.phase = Phase.COMPLETE
         elif self.state.chapters and self.book.current_chapter > 0:
             self.state.phase = Phase.WRITING
-        elif tl and tl.outlines:
+        elif tl.outlines:
             # 故事线书即使一章未写也直接进写作（用 storyline 大纲，永不发 PLAN_OUTLINE）
             self.state.phase = Phase.WRITING
         else:

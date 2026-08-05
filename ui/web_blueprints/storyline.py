@@ -570,10 +570,13 @@ def api_generate_full(storyline_id):
                     _save_storyline(tl, storyline_id)
                     payload["storyline"] = tl.to_dict()
                     task_manager.done(task_id, message="完整大纲生成完成")
+                    # 大纲已变化：失效续写引擎缓存，让前端 reload 后重建（含桥段写作者）
+                    _engines.pop(f"cont_{storyline_id}", None)
 
                 yield "data: " + _json.dumps(payload, ensure_ascii=False) + "\n\n"
         except Exception as e:
             import traceback
+            _engines.pop(f"cont_{storyline_id}", None)
             task_manager.fail(task_id, str(e))
             err_payload = {"event": "error", "message": str(e),
                            "traceback": traceback.format_exc()}
