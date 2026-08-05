@@ -61,6 +61,7 @@ def timeline_write_flow(engine_id):
         engine_id=engine_id,
         state=engine.state,
         timeline=engine.timeline,
+        book=getattr(engine, "book", None),
     )
 
 

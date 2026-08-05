@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}启动新书 — NovelEngine{% endblock %}
 {% block content %}
+{% from "_flow_stepper.html" import flow_stepper %}
+{{ flow_stepper(1) }}
 <h1>🔰 启动新书</h1>
 <p class="subtitle">填写基本信息即可创建故事线草稿，随后在故事线编辑器里生成完整大纲并开始写作。</p>
 

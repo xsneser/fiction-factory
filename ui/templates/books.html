@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
+{% from "_flow_stepper.html" import status_badge %}
 <h1>📚 书库 <a href="/books/start" class="btn" style="float:right">+ 新书</a></h1>
 
 {% if books %}
 <table>
-    <thead><tr><th>书名</th><th>笔名</th><th>流派</th><th>大纲</th><th>进度</th><th>操作</th></tr></thead>
+    <thead><tr><th>书名</th><th>笔名</th><th>流派</th><th>大纲</th><th>进度</th><th>状态</th><th>操作</th></tr></thead>
     <tbody>
     {% for r in books %}
     {% set b = r.book %}
@@ -22,7 +23,9 @@
             {% endif %}
         </td>
         <td>{{ b.current_chapter }}/{{ b.chapter_count }}</td>
+        <td>{{ status_badge(b.status) }}</td>
         <td style="white-space:nowrap">
+            {% if r.next %}<a href="{{ r.next.href }}" class="btn small" style="background:#1f6feb;color:#fff">{{ r.next.label }}</a>{% endif %}
             <a href="/timeline/{{ b.book_id }}/edit" class="btn small">📋 继续规划</a>
             {% if r.is_timeline %}
             <a href="/books/start/timeline/{{ b.book_id }}/write" class="btn small secondary">✍️ 开始写作</a>

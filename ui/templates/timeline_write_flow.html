@@ -3,6 +3,7 @@
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css">
 <link rel="stylesheet" href="/static/css/workspace.css">
+{% from "_flow_stepper.html" import flow_stepper, status_badge %}
 <script>window.__BOOK_TIMELINE__ = {{ timeline.to_dict() | tojson if timeline else 'null' }};</script>
 <div class="tle-layout">
 <h1>🔰 蓝图式写作（新核心）</h1>
@@ -14,7 +15,12 @@
     <span>每章：<strong>{{ timeline.words_per_chapter }}字</strong></span>
     <span>进度：<strong id="prog-ch">{{ state.current_chapter }}</strong> / <span id="prog-total">{{ state.total_chapters }}</span> 章</span>
     <span>本章：<strong id="chp-words">0</strong>/<span id="chp-target">{{ timeline.words_per_chapter }}</span>字</span>
+    <span>状态：{{ status_badge(book.status) if book else status_badge('writing') }}</span>
 </div>
+
+{{ flow_stepper(3 if state.current_chapter < 2 else 4, book_id=state.book_id,
+                 phase='ready', current_chapter=state.current_chapter,
+                 status=(book.status if book else 'writing')) }}
 
 {# ─── 左右分栏：左=故事线（随写作高亮）| 右=写作动态 ─── #}
 <div class="editor-split">
@@ -41,11 +47,14 @@
 .wf-card { background:#0d1117; border:1px solid #21262d; border-radius:8px; overflow:hidden; }
 .wf-card-head { font-size:12px; font-weight:600; color:#79c0ff; padding:8px 12px; border-bottom:1px solid #21262d; background:#161b22; }
 .wf-card-body { margin:0; padding:12px; font-size:12px; line-height:1.7; color:#c9d1d9; white-space:pre-wrap; word-break:break-word; max-height:340px; overflow-y:auto; }
+.wf-link { color:#3fb950; text-decoration:none; font-size:13px; }
+.wf-link:hover { text-decoration:underline; }
 </style>
 
 <script src="/static/js/story_line.js"></script>
 <script>
 const engineId = "{{ engine_id }}";
+const bookId = "{{ state.book_id }}";
 let currentChapter = {{ state.current_chapter }};
 let running = false;
 let stopped = false;
@@ -199,6 +208,14 @@ async function writeBridge() {
                     updateProg();
                     updateChWords(0, document.getElementById('chp-target').textContent);
                     feedItem('success', '✅ 第' + evt.chapter + '章完成 · ' + evt.word_count + '字 · 花费 ¥' + (evt.cost || 0));
+                    // 断点2修复：写完后提供「查看本章 / 去书详情」跳转
+                    if (bookId) {
+                        const links = document.createElement('div');
+                        links.style.margin = '4px 0 8px';
+                        links.innerHTML = '<a class="wf-link" href="/books/' + bookId + '#ch-' + evt.chapter + '">📖 查看本章</a>' +
+                            ' · <a class="wf-link" href="/books/' + bookId + '">📄 去书详情</a>';
+                        document.getElementById('wf-feed').appendChild(links);
+                    }
                     if (evt.review) {
                         const r = evt.review;
                         const verdict = r.passed ? '✅ 通过' : '❌ 未过';
@@ -215,6 +232,14 @@ async function writeBridge() {
                     feedItem('info', '⏭️ ' + (evt.reason || '桥段跳过'));
                 } else if (evt.type === 'complete') {
                     feedItem('success', '🎉 ' + (evt.message || '全书完成'));
+                    // 断点3修复：全书完成 → 提供上架/导出与书详情入口
+                    if (evt.book_id) {
+                        const d = document.createElement('div');
+                        d.style.margin = '4px 0 8px';
+                        d.innerHTML = '<a class="wf-link" href="/books/' + evt.book_id + '/publish">🚀 去上架 / 导出</a>' +
+                            ' · <a class="wf-link" href="/books/' + evt.book_id + '">📄 书详情</a>';
+                        document.getElementById('wf-feed').appendChild(d);
+                    }
                 } else if (evt.type === 'error') {
                     feedItem('error', '❌ ' + (evt.message || '写作失败'));
                 }

@@ -20,6 +20,24 @@ def books():
 
 _book_rows_cache: dict = {}  # book_id -> (mtimes, row)
 
+
+def next_step_for(book, is_timeline: bool = False) -> dict:
+    """根据图书状态给出「下一步」动作（供书库/写作台/仪表盘列表渲染）。"""
+    bid = book.book_id
+    if is_timeline or book.status == "ready":
+        # 已完成故事线的草稿（tl_*）→ 开始写作；正式书规划中 → 先规划大纲
+        if is_timeline:
+            return {"label": "开始写作", "href": f"/books/start/timeline/{bid}/write", "step": 3}
+        return {"label": "规划大纲", "href": f"/timeline/{bid}/edit", "step": 2}
+    if book.status in ("writing", "reviewing"):
+        return {"label": "继续写作", "href": f"/books/{bid}/continue", "step": 3}
+    if book.status == "finished":
+        return {"label": "上架出版", "href": f"/books/{bid}/publish", "step": 5}
+    if book.status == "published":
+        return {"label": "查看上架", "href": f"/books/{bid}/publish", "step": 5}
+    return {"label": "查看详情", "href": f"/books/{bid}", "step": 2}
+
+
 def _book_sig(bid: str):
     """books/{id} 三份关键文件的 mtime，用于判断行级缓存是否仍有效。"""
     paths = (f"books/{bid}/book.json", f"books/{bid}/timeline.json",
@@ -52,6 +70,7 @@ def _book_rows():
             "timeline_outlines": len(tl.outlines) if tl else 0,
             "timeline_plots": len(tl.plots) if tl else 0,
             "outline_count": len((outline or {}).get("stages", [])) if outline else 0,
+            "next": next_step_for(b, False),
         }
         _book_rows_cache[b.book_id] = (sig, row)
         rows.append(row)
@@ -98,6 +117,7 @@ def _book_rows():
             "timeline_outlines": len(tl.outlines),
             "timeline_plots": len(tl.plots),
             "outline_count": 0,
+            "next": next_step_for(bc, True),
         }
         _book_rows_cache[tl_id] = (tsig, row)
         rows.append(row)

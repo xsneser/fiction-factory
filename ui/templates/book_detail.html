@@ -1,12 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
+{% from "_flow_stepper.html" import flow_stepper, status_badge %}
+{{ flow_stepper(5 if book.status in ('finished','published') else (3 if book.current_chapter >= 1 else 2),
+                 book_id=book.book_id,
+                 phase=(timeline.phase if timeline else 'config'),
+                 current_chapter=book.current_chapter, status=book.status) }}
 <h1>📖 {{ book.title or '(未命名)' }}</h1>
 
-<div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+<div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
+    <span>状态：{{ status_badge(book.status) }}</span>
     <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 续写 / 进入写作台</a>
+    <a href="/books/{{ book.book_id }}/publish" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">🚀 上架 / 导出</a>
     <a href="#" class="btn" style="background:#8957e5;color:#fff;text-decoration:none" onclick="generateMeta()">🎬 生成书名/简介</a>
     {% if basic_info.get('has_timeline') %}
-    <a href="/timeline/{{ book.book_id }}/edit" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">📋 编辑大纲</a>
+    <a href="/timeline/{{ book.book_id }}/edit" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none">📋 编辑大纲</a>
     {% endif %}
     <form method="POST" action="/books/{{ book.book_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ book.title }}》？')">
         <button class="small danger" style="padding:8px 16px">删除</button>
@@ -160,7 +167,7 @@
 {% if chapters %}
 <h3>📄 已生成章节 ({{ chapters|length }})</h3>
 {% for ch in chapters %}
-<div class="accordion"><div class="accordion-header"><span>第{{ ch.num }}章: {{ ch.title }}</span><span style="color:#8b949e;font-size:12px">📊 {{ ch.word_count }} 字 · {{ ch.created_at[:16] if ch.created_at else '' }}</span></div>
+<div class="accordion" id="ch-{{ ch.num }}"><div class="accordion-header"><span>第{{ ch.num }}章: {{ ch.title }}</span><span style="color:#8b949e;font-size:12px">📊 {{ ch.word_count }} 字 · {{ ch.created_at[:16] if ch.created_at else '' }}</span></div>
     <div class="accordion-body">
         {% if ch.summary %}<p style="color:#8b949e">📝 {{ ch.summary }}</p>{% endif %}
         {% if ch.review %}

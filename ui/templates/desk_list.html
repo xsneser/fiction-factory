@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}写作台 — 选择书籍{% endblock %}
 {% block content %}
+{% from "_flow_stepper.html" import status_badge %}
 <h1>✍️ 写作台</h1>
 <p style="color:#8b949e;margin-bottom:20px">选择一本书进入写作/续写</p>
 
@@ -9,7 +10,7 @@
     {% for r in books %}
     {% set b = r.book %}
     <div class="card desk-card">
-        <div class="title">{{ b.pen_name }} · {{ b.title }}</div>
+        <div class="title">{{ b.pen_name }} · {{ b.title }} {{ status_badge(b.status) }}</div>
         <div class="meta">{{ b.genre }}{% if b.sub_genre %}/{{ b.sub_genre }}{% endif %} · 进度 {{ b.current_chapter }}/{{ b.chapter_count }} 章</div>
         <div style="margin:8px 0">
             {% if r.has_timeline %}
@@ -21,7 +22,8 @@
             {% endif %}
         </div>
         <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-            <a href="/timeline/{{ b.book_id }}/edit" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none;display:inline-block">📋 继续规划</a>
+            {% if r.next %}<a href="{{ r.next.href }}" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none;display:inline-block">{{ r.next.label }}</a>{% endif %}
+            <a href="/timeline/{{ b.book_id }}/edit" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">📋 继续规划</a>
             {% if r.is_timeline %}
             <a href="/books/start/timeline/{{ b.book_id }}/write" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">✍️ 开始写作</a>
             <a href="/books/{{ b.book_id }}" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none;display:inline-block">📖 详情</a>
