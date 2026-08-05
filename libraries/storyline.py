@@ -249,17 +249,29 @@ def structure_to_stages(tmpl) -> list[dict]:
     ]
 
 
-def mount_themes_and_hooks(plot: "PlotSlot", theme_entries: list, storyline_themes: list) -> None:
+# 内涵→桥段兼容映射（免费规则，替代 theme_lib.compatible_plots）
+# 由内置母题 compatible_plots 反查：桥段模板 id → 可承载母题名（保留完整名，与 tl.themes 一致）。
+# 删除 theme_lib 后此常量是「内涵跟随桥段」的唯一数据源。
+THEME_PLOT_COMPAT = {
+    "plot_dating_001": ["公平（Justice）", "身份与伪装（Identity & Disguise）"],
+    "plot_dating_003": ["归属感（Belonging）", "传承与突破（Legacy & Breakthrough）"],
+    "plot_dating_004": ["成长的代价（Cost of Growth）", "传承与突破（Legacy & Breakthrough）"],
+    "plot_dating_005": ["公平（Justice）"],
+    "plot_dating_006": ["成长的代价（Cost of Growth）", "牺牲（Sacrifice）"],
+    "plot_dating_008": ["身份与伪装（Identity & Disguise）"],
+    "plot_dating_010": ["公平（Justice）", "成长的代价（Cost of Growth）",
+                        "牺牲（Sacrifice）", "归属感（Belonging）"],
+}
+
+
+def mount_themes_and_hooks(plot: "PlotSlot", storyline_themes: list) -> None:
     """给桥段挂载内涵（跟随桥段）并标注吸睛点 —— StorylineBuilder/OutlineGenerator 共用，单一实现防漂移。
 
-    内涵只挂到能承载它的桥段（ThemeEntry.compatible_plots 命中），不强挂；
+    内涵只挂到能承载它的桥段（THEME_PLOT_COMPAT 命中），不强挂；
     未命中的母题仍作为书级可用线索随「书级设定卡」注入写作；笑点完全涌现，不在此分配。
     """
-    theme_hints = []
-    for name in storyline_themes:
-        entry = next((e for e in theme_entries if e.name == name), None)
-        if entry and plot.template_id in (entry.compatible_plots or []):
-            theme_hints.append(entry.name)
+    compatible = THEME_PLOT_COMPAT.get(getattr(plot, "template_id", ""), [])
+    theme_hints = [name for name in storyline_themes if name in compatible]
     plot.theme_hints = theme_hints[:2]
 
     hook_candidates = []
@@ -278,11 +290,10 @@ def mount_themes_and_hooks(plot: "PlotSlot", theme_entries: list, storyline_them
 class StorylineBuilder:
     """根据流派和用户需求，生成大纲故事线 + 桥段配置"""
 
-    def __init__(self, structure_lib=None, plot_lib=None, gag_lib=None, theme_lib=None, llm_client=None):
+    def __init__(self, structure_lib=None, plot_lib=None, gag_lib=None, llm_client=None):
         self.structures = structure_lib
         self.plots = plot_lib
         self.gags = gag_lib
-        self.themes = theme_lib
         self.llm = llm_client
         self._counter = 0
 
@@ -487,8 +498,7 @@ class StorylineBuilder:
     def fill_themes_and_hooks(self, plots: list[PlotSlot], storyline: BookStoryline):
         """给桥段挂载内涵（跟随桥段）并标注吸睛点（委托共享 mount_themes_and_hooks）。"""
         for p in plots:
-            mount_themes_and_hooks(p, self.themes.entries if self.themes else [],
-                                   storyline.themes)
+            mount_themes_and_hooks(p, storyline.themes)
 
 
 # ═══════════════════════════════════════════

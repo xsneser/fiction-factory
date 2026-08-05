@@ -2,7 +2,7 @@
 大纲助手（Outline Agent）— 让用户在对话框里用自然语言调整故事线配置。
 
 用法（由 ui/web_ui.py 的 /api/storyline/<id>/agent 路由调用）：
-    agent = OutlineAgent(llm, structure_lib, plot_lib, gag_lib, theme_lib)
+    agent = OutlineAgent(llm, structure_lib, plot_lib, gag_lib)
     result = agent.handle(tl, "第一个桥段改成打脸爽文")
     # result = {"ok": True, "intent": "...", "reply": "...",
     #           "summary": ["改动摘要", ...], "timeline": tl.to_dict()}
@@ -24,13 +24,11 @@ from .storyline import PlotSlot
 
 
 class OutlineAgent:
-    def __init__(self, llm, structure_lib=None, plot_lib=None,
-                 gag_lib=None, theme_lib=None):
+    def __init__(self, llm, structure_lib=None, plot_lib=None, gag_lib=None):
         self.llm = llm
         self.structures = structure_lib
         self.plots = plot_lib
         self.gags = gag_lib
-        self.themes = theme_lib
 
     # ═══════════════════════════════════════════
     # 入口

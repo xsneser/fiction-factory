@@ -19,7 +19,6 @@ TMP_DIR = tempfile.gettempdir()
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
-from libraries.theme import ThemeLibrary
 from libraries.example_lib import ExampleLibrary
 from libraries.profiles import ProfileManager
 from libraries.book_manager import BookManager
@@ -69,14 +68,21 @@ gag = GagLibrary()
 assert_ok("笑点库-数量", len(gag.patterns) >= 10, f"{len(gag.patterns)} 模式")
 assert_ok("笑点库-搜索", len(gag.search(scene="日常")) > 0)
 
-theme = ThemeLibrary()
-assert_ok("内涵库-数量", len(theme.entries) >= 6)
-
 ex_lib = ExampleLibrary()
 assert_ok("摘录库-数量", len(ex_lib.excerpts) >= 10, f"{len(ex_lib.excerpts)} 条")
 assert_ok("摘录库-类型检索", len(ex_lib.search(type_="开头钩子")) >= 3)
 assert_ok("摘录库-分类检索", len(ex_lib.search(category="爽文")) >= 2)
 assert_ok("摘录库-字段完整", all(e.text and e.type and e.tag for e in ex_lib.excerpts[:5]))
+
+# 内涵跟随 = 免费规则 THEME_PLOT_COMPAT（theme_lib 移除后的唯一数据源）
+from libraries.storyline import PlotSlot as _PS, mount_themes_and_hooks as _mth, THEME_PLOT_COMPAT as _tpc
+assert_ok("内涵-映射非空", len(_tpc) >= 6, f"{len(_tpc)} 个桥段模板")
+_pc = _PS(id="c", template_id="plot_dating_001", name="退婚", category="爽文", outline_id="o", stage_index=0)
+_mth(_pc, ["公平（Justice）", "牺牲（Sacrifice）"])
+assert_ok("内涵-兼容桥段挂母题", _pc.theme_hints == ["公平（Justice）"], str(_pc.theme_hints))
+_pp = _PS(id="d", template_id="plot_dating_007", name="擂台", category="战斗", outline_id="o", stage_index=0)
+_mth(_pp, ["公平（Justice）"])
+assert_ok("内涵-不兼容桥段不挂", _pp.theme_hints == [], str(_pp.theme_hints))
 
 # ══════════════════════════════════════════════
 #  Phase 2: 笔名档案 + 图书管理

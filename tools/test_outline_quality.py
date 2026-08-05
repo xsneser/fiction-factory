@@ -18,7 +18,6 @@ from libraries.outline_generator import OutlineGenerator
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
-from libraries.theme import ThemeLibrary
 
 
 def main():
@@ -45,7 +44,6 @@ def main():
         structure_lib=StructureLibrary(),
         plot_lib=PlotLibrary(),
         gag_lib=GagLibrary(),
-        theme_lib=ThemeLibrary(),
         profile=None,
     )
 

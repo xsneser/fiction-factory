@@ -87,7 +87,7 @@ def extend_outline(storyline_id):
     llm = get_llm() if mode == "ai" else None
     builder = StorylineBuilder(
         structure_lib=struct_lib, plot_lib=plot_lib,
-        gag_lib=gag_lib, theme_lib=theme_lib, llm_client=llm,
+        gag_lib=gag_lib, llm_client=llm,
     )
     _seed_builder_counter(builder,
                           [o.id for o in tl.outlines] + [p.id for p in tl.plots])
@@ -196,7 +196,7 @@ def api_generate_outlines(storyline_id):
     llm = get_llm()
     builder = StorylineBuilder(
         structure_lib=struct_lib, plot_lib=plot_lib,
-        gag_lib=gag_lib, theme_lib=theme_lib, llm_client=llm,
+        gag_lib=gag_lib, llm_client=llm,
     )
 
     mode = request.args.get("mode", "ai")
@@ -236,7 +236,7 @@ def api_fill_plots(storyline_id):
     llm = get_llm()
     builder = StorylineBuilder(
         structure_lib=struct_lib, plot_lib=plot_lib,
-        gag_lib=gag_lib, theme_lib=theme_lib, llm_client=llm,
+        gag_lib=gag_lib, llm_client=llm,
     )
     # seed 计数器，避免新桥段 id 与已有桥段撞号（否则去重会静默丢弃）
     _seed_builder_counter(builder, [p.id for p in tl.plots])
@@ -267,7 +267,7 @@ def api_fill_gags(storyline_id):
 
     builder = StorylineBuilder(
         structure_lib=struct_lib, plot_lib=plot_lib,
-        gag_lib=gag_lib, theme_lib=theme_lib,
+        gag_lib=gag_lib,
     )
     builder.fill_themes_and_hooks(tl.plots, tl)
     from libraries.storyline import annotate_plot_roles
@@ -492,13 +492,12 @@ def api_generate_full(storyline_id):
     from libraries.outline_generator import OutlineGenerator
     from libraries.prompt_harness import PromptHarness
     harness = PromptHarness(storyline=tl, profile=profile,
-                            gag_lib=gag_lib, theme_lib=theme_lib, plot_lib=plot_lib)
+                            gag_lib=gag_lib, plot_lib=plot_lib)
     gen = OutlineGenerator(
         llm_client=llm,
         structure_lib=struct_lib,
         plot_lib=plot_lib,
         gag_lib=gag_lib,
-        theme_lib=theme_lib,
         profile=profile,
         harness=harness,
     )
@@ -606,7 +605,7 @@ def api_storyline_agent(storyline_id):
 
     from libraries.outline_agent import OutlineAgent
     agent = OutlineAgent(llm=llm, structure_lib=struct_lib, plot_lib=plot_lib,
-                         gag_lib=gag_lib, theme_lib=theme_lib)
+                         gag_lib=gag_lib)
     try:
         result = agent.handle(tl, message)
     except Exception as e:

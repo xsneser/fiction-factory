@@ -20,7 +20,6 @@ from libraries.outline_generator import OutlineGenerator
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
-from libraries.theme import ThemeLibrary
 from libraries.engine import NovelEngine, Instruction, Op
 
 
@@ -52,7 +51,7 @@ def main():
     stage("新书生成大纲", "OutlineGenerator 5 阶段管线")
     gen = OutlineGenerator(llm_client=llm, structure_lib=StructureLibrary(),
                            plot_lib=PlotLibrary(), gag_lib=GagLibrary(),
-                           theme_lib=ThemeLibrary(), profile=None)
+                           profile=None)
     result = None
     for evt, msg, data in gen.generate(genre=args.genre, sub_genre=args.sub,
                                        custom_context=args.context, pen_name="测试笔名",

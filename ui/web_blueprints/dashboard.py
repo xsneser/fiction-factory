@@ -19,7 +19,7 @@ def dashboard():
         plot_count=len(plot_lib.templates),
         struct_count=len(struct_lib.templates),
         gag_count=len(gag_lib.patterns),
-        theme_count=len(theme_lib.entries),
+        excerpt_count=len(example_lib.excerpts),
         engine_count=len(_engines),
     )
 

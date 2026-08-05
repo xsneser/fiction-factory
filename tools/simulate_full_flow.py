@@ -33,7 +33,6 @@ from libraries.outline_generator import OutlineGenerator
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
-from libraries.theme import ThemeLibrary
 from libraries.storyline import BookStoryline
 from libraries.engine import NovelEngine
 from libraries.book_manager import BookManager
@@ -78,7 +77,7 @@ def main():
         stage("① 创建 + 大纲", f"OutlineGenerator 生成故事线（max_outlines={args.max_outlines}）")
         gen = OutlineGenerator(llm_client=llm, structure_lib=StructureLibrary(),
                                plot_lib=PlotLibrary(), gag_lib=GagLibrary(),
-                               theme_lib=ThemeLibrary(), profile=None)
+                               profile=None)
         result = None
         for evt, msg, data in gen.generate(
                 genre=args.genre, sub_genre=args.sub, custom_context=args.context,

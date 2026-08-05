@@ -5,7 +5,6 @@
 from .plot import PlotLibrary, PlotTemplate, PlotSlot
 from .structure import StructureLibrary, StructureTemplate
 from .gag import GagLibrary, GagPattern
-from .theme import ThemeLibrary, ThemeEntry
 from .profiles import PenNameProfile, ProfileManager, PRESET_PROFILES
 from .book_manager import BookConfig, BookManager
 from .cost_tracker import CostTracker, CostRecord, estimate_cost

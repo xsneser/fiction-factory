@@ -16,7 +16,6 @@ logger = logging.getLogger("novel-engine.engine")
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
-from libraries.theme import ThemeLibrary
 from libraries.example_lib import ExampleLibrary
 from libraries.profiles import PenNameProfile, ProfileManager
 from libraries.book_manager import BookManager, BookConfig
@@ -136,7 +135,6 @@ class NovelEngine:
         self.plot_lib = PlotLibrary()
         self.struct_lib = StructureLibrary()
         self.gag_lib = GagLibrary()
-        self.theme_lib = ThemeLibrary()
         self.example_lib = ExampleLibrary()
         self.profiles = ProfileManager("profiles")
         self.book_mgr = BookManager("books")
@@ -254,7 +252,6 @@ class NovelEngine:
                     structure_lib=self.struct_lib,
                     plot_lib=self.plot_lib,
                     gag_lib=self.gag_lib,
-                    theme_lib=self.theme_lib,
                 )
             except Exception as e:
                 logger.warning("恢复组装计划失败 (%s): %s", plan_path, e)
@@ -280,7 +277,6 @@ class NovelEngine:
                 from .storyline_writer import StorylineChapterWriter
                 self.harness = PromptHarness(storyline=tl, profile=self.profile,
                                              gag_lib=self.gag_lib,
-                                             theme_lib=self.theme_lib,
                                              plot_lib=self.plot_lib,
                                              platform=self.state.platform,
                                              example_lib=self.example_lib,

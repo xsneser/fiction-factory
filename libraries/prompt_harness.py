@@ -166,12 +166,11 @@ class PromptHarness:
     """集中式提示词 harness。storyline 可后续赋值（保持对活对象的引用）。"""
 
     def __init__(self, storyline: Optional[BookStoryline] = None, profile=None,
-                 gag_lib=None, theme_lib=None, plot_lib=None, platform: str = "",
+                 gag_lib=None, plot_lib=None, platform: str = "",
                  example_lib=None, book_id: str = ""):
         self.storyline = storyline
         self.profile = profile
         self.gag_lib = gag_lib
-        self.theme_lib = theme_lib
         self.plot_lib = plot_lib
         self.example_lib = example_lib        # 原文摘录库（写法范本注入）
         self.book_id = book_id                # banned_in 按书过滤

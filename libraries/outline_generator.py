@@ -6,7 +6,7 @@
 输出: BookStoryline JSON（多大纲+桥段+内涵+吸睛；笑点完全涌现、不写入大纲）
 
 用法:
-    gen = OutlineGenerator(llm, structure_lib, plot_lib, gag_lib, theme_lib)
+    gen = OutlineGenerator(llm, structure_lib, plot_lib, gag_lib)
     for event in gen.generate(genre="玄幻", sub_genre="重生", ...):
         # event = ("phase"|"progress"|"done"|"error", message, data_dict)
         yield sse_event(event)
@@ -16,12 +16,11 @@ import json, time
 
 from .storyline import (
     BookStoryline, OutlineSlot, PlotSlot, merge_basic_info, annotate_plot_roles,
-    structure_to_stages, mount_themes_and_hooks,
+    structure_to_stages, mount_themes_and_hooks, THEME_PLOT_COMPAT,
 )
 from .structure import StructureLibrary
 from .plot import PlotLibrary
 from .gag import GagLibrary
-from .theme import ThemeLibrary
 
 
 def basic_info_is_rich(basic_info: dict) -> bool:
@@ -63,7 +62,6 @@ class OutlineGenerator:
         structure_lib: Optional[StructureLibrary] = None,
         plot_lib: Optional[PlotLibrary] = None,
         gag_lib: Optional[GagLibrary] = None,
-        theme_lib: Optional[ThemeLibrary] = None,
         profile: Optional[dict] = None,
         harness=None,
     ):
@@ -71,7 +69,6 @@ class OutlineGenerator:
         self.structures = structure_lib
         self.plots = plot_lib
         self.gags = gag_lib
-        self.themes = theme_lib
         self.profile = profile
         self.harness = harness   # PromptHarness：为各 phase 前置书级设定卡
 
@@ -815,30 +812,25 @@ class OutlineGenerator:
 
     def _select_book_themes(self, genre: str,
                             tl: Optional[BookStoryline] = None) -> list[str]:
-        """选定全书母题（内涵跟随桥段的前提：母题必须来自库内，才能按 compatible_plots 挂桥段）。
+        """选定全书母题（内涵跟随桥段的前提）。
 
-        优先级：流派匹配 → 按本书已选桥段模板命中 compatible_plots 的母题 →
-        库内前几个启用的母题 → 兜底默认。
+        免费规则：按本书已选桥段模板命中 THEME_PLOT_COMPAT 收集母题（去重取前 2）→ 兜底默认。
         """
         default_themes = ["成长蜕变", "命运抗争"]
-        entries = []
-        if self.themes and hasattr(self.themes, 'search'):
-            entries = self.themes.search(name=genre)
-        if not entries and self.themes and tl:
+        matched = []
+        if tl:
             plot_tids = {p.template_id for p in tl.plots if p.template_id}
-            if plot_tids:
-                entries = [e for e in self.themes.entries
-                           if (set(e.compatible_plots or []) & plot_tids)]
-        if not entries and self.themes:
-            entries = [e for e in self.themes.entries if getattr(e, "enabled", True)]
-        return [e.name for e in entries[:2]] if entries else default_themes
+            for tid in plot_tids:
+                for name in THEME_PLOT_COMPAT.get(tid, []):
+                    if name not in matched:
+                        matched.append(name)
+        return matched[:2] if matched else default_themes
 
     def _inject_themes_and_hooks(
         self, plot: PlotSlot, tl: BookStoryline,
     ):
         """为一个桥段匹配内涵（跟随桥段）并标注吸睛点（委托共享 mount_themes_and_hooks）。"""
-        mount_themes_and_hooks(
-            plot, self.themes.entries if self.themes else [], tl.themes)
+        mount_themes_and_hooks(plot, tl.themes)
 
     # ═══════════════════════════════════════
     # Phase 4: 线程与呼应（线程穿插 + 桥段拆分设局→收局）
@@ -1200,14 +1192,14 @@ def quick_generate(
     custom_context: str = "",
     pen_name: str = "",
     words_per_chapter: int = 3000,
-    structure_lib=None, plot_lib=None, gag_lib=None, theme_lib=None,
+    structure_lib=None, plot_lib=None, gag_lib=None,
 ) -> dict:
     """
     同步版本：生成并返回完整 BookStoryline（测试/脚本用）。
     注意：会阻塞直到全部生成完成。
     """
     gen = OutlineGenerator(
-        llm_client, structure_lib, plot_lib, gag_lib, theme_lib)
+        llm_client, structure_lib, plot_lib, gag_lib)
     result = None
     for event_type, message, data in gen.generate(
         genre=genre, sub_genre=sub_genre, custom_context=custom_context,

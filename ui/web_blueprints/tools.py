@@ -66,7 +66,7 @@ def scout_run():
     if not llm:
         return jsonify({"error": "LLM 未配置"}), 500
 
-    scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib, theme_lib)
+    scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib, example_lib)
 
     def generate():
         import json as _json
@@ -201,9 +201,9 @@ def scout_ingest():
     plots = data.get("plots", [])
     structures = data.get("structures", [])
     gags = data.get("gags", [])
-    themes = data.get("themes", [])
+    excerpts = data.get("excerpts", [])
 
-    if not title and not any([plots, structures, gags, themes]):
+    if not title and not any([plots, structures, gags, excerpts]):
         return jsonify({"ok": False, "error": "参数为空"}), 400
 
     llm = get_llm()
@@ -214,22 +214,22 @@ def scout_ingest():
     task_manager.ensure_single("资产入库")
     task_id = f"ingest_{title}_{int(time.time())}"
     task_manager.start(task_id, name="资产入库", title=title, total=1, phase="入库中...", url="/extract")
-    task_manager.log(task_id, f"入库: {len(plots)}桥段 {len(structures)}大纲 {len(gags)}笑点 {len(themes)}内涵", "info")
+    task_manager.log(task_id, f"入库: {len(plots)}桥段 {len(structures)}大纲 {len(gags)}笑点 {len(excerpts)}范本", "info")
 
-    scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib, theme_lib)
+    scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib, example_lib)
     stats = scout.ingest_selected(
         plots=plots, structures=structures,
-        gags=gags, themes=themes, source="fanqie",
+        gags=gags, excerpts=excerpts, source="fanqie",
     )
 
     task_manager.done(task_id, message=f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲")
-    task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 +{stats['gags']}笑点 +{stats['themes']}内涵", "success")
+    task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 +{stats['gags']}笑点 +{stats['excerpts']}范本", "success")
 
     return jsonify({
         "ok": True,
         "stats": stats,
         "message": f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
-                   f"+{stats['gags']}笑点 +{stats['themes']}内涵",
+                   f"+{stats['gags']}笑点 +{stats['excerpts']}范本",
     })
 
 
@@ -333,7 +333,7 @@ def scout_analyze():
                     task_manager.progress(task_id, current=45, phase="分析完成", message="四大库提取完毕")
                     task_manager.log(task_id,
                         f"桥段: {len(analysis.get('plots',[]))}个 大纲: {len(analysis.get('structures',[]))}个 "
-                        f"笑点: {len(analysis.get('gags',[]))}个 内涵: {len(analysis.get('themes',[]))}个 "
+                        f"笑点: {len(analysis.get('gags',[]))}个 "
                         f"范本: {len(analysis.get('excerpts',[]))}条", "success")
                 else:
                     # Step 2: 分析写作风格
@@ -373,7 +373,7 @@ def scout_analyze():
                     "plot_details": analysis.get("plots", []),
                     "structure_details": analysis.get("structures", []),
                     "gag_details": analysis.get("gags", []),
-                    "theme_details": analysis.get("themes", []),
+                    "excerpt_details": analysis.get("excerpts", []),
                     "writing_style": analysis.get("writing_style"),
                     "profile_ready": profile_ready,
                 }))

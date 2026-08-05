@@ -12,7 +12,6 @@ import json
 from .plot import PlotTemplate
 from .structure import StructureTemplate
 from .gag import GagPattern
-from .theme import ThemeEntry
 
 
 class StageWritingPlan:
@@ -39,7 +38,6 @@ class BookAssemblerPlan:
     genre: str = ""
     structure: Optional[StructureTemplate] = None
     stages: list[StageWritingPlan] = field(default_factory=list)
-    themes: list[ThemeEntry] = field(default_factory=list)  # 贯穿全书的母题
     theme_hints: list[str] = field(default_factory=list)    # 浓缩的内涵提示
     generated_at: str = ""
 
@@ -49,8 +47,6 @@ class BookAssemblerPlan:
             "genre": self.genre,
             "structure_id": self.structure.id if self.structure else "",
             "structure_name": self.structure.name if self.structure else "",
-            "themes": [{"id": t.id, "name": t.name, "description": t.description}
-                       for t in self.themes],
             "theme_hints": self.theme_hints,
             "stages": [
                 {
@@ -84,9 +80,8 @@ class BookAssemblerPlan:
         structure_lib=None,
         plot_lib=None,
         gag_lib=None,
-        theme_lib=None,
     ) -> "BookAssemblerPlan":
-        """从磁盘 dict 完整还原计划；库对象由调用方注入（Structure/Plot/Gag/Theme Library）。"""
+        """从磁盘 dict 完整还原计划；库对象由调用方注入（Structure/Plot/Gag Library）。"""
         plan = cls(
             book_title=d.get("book_title", ""),
             genre=d.get("genre", ""),
@@ -95,11 +90,6 @@ class BookAssemblerPlan:
         )
         if structure_lib:
             plan.structure = structure_lib.get_by_id(d.get("structure_id", "")) or None
-        for t in d.get("themes", []):
-            if theme_lib:
-                theme = theme_lib.get_by_id(t.get("id", ""))
-                if theme:
-                    plan.themes.append(theme)
         for s in d.get("stages", []):
             sp = StageWritingPlan(
                 stage_index=s.get("stage_index", 0),

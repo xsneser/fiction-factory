@@ -53,7 +53,6 @@ class ScoutResult:
     new_plots: list[dict] = field(default_factory=list)
     new_structures: list[dict] = field(default_factory=list)
     new_gags: list[dict] = field(default_factory=list)
-    new_themes: list[dict] = field(default_factory=list)
     new_excerpts: list[dict] = field(default_factory=list)
     downloaded_chapters: int = 0
     analysis_cost: float = 0.0
@@ -570,7 +569,7 @@ class NovelAnalyzer:
                       on_progress=None) -> dict:
         """分析一本小说，提取所有可复用元素"""
         if not self.llm:
-            return {"plots": [], "structures": [], "gags": [], "themes": [],
+            return {"plots": [], "structures": [], "gags": [],
                     "excerpts": []}
 
         samples = self._select_samples(chapters)
@@ -578,23 +577,19 @@ class NovelAnalyzer:
         result = {}
 
         if on_progress:
-            on_progress("analyze", 1, 5, "提取桥段...")
+            on_progress("analyze", 1, 4, "提取桥段...")
         result["plots"] = self.extract_plots(novel, samples)
 
         if on_progress:
-            on_progress("analyze", 2, 5, "提取大纲...")
+            on_progress("analyze", 2, 4, "提取大纲...")
         result["structures"] = self.extract_structure(novel, samples)
 
         if on_progress:
-            on_progress("analyze", 3, 5, "提取笑点...")
+            on_progress("analyze", 3, 4, "提取笑点...")
         result["gags"] = self.extract_gags(novel, samples)
 
         if on_progress:
-            on_progress("analyze", 4, 5, "提取内涵...")
-        result["themes"] = self.extract_themes(novel, samples)
-
-        if on_progress:
-            on_progress("analyze", 5, 5, "提取范本摘录...")
+            on_progress("analyze", 4, 4, "提取范本摘录...")
         result["excerpts"] = self.extract_excerpts(novel, samples)
 
         return result
@@ -709,38 +704,6 @@ class NovelAnalyzer:
             logger.warning(f"Gag extraction failed: {e}")
             return []
 
-    def extract_themes(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
-        """提取母题/内涵"""
-        text = self._build_sample_text(samples, 1500)
-
-        prompt = f"""分析以下小说的深层母题和内涵表达手法。
-
-每个母题包括：
-1. 母题名称（如"底层逆袭的尊严""知识改变命运"）
-2. 母题描述
-3. 在小说中的具体体现方式
-4. 写作建议（如何在其他小说中复用）
-
-【小说内容样本】
-{text}
-
-返回 JSON：
-{{"themes": [
-  {{"name":"母题名称","description":"描述",
-   "expression":"在小说中的体现方式",
-   "writing_tips":["写作建议1","写作建议2"],
-   "compatible_genres":["玄幻","都市"]}}
-]}}"""
-        try:
-            raw = self.llm.call("你是一位专业的文学分析学者。只返回JSON。",
-                                prompt, temperature=0.5, max_tokens=4096)
-            from core.llm_client import extract_json
-            data = json.loads(extract_json(raw))
-            return data.get("themes", [])
-        except Exception as e:
-            logger.warning(f"Theme extraction failed: {e}")
-            return []
-
     def extract_excerpts(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
         """提取写法范本原文摘录（「肉」库来源）。
 
@@ -806,20 +769,18 @@ class NovelAnalyzer:
 # ═══════════════════════════════════════════
 
 class LibraryIngestor:
-    """将分析结果导入四大库（+ 原文摘录库）"""
+    """将分析结果导入各库（桥段/大纲/笑点/摘录）"""
 
-    def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None, theme_lib=None,
+    def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None,
                  example_lib=None):
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
         self.gag_lib = gag_lib
-        self.theme_lib = theme_lib
         self.example_lib = example_lib
 
     def ingest(self, analysis: dict, source: str = "fanqie") -> dict:
         """导入分析结果到各库"""
-        stats = {"plots": 0, "structures": 0, "gags": 0, "themes": 0,
-                 "excerpts": 0}
+        stats = {"plots": 0, "structures": 0, "gags": 0, "excerpts": 0}
 
         for plot in analysis.get("plots", []):
             if self.plot_lib:
@@ -835,11 +796,6 @@ class LibraryIngestor:
             if self.gag_lib:
                 self._add_gag(gag, source)
                 stats["gags"] += 1
-
-        for theme in analysis.get("themes", []):
-            if self.theme_lib:
-                self._add_theme(theme, source)
-                stats["themes"] += 1
 
         for ex in analysis.get("excerpts", []):
             if self.example_lib:
@@ -914,20 +870,6 @@ class LibraryIngestor:
         )
         self.gag_lib.patterns.append(pattern)
 
-    def _add_theme(self, data: dict, source: str):
-        from libraries.theme import ThemeEntry
-        tid = f"scout_{source}_{data.get('name','unknown')}"
-        for t in self.theme_lib.entries:
-            if t.id == tid:
-                return
-
-        entry = ThemeEntry(
-            id=tid, name=data.get("name",""),
-            description=data.get("description",""),
-            techniques=data.get("writing_tips",data.get("techniques",[])),
-        )
-        self.theme_lib.entries.append(entry)
-
     def _add_excerpt(self, data: dict, source: str):
         """导入原文摘录到 example_lib（按文本哈希去重，避免同段重复入库）。"""
         from libraries.example_lib import ExampleExcerpt
@@ -969,16 +911,14 @@ class FanqieScoutAgent:
     """
 
     def __init__(self, llm_client=None, plot_lib=None, struct_lib=None,
-                 gag_lib=None, theme_lib=None, example_lib=None, verify: bool = True):
+                 gag_lib=None, example_lib=None, verify: bool = True):
         self.crawler = FanqieCrawler(verify=verify)
         self.analyzer = NovelAnalyzer(llm_client)
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
         self.gag_lib = gag_lib
-        self.theme_lib = theme_lib
         self.example_lib = example_lib
-        self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib, theme_lib,
-                                        example_lib)
+        self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib, example_lib)
 
     def run(self, genre: str = "", book_count: int = 5,
             chapters_per_book: int = 30, delay: float = 1.5,
@@ -1024,7 +964,6 @@ class FanqieScoutAgent:
             result.new_plots.extend(analysis.get("plots", []))
             result.new_structures.extend(analysis.get("structures", []))
             result.new_gags.extend(analysis.get("gags", []))
-            result.new_themes.extend(analysis.get("themes", []))
             result.new_excerpts.extend(analysis.get("excerpts", []))
 
             # 入库
@@ -1038,7 +977,6 @@ class FanqieScoutAgent:
         logger.info(f"Scout complete: {len(result.new_plots)} plots, "
                      f"{len(result.new_structures)} structures, "
                      f"{len(result.new_gags)} gags, "
-                     f"{len(result.new_themes)} themes, "
                      f"{len(result.new_excerpts)} excerpts")
 
         return result
@@ -1139,30 +1077,27 @@ class FanqieScoutAgent:
             return result
 
         if on_progress:
-            on_progress("analyze", 0, 5, "LLM分析...")
+            on_progress("analyze", 0, 4, "LLM分析...")
         analysis = self.analyzer.analyze_book(novel, downloaded, on_progress=on_progress)
 
         result.new_plots = analysis.get("plots", [])
         result.new_structures = analysis.get("structures", [])
         result.new_gags = analysis.get("gags", [])
-        result.new_themes = analysis.get("themes", [])
         result.new_excerpts = analysis.get("excerpts", [])
 
         if on_progress:
-            on_progress("analysis_done", 5, 5, "分析完成，等待入库")
+            on_progress("analysis_done", 4, 4, "分析完成，等待入库")
 
         return result
 
     def ingest_selected(self, plots: list = None, structures: list = None,
-                        gags: list = None, themes: list = None,
-                        excerpts: list = None,
+                        gags: list = None, excerpts: list = None,
                         source: str = "fanqie", on_progress=None) -> dict:
         """选择性入库"""
         from datetime import datetime
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        stats = {"plots": 0, "structures": 0, "gags": 0, "themes": 0,
-                 "excerpts": 0}
+        stats = {"plots": 0, "structures": 0, "gags": 0, "excerpts": 0}
 
         if plots and self.plot_lib:
             for item in plots:
@@ -1193,16 +1128,6 @@ class FanqieScoutAgent:
             if on_progress:
                 on_progress("ingest", 1, 1, f"笑点已入库 {stats['gags']}个")
             self.gag_lib._save()
-
-        if themes and self.theme_lib:
-            for item in themes:
-                item["source"] = source
-                item["created_at"] = now
-                self.ingestor._add_theme(item, source)
-                stats["themes"] += 1
-            if on_progress:
-                on_progress("ingest", 1, 1, f"内涵已入库 {stats['themes']}个")
-            self.theme_lib._save()
 
         if excerpts and self.example_lib:
             for item in excerpts:
@@ -1254,10 +1179,10 @@ if __name__ == "__main__":
     from libraries.plot import PlotLibrary
     from libraries.structure import StructureLibrary
     from libraries.gag import GagLibrary
-    from libraries.theme import ThemeLibrary
+    from libraries.example_lib import ExampleLibrary
 
     scout = FanqieScoutAgent(llm, PlotLibrary(), StructureLibrary(),
-                              GagLibrary(), ThemeLibrary())
+                              GagLibrary(), ExampleLibrary())
     result = scout.run(genre=genre, book_count=book_count,
                        chapters_per_book=chapters)
 
@@ -1267,5 +1192,4 @@ if __name__ == "__main__":
     print(f"New plots: {len(result.new_plots)}")
     print(f"New structures: {len(result.new_structures)}")
     print(f"New gags: {len(result.new_gags)}")
-    print(f"New themes: {len(result.new_themes)}")
     print(f"New excerpts: {len(result.new_excerpts)}")

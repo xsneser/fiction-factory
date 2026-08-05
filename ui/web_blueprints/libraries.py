@@ -23,14 +23,13 @@ def plot_detail_api(plot_id):
     return jsonify(t.to_dict())
 
 
-# ─── 库启用/禁用/删除（四大库共用一套逻辑） ───
+# ─── 库启用/禁用/删除（各库共用一套逻辑） ───
 
 # kind → (库实例, 条目列表属性名)
 _LIB_TABLE = {
     "plots": (plot_lib, "templates"),
     "structures": (struct_lib, "templates"),
     "gags": (gag_lib, "patterns"),
-    "themes": (theme_lib, "entries"),
 }
 
 
@@ -80,14 +79,6 @@ def gag_toggle(gag_id): return _lib_toggle("gags", gag_id)
 def gag_delete(gag_id): return _lib_delete("gags", gag_id)
 
 
-@bp.route("/api/themes/<theme_id>/toggle", methods=["POST"])
-def theme_toggle(theme_id): return _lib_toggle("themes", theme_id)
-
-
-@bp.route("/api/themes/<theme_id>/delete", methods=["POST"])
-def theme_delete(theme_id): return _lib_delete("themes", theme_id)
-
-
 @bp.route("/structures")
 def structures():
     return render_template("structures.html", templates=struct_lib.templates)
@@ -96,11 +87,6 @@ def structures():
 @bp.route("/gags")
 def gags():
     return render_template("gags.html", patterns=gag_lib.patterns)
-
-
-@bp.route("/themes")
-def themes():
-    return render_template("themes.html", entries=theme_lib.entries)
 
 
 @bp.route("/profiles")
