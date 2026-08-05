@@ -15,6 +15,51 @@ def _publisher() -> Publisher:
     return Publisher(book_mgr)
 
 
+def _latest_export(book_id: str) -> str:
+    """返回最近一次导出的 zip 路径（无则空串）。"""
+    export_root = os.path.join(str(book_mgr.dir), book_id, "export")
+    if not os.path.isdir(export_root):
+        return ""
+    dirs = sorted(glob.glob(os.path.join(export_root, "*")),
+                  key=os.path.getmtime, reverse=True)
+    if not dirs:
+        return ""
+    zips = glob.glob(os.path.join(dirs[0], "*_投稿包_*.zip"))
+    return zips[0] if zips else ""
+
+
+@bp.route("/publish")
+def publish_index():
+    """上架管理中心：聚合展示所有书的上架信息（状态/检查/字数/上架时间/导出）。"""
+    from .books import _book_rows
+    rows = _book_rows()
+    pub = _publisher()
+    books_info = []
+    for r in rows:
+        b = r["book"]
+        if r["is_timeline"]:
+            continue  # 时间线草稿（tl_*）不可上架
+        try:
+            outline = book_mgr.get_outline(b.book_id)
+            try:
+                timeline = book_mgr.load_timeline(b.book_id)
+            except Exception:
+                timeline = None
+            report = pub.build_report(b, timeline=timeline, outline=outline)
+        except Exception as e:
+            logger.warning("上架中心：构建 %s 报告失败: %s", b.book_id, e)
+            continue
+        books_info.append({
+            "book": b,
+            "report": report,
+            "can_export": (b.current_chapter or 0) >= 1,
+            "export_zip": _latest_export(b.book_id),
+        })
+    # 排序：未上架在前（待处理优先），已上架靠后
+    books_info.sort(key=lambda x: (x["book"].status == "published", x["book"].status == "finished"))
+    return render_template("publish_index.html", books_info=books_info)
+
+
 @bp.route("/books/<book_id>/publish")
 def publish_page(book_id):
     """上架页：检查报告 + 状态机按钮 + 导出。"""
