@@ -234,7 +234,7 @@ def run_tests():
 
             if r.status_code == 200:
                 check(f"Write flow title in page",
-                      "蓝图式写作" in r.text or bid in r.text,
+                      "✍️ 写作台" in r.text or bid in r.text,
                       f"write flow marker not found for {bid}")
 
             # 世界观设定卡页（只读校验；confirm 会 mutate，交给 tools/smoke_world_card.py 的临时书覆盖）
@@ -250,8 +250,30 @@ def run_tests():
                       "world card marker not found")
             else:
                 check(f"World card page ({bid})", False, f"got {r.status_code}")
-    else:
-        print("  (no books found - skipping book tests)")
+
+    # 书库列表：有 storyline 的书应见「🌍 设定」入口
+    r = get("/books")
+    check("Books list renders", r.status_code == 200, f"got {r.status_code}")
+    if r.status_code == 200 and "🌍 设定" not in r.text:
+        print("  (no storyline books in library - skipping world-entry check)")
+
+    # 书详情状态感知引导：planning 无章节书不应出现「🎬 生成书名/简介」按钮（需第1章）
+    for bid in book_ids[:3] if book_ids else []:
+        rd = get(f"/books/{bid}")
+        if rd.status_code != 200:
+            continue
+        btn = 'onclick="generateMeta()">🎬 生成书名/简介'
+        has_meta_btn = btn in rd.text
+        # 进度 "n/m 章" 从页面解析
+        import re as _re
+        m = _re.search(r'(\d+)\s*/\s*(\d+)\s*章', rd.text)
+        chapter = int(m.group(1)) if m else 0
+        if chapter == 0:
+            check(f"Planning book no generate-meta btn ({bid})", not has_meta_btn,
+                  "planning 书不应显示生成书名/简介按钮")
+        else:
+            check(f"Written book has generate-meta btn ({bid})", has_meta_btn,
+                  "已写书应显示生成书名/简介按钮")
 
     # ═══ Storyline renderer consistency ═══
     # 方案4：服务端 Jinja 渲染的桥段卡应与 JS 重绘（renderPlotList）字段一致，

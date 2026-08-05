@@ -402,6 +402,51 @@ loaded_csm.load(os.path.join(TMP_DIR, "test_chars.json"))
 assert_ok("持久-角色", len(loaded_csm.characters) == 3)
 
 # ══════════════════════════════════════════════
+#  Phase 11: 新书启动规划态（设定先行流程纯逻辑，不调 LLM）
+# ══════════════════════════════════════════════
+print("\n═══ Phase 11: 新书启动规划态 ═══")
+from libraries.storyline import BookStoryline, basic_info_world_done
+from libraries.outline_generator import basic_info_is_rich
+
+assert_ok("规划-一句话种子即算已设定",
+          basic_info_world_done({"world_building": {"description": "x"}}) is True)
+assert_ok("规划-主角名即算已设定",
+          basic_info_world_done({"protagonist": {"name": "张三"}}) is True)
+assert_ok("规划-已打标即算已设定",
+          basic_info_world_done({"_world_generated": True}) is True)
+assert_ok("规划-空设定不算已设定", basic_info_world_done({}) is False)
+assert_ok("规划-rich=已打标", basic_info_is_rich({"_world_generated": True}) is True)
+assert_ok("规划-薄设定不算rich", basic_info_is_rich({"world_building": {"description": "x"}}) is False)
+
+_tb = bm.create(title="plan_test", pen_name="t", genre="玄幻")
+_tbid = _tb.book_id
+try:
+    _raised = False
+    try:
+        NovelEngine().continue_book(_tbid)
+    except ValueError:
+        _raised = True
+    assert_ok("规划-无storyline报错", _raised)
+
+    _tl = BookStoryline(genre="玄幻")
+    _tl.basic_info["world_building"]["description"] = "一句话种子"
+    bm.save_storyline(_tbid, _tl)
+    _eng = NovelEngine()
+    _st = _eng.continue_book(_tbid)
+    assert_ok("规划-空大纲可进入(写作者None)", _eng.storyline_writer is None)
+    assert_ok("规划-phase为OUTLINE", _st.phase == Phase.OUTLINE, _st.phase.value)
+
+    from libraries.storyline import OutlineSlot
+    _tl.outlines.append(OutlineSlot(id="o1", template_id="", name="测试",
+                                    start_chapter=1, end_chapter=5))
+    bm.save_storyline(_tbid, _tl)
+    _eng2 = NovelEngine()
+    _eng2.continue_book(_tbid)
+    assert_ok("规划-有大纲建写作者", _eng2.storyline_writer is not None)
+finally:
+    bm.delete(_tbid)
+
+# ══════════════════════════════════════════════
 #  汇总
 # ══════════════════════════════════════════════
 print(f"\n{'='*55}")

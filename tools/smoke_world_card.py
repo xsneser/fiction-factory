@@ -74,10 +74,18 @@ def run_smoke():
         print("[5] confirm ->", d.get("ok"), "| redirect:", d.get("redirect"))
         assert d.get("ok") and "/storyline/" in d.get("redirect", "")
 
-        # 6) GET 确认后的跳转目标（故事线编辑器 → 写作台）不 404
-        r = client.get(d["redirect"])
-        print("[6] GET", d["redirect"], "->", r.status_code)
-        assert r.status_code in (200, 302), "跳转目标应可达"
+        # 6) GET 确认后的跳转目标 → 应渲染写作台（规划态，非错误页，无写桥段按钮）
+        r = client.get(d["redirect"], follow_redirects=True)
+        html = r.get_data(as_text=True)
+        print("[6] GET", d["redirect"], "->", r.status_code,
+              "| 写作台:", "✍️ 写作台" in html, "| 错误页:", "⚠️ 无法进入写作" in html,
+              "| 一键生成完整大纲:", "✨ 一键生成完整大纲" in html,
+              "| 写桥段按钮(应无):", "▶ 写下一个桥段" in html)
+        assert r.status_code == 200, "写作台应可渲染"
+        assert "✍️ 写作台" in html, "应渲染写作台"
+        assert "⚠️ 无法进入写作" not in html, "不应是错误页"
+        assert "✨ 一键生成完整大纲" in html, "规划态应见一键生成完整大纲按钮"
+        assert "▶ 写下一个桥段" not in html, "规划态不应显示写桥段按钮（已门控）"
 
         print("\nSMOKE OK")
     finally:
