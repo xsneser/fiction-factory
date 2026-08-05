@@ -333,7 +333,8 @@ def scout_analyze():
                     task_manager.progress(task_id, current=45, phase="分析完成", message="四大库提取完毕")
                     task_manager.log(task_id,
                         f"桥段: {len(analysis.get('plots',[]))}个 大纲: {len(analysis.get('structures',[]))}个 "
-                        f"笑点: {len(analysis.get('gags',[]))}个 内涵: {len(analysis.get('themes',[]))}个", "success")
+                        f"笑点: {len(analysis.get('gags',[]))}个 内涵: {len(analysis.get('themes',[]))}个 "
+                        f"范本: {len(analysis.get('excerpts',[]))}条", "success")
                 else:
                     # Step 2: 分析写作风格
                     task_manager.progress(task_id, current=30, phase="LLM 分析写作风格...", message="正在分析写作风格")

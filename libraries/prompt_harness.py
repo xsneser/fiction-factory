@@ -31,6 +31,24 @@ CATEGORY_GAG_SCENES = {
 DEFAULT_GAG_SCENES = ["日常对话", "日常互动"]
 
 
+# 桥段 category → 适合注入的写法范本类型（免费规则，与 CATEGORY_GAG_SCENES 同理）
+# 范本 = 原文摘录库（example_lib）的真实句子，管「句子像不像人写的」——节奏/画面/语气。
+CATEGORY_EXCERPT_TYPES = {
+    "开篇": ["开头钩子", "主角亮相"],
+    "爽文": ["打脸爽点", "高张力对白"],
+    "打脸": ["打脸爽点"],
+    "战斗": ["高张力对白", "结尾余韵"],
+    "都市": ["高张力对白", "打脸爽点"],
+    "情感": ["高张力对白", "结尾余韵"],
+    "日常": ["日常对话", "高张力对白"],
+    "悬疑": ["章末钩子", "开头钩子"],
+    "成长": ["打脸爽点", "高张力对白"],
+    "冲突": ["章末钩子", "高张力对白"],
+    "职场": ["打脸爽点", "高张力对白"],
+}
+DEFAULT_EXCERPT_TYPES = ["高张力对白", "开头钩子"]
+
+
 # 写前编辑诊断（模拟人类作者开写前想清楚"这一节要达到什么"）—— 免费规则映射
 CATEGORY_READER_DESIRE = {
     "爽文": "打脸快感与身份抬升",
@@ -148,12 +166,15 @@ class PromptHarness:
     """集中式提示词 harness。storyline 可后续赋值（保持对活对象的引用）。"""
 
     def __init__(self, storyline: Optional[BookStoryline] = None, profile=None,
-                 gag_lib=None, theme_lib=None, plot_lib=None, platform: str = ""):
+                 gag_lib=None, theme_lib=None, plot_lib=None, platform: str = "",
+                 example_lib=None, book_id: str = ""):
         self.storyline = storyline
         self.profile = profile
         self.gag_lib = gag_lib
         self.theme_lib = theme_lib
         self.plot_lib = plot_lib
+        self.example_lib = example_lib        # 原文摘录库（写法范本注入）
+        self.book_id = book_id                # banned_in 按书过滤
         # 目标平台（fanqie/qidian）：写作 prompt 注入平台写作约束；空=不注入
         self.platform = platform or (storyline.platform if storyline else "") or ""
 
@@ -409,6 +430,18 @@ class PromptHarness:
             hook_block = ("\n【本桥段吸睛点】" + "、".join(hooks[:2])
                           + "\n（写出实感：用具体画面/结果把这几个吸睛点做成读者想看的爽点/悬念/反转，不直白点破、不加括号注解）")
 
+        # 写法范本（原文摘录库 example_lib）：借鉴真实句子的节奏/画面/语气，治「没味儿」。
+        excerpt_block = ""
+        if self.example_lib:
+            try:
+                exs = self.prescreen_excerpts(p, self.book_id, limit=2)
+                if exs:
+                    lines = [f"- [{e.type}·{e.tag}] {e.text}" for e in exs]
+                    excerpt_block = ("\n【写法范本（本桥段类型）】\n" + "\n".join(lines)
+                                     + "\n（只借鉴其节奏、画面、语气与网文手感，严禁照抄句子；写出同类感觉的正文）\n\n")
+            except Exception:
+                excerpt_block = ""
+
         # 前文上下文（修复：原 _group_prompt 的 character_states 形参未被渲染）
         ctx = []
         if prev_ending:
@@ -493,6 +526,7 @@ class PromptHarness:
 【变量槽位】{slots_text or '跟随上下文自由发挥'}
 {diag_block}
 {hook_block}
+{excerpt_block}
 {roles_block}
 {theme_block}
 {payoff_block}
@@ -715,6 +749,25 @@ class PromptHarness:
                 pool.append(g)
         pool.sort(key=lambda g: getattr(g, "usage_count", 0))
         return pool[:6]
+
+    def prescreen_excerpts(self, plot, book_id: str = "", limit: int = 2) -> list:
+        """按桥段 category → 摘录类型 预筛 ≤limit 条写法范本（免费规则，不写进大纲）。
+
+        泛型摘录（category 空）对任何桥段都可用，作为候选补充；按 usage_count 升序（少用优先）。
+        """
+        if not self.example_lib:
+            return []
+        category = str(getattr(plot, "category", "") or "")
+        types = CATEGORY_EXCERPT_TYPES.get(category, DEFAULT_EXCERPT_TYPES)
+        seen, pool = set(), []
+        for t in types:
+            for e in self.example_lib.search(type_=t, category=category, book_id=book_id):
+                if e.id in seen:
+                    continue
+                seen.add(e.id)
+                pool.append(e)
+        pool.sort(key=lambda e: getattr(e, "usage_count", 0))
+        return pool[:limit]
 
     # ═══════════════════════════════════════════
     # 场景 D：世界观/设定生成（启动新书前置；集中式 prompt）

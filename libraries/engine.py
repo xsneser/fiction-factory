@@ -17,6 +17,7 @@ from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
 from libraries.theme import ThemeLibrary
+from libraries.example_lib import ExampleLibrary
 from libraries.profiles import PenNameProfile, ProfileManager
 from libraries.book_manager import BookManager, BookConfig
 from libraries.cost_tracker import CostTracker
@@ -136,6 +137,7 @@ class NovelEngine:
         self.struct_lib = StructureLibrary()
         self.gag_lib = GagLibrary()
         self.theme_lib = ThemeLibrary()
+        self.example_lib = ExampleLibrary()
         self.profiles = ProfileManager("profiles")
         self.book_mgr = BookManager("books")
         self._books_dir = self.book_mgr.dir
@@ -280,7 +282,9 @@ class NovelEngine:
                                              gag_lib=self.gag_lib,
                                              theme_lib=self.theme_lib,
                                              plot_lib=self.plot_lib,
-                                             platform=self.state.platform)
+                                             platform=self.state.platform,
+                                             example_lib=self.example_lib,
+                                             book_id=book_id)
                 self.gag_injector = GagInjector(llm=self.llm, harness=self.harness,
                                                 gag_lib=self.gag_lib)
                 self.storyline_writer = StorylineChapterWriter(
