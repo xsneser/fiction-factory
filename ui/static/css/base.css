@@ -147,3 +147,23 @@
         .toast-out { opacity:0; transition:opacity .3s; }
         @keyframes toast-in { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
 
+
+        /* ─── 全流程步骤条（创建→大纲→写作→续写→上架） ─── */
+        .flow-stepper { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:18px; padding:10px 14px; background:var(--bg-elev); border:1px solid var(--border); border-radius:var(--radius); }
+        .fs-step { display:inline-flex; align-items:center; gap:6px; text-decoration:none; padding:5px 12px; border-radius:20px; background:var(--bg-inset); border:1px solid var(--border-soft); color:var(--fg-muted); font-size:12px; }
+        a.fs-step:hover { border-color:var(--accent); color:var(--fg); }
+        .fs-step.active { background:#1a2332; border-color:var(--accent); color:var(--accent); }
+        .fs-step.done .fs-num { background:var(--success); color:#fff; }
+        .fs-step.done { color:var(--fg); }
+        .fs-num { width:18px; height:18px; border-radius:50%; background:var(--border); color:var(--fg); font-size:11px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+        .fs-label { white-space:nowrap; }
+        .fs-arrow { color:var(--fg-dim); font-size:12px; }
+
+        /* ─── 上架报告 ─── */
+        .publish-report { margin-top:16px; }
+        .publish-item { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; margin-bottom:8px; background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); }
+        .publish-item.ok { border-left:3px solid var(--success); }
+        .publish-item.fail { border-left:3px solid var(--danger); }
+        .publish-item .pi-status { font-size:16px; line-height:1.2; }
+        .publish-item .pi-label { font-weight:600; color:var(--fg-strong); font-size:13px; }
+        .publish-item .pi-detail { color:var(--fg-muted); font-size:12px; margin-top:2px; }

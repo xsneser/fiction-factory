@@ -1,0 +1,34 @@
+{# ─── 全流程步骤条 + 状态徽标（共享 partial，逐页 {% from ... import %}） ─── #}
+
+{% macro flow_stepper(current, book_id='', timeline_id='', phase='config', current_chapter=0, status='planning') %}
+<div class="flow-stepper">
+    {% set s2_href = ('/timeline/' + (timeline_id or book_id) + '/edit') if (timeline_id or book_id) else '' %}
+    {% set s3_href = ('/books/' + book_id + '/continue') if book_id else '' %}
+    {% set s5_href = ('/books/' + book_id + '/publish') if book_id else '' %}
+    {% set steps = [
+        {'n':1, 'label':'创建', 'href':'/books/start', 'done':True, 'active':current==1},
+        {'n':2, 'label':'大纲·故事线', 'href':s2_href,
+         'done':(phase in ('plots','gags','ready')) or current_chapter>=1, 'active':current==2},
+        {'n':3, 'label':'章节写作', 'href':s3_href, 'done':current_chapter>=1, 'active':current==3},
+        {'n':4, 'label':'续写', 'href':s3_href, 'done':current_chapter>=2, 'active':current==4},
+        {'n':5, 'label':'上架', 'href':s5_href, 'done':status in ('finished','published'), 'active':current==5},
+    ] %}
+    {% for s in steps %}
+        {% if s.href %}
+        <a href="{{ s.href }}" class="fs-step {{ 'active' if s.active else '' }} {{ 'done' if s.done else '' }}">
+        {% else %}
+        <span class="fs-step {{ 'active' if s.active else '' }} {{ 'done' if s.done else '' }}">
+        {% endif %}
+            <span class="fs-num">{{ s.n }}</span>
+            <span class="fs-label">{{ s.label }}</span>
+        {% if s.href %}</a>{% else %}</span>{% endif %}
+        {% if not loop.last %}<span class="fs-arrow">→</span>{% endif %}
+    {% endfor %}
+</div>
+{% endmacro %}
+
+{% macro status_badge(status) %}
+{% set cn_map = {'planning':'规划中','ready':'可写作','writing':'写作中','reviewing':'审查中','finished':'完本','published':'已上架','paused':'暂停'} %}
+{% set css_map = {'planning':'yellow','ready':'blue','writing':'green','reviewing':'purple','finished':'blue','published':'green','paused':'red'} %}
+<span class="tag {{ css_map.get(status or '', '') }}">{{ cn_map.get(status or '', status or '') }}</span>
+{% endmacro %}

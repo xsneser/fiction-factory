@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}上架 — {{ book.title or '(未命名)' }}{% endblock %}
+{% block content %}
+{% from "_flow_stepper.html" import flow_stepper, status_badge %}
+{{ flow_stepper(5, book_id=book.book_id, phase='ready',
+                 current_chapter=book.current_chapter, status=book.status) }}
+
+<h1>🚀 上架 / 发布</h1>
+<div class="info-bar">
+    <span>书名：<strong>{{ book.title or '(待定)' }}</strong></span>
+    <span>笔名：<strong>{{ book.pen_name }}</strong></span>
+    <span>流派：<strong>{{ book.genre }}{% if book.sub_genre %}/{{ book.sub_genre }}{% endif %}</strong></span>
+    <span>平台：<strong>{{ book.platform }}</strong></span>
+    <span>进度：<strong>{{ book.current_chapter }}/{{ book.chapter_count }}</strong> 章</span>
+    <span>状态：{{ status_badge(book.status) }}</span>
+    {% if book.finished_at %}<span>完本：<strong>{{ book.finished_at[:16] }}</strong></span>{% endif %}
+    {% if book.published_at %}<span>上架：<strong>{{ book.published_at[:16] }}</strong></span>{% endif %}
+    {% if book.exported_at %}<span>最近导出：<strong>{{ book.exported_at[:16] }}</strong></span>{% endif %}
+</div>
+
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
+    <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 返回写作</a>
+    <a href="/books/{{ book.book_id }}" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none">📖 书详情</a>
+    <button class="btn" style="background:#8957e5;color:#fff" onclick="markFinished()"
+        {% if book.status in ('finished','published') %}disabled{% endif %}>✅ 标记完本</button>
+    <button class="btn" style="background:#1f6feb;color:#fff" onclick="doPublish()"
+        {% if book.status == 'published' %}disabled{% endif %}>🚀 标记已上架</button>
+    <button class="btn" style="background:#6f42c1;color:#fff" onclick="doExport()">📦 导出投稿包</button>
+</div>
+
+<h3>🔍 上架检查（纯规则，不调 LLM）</h3>
+<div class="publish-report" id="report">
+    {% if report %}
+    {% for item in report.items %}
+    <div class="publish-item {{ 'ok' if item.passed else 'fail' }}">
+        <span class="pi-status">{{ '✅' if item.passed else '❌' }}</span>
+        <div>
+            <div class="pi-label">{{ item.label }}</div>
+            <div class="pi-detail">{{ item.detail }}</div>
+        </div>
+    </div>
+    {% endfor %}
+    <p style="font-size:12px;color:{{ '#3fb950' if report.can_publish else '#f85149' }};margin-top:8px">
+        {{ report.summary }} · 共 {{ report.chapters }} 章 / {{ report.total_words }} 字
+        {% if report.thresholds %} · 上架线：{{ report.thresholds.get('min_total_words', 0) }}字 / {{ report.thresholds.get('min_chapters', 0) }}章{% endif %}
+    </p>
+    {% else %}
+    <p style="color:#484f58">暂无检查数据</p>
+    {% endif %}
+</div>
+
+<div id="manifest-box" style="display:none;margin-top:16px"></div>
+
+<script>
+const bookId = "{{ book.book_id }}";
+function api(path, opts) {
+    return fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, ...(opts||{})})
+        .then(r => r.json());
+}
+function markFinished() {
+    if (!confirm('标记本书为「完本」？')) return;
+    api('/api/books/' + bookId + '/mark-finished').then(d => {
+        if (d.ok) { flashToast('✅ 已标记完本（' + d.status + '）', 'success'); setTimeout(() => location.reload(), 500); }
+        else showToast(d.error || '操作失败', 'error');
+    }).catch(e => showToast('请求失败: ' + e.message, 'error'));
+}
+function doPublish() {
+    if (!confirm('标记本书为「已上架」？将写入上架时间。')) return;
+    api('/api/books/' + bookId + '/publish').then(d => {
+        if (d.ok) { flashToast('✅ 已上架：' + d.published_at, 'success'); setTimeout(() => location.reload(), 500); }
+        else if (d.report && !d.report.can_publish) {
+            if (confirm('上架检查未通过（' + d.error + '）。仍要强制上架吗？')) {
+                api('/api/books/' + bookId + '/publish', {body: JSON.stringify({force: true})}).then(d2 => {
+                    if (d2.ok) { flashToast('✅ 已强制上架：' + d2.published_at, 'success'); setTimeout(() => location.reload(), 500); }
+                    else showToast(d2.error || '上架失败', 'error');
+                });
+            }
+        } else showToast(d.error || '上架失败', 'error');
+    }).catch(e => showToast('请求失败: ' + e.message, 'error'));
+}
+function doExport() {
+    api('/api/books/' + bookId + '/export').then(d => {
+        if (!d.ok) { showToast(d.error || '导出失败', 'error'); return; }
+        const box = document.getElementById('manifest-box');
+        box.style.display = 'block';
+        const files = (d.files || []).map(f => '<div style="font-size:12px;color:#8b949e">' + f + '</div>').join('');
+        box.innerHTML = '<h3>📦 导出成功（' + d.chapter_count + ' 章 / ' + d.total_words + ' 字）</h3>' +
+            '<p style="color:#484f58;font-size:12px">目录：' + d.export_dir + '</p>' +
+            '<div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px;margin:8px 0">' + files + '</div>' +
+            '<a class="btn" style="background:#6f42c1;color:#fff;text-decoration:none" href="/api/books/' + bookId + '/export/download">⬇️ 下载 ' + d.zip_name + '</a>';
+        flashToast('✅ 导出完成', 'success');
+    }).catch(e => showToast('请求失败: ' + e.message, 'error'));
+}
+</script>
+{% endblock %}
