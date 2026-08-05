@@ -91,6 +91,7 @@ class OutlineGenerator:
         max_outlines: int = 5,
         storyline: Optional[BookStoryline] = None,
         on_save: Optional[Callable[[BookStoryline], None]] = None,
+        skip_analyze: bool = False,
     ):
         """
         生成器：逐步构建 BookStoryline，yield SSE 事件。
@@ -121,11 +122,16 @@ class OutlineGenerator:
                    "desc": "分析世界观、主角设定、故事基调..."})
             yield ("progress", "分析故事要素...", {})
 
-            basic_info = self._analyze_story(genre, sub_genre, custom_context, pen_name)
-            if basic_info:
-                # 原地累加：保留用户已填的基础设定（主角/世界观等非空字段不覆盖）
-                tl.basic_info = merge_basic_info(tl.basic_info, basic_info)
-            # 故事线规则校验（重生/年龄/年份自洽）
+            # 世界观已由启动前置的设定生成器产出时跳过 LLM 分析，直接复用（不二次覆盖）
+            skip = skip_analyze or self._basic_info_is_rich(tl.basic_info)
+            if skip:
+                yield ("progress", "复用已生成的世界观/主角设定，跳过 LLM 故事分析...", {})
+            else:
+                basic_info = self._analyze_story(genre, sub_genre, custom_context, pen_name)
+                if basic_info:
+                    # 原地累加：保留用户已填的基础设定（主角/世界观等非空字段不覆盖）
+                    tl.basic_info = merge_basic_info(tl.basic_info, basic_info)
+            # 故事线规则校验（重生/年龄/年份自洽）—— 跳过分析时也必须执行
             storyline_warnings.extend(self._validate_storyline_math(tl.basic_info))
             if storyline_warnings:
                 yield ("warnings", f"故事线校验发现 {len(storyline_warnings)} 个问题", {
@@ -351,6 +357,27 @@ class OutlineGenerator:
             "pov": "第三人称",
             "era_language": "",
         }
+
+    def _basic_info_is_rich(self, basic_info: dict) -> bool:
+        """判断基础设定是否已由世界观生成器充实（可跳过 Phase 1 LLM 分析）。
+
+        条件：显式打了 _world_generated 标记；或世界观填充维度 ≥4 且主角名非空（双保险）。
+        """
+        bi = basic_info or {}
+        if bi.get("_world_generated"):
+            return True
+        wb = bi.get("world_building") or {}
+        if not isinstance(wb, dict):
+            wb = {}
+        keys = ["era", "power_system", "factions", "rules", "geography", "culture",
+                "history", "social_structure", "core_conflict"]
+        filled = 0
+        for k in keys:
+            v = wb.get(k)
+            if (isinstance(v, list) and v) or str(v or "").strip():
+                filled += 1
+        protag_name = str((bi.get("protagonist") or {}).get("name", "") or "").strip()
+        return filled >= 4 and bool(protag_name)
 
     def _validate_storyline_math(self, basic_info: dict) -> list[str]:
         """Phase 1 后规则校验：重生/年龄/年份关系自洽（纯规则，不调 LLM）。"""

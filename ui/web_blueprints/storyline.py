@@ -508,10 +508,14 @@ def api_generate_full(storyline_id):
     world = bi.get("world_building", {}) or {}
     protag = bi.get("protagonist", {}) or {}
     ctx_parts = []
+    if world.get("world_summary"):
+        ctx_parts.append(f"世界观概述：{world['world_summary']}")
     if world.get("description"):
         ctx_parts.append(f"世界观：{world['description']}")
     if protag.get("name") or protag.get("identity"):
         ctx_parts.append(f"主角：{protag.get('name','')}（{protag.get('identity','')}）")
+    if bi.get("storyline_hint"):
+        ctx_parts.append(f"故事线想法：{bi['storyline_hint']}")
     custom_context = "；".join(ctx_parts) or (tl.book_title or "")
 
     from plugins import task_manager
@@ -531,6 +535,7 @@ def api_generate_full(storyline_id):
                 words_per_chapter=tl.words_per_chapter,
                 storyline=tl,                       # 原地累加，可逐步落盘
                 on_save=lambda _tl: _save_storyline(_tl, storyline_id),
+                skip_analyze=bool((tl.basic_info or {}).get("_world_generated")),
             ):
                 # 原始思考流（thinking token）不再下发，前端只展示决策/动作
                 if event_type == "thinking":
