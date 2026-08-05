@@ -17,10 +17,23 @@ def timeline_edit(timeline_id):
     tl_data = _resolve_timeline(timeline_id)
     if not tl_data:
         return "故事线配置不存在或已过期", 404
+    # 供顶部流程步骤条 / ready 面板使用：
+    #   total_ch     = 大纲规划总章数（Python 侧算，避免 Jinja max 对空列表报错）
+    #   book_current = 正式书（book_*）已写章节数；草稿（tl_*）为 0
+    total_ch = max((o.end_chapter for o in tl_data.outlines), default=0)
+    book_current = 0
+    if timeline_id.startswith("book_"):
+        try:
+            _book = book_mgr.get(timeline_id)
+            book_current = _book.current_chapter if _book else 0
+        except Exception:
+            book_current = 0
     return render_template("timeline_editor.html",
         timeline_id=timeline_id,
         timeline=tl_data,
         timeline_json=tl_data.to_dict(),
+        total_ch=total_ch,
+        book_current=book_current,
     )
 
 

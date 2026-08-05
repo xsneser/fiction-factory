@@ -3,6 +3,7 @@
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css">
 <link rel="stylesheet" href="/static/css/workspace.css">
+{% from "_flow_stepper.html" import flow_stepper %}
 <script>window.__BOOK_TIMELINE__ = {{ timeline_json | tojson }};</script>
 <div class="tle-layout">
 <h1>🔰 新书规划：故事线编辑器</h1>
@@ -11,6 +12,9 @@
     <span>流派：<strong>{{ timeline.genre }}{% if timeline.sub_genre %}/{{ timeline.sub_genre }}{% endif %}</strong></span>
     <span>每章：<strong>{{ timeline.words_per_chapter }}字</strong></span>
 </div>
+
+{{ flow_stepper(2, timeline_id=timeline_id, phase=timeline.phase,
+                 current_chapter=book_current) }}
 
 {# ─── 步骤指示器 ─── #}
 <div class="flow-steps" style="margin-bottom:24px">
@@ -32,10 +36,18 @@
         <div class="step-status" id="status-gags">{{ '✅' if timeline.phase == 'ready' else '等待中' }}</div>
     </div>
     <div class="step-arrow">→</div>
-    <div class="step" id="step-write">
+    <div class="step {% if timeline.phase == 'ready' %}active{% endif %}" id="step-write">
         <div class="step-num">4</div>
         <div class="step-label">开始写作</div>
-        <div class="step-status">➡️</div>
+        <div class="step-status">
+            {% if timeline.phase == 'ready' %}
+            {% if timeline_id.startswith('book_') %}
+            <a href="/books/{{ timeline_id }}/continue" style="color:#3fb950;text-decoration:none">✅ 点击进入写作 →</a>
+            {% else %}
+            <a href="/books/start/timeline/{{ timeline_id }}/write" style="color:#3fb950;text-decoration:none">✅ 点击进入写作 →</a>
+            {% endif %}
+            {% else %}➡️{% endif %}
+        </div>
     </div>
 </div>
 
@@ -165,6 +177,25 @@
             </div>
             <div style="margin-top:20px">
                 <button class="btn-primary" onclick="startWriting()" style="background:#1f6feb;font-size:16px;padding:12px 32px">🚀 确认全部 → 开始写作</button>
+            </div>
+        </div>
+
+        {# ─── Ready 面板：一键生成完成后 phase=ready，三个阶段面板全部隐藏，
+             此处提供「开始写作」入口，避免用户从编辑器无法进入写作 ─── #}
+        <div id="phase-ready" class="phase-panel" {% if timeline.phase != 'ready' %}style="display:none"{% endif %}>
+            <div class="phase-header">
+                <h2>🚀 准备就绪</h2>
+            </div>
+            <p style="color:#8b949e;margin-bottom:12px">
+                已生成 <strong>{{ timeline.outlines|length }}</strong> 条大纲 · <strong>{{ timeline.plots|length }}</strong> 个桥段 · 共 <strong>{{ total_ch }}</strong> 章。
+                可随时进入写作，也可先扩展故事线或继续规划。
+            </p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <button class="btn-primary" style="background:#1f6feb;font-size:16px;padding:12px 32px" onclick="startWriting()">🚀 开始写作</button>
+                <button class="btn btn-sm" style="background:#30363d;color:#c9d1d9" onclick="extendOutline()">➕ 扩展故事线（续写大纲）</button>
+                {% if timeline_id.startswith('book_') %}
+                <a href="/books/{{ timeline_id }}" class="btn" style="background:#238636;color:#fff;text-decoration:none">📖 查看书详情</a>
+                {% endif %}
             </div>
         </div>
 
@@ -427,7 +458,7 @@ function genFullStart() {
     // 生成期：左侧故事线常驻，右侧切换到「5 阶段进度 + 生成动态」
     var panel = document.getElementById('gen-panel');
     if (panel) panel.style.display = 'block';
-    ['phase-outlines', 'phase-plots', 'phase-gags'].forEach(function(id) {
+    ['phase-outlines', 'phase-plots', 'phase-gags', 'phase-ready'].forEach(function(id) {
         var el = document.getElementById(id);
         if (el) el.style.display = 'none';
     });
@@ -529,6 +560,16 @@ function genFullHandle(evt) {
         refreshStoryline(evt.timeline);
     }
 }
+// 按 timeline.phase 恢复各阶段面板显隐（ready 时展示「准备就绪」面板而非三阶段面板）
+function applyPhaseVisibility() {
+    var tl = window.__BOOK_TIMELINE__ || {};
+    var ph = tl.phase || 'config';
+    function show(id, cond) { var el = document.getElementById(id); if (el) el.style.display = cond ? '' : 'none'; }
+    show('phase-outlines', ['config', 'outlines'].indexOf(ph) >= 0);
+    show('phase-plots', ph === 'plots');
+    show('phase-gags', ph === 'gags');
+    show('phase-ready', ph === 'ready');
+}
 function genFullFinish() {
     gFullRunning = false;
     var btn = document.getElementById('btn-gen-full');
@@ -538,8 +579,7 @@ function genFullFinish() {
     if (steps) steps.style.display = '';
     var panel = document.getElementById('gen-panel');
     if (panel) panel.style.display = 'none';
-    var ph = document.getElementById('phase-outlines');
-    if (ph) ph.style.display = '';
+    applyPhaseVisibility();
     refreshStoryline(window.__BOOK_TIMELINE__);
 }
 
