@@ -53,7 +53,7 @@ def main():
     phase_log = []
     decision_count = {"outline_choice": 0, "plot_choice": 0, "theme_review": 0, "validate": 0}
     total_thinking_chars = 0
-    result_timeline = None
+    result_storyline = None
     issues = None
 
     for event_type, message, data in gen.generate(
@@ -75,7 +75,7 @@ def main():
         elif event_type == "thinking":
             total_thinking_chars += len((data or {}).get("stream", ""))
         elif event_type == "done":
-            result_timeline = data.get("timeline")
+            result_storyline = data.get("timeline")
             issues = data.get("stats", {}).get("issues")
         elif event_type == "error":
             print("❌ 生成错误:", message)
@@ -88,15 +88,15 @@ def main():
         if evt == "phase":
             print(f"  ▶ {msg}")
 
-    if not result_timeline:
+    if not result_storyline:
         print("❌ 未得到结果")
         return 1
 
     # ── 质量检查 ──
-    outlines = result_timeline.get("outlines", [])
-    plots = result_timeline.get("plots", [])
-    themes = result_timeline.get("themes", [])
-    bi = result_timeline.get("basic_info", {})
+    outlines = result_storyline.get("outlines", [])
+    plots = result_storyline.get("plots", [])
+    themes = result_storyline.get("themes", [])
+    bi = result_storyline.get("basic_info", {})
     print(f"\n===== 产出概览 =====")
     print(f"母题: {themes}")
     print(f"主角: {bi.get('protagonist', {})}")
@@ -123,10 +123,10 @@ def main():
 
     # ── 保存 ──
     if not args.save:
-        args.save = f"books/timelines/test_quality_{args.genre}_{int(time.time())}.json"
+        args.save = f"storage/qa/storyline_quality_{args.genre}_{int(time.time())}.json"
     os.makedirs(os.path.dirname(args.save), exist_ok=True)
     with open(args.save, "w", encoding="utf-8") as f:
-        json.dump(result_timeline, f, ensure_ascii=False, indent=2)
+        json.dump(result_storyline, f, ensure_ascii=False, indent=2)
     print(f"已保存: {args.save}")
 
     # ── 质量判读 ──

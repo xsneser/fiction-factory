@@ -107,9 +107,9 @@ assert_ok("图书-大纲", bm.get_outline(cfg.book_id) is not None)
 print("\n═══ Phase 3: 写作核心统一（无 LLM）═══")
 
 from libraries.book_meta import build_title_prompt, build_synopsis_prompt, platform_constraints
-from libraries.timeline_writer import opening_mode_active
+from libraries.storyline_writer import opening_mode_active
 from libraries.prompt_harness import PromptHarness
-from libraries.timeline import OutlineSlot, PlotSlot
+from libraries.storyline import OutlineSlot, PlotSlot
 
 title_p = build_title_prompt("玄幻", "系统流", "fanqie", "正文占位" * 50)
 assert_ok("书名-含流派", "玄幻" in title_p and "系统流" in title_p)
@@ -125,7 +125,7 @@ assert_ok("开场-超800字关闭", opening_mode_active(1, 800, 0) is False)
 assert_ok("开场-超3桥段关闭", opening_mode_active(1, 0, 3) is False)
 assert_ok("开场-非第1章关闭", opening_mode_active(2, 0, 0) is False)
 
-h = PromptHarness(timeline=None, profile=None)
+h = PromptHarness(storyline=None, profile=None)
 _o = OutlineSlot(id="o1", template_id="struct_urban_01", name="开篇",
                  start_chapter=1, end_chapter=3, stages=[{"name": "开局", "events": ["x"]}])
 _p = PlotSlot(id="p1", template_id="plot_dating_011", name="开篇桥段", category="开篇",
@@ -141,35 +141,35 @@ assert_ok("非开场-不含铁律", "开场模式" not in normal_p)
 # ══════════════════════════════════════════════
 print("\n═══ Phase 3.5: 线程穿插 + 桥段拆分（无 LLM）═══")
 
-from libraries.timeline import BookTimeline, OutlineSlot, PlotSlot
-from libraries.timeline_writer import TimelineChapterWriter
+from libraries.storyline import BookStoryline, OutlineSlot, PlotSlot
+from libraries.storyline_writer import StorylineChapterWriter
 from libraries.outline_generator import OutlineGenerator
 
 _p0 = PlotSlot(id="x", template_id="t", name="n")
 assert_ok("线程-缺省主线", _p0.thread_id == "主线" and _p0.resolves_plot_id == "")
-_tlA = BookTimeline(); _tlA.plots = [_p0]
-assert_ok("线程-往返一致", BookTimeline.from_dict(_tlA.to_dict()).plots[0].thread_id == "主线")
-_tlA2 = BookTimeline.from_dict({"plots": [{"id": "y", "template_id": "t", "name": "n"}]})
-assert_ok("线程-旧数据兼容", _tlA2.plots[0].thread_id == "主线")
+_slA = BookStoryline(); _slA.plots = [_p0]
+assert_ok("线程-往返一致", BookStoryline.from_dict(_slA.to_dict()).plots[0].thread_id == "主线")
+_slA2 = BookStoryline.from_dict({"plots": [{"id": "y", "template_id": "t", "name": "n"}]})
+assert_ok("线程-旧数据兼容", _slA2.plots[0].thread_id == "主线")
 
 # 线程轮流排序（主线2:1；数据刻意按"先主线后副线"构造，穿插后顺序改变）
-_tlB = BookTimeline()
+_slB = BookStoryline()
 _oB = OutlineSlot(id="o1", template_id="t", name="弧", start_chapter=1, end_chapter=30,
                   stages=[{"name": "s%d" % i, "events": ["e"]} for i in range(6)])
-_tlB.outlines = [_oB]
+_slB.outlines = [_oB]
 def _mk(pid, st, order, tid):
     return PlotSlot(id=pid, template_id="t", name=pid, outline_id="o1", stage_index=st, order=order, thread_id=tid)
-_tlB.plots = [
+_slB.plots = [
     _mk("M1",0,0,"主线"),_mk("M2",0,1,"主线"),_mk("M3",1,0,"主线"),_mk("M4",1,1,"主线"),
     _mk("M5",2,0,"主线"),_mk("M6",2,1,"主线"),
     _mk("S1",3,0,"副线"),_mk("S2",3,1,"副线"),_mk("S3",4,0,"副线"),
     _mk("V1",4,1,"伏笔"),_mk("V2",5,0,"伏笔"),_mk("V3",5,1,"伏笔"),
 ]
-_wB = TimelineChapterWriter(timeline=_tlB)
+_wB = StorylineChapterWriter(storyline=_slB)
 _seqB = [p.id for p in _wB._threaded_ordered_plots()]
 assert_ok("线程-轮流前7", _seqB[:7] == ["M1","M2","S1","V1","M3","M4","S2"], " ".join(_seqB[:7]))
-for p in _tlB.plots: p.thread_id = "主线"
-_strict = [p.id for p in sorted(_tlB.plots, key=lambda p: (0, p.stage_index, p.order))]
+for p in _slB.plots: p.thread_id = "主线"
+_strict = [p.id for p in sorted(_slB.plots, key=lambda p: (0, p.stage_index, p.order))]
 _seqB2 = [p.id for p in _wB._threaded_ordered_plots()]
 assert_ok("线程-全主线=旧严格顺序", _seqB2 == _strict, " ".join(_seqB2))
 
@@ -177,10 +177,10 @@ assert_ok("线程-全主线=旧严格顺序", _seqB2 == _strict, " ".join(_seqB2
 _genB = OutlineGenerator(llm_client=None)
 _setupB = PlotSlot(id="setup1", template_id="t", name="阴谋·设局", category="悬疑",
                    outline_id="o1", stage_index=0, order=0)
-_tlC = BookTimeline(); _tlC.outlines = [_oB]; _tlC.plots = [_setupB]
+_slC = BookStoryline(); _slC.outlines = [_oB]; _slC.plots = [_setupB]
 _evtsB = list(_genB._apply_split_payoffs(
-    _tlC, [{"plot_id": "setup1", "payoff_after_stage": 2, "payoff_name": "阴谋·收局"}]))
-_payoffsB = [p for p in _tlC.plots if p.resolves_plot_id]
+    _slC, [{"plot_id": "setup1", "payoff_after_stage": 2, "payoff_name": "阴谋·收局"}]))
+_payoffsB = [p for p in _slC.plots if p.resolves_plot_id]
 assert_ok("线程-收局创建", len(_payoffsB) == 1, str(len(_payoffsB)))
 assert_ok("线程-收局晚于设局", _payoffsB[0].stage_index > _setupB.stage_index, str(_payoffsB[0].stage_index))
 assert_ok("线程-收局 plot_added 事件", len(_evtsB) == 1 and _evtsB[0][0] == "plot_added")
@@ -196,9 +196,9 @@ assert_ok("线程-分类兜底",
 print("\n═══ Phase 3.6: 叙事纪律 + 角色档案（无 LLM）═══")
 
 from libraries.character_state import CharacterStateMachine
-from libraries.timeline import annotate_plot_roles
+from libraries.storyline import annotate_plot_roles
 from libraries.prompt_harness import PromptHarness
-from libraries.timeline_writer import has_repeated_token
+from libraries.storyline_writer import has_repeated_token
 
 _csm = CharacterStateMachine()
 _csm.register("李哥", "同事", gender="男", personality="老油条",
@@ -210,46 +210,46 @@ import json as _json
 _csm2 = CharacterStateMachine.from_dict(_json.loads(_json.dumps(_csm.to_dict())))
 assert_ok("角色-序列化往返", _csm2.get("李哥").gender == "男" and _csm2.get("李哥").catchphrase == "这破公司")
 
-_tlR = BookTimeline()
-_tlR.plots = [PlotSlot(id="p1", template_id="t", name="退婚", outline_id="o1", stage_index=0, order=0, roles=["陈默", "赵婶"])]
-assert_ok("roles-往返", BookTimeline.from_dict(_tlR.to_dict()).plots[0].roles == ["陈默", "赵婶"])
+_slR = BookStoryline()
+_slR.plots = [PlotSlot(id="p1", template_id="t", name="退婚", outline_id="o1", stage_index=0, order=0, roles=["陈默", "赵婶"])]
+assert_ok("roles-往返", BookStoryline.from_dict(_slR.to_dict()).plots[0].roles == ["陈默", "赵婶"])
 
-_tlA = BookTimeline()
-_tlA.basic_info = {"protagonist": {"name": "陈默"},
+_slA = BookStoryline()
+_slA.basic_info = {"protagonist": {"name": "陈默"},
                    "supporting_cast": [{"name": "李哥"}, {"name": "赵婶"}, {"name": "周磊"}]}
 _oA = OutlineSlot(id="o1", template_id="t", name="弧", start_chapter=1, end_chapter=30,
                   stages=[{"name": "开局", "events": ["李哥堵门", "退婚"]}])
-_tlA.outlines = [_oA]
-_tlA.plots = [PlotSlot(id="a", template_id="t", name="退婚", outline_id="o1", stage_index=0, order=0,
+_slA.outlines = [_oA]
+_slA.plots = [PlotSlot(id="a", template_id="t", name="退婚", outline_id="o1", stage_index=0, order=0,
                        slots=[{"name": "对象", "default": "赵婶"}]),
               PlotSlot(id="b", template_id="t", name="职场", outline_id="o1", stage_index=0, order=1)]
-annotate_plot_roles(_tlA)
-assert_ok("annotate-主角恒首", _tlA.plots[0].roles[0] == "陈默")
-assert_ok("annotate-配角按名命中", "赵婶" in _tlA.plots[0].roles and "李哥" in _tlA.plots[0].roles)
-assert_ok("annotate-无关缺席", "周磊" not in _tlA.plots[0].roles and "周磊" not in _tlA.plots[1].roles)
+annotate_plot_roles(_slA)
+assert_ok("annotate-主角恒首", _slA.plots[0].roles[0] == "陈默")
+assert_ok("annotate-配角按名命中", "赵婶" in _slA.plots[0].roles and "李哥" in _slA.plots[0].roles)
+assert_ok("annotate-无关缺席", "周磊" not in _slA.plots[0].roles and "周磊" not in _slA.plots[1].roles)
 
 assert_ok("重复词-底下底下", has_repeated_token("底下底下弹出一条灰字") is True)
 assert_ok("重复词-正常", has_repeated_token("他猛地站起来") is False)
 assert_ok("重复词-哈哈哈放行", has_repeated_token("哈哈哈，你逗我") is False)
 assert_ok("重复词-的的的", has_repeated_token("的的的") is True)
 
-_tlBible = BookTimeline()
-_tlBible.basic_info = {"protagonist": {"name": "陈默", "identity": "重生程序员"},
+_slBible = BookStoryline()
+_slBible.basic_info = {"protagonist": {"name": "陈默", "identity": "重生程序员"},
                        "world_building": {"era": "现代都市 2008", "power_system": "系统"},
                        "supporting_cast": [{"name": "李哥", "gender": "男", "title": "李哥", "personality": "老油条", "catchphrase": "这破公司"}],
                        "pov": "第三人称", "era_language": ""}
-_hB = PromptHarness(timeline=_tlBible, profile=None)
+_hB = PromptHarness(storyline=_slBible, profile=None)
 _cond = _hB.build_book_bible_condensed()
 assert_ok("bible-视角", "视角：第三人称" in _cond and "禁止" in _cond)
 assert_ok("bible-时代语言", "搭子" in _cond and "内卷" in _cond)
 _full = _hB.build_book_bible()
 assert_ok("bible-配角性别口头禅", "男" in _full and "这破公司" in _full)
 
-_tw = _genB._validate_timeline_math({"protagonist": {"death_year": 2010, "age": 25},
+_sw = _genB._validate_storyline_math({"protagonist": {"death_year": 2010, "age": 25},
                                      "world_building": {"era": "现代都市 2015"}})
-assert_ok("时间线-矛盾警告", any("重生时间线矛盾" in w for w in _tw))
-_tw2 = _genB._validate_timeline_math({"protagonist": {"age": 25}, "world_building": {"era": "2008年"}})
-assert_ok("时间线-自洽无警告", not any("矛盾" in w or "不自洽" in w for w in _tw2))
+assert_ok("故事线-矛盾警告", any("重生故事线矛盾" in w for w in _sw))
+_sw2 = _genB._validate_storyline_math({"protagonist": {"age": 25}, "world_building": {"era": "2008年"}})
+assert_ok("故事线-自洽无警告", not any("矛盾" in w or "不自洽" in w for w in _sw2))
 
 # ══════════════════════════════════════════════
 #  Phase 4: 成本追踪

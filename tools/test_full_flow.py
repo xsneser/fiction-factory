@@ -71,21 +71,31 @@ def main():
     # 续写第 4 章仍在大纲范围内，可验证"故事线上下文"分支
     for o in result["outlines"]:
         o["end_chapter"] = min(o["end_chapter"], o["start_chapter"] + 4)
-    from libraries.timeline import BookTimeline
-    tl = BookTimeline.from_dict(result)
-    tl.words_per_chapter = 2000
-    print(f"→ 裁剪为 {len(tl.outlines)} 条大纲，总章数 "
-          f"{max(o.end_chapter for o in tl.outlines)}（供写作测试）")
+    from libraries.storyline import BookStoryline
+    sl = BookStoryline.from_dict(result)
+    sl.words_per_chapter = 2000
+    print(f"→ 裁剪为 {len(sl.outlines)} 条大纲，总章数 "
+          f"{max(o.end_chapter for o in sl.outlines)}（供写作测试）")
 
-    # ═══ ② 新书写作：撰写 + 文本填充（TimelineChapterWriter：按桥段生成→满章切分→落盘）═══
-    stage("撰写 + 文本填充", "engine.start_new_book_timeline → TimelineChapterWriter")
+    # ═══ ② 新书写作：撰写 + 文本填充（StorylineChapterWriter：按桥段生成→满章切分→落盘）═══
+    stage("撰写 + 文本填充", "create + save_storyline → StorylineChapterWriter")
+    from libraries.book_manager import BookManager
+    bm = BookManager("books")
+    book = bm.create(
+        title=sl.book_title or "(待定)",
+        pen_name=sl.pen_name or "测试笔名",
+        genre=sl.genre, sub_genre=sl.sub_genre,
+        platform=sl.platform or "fanqie",
+        chapter_count=max((o.end_chapter for o in sl.outlines), default=500),
+        structure_template_id="storyline")
+    bm.save_storyline(book.book_id, sl)
     engine = NovelEngine(llm_client=llm)
-    state = engine.start_new_book_timeline(tl)
+    state = engine.continue_book(book.book_id)
     book_id = state.book_id
     print(f"创建图书: {book_id}")
 
     for ch in range(1, 4):
-        inst = Instruction(Op.WRITE_TIMELINE_CHAPTER, chapter_num=ch)
+        inst = Instruction(Op.WRITE_STORYLINE_CHAPTER, chapter_num=ch)
         r = engine.execute(inst)
         wc = r.get("word_count", 0)
         bp = r.get("blueprint", {})
@@ -98,10 +108,10 @@ def main():
     engine.book_mgr.update(engine.book)
 
     # ═══ ③ 续写：continue_book → 桥段级写第 4 章（唯一写作核心）═══
-    stage("续写", "continue_book → _exec_write_timeline_chapter（桥段级）")
+    stage("续写", "continue_book → _exec_write_storyline_chapter（桥段级）")
     engine2 = NovelEngine(llm_client=llm)
     engine2.continue_book(book_id)
-    r = engine2._exec_write_timeline_chapter(Instruction(Op.WRITE_TIMELINE_CHAPTER, 4))
+    r = engine2._exec_write_storyline_chapter(Instruction(Op.WRITE_STORYLINE_CHAPTER, 4))
     wc = r.get("word_count", 0)
     print(f"  第4章: {wc}字 | status={r.get('status')} | 用了故事线上下文: "
           f"{'是' if engine2.state.current_content else '否'}")

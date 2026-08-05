@@ -17,7 +17,7 @@
 | 模块 | 说明 | 状态 |
 |------|------|------|
 | **引擎** (`libraries/engine.py`) | 新书启动 → 规划 → 逐章续写，全自动闭环 | ✅ v0.5 |
-| **桥段写作** (`libraries/timeline_writer.py`) | 唯一写作核心：桥段驱动逐短句组增量生成 + 炸裂开场 | ✅ 新 |
+| **桥段写作** (`libraries/storyline_writer.py`) | 唯一写作核心：桥段驱动逐短句组增量生成 + 炸裂开场 | ✅ 新 |
 | **桥段库** (`libraries/plot.py`) | 网文经典桥段的结构化模板（12个内置） | ✅ |
 | **大纲库** (`libraries/structure.py`) | 各流派的卷/弧/章骨架（5个内置） | ✅ |
 | **笑点库** (`libraries/gag.py`) | 搞笑模式模板 + 例句（10个内置） | ✅ |
@@ -75,7 +75,7 @@ python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
 写 → 审 → 去AI → 修正 → 继续写
 ```
 
-每个章节由**桥段写作**（`timeline_writer.py`，唯一写作核心）逐桥段、逐短句组增量生成：
+每个章节由**桥段写作**（`storyline_writer.py`，唯一写作核心）逐桥段、逐短句组增量生成：
 - 桥段是生成单元：每个桥段按短句组流式续写，累计满 `words_per_chapter` 自动切章。
 - 第 1 章前 800 字 / 前 3 桥段强制"炸裂开场"（番茄式冷开场：前三句不铺垫、前 200 字钩子）。
 - 写完后：灵机一动探测器注入笑点 → 章节语义摘要 → 第 1 章写完自动生成书名/简介。
@@ -158,8 +158,8 @@ D:\NovelEngine/
 │   ├── engine.py           # 引擎（新书/续写双模式）
 │   ├── book_meta.py        # 书名/简介生成（纯函数）
 │   ├── outline_generator.py# 故事线大纲生成（5阶段管线）
-│   ├── timeline.py         # 时间线数据模型 + TimelineBuilder
-│   ├── timeline_writer.py  # 桥段驱动的逐章增量写作
+│   ├── storyline.py        # 故事线数据模型 + StorylineBuilder
+│   ├── storyline_writer.py # 桥段驱动的逐章增量写作
 │   ├── assembler.py        # 书籍组装器（库材料→写作计划）
 │   ├── outline_agent.py    # 大纲助手（自然语言调整故事线）
 │   ├── base_library.py     # 四大库共用基类（单例+读写）
@@ -196,10 +196,10 @@ D:\NovelEngine/
 │       ├── books.html      # 图书列表
 │       ├── book_detail.html# 单书详情
 │       ├── start_book.html # 新书启动 ① 选择笔名/流派
-│       ├── timeline_editor.html # 故事线编辑器（时间线）
-│       ├── timeline_detail.html # 故事线草稿详情
-│       ├── timeline_outline_card.html # 大纲卡片组件
-│       ├── timeline_write_flow.html # 蓝图式写作台
+│       ├── storyline_editor.html # 故事线编辑器（写作台）
+│       ├── storyline_detail.html # 故事线草稿详情
+│       ├── storyline_outline_card.html # 大纲卡片组件
+│       ├── storyline_write_flow.html # 蓝图式写作台
 │       ├── desk_empty.html # 写作台空界面（从书库选书进入）
 │       ├── extract.html    # 内容提取
 │       ├── settings.html   # 设置
@@ -221,7 +221,7 @@ D:\NovelEngine/
 │       ├── book.json       # 图书配置
 │       ├── chapters/       # 章节 JSON
 │       ├── outline/        # 大纲
-│       ├── timeline.json   # 故事线配置
+│       ├── storyline.json  # 故事线配置
 │       ├── assembler_plan.json # 写作计划（桥段/笑点注入）
 │       ├── draft_chapter.json  # 进行中章节草稿
 │       ├── character_states.json

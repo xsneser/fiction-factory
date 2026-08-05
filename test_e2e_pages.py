@@ -239,18 +239,18 @@ def run_tests():
     else:
         print("  (no books found - skipping book tests)")
 
-    # ═══ Timeline renderer consistency ═══
+    # ═══ Storyline renderer consistency ═══
     # 方案4：服务端 Jinja 渲染的桥段卡应与 JS 重绘（renderPlotList）字段一致，
     # 必须包含 线程/收局/内涵 三个徽标，防止双份渲染漂移。
-    print("\n--- Timeline Renderer Consistency ---")
+    print("\n--- Storyline Renderer Consistency ---")
     tl_editor = None
     for cand in book_ids[:3] if book_ids else []:
-        r = get(f"/timeline/{cand}/edit")
+        r = get(f"/storyline/{cand}/edit")
         if r.status_code == 200 and "故事线编辑器" in r.text:
             tl_editor = r
             break
     if tl_editor is None:
-        print("  (no timeline editor page found - skipping renderer check)")
+        print("  (no storyline editor page found - skipping renderer check)")
     else:
         for badge, label in [("线程:", "thread badge"),
                              ("↪ 收局", "payoff badge"),

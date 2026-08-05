@@ -34,7 +34,7 @@ from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
 from libraries.theme import ThemeLibrary
-from libraries.timeline import BookTimeline
+from libraries.storyline import BookStoryline
 from libraries.engine import NovelEngine
 from libraries.book_manager import BookManager
 from libraries.publisher import Publisher
@@ -92,26 +92,36 @@ def main():
         if not result:
             print("❌ 未得到大纲结果")
             return 1
-        tl = BookTimeline.from_dict(result)
-        n_o, n_p = len(tl.outlines), len(tl.plots)
-        total_ch = max((o.end_chapter for o in tl.outlines), default=0)
+        sl = BookStoryline.from_dict(result)
+        n_o, n_p = len(sl.outlines), len(sl.plots)
+        total_ch = max((o.end_chapter for o in sl.outlines), default=0)
         print(f"✅ 大纲生成：{n_o} 条大纲 / {n_p} 个桥段 / 共 {total_ch} 章")
         if n_o < 1 or n_p < 1:
             print("❌ 大纲或桥段为空")
             return 1
 
         # ═══ ② 开始写作 → 建正式书（模拟用户点「开始写作」）═══
-        stage("② 开始写作", "start_new_book_timeline 建正式书")
+        stage("② 开始写作", "create + save_storyline + continue_book")
+        # 规划书即正式书：直接建书 + 存故事线，再 continue_book 恢复引擎
+        book = bm.create(
+            title=sl.book_title or "(待定)",
+            pen_name=sl.pen_name or "模拟笔名",
+            genre=sl.genre, sub_genre=sl.sub_genre,
+            platform=sl.platform or "fanqie",
+            chapter_count=max((o.end_chapter for o in sl.outlines), default=500),
+            structure_template_id="storyline")
+        book.detector_frequency = 999   # 跳过探测器 LLM 调用（省钱，只验主链路）
+        bm.update(book)
+        bm.save_storyline(book.book_id, sl)
         engine = NovelEngine(llm_client=llm)
-        # detector_frequency 调大 → 跳过探测器 LLM 调用（省钱，只验主链路）
-        state = engine.start_new_book_timeline(tl, config={"detector_frequency": 999})
+        state = engine.continue_book(book.book_id)
         book_id = state.book_id
         print(f"✅ 建书完成: {book_id} | total_chapters={state.total_chapters}")
         if not book_id:
             print("❌ 建书失败")
             return 1
-        if not bm.get(book_id) or not bm.load_timeline(book_id):
-            print("❌ book.json / timeline.json 未落盘")
+        if not bm.get(book_id) or not bm.load_storyline(book_id):
+            print("❌ book.json / storyline.json 未落盘")
             return 1
 
         # ═══ ③ 章节写作（逐桥段，写满 args.chapters 章）═══
@@ -159,7 +169,7 @@ def main():
         pub = Publisher(engine2.book_mgr)
         book = engine2.book
         report = pub.build_report(
-            book, timeline=engine2.timeline,
+            book, storyline=engine2.storyline,
             outline=bm.get_outline(book_id),
             thresholds={"min_total_words": args.min_total_words, "min_chapters": args.min_chapters})
         for item in report.items:

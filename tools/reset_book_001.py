@@ -3,7 +3,7 @@
 
 执行的动作（幂等）：
   1. 删除 chapters/0001.json（断裂第一章：沈宁穿越 + 林尘被逐两个故事拼接）
-  2. 把 timeline.json 中 written_chapter==1 的桥段重置为 0（回到未写状态）
+  2. 把 storyline.json 中 written_chapter==1 的桥段重置为 0（回到未写状态）
   3. 删除 draft_chapter.json（进行中章节草稿，若有）
   4. 清空 character_states.json（源自断裂章节，保留空结构）
   5. book.json 的 current_chapter 置 0（chapter_count 保留）
@@ -40,7 +40,7 @@ def main():
     print(f"✔ 已删除 {deleted} 个章节文件" if deleted else "· 无章节文件")
 
     # 2. 重置所有已写桥段的 written_chapter → 0（回到未写状态）
-    tl_path = BOOK_DIR / "timeline.json"
+    tl_path = BOOK_DIR / "storyline.json"
     if tl_path.exists():
         tl = json.loads(tl_path.read_text(encoding="utf-8"))
         reset = 0
@@ -51,7 +51,7 @@ def main():
         tl_path.write_text(json.dumps(tl, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"✔ 已重置 {reset} 个桥段的 written_chapter → 0")
     else:
-        print("· timeline.json 不存在，跳过")
+        print("· storyline.json 不存在，跳过")
 
     # 3. 删除草稿
     draft = BOOK_DIR / "draft_chapter.json"
