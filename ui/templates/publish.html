@@ -1,9 +1,10 @@
 {% extends "base.html" %}
-{% block title %}上架 — {{ book.title or '(未命名)' }}{% endblock %}
+{% block title %}上架 — {{ book.title or '(待定)' }}{% endblock %}
 {% block content %}
 {% from "_flow_stepper.html" import flow_stepper, status_badge %}
-{{ flow_stepper(5, book_id=book.book_id, phase='ready',
-                 current_chapter=book.current_chapter, status=book.status) }}
+{{ flow_stepper(6, book_id=book.book_id, phase='ready',
+                 current_chapter=book.current_chapter, status=book.status,
+                 world_done=True) }}
 
 <h1>🚀 上架 / 发布</h1>
 <div class="info-bar">

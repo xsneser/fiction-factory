@@ -1,17 +1,20 @@
 {# ─── 全流程步骤条 + 状态徽标（共享 partial，逐页 {% from ... import %}） ─── #}
 
-{% macro flow_stepper(current, book_id='', storyline_id='', phase='config', current_chapter=0, status='planning') %}
+{% macro flow_stepper(current, book_id='', storyline_id='', phase='config', current_chapter=0, status='planning', world_done=False) %}
 <div class="flow-stepper">
-    {% set s2_href = ('/storyline/' + (storyline_id or book_id) + '/edit') if (storyline_id or book_id) else '' %}
-    {% set s3_href = ('/books/' + book_id + '/continue') if book_id else '' %}
-    {% set s5_href = ('/books/' + book_id + '/publish') if book_id else '' %}
+    {% set id_ = (storyline_id or book_id) %}
+    {% set s2_href = ('/books/' + id_ + '/world') if id_ else '' %}
+    {% set s3_href = ('/storyline/' + id_ + '/edit') if id_ else '' %}
+    {% set s4_href = ('/books/' + book_id + '/continue') if book_id else '' %}
+    {% set s6_href = ('/books/' + book_id + '/publish') if book_id else '' %}
     {% set steps = [
-        {'n':1, 'label':'创建', 'href':'/books/start', 'done':True, 'active':current==1},
-        {'n':2, 'label':'大纲·故事线', 'href':s2_href,
-         'done':(phase in ('plots','gags','ready')) or current_chapter>=1, 'active':current==2},
-        {'n':3, 'label':'章节写作', 'href':s3_href, 'done':current_chapter>=1, 'active':current==3},
-        {'n':4, 'label':'续写', 'href':s3_href, 'done':current_chapter>=2, 'active':current==4},
-        {'n':5, 'label':'上架', 'href':s5_href, 'done':status in ('finished','published'), 'active':current==5},
+        {'n':1, 'label':'创建',       'href':'/books/start',          'done':True, 'active':current==1},
+        {'n':2, 'label':'世界观',     'href':s2_href,                 'done':world_done, 'active':current==2},
+        {'n':3, 'label':'大纲·故事线','href':s3_href,
+         'done':(phase in ('plots','gags','ready')) or current_chapter>=1, 'active':current==3},
+        {'n':4, 'label':'章节写作',   'href':s4_href, 'done':current_chapter>=1, 'active':current==4},
+        {'n':5, 'label':'续写',       'href':s4_href, 'done':current_chapter>=2, 'active':current==5},
+        {'n':6, 'label':'上架',       'href':s6_href, 'done':status in ('finished','published'), 'active':current==6},
     ] %}
     {% for s in steps %}
         {% if s.href %}

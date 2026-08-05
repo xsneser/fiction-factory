@@ -1,20 +1,32 @@
 {% extends "base.html" %}
 {% block content %}
 {% from "_flow_stepper.html" import flow_stepper, status_badge %}
-{{ flow_stepper(5 if book.status in ('finished','published') else (3 if book.current_chapter >= 1 else 2),
-                 book_id=book.book_id,
-                 phase=(storyline.phase if storyline else 'config'),
-                 current_chapter=book.current_chapter, status=book.status) }}
-<h1>📖 {{ book.title or '(未命名)' }}</h1>
+{{ flow_stepper(
+    6 if book.status in ('finished','published') else
+    (4 if book.current_chapter >= 1 else (2 if not world_done else 3)),
+    book_id=book.book_id,
+    phase=(storyline.phase if storyline else 'config'),
+    current_chapter=book.current_chapter, status=book.status,
+    world_done=world_done) }}
+<h1>📖 {{ book.title or '(待定)' }}</h1>
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
     <span>状态：{{ status_badge(book.status) }}</span>
-    <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 续写 / 进入写作台</a>
-    <a href="/books/{{ book.book_id }}/publish" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">🚀 上架 / 导出</a>
-    <a href="#" class="btn" style="background:#8957e5;color:#fff;text-decoration:none" onclick="generateMeta()">🎬 生成书名/简介</a>
     {% if basic_info.get('has_storyline') %}
-    <a href="/storyline/{{ book.book_id }}/edit" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none">📋 编辑大纲</a>
+        {% if not world_done %}
+        <a href="/books/{{ book.book_id }}/world" class="btn" style="background:#8957e5;color:#fff;text-decoration:none">🌍 生成世界观</a>
+        {% else %}
+        <a href="/books/{{ book.book_id }}/world" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none">🌍 设定</a>
+        {% endif %}
+        <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 进入写作台</a>
+        {% if has_outlines %}
+        <a href="/storyline/{{ book.book_id }}/edit" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none">📋 编辑大纲</a>
+        {% endif %}
     {% endif %}
+    {% if book.current_chapter >= 1 %}
+    <a href="#" class="btn" style="background:#8957e5;color:#fff;text-decoration:none" onclick="generateMeta()">🎬 生成书名/简介</a>
+    {% endif %}
+    <a href="/books/{{ book.book_id }}/publish" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">🚀 上架 / 导出</a>
     <form method="POST" action="/books/{{ book.book_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ book.title }}》？')">
         <button class="small danger" style="padding:8px 16px">删除</button>
     </form>

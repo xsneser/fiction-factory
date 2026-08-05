@@ -66,6 +66,8 @@ def storyline_write_flow(engine_id):
             total_ch = max((o.end_chapter for o in sl.outlines), default=0)
         except Exception:
             total_ch = 0
+    from libraries.storyline import basic_info_world_done
+    world_done = basic_info_world_done((sl.basic_info if sl else None))
     return render_template("storyline_write_flow.html",
         engine_id=engine_id,
         state=engine.state,
@@ -73,6 +75,7 @@ def storyline_write_flow(engine_id):
         book=book,
         chapters=chapters,
         total_ch=total_ch,
+        world_done=world_done,
     )
 
 

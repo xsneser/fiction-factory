@@ -13,8 +13,8 @@
     <span>每章：<strong>{{ storyline.words_per_chapter }}字</strong></span>
 </div>
 
-{{ flow_stepper(2, storyline_id=storyline_id, phase=storyline.phase,
-                 current_chapter=book_current) }}
+{{ flow_stepper(3, storyline_id=storyline_id, phase=storyline.phase,
+                 current_chapter=book_current, world_done=True) }}
 
 {# ─── 步骤指示器 ─── #}
 <div class="flow-steps" style="margin-bottom:24px">

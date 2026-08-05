@@ -37,7 +37,7 @@
     {% for r in books %}
     {% set b = r.book %}
     <tr>
-        <td style="color:#c9d1d9">{{ b.title or '(未命名)' }}</td>
+        <td style="color:#c9d1d9">{{ b.title or '(待定)' }}</td>
         <td>{{ b.pen_name }}</td>
         <td><span class="tag">{{ b.genre }}</span>{% if b.sub_genre %} <span class="tag blue">{{ b.sub_genre }}</span>{% endif %}</td>
         <td>
@@ -45,7 +45,10 @@
             <small>{{ b.current_chapter }}/{{ b.chapter_count }} 章</small>
         </td>
         <td>{{ status_badge(b.status) }}</td>
-        <td><a href="/books/{{ b.book_id }}" class="btn small">查看详情</a></td>
+        <td>
+            {% if r.has_storyline %}<a href="/books/{{ b.book_id }}/world" class="btn small">🌍 设定</a>{% endif %}
+            <a href="/books/{{ b.book_id }}" class="btn small">查看详情</a>
+        </td>
     </tr>
     {% endfor %}
     </tbody>

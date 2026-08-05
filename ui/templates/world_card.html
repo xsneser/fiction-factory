@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}世界观设定卡 — NovelEngine{% endblock %}
 {% block content %}
+{% from "_flow_stepper.html" import flow_stepper %}
+{{ flow_stepper(2, book_id=book_id, phase=(storyline.phase if storyline else 'config'),
+                 world_done=world_generated) }}
 <h1>🌍 世界观设定卡 <span class="book-id">{{ book_id }}</span></h1>
 <p class="subtitle">用一句话设定生成完整世界观，逐项审查/微调后再进入大纲生成。留空的字段=交给 AI。</p>
 

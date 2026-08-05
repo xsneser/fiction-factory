@@ -21,28 +21,30 @@ def books():
 _book_rows_cache: dict = {}  # book_id -> (mtimes, row)
 
 
-def next_step_for(book, has_storyline: bool = False, storyline_phase: str = "") -> dict:
+def next_step_for(book, has_storyline: bool = False,
+                  world_done: bool = False, outlines_count: int = 0) -> dict:
     """根据图书状态给出「下一步」动作（供书库/仪表盘列表渲染）。
 
-    规划书（无章节）：故事线 phase 就绪 → 开始写作；否则 → 规划大纲（进故事线编辑器）。
-    每个状态只给一个明确的下一步；「查看详情」仅作兜底（此时表格标题本身即是详情链接，
-    避免与详情入口重复）。
+    设定先行规划书（无章节）：无世界观 → 🌍 生成世界观；有世界无大纲 → 📋 生成大纲；
+    有大纲 → ✍️ 开始写作。每个状态只给一个明确的下一步。
     """
     bid = book.book_id
     if book.status in ("ready", "planning"):
         if (book.current_chapter or 0) == 0:
             if not has_storyline:
                 return {"label": "查看详情", "href": f"/books/{bid}", "step": 2}
-            if storyline_phase == "ready":
-                return {"label": "开始写作", "href": f"/books/{bid}/continue", "step": 3}
-            return {"label": "规划大纲", "href": f"/storyline/{bid}/edit", "step": 2}
-        return {"label": "继续写作", "href": f"/books/{bid}/continue", "step": 3}
+            if not world_done:
+                return {"label": "🌍 生成世界观", "href": f"/books/{bid}/world", "step": 2}
+            if outlines_count == 0:
+                return {"label": "📋 生成大纲", "href": f"/books/{bid}/continue", "step": 3}
+            return {"label": "✍️ 开始写作", "href": f"/books/{bid}/continue", "step": 4}
+        return {"label": "继续写作", "href": f"/books/{bid}/continue", "step": 4}
     if book.status in ("writing", "reviewing"):
-        return {"label": "继续写作", "href": f"/books/{bid}/continue", "step": 3}
+        return {"label": "继续写作", "href": f"/books/{bid}/continue", "step": 4}
     if book.status == "finished":
-        return {"label": "上架出版", "href": f"/books/{bid}/publish", "step": 5}
+        return {"label": "上架出版", "href": f"/books/{bid}/publish", "step": 6}
     if book.status == "published":
-        return {"label": "查看上架", "href": f"/books/{bid}/publish", "step": 5}
+        return {"label": "查看上架", "href": f"/books/{bid}/publish", "step": 6}
     return {"label": "查看详情", "href": f"/books/{bid}", "step": 2}
 
 
@@ -68,6 +70,8 @@ def _book_rows():
             continue
         sl = book_mgr.load_storyline(b.book_id)
         outline = book_mgr.get_outline(b.book_id)
+        from libraries.storyline import basic_info_world_done
+        world_done = basic_info_world_done(sl.basic_info if sl else None)
         row = {
             "book": b,
             "has_storyline": sl is not None,
@@ -75,7 +79,8 @@ def _book_rows():
             "storyline_plots": len(sl.plots) if sl else 0,
             "outline_count": len((outline or {}).get("stages", [])) if outline else 0,
             "next": next_step_for(b, has_storyline=sl is not None,
-                                  storyline_phase=getattr(sl, "phase", "") if sl else ""),
+                                  world_done=world_done,
+                                  outlines_count=len(sl.outlines) if sl else 0),
         }
         _book_rows_cache[b.book_id] = (sig, row)
         rows.append(row)
@@ -112,7 +117,7 @@ def book_detail(book_id):
     outline = book_mgr.get_outline(book_id)
     storyline = book_mgr.load_storyline(book_id)
     if storyline:
-        basic_info = storyline.basic_info or {}
+        basic_info = dict(storyline.basic_info or {})  # 拷贝再打标，避免就地污染缓存对象
         basic_info["has_storyline"] = True
     else:
         basic_info = _basic_info_from_outline(outline, book)
@@ -148,11 +153,15 @@ def book_detail(book_id):
                 }
         except Exception as e:
             logger.warning("读取章节草稿失败: %s", e)
+    from libraries.storyline import basic_info_world_done
+    world_done = basic_info_world_done(storyline.basic_info if storyline else None)
+    has_outlines = bool(storyline and storyline.outlines)
     return render_template("book_detail.html", book=book,
         outline=outline, chapters=chapters,
         storyline=storyline,
         basic_info=basic_info,
-        cost=cost.summary(), characters=csm.characters, draft=draft)
+        cost=cost.summary(), characters=csm.characters, draft=draft,
+        world_done=world_done, has_outlines=has_outlines)
 
 
 @bp.route("/api/book/<book_id>/generate-meta", methods=["POST"])

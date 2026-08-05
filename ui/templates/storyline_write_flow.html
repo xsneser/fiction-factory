@@ -19,9 +19,11 @@
     <span>状态：{{ status_badge(book.status) if book else status_badge('writing') }}</span>
 </div>
 
-{{ flow_stepper(3 if state.current_chapter < 2 else 4, book_id=state.book_id,
-                 phase='ready', current_chapter=state.current_chapter,
-                 status=(book.status if book else 'writing')) }}
+{{ flow_stepper(4 if state.current_chapter < 2 else 5, book_id=state.book_id,
+                 phase=(storyline.phase if storyline else 'config'),
+                 current_chapter=state.current_chapter,
+                 status=(book.status if book else 'writing'),
+                 world_done=world_done) }}
 
 {# ─── 三栏：左=故事线 | 中=规划↔正文切换 | 右=写作助手+写作动态 ─── #}
 <div class="editor-split">

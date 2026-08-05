@@ -34,7 +34,7 @@
     {% set b = item.book %}
     {% set rep = item.report %}
     <tr>
-        <td><strong><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title or '(未命名)' }}</a></strong></td>
+        <td><strong><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title or '(待定)' }}</a></strong></td>
         <td style="white-space:nowrap">{{ b.pen_name }} <span class="tag blue">{{ b.platform }}</span></td>
         <td>{{ status_badge(b.status) }}</td>
         <td>{{ b.current_chapter }}/{{ b.chapter_count }} 章</td>

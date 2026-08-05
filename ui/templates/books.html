@@ -10,7 +10,7 @@
     {% for r in books %}
     {% set b = r.book %}
     <tr>
-        <td><strong><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title }}</a></strong></td>
+        <td><strong><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title or '(待定)' }}</a></strong></td>
         <td>{{ b.pen_name }}</td>
         <td><span class="tag">{{ b.genre }}</span>{% if b.sub_genre %} <span class="tag blue">{{ b.sub_genre }}</span>{% endif %}</td>
         <td>
@@ -26,6 +26,7 @@
         <td>{{ status_badge(b.status) }}</td>
         <td style="white-space:nowrap">
             {% if r.next %}<a href="{{ r.next.href }}" class="btn small" style="background:#1f6feb;color:#fff">{{ r.next.label }}</a>{% endif %}
+            {% if r.has_storyline %}<a href="/books/{{ b.book_id }}/world" class="btn small secondary" title="世界观设定卡">🌍 设定</a>{% endif %}
             <a href="/books/{{ b.book_id }}" class="btn small secondary">📖 详情</a>
             <form method="POST" action="/books/{{ b.book_id }}/delete" style="display:inline" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
                 <button class="small danger">删除</button>
