@@ -80,6 +80,15 @@ function feedCardStart(evt) {
         (evt.outline_name ? '（大纲「' + evt.outline_name + '」）' : '') +
         (evt.stage_name ? ' · ' + evt.stage_name : '') +
         '　预计' + (evt.planned_words || '?') + '字';
+    if (evt.hook_points && evt.hook_points.length) {
+        const hook = document.createElement('div');
+        hook.style.fontWeight = 'normal';
+        hook.style.color = '#d29922';
+        hook.style.fontSize = '11px';
+        hook.style.marginTop = '2px';
+        hook.textContent = '⚡ 吸睛：' + evt.hook_points.join('、');
+        head.appendChild(hook);
+    }
     const body = document.createElement('pre');
     body.className = 'wf-card-body';
     body.textContent = '⏳ 生成中...';

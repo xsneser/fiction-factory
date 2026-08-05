@@ -404,7 +404,8 @@ class TimelineChapterWriter:
                "plot_id": p.id, "plot_name": p.name,
                "outline_id": o.id if o else "", "outline_name": o.name if o else "",
                "stage_name": stage.get("name", "") if isinstance(stage, dict) else "",
-               "planned_words": planned}
+               "planned_words": planned,
+               "hook_points": list(getattr(p, "hook_points", None) or [])}
 
         seg_parts = []
         seg_words = 0

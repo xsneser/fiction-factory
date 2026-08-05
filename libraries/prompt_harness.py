@@ -321,6 +321,14 @@ class PromptHarness:
                 f"（可选: {'、'.join(s.get('options', [])[:3])}）"
                 for s in p.slots[:4])
 
+        # 吸睛点（mount_themes_and_hooks 已生成，此前从未进写作 prompt）：
+        # 把桥段的最强爽点/悬念落地为读者可见的 payoff。
+        hook_block = ""
+        hooks = list(getattr(p, "hook_points", None) or [])
+        if hooks:
+            hook_block = ("\n【本桥段吸睛点】" + "、".join(hooks[:2])
+                          + "\n（写出实感：用具体画面/结果把这几个吸睛点做成读者想看的爽点/悬念/反转，不直白点破、不加括号注解）")
+
         # 前文上下文（修复：原 _group_prompt 的 character_states 形参未被渲染）
         ctx = []
         if prev_ending:
@@ -389,6 +397,7 @@ class PromptHarness:
 【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按大纲自然推进'}
 【桥段骨架】{structure}
 【变量槽位】{slots_text or '跟随上下文自由发挥'}
+{hook_block}
 {roles_block}
 {theme_block}
 {payoff_block}
