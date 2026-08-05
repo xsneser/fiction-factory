@@ -694,7 +694,18 @@ class NovelEngine:
     # ─── 通用 ───
 
     def _exec_complete(self, inst: Instruction) -> dict:
-        return {"status": "complete", "message": "全书完成"}
+        # 防御性完本标记（完整链路正常由 _write_next_bridge_stream 触发）
+        if self.book:
+            try:
+                if self.book.status != "published":
+                    self.book.status = "finished"
+                    self.book.finished_at = datetime.now().isoformat(timespec="seconds")
+                    self.book_mgr.update(self.book)
+            except Exception as e:
+                logger.warning("标记完本失败: %s", e)
+        return {"status": "complete", "message": "全书完成",
+                "book_id": getattr(self.state, "book_id", ""),
+                "status_label": getattr(self.book, "status", "") or "finished"}
 
     def _exec_pause(self, inst: Instruction) -> dict:
         return {"status": "paused", "reason": inst.reason}
@@ -863,6 +874,8 @@ class NovelEngine:
             try:
                 self.book.current_chapter = chapter_num
                 self.book.status = "writing"
+                # 累计总字数记账（仅展示用；上架检查的权威字数由 publisher 从磁盘重算）
+                self.book.total_words = (self.book.total_words or 0) + count_prose_units(full_text)
                 self.book_mgr.update(self.book)
             except Exception as e:
                 logger.warning("更新图书进度失败: %s", e)
@@ -975,7 +988,17 @@ class NovelEngine:
 
         # 无剩余桥段 → 全书完成
         if not result or not result.get("text") or result["text"].startswith("["):
-            yield {"type": "complete", "message": "没有更多桥段可写（全书完成）"}
+            if self.book:
+                try:
+                    if self.book.status != "published":
+                        self.book.status = "finished"
+                        self.book.finished_at = datetime.now().isoformat(timespec="seconds")
+                        self.book_mgr.update(self.book)
+                except Exception as e:
+                    logger.warning("标记完本失败: %s", e)
+            yield {"type": "complete", "message": "没有更多桥段可写（全书完成）",
+                   "book_id": self.state.book_id,
+                   "status": getattr(self.book, "status", "") or "finished"}
             return
 
         final = self._finalize_written_chapter(chapter_num, result)
@@ -1003,7 +1026,17 @@ class NovelEngine:
         chapter_num = self.state.current_chapter + 1
         total_ch = self.state.total_chapters or self.timeline_writer._total_chapters
         if chapter_num > total_ch:
-            yield {"type": "complete", "message": "已写完全部章节"}
+            # 全书完成 → 标记完本（status=finished + finished_at），随事件带给前端上架入口
+            if self.book:
+                try:
+                    if self.book.status != "published":
+                        self.book.status = "finished"
+                        self.book.finished_at = datetime.now().isoformat(timespec="seconds")
+                        self.book_mgr.update(self.book)
+                except Exception as e:
+                    logger.warning("标记完本失败: %s", e)
+            yield {"type": "complete", "message": "已写完全部章节",
+                   "book_id": self.state.book_id, "status": getattr(self.book, "status", "") or "finished"}
             return
         prev_ending, char_states, buffer, words, summaries = self._prepare_chapter_context(chapter_num)
 

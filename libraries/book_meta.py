@@ -67,3 +67,22 @@ def platform_constraints(platform: str) -> str:
         ),
     }
     return constraints.get(platform, "")
+
+
+def publish_thresholds(platform: str, min_total_words: int | None = None,
+                       min_chapters: int | None = None) -> dict:
+    """上架所需的结构化平台阈值（纯函数，无 LLM）。
+
+    供上架检查（libraries/publisher.py）与模拟脚本使用；调用方可用
+    min_total_words / min_chapters 覆盖默认值（如模拟脚本压到 800 字跑通全流程）。
+    """
+    defaults = {
+        "fanqie": {"min_total_words": 20000, "min_chapters": 5},
+        "qidian": {"min_total_words": 30000, "min_chapters": 5},
+    }
+    thresholds = dict(defaults.get(platform, {"min_total_words": 10000, "min_chapters": 3}))
+    if min_total_words is not None:
+        thresholds["min_total_words"] = min_total_words
+    if min_chapters is not None:
+        thresholds["min_chapters"] = min_chapters
+    return thresholds

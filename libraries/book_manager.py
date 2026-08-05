@@ -26,7 +26,7 @@ class BookConfig:
     current_chapter: int = 0
     words_per_chapter: int = 3000
     total_words: int = 0
-    status: str = "planning"              # planning/writing/reviewing/published/paused
+    status: str = "planning"              # planning/ready/writing/reviewing/finished/published/paused
     structure_template_id: str = ""        # 使用的大纲模板ID
     assigned_profiles: list[str] = field(default_factory=list)  # 使用的桥段列表
     assigned_gags: list[str] = field(default_factory=list)      # 使用的笑点列表
@@ -41,6 +41,11 @@ class BookConfig:
     current_cost: float = 0.0
     created_at: str = ""
     updated_at: str = ""
+    # 上架生命周期（由 libraries/publisher.py 写入；from_dict 按字段过滤，旧 book.json 自动兼容）
+    finished_at: str = ""                  # 完本时间
+    published_at: str = ""                 # 上架时间
+    exported_at: str = ""                  # 最近导出时间
+    publish_note: str = ""                 # 可选投稿备注
 
     def to_dict(self) -> dict:
         return self.__dict__
