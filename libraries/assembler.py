@@ -1,7 +1,7 @@
 """书籍组装器（Book Assembler）—— 仅保留旧书兼容
 
 历史：按大纲结构匹配桥段/笑点/内涵、生成写作计划的组装管线。
-现状：桥段写作 timeline_writer 不再依赖 assembler_plan；BookAssembler 已在 P2 下线评估中移除。
+现状：桥段写作 storyline_writer 不再依赖 assembler_plan；BookAssembler 已在 P2 下线评估中移除。
 本模块只保留 BookAssemblerPlan / StageWritingPlan 数据结构与 load_plan，
 供 continue_book 加载旧书遗留的 assembler_plan.json（不再生成新计划）。
 """

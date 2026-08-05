@@ -2,7 +2,7 @@
 书名 / 简介 / 平台约束（Book Metadata）— 纯函数，无 LLM、无状态
 
 从原 new_book.py 抢救迁移（删除节拍/新书写作后保留元数据生成）。
-接入时间线流：第 1 章写完由 engine._generate_book_meta 调用生成书名+简介。
+接入故事线流：第 1 章写完由 engine._generate_book_meta 调用生成书名+简介。
 """
 
 

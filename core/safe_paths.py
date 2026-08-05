@@ -7,15 +7,10 @@ from pathlib import Path
 
 
 _BOOK_ID_RE = re.compile(r"^book_\d{3,}$")
-_TIMELINE_ID_RE = re.compile(r"^(?:tl|gen)_[A-Za-z0-9_\-\u4e00-\u9fff]+$")
 
 
 def is_safe_book_id(value: str) -> bool:
     return bool(_BOOK_ID_RE.fullmatch(value or ""))
-
-
-def is_safe_timeline_id(value: str) -> bool:
-    return bool(_TIMELINE_ID_RE.fullmatch(value or ""))
 
 
 def ensure_child_path(base: str | Path, target: str | Path) -> Path:

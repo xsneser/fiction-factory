@@ -61,8 +61,8 @@ class Op(Enum):
     DE_AI_PASS = "de_ai_pass"          # 去AI味
     CONFIRM_CHAPTER = "confirm"        # 确认发布
 
-    # 蓝图写作（时间线驱动）
-    WRITE_TIMELINE_CHAPTER = "write_timeline_chapter"  # 按蓝图写一章
+    # 蓝图写作（故事线驱动）
+    WRITE_STORYLINE_CHAPTER = "write_storyline_chapter"  # 按蓝图写一章
 
 
 @dataclass
@@ -120,13 +120,12 @@ class EngineState:
 
 class NovelEngine:
     """
-    小说工厂总引擎 v2.0 — 唯一写作核心 = 桥段写作（timeline_writer）
+    小说工厂总引擎 v2.0 — 唯一写作核心 = 桥段写作（storyline_writer）
 
     入口：
-        engine.start_new_book_timeline(timeline, config)  → 时间线书启动（桥段写作）
-        engine.continue_book(book_id)                     → 续写（桥段写作）
+        engine.continue_book(book_id) → 从书的故事线恢复并进入桥段写作
 
-    流程：时间线书按桥段逐章写作（大纲=故事线）→ 第1章写完自动生成书名/简介。
+    流程：故事线按桥段逐章写作（大纲=故事线）→ 第1章写完自动生成书名/简介。
     """
 
     def __init__(self, llm_client=None):
@@ -144,10 +143,9 @@ class NovelEngine:
         self.profile: Optional[PenNameProfile] = None
         self.char_states = CharacterStateMachine()
 
-        # 蓝图式写作（时间线驱动，新核心）
-        self.timeline: Optional[dict] = None          # BookTimeline
-        self.timeline_writer = None                    # TimelineChapterWriter
-        self._timeline_config: Optional[dict] = None   # 原始时间线配置
+        # 蓝图式写作（故事线驱动，新核心）
+        self.storyline: Optional[dict] = None          # BookStoryline
+        self.storyline_writer = None                    # StorylineChapterWriter
 
         # 状态
         self.state = EngineState()
@@ -158,122 +156,8 @@ class NovelEngine:
     # 入口
     # ═══════════════════════════════════════════
 
-    def start_new_book_timeline(self, timeline: dict, config: dict = None,
-                                source_timeline_id: str = "") -> EngineState:
-        """
-        🔰 蓝图式新书启动（新核心）
-
-        timeline: BookTimeline 对象（多大纲序列 + 桥段嵌套 + 笑点/内涵）
-        config: 可选覆盖配置（pen_name/genre/sub_genre/words_per_chapter）
-        source_timeline_id: 来源故事线草稿 id（用于「开始写作」时去重，避免同一草稿重复建书）
-        """
-        if not self.llm:
-            raise RuntimeError("LLM 未配置，无法启动新书")
-
-        # 保存时间线配置
-        self._timeline_config = timeline
-        self.timeline = timeline
-
-        pen_name = (config or {}).get("pen_name") or timeline.pen_name
-        genre = (config or {}).get("genre") or timeline.genre
-        sub_genre = (config or {}).get("sub_genre") or timeline.sub_genre
-        words_per_chapter = (config or {}).get("words_per_chapter") or timeline.words_per_chapter
-        platform = (config or {}).get("platform") or timeline.platform or "fanqie"
-
-        # 总章节数：优先按桥段真实规划字数重算（预计=实际），无桥段则退回大纲范围
-        total_ch = self._planned_total_chapters() or 0
-        if total_ch <= 0:
-            total_ch = max((o.end_chapter for o in timeline.outlines), default=0)
-        if total_ch <= 0:
-            total_ch = 100
-
-        self.state = EngineState(
-            book_mode=BookMode.CONTINUE,   # 蓝图模式直接进入写作
-            phase=Phase.WRITING,
-            title=timeline.book_title or "(待定)",
-            pen_name=pen_name,
-            genre=genre,
-            sub_genre=sub_genre,
-            platform=platform,
-            total_chapters=total_ch,
-            current_chapter=0,
-            started_at=datetime.now().isoformat(),
-        )
-
-        # 加载笔名档案
-        self.profile = None
-        try:
-            self.profile = self.profiles.get_by_name(pen_name)
-        except Exception as e:
-            logger.warning("加载笔名档案失败: %s", e)
-
-        # 初始化集中式 harness 与灵机一动探测环
-        self.harness = PromptHarness(timeline=timeline, profile=self.profile,
-                                     gag_lib=self.gag_lib, theme_lib=self.theme_lib,
-                                     plot_lib=self.plot_lib, platform=platform)
-        self.gag_injector = GagInjector(llm=self.llm, harness=self.harness,
-                                        gag_lib=self.gag_lib)
-
-        # 灵机一动探测频率旋钮（每 N 短句组探测一次）；持久化到 book.json 供续写读取
-        detector_frequency = int((config or {}).get("detector_frequency", 1) or 1)
-
-        # 初始化蓝图写作器
-        from .timeline_writer import TimelineChapterWriter
-
-        self.timeline_writer = TimelineChapterWriter(
-            timeline=timeline,
-            llm_client=self.llm,
-            de_ai_engine=self.de_ai,
-            reviewer=self.reviewer,
-            gag_lib=self.gag_lib,
-            plot_lib=self.plot_lib,
-            profile=self.profile,
-            harness=self.harness,
-            gag_injector=self.gag_injector,
-            book_id="",
-            detector_frequency=detector_frequency,
-            budget_checker=self._remaining_budget,
-        )
-
-        # 注册主角/配角到角色状态机（含性别/性格/惯用语句/简介；重置防引擎实例复用残留）
-        self.char_states = CharacterStateMachine()
-        self._register_timeline_characters(timeline)
-
-        # 初始化成本追踪
-        self.cost_tracker = CostTracker()
-        self.cost_tracker.book_id = "timeline_book"
-
-        # 创建正式图书记录（蓝图模式章节直接落盘）
-        try:
-            from .book_manager import BookConfig
-            book = self.book_mgr.create(
-                title=timeline.book_title or "(待定)",
-                pen_name=pen_name,
-                genre=genre,
-                sub_genre=sub_genre,
-                platform=platform,
-                chapter_count=total_ch,
-                structure_template_id="timeline",
-                style_profile_id=self.profile.id if self.profile else "",
-                source_timeline_id=source_timeline_id,
-            )
-            self.book = book
-            self.state.book_id = book.book_id
-            self.cost_tracker.book_id = book.book_id
-            book.detector_frequency = detector_frequency
-            self.book_mgr.update(book)
-            if self.timeline_writer:
-                self.timeline_writer.book_id = book.book_id
-            # 保存时间线配置到图书目录（统一入口，确保 book.json 与 timeline.json 同目录）
-            self.book_mgr.save_timeline(book.book_id, timeline)
-        except Exception as e:
-            logger.error("创建图书记录失败: %s", e)
-            self.book = None
-
-        return self.state
-
-    def _register_timeline_characters(self, tl):
-        """从 timeline.basic_info 注册主角与配角到 char_states（性别/性格/惯用语句/简介）。
+    def _register_storyline_characters(self, tl):
+        """从 storyline.basic_info 注册主角与配角到 char_states（性别/性格/惯用语句/简介）。
 
         register 重名去重保证续写不覆盖动态状态（location/mood/goal）。
         """
@@ -372,14 +256,14 @@ class NovelEngine:
             except Exception as e:
                 logger.warning("恢复组装计划失败 (%s): %s", plan_path, e)
 
-        # 加载时间线（唯一写作核心 = 桥段写作）：无故事线直接报错
-        tl = self.book_mgr.load_timeline(book_id)
+        # 加载故事线（唯一写作核心 = 桥段写作）：无故事线直接报错
+        tl = self.book_mgr.load_storyline(book_id)
         if tl is None or not tl.outlines:
             raise ValueError(
-                "该书未生成故事线（timeline）。请先在时间线编辑器生成并确认故事线，再进行写作。")
+                "该书未生成故事线（storyline）。请先在故事线编辑器生成并确认故事线，再进行写作。")
         if tl and tl.outlines:
-            self.timeline = tl
-            self._derive_chapters_from_timeline(tl)
+            self.storyline = tl
+            self._derive_chapters_from_storyline(tl)
             # 总章节数按桥段真实规划重算（让书库/详情/写作台进度与实际写作计划一致）
             planned_total = self._planned_total_chapters()
             if planned_total:
@@ -387,25 +271,25 @@ class NovelEngine:
                 if self.book and self.book.chapter_count != planned_total:
                     self.book.chapter_count = planned_total
                     self.book_mgr.update(self.book)
-            # 时间线书：创建桥段驱动的写作者（撰写/续写统一同一套，支持断点续写）
-            if self.timeline_writer is None:
-                from .timeline_writer import TimelineChapterWriter
-                self.harness = PromptHarness(timeline=tl, profile=self.profile,
+            # 故事线书：创建桥段驱动的写作者（撰写/续写统一同一套，支持断点续写）
+            if self.storyline_writer is None:
+                from .storyline_writer import StorylineChapterWriter
+                self.harness = PromptHarness(storyline=tl, profile=self.profile,
                                              gag_lib=self.gag_lib,
                                              theme_lib=self.theme_lib,
                                              plot_lib=self.plot_lib,
                                              platform=self.state.platform)
                 self.gag_injector = GagInjector(llm=self.llm, harness=self.harness,
                                                 gag_lib=self.gag_lib)
-                self.timeline_writer = TimelineChapterWriter(
-                    timeline=tl, llm_client=self.llm, de_ai_engine=self.de_ai,
+                self.storyline_writer = StorylineChapterWriter(
+                    storyline=tl, llm_client=self.llm, de_ai_engine=self.de_ai,
                     reviewer=self.reviewer, gag_lib=self.gag_lib,
                     plot_lib=self.plot_lib, profile=self.profile,
                     harness=self.harness, gag_injector=self.gag_injector,
                     book_id=book_id, budget_checker=self._remaining_budget,
                     detector_frequency=getattr(self.book, "detector_frequency", 1) or 1)
             # 注册主角/配角（续写：register 重名去重，不覆盖已存的动态状态）
-            self._register_timeline_characters(tl)
+            self._register_storyline_characters(tl)
 
         # 确定当前阶段
         if self.book.current_chapter >= self.book.chapter_count:
@@ -413,17 +297,17 @@ class NovelEngine:
         elif self.state.chapters and self.book.current_chapter > 0:
             self.state.phase = Phase.WRITING
         elif tl and tl.outlines:
-            # 时间线书即使一章未写也直接进写作（用 timeline 大纲，永不发 PLAN_OUTLINE）
+            # 故事线书即使一章未写也直接进写作（用 storyline 大纲，永不发 PLAN_OUTLINE）
             self.state.phase = Phase.WRITING
         else:
             self.state.phase = Phase.OUTLINE
 
         return self.state
 
-    def _derive_chapters_from_timeline(self, tl) -> None:
-        """从 BookTimeline 维护"章节 → (大纲, 阶段)"索引，供续写定位使用。
+    def _derive_chapters_from_storyline(self, tl) -> None:
+        """从 BookStoryline 维护"章节 → (大纲, 阶段)"索引，供续写定位使用。
 
-        大纲本身就是故事线配置（timeline.json），不在这里拍平成"每章一段文本"；
+        大纲本身就是故事线配置（storyline.json），不在这里拍平成"每章一段文本"；
         每章写作时由 _storyline_chapter_context 直接从故事线现算大纲/桥段/笑点。
         """
         max_end = max((o.end_chapter for o in tl.outlines), default=0)
@@ -448,7 +332,7 @@ class NovelEngine:
         self.state.chapters = chapters
         self.state.total_chapters = max(self.state.total_chapters, max_end)
         self.state.outline_data = {
-            "structure": "timeline",
+            "structure": "storyline",
             "chapters": chapters,
             "total_chapters": max_end,
         }
@@ -469,18 +353,18 @@ class NovelEngine:
         """从故事线配置定位本章覆盖的大纲/阶段/桥段/笑点/内涵。
 
         返回 dict（outline/stage_index/stage/plots/gags/themes/hooks），
-        无 timeline 或章节无覆盖时返回 None。
+        无 storyline 或章节无覆盖时返回 None。
         """
-        if not self.timeline or not self.timeline.outlines:
+        if not self.storyline or not self.storyline.outlines:
             return None
         owner = next(
-            (o for o in self.timeline.outlines if o.start_chapter <= chapter_num <= o.end_chapter),
+            (o for o in self.storyline.outlines if o.start_chapter <= chapter_num <= o.end_chapter),
             None,
         )
         if not owner:
             return None
         stage_index, stage = self._locate_stage(owner, chapter_num)
-        plots = [p for p in self.timeline.plots
+        plots = [p for p in self.storyline.plots
                  if p.outline_id == owner.id and (p.stage_index == stage_index or stage_index < 0)]
         gags, themes, hooks = [], [], []
         for p in plots:
@@ -581,8 +465,8 @@ class NovelEngine:
 
     def _estimate_bridge_chapter(self, plot) -> int:
         """估算桥段所在章节：大纲起始 + 前面各阶段 max_ch 累计（免费规则，粗略即可）。"""
-        o = next((x for x in self.timeline.outlines if x.id == plot.outline_id),
-                 None) if self.timeline else None
+        o = next((x for x in self.storyline.outlines if x.id == plot.outline_id),
+                 None) if self.storyline else None
         if not o:
             return 0
         acc = o.start_chapter
@@ -594,12 +478,12 @@ class NovelEngine:
 
     def _build_promise_from_setup(self, p) -> dict:
         """为设局桥段生成读者承诺条目（免费规则）：desc 从桥段名+吸睛点推导，deadline 用收局桥段估算章。"""
-        payoff = next((q for q in self.timeline.plots if q.resolves_plot_id == p.id), None)
+        payoff = next((q for q in self.storyline.plots if q.resolves_plot_id == p.id), None)
         desc = f"「{p.name}」埋下的钩子"
         if getattr(p, "hook_points", None):
             desc += "（" + p.hook_points[0] + "）"
         return {
-            "id": f"promise_{len(getattr(self.timeline, 'promises', None) or []) + 1:04d}",
+            "id": f"promise_{len(getattr(self.storyline, 'promises', None) or []) + 1:04d}",
             "setup_plot_id": p.id,
             "type": self._promise_type(p.category),
             "desc": desc,
@@ -615,12 +499,12 @@ class NovelEngine:
 
         模拟人类作者的"伏笔账本"：埋了记下，还了勾销；逾期由 render_bridge_prompt 注入提醒。
         """
-        if not self.timeline:
+        if not self.storyline:
             return
-        promises = list(getattr(self.timeline, "promises", None) or [])
+        promises = list(getattr(self.storyline, "promises", None) or [])
         by_setup = {p.get("setup_plot_id", ""): p for p in promises if p.get("setup_plot_id")}
         changed = False
-        for p in self.timeline.plots:
+        for p in self.storyline.plots:
             if (getattr(p, "written_chapter", 0) or 0) != chapter_num:
                 continue
             rpid = getattr(p, "resolves_plot_id", "") or ""
@@ -632,13 +516,13 @@ class NovelEngine:
                 changed = True
             # 设局：被收局桥段引用且未登记 → 新增 pending 承诺
             if (not rpid and p.id not in by_setup
-                    and any(q.resolves_plot_id == p.id for q in self.timeline.plots if q.id != p.id)):
+                    and any(q.resolves_plot_id == p.id for q in self.storyline.plots if q.id != p.id)):
                 promises.append(self._build_promise_from_setup(p))
                 changed = True
         if changed:
-            self.timeline.promises = promises
+            self.storyline.promises = promises
             try:
-                self.book_mgr.save_timeline(self.state.book_id, self.timeline)
+                self.book_mgr.save_storyline(self.state.book_id, self.storyline)
             except Exception as e:
                 logger.warning("保存读者承诺台账失败: %s", e)
 
@@ -684,7 +568,7 @@ class NovelEngine:
             Op.COMPLETE:        self._exec_complete,
             Op.PAUSE:           self._exec_pause,
             Op.WRITE_CHAPTER:   self._exec_write_chapter,
-            Op.WRITE_TIMELINE_CHAPTER: self._exec_write_timeline_chapter,
+            Op.WRITE_STORYLINE_CHAPTER: self._exec_write_storyline_chapter,
         }
         handler = handlers.get(inst.op)
         if handler:
@@ -712,13 +596,13 @@ class NovelEngine:
     def _exec_write_chapter(self, inst: Instruction) -> dict:
         """写一章（唯一写作核心 = 桥段写作）。
 
-        统一委托给桥段驱动的 timeline_writer（按桥段生成、满章切分）；
-        无故事线桥段时报错（需先在时间线编辑器生成并确认桥段）。
+        统一委托给桥段驱动的 storyline_writer（按桥段生成、满章切分）；
+        无故事线桥段时报错（需先在故事线编辑器生成并确认桥段）。
         """
-        if not (self.timeline_writer and self.timeline and self.timeline.plots):
+        if not (self.storyline_writer and self.storyline and self.storyline.plots):
             raise RuntimeError(
-                "该书未生成故事线桥段（timeline.plots 为空）。请先在时间线编辑器生成并确认桥段，再进行写作。")
-        return self._exec_write_timeline_chapter(inst)
+                "该书未生成故事线桥段（storyline.plots 为空）。请先在故事线编辑器生成并确认桥段，再进行写作。")
+        return self._exec_write_storyline_chapter(inst)
 
     def _prepare_chapter_context(self, chapter_num: int):
         """取本章写作上下文：上文结尾 + 角色状态 + 进行中章节草稿 + 已完成章节语义摘要。
@@ -790,9 +674,9 @@ class NovelEngine:
             return ""
 
     def _generate_book_meta(self, chapter1_text: str) -> dict:
-        """第 1 章写完后自动生成书名+简介，落盘 book.json / timeline.json / outline.json。
+        """第 1 章写完后自动生成书名+简介，落盘 book.json / storyline.json / outline.json。
 
-        从老书名生成器抢救改造，去掉旧新书状态依赖，接入时间线流。
+        从老书名生成器抢救改造，去掉旧新书状态依赖，接入故事线流。
         异常兜底为 best-effort：书名缺省保留原标题，简介缺省为空。
         """
         if not self.llm or not self.book:
@@ -843,12 +727,12 @@ class NovelEngine:
                     self.book_mgr.update(self.book)
                 except Exception as e:
                     logger.warning("更新 book.title 失败: %s", e)
-            if self.timeline and self.timeline.book_title != best:
+            if self.storyline and self.storyline.book_title != best:
                 try:
-                    self.timeline.book_title = best
-                    self.book_mgr.save_timeline(self.state.book_id, self.timeline)
+                    self.storyline.book_title = best
+                    self.book_mgr.save_storyline(self.state.book_id, self.storyline)
                 except Exception as e:
-                    logger.warning("更新 timeline.book_title 失败: %s", e)
+                    logger.warning("更新 storyline.book_title 失败: %s", e)
         if synopsis:
             try:
                 outline = self.book_mgr.get_outline(self.state.book_id) or {}
@@ -862,7 +746,7 @@ class NovelEngine:
     def _finalize_written_chapter(self, chapter_num: int, result: dict) -> dict:
         """桥段写完后的收尾：持久化进度/角色/章节/成本。"""
         full_text = result["text"]
-        # timeline 路径补一次免费规则层去AI味（词替换+段落节奏），与节拍路径行为一致；
+        # storyline 路径补一次免费规则层去AI味（词替换+段落节奏），与节拍路径行为一致；
         # 仅在桥段写完落盘前处理，word_count 仍以写作时统计为准。
         try:
             full_text = self.de_ai.process_rule_based(full_text).processed
@@ -882,10 +766,10 @@ class NovelEngine:
 
         # 持久化桥段写入进度（written_chapter），供断点续写
         try:
-            if self.book and self.timeline:
-                self.book_mgr.save_timeline(self.state.book_id, self.timeline)
+            if self.book and self.storyline:
+                self.book_mgr.save_storyline(self.state.book_id, self.storyline)
         except Exception as e:
-            logger.warning("保存时间线进度失败: %s", e)
+            logger.warning("保存故事线进度失败: %s", e)
 
         self.state.current_content = full_text
         self.state.phase = Phase.REVIEWING
@@ -901,7 +785,7 @@ class NovelEngine:
         # 生成章节语义摘要（跨章长程记忆），随章节一起落盘
         summary = ""
         try:
-            ctx = self._storyline_chapter_context(chapter_num) if self.timeline else None
+            ctx = self._storyline_chapter_context(chapter_num) if self.storyline else None
             summary = self._summarize_chapter(chapter_num, full_text, ctx)
         except Exception as e:
             logger.warning("生成章节摘要失败: %s", e)
@@ -911,14 +795,14 @@ class NovelEngine:
         review = None
         review_hint = ""
         try:
-            target_words = (self.timeline.words_per_chapter
-                            if getattr(self, "timeline", None) and self.timeline else 3000)
+            target_words = (self.storyline.words_per_chapter
+                            if getattr(self, "storyline", None) and self.storyline else 3000)
             review = self.reviewer.review(full_text, chapter_num,
                                           chapter_title=f"第{chapter_num}章",
                                           target_words=target_words)
             review_hint = self._review_to_hint(review)
-            if review_hint and self.timeline_writer:
-                self.timeline_writer.review_hint = review_hint
+            if review_hint and self.storyline_writer:
+                self.storyline_writer.review_hint = review_hint
         except Exception as e:
             logger.warning("章节规则审查失败: %s", e)
         review_dict = self._review_to_dict(review) if review else None
@@ -940,13 +824,13 @@ class NovelEngine:
                 logger.warning("保存章节失败: %s", e)
 
         # 记录成本
-        self.cost_tracker.record(f"ch{chapter_num}_timeline", (result.get("input_text") or ""), full_text)
+        self.cost_tracker.record(f"ch{chapter_num}_storyline", (result.get("input_text") or ""), full_text)
 
         return {
             "status": "chapter_written",
             "chapter": chapter_num,
             "word_count": result["word_count"],
-            "plot_used": "timeline_writer",
+            "plot_used": "storyline_writer",
             "beats": result["beats"],
             "beat_details": result.get("beat_details", []),
             "blueprint": result.get("blueprint", {}),
@@ -954,15 +838,15 @@ class NovelEngine:
             "cost": round(self.cost_tracker.spent, 4),
         }
 
-    def _write_timeline_chapter_stream(self, chapter_num: int):
+    def _write_storyline_chapter_stream(self, chapter_num: int):
         """流式写一章（生成器）：逐桥段 yield bridge_start/group_chunk/bridge_done 事件，
         结束 yield chapter_done。供 SSE 写作端点（批处理/整章）使用。"""
-        if not self.timeline_writer:
-            raise RuntimeError("蓝图写作器未初始化，请先调用 start_new_book_timeline()")
+        if not self.storyline_writer:
+            raise RuntimeError("蓝图写作器未初始化，请先调用 continue_book()")
         self.state.current_chapter = chapter_num
         prev_ending, char_states, buffer, words, summaries = self._prepare_chapter_context(chapter_num)
 
-        gen = self.timeline_writer.write_chapter_stepwise(
+        gen = self.storyline_writer.write_chapter_stepwise(
             chapter_num, prev_ending, char_states,
             chapter_buffer="\n\n".join(buffer), chapter_words=words,
             summaries_context=summaries)
@@ -1008,23 +892,23 @@ class NovelEngine:
                "word_count": final.get("word_count"),
                "beats": final.get("beats"),
                "review": final.get("review"),
-               "promises": self.timeline.promises if self.timeline else None,
+               "promises": self.storyline.promises if self.storyline else None,
                "cost": final.get("cost")}
 
     def _write_next_bridge_stream(self):
         """流式写「一个」桥段（生成器）— 新核心：按桥段撰写。
 
         事件：bridge_start / group_chunk / bridge_done / chapter_done / complete。
-        - 桥段写完：持久化 timeline（written_chapter）+ 章节草稿 draft_chapter.json；
+        - 桥段写完：持久化 storyline（written_chapter）+ 章节草稿 draft_chapter.json；
         - 若本章累计字数达标：合成全文落盘为章节、清草稿、yield chapter_done。
         """
-        if not self.timeline_writer:
-            raise RuntimeError("蓝图写作器未初始化，请先调用 start_new_book_timeline()")
+        if not self.storyline_writer:
+            raise RuntimeError("蓝图写作器未初始化，请先调用 continue_book()")
         # current_chapter 语义 = 最后「已完成」章节；进行中的章节不递增，
         # 这样下一桥段仍回到本章累计（draft_chapter.json 恢复）。切章时才由
         # _finalize_written_chapter 更新 current_chapter。
         chapter_num = self.state.current_chapter + 1
-        total_ch = self.state.total_chapters or self.timeline_writer._total_chapters
+        total_ch = self.state.total_chapters or self.storyline_writer._total_chapters
         if chapter_num > total_ch:
             # 全书完成 → 标记完本（status=finished + finished_at），随事件带给前端上架入口
             if self.book:
@@ -1040,7 +924,7 @@ class NovelEngine:
             return
         prev_ending, char_states, buffer, words, summaries = self._prepare_chapter_context(chapter_num)
 
-        gen = self.timeline_writer.write_bridge_stepwise(
+        gen = self.storyline_writer.write_bridge_stepwise(
             chapter_num, prev_ending, char_states,
             chapter_buffer="\n\n".join(buffer), chapter_words=words,
             summaries_context=summaries)
@@ -1066,7 +950,7 @@ class NovelEngine:
             return
 
         # 持久化桥段进度 + 进行中章节草稿
-        self.book_mgr.save_timeline(self.state.book_id, self.timeline)
+        self.book_mgr.save_storyline(self.state.book_id, self.storyline)
         buffer = buffer + [result["text"]]
         self._save_draft(chapter_num, buffer, result["chapter_words"])
 
@@ -1089,21 +973,21 @@ class NovelEngine:
                    "word_count": final.get("word_count"),
                    "beats": final.get("beats"),
                    "review": final.get("review"),
-                   "promises": self.timeline.promises if self.timeline else None,
+                   "promises": self.storyline.promises if self.storyline else None,
                    "cost": final.get("cost")}
         else:
             yield {"type": "chapter_progress",
                    "chapter": chapter_num,
                    "words": result["chapter_words"],
-                   "target": self.timeline.words_per_chapter or 3000}
+                   "target": self.storyline.words_per_chapter or 3000}
 
-    def _exec_write_timeline_chapter(self, inst: Instruction) -> dict:
-        """按蓝图（时间线）写一章 — 新核心（同步版，供非 SSE 路径）"""
-        if not self.timeline_writer:
-            return {"error": "蓝图写作器未初始化，请先调用 start_new_book_timeline()"}
+    def _exec_write_storyline_chapter(self, inst: Instruction) -> dict:
+        """按蓝图（故事线）写一章 — 新核心（同步版，供非 SSE 路径）"""
+        if not self.storyline_writer:
+            return {"error": "蓝图写作器未初始化，请先调用 continue_book()"}
         chapter_num = inst.chapter_num
         prev_ending, char_states, buffer, words, summaries = self._prepare_chapter_context(chapter_num)
-        result = self.timeline_writer.write_chapter(
+        result = self.storyline_writer.write_chapter(
             chapter_num=chapter_num,
             previous_chapter_ending=prev_ending,
             character_states=char_states,
@@ -1182,7 +1066,7 @@ class NovelEngine:
                 "text": text, "word_count": words, "beats": 0,
                 "beat_details": [],
                 "input_text": "\n".join(
-                    getattr(self.timeline_writer, "_input_texts", []) or []),
+                    getattr(self.storyline_writer, "_input_texts", []) or []),
                 "blueprint": {
                     "chapter_title": f"第{ch}章",
                     "chapter_num": ch,
@@ -1195,14 +1079,14 @@ class NovelEngine:
 
     def _planned_total_chapters(self) -> Optional[int]:
         """按桥段真实规划字数重算全书章节数（让"进度 X/Y 章"与写作计划一致）。
-        无 timeline/桥段时返回 None（沿用原章节数）。"""
-        if not (self.timeline and self.timeline.plots):
+        无 storyline/桥段时返回 None（沿用原章节数）。"""
+        if not (self.storyline and self.storyline.plots):
             return None
         try:
-            from libraries.timeline_writer import planned_words
+            from libraries.storyline_writer import planned_words
             import math
-            total_w = sum(planned_words(p) for p in self.timeline.plots)
-            wpc = self.timeline.words_per_chapter or 3000
+            total_w = sum(planned_words(p) for p in self.storyline.plots)
+            wpc = self.storyline.words_per_chapter or 3000
             return max(1, math.ceil(total_w / wpc))
         except Exception as e:
             logger.warning("重算总章节数失败: %s", e)

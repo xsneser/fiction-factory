@@ -1,4 +1,4 @@
-"""Web UI 共享上下文 — 全局服务/LLM 客户端/引擎缓存/时间线统一存取。
+"""Web UI 共享上下文 — 全局服务/LLM 客户端/引擎缓存/故事线统一存取。
 
 自 ui/web_ui.py 拆分：所有蓝图模块 `from .ctx import *` 共享同一份状态。
 """
@@ -21,9 +21,9 @@ from libraries.engine import NovelEngine, BookMode, Op, Instruction
 from core.llm_client import LLMClient
 from core.models import APIConfig
 from core.json_store import read_json, write_json_atomic
-from core.safe_paths import ensure_child_path, is_safe_timeline_id, parse_int
-from libraries.timeline import (
-    BookTimeline, save_timeline, load_timeline, TimelineBuilder,
+from core.safe_paths import ensure_child_path, parse_int
+from libraries.storyline import (
+    BookStoryline, save_storyline, load_storyline, StorylineBuilder,
 )
 
 # ─── 全局服务 ───
@@ -69,38 +69,36 @@ def sse_stream_response(gen):
 
 # ─── 引擎实例缓存 ───
 _engines: dict[str, NovelEngine] = {}
-_timelines: dict[str, dict] = {}  # 时间线配置缓存
-_timeline_lock = threading.Lock()  # 保护时间线缓存读写（Flask 多线程）
+_storylines: dict[str, dict] = {}  # 故事线配置缓存
+_storyline_lock = threading.Lock()  # 保护故事线缓存读写（Flask 多线程）
 
-# ─── 时间线统一存取：草稿(tl_*) 与正式书(book_*) 两套 id 分派 ───
+# ─── 故事线统一存取：每本书的故事线都在书目录内 books/<id>/storyline.json ───
 
-def _timeline_filepath(timeline_id: str) -> str:
-    """按 id 前缀把时间线分派到磁盘路径：正式书在书目录内，草稿在 books/timelines/。"""
-    if timeline_id.startswith("book_"):
-        return f"books/{timeline_id}/timeline.json"
-    return f"books/timelines/{timeline_id}.json"
+def _storyline_filepath(storyline_id: str) -> str:
+    """故事线统一存在书目录内。"""
+    return f"books/{storyline_id}/storyline.json"
 
 
-def _resolve_timeline(timeline_id):
-    """从内存缓存或磁盘加载 BookTimeline，兼容 tl_* 与 book_*。"""
-    with _timeline_lock:
-        tl = _timelines.get(timeline_id)
-        if tl is None:
-            tl = load_timeline(_timeline_filepath(timeline_id))
-            if tl:
-                _timelines[timeline_id] = tl
-    return tl
+def _resolve_storyline(storyline_id):
+    """从内存缓存或磁盘加载 BookStoryline。"""
+    with _storyline_lock:
+        sl = _storylines.get(storyline_id)
+        if sl is None:
+            sl = load_storyline(_storyline_filepath(storyline_id))
+            if sl:
+                _storylines[storyline_id] = sl
+    return sl
 
 
-def _save_timeline(tl, timeline_id):
+def _save_storyline(sl, storyline_id):
     """写入内存缓存并落盘。"""
-    with _timeline_lock:
-        _timelines[timeline_id] = tl
-    save_timeline(tl, _timeline_filepath(timeline_id))
+    with _storyline_lock:
+        _storylines[storyline_id] = sl
+    save_storyline(sl, _storyline_filepath(storyline_id))
 
 
 def _max_id_suffix(ids) -> int:
-    """取 id 列表中最大数字后缀，用于 seed TimelineBuilder 计数器防碰撞。"""
+    """取 id 列表中最大数字后缀，用于 seed StorylineBuilder 计数器防碰撞。"""
     import re as _re
     max_n = 0
     for i in ids:
@@ -111,19 +109,19 @@ def _max_id_suffix(ids) -> int:
 
 
 def _seed_builder_counter(builder, ids) -> None:
-    """把 TimelineBuilder._counter 抬到现有 id 最大后缀之上，避免 outline_0001/plot_0001 碰撞。"""
+    """把 StorylineBuilder._counter 抬到现有 id 最大后缀之上，避免 outline_0001/plot_0001 碰撞。"""
     builder._counter = _max_id_suffix(ids)
 
 
 __all__ = [
     "plot_lib", "struct_lib", "gag_lib", "theme_lib", "profiles", "book_mgr",
     "get_llm", "sse_stream_response",
-    "_engines", "_timelines", "_timeline_lock",
-    "_timeline_filepath", "_resolve_timeline", "_save_timeline",
+    "_engines", "_storylines", "_storyline_lock",
+    "_storyline_filepath", "_resolve_storyline", "_save_storyline",
     "_max_id_suffix", "_seed_builder_counter",
     "NovelEngine", "BookMode", "Op", "Instruction",
     "CostTracker", "DeAIEngine", "CharacterStateMachine", "ContentReviewer",
     "LLMClient", "APIConfig",
-    "read_json", "write_json_atomic", "ensure_child_path", "is_safe_timeline_id", "parse_int",
-    "BookTimeline", "save_timeline", "load_timeline", "TimelineBuilder",
+    "read_json", "write_json_atomic", "ensure_child_path", "parse_int",
+    "BookStoryline", "save_storyline", "load_storyline", "StorylineBuilder",
 ]

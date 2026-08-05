@@ -1,8 +1,8 @@
 """
-书籍时间线（Book Timeline）— 多大纲序列 + 桥段嵌套配置
+书籍故事线（Book Storyline）— 多大纲序列 + 桥段嵌套配置
 
 核心理念：
-  一本书不是一个大纲走到头，而是多个大纲按时间线串接，
+  一本书不是一个大纲走到头，而是多个大纲按故事线串接，
   大纲之间可以重叠交叉（A 还没结束 B 已经开始），
   桥段在大纲阶段内可以嵌套、包含、重叠。
 """
@@ -19,7 +19,7 @@ from core.json_store import read_json, write_json_atomic
 
 @dataclass
 class OutlineSlot:
-    """一个大纲在时间线上的位置"""
+    """一个大纲在故事线上的位置"""
     id: str                        # 唯一标识
     template_id: str               # 对应 StructureLibrary 里的模板，""=已展开不依赖模板
     name: str                      # 显示名称（如"都市爽文开篇"）
@@ -53,7 +53,7 @@ class PlotSlot:
     parent_plot_id: str = ""       # 嵌套：父桥段 id，空=顶级
     children_plot_ids: list[str] = field(default_factory=list)  # 子桥段
 
-    # 位置信息（用于时间线展示）
+    # 位置信息（用于故事线展示）
     order: int = 0                 # 阶段内排序
     cover_beats: int = 4           # 预计覆盖多少个节拍
     template_structure: str = ""   # 桥段模板结构字符串（箭头流程）
@@ -78,8 +78,8 @@ class PlotSlot:
 
 
 @dataclass
-class BookTimeline:
-    """整本书的时间线配置 —— 新书启动的核心产出"""
+class BookStoryline:
+    """整本书的故事线配置 —— 新书启动的核心产出"""
     book_title: str = ""
     genre: str = ""
     sub_genre: str = ""
@@ -98,7 +98,7 @@ class BookTimeline:
         "era_language": "",  # 时代语言约束（禁止晚于该时代的网络新词）
     })
 
-    # 时间线
+    # 故事线
     outlines: list[OutlineSlot] = field(default_factory=list)
     plots: list[PlotSlot] = field(default_factory=list)
 
@@ -166,7 +166,7 @@ class BookTimeline:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "BookTimeline":
+    def from_dict(cls, d: dict) -> "BookStoryline":
         tl = cls(
             book_title=d.get("book_title", ""),
             genre=d.get("genre", ""),
@@ -220,7 +220,7 @@ class BookTimeline:
 
 
 # ═══════════════════════════════════════════
-# 时间线生成器
+# 故事线生成器
 # ═══════════════════════════════════════════
 
 def structure_to_stages(tmpl) -> list[dict]:
@@ -232,14 +232,14 @@ def structure_to_stages(tmpl) -> list[dict]:
     ]
 
 
-def mount_themes_and_hooks(plot: "PlotSlot", theme_entries: list, timeline_themes: list) -> None:
-    """给桥段挂载内涵（跟随桥段）并标注吸睛点 —— TimelineBuilder/OutlineGenerator 共用，单一实现防漂移。
+def mount_themes_and_hooks(plot: "PlotSlot", theme_entries: list, storyline_themes: list) -> None:
+    """给桥段挂载内涵（跟随桥段）并标注吸睛点 —— StorylineBuilder/OutlineGenerator 共用，单一实现防漂移。
 
     内涵只挂到能承载它的桥段（ThemeEntry.compatible_plots 命中），不强挂；
     未命中的母题仍作为书级可用线索随「书级设定卡」注入写作；笑点完全涌现，不在此分配。
     """
     theme_hints = []
-    for name in timeline_themes:
+    for name in storyline_themes:
         entry = next((e for e in theme_entries if e.name == name), None)
         if entry and plot.template_id in (entry.compatible_plots or []):
             theme_hints.append(entry.name)
@@ -258,8 +258,8 @@ def mount_themes_and_hooks(plot: "PlotSlot", theme_entries: list, timeline_theme
     ]
 
 
-class TimelineBuilder:
-    """根据流派和用户需求，生成大纲时间线 + 桥段配置"""
+class StorylineBuilder:
+    """根据流派和用户需求，生成大纲故事线 + 桥段配置"""
 
     def __init__(self, structure_lib=None, plot_lib=None, gag_lib=None, theme_lib=None, llm_client=None):
         self.structures = structure_lib
@@ -338,11 +338,11 @@ class TimelineBuilder:
                 for t in templates
             )
 
-        prompt = f"""为一本{genre}/{sub_genre}类网络小说设计大纲时间线。
+        prompt = f"""为一本{genre}/{sub_genre}类网络小说设计大纲故事线。
 
 用户想法：{context if context else '标准开局'}
 
-请从可用大纲模板中选择 2-{max_outlines}个，按时间线串联。大纲之间可以重叠交叉（前一个还没结束，后一个已经开始）。
+请从可用大纲模板中选择 2-{max_outlines}个，按故事线串联。大纲之间可以重叠交叉（前一个还没结束，后一个已经开始）。
 
 返回JSON：
 {{
@@ -412,7 +412,7 @@ class TimelineBuilder:
         return outlines
 
     def fill_plots_for_outline(
-        self, outline: OutlineSlot, timeline: BookTimeline,
+        self, outline: OutlineSlot, storyline: BookStoryline,
     ) -> list[PlotSlot]:
         """
         给一个大纲的每个阶段填充桥段。
@@ -429,9 +429,9 @@ class TimelineBuilder:
 
             # 匹配桥段：阶段名+事件描述+流派
             context = f"{outline.name} {stage_name} {' '.join(events)}"
-            candidates = self.plots.match_for_chapter(context, timeline.genre)
+            candidates = self.plots.match_for_chapter(context, storyline.genre)
             if not candidates:
-                candidates = self.plots.search(category=timeline.genre)
+                candidates = self.plots.search(category=storyline.genre)
                 if not candidates:
                     candidates = self.plots.templates[:1]
 
@@ -458,7 +458,7 @@ class TimelineBuilder:
                 new_plots.append(p)
                 if parent_id:
                     # 找到父桥段并添加子关系
-                    for existing in timeline.plots + new_plots:
+                    for existing in storyline.plots + new_plots:
                         if existing.id == parent_id:
                             existing.children_plot_ids.append(pid)
                             break
@@ -467,33 +467,33 @@ class TimelineBuilder:
         outline.expanded = True
         return new_plots
 
-    def fill_themes_and_hooks(self, plots: list[PlotSlot], timeline: BookTimeline):
+    def fill_themes_and_hooks(self, plots: list[PlotSlot], storyline: BookStoryline):
         """给桥段挂载内涵（跟随桥段）并标注吸睛点（委托共享 mount_themes_and_hooks）。"""
         for p in plots:
             mount_themes_and_hooks(p, self.themes.entries if self.themes else [],
-                                   timeline.themes)
+                                   storyline.themes)
 
 
 # ═══════════════════════════════════════════
 # 持久化
 # ═══════════════════════════════════════════
 
-def save_timeline(timeline: BookTimeline, path: str):
-    """保存时间线到文件"""
+def save_storyline(storyline: BookStoryline, path: str):
+    """保存故事线到文件"""
     from pathlib import Path
     p = Path(path)
-    write_json_atomic(p, timeline.to_dict())
+    write_json_atomic(p, storyline.to_dict())
 
 
-def load_timeline(path: str) -> Optional[BookTimeline]:
-    """从文件加载时间线"""
+def load_storyline(path: str) -> Optional[BookStoryline]:
+    """从文件加载故事线"""
     from pathlib import Path
     p = Path(path)
     if not p.exists():
         return None
     try:
         data = read_json(p, {})
-        return BookTimeline.from_dict(data)
+        return BookStoryline.from_dict(data)
     except Exception:
         return None
 
@@ -545,7 +545,7 @@ _CATEGORY_RELATION = {
 }
 
 
-def annotate_plot_roles(tl: BookTimeline) -> int:
+def annotate_plot_roles(tl: BookStoryline) -> int:
     """规则标注每个桥段的出场人物（主角恒在首位；配角名出现在桥段事件/骨架/槽位/吸睛文本 → 出场）。
 
     幂等：重跑覆盖。返回标注到出场人物的桥段数。

@@ -8,14 +8,14 @@
   · 短句组生成：每个桥段内逐「短句组」调用 LLM（每次 1-3 个短句，约 50-100 字），
     组与组之间用空行分隔成独立段落（网文短段风格）；每次调用都携带
     「本章已写全部前文 + 上一章结尾 + 本桥段已写」，保证桥段之间故事连贯。
-  · 每段/每章写完立即落盘（桥段 written_chapter 写入 timeline，章节正文由 engine 保存）
+  · 每段/每章写完立即落盘（桥段 written_chapter 写入 storyline，章节正文由 engine 保存）
 
 旧"整本先写全文再分章"（BlueprintWritingPipeline）已废弃删除。
 """
 import re
 from collections import OrderedDict
 
-from .timeline import BookTimeline
+from .storyline import BookStoryline
 from core.text_utils import count_prose_units
 
 CHARS_PER_BEAT = 200          # 每个节拍预计写多少个汉字（用于桥段字数规划）
@@ -87,7 +87,7 @@ def _typo_issue(text: str) -> str:
     return ""
 
 
-class TimelineChapterWriter:
+class StorylineChapterWriter:
     """
     章节级蓝图写作器 — 桥段驱动的逐章增量写作。
 
@@ -95,15 +95,15 @@ class TimelineChapterWriter:
       · 左→右 = 层次顺序：大纲 → 阶段 → 桥段
       · 上→下 = 故事顺序：沿故事线逐桥段推进
     每个桥段写完累计字数，达到 words_per_chapter 即切成一章；
-    桥段 written_chapter 写入 timeline 便于断点续写，章节正文由调用方立即落盘。
+    桥段 written_chapter 写入 storyline 便于断点续写，章节正文由调用方立即落盘。
     """
 
-    def __init__(self, timeline: BookTimeline, llm_client=None,
+    def __init__(self, storyline: BookStoryline, llm_client=None,
                  de_ai_engine=None, reviewer=None,
                  gag_lib=None, plot_lib=None, profile=None,
                  harness=None, gag_injector=None, book_id: str = "",
                  detector_frequency: int = 1, budget_checker=None):
-        self.timeline = timeline
+        self.storyline = storyline
         self.llm = llm_client
         self.de_ai = de_ai_engine
         self.reviewer = reviewer
@@ -119,8 +119,8 @@ class TimelineChapterWriter:
         # 本章输入 prompt 累计（供成本计量）；跨桥段累计、跨章重置
         self._input_chapter = 0
         self._input_texts: list = []
-        self._total_chapters = (max((o.end_chapter for o in timeline.outlines), default=0)
-                                if timeline else 0)
+        self._total_chapters = (max((o.end_chapter for o in storyline.outlines), default=0)
+                                if storyline else 0)
 
     # ── 桥段按故事顺序（上→下）与层次（左→右：大纲→阶段→桥段）排列 ──
     def _threaded_ordered_plots(self):
@@ -129,7 +129,7 @@ class TimelineChapterWriter:
         线程内按 (大纲, stage, order, thread_seq) 排序；主线每轮取 2 个、其他线程各 1 个。
         向后兼容：全部 thread_id="主线" 时退化为原严格顺序（单组顺序取）。
         """
-        outlines = self.timeline.outlines
+        outlines = self.storyline.outlines
         o_pos = {o.id: i for i, o in enumerate(outlines)}
 
         def base_key(p):
@@ -137,7 +137,7 @@ class TimelineChapterWriter:
                     getattr(p, "thread_seq", 0) or 0)
 
         groups = OrderedDict()
-        for p in sorted(self.timeline.plots, key=base_key):
+        for p in sorted(self.storyline.plots, key=base_key):
             tid = (getattr(p, "thread_id", "") or "主线")
             groups.setdefault(tid, []).append(p)
 
@@ -168,7 +168,7 @@ class TimelineChapterWriter:
         线程穿插（主线/副线/伏笔线轮流取）保证第 1 章即多线并进；
         收局槽位（resolves_plot_id 非空）天然落在线程后段、被其他线程穿插。
         """
-        outlines = self.timeline.outlines
+        outlines = self.storyline.outlines
         plots = self._threaded_ordered_plots()
         result = []
         for p in plots:
@@ -184,9 +184,9 @@ class TimelineChapterWriter:
 
     def _find_resolver_name(self, plot_id: str) -> str:
         """返回引用 plot_id 的收局桥段名（设局提示用），无则空。"""
-        if not self.timeline:
+        if not self.storyline:
             return ""
-        for q in self.timeline.plots:
+        for q in self.storyline.plots:
             if getattr(q, "resolves_plot_id", "") == plot_id:
                 return getattr(q, "name", "")
         return ""
@@ -374,7 +374,7 @@ class TimelineChapterWriter:
         返回（StopIteration.value）：
             {"text", "words", "planned_words", "cut_chapter", "chapter_words"}
         """
-        if not self.timeline or not self.timeline.plots:
+        if not self.storyline or not self.storyline.plots:
             yield {"type": "complete", "message": "没有桥段可写"}
             return
         queue = [q for q in self._story_ordered_plots()
@@ -392,7 +392,7 @@ class TimelineChapterWriter:
         # 炸裂开场：第 1 章前 800 字 / 前 3 个桥段命中开场模式
         written_count = len(self._story_ordered_plots()) - len(queue)
         is_opening = opening_mode_active(chapter_num, chapter_words, written_count)
-        target = self.timeline.words_per_chapter or 3000
+        target = self.storyline.words_per_chapter or 3000
         planned = planned_words(p)
         # 预算裁剪：一章内不超写（最后一桥段可能被压缩以贴合字数）
         budget = min(planned, max(target - chapter_words, 0))
@@ -476,12 +476,12 @@ class TimelineChapterWriter:
         所有桥段完成后 return 章节结果 dict（通过 StopIteration.value 取回）。
         chapter_buffer/chapter_words：进行中章节草稿（按桥段撰写中断后续写）。
         """
-        if not self.timeline or not self.timeline.plots:
+        if not self.storyline or not self.storyline.plots:
             return {"text": f"[第{chapter_num}章无桥段可写]",
                     "word_count": 0, "beats": 0, "beat_details": [],
                     "blueprint": {"chapter_title": f"第{chapter_num}章",
                                   "total_chapters": self._total_chapters}}
-        target = self.timeline.words_per_chapter or 3000
+        target = self.storyline.words_per_chapter or 3000
         buffer = [s for s in (chapter_buffer or "").split("\n\n") if s]
         words = chapter_words or 0
         consumed = []

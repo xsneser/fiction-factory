@@ -32,7 +32,6 @@ class BookConfig:
     assigned_gags: list[str] = field(default_factory=list)      # 使用的笑点列表
     assigned_themes: list[str] = field(default_factory=list)    # 使用的内涵主题
     opening_template_id: str = ""          # 开篇模板ID
-    source_timeline_id: str = ""           # 源自哪个故事线草稿（tl_*/gen_*），用于「开始写作」去重
     # 前三章特殊配置
     first_three_chapters: dict = field(default_factory=dict)
     style_profile_id: str = ""             # 笔名风格档案ID
@@ -130,8 +129,7 @@ class BookManager:
                sub_genre: str = "", platform: str = "fanqie",
                chapter_count: int = 500,
                structure_template_id: str = "",
-               style_profile_id: str = "",
-               source_timeline_id: str = "") -> BookConfig:
+               style_profile_id: str = "") -> BookConfig:
         book_id = self._next_book_id()
         cfg = BookConfig(
             book_id=book_id, title=title, pen_name=pen_name,
@@ -139,7 +137,6 @@ class BookManager:
             chapter_count=chapter_count,
             structure_template_id=structure_template_id,
             style_profile_id=style_profile_id,
-            source_timeline_id=source_timeline_id,
             created_at=datetime.now().isoformat(),
         )
         # 创建目录
@@ -225,17 +222,17 @@ class BookManager:
             return read_json(outline_path)
         return None
 
-    def save_timeline(self, book_id: str, timeline) -> None:
-        """把 BookTimeline 持久化到 books/{book_id}/timeline.json。
-        timeline.save_timeline 内部会调用 to_dict()，这里直接透传对象。
-        函数内 import，避免与 timeline.py 产生循环依赖。"""
-        from libraries.timeline import save_timeline as _save
-        _save(timeline, str(self.dir / book_id / "timeline.json"))
+    def save_storyline(self, book_id: str, storyline) -> None:
+        """把 BookStoryline 持久化到 books/{book_id}/storyline.json。
+        storyline.save_storyline 内部会调用 to_dict()，这里直接透传对象。
+        函数内 import，避免与 storyline.py 产生循环依赖。"""
+        from libraries.storyline import save_storyline as _save
+        _save(storyline, str(self.dir / book_id / "storyline.json"))
 
-    def load_timeline(self, book_id: str):
-        """加载 books/{book_id}/timeline.json，返回 BookTimeline 或 None。"""
-        from libraries.timeline import load_timeline as _load
-        path = self.dir / book_id / "timeline.json"
+    def load_storyline(self, book_id: str):
+        """加载 books/{book_id}/storyline.json，返回 BookStoryline 或 None。"""
+        from libraries.storyline import load_storyline as _load
+        path = self.dir / book_id / "storyline.json"
         if path.exists():
             return _load(str(path))
         return None

@@ -4,7 +4,7 @@
 统一出口：
   · 书级设定卡（Book Bible）：主角/世界观/配角/基调/母题/风格 压缩成紧凑 bullet，
     在全书开始前确立统一的写作风格与世界观，注入所有写作与大纲决策。
-  · render_bridge_prompt   ：桥段写作（取代 timeline_writer._group_prompt 的内联拼装）
+  · render_bridge_prompt   ：桥段写作（取代 storyline_writer._group_prompt 的内联拼装）
   · render_detector_prompt ：笑点探测器（gag_injector 用；笑点完全涌现，不写入大纲）
   · render_summary_prompt  ：章节语义摘要（长程记忆）
   · render_outline_context ：大纲各 phase 前置设定卡
@@ -15,7 +15,7 @@
 """
 from typing import Optional
 
-from .timeline import BookTimeline
+from .storyline import BookStoryline
 
 
 # 桥段 category → 适合的笑点 fit_scene 关键词（免费规则，不写进大纲）
@@ -70,11 +70,11 @@ OPENING_MODE_RULES = """【开场模式 — 炸裂开场（第一章开篇桥段
 9. 冲突线前置铁律：开篇直接把核心冲突（退婚短信/嘲讽打压/走投无路/系统激活）拍在读者脸上，与主角困境同屏立起，禁止先铺身份背景再讲冲突。"""
 
 
-# 全书一致性铁律 —— 防 E2E 评审硬伤：系统重复绑定、数值不闭环、时间线穿帮、无时间过渡
+# 全书一致性铁律 —— 防 E2E 评审硬伤：系统重复绑定、数值不闭环、故事线穿帮、无时间过渡
 CONSISTENCY_RULES = """【全书一致性铁律】
 1. 系统/金手指的"激活/绑定"全书只发生一次；此后同类事件用"新模块/新功能解锁"，禁止重复出现"绑定成功"。
 2. 引入的数值（压迫值/劳动值/经验值/属性点等）必须在后续情节有回响闭环，禁止只出现一次再无下文。
-3. 对话中的身份/背景/时间线信息严格符合当前时间线，禁止把前世/未来记忆混进当前对话。
+3. 对话中的身份/背景/故事线信息严格符合当前故事线，禁止把前世/未来记忆混进当前对话。
 4. 跨场景/跨天的事件之间要有自然时间过渡（如"当天夜里""三天后"），禁止无衔接跳转。"""
 
 
@@ -117,24 +117,24 @@ def _profile_style_text(profile) -> str:
 
 
 class PromptHarness:
-    """集中式提示词 harness。timeline 可后续赋值（保持对活对象的引用）。"""
+    """集中式提示词 harness。storyline 可后续赋值（保持对活对象的引用）。"""
 
-    def __init__(self, timeline: Optional[BookTimeline] = None, profile=None,
+    def __init__(self, storyline: Optional[BookStoryline] = None, profile=None,
                  gag_lib=None, theme_lib=None, plot_lib=None, platform: str = ""):
-        self.timeline = timeline
+        self.storyline = storyline
         self.profile = profile
         self.gag_lib = gag_lib
         self.theme_lib = theme_lib
         self.plot_lib = plot_lib
         # 目标平台（fanqie/qidian）：写作 prompt 注入平台写作约束；空=不注入
-        self.platform = platform or (timeline.platform if timeline else "") or ""
+        self.platform = platform or (storyline.platform if storyline else "") or ""
 
     # ═══════════════════════════════════════════
     # 书级设定卡（Book Bible）分段渲染
     # ═══════════════════════════════════════════
 
     def _protagonist_bullets(self) -> str:
-        tl = self.timeline
+        tl = self.storyline
         if not tl:
             return ""
         proto = (tl.basic_info or {}).get("protagonist", {}) or {}
@@ -152,7 +152,7 @@ class PromptHarness:
         return "\n".join(parts)
 
     def _world_bullets(self) -> str:
-        tl = self.timeline
+        tl = self.storyline
         if not tl:
             return ""
         wb = (tl.basic_info or {}).get("world_building", {}) or {}
@@ -173,7 +173,7 @@ class PromptHarness:
         return "\n".join(parts)
 
     def _tone_bullets(self) -> str:
-        tl = self.timeline
+        tl = self.storyline
         if not tl:
             return ""
         bi = tl.basic_info or {}
@@ -184,7 +184,7 @@ class PromptHarness:
         return "- 基调：" + "/".join(x for x in [tone, audience] if x)
 
     def _theme_bullets(self) -> str:
-        tl = self.timeline
+        tl = self.storyline
         if not tl:
             return ""
         themes = [str(t) for t in (tl.themes or [])][:4]
@@ -193,7 +193,7 @@ class PromptHarness:
         return "- 全书母题：" + "、".join(themes)
 
     def _supporting_cast_bullets(self) -> str:
-        tl = self.timeline
+        tl = self.storyline
         if not tl:
             return ""
         cast = (tl.basic_info or {}).get("supporting_cast", []) or []
@@ -225,7 +225,7 @@ class PromptHarness:
         return "\n".join(lines)
 
     def _pov_bullets(self) -> str:
-        tl = self.timeline
+        tl = self.storyline
         if not tl:
             return ""
         pov = str((tl.basic_info or {}).get("pov", "") or "").strip()
@@ -234,7 +234,7 @@ class PromptHarness:
         return f"- 视角：{pov}（全篇统一该人称，禁止第一/第三人称混用）"
 
     def _era_language_bullets(self) -> str:
-        tl = self.timeline
+        tl = self.storyline
         if not tl:
             return ""
         bi = tl.basic_info or {}
@@ -254,8 +254,8 @@ class PromptHarness:
         return _profile_style_text(self.profile)
 
     def _rebirth_time_bullets(self) -> str:
-        """重生文时间词纪律：前世经历禁止用当前时间线近指词。"""
-        tl = self.timeline
+        """重生文时间词纪律：前世经历禁止用当前故事线近指词。"""
+        tl = self.storyline
         if not tl:
             return ""
         bi = tl.basic_info or {}
@@ -269,7 +269,7 @@ class PromptHarness:
         if not (death_year > 0 or "重生" in identity or "重生" in era):
             return ""
         return ("- 时间纪律（重生文）：指代前世/上辈子的经历一律用「上辈子/前世/当年」，"
-                "禁止用「上周/上个月/去年/昨天/那年」等近指词（那属于当前时间线）。")
+                "禁止用「上周/上个月/去年/昨天/那年」等近指词（那属于当前故事线）。")
 
     def _bible_sections(self, condensed: bool = False):
         """按优先级返回 [(标题, 文本), ...]。condensed 时只留写作必需段。"""
@@ -332,7 +332,7 @@ class PromptHarness:
                              is_opening: bool = False,
                              review_hint: str = "",
                              chapter_num: int = 0) -> str:
-        """返回 user prompt 字符串（system 沿用 timeline_writer 的铁律，不在本方法内）。
+        """返回 user prompt 字符串（system 沿用 storyline_writer 的铁律，不在本方法内）。
 
         item = {"outline": OutlineSlot, "stage": dict, "plot": PlotSlot}
         is_opening=True 时注入炸裂开场铁律（第一章前 N 桥段）。
@@ -408,7 +408,7 @@ class PromptHarness:
         diag_block = self._pre_write_diagnosis(p, stage_name)
 
         # 视角铁律（防人称漂移：显式重申，不让模型自己定）
-        _pov = str((self.timeline.basic_info or {}).get("pov", "") if self.timeline else "").strip()
+        _pov = str((self.storyline.basic_info or {}).get("pov", "") if self.storyline else "").strip()
         if _pov == "第一人称":
             pov_block = "【视角铁律】全篇第一人称「我」叙事；禁止叙事段落跳出第三人称「他/她」；对话内人物称谓不受限。\n\n"
         elif _pov == "第三人称":
@@ -487,13 +487,13 @@ class PromptHarness:
         )
 
     def _promises_block(self, p, chapter_num: int) -> str:
-        """读者承诺台账块：本桥段要兑现的、已逾期的、活跃可推进的（免费规则，从 timeline.promises 现算）。
+        """读者承诺台账块：本桥段要兑现的、已逾期的、活跃可推进的（免费规则，从 storyline.promises 现算）。
 
         模拟人类作者的"伏笔账本"：写前扫一眼还有哪些欠读者没还、哪个逾期了。
         """
-        if not self.timeline:
+        if not self.storyline:
             return ""
-        promises = getattr(self.timeline, "promises", None) or []
+        promises = getattr(self.storyline, "promises", None) or []
         active = [q for q in promises if q.get("status") == "pending"]
         if not active:
             return ""
@@ -520,9 +520,9 @@ class PromptHarness:
 
     def _roles_block(self, p) -> str:
         """本桥段出场人物：性别/性格/惯用语句/简介（防性别指代错、保持角色声线）。"""
-        if not self.timeline:
+        if not self.storyline:
             return ""
-        bi = self.timeline.basic_info or {}
+        bi = self.storyline.basic_info or {}
         protag = bi.get("protagonist") or {}
         cast_map = {}
         for c in (bi.get("supporting_cast") or []):
@@ -618,14 +618,14 @@ class PromptHarness:
     # ═══════════════════════════════════════════
 
     def render_outline_context(self, phase_kind: str,
-                               timeline: Optional[BookTimeline] = None) -> str:
+                               storyline: Optional[BookStoryline] = None) -> str:
         """返回要拼到大纲 prompt 开头的上下文块（空字符串表示无需前置）。
 
         phase_kind ∈ analyze/sequence/select_plots/theme_review/validate
         """
-        prev_tl = self.timeline
-        if timeline is not None:
-            self.timeline = timeline
+        prev_storyline = self.storyline
+        if storyline is not None:
+            self.storyline = storyline
         try:
             if phase_kind in ("sequence", "validate"):
                 bible = self.build_book_bible(max_chars=900)
@@ -634,11 +634,11 @@ class PromptHarness:
                 bible = self.build_book_bible_condensed(max_chars=500)
                 return f"【书级设定（简）】\n{bible}\n" if bible else ""
             if phase_kind == "theme_review":
-                themes = [str(t) for t in (self.timeline.themes or [])][:6] if self.timeline else []
+                themes = [str(t) for t in (self.storyline.themes or [])][:6] if self.storyline else []
                 return f"【全书母题】{'、'.join(themes) if themes else '（无）'}\n"
             return ""
         finally:
-            self.timeline = prev_tl
+            self.storyline = prev_storyline
 
     # ═══════════════════════════════════════════
     # 候选笑点模式池预筛（免费规则，不写进大纲）

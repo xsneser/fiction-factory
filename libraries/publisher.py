@@ -4,7 +4,7 @@
 上架前检查（5 项 error 级，缺一不可）+ 状态机（writing → finished → published）
 + 按平台格式导出章节文件（供手动投稿番茄 / 起点）。
 
-数据源全部来自磁盘：book.json / outline.json（synopsis）/ timeline.json / chapters/{n}.json。
+数据源全部来自磁盘：book.json / outline.json（synopsis）/ storyline.json / chapters/{n}.json。
 authoritative 字数一律重算，不依赖 engine 记账字段（断点续写重入可能造成轻微偏差）。
 """
 import os
@@ -72,11 +72,11 @@ class Publisher:
     # ───────────────────────────────────────────
     # 上架前检查（免费规则，无 LLM）
     # ───────────────────────────────────────────
-    def build_report(self, book, timeline=None, outline=None,
+    def build_report(self, book, storyline=None, outline=None,
                      thresholds: dict | None = None) -> PublishReport:
         """对一本书跑 5 项 error 级检查，返回 PublishReport。
 
-        book：BookConfig；timeline/outline 可传入，None 时从磁盘加载。
+        book：BookConfig；storyline/outline 可传入，None 时从磁盘加载。
         thresholds：publish_thresholds() 的返回；默认按 platform 取真实阈值。
         """
         if thresholds is None:
@@ -84,11 +84,11 @@ class Publisher:
         min_words = int(thresholds.get("min_total_words", 0))
         min_ch = int(thresholds.get("min_chapters", 0))
 
-        if timeline is None:
+        if storyline is None:
             try:
-                timeline = self.book_mgr.load_timeline(book.book_id)
+                storyline = self.book_mgr.load_storyline(book.book_id)
             except Exception:
-                timeline = None
+                storyline = None
         if outline is None:
             try:
                 outline = self.book_mgr.get_outline(book.book_id) or {}
@@ -100,7 +100,7 @@ class Publisher:
 
         items = [
             self._check_title(book),
-            self._check_synopsis(outline, timeline),
+            self._check_synopsis(outline, storyline),
             self._check_words(total_words, min_words, min_ch),
             self._check_review(chapters),
             self._check_finished(book, total_words, min_words, min_ch),
@@ -127,13 +127,13 @@ class Publisher:
         detail = f"书名：{title or '（空）'}" if ok else "书名缺失或仍是占位符，请先生成书名/简介"
         return PublishCheckItem("title", "书名齐备", ok, detail)
 
-    def _check_synopsis(self, outline, timeline) -> PublishCheckItem:
+    def _check_synopsis(self, outline, storyline) -> PublishCheckItem:
         synopsis = ""
         if outline and outline.get("synopsis"):
             synopsis = (outline.get("synopsis") or "").strip()
-        if not synopsis and timeline and timeline.basic_info:
-            synopsis = ((timeline.basic_info.get("synopsis") or "").strip()
-                        if isinstance(timeline.basic_info, dict) else "")
+        if not synopsis and storyline and storyline.basic_info:
+            synopsis = ((storyline.basic_info.get("synopsis") or "").strip()
+                        if isinstance(storyline.basic_info, dict) else "")
         ok = len(synopsis) >= 20
         detail = f"简介 {len(synopsis)} 字，已就绪" if ok else "简介缺失或过短（<20字），请先生成简介"
         return PublishCheckItem("synopsis", "简介齐备", ok, detail)
@@ -228,14 +228,14 @@ class Publisher:
 
         chapters, total_words = self._load_chapters(book)
         outline = self.book_mgr.get_outline(book_id) or {}
-        timeline = None
+        storyline = None
         try:
-            timeline = self.book_mgr.load_timeline(book_id)
+            storyline = self.book_mgr.load_storyline(book_id)
         except Exception:
-            timeline = None
+            storyline = None
         synopsis = (outline.get("synopsis") or "").strip()
-        if not synopsis and timeline and timeline.basic_info:
-            synopsis = (timeline.basic_info.get("synopsis") or "").strip()
+        if not synopsis and storyline and storyline.basic_info:
+            synopsis = (storyline.basic_info.get("synopsis") or "").strip()
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         export_dir = ensure_child_path(

@@ -3,7 +3,7 @@
 6 阶段 LLM 管线：故事分析 → 故事线规划 → 桥段编排 → 线程与呼应 → 内涵挂载 → 一致性验证
 
 输入: 流派/子流派/自定义描述 + 四大库（候选池） + 笔名档案
-输出: BookTimeline JSON（多大纲+桥段+内涵+吸睛；笑点完全涌现、不写入大纲）
+输出: BookStoryline JSON（多大纲+桥段+内涵+吸睛；笑点完全涌现、不写入大纲）
 
 用法:
     gen = OutlineGenerator(llm, structure_lib, plot_lib, gag_lib, theme_lib)
@@ -14,8 +14,8 @@
 from typing import Callable, Optional
 import json, time
 
-from .timeline import (
-    BookTimeline, OutlineSlot, PlotSlot, merge_basic_info, annotate_plot_roles,
+from .storyline import (
+    BookStoryline, OutlineSlot, PlotSlot, merge_basic_info, annotate_plot_roles,
     structure_to_stages, mount_themes_and_hooks,
 )
 from .structure import StructureLibrary
@@ -30,7 +30,7 @@ from .theme import ThemeLibrary
 
 class OutlineGenerator:
     """
-    大纲生成引擎 — 从用户想法到 BookTimeline JSON 的完整 LLM 管线。
+    大纲生成引擎 — 从用户想法到 BookStoryline JSON 的完整 LLM 管线。
 
     6 个阶段，每个阶段 yield SSE 事件，UI 实时显示进度。
     """
@@ -89,11 +89,11 @@ class OutlineGenerator:
         pen_name: str = "",
         words_per_chapter: int = 3000,
         max_outlines: int = 5,
-        timeline: Optional[BookTimeline] = None,
-        on_save: Optional[Callable[[BookTimeline], None]] = None,
+        storyline: Optional[BookStoryline] = None,
+        on_save: Optional[Callable[[BookStoryline], None]] = None,
     ):
         """
-        生成器：逐步构建 BookTimeline，yield SSE 事件。
+        生成器：逐步构建 BookStoryline，yield SSE 事件。
 
         事件格式: (event_type: str, message: str, data: dict)
         新增事件：
@@ -102,19 +102,19 @@ class OutlineGenerator:
           ("decision", kind, {...})            — 决策完成（候选→选中→理由），
                   让用户看到"确定了哪个大纲/桥段/内涵"及 AI 的理由
 
-        timeline: 传入现有 BookTimeline 则原地累加（供逐步落盘）；None 则新建。
+        storyline: 传入现有 BookStoryline 则原地累加（供逐步落盘）；None 则新建。
         on_save:  每阶段完成后回调 on_save(tl)，用于把大纲/桥段/内涵"挨个步骤写进配置文件"。
         """
-        tl = timeline if timeline is not None else BookTimeline(
+        tl = storyline if storyline is not None else BookStoryline(
             genre=genre, sub_genre=sub_genre,
             words_per_chapter=words_per_chapter, pen_name=pen_name,
         )
         if self.harness:
-            self.harness.timeline = tl
+            self.harness.storyline = tl
 
         total_phases = 6
         issues = []
-        timeline_warnings = []
+        storyline_warnings = []
         try:
             # ── Phase 1: 故事分析 ──
             yield ("phase", "故事分析", {"phase": 1, "total": total_phases,
@@ -125,11 +125,11 @@ class OutlineGenerator:
             if basic_info:
                 # 原地累加：保留用户已填的基础设定（主角/世界观等非空字段不覆盖）
                 tl.basic_info = merge_basic_info(tl.basic_info, basic_info)
-            # 时间线规则校验（重生/年龄/年份自洽）
-            timeline_warnings.extend(self._validate_timeline_math(tl.basic_info))
-            if timeline_warnings:
-                yield ("warnings", f"时间线校验发现 {len(timeline_warnings)} 个问题", {
-                    "issues": list(timeline_warnings), "phase": 1,
+            # 故事线规则校验（重生/年龄/年份自洽）
+            storyline_warnings.extend(self._validate_storyline_math(tl.basic_info))
+            if storyline_warnings:
+                yield ("warnings", f"故事线校验发现 {len(storyline_warnings)} 个问题", {
+                    "issues": list(storyline_warnings), "phase": 1,
                 })
             yield ("phase_done", "故事分析完成", {
                 "phase": 1, "data": {"protagonist": tl.basic_info.get("protagonist", {})}
@@ -139,11 +139,11 @@ class OutlineGenerator:
 
             # ── Phase 2: 故事线规划 ──
             yield ("phase", "故事线规划", {"phase": 2, "total": total_phases,
-                   "desc": f"从大纲库选择 {max_outlines} 个模板，排布时间线..."})
+                   "desc": f"从大纲库选择 {max_outlines} 个模板，排布故事线..."})
             yield ("progress", "分析大纲库候选...", {})
 
             tl.outlines = []  # 原地累加：每条大纲确定后立即写入，供实时刷新
-            outlines = yield from self._plan_timeline(
+            outlines = yield from self._plan_storyline(
                 genre, sub_genre, custom_context, tl, max_outlines)
             if not tl.outlines and outlines:
                 tl.outlines = outlines
@@ -230,10 +230,10 @@ class OutlineGenerator:
 
             # ── Phase 6: 一致性验证 ──
             yield ("phase", "一致性验证", {"phase": 6, "total": total_phases,
-                   "desc": "验证时间线合理性、桥段覆盖、内涵挂载..."})
+                   "desc": "验证故事线合理性、桥段覆盖、内涵挂载..."})
             yield ("progress", "检查故事线...", {})
 
-            issues = self._validate(tl) + timeline_warnings
+            issues = self._validate(tl) + storyline_warnings
             yield from self._validate_with_llm(tl)
             if issues:
                 yield ("warnings", f"发现 {len(issues)} 个建议", {
@@ -352,7 +352,7 @@ class OutlineGenerator:
             "era_language": "",
         }
 
-    def _validate_timeline_math(self, basic_info: dict) -> list[str]:
+    def _validate_storyline_math(self, basic_info: dict) -> list[str]:
         """Phase 1 后规则校验：重生/年龄/年份关系自洽（纯规则，不调 LLM）。"""
         warnings = []
         bi = basic_info or {}
@@ -372,7 +372,7 @@ class OutlineGenerator:
 
         if death_year and story_year and story_year >= death_year:
             warnings.append(
-                f"重生时间线矛盾：主角死亡于 {death_year} 年，故事却设定在 {story_year} 年（重生应回到死亡之前）")
+                f"重生故事线矛盾：主角死亡于 {death_year} 年，故事却设定在 {story_year} 年（重生应回到死亡之前）")
         if story_year and age > 0 and story_year - age < 1900:
             warnings.append(
                 f"年龄/年份不自洽：{story_year} 年主角 {age} 岁（出生年 {story_year - age} 过晚）")
@@ -390,12 +390,12 @@ class OutlineGenerator:
     # Phase 2: 故事线规划
     # ═══════════════════════════════════════
 
-    def _plan_timeline(
+    def _plan_storyline(
         self, genre: str, sub_genre: str,
-        custom_context: str, tl: BookTimeline,
+        custom_context: str, tl: BookStoryline,
         max_outlines: int = 5,
     ):
-        """从大纲库选模板 → AI 排布时间线 → 展开阶段。
+        """从大纲库选模板 → AI 排布故事线 → 展开阶段。
 
         生成器：AI 模式下 yield thinking/decision 事件，最终 return list[OutlineSlot]。
         每条大纲确定后立即写入 tl.outlines 并 yield outline_added，供前端实时刷新。
@@ -414,13 +414,13 @@ class OutlineGenerator:
             result = yield from self._rule_sequence(candidates, max_outlines, tl)
             return result
 
-        # AI 模式：让 AI 选择合适的模板并排时间线
+        # AI 模式：让 AI 选择合适的模板并排故事线
         result = yield from self._ai_sequence(
             candidates, genre, sub_genre, custom_context, tl, max_outlines)
         return result
 
     def _rule_sequence(
-        self, candidates: list, max_outlines: int, tl: BookTimeline,
+        self, candidates: list, max_outlines: int, tl: BookStoryline,
     ):
         """规则模式：顺序选取大纲模板（生成器，每条确定后写入 tl 并 yield outline_added）"""
         outlines = []
@@ -449,7 +449,7 @@ class OutlineGenerator:
 
     def _ai_sequence(
         self, candidates: list, genre: str, sub_genre: str,
-        custom_context: str, tl: BookTimeline, max_outlines: int,
+        custom_context: str, tl: BookStoryline, max_outlines: int,
     ):
         """AI 辅助排布故事线。
 
@@ -489,7 +489,7 @@ class OutlineGenerator:
 {cand_text}
 
 要求：
-1. 从候选模板中选择最适合的 2-{max_outlines} 个，按时间线串联
+1. 从候选模板中选择最适合的 2-{max_outlines} 个，按故事线串联
 2. 大纲之间可以重叠 2-5 章（transition_type="overlap"），过渡更自然
 3. 为每条大纲定义过渡类型：sequential（顺序接续）、overlap（重叠过渡）、merge（融合）
 4. 排版应体现"开局爽 → 中段稳 → 高潮燃"的节奏
@@ -515,7 +515,7 @@ class OutlineGenerator:
             "step": "候选大纲模板",
             "candidates": cand_list,
             "chosen": {},
-            "reason": "以下模板来自大纲库，AI 将从其中挑选并排布时间线",
+            "reason": "以下模板来自大纲库，AI 将从其中挑选并排布故事线",
         })
 
         outlines_data = None
@@ -599,7 +599,7 @@ class OutlineGenerator:
     # ═══════════════════════════════════════
 
     def _arrange_plots_for_outline(
-        self, outline: OutlineSlot, tl: BookTimeline, genre: str,
+        self, outline: OutlineSlot, tl: BookStoryline, genre: str,
     ):
         """为一个大纲的每个阶段匹配桥段（AI 选择，避免跨阶段重复与类型错配）。
 
@@ -782,7 +782,7 @@ class OutlineGenerator:
     # ═══════════════════════════════════════
 
     def _select_book_themes(self, genre: str,
-                            tl: Optional[BookTimeline] = None) -> list[str]:
+                            tl: Optional[BookStoryline] = None) -> list[str]:
         """选定全书母题（内涵跟随桥段的前提：母题必须来自库内，才能按 compatible_plots 挂桥段）。
 
         优先级：流派匹配 → 按本书已选桥段模板命中 compatible_plots 的母题 →
@@ -802,7 +802,7 @@ class OutlineGenerator:
         return [e.name for e in entries[:2]] if entries else default_themes
 
     def _inject_themes_and_hooks(
-        self, plot: PlotSlot, tl: BookTimeline,
+        self, plot: PlotSlot, tl: BookStoryline,
     ):
         """为一个桥段匹配内涵（跟随桥段）并标注吸睛点（委托共享 mount_themes_and_hooks）。"""
         mount_themes_and_hooks(
@@ -821,7 +821,7 @@ class OutlineGenerator:
             return "副线"
         return "主线"
 
-    def _apply_thread_fallback(self, tl: BookTimeline):
+    def _apply_thread_fallback(self, tl: BookStoryline):
         """LLM 线程规划失败时回退：按分类归线程，不拆。"""
         tl.threads = [
             {"id": "主线", "name": "主线", "desc": "主角核心推进线"},
@@ -843,7 +843,7 @@ class OutlineGenerator:
             return "主线"
         return self._THREAD_ID_NORM.get(tid.lower(), tid)
 
-    def _apply_thread_assignments(self, tl: BookTimeline, threads, assignments):
+    def _apply_thread_assignments(self, tl: BookStoryline, threads, assignments):
         """把 LLM 的线程分配应用到 plots（未分配的按分类兜底；英文 id 规范化为中文）。"""
         if isinstance(threads, list) and threads:
             tl.threads = [{"id": self._normalize_thread_id(t.get("id")),
@@ -879,7 +879,7 @@ class OutlineGenerator:
                 p.thread_id = self._default_thread_for_category(p.category)
                 p.thread_seq = 0
 
-    def _apply_split_payoffs(self, tl: BookTimeline, splits):
+    def _apply_split_payoffs(self, tl: BookStoryline, splits):
         """为选中的设局桥段创建收局槽位（resolves_plot_id=设局.id），放后几个 stage。
 
         生成器：每个收局 yield plot_added 供前端实时刷新。
@@ -919,7 +919,7 @@ class OutlineGenerator:
                 "category": payoff.category,
             })
 
-    def _plan_threads_and_splits(self, tl: BookTimeline, genre: str):
+    def _plan_threads_and_splits(self, tl: BookStoryline, genre: str):
         """Phase 4：LLM 规划叙事线程 + 桥段拆分设局→收局。
 
         生成器：yield thinking/decision/plot_added；失败回退规则。
@@ -947,7 +947,7 @@ class OutlineGenerator:
         } for p in ordered[:60]]
 
         bible_block = self.harness.render_outline_context("thread_split", tl) if self.harness else ""
-        prompt = f"""{bible_block}为以下{genre}小说的时间线规划「叙事线程」和「桥段拆分设局→收局」。
+        prompt = f"""{bible_block}为以下{genre}小说的故事线规划「叙事线程」和「桥段拆分设局→收局」。
 
 【大纲】
 {json.dumps(outlines_view, ensure_ascii=False)}
@@ -1012,7 +1012,7 @@ class OutlineGenerator:
             "reason": data.get("reason", "") or "规划完成",
         })
 
-    def _review_theme_assignments(self, tl: BookTimeline, genre: str):
+    def _review_theme_assignments(self, tl: BookStoryline, genre: str):
         """Phase 4 内涵挂载后的 LLM 复查（流式思考）。
 
         生成器：yield thinking（token 流）+ decision（复查结论），
@@ -1073,8 +1073,8 @@ class OutlineGenerator:
     # Phase 5: 一致性验证
     # ═══════════════════════════════════════
 
-    def _validate(self, tl: BookTimeline) -> list[str]:
-        """验证 BookTimeline 的合理性和完整性"""
+    def _validate(self, tl: BookStoryline) -> list[str]:
+        """验证 BookStoryline 的合理性和完整性"""
         issues = []
 
         # 1. 章节连续性
@@ -1115,7 +1115,7 @@ class OutlineGenerator:
 
         return issues
 
-    def _validate_with_llm(self, tl: BookTimeline):
+    def _validate_with_llm(self, tl: BookStoryline):
         """Phase 5 一致性验证的 LLM 复查（流式思考）。
 
         生成器：yield thinking（token 流）+ decision（验证结论），
@@ -1136,7 +1136,7 @@ class OutlineGenerator:
 大纲：{json.dumps(outlines_view, ensure_ascii=False, indent=1)}
 桥段总数：{len(tl.plots)}；内涵已按桥段挂载。
 
-请检查：时间线重叠/间隔是否合理、桥段覆盖是否均匀、有无明显漏洞。
+请检查：故事线重叠/间隔是否合理、桥段覆盖是否均匀、有无明显漏洞。
 
 返回 JSON：
 {{"issues": ["...", "..."], "summary": "一句话结论"}}"""
@@ -1171,7 +1171,7 @@ def quick_generate(
     structure_lib=None, plot_lib=None, gag_lib=None, theme_lib=None,
 ) -> dict:
     """
-    同步版本：生成并返回完整 BookTimeline（测试/脚本用）。
+    同步版本：生成并返回完整 BookStoryline（测试/脚本用）。
     注意：会阻塞直到全部生成完成。
     """
     gen = OutlineGenerator(
