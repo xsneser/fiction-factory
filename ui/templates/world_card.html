@@ -181,9 +181,7 @@ function biToForm(bi) {
     $('wb-geography').value = wb.geography || ''; $('wb-culture').value = wb.culture || '';
     $('wb-history').value = wb.history || ''; $('wb-social_structure').value = wb.social_structure || '';
     $('wb-core_conflict').value = wb.core_conflict || ''; $('wb-world_summary').value = wb.world_summary || '';
-    $('wb-factions').value = (wb.factions || []).map(function(f){
-        return (f && typeof f === 'object') ? (f.name + (f.stance ? ':' + f.stance : '')) : f;
-    }).join('\n');
+    $('wb-factions').value = factionLinesText(wb.factions);
     $('wb-rules').value = (wb.rules || []).join('\n');
     var p = bi.protagonist || {};
     $('p-name').value = p.name || ''; $('p-identity').value = p.identity || '';
@@ -195,24 +193,13 @@ function biToForm(bi) {
     $('bi-pov').value = bi.pov || ''; $('bi-era_language').value = bi.era_language || '';
 }
 function formToBi() {
-    function parseFactions(txt) {
-        var out = [];
-        txt.split(/[\n,，、;；]+/).forEach(function(x){
-            x = x.trim(); if (!x) return;
-            var i = x.indexOf(':');
-            if (i > 0) out.push({name: x.slice(0,i).trim(), stance: x.slice(i+1).trim()});
-            else out.push(x);
-        });
-        return out;
-    }
-    function parseRules(txt){ return txt.split('\n').map(function(x){return x.trim();}).filter(Boolean); }
     var wb = {
         description: ($('world-idea').value || '').trim(),
         era: $('wb-era').value.trim(), power_system: $('wb-power_system').value.trim(),
         geography: $('wb-geography').value.trim(), culture: $('wb-culture').value.trim(),
         history: $('wb-history').value.trim(), social_structure: $('wb-social_structure').value.trim(),
         core_conflict: $('wb-core_conflict').value.trim(), world_summary: $('wb-world_summary').value.trim(),
-        factions: parseFactions($('wb-factions').value), rules: parseRules($('wb-rules').value),
+        factions: parseFactionLines($('wb-factions').value), rules: parseRuleLines($('wb-rules').value),
     };
     var proto = {
         name: $('p-name').value.trim(), identity: $('p-identity').value.trim(),

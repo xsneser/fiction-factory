@@ -243,3 +243,26 @@
         }
         pollStatus();
         setInterval(pollStatus, 2000);
+
+/* ─── 设定卡共享解析（world_card.html 与 storyline_write_flow.html 共用）─── */
+function parseFactionLines(txt) {
+    /* "名:立场" 一行/逗号 → [{name, stance}] 或 [str] */
+    var out = [];
+    String(txt || '').split(/[\n,，、;；]+/).forEach(function(x) {
+        x = String(x).trim(); if (!x) return;
+        var i = x.indexOf(':');
+        if (i > 0) out.push({name: x.slice(0, i).trim(), stance: x.slice(i + 1).trim()});
+        else out.push(x);
+    });
+    return out;
+}
+function parseRuleLines(txt) {
+    /* 每行一条规则 → [str] */
+    return String(txt || '').split('\n').map(function(x){ return String(x).trim(); }).filter(Boolean);
+}
+function factionLinesText(factions) {
+    /* [{name,stance}] 或 [str] → 文本（"名:立场" 一行） */
+    return (factions || []).map(function(f){
+        return (f && typeof f === 'object') ? (f.name + (f.stance ? ':' + f.stance : '')) : f;
+    }).join('\n');
+}

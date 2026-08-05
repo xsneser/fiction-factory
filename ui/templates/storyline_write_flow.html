@@ -210,6 +210,20 @@
                             <input id="bi_protag_golden" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('golden_finger','')) }}">
                         </label>
                     </div>
+                    <div class="form-row half">
+                        <label>性别
+                            <input id="bi_protag_gender" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('gender','')) }}">
+                        </label>
+                        <label>年龄
+                            <input id="bi_protag_age" type="number" min="0" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('age') or '') }}">
+                        </label>
+                    </div>
+                    <div class="form-row half">
+                        <label>死亡年份（重生文用）
+                            <input id="bi_protag_death_year" type="number" min="0" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('death_year') or '') }}">
+                        </label>
+                        <label></label>
+                    </div>
                     <div class="form-row">
                         <label>世界观简述
                             <textarea id="bi_world_desc" rows="2">{{ ((storyline.basic_info.get('world_building') or {}).get('description','')) }}</textarea>
@@ -221,6 +235,42 @@
                         </label>
                         <label>力量体系
                             <input id="bi_world_power" value="{{ ((storyline.basic_info.get('world_building') or {}).get('power_system','')) }}">
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <label>设定概述（world_summary，一段话整体设定）
+                            <textarea id="bi_world_summary" rows="2">{{ ((storyline.basic_info.get('world_building') or {}).get('world_summary','')) }}</textarea>
+                        </label>
+                    </div>
+                    <div class="form-row half">
+                        <label>地理
+                            <input id="bi_world_geography" value="{{ ((storyline.basic_info.get('world_building') or {}).get('geography','')) }}">
+                        </label>
+                        <label>文化
+                            <input id="bi_world_culture" value="{{ ((storyline.basic_info.get('world_building') or {}).get('culture','')) }}">
+                        </label>
+                    </div>
+                    <div class="form-row half">
+                        <label>历史
+                            <input id="bi_world_history" value="{{ ((storyline.basic_info.get('world_building') or {}).get('history','')) }}">
+                        </label>
+                        <label>社会结构
+                            <input id="bi_world_social" value="{{ ((storyline.basic_info.get('world_building') or {}).get('social_structure','')) }}">
+                        </label>
+                    </div>
+                    <div class="form-row">
+                        <label>核心矛盾
+                            <input id="bi_world_conflict" value="{{ ((storyline.basic_info.get('world_building') or {}).get('core_conflict','')) }}">
+                        </label>
+                    </div>
+                    <div class="form-row half">
+                        <label>势力（"名:立场" 一行/逗号）
+                            {% set _factions = ((storyline.basic_info.get('world_building') or {}).get('factions') or []) %}
+                            <textarea id="bi_world_factions" rows="2">{% for f in _factions %}{% if f is mapping %}{{ f.get('name','') }}{% if f.get('stance') %}:{{ f.get('stance') }}{% endif %}{% else %}{{ f }}{% endif %}
+{% endfor %}</textarea>
+                        </label>
+                        <label>世界规则（每行一条）
+                            <textarea id="bi_world_rules" rows="2">{{ ((storyline.basic_info.get('world_building') or {}).get('rules') or []) | join('\n') }}</textarea>
                         </label>
                     </div>
                     <div class="form-row half">
@@ -636,11 +686,22 @@ function saveBasicInfo() {
             personality: document.getElementById('bi_protag_personality').value,
             background: document.getElementById('bi_protag_background').value,
             golden_finger: document.getElementById('bi_protag_golden').value,
+            gender: document.getElementById('bi_protag_gender').value.trim(),
+            age: parseInt(document.getElementById('bi_protag_age').value || '0', 10) || 0,
+            death_year: parseInt(document.getElementById('bi_protag_death_year').value || '0', 10) || 0,
         },
         world_building: {
             description: document.getElementById('bi_world_desc').value,
             era: document.getElementById('bi_world_era').value,
             power_system: document.getElementById('bi_world_power').value,
+            world_summary: document.getElementById('bi_world_summary').value.trim(),
+            geography: document.getElementById('bi_world_geography').value.trim(),
+            culture: document.getElementById('bi_world_culture').value.trim(),
+            history: document.getElementById('bi_world_history').value.trim(),
+            social_structure: document.getElementById('bi_world_social').value.trim(),
+            core_conflict: document.getElementById('bi_world_conflict').value.trim(),
+            factions: parseFactionLines(document.getElementById('bi_world_factions').value),
+            rules: parseRuleLines(document.getElementById('bi_world_rules').value),
         },
         tone: document.getElementById('bi_tone').value,
         target_audience: document.getElementById('bi_audience').value,
