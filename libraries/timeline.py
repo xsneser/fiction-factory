@@ -85,6 +85,7 @@ class BookTimeline:
     sub_genre: str = ""
     words_per_chapter: int = 3000
     pen_name: str = ""
+    platform: str = "fanqie"   # 目标平台：fanqie/qidian（写作时注入平台写作约束）
 
     # 基础信息库（参考 show-me-the-story 的设定体系）
     basic_info: dict = field(default_factory=lambda: {
@@ -120,6 +121,7 @@ class BookTimeline:
             "sub_genre": self.sub_genre,
             "words_per_chapter": self.words_per_chapter,
             "pen_name": self.pen_name,
+            "platform": self.platform,
             "basic_info": self.basic_info,
             "outlines": [{
                 "id": o.id, "template_id": o.template_id, "name": o.name,
@@ -165,6 +167,7 @@ class BookTimeline:
             sub_genre=d.get("sub_genre", ""),
             words_per_chapter=d.get("words_per_chapter", 3000),
             pen_name=d.get("pen_name", ""),
+            platform=d.get("platform", "fanqie"),
             basic_info=d.get("basic_info", {}),
             themes=d.get("themes", []),
             global_gags=d.get("global_gags", []),

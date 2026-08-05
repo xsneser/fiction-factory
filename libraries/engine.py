@@ -178,6 +178,7 @@ class NovelEngine:
         genre = (config or {}).get("genre") or timeline.genre
         sub_genre = (config or {}).get("sub_genre") or timeline.sub_genre
         words_per_chapter = (config or {}).get("words_per_chapter") or timeline.words_per_chapter
+        platform = (config or {}).get("platform") or timeline.platform or "fanqie"
 
         # 总章节数：优先按桥段真实规划字数重算（预计=实际），无桥段则退回大纲范围
         total_ch = self._planned_total_chapters() or 0
@@ -193,7 +194,7 @@ class NovelEngine:
             pen_name=pen_name,
             genre=genre,
             sub_genre=sub_genre,
-            platform="fanqie",
+            platform=platform,
             total_chapters=total_ch,
             current_chapter=0,
             started_at=datetime.now().isoformat(),
@@ -209,7 +210,7 @@ class NovelEngine:
         # 初始化集中式 harness 与灵机一动探测环
         self.harness = PromptHarness(timeline=timeline, profile=self.profile,
                                      gag_lib=self.gag_lib, theme_lib=self.theme_lib,
-                                     plot_lib=self.plot_lib)
+                                     plot_lib=self.plot_lib, platform=platform)
         self.gag_injector = GagInjector(llm=self.llm, harness=self.harness,
                                         gag_lib=self.gag_lib)
 
@@ -250,7 +251,7 @@ class NovelEngine:
                 pen_name=pen_name,
                 genre=genre,
                 sub_genre=sub_genre,
-                platform="fanqie",
+                platform=platform,
                 chapter_count=total_ch,
                 structure_template_id="timeline",
                 style_profile_id=self.profile.id if self.profile else "",
@@ -392,7 +393,8 @@ class NovelEngine:
                 self.harness = PromptHarness(timeline=tl, profile=self.profile,
                                              gag_lib=self.gag_lib,
                                              theme_lib=self.theme_lib,
-                                             plot_lib=self.plot_lib)
+                                             plot_lib=self.plot_lib,
+                                             platform=self.state.platform)
                 self.gag_injector = GagInjector(llm=self.llm, harness=self.harness,
                                                 gag_lib=self.gag_lib)
                 self.timeline_writer = TimelineChapterWriter(

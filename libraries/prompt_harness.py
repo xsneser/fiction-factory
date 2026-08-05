@@ -95,12 +95,14 @@ class PromptHarness:
     """集中式提示词 harness。timeline 可后续赋值（保持对活对象的引用）。"""
 
     def __init__(self, timeline: Optional[BookTimeline] = None, profile=None,
-                 gag_lib=None, theme_lib=None, plot_lib=None):
+                 gag_lib=None, theme_lib=None, plot_lib=None, platform: str = ""):
         self.timeline = timeline
         self.profile = profile
         self.gag_lib = gag_lib
         self.theme_lib = theme_lib
         self.plot_lib = plot_lib
+        # 目标平台（fanqie/qidian）：写作 prompt 注入平台写作约束；空=不注入
+        self.platform = platform or (timeline.platform if timeline else "") or ""
 
     # ═══════════════════════════════════════════
     # 书级设定卡（Book Bible）分段渲染
@@ -392,10 +394,19 @@ class PromptHarness:
         opening_block = (OPENING_MODE_RULES + "\n\n") if is_opening else ""
         consistency_block = CONSISTENCY_RULES + "\n\n"
         review_block = (("【上章审查提示】" + review_hint.strip() + "\n\n") if review_hint else "")
+        platform_block = ""
+        if self.platform:
+            try:
+                from .book_meta import platform_constraints
+                pc = platform_constraints(self.platform)
+                if pc:
+                    platform_block = pc + "\n\n"
+            except Exception:
+                pass
 
         return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个句子。
 
-{bible_block}{opening_block}{consistency_block}{review_block}{pov_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
+{bible_block}{opening_block}{consistency_block}{platform_block}{review_block}{pov_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
 【当前阶段】{stage_name}
 【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按大纲自然推进'}
 【桥段骨架】{structure}

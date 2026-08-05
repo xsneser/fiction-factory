@@ -10,6 +10,7 @@
     <span>书名：<strong>{{ state.title or '(待定)' }}</strong></span>
     <span>笔名：<strong>{{ state.pen_name }}</strong></span>
     <span>流派：<strong>{{ state.genre }}{% if state.sub_genre %}/{{ state.sub_genre }}{% endif %}</strong></span>
+    <span>平台：<strong>{{ state.platform }}</strong></span>
     <span>每章：<strong>{{ timeline.words_per_chapter }}字</strong></span>
     <span>进度：<strong id="prog-ch">{{ state.current_chapter }}</strong> / <span id="prog-total">{{ state.total_chapters }}</span> 章</span>
     <span>本章：<strong id="chp-words">0</strong>/<span id="chp-target">{{ timeline.words_per_chapter }}</span>字</span>

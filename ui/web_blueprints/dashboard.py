@@ -39,6 +39,7 @@ def start_new_book():
         pen_name = request.form.get("pen_name", "")
         genre = request.form.get("genre", "")
         sub_genre = request.form.get("sub_genre", "")
+        platform = request.form.get("platform", "fanqie")
 
         # 创建时间线配置
         timeline = BookTimeline(
@@ -47,6 +48,7 @@ def start_new_book():
             sub_genre=sub_genre,
             words_per_chapter=parse_int(request.form.get("words_per_chapter"), 3000, min_value=500, max_value=20000),
             pen_name=pen_name,
+            platform=platform,
             basic_info={
                 "protagonist": {
                     "name": request.form.get("protag_name", ""),
