@@ -236,6 +236,20 @@ def run_tests():
                 check(f"Write flow title in page",
                       "蓝图式写作" in r.text or bid in r.text,
                       f"write flow marker not found for {bid}")
+
+            # 世界观设定卡页（只读校验；confirm 会 mutate，交给 tools/smoke_world_card.py 的临时书覆盖）
+            # 无故事线的遗留书会 302 回书详情——两种都算可达；不跟随重定向以便区分
+            r = s.get(urljoin(BASE, f"/books/{bid}/world"), timeout=15, allow_redirects=False)
+            if r.status_code == 302:
+                loc = r.headers.get("Location", "")
+                check(f"World card redirect ({bid})", f"/books/{bid}" in loc,
+                      f"redirect to {loc}")
+            elif r.status_code == 200:
+                check(f"World card marker ({bid})",
+                      "世界观设定卡" in r.text,
+                      "world card marker not found")
+            else:
+                check(f"World card page ({bid})", False, f"got {r.status_code}")
     else:
         print("  (no books found - skipping book tests)")
 

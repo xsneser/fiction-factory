@@ -28,10 +28,13 @@ def _profile_for(tl):
 
 @bp.route("/books/<book_id>/world")
 def world_card(book_id):
-    """世界观设定卡：展示/编辑已生成设定，支持重新生成、示例候选、从已有书借鉴。"""
+    """世界观设定卡：展示/编辑已生成设定，支持重新生成、示例候选、从已有书借鉴。
+
+    无故事线的书（未走设定先行流程）优雅回退到书详情页，而非硬 404。
+    """
     tl = _resolve_storyline(book_id)
     if not tl:
-        return jsonify({"error": "not found"}), 404
+        return redirect(url_for("books.book_detail", book_id=book_id))
     bi = tl.basic_info or {}
     borrow_books = []
     for b in book_mgr.list_all():

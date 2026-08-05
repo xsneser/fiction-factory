@@ -174,20 +174,25 @@ class WorldBuildingGenerator:
 
     def generate_candidates(self, genre: str = "", sub_genre: str = "",
                             idea: str = "", count: int = 3) -> list:
-        """示例候选：一次产出 count 个差异化世界观候选（非流式 JSON 端点）。"""
+        """示例候选：一次产出 count 个差异化世界观候选（非流式 JSON 端点，失败重试≤3）。"""
         if not self.llm:
             return []
         prompt = self.harness.render_world_candidates_prompt(
             idea=idea, genre=genre or "", sub_genre=sub_genre or "", count=count)
-        try:
-            from core.llm_client import extract_json
-            raw = self.llm.call(WORLD_CANDIDATES_SYSTEM, prompt,
-                                temperature=0.9, max_tokens=2048)
-            data = json.loads(extract_json(raw))
-            cands = data.get("candidates") or []
-            return [c for c in cands if isinstance(c, dict) and c.get("one_liner")][:count]
-        except Exception:
-            return []
+        from core.llm_client import extract_json
+        for attempt in range(3):
+            try:
+                # 推理型模型：max_tokens 留足推理+内容余量（同 outline_generator 用 8192）
+                raw = self.llm.call(WORLD_CANDIDATES_SYSTEM, prompt,
+                                    temperature=0.9, max_tokens=8192)
+                data = json.loads(extract_json(raw))
+                cands = [c for c in (data.get("candidates") or [])
+                         if isinstance(c, dict) and c.get("one_liner")][:count]
+                if cands:
+                    return cands
+            except Exception:
+                pass
+        return []
 
     # ═══════════════════════════════════════════
     # 内部：2 次链式 LLM 调用
@@ -195,22 +200,28 @@ class WorldBuildingGenerator:
 
     def _draft_world_summary(self, genre: str, sub_genre: str, idea: str,
                              platform: str, seed_basic_info):
-        """Call A：一句话 → 世界观设定短文（流式转发 thinking，返回短文全文）。"""
+        """Call A：一句话 → 世界观设定短文（流式转发 thinking，返回短文全文）。失败重试≤3。"""
         prompt = self.harness.render_world_build_draft_prompt(
             idea=idea, genre=genre, sub_genre=sub_genre,
             seed_basic_info=seed_basic_info, platform=platform)
-        collected = []
-        try:
-            # 推理型模型：max_tokens 必须留足推理余量（同 outline_generator 用 8192）
-            for delta_key, text in self.llm.stream_deltas(
-                    WORLD_BUILD_SYSTEM, prompt, temperature=0.8, max_tokens=4096):
-                yield ("thinking", "world_draft", {"stream": text, "mode": delta_key})
-                if delta_key == "content":
-                    collected.append(text)
-        except Exception:
-            yield ("error", "世界观设定短文生成失败", {})
-            return ""
-        return "".join(collected)
+        last_err = None
+        for attempt in range(3):
+            collected = []
+            try:
+                # 推理型模型：max_tokens 必须留足推理余量（同 outline_generator 用 8192）
+                for delta_key, text in self.llm.stream_deltas(
+                        WORLD_BUILD_SYSTEM, prompt, temperature=0.8, max_tokens=4096):
+                    yield ("thinking", "world_draft", {"stream": text, "mode": delta_key})
+                    if delta_key == "content":
+                        collected.append(text)
+                if "".join(collected).strip():
+                    return "".join(collected)
+                last_err = RuntimeError("Call A 无内容输出")
+            except Exception as e:
+                last_err = e
+            yield ("progress", f"世界观设定文生成失败，重试（{attempt + 1}/3）...", {})
+        yield ("error", f"世界观设定短文生成失败：{last_err}", {})
+        return ""
 
     def _extract_world_struct(self, genre: str, sub_genre: str, idea: str,
                               summary: str, seed_basic_info):
