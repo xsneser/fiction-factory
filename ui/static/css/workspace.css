@@ -6,11 +6,17 @@ main { overflow: hidden; }
 /* 工作台高度 100%；下方折叠面板（基础设定）展开超出时整体可滚动，避免被裁切 */
 .tle-layout { display:flex; flex-direction:column; height:100%; min-height:0; overflow-y:auto; }
 .editor-split { flex:1; min-height:0; display:flex; gap:16px; align-items:stretch; }
-.editor-left { width:28%; min-width:280px; flex-shrink:0; display:flex; flex-direction:column; min-height:0; }
+.editor-left { width:24%; min-width:260px; flex-shrink:0; display:flex; flex-direction:column; min-height:0; }
 .editor-scroll { flex:1; min-height:0; overflow:hidden; }
 .editor-storyline { height:100%; min-height:0; background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); padding:12px; }
 .editor-mid { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding-right:4px; }
-.editor-right { width:28%; min-width:280px; flex:0 0 auto; overflow-y:auto; min-height:0; padding-right:4px; }
+.editor-right { width:30%; min-width:300px; flex:0 0 auto; overflow-y:auto; min-height:0; padding-right:4px; }
+
+/* 右栏：规划/生成折叠区（JS 从 view-plan 搬来，生成动态在右，中间只留正文） */
+.right-plan { border:1px solid var(--border-soft); border-radius:var(--radius); padding:10px 12px; margin-bottom:12px; background:var(--bg-elev); }
+.right-plan summary { cursor:pointer; color:#c9d1d9; font-size:13px; font-weight:600; user-select:none; }
+.right-plan[open] summary { margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border-soft); }
+.right-plan-section { display:block; padding:0; margin:0; overflow:visible; }
 
 /* 中栏：章节正文（连续文本，不再按桥段分卡） */
 .manuscript { background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); padding:16px; font-size:15px; line-height:1.9; color:#c9d1d9; white-space:pre-wrap; word-break:break-word; min-height:0; }

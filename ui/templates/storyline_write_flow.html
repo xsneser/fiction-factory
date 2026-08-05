@@ -6,6 +6,7 @@
 {% from "_flow_stepper.html" import flow_stepper, status_badge %}
 <script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
 <script>window.__STORYLINE_ID__ = "{{ state.book_id }}";</script>
+<script>window.__PLANNING__ = {{ 'true' if not (book.current_chapter or 0) else 'false' }};</script>
 <div class="tle-layout">
 <h1>✍️ 写作台</h1>
 <div class="info-bar">
@@ -33,16 +34,10 @@
     </div>
 
     <div class="editor-mid">
-        <div class="gen-split-title" style="display:flex;justify-content:space-between;align-items:center">
-            <span id="mid-title">📖 章节正文</span>
-            <span style="display:flex;gap:6px">
-                <button id="tab-plan-btn" class="btn btn-sm" style="border-color:#58a6ff" onclick="switchView('plan')">📋 规划</button>
-                <button id="tab-write-btn" class="btn btn-sm" onclick="switchView('write')">📖 正文</button>
-            </span>
-        </div>
+        <div class="gen-split-title">📖 章节正文</div>
 
-        {# ─── 规划视图：生成/编排/内涵（从原规划页并入） ─── #}
-        <div id="view-plan" class="view-pane" style="display:{{ 'none' if (book.current_chapter or 0) >= 1 else 'block' }}">
+        {# ─── 规划/生成面板：JS 初始化时搬到右栏（生成动态在右，中间只留正文） ─── #}
+        <div id="view-plan" class="view-pane" style="display:block">
             <div id="gen-panel" style="display:none">
                 <div id="gen-full-box" style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:16px">
                     <div style="display:flex;gap:8px;margin-bottom:8px">
@@ -168,7 +163,7 @@
                     可随时进入正文写作，也可先扩展故事线或继续规划。
                 </p>
                 <div style="display:flex;gap:10px;flex-wrap:wrap">
-                    <button class="btn-primary" style="background:#1f6feb;font-size:16px;padding:12px 32px" onclick="switchView('write')">🚀 开始写作（正文）</button>
+                    <button class="btn-primary" style="background:#1f6feb;font-size:16px;padding:12px 32px" onclick="scrollManuscript()">🚀 开始写作（正文）</button>
                     <button class="btn btn-sm" style="background:#30363d;color:#c9d1d9" onclick="extendOutline()">➕ 扩展故事线（续写大纲）</button>
                     <a href="/books/{{ state.book_id }}" class="btn" style="background:#238636;color:#fff;text-decoration:none">📖 查看书详情</a>
                 </div>
@@ -302,8 +297,8 @@
             </div>
         </div>
 
-        {# ─── 正文视图：连续章节文本 ─── #}
-        <div id="view-write" class="view-pane" style="display:{{ 'block' if (book.current_chapter or 0) >= 1 else 'none' }}">
+        {# ─── 正文视图：连续章节文本（中栏永远只显示正文） ───#}
+        <div id="view-write" class="view-pane" style="display:block">
             <div id="wf-manuscript" class="manuscript">
                 {% for c in chapters %}
                 {% if not loop.first %}<div class="m-chapter-divider">────────</div>{% endif %}
@@ -378,24 +373,27 @@ function refreshStoryline(sl) {
     refreshStoryline(window.__BOOK_STORYLINE__);
 })();
 
-/* ─── 中栏视图切换：规划 ↔ 正文 ─── */
-function switchView(v) {
+/* ─── 布局：规划/生成面板搬到右栏（生成动态在右，中间只留正文） ─── */
+(function() {
     var plan = document.getElementById('view-plan');
-    var write = document.getElementById('view-write');
-    var pb = document.getElementById('tab-plan-btn');
-    var wb = document.getElementById('tab-write-btn');
-    var title = document.getElementById('mid-title');
-    if (v === 'plan') {
-        plan.style.display = 'block'; write.style.display = 'none';
-        pb.style.borderColor = '#58a6ff'; wb.style.borderColor = '';
-        title.textContent = '📋 规划 · 故事线';
-        if (window.StoryLine) window.StoryLine.init('editor-storyline', window.__BOOK_STORYLINE__, {scrollable: true});
-    } else {
-        plan.style.display = 'none'; write.style.display = 'block';
-        wb.style.borderColor = '#58a6ff'; pb.style.borderColor = '';
-        title.textContent = '📖 章节正文';
-        scrollManuscript();
-    }
+    var right = document.querySelector('.editor-right');
+    if (!plan || !right) return;
+    plan.style.display = 'block';
+    plan.className = 'right-plan-section';
+    var det = document.createElement('details');
+    det.className = 'right-plan';
+    det.open = !!window.__PLANNING__;   // 规划态默认展开，写作态折叠
+    var sum = document.createElement('summary');
+    sum.textContent = '📋 规划与生成（大纲 / 桥段 / 内涵 / 基础设定）';
+    det.appendChild(sum);
+    det.appendChild(plan);
+    var wf = document.getElementById('wf-feed');
+    right.insertBefore(det, wf || null);
+})();
+
+/* ─── 中栏视图切换：彻底重构后中栏只有正文，规划面板在右栏；保留此函数兼容旧调用 ─── */
+function switchView(v) {
+    scrollManuscript();
 }
 
 /* ─── 中栏：章节正文（连续文本） ─── */
@@ -480,6 +478,8 @@ var gFullRunning = false;
 function genFullStart() {
     if (gFullRunning) return;
     gFullRunning = true;
+    var det = document.querySelector('.right-plan');
+    if (det) det.open = true;   // 生成时展开规划面板，让用户看到进度
     var btn = document.getElementById('btn-gen-full');
     btn.disabled = true; btn.textContent = '⏳ 生成中...';
     var box = document.getElementById('gen-full-box');
@@ -529,9 +529,9 @@ function genFullLog(msg, cls) {
     d.className = 'gf-item' + (cls ? ' ' + cls : '');
     d.textContent = msg;
     feed.appendChild(d);
-    var plan = document.getElementById('view-plan');
-    if (plan && plan.scrollHeight - plan.scrollTop - plan.clientHeight < 80) {
-        plan.scrollTop = plan.scrollHeight;
+    var right = document.querySelector('.editor-right');
+    if (right && right.scrollHeight - right.scrollTop - right.clientHeight < 80) {
+        right.scrollTop = right.scrollHeight;
     }
 }
 function genFeedAction(kind, text) { genFullLog(text, 'action action-' + kind); }
