@@ -21,13 +21,20 @@ def books():
 _book_rows_cache: dict = {}  # book_id -> (mtimes, row)
 
 
-def next_step_for(book, is_timeline: bool = False) -> dict:
-    """根据图书状态给出「下一步」动作（供书库/写作台/仪表盘列表渲染）。"""
+def next_step_for(book, is_timeline: bool = False, has_timeline: bool = False) -> dict:
+    """根据图书状态给出「下一步」动作（供书库/写作台/仪表盘列表渲染）。
+
+    每个状态只给一个明确的下一步；「查看详情」仅作兜底（此时表格标题本身即是详情链接，
+    避免与详情入口重复）。
+    """
     bid = book.book_id
-    if is_timeline or book.status == "ready":
-        # 已完成故事线的草稿（tl_*）→ 开始写作；正式书规划中 → 先规划大纲
-        if is_timeline:
-            return {"label": "开始写作", "href": f"/books/start/timeline/{bid}/write", "step": 3}
+    if is_timeline:
+        # 已完成故事线的草稿（tl_*）→ 开始写作（建正式书）
+        return {"label": "开始写作", "href": f"/books/start/timeline/{bid}/write", "step": 3}
+    if book.status in ("ready", "planning"):
+        # 正式书：规划中/可写作 → 先规划大纲（无故事线的残缺书兜底看详情）
+        if not has_timeline:
+            return {"label": "查看详情", "href": f"/books/{bid}", "step": 2}
         return {"label": "规划大纲", "href": f"/timeline/{bid}/edit", "step": 2}
     if book.status in ("writing", "reviewing"):
         return {"label": "继续写作", "href": f"/books/{bid}/continue", "step": 3}
@@ -70,7 +77,7 @@ def _book_rows():
             "timeline_outlines": len(tl.outlines) if tl else 0,
             "timeline_plots": len(tl.plots) if tl else 0,
             "outline_count": len((outline or {}).get("stages", [])) if outline else 0,
-            "next": next_step_for(b, False),
+            "next": next_step_for(b, False, has_timeline=tl is not None),
         }
         _book_rows_cache[b.book_id] = (sig, row)
         rows.append(row)

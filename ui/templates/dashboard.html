@@ -47,7 +47,6 @@
         <td>{{ status_badge(b.status) }}</td>
         <td>
             {% if r.next %}<a href="{{ r.next.href }}" class="btn small" style="background:#1f6feb;color:#fff">{{ r.next.label }}</a>{% endif %}
-            <a href="{% if r.is_timeline %}/timeline/{{ b.book_id }}/edit{% else %}/books/{{ b.book_id }}{% endif %}" class="btn small">查看</a>
         </td>
     </tr>
     {% endfor %}
