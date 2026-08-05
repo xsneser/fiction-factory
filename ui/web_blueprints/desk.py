@@ -2,7 +2,7 @@
 import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
+from flask import Blueprint, render_template, render_template_string, request, jsonify, redirect, url_for, Response, stream_with_context
 from .ctx import *
 from .books import _book_rows
 bp = Blueprint("desk", __name__)
@@ -183,9 +183,21 @@ def continue_book_page(book_id):
         return jsonify({"error": "LLM 未配置"}), 500
     engine_id = f"cont_{book_id}"
     if engine_id not in _engines:
-        engine = NovelEngine(llm_client=llm)
-        engine.continue_book(book_id)
-        _engines[engine_id] = engine
+        try:
+            engine = NovelEngine(llm_client=llm)
+            engine.continue_book(book_id)
+            _engines[engine_id] = engine
+        except (ValueError, RuntimeError) as e:
+            # 无故事线（旧书/未生成 timeline）：给出指引而非 500，
+            # 避免「续写/进入写作台」在残缺书上直接崩溃。
+            return render_template_string(
+                '<div class="tle-layout"><h2>⚠️ 无法进入写作</h2>'
+                '<p style="color:#8b949e">{{ msg }}</p>'
+                '<p><a class="btn" style="background:#1f6feb;color:#fff;text-decoration:none" '
+                'href="/books/{{ bid }}">📖 返回书详情</a> '
+                '<a class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none" '
+                'href="/books">📚 去书库</a></p></div>',
+                msg=str(e), bid=book_id), 200
     return redirect(url_for("desk.timeline_write_flow", engine_id=engine_id))
 
 
