@@ -541,6 +541,28 @@ class NovelEngine:
             return float("inf")
         return self.cost_tracker.remaining()
 
+    @staticmethod
+    def _review_to_dict(review) -> dict:
+        """把 ReviewResult 转成可落盘 JSON 的 dict（含 issues 列表）。"""
+        return {
+            "passed": bool(getattr(review, "passed", False)),
+            "score": int(getattr(review, "score", 0) or 0),
+            "summary": str(getattr(review, "summary", "") or ""),
+            "issues": [
+                {"severity": i.severity, "category": i.category,
+                 "description": i.description, "suggestion": i.suggestion}
+                for i in (getattr(review, "issues", None) or [])
+            ],
+        }
+
+    @staticmethod
+    def _review_to_hint(review) -> str:
+        """把审查问题压成一句句修复提示（注入下一桥段写作 prompt）。"""
+        issues = [i for i in (getattr(review, "issues", None) or [])
+                  if i.severity in ("error", "warning")]
+        hints = [i.description.strip() for i in issues[:3] if (i.description or "").strip()]
+        return "；".join(hints)
+
     def _route_continue(self) -> Instruction:
         """♻️ 续写路由"""
         s = self.state
@@ -792,12 +814,30 @@ class NovelEngine:
         except Exception as e:
             logger.warning("生成章节摘要失败: %s", e)
 
+        # 章节门禁：规则审查（免费规则层，不调 LLM）。失败不阻断（不加写完重写），
+        # 只把修复提示注入下一桥段写作 prompt，让模型带着教训继续写。
+        review = None
+        review_hint = ""
+        try:
+            target_words = (self.timeline.words_per_chapter
+                            if getattr(self, "timeline", None) and self.timeline else 3000)
+            review = self.reviewer.review(full_text, chapter_num,
+                                          chapter_title=f"第{chapter_num}章",
+                                          target_words=target_words)
+            review_hint = self._review_to_hint(review)
+            if review_hint and self.timeline_writer:
+                self.timeline_writer.review_hint = review_hint
+        except Exception as e:
+            logger.warning("章节规则审查失败: %s", e)
+        review_dict = self._review_to_dict(review) if review else None
+
         # 保存章节
         if self.book:
             try:
                 self.book_mgr.save_chapter(
                     self.state.book_id, chapter_num,
-                    f"第{chapter_num}章", full_text, summary)
+                    f"第{chapter_num}章", full_text, summary,
+                    review=review_dict)
             except Exception as e:
                 logger.warning("保存章节失败: %s", e)
 
@@ -812,6 +852,7 @@ class NovelEngine:
             "beats": result["beats"],
             "beat_details": result.get("beat_details", []),
             "blueprint": result.get("blueprint", {}),
+            "review": review_dict,
             "cost": round(self.cost_tracker.spent, 4),
         }
 
@@ -858,6 +899,7 @@ class NovelEngine:
                "chapter": final.get("chapter"),
                "word_count": final.get("word_count"),
                "beats": final.get("beats"),
+               "review": final.get("review"),
                "cost": final.get("cost")}
 
     def _write_next_bridge_stream(self):
@@ -927,6 +969,7 @@ class NovelEngine:
                    "chapter": final.get("chapter"),
                    "word_count": final.get("word_count"),
                    "beats": final.get("beats"),
+                   "review": final.get("review"),
                    "cost": final.get("cost")}
         else:
             yield {"type": "chapter_progress",

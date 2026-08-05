@@ -115,6 +115,7 @@ class TimelineChapterWriter:
         self.book_id = book_id
         self.detector_frequency = detector_frequency
         self.budget_checker = budget_checker  # 预算门控：callable 返回剩余预算（元），None=不限制
+        self.review_hint = ""  # 上一章规则审查（reviewer）未过的修复提示：一次性注入首个桥段，用完即清
         # 本章输入 prompt 累计（供成本计量）；跨桥段累计、跨章重置
         self._input_chapter = 0
         self._input_texts: list = []
@@ -209,12 +210,16 @@ class TimelineChapterWriter:
         + 角色状态 + 灵机一动 + 炸裂开场）；无 harness 时回退极简模板（仅单测/兜底用，生产恒走 harness）。
         """
         if self.harness:
+            review_hint = self.review_hint or ""
+            if review_hint:
+                self.review_hint = ""   # 一次性：只在上一章未过审查后的首个桥段注入，用完即清
             return self.harness.render_bridge_prompt(
                 item, chapter_buffer, prev_ending, bridge_text, budget_remaining,
                 character_states=character_states,
                 summaries_context=summaries_context,
                 inspiration_hint=inspiration_hint,
-                is_opening=is_opening)
+                is_opening=is_opening,
+                review_hint=review_hint)
 
         # ── 回退：无 harness 时极简兜底（只保上下文+核心约束，防止双份模板漂移）──
         p = item["plot"]

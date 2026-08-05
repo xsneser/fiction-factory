@@ -302,11 +302,13 @@ class PromptHarness:
                              character_states: str = "",
                              summaries_context: str = "",
                              inspiration_hint: str = "",
-                             is_opening: bool = False) -> str:
+                             is_opening: bool = False,
+                             review_hint: str = "") -> str:
         """返回 user prompt 字符串（system 沿用 timeline_writer 的铁律，不在本方法内）。
 
         item = {"outline": OutlineSlot, "stage": dict, "plot": PlotSlot}
         is_opening=True 时注入炸裂开场铁律（第一章前 N 桥段）。
+        review_hint：上一章规则审查（reviewer）未过的修复提示，一次性注入首个桥段。
         """
         o = item["outline"]
         stage = item["stage"] or {}
@@ -389,10 +391,11 @@ class PromptHarness:
 
         opening_block = (OPENING_MODE_RULES + "\n\n") if is_opening else ""
         consistency_block = CONSISTENCY_RULES + "\n\n"
+        review_block = (("【上章审查提示】" + review_hint.strip() + "\n\n") if review_hint else "")
 
         return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个句子。
 
-{bible_block}{opening_block}{consistency_block}{pov_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
+{bible_block}{opening_block}{consistency_block}{review_block}{pov_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
 【当前阶段】{stage_name}
 【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按大纲自然推进'}
 【桥段骨架】{structure}

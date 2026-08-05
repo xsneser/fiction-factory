@@ -165,6 +165,15 @@ async function writeBridge() {
                     updateProg();
                     updateChWords(0, document.getElementById('chp-target').textContent);
                     feedItem('success', '✅ 第' + evt.chapter + '章完成 · ' + evt.word_count + '字 · 花费 ¥' + (evt.cost || 0));
+                    if (evt.review) {
+                        const r = evt.review;
+                        const verdict = r.passed ? '✅ 通过' : '❌ 未过';
+                        let txt = '🔍 章节审查 ' + (r.score != null ? r.score + '分 ' : '') + verdict;
+                        if (r.issues && r.issues.length) {
+                            txt += '：' + r.issues.slice(0, 3).map(i => i.description).join('；');
+                        }
+                        feedItem(r.passed ? 'info' : 'warn', txt);
+                    }
                 } else if (evt.type === 'budget_paused') {
                     feedItem('warn', '⛔ ' + (evt.message || '预算耗尽，暂停写作') + '——请到「设置」调高单书预算后继续写');
                 } else if (evt.type === 'bridge_skip') {

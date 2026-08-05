@@ -154,14 +154,16 @@ class BookManager:
         self._cache[cfg.book_id] = cfg
 
     def save_chapter(self, book_id: str, chapter_num: int,
-                     title: str, content: str, summary: str = ""):
-        """保存章节"""
+                     title: str, content: str, summary: str = "",
+                     review: dict | None = None):
+        """保存章节（review：规则审查结果 dict，随章节落盘供详情页展示）"""
         book_dir = self.dir / book_id / "chapters"
         book_dir.mkdir(parents=True, exist_ok=True)
         chapter_file = book_dir / f"{chapter_num:04d}.json"
         write_json_atomic(chapter_file, {
             "num": chapter_num, "title": title,
             "content": content, "summary": summary,
+            "review": review,
             "created_at": datetime.now().isoformat(),
         })
 
