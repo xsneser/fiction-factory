@@ -3,7 +3,7 @@
 {% from "_flow_stepper.html" import flow_stepper, status_badge %}
 {{ flow_stepper(5 if book.status in ('finished','published') else (3 if book.current_chapter >= 1 else 2),
                  book_id=book.book_id,
-                 phase=(timeline.phase if timeline else 'config'),
+                 phase=(storyline.phase if storyline else 'config'),
                  current_chapter=book.current_chapter, status=book.status) }}
 <h1>📖 {{ book.title or '(未命名)' }}</h1>
 
@@ -12,8 +12,8 @@
     <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 续写 / 进入写作台</a>
     <a href="/books/{{ book.book_id }}/publish" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">🚀 上架 / 导出</a>
     <a href="#" class="btn" style="background:#8957e5;color:#fff;text-decoration:none" onclick="generateMeta()">🎬 生成书名/简介</a>
-    {% if basic_info.get('has_timeline') %}
-    <a href="/timeline/{{ book.book_id }}/edit" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none">📋 编辑大纲</a>
+    {% if basic_info.get('has_storyline') %}
+    <a href="/storyline/{{ book.book_id }}/edit" class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none">📋 编辑大纲</a>
     {% endif %}
     <form method="POST" action="/books/{{ book.book_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ book.title }}》？')">
         <button class="small danger" style="padding:8px 16px">删除</button>
@@ -30,7 +30,7 @@
 {# ─── 设定（人物/世界观/配角） ─── #}
 {% set protag = basic_info.get('protagonist') or {} %}
 {% set world = basic_info.get('world_building') or {} %}
-{% if basic_info.get('has_timeline') or protag or world or basic_info.get('synopsis') %}
+{% if basic_info.get('has_storyline') or protag or world or basic_info.get('synopsis') %}
 <h3>🌍 设定</h3>
 <div class="detail-grid">
     <div class="detail-item">
@@ -114,10 +114,10 @@
 </table>
 {% endif %}
 
-{# ─── 大纲：时间线优先，无则回退结构大纲 ─── #}
-{% if timeline and timeline.outlines %}
-<h3>📋 故事线大纲 ({{ timeline.outlines|length }})</h3>
-{% for o in timeline.outlines %}
+{# ─── 大纲：故事线优先，无则回退结构大纲 ─── #}
+{% if storyline and storyline.outlines %}
+<h3>📋 故事线大纲 ({{ storyline.outlines|length }})</h3>
+{% for o in storyline.outlines %}
 <div class="accordion">
     <div class="accordion-header">
         <span>{{ o.name }}</span>
@@ -129,7 +129,7 @@
         <p><strong>{{ s.get('name','') }}:</strong> {{ s.get('events', [])|join('、') }}</p>
         {% endfor %}
         {% endif %}
-        {% set ops = timeline.plots|selectattr('outline_id','equalto', o.id)|list %}
+        {% set ops = storyline.plots|selectattr('outline_id','equalto', o.id)|list %}
         {% if ops %}
         <p style="color:#8b949e;font-size:12px;margin-top:8px">桥段 ({{ ops|length }}):</p>
         <div style="display:flex;flex-wrap:wrap;gap:6px">

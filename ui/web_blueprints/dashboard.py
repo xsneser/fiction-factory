@@ -30,7 +30,7 @@ def dashboard():
 # ═══════════════════════════════════════════
 
 def start_new_book():
-    """新书启动 — v2: 先创建时间线配置，再跳转编辑器"""
+    """新书启动 — v2: 先创建故事线配置，再跳转编辑器"""
     if request.method == "POST":
         llm = get_llm()
         if not llm:
@@ -41,8 +41,8 @@ def start_new_book():
         sub_genre = request.form.get("sub_genre", "")
         platform = request.form.get("platform", "fanqie")
 
-        # 创建时间线配置
-        timeline = BookTimeline(
+        # 创建故事线配置
+        storyline = BookStoryline(
             book_title=request.form.get("title", ""),
             genre=genre,
             sub_genre=sub_genre,
@@ -63,26 +63,34 @@ def start_new_book():
             phase="config",
         )
 
-        # 如果用户给了时间线描述，立即用 AI 生成大纲序列
-        timeline_hint = request.form.get("timeline_hint", "")
-        if timeline_hint:
-            builder = TimelineBuilder(
+        # 如果用户给了故事线描述，立即用 AI 生成大纲序列
+        storyline_hint = request.form.get("storyline_hint", "")
+        if storyline_hint:
+            builder = StorylineBuilder(
                 structure_lib=struct_lib,
                 plot_lib=plot_lib,
                 gag_lib=gag_lib,
                 theme_lib=theme_lib,
                 llm_client=llm,
             )
-            timeline.outlines = builder.build_outline_sequence(
-                genre=genre, sub_genre=sub_genre, custom_context=timeline_hint)
-            timeline.phase = "outlines"
+            storyline.outlines = builder.build_outline_sequence(
+                genre=genre, sub_genre=sub_genre, custom_context=storyline_hint)
+            storyline.phase = "outlines"
 
-        # 保存并跳转
-        timeline_id = f"tl_{pen_name}_{int(time.time())}"
-        _timelines[timeline_id] = timeline
-        save_timeline(timeline, f"books/timelines/{timeline_id}.json")
+        # 直接建正式书（规划书=书目录内的书；草稿目录已废弃）
+        book = book_mgr.create(
+            title=storyline.book_title or "(待定)",
+            pen_name=pen_name,
+            genre=genre,
+            sub_genre=sub_genre,
+            platform=platform,
+            chapter_count=max((o.end_chapter for o in storyline.outlines), default=500),
+            structure_template_id="storyline",
+            style_profile_id="",
+        )
+        book_mgr.save_storyline(book.book_id, storyline)
 
-        return redirect(url_for("timeline.timeline_edit", timeline_id=timeline_id))
+        return redirect(url_for("storyline.storyline_edit", storyline_id=book.book_id))
 
     return render_template("start_book.html",
         pen_names=profiles.list_all(),
@@ -98,7 +106,7 @@ def start_new_book():
 # ═══════════════════════════════════════════
 
 def outline_generator_page():
-    """大纲生成器已内嵌到「启动新书」流程（时间线编辑器：一键生成完整大纲）"""
+    """大纲生成器已内嵌到「启动新书」流程（故事线编辑器：一键生成完整大纲）"""
     return redirect(url_for("dashboard.start_new_book"))
 
 

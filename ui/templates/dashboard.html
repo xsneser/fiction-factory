@@ -45,7 +45,7 @@
             <small>{{ b.current_chapter }}/{{ b.chapter_count }} 章</small>
         </td>
         <td>{{ status_badge(b.status) }}</td>
-        <td><a href="{% if r.is_timeline %}/timeline/{{ b.book_id }}/edit{% else %}/books/{{ b.book_id }}{% endif %}" class="btn small">查看详情</a></td>
+        <td><a href="/books/{{ b.book_id }}" class="btn small">查看详情</a></td>
     </tr>
     {% endfor %}
     </tbody>

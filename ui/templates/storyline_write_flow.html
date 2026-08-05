@@ -4,7 +4,7 @@
 <link rel="stylesheet" href="/static/css/story_line.css">
 <link rel="stylesheet" href="/static/css/workspace.css">
 {% from "_flow_stepper.html" import flow_stepper, status_badge %}
-<script>window.__BOOK_TIMELINE__ = {{ timeline.to_dict() | tojson if timeline else 'null' }};</script>
+<script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
 <div class="tle-layout">
 <h1>✍️ 写作台</h1>
 <div class="info-bar">
@@ -12,9 +12,9 @@
     <span>笔名：<strong>{{ state.pen_name }}</strong></span>
     <span>流派：<strong>{{ state.genre }}{% if state.sub_genre %}/{{ state.sub_genre }}{% endif %}</strong></span>
     <span>平台：<strong>{{ state.platform }}</strong></span>
-    <span>每章：<strong>{{ timeline.words_per_chapter }}字</strong></span>
+    <span>每章：<strong>{{ storyline.words_per_chapter }}字</strong></span>
     <span>进度：<strong id="prog-ch">{{ state.current_chapter }}</strong> / <span id="prog-total">{{ state.total_chapters }}</span> 章</span>
-    <span>本章：<strong id="chp-words">0</strong>/<span id="chp-target">{{ timeline.words_per_chapter }}</span>字</span>
+    <span>本章：<strong id="chp-words">0</strong>/<span id="chp-target">{{ storyline.words_per_chapter }}</span>字</span>
     <span>状态：{{ status_badge(book.status) if book else status_badge('writing') }}</span>
 </div>
 
@@ -67,11 +67,11 @@ let stopped = false;
 let controller = null;
 
 // 初始化左侧故事线
-if (window.__BOOK_TIMELINE__ && window.StoryLine) {
-    window.StoryLine.init('editor-storyline', window.__BOOK_TIMELINE__, {scrollable: true});
+if (window.__BOOK_STORYLINE__ && window.StoryLine) {
+    window.StoryLine.init('editor-storyline', window.__BOOK_STORYLINE__, {scrollable: true});
 }
 // 初始化读者承诺台账（已有写入的承诺）
-renderPromises(window.__BOOK_TIMELINE__ ? window.__BOOK_TIMELINE__.promises : null);
+renderPromises(window.__BOOK_STORYLINE__ ? window.__BOOK_STORYLINE__.promises : null);
 
 /* ─── 中栏：章节正文（连续文本） ─── */
 function scrollManuscript() {
@@ -181,7 +181,7 @@ async function writeBridge() {
     document.getElementById('btn-stop').style.display = 'inline-block';
     controller = new AbortController();
     try {
-        const resp = await fetch('/api/timeline-engine/' + engineId + '/write-bridge',
+        const resp = await fetch('/api/storyline-engine/' + engineId + '/write-bridge',
             {method: 'POST', signal: controller.signal});
         if (!resp.ok || !resp.body) {
             const txt = await resp.text();

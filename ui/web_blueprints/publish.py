@@ -37,15 +37,15 @@ def publish_index():
     books_info = []
     for r in rows:
         b = r["book"]
-        if r["is_timeline"]:
-            continue  # 时间线草稿（tl_*）不可上架
+        if b.status == "planning" or (b.current_chapter or 0) == 0:
+            continue  # 规划书（无章节）不可上架
         try:
             outline = book_mgr.get_outline(b.book_id)
             try:
-                timeline = book_mgr.load_timeline(b.book_id)
+                storyline = book_mgr.load_storyline(b.book_id)
             except Exception:
-                timeline = None
-            report = pub.build_report(b, timeline=timeline, outline=outline)
+                storyline = None
+            report = pub.build_report(b, storyline=storyline, outline=outline)
         except Exception as e:
             logger.warning("上架中心：构建 %s 报告失败: %s", b.book_id, e)
             continue
@@ -70,12 +70,12 @@ def publish_page(book_id):
         return "图书不存在", 404
     outline = book_mgr.get_outline(book_id)
     try:
-        timeline = book_mgr.load_timeline(book_id)
+        storyline = book_mgr.load_storyline(book_id)
     except Exception:
-        timeline = None
-    report = _publisher().build_report(book, timeline=timeline, outline=outline)
+        storyline = None
+    report = _publisher().build_report(book, storyline=storyline, outline=outline)
     return render_template("publish.html", book=book, report=report,
-                           timeline=timeline, outline=outline)
+                           storyline=storyline, outline=outline)
 
 
 @bp.route("/api/books/<book_id>/publish-check", methods=["POST"])
@@ -88,10 +88,10 @@ def api_publish_check(book_id):
         return jsonify({"ok": False, "error": "图书不存在"}), 404
     outline = book_mgr.get_outline(book_id)
     try:
-        timeline = book_mgr.load_timeline(book_id)
+        storyline = book_mgr.load_storyline(book_id)
     except Exception:
-        timeline = None
-    report = _publisher().build_report(book, timeline=timeline, outline=outline)
+        storyline = None
+    report = _publisher().build_report(book, storyline=storyline, outline=outline)
     return jsonify({"ok": True, "report": report.to_dict()})
 
 

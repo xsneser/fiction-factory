@@ -46,26 +46,26 @@
 
 <script>
 function updateOutline(id, field, val) {
-    fetch('/api/timeline/' + timelineId + '/update-outline', {
+    fetch('/api/storyline/' + storylineId + '/update-outline', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: id, field: field, value: parseInt(val)})
     }).then(r => r.json()).then(d => { if (!d.ok) location.reload(); });
 }
 function moveOutline(id, dir) {
-    fetch('/api/timeline/' + timelineId + '/move-outline', {
+    fetch('/api/storyline/' + storylineId + '/move-outline', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: id, direction: dir})
     }).then(r => r.json()).then(d => { if (d.ok) location.reload(); });
 }
 function deleteOutline(id) {
     if (!confirm('删除这个大纲？')) return;
-    fetch('/api/timeline/' + timelineId + '/delete-outline', {
+    fetch('/api/storyline/' + storylineId + '/delete-outline', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: id})
     }).then(r => r.json()).then(d => { if (d.ok) location.reload(); });
 }
 function setNarrative(id, narrative, target) {
-    fetch('/api/timeline/' + timelineId + '/set-narrative', {
+    fetch('/api/storyline/' + storylineId + '/set-narrative', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: id, narrative: narrative, narrative_target: target || ''})
     }).then(r => r.json()).then(d => { if (!d.ok) showToast(d.error || '设置失败', 'error'); });

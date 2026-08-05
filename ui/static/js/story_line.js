@@ -1,6 +1,6 @@
 /*
  * 故事线（Story Line）组件 — 垂直 Gantt
- * 从 BookTimeline dict 渲染：章节轴 + 大纲/桥段/线程通道。
+ * 从 BookStoryline dict 渲染：章节轴 + 大纲/桥段/线程通道。
  * 支持叙事手法视觉区分：顺叙(chronological)/倒叙(flashback)/插叙(interleaved)。
  *
  * 用法：StoryLine.init('mount-id', bookTimelineDict, {currentChapter: N})
@@ -35,7 +35,7 @@
     return (TOTAL_WORDS > 0) ? (w / TOTAL_WORDS) * 100 : 0;
   }
 
-  /* 桥段预计字数 = cover_beats × 200，封顶 1200（与后端 timeline_writer.planned_words 同一公式） */
+  /* 桥段预计字数 = cover_beats × 200，封顶 1200（与后端 storyline_writer.planned_words 同一公式） */
   function plannedWords(p) {
     var beats = Math.max(parseInt((p && p.cover_beats) || 0, 10) || 0, 2);
     return Math.min(beats * 200, 1200);
@@ -47,7 +47,7 @@
     return '#ffa657';
   }
 
-  /* ─── 数据适配：BookTimeline → 平铺数组（桥段按真实规划字数定位，预计=实际） ─── */
+  /* ─── 数据适配：BookStoryline → 平铺数组（桥段按真实规划字数定位，预计=实际） ─── */
   function adapt(bt) {
     bt = bt || {};
     WPC = bt.words_per_chapter || 3000;

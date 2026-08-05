@@ -14,47 +14,32 @@ bp = Blueprint("desk", __name__)
 def desk_list():
     """写作台 — 故事线编辑器（从书库带书进入）。
 
-    写作台按书进入：书库每本书的「✍️ 写作台」入口打开 /timeline/<id>/edit；
+    写作台按书进入：书库每本书的「✍️ 写作台」入口打开 /storyline/<id>/edit；
     直接访问 /desk（无书上下文）显示空界面，引导回书库选书。
     """
     return render_template("desk_empty.html")
 
 
 @bp.route("/books/start/timeline/<timeline_id>/write")
-def timeline_start_writing(timeline_id):
-    """从时间线配置启动蓝图式写作引擎（新核心）。
+def _compat_storyline_start_writing(timeline_id):
+    """旧「从故事线启动写作」URL 兼容：规划书即正式书，「开始写作」统一走 /books/<id>/continue。"""
+    return redirect(url_for("desk.continue_book_page", book_id=timeline_id), 302)
 
-    同一故事线草稿只建一本正式书：再次「开始写作」复用已有 book_*（避免书名/笔名重复建书）。
-    """
-    tl = _resolve_timeline(timeline_id)
-    if not tl:
-        return "故事线配置不存在或已过期", 404
 
-    llm = get_llm()
-    if not llm:
-        return jsonify({"error": "LLM 未配置"}), 500
-
-    # 复用已由该草稿创建的正式书
-    existing = next((b for b in book_mgr.list_all()
-                     if b.source_timeline_id == timeline_id), None)
-    if existing is not None:
-        engine_id = f"cont_{existing.book_id}"
-        if engine_id not in _engines:
-            engine = NovelEngine(llm_client=llm)
-            engine.continue_book(existing.book_id)
-            _engines[engine_id] = engine
-        return redirect(url_for("desk.timeline_write_flow", engine_id=engine_id))
-
-    engine = NovelEngine(llm_client=llm)
-    engine.start_new_book_timeline(tl, source_timeline_id=timeline_id)
-
-    temp_id = f"tlw_{tl.pen_name}_{int(time.time())}"
-    _engines[temp_id] = engine
-    return redirect(url_for("desk.timeline_write_flow", engine_id=temp_id))
-
+# ─── 兼容：旧 /books/timeline/write 与 /api/timeline-engine 前缀 ───
 
 @bp.route("/books/timeline/write/<engine_id>")
-def timeline_write_flow(engine_id):
+def _compat_storyline_write_flow(engine_id):
+    return redirect(url_for("desk.storyline_write_flow", engine_id=engine_id), 302)
+
+
+@bp.route("/api/timeline-engine/<path:rest>", methods=["POST"])
+def _compat_api_storyline_engine(rest):
+    return redirect("/api/storyline-engine/" + rest, 307)
+
+
+@bp.route("/books/storyline/write/<engine_id>")
+def storyline_write_flow(engine_id):
     """蓝图式写作流程页（新核心）"""
     engine = _engines.get(engine_id)
     if not engine:
@@ -74,17 +59,17 @@ def timeline_write_flow(engine_id):
                     })
         except Exception as e:
             logger.warning("加载已写章节失败: %s", e)
-    return render_template("timeline_write_flow.html",
+    return render_template("storyline_write_flow.html",
         engine_id=engine_id,
         state=engine.state,
-        timeline=engine.timeline,
+        storyline=engine.storyline,
         book=book,
         chapters=chapters,
     )
 
 
-@bp.route("/api/timeline-engine/<engine_id>/step", methods=["POST"])
-def timeline_engine_step(engine_id):
+@bp.route("/api/storyline-engine/<engine_id>/step", methods=["POST"])
+def storyline_engine_step(engine_id):
     """蓝图引擎：按故事线写下一章（新书前三章 / 续写任意章节通用）"""
     from plugins import task_manager
 
@@ -96,7 +81,7 @@ def timeline_engine_step(engine_id):
     task_id = f"engine_{engine_id}"
     next_ch = engine.state.current_chapter + 1
     total_ch = engine.state.total_chapters or next_ch
-    flow_url = url_for("desk.timeline_write_flow", engine_id=engine_id)
+    flow_url = url_for("desk.storyline_write_flow", engine_id=engine_id)
 
     # 注册/更新任务（新书生成 / 续写写作）
     task_name = "续写写作" if is_continue else "新书生成"
@@ -114,7 +99,7 @@ def timeline_engine_step(engine_id):
         task_manager.done(task_id, message="全书完成")
         return jsonify({"status": "done", "flow_complete": True, "reason": "已写完全部章节"})
 
-    inst = Instruction(Op.WRITE_TIMELINE_CHAPTER, chapter_num=next_ch)
+    inst = Instruction(Op.WRITE_STORYLINE_CHAPTER, chapter_num=next_ch)
     result = engine.execute(inst)
     if result.get("error"):
         task_manager.fail(task_id, str(result["error"]))
@@ -122,7 +107,7 @@ def timeline_engine_step(engine_id):
     task_manager.log(task_id, f"第{next_ch}章完成 {result.get('word_count', 0)}字", "success")
 
     return jsonify({
-        "op": "write_timeline_chapter",
+        "op": "write_storyline_chapter",
         "chapter_num": next_ch,
         "status": result.get("status"),
         "word_count": result.get("word_count", 0),
@@ -133,8 +118,8 @@ def timeline_engine_step(engine_id):
     })
 
 
-@bp.route("/api/timeline-engine/<engine_id>/write-chapter", methods=["POST"])
-def timeline_engine_write_chapter_sse(engine_id):
+@bp.route("/api/storyline-engine/<engine_id>/write-chapter", methods=["POST"])
+def storyline_engine_write_chapter_sse(engine_id):
     """蓝图引擎：流式写一章（SSE）。逐桥段下发 plot_start / plot_done / chapter_done。
 
     前端据此在右侧逐桥段展示步骤与正文，并高亮左侧故事线对应的大纲/桥段。
@@ -146,7 +131,7 @@ def timeline_engine_write_chapter_sse(engine_id):
 
     def generate():
         try:
-            for evt in engine._write_timeline_chapter_stream(
+            for evt in engine._write_storyline_chapter_stream(
                     engine.state.current_chapter + 1):
                 yield "data: " + _json.dumps(evt, ensure_ascii=False) + "\n\n"
         except Exception as e:
@@ -158,8 +143,8 @@ def timeline_engine_write_chapter_sse(engine_id):
     return sse_stream_response(generate())
 
 
-@bp.route("/api/timeline-engine/<engine_id>/write-bridge", methods=["POST"])
-def timeline_engine_write_bridge_sse(engine_id):
+@bp.route("/api/storyline-engine/<engine_id>/write-bridge", methods=["POST"])
+def storyline_engine_write_bridge_sse(engine_id):
     """蓝图引擎：流式写「一个」桥段（SSE，新核心·按桥段撰写）。
 
     事件：bridge_start / group_chunk / bridge_done / chapter_done / complete。
@@ -192,7 +177,7 @@ def timeline_engine_write_bridge_sse(engine_id):
 # ═══════════════════════════════════════════
 
 def continue_book_page(book_id):
-    """书续写 — 统一走时间线蓝图写作流程（新核心）"""
+    """书续写 — 统一走故事线蓝图写作流程（新核心）"""
     book = book_mgr.get(book_id)
     if not book:
         return "图书不存在", 404
@@ -206,7 +191,7 @@ def continue_book_page(book_id):
             engine.continue_book(book_id)
             _engines[engine_id] = engine
         except (ValueError, RuntimeError) as e:
-            # 无故事线（旧书/未生成 timeline）：给出指引而非 500，
+            # 无故事线（旧书/未生成 storyline）：给出指引而非 500，
             # 避免「续写/进入写作台」在残缺书上直接崩溃。
             return render_template_string(
                 '<div class="tle-layout"><h2>⚠️ 无法进入写作</h2>'
@@ -216,7 +201,7 @@ def continue_book_page(book_id):
                 '<a class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none" '
                 'href="/books">📚 去书库</a></p></div>',
                 msg=str(e), bid=book_id), 200
-    return redirect(url_for("desk.timeline_write_flow", engine_id=engine_id))
+    return redirect(url_for("desk.storyline_write_flow", engine_id=engine_id))
 
 
 

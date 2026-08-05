@@ -1,51 +1,47 @@
 {% extends "base.html" %}
-{% block title %}故事线编辑 — {{ timeline.book_title or timeline.pen_name }}{% endblock %}
+{% block title %}故事线编辑 — {{ storyline.book_title or storyline.pen_name }}{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css">
 <link rel="stylesheet" href="/static/css/workspace.css">
 {% from "_flow_stepper.html" import flow_stepper %}
-<script>window.__BOOK_TIMELINE__ = {{ timeline_json | tojson }};</script>
+<script>window.__BOOK_STORYLINE__ = {{ storyline_json | tojson }};</script>
 <div class="tle-layout">
 <h1>✍️ 写作台</h1>
 <div class="info-bar">
-    <span>笔名：<strong>{{ timeline.pen_name }}</strong></span>
-    <span>流派：<strong>{{ timeline.genre }}{% if timeline.sub_genre %}/{{ timeline.sub_genre }}{% endif %}</strong></span>
-    <span>每章：<strong>{{ timeline.words_per_chapter }}字</strong></span>
+    <span>笔名：<strong>{{ storyline.pen_name }}</strong></span>
+    <span>流派：<strong>{{ storyline.genre }}{% if storyline.sub_genre %}/{{ storyline.sub_genre }}{% endif %}</strong></span>
+    <span>每章：<strong>{{ storyline.words_per_chapter }}字</strong></span>
 </div>
 
-{{ flow_stepper(2, timeline_id=timeline_id, phase=timeline.phase,
+{{ flow_stepper(2, storyline_id=storyline_id, phase=storyline.phase,
                  current_chapter=book_current) }}
 
 {# ─── 步骤指示器 ─── #}
 <div class="flow-steps" style="margin-bottom:24px">
-    <div class="step {% if timeline.phase in ('config','outlines') %}active{% endif %}" id="step-outlines">
+    <div class="step {% if storyline.phase in ('config','outlines') %}active{% endif %}" id="step-outlines">
         <div class="step-num">1</div>
         <div class="step-label">故事线</div>
-        <div class="step-status" id="status-outlines">{{ '✅' if timeline.outlines and timeline.phase != 'config' else '等待中' }}</div>
+        <div class="step-status" id="status-outlines">{{ '✅' if storyline.outlines and storyline.phase != 'config' else '等待中' }}</div>
     </div>
     <div class="step-arrow">→</div>
-    <div class="step {% if timeline.phase in ('plots','gags') %}active{% endif %}" id="step-plots">
+    <div class="step {% if storyline.phase in ('plots','gags') %}active{% endif %}" id="step-plots">
         <div class="step-num">2</div>
         <div class="step-label">桥段编排</div>
-        <div class="step-status" id="status-plots">{{ '✅' if timeline.phase in ('gags','ready') else '等待中' }}</div>
+        <div class="step-status" id="status-plots">{{ '✅' if storyline.phase in ('gags','ready') else '等待中' }}</div>
     </div>
     <div class="step-arrow">→</div>
-    <div class="step {% if timeline.phase == 'gags' %}active{% endif %}" id="step-gags">
+    <div class="step {% if storyline.phase == 'gags' %}active{% endif %}" id="step-gags">
         <div class="step-num">3</div>
         <div class="step-label">加料注入</div>
-        <div class="step-status" id="status-gags">{{ '✅' if timeline.phase == 'ready' else '等待中' }}</div>
+        <div class="step-status" id="status-gags">{{ '✅' if storyline.phase == 'ready' else '等待中' }}</div>
     </div>
     <div class="step-arrow">→</div>
-    <div class="step {% if timeline.phase == 'ready' %}active{% endif %}" id="step-write">
+    <div class="step {% if storyline.phase == 'ready' %}active{% endif %}" id="step-write">
         <div class="step-num">4</div>
         <div class="step-label">开始写作</div>
         <div class="step-status">
-            {% if timeline.phase == 'ready' %}
-            {% if timeline_id.startswith('book_') %}
-            <a href="/books/{{ timeline_id }}/continue" style="color:#3fb950;text-decoration:none">✅ 点击进入写作 →</a>
-            {% else %}
-            <a href="/books/start/timeline/{{ timeline_id }}/write" style="color:#3fb950;text-decoration:none">✅ 点击进入写作 →</a>
-            {% endif %}
+            {% if storyline.phase == 'ready' %}
+            <a href="/books/{{ storyline_id }}/continue" style="color:#3fb950;text-decoration:none">✅ 点击进入写作 →</a>
             {% else %}➡️{% endif %}
         </div>
     </div>
@@ -76,14 +72,14 @@
         </div>
 
         {# ─── Phase 1: 故事线操作 ─── #}
-        <div id="phase-outlines" class="phase-panel" {% if timeline.phase not in ('config','outlines') %}style="display:none"{% endif %}>
+        <div id="phase-outlines" class="phase-panel" {% if storyline.phase not in ('config','outlines') %}style="display:none"{% endif %}>
             <div class="phase-header">
                 <h2>📋 故事线</h2>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
                     <button class="btn-primary btn-sm" id="btn-gen-full" style="background:#6f42c1" onclick="genFullStart()">✨ 一键生成完整大纲</button>
                     <button class="btn-primary btn-sm" onclick="generateOutlines()">🤖 AI 生成大纲序列</button>
                     <button class="btn btn-sm" style="background:#30363d;color:#c9d1d9" onclick="addOutline()">+ 手动添加</button>
-                    {% if timeline.outlines %}
+                    {% if storyline.outlines %}
                     <button class="btn btn-sm" style="background:#1a2b1a;color:#3fb950" onclick="extendOutline()">➕ 扩展故事线（续写大纲）</button>
                     {% endif %}
                     <button class="btn-primary btn-sm" onclick="confirmOutlines()" id="btn-confirm-outlines" style="background:#1f6feb">✅ 确认大纲 → 编排桥段</button>
@@ -91,11 +87,11 @@
             </div>
 
             <div id="outline-list" class="outline-list">
-                {% for o in timeline.outlines %}
-                {% include "timeline_outline_card.html" %}
+                {% for o in storyline.outlines %}
+                {% include "storyline_outline_card.html" %}
                 {% endfor %}
             </div>
-            <div id="outline-empty" class="empty" {% if timeline.outlines %}style="display:none"{% endif %}>
+            <div id="outline-empty" class="empty" {% if storyline.outlines %}style="display:none"{% endif %}>
                 <div class="icon" style="font-size:36px">📋</div>
                 <p style="color:#8b949e;margin-top:12px">还没有大纲配置</p>
                 <p style="color:#484f58;font-size:12px;margin-top:6px">点击"AI 生成大纲序列"让引擎自动规划，或手动添加大纲</p>
@@ -103,7 +99,7 @@
         </div>
 
         {# ─── Phase 2: 桥段编排 ─── #}
-        <div id="phase-plots" class="phase-panel" {% if timeline.phase != 'plots' %}style="display:none"{% endif %}>
+        <div id="phase-plots" class="phase-panel" {% if storyline.phase != 'plots' %}style="display:none"{% endif %}>
             <div class="phase-header">
                 <h2>🧩 桥段编排</h2>
                 <div style="display:flex;gap:8px">
@@ -112,10 +108,10 @@
                 </div>
             </div>
             <div id="plot-list">
-                {% for o in timeline.outlines %}
+                {% for o in storyline.outlines %}
                 <div class="outline-plot-group" data-outline-id="{{ o.id }}">
                     <h3 style="margin:16px 0 8px;color:#58a6ff">{{ o.name }} <span style="font-size:12px;color:#8b949e">第{{ o.start_chapter }}-{{ o.end_chapter }}章</span></h3>
-                    {% for p in timeline.plots if p.outline_id == o.id %}
+                    {% for p in storyline.plots if p.outline_id == o.id %}
                     <div class="plot-card card">
                         <div style="display:flex;justify-content:space-between;align-items:start">
                             <div>
@@ -155,15 +151,15 @@
         </div>
 
         {# ─── Phase 3: 加料注入 ─── #}
-        <div id="phase-gags" class="phase-panel" {% if timeline.phase != 'gags' %}style="display:none"{% endif %}>
+        <div id="phase-gags" class="phase-panel" {% if storyline.phase != 'gags' %}style="display:none"{% endif %}>
             <div class="phase-header">
                 <h2>🎭 内涵挂载</h2>
                 <button class="btn-primary" onclick="injectGags()">🤖 AI 挂载内涵+吸睛点</button>
             </div>
             <div id="gag-result">
-                {% for o in timeline.outlines %}
+                {% for o in storyline.outlines %}
                 <h3 style="margin:12px 0 6px;color:#58a6ff;font-size:14px">{{ o.name }}</h3>
-                {% for p in timeline.plots if p.outline_id == o.id %}
+                {% for p in storyline.plots if p.outline_id == o.id %}
                 <div class="plot-card card" style="font-size:12px">
                     <strong>{{ p.name }}</strong>
                     <div style="color:#3fb950;margin-top:4px">🎭 笑点: 写作时灵机一动（不预设）</div>
@@ -182,20 +178,18 @@
 
         {# ─── Ready 面板：一键生成完成后 phase=ready，三个阶段面板全部隐藏，
              此处提供「开始写作」入口，避免用户从编辑器无法进入写作 ─── #}
-        <div id="phase-ready" class="phase-panel" {% if timeline.phase != 'ready' %}style="display:none"{% endif %}>
+        <div id="phase-ready" class="phase-panel" {% if storyline.phase != 'ready' %}style="display:none"{% endif %}>
             <div class="phase-header">
                 <h2>🚀 准备就绪</h2>
             </div>
             <p style="color:#8b949e;margin-bottom:12px">
-                已生成 <strong>{{ timeline.outlines|length }}</strong> 条大纲 · <strong>{{ timeline.plots|length }}</strong> 个桥段 · 共 <strong>{{ total_ch }}</strong> 章。
+                已生成 <strong>{{ storyline.outlines|length }}</strong> 条大纲 · <strong>{{ storyline.plots|length }}</strong> 个桥段 · 共 <strong>{{ total_ch }}</strong> 章。
                 可随时进入写作，也可先扩展故事线或继续规划。
             </p>
             <div style="display:flex;gap:10px;flex-wrap:wrap">
                 <button class="btn-primary" style="background:#1f6feb;font-size:16px;padding:12px 32px" onclick="startWriting()">🚀 开始写作</button>
                 <button class="btn btn-sm" style="background:#30363d;color:#c9d1d9" onclick="extendOutline()">➕ 扩展故事线（续写大纲）</button>
-                {% if timeline_id.startswith('book_') %}
-                <a href="/books/{{ timeline_id }}" class="btn" style="background:#238636;color:#fff;text-decoration:none">📖 查看书详情</a>
-                {% endif %}
+                <a href="/books/{{ storyline_id }}" class="btn" style="background:#238636;color:#fff;text-decoration:none">📖 查看书详情</a>
             </div>
         </div>
 
@@ -206,8 +200,8 @@
                 <span style="font-size:11px;color:#8b949e">设局桥段写出→待兑现，收局桥段写出→已兑现；逾期会在写作 prompt 提醒</span>
             </div>
             <div id="promise-ledger">
-                {% if timeline.promises %}
-                {% for pr in timeline.promises %}
+                {% if storyline.promises %}
+                {% for pr in storyline.promises %}
                 <div class="plot-card card" style="font-size:12px">
                     <span style="color:#c9d1d9">{{ pr.desc }}</span>
                     {% if pr.status == 'fulfilled' %}
@@ -247,65 +241,65 @@
         <div class="form-row" style="margin-bottom:14px">
             <label>书名
                 <div style="display:flex;gap:8px">
-                    <input id="bi_title" value="{{ timeline.book_title or '' }}" placeholder="留空可让 AI 生成书名">
+                    <input id="bi_title" value="{{ storyline.book_title or '' }}" placeholder="留空可让 AI 生成书名">
                     <button type="button" class="btn-primary btn-sm" style="background:#6f42c1;flex-shrink:0;width:auto" id="btn-gen-title" onclick="generateTitle()">✨ 生成书名</button>
                 </div>
             </label>
         </div>
         <div class="form-row half">
             <label>主角姓名
-                <input id="bi_protag_name" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('name','')) }}">
+                <input id="bi_protag_name" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('name','')) }}">
             </label>
             <label>身份/职业
-                <input id="bi_protag_identity" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('identity','')) }}">
+                <input id="bi_protag_identity" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('identity','')) }}">
             </label>
         </div>
         <div class="form-row half">
             <label>性格特点
-                <input id="bi_protag_personality" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('personality','')) }}">
+                <input id="bi_protag_personality" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('personality','')) }}">
             </label>
             <label>背景
-                <input id="bi_protag_background" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('background','')) }}">
+                <input id="bi_protag_background" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('background','')) }}">
             </label>
         </div>
         <div class="form-row">
             <label>金手指
-                <input id="bi_protag_golden" value="{{ ((timeline.basic_info.get('protagonist') or {}).get('golden_finger','')) }}">
+                <input id="bi_protag_golden" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('golden_finger','')) }}">
             </label>
         </div>
         <div class="form-row">
             <label>世界观简述
-                <textarea id="bi_world_desc" rows="2">{{ ((timeline.basic_info.get('world_building') or {}).get('description','')) }}</textarea>
+                <textarea id="bi_world_desc" rows="2">{{ ((storyline.basic_info.get('world_building') or {}).get('description','')) }}</textarea>
             </label>
         </div>
         <div class="form-row half">
             <label>时代背景
-                <input id="bi_world_era" value="{{ ((timeline.basic_info.get('world_building') or {}).get('era','')) }}">
+                <input id="bi_world_era" value="{{ ((storyline.basic_info.get('world_building') or {}).get('era','')) }}">
             </label>
             <label>力量体系
-                <input id="bi_world_power" value="{{ ((timeline.basic_info.get('world_building') or {}).get('power_system','')) }}">
+                <input id="bi_world_power" value="{{ ((storyline.basic_info.get('world_building') or {}).get('power_system','')) }}">
             </label>
         </div>
         <div class="form-row half">
             <label>基调
-                <input id="bi_tone" placeholder="轻松/沉重/热血/幽默" value="{{ timeline.basic_info.get('tone','') }}">
+                <input id="bi_tone" placeholder="轻松/沉重/热血/幽默" value="{{ storyline.basic_info.get('tone','') }}">
             </label>
             <label>目标读者
-                <input id="bi_audience" value="{{ timeline.basic_info.get('target_audience','') }}">
+                <input id="bi_audience" value="{{ storyline.basic_info.get('target_audience','') }}">
             </label>
             <label>视角
                 <select id="bi_pov">
-                    <option value="第三人称" {{ 'selected' if timeline.basic_info.get('pov','第三人称') == '第三人称' }}>第三人称</option>
-                    <option value="第一人称" {{ 'selected' if timeline.basic_info.get('pov','第三人称') == '第一人称' }}>第一人称</option>
+                    <option value="第三人称" {{ 'selected' if storyline.basic_info.get('pov','第三人称') == '第三人称' }}>第三人称</option>
+                    <option value="第一人称" {{ 'selected' if storyline.basic_info.get('pov','第三人称') == '第一人称' }}>第一人称</option>
                 </select>
             </label>
             <label>时代语言约束
-                <input id="bi_era_language" placeholder="如：2008年语境，禁止现代网络词" value="{{ timeline.basic_info.get('era_language','') }}">
+                <input id="bi_era_language" placeholder="如：2008年语境，禁止现代网络词" value="{{ storyline.basic_info.get('era_language','') }}">
             </label>
         </div>
         <div class="form-row">
             <label>配角（JSON 数组，可选）
-                <textarea id="bi_supporting_cast" rows="3" placeholder='[{"name":"...","role":"...","relation":"...","gender":"男/女","title":"...","personality":"...","catchphrase":"..."}]'>{{ (timeline.basic_info.get('supporting_cast') or []) | tojson }}</textarea>
+                <textarea id="bi_supporting_cast" rows="3" placeholder='[{"name":"...","role":"...","relation":"...","gender":"男/女","title":"...","personality":"...","catchphrase":"..."}]'>{{ (storyline.basic_info.get('supporting_cast') or []) | tojson }}</textarea>
             </label>
         </div>
         <button class="btn-primary btn-sm" id="btn-save-basic" onclick="saveBasicInfo()">💾 保存设定</button>
@@ -364,16 +358,16 @@
 
 <script src="/static/js/story_line.js"></script>
 <script>
-var timelineId = "{{ timeline_id }}";
+var storylineId = "{{ storyline_id }}";
 
 // 左侧故事线（纵向视图）默认常驻：新书启动生成大纲即为「左故事线」布局
-function refreshStoryline(timeline) {
+function refreshStoryline(storyline) {
     if (window.StoryLine) {
-        window.StoryLine.init('editor-storyline', timeline || {}, {scrollable: true});
+        window.StoryLine.init('editor-storyline', storyline || {}, {scrollable: true});
     }
 }
 (function initStoryline() {
-    refreshStoryline(window.__BOOK_TIMELINE__);
+    refreshStoryline(window.__BOOK_STORYLINE__);
 })();
 
 // 基础设定未保存徽标：任一 bi_* 字段改动即显示「● 未保存」
@@ -392,7 +386,7 @@ function generateTitle() {
     var btn = document.getElementById('btn-gen-title');
     if (!btn || btn.disabled) return;
     btn.disabled = true; btn.textContent = '生成中...';
-    fetch('/api/timeline/' + timelineId + '/generate-title', { method: 'POST' })
+    fetch('/api/storyline/' + storylineId + '/generate-title', { method: 'POST' })
         .then(r => r.json()).then(d => {
             if (d.ok) {
                 document.getElementById('bi_title').value = d.chosen || '';
@@ -431,7 +425,7 @@ function saveBasicInfo() {
     }
     var btn = document.getElementById('btn-save-basic');
     btn.disabled = true; btn.textContent = '保存中...';
-    fetch('/api/timeline/' + timelineId + '/save-basic-info', {
+    fetch('/api/storyline/' + storylineId + '/save-basic-info', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload)
     }).then(function(r){ return r.json(); }).then(function(d) {
@@ -465,8 +459,8 @@ function genFullStart() {
     // 生成期间顶部流程条与生成面板 5 阶段条重复，隐藏顶部那条
     var steps = document.querySelector('.flow-steps');
     if (steps) steps.style.display = 'none';
-    refreshStoryline(window.__BOOK_TIMELINE__);
-    fetch('/api/timeline/' + timelineId + '/generate-full', { method: 'POST' })
+    refreshStoryline(window.__BOOK_STORYLINE__);
+    fetch('/api/storyline/' + storylineId + '/generate-full', { method: 'POST' })
         .then(function(resp) {
             var reader = resp.body.getReader();
             var decoder = new TextDecoder();
@@ -556,13 +550,13 @@ function genFullHandle(evt) {
         return;
     }
     // 逐条实时刷新左侧故事线：大纲 / 桥段 / 笑点 / 阶段完成时
-    if (['outline_added','outline_plots','plot_added','theme_injected','phase_done','done'].indexOf(type) >= 0 && evt.timeline) {
-        refreshStoryline(evt.timeline);
+    if (['outline_added','outline_plots','plot_added','theme_injected','phase_done','done'].indexOf(type) >= 0 && evt.storyline) {
+        refreshStoryline(evt.storyline);
     }
 }
-// 按 timeline.phase 恢复各阶段面板显隐（ready 时展示「准备就绪」面板而非三阶段面板）
+// 按 storyline.phase 恢复各阶段面板显隐（ready 时展示「准备就绪」面板而非三阶段面板）
 function applyPhaseVisibility() {
-    var tl = window.__BOOK_TIMELINE__ || {};
+    var tl = window.__BOOK_STORYLINE__ || {};
     var ph = tl.phase || 'config';
     function show(id, cond) { var el = document.getElementById(id); if (el) el.style.display = cond ? '' : 'none'; }
     show('phase-outlines', ['config', 'outlines'].indexOf(ph) >= 0);
@@ -580,20 +574,20 @@ function genFullFinish() {
     var panel = document.getElementById('gen-panel');
     if (panel) panel.style.display = 'none';
     applyPhaseVisibility();
-    refreshStoryline(window.__BOOK_TIMELINE__);
+    refreshStoryline(window.__BOOK_STORYLINE__);
 }
 
 function generateOutlines() {
     var btn = event.target;
     btn.disabled = true; btn.textContent = '生成中...';
-    fetch('/api/timeline/' + timelineId + '/generate-outlines', { method: 'POST' })
+    fetch('/api/storyline/' + storylineId + '/generate-outlines', { method: 'POST' })
         .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 大纲序列已生成', 'success'); location.reload(); } else showToast(d.error, 'error'); })
         .catch(e => showToast('失败: ' + e.message, 'error'))
         .finally(() => { btn.disabled = false; btn.textContent = '🤖 AI 生成大纲序列'; });
 }
 
 function addOutline() {
-    fetch('/api/timeline/' + timelineId + '/generate-outlines?mode=rule', { method: 'POST' })
+    fetch('/api/storyline/' + storylineId + '/generate-outlines?mode=rule', { method: 'POST' })
         .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 已添加大纲', 'success'); location.reload(); } else showToast(d.error, 'error'); })
         .catch(e => showToast('失败: ' + e.message, 'error'));
 }
@@ -602,7 +596,7 @@ function extendOutline() {
     var btn = event.target;
     if (!confirm('在故事线末尾追加一段新大纲弧（含桥段），用于续写扩展。确定？')) return;
     btn.disabled = true; btn.textContent = '扩展中...';
-    fetch('/api/timeline/' + timelineId + '/extend-outline', { method: 'POST' })
+    fetch('/api/storyline/' + storylineId + '/extend-outline', { method: 'POST' })
         .then(r => r.json()).then(d => {
             if (d.ok) { flashToast('✅ 故事线已扩展', 'success'); location.reload(); }
             else showToast(d.error || '扩展失败', 'error');
@@ -614,7 +608,7 @@ function confirmOutlines() {
     if (!confirm('确认故事线？确认后进入桥段编排阶段。')) return;
     var btn = document.getElementById('btn-confirm-outlines');
     btn.disabled = true; btn.textContent = '处理中...';
-    fetch('/api/timeline/' + timelineId + '/confirm-outlines', { method: 'POST' })
+    fetch('/api/storyline/' + storylineId + '/confirm-outlines', { method: 'POST' })
         .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 已确认故事线', 'success'); location.reload(); } else showToast(d.error, 'error'); })
         .catch(e => showToast('失败: ' + e.message, 'error'));
 }
@@ -622,7 +616,7 @@ function confirmOutlines() {
 function fillPlots() {
     var btn = event.target;
     btn.disabled = true; btn.textContent = '填充中...';
-    fetch('/api/timeline/' + timelineId + '/fill-plots', { method: 'POST' })
+    fetch('/api/storyline/' + storylineId + '/fill-plots', { method: 'POST' })
         .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 桥段已填充', 'success'); location.reload(); } else showToast(d.error, 'error'); })
         .catch(e => showToast('失败: ' + e.message, 'error'))
         .finally(() => { btn.disabled = false; btn.textContent = '🤖 AI 填充桥段'; });
@@ -630,12 +624,12 @@ function fillPlots() {
 
 function confirmPlots() {
     if (!confirm('确认桥段编排？确认后进入加料注入阶段。')) return;
-    fetch('/api/timeline/' + timelineId + '/fill-gags', { method: 'POST' })
+    fetch('/api/storyline/' + storylineId + '/fill-gags', { method: 'POST' })
         .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 已进入加料注入', 'success'); location.reload(); } else showToast(d.error, 'error'); });
 }
 
 function togglePlotConfirm(plotId, checked) {
-    fetch('/api/timeline/' + timelineId + '/plot-confirm', {
+    fetch('/api/storyline/' + storylineId + '/plot-confirm', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({plot_id: plotId, confirmed: checked})
     });
@@ -644,17 +638,13 @@ function togglePlotConfirm(plotId, checked) {
 function injectGags() {
     var btn = event.target;
     btn.disabled = true; btn.textContent = '注入中...';
-    fetch('/api/timeline/' + timelineId + '/fill-gags', { method: 'POST' })
+    fetch('/api/storyline/' + storylineId + '/fill-gags', { method: 'POST' })
         .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 内涵已挂载', 'success'); location.reload(); } else showToast(d.error, 'error'); });
 }
 
 function startWriting() {
-    // 正式书（book_*）已有图书记录：进入续写/写作台，避免重复建书
-    if (timelineId.indexOf('book_') === 0) {
-        location.href = '/books/' + timelineId + '/continue';
-    } else {
-        location.href = '/books/start/timeline/' + timelineId + '/write';
-    }
+    // 规划书即正式书：进入续写/写作台
+    location.href = '/books/' + storylineId + '/continue';
 }
 
 // ═══════════════════════════════════════════
@@ -727,7 +717,7 @@ function agentSend() {
     agentAppendUser(text);
     agentBusy = true;
     agentAppendTyping();
-    fetch('/api/timeline/' + timelineId + '/agent', {
+    fetch('/api/storyline/' + storylineId + '/agent', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({message: text})
@@ -739,10 +729,10 @@ function agentSend() {
             return;
         }
         agentAppendAssistant(d.reply || '', d.summary || []);
-        if (d.timeline) {
-            window.__BOOK_TIMELINE__ = d.timeline;
-            refreshStoryline(d.timeline);
-            renderPhaseLists(d.timeline);
+        if (d.storyline) {
+            window.__BOOK_STORYLINE__ = d.storyline;
+            refreshStoryline(d.storyline);
+            renderPhaseLists(d.storyline);
         }
     }).catch(function(e) {
         agentRemoveTyping();
@@ -751,7 +741,7 @@ function agentSend() {
     });
 }
 
-// 助手改动后按 timeline 数据重绘右侧各阶段列表（初始加载仍走服务端渲染）
+// 助手改动后按 storyline 数据重绘右侧各阶段列表（初始加载仍走服务端渲染）
 function renderPhaseLists(tl) {
     if (!tl) return;
     var oList = document.getElementById('outline-list');

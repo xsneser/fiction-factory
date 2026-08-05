@@ -21,21 +21,22 @@ def books():
 _book_rows_cache: dict = {}  # book_id -> (mtimes, row)
 
 
-def next_step_for(book, is_timeline: bool = False, has_timeline: bool = False) -> dict:
-    """根据图书状态给出「下一步」动作（供书库/写作台/仪表盘列表渲染）。
+def next_step_for(book, has_storyline: bool = False, storyline_phase: str = "") -> dict:
+    """根据图书状态给出「下一步」动作（供书库/仪表盘列表渲染）。
 
+    规划书（无章节）：故事线 phase 就绪 → 开始写作；否则 → 规划大纲（进故事线编辑器）。
     每个状态只给一个明确的下一步；「查看详情」仅作兜底（此时表格标题本身即是详情链接，
     避免与详情入口重复）。
     """
     bid = book.book_id
-    if is_timeline:
-        # 已完成故事线的草稿（tl_*）→ 开始写作（建正式书）
-        return {"label": "开始写作", "href": f"/books/start/timeline/{bid}/write", "step": 3}
     if book.status in ("ready", "planning"):
-        # 正式书：规划中/可写作 → 先规划大纲（无故事线的残缺书兜底看详情）
-        if not has_timeline:
-            return {"label": "查看详情", "href": f"/books/{bid}", "step": 2}
-        return {"label": "规划大纲", "href": f"/timeline/{bid}/edit", "step": 2}
+        if (book.current_chapter or 0) == 0:
+            if not has_storyline:
+                return {"label": "查看详情", "href": f"/books/{bid}", "step": 2}
+            if storyline_phase == "ready":
+                return {"label": "开始写作", "href": f"/books/{bid}/continue", "step": 3}
+            return {"label": "规划大纲", "href": f"/storyline/{bid}/edit", "step": 2}
+        return {"label": "继续写作", "href": f"/books/{bid}/continue", "step": 3}
     if book.status in ("writing", "reviewing"):
         return {"label": "继续写作", "href": f"/books/{bid}/continue", "step": 3}
     if book.status == "finished":
@@ -47,17 +48,14 @@ def next_step_for(book, is_timeline: bool = False, has_timeline: bool = False) -
 
 def _book_sig(bid: str):
     """books/{id} 三份关键文件的 mtime，用于判断行级缓存是否仍有效。"""
-    paths = (f"books/{bid}/book.json", f"books/{bid}/timeline.json",
+    paths = (f"books/{bid}/book.json", f"books/{bid}/storyline.json",
              f"books/{bid}/outline/outline.json")
     return tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in paths)
 
 
 def _book_rows():
-    """书库/写作台共用：每本书附带时间线/大纲元数据。
-    行级缓存 key = 三份文件 mtime；后续导航只做 stat，不再 parse 大 JSON。
-    除正式书 book_* 外，也列出「已生成完整故事线」的时间线草稿（tl_*/gen_* 且 phase=ready），
-    它们在书库/写作台同样代表一本可继续规划 / 开始写作的书。"""
-    from libraries.book_manager import BookConfig
+    """书库共用：每本书附带故事线/大纲元数据（故事线已并入书目录，无独立草稿）。
+    行级缓存 key = 三份文件 mtime；后续导航只做 stat，不再 parse 大 JSON。"""
     books = book_mgr.list_all()
     valid_ids = set()
     rows = []
@@ -68,65 +66,18 @@ def _book_rows():
         if cached and cached[0] == sig:
             rows.append(cached[1])
             continue
-        tl = book_mgr.load_timeline(b.book_id)
+        sl = book_mgr.load_storyline(b.book_id)
         outline = book_mgr.get_outline(b.book_id)
         row = {
             "book": b,
-            "is_timeline": False,
-            "has_timeline": tl is not None,
-            "timeline_outlines": len(tl.outlines) if tl else 0,
-            "timeline_plots": len(tl.plots) if tl else 0,
+            "has_storyline": sl is not None,
+            "storyline_outlines": len(sl.outlines) if sl else 0,
+            "storyline_plots": len(sl.plots) if sl else 0,
             "outline_count": len((outline or {}).get("stages", [])) if outline else 0,
-            "next": next_step_for(b, False, has_timeline=tl is not None),
+            "next": next_step_for(b, has_storyline=sl is not None,
+                                  storyline_phase=getattr(sl, "phase", "") if sl else ""),
         }
         _book_rows_cache[b.book_id] = (sig, row)
-        rows.append(row)
-
-    # 已完成故事线的草稿时间线也进书库（可继续规划 / 开始写作）
-    # 已被正式书 source_timeline_id 引用的草稿不再重复列出（避免"两本同名书"）
-    imported_timeline_ids = {b.source_timeline_id for b in books if getattr(b, "source_timeline_id", "")}
-    import glob as _glob
-    for p in _glob.glob(os.path.join("books", "timelines", "*.json")):
-        tl_id = os.path.splitext(os.path.basename(p))[0]
-        if tl_id in valid_ids:
-            continue
-        if tl_id in imported_timeline_ids:
-            _book_rows_cache.pop(tl_id, None)
-            continue
-        valid_ids.add(tl_id)
-        try:
-            tsig = os.path.getmtime(p)
-        except OSError:
-            continue
-        cached = _book_rows_cache.get(tl_id)
-        if cached and cached[0] == tsig:
-            rows.append(cached[1])
-            continue
-        tl = load_timeline(p)
-        if not tl or getattr(tl, "phase", "") != "ready":
-            _book_rows_cache.pop(tl_id, None)
-            continue
-        total_ch = max((o.end_chapter for o in tl.outlines), default=0)
-        bc = BookConfig(
-            book_id=tl_id,
-            title=tl.book_title or "(待定)",
-            pen_name=tl.pen_name or "",
-            genre=tl.genre or "",
-            sub_genre=tl.sub_genre or "",
-            current_chapter=0,
-            chapter_count=total_ch or 0,
-            status="ready",
-        )
-        row = {
-            "book": bc,
-            "is_timeline": True,
-            "has_timeline": True,
-            "timeline_outlines": len(tl.outlines),
-            "timeline_plots": len(tl.plots),
-            "outline_count": 0,
-            "next": next_step_for(bc, True),
-        }
-        _book_rows_cache[tl_id] = (tsig, row)
         rows.append(row)
 
     for key in list(_book_rows_cache):
@@ -159,13 +110,13 @@ def book_detail(book_id):
     book = book_mgr.get(book_id)
     if not book: return "Not found", 404
     outline = book_mgr.get_outline(book_id)
-    timeline = book_mgr.load_timeline(book_id)
-    if timeline:
-        basic_info = timeline.basic_info or {}
-        basic_info["has_timeline"] = True
+    storyline = book_mgr.load_storyline(book_id)
+    if storyline:
+        basic_info = storyline.basic_info or {}
+        basic_info["has_storyline"] = True
     else:
         basic_info = _basic_info_from_outline(outline, book)
-        basic_info["has_timeline"] = False
+        basic_info["has_storyline"] = False
     # 简介存在 outline.json，合并进 basic_info 供详情页显示
     if outline and (outline.get("synopsis") or ""):
         basic_info.setdefault("synopsis", outline["synopsis"])
@@ -199,7 +150,7 @@ def book_detail(book_id):
             logger.warning("读取章节草稿失败: %s", e)
     return render_template("book_detail.html", book=book,
         outline=outline, chapters=chapters,
-        timeline=timeline,
+        storyline=storyline,
         basic_info=basic_info,
         cost=cost.summary(), characters=csm.characters, draft=draft)
 
@@ -209,7 +160,7 @@ def api_book_generate_meta(book_id):
     """书库详情页：手动生成书名+简介（基于第 1 章内容）。
 
     从"第 1 章写完自动触发"改为详情页独立动作。
-    生成结果写 book.json（title）/ timeline.json（book_title）/ outline.json（synopsis）。
+    生成结果写 book.json（title）/ storyline.json（book_title）/ outline.json（synopsis）。
     """
     if not book_mgr.get(book_id):
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -222,7 +173,7 @@ def api_book_generate_meta(book_id):
     try:
         from libraries.engine import NovelEngine
         engine = NovelEngine(llm_client=llm)
-        engine.continue_book(book_id)   # 恢复 book/timeline（无 timeline 会报错）
+        engine.continue_book(book_id)   # 恢复 book/storyline（无 storyline 会报错）
         result = engine._generate_book_meta(ch1["content"])
         # 使 web_ui 的 book 缓存失效，下次详情页加载读到磁盘新值
         book_mgr._cache.pop(book_id, None)
@@ -236,22 +187,5 @@ def api_book_generate_meta(book_id):
 def delete_book(book_id):
     book_mgr.delete(book_id)
     return redirect(url_for("books.books"))
-
-
-@bp.route("/timeline/<timeline_id>/delete", methods=["POST"])
-def timeline_delete(timeline_id):
-    """删除故事线草稿（tl_*/gen_*）。正式书 book_* 请走 /books/<id>/delete。"""
-    if timeline_id.startswith("book_"):
-        return jsonify({"ok": False, "error": "正式书请从书库删除"}), 400
-    if not is_safe_timeline_id(timeline_id):
-        return jsonify({"ok": False, "error": "非法故事线 ID"}), 400
-    _timelines.pop(timeline_id, None)
-    path = ensure_child_path("books/timelines", _timeline_filepath(timeline_id))
-    try:
-        if path.exists():
-            os.remove(path)
-        return jsonify({"ok": True})
-    except OSError as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
 
 

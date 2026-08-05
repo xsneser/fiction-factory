@@ -1,25 +1,25 @@
 {% extends "base.html" %}
-{% block title %}故事线详情 — {{ timeline.book_title or timeline.pen_name }}{% endblock %}
+{% block title %}故事线详情 — {{ storyline.book_title or storyline.pen_name }}{% endblock %}
 {% block content %}
-{% set bi = timeline.basic_info or {} %}
+{% set bi = storyline.basic_info or {} %}
 {% set protag = bi.get('protagonist') or {} %}
 {% set world = bi.get('world_building') or {} %}
 
-<h1>📖 {{ timeline.book_title or '(待定)' }}</h1>
+<h1>📖 {{ storyline.book_title or '(待定)' }}</h1>
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
-    <a href="/timeline/{{ timeline_id }}/edit" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">📋 继续规划</a>
-    <a href="/books/start/timeline/{{ timeline_id }}/write" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 开始写作</a>
-    <form method="POST" action="/timeline/{{ timeline_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ timeline.book_title or timeline.pen_name }}》？')">
+    <a href="/storyline/{{ storyline_id }}/edit" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">📋 继续规划</a>
+    <a href="/books/{{ storyline_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 开始写作</a>
+    <form method="POST" action="/books/{{ storyline_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ storyline.book_title or storyline.pen_name }}》？')">
         <button class="small danger" style="padding:8px 16px">删除</button>
     </form>
 </div>
 
 <div class="detail-grid">
-    <div class="detail-item"><div class="label">笔名</div><div class="value">{{ timeline.pen_name or '—' }}</div></div>
-    <div class="detail-item"><div class="label">流派</div><div class="value">{{ timeline.genre }}{% if timeline.sub_genre %} / {{ timeline.sub_genre }}{% endif %}</div></div>
-    <div class="detail-item"><div class="label">每章</div><div class="value">{{ timeline.words_per_chapter }} 字</div></div>
-    <div class="detail-item"><div class="label">阶段</div><div class="value">{{ timeline.phase }}</div></div>
+    <div class="detail-item"><div class="label">笔名</div><div class="value">{{ storyline.pen_name or '—' }}</div></div>
+    <div class="detail-item"><div class="label">流派</div><div class="value">{{ storyline.genre }}{% if storyline.sub_genre %} / {{ storyline.sub_genre }}{% endif %}</div></div>
+    <div class="detail-item"><div class="label">每章</div><div class="value">{{ storyline.words_per_chapter }} 字</div></div>
+    <div class="detail-item"><div class="label">阶段</div><div class="value">{{ storyline.phase }}</div></div>
 </div>
 
 {# ─── 设定（人物/世界观/配角） ─── #}
@@ -62,9 +62,9 @@
 {% endif %}
 
 {# ─── 故事线大纲 ─── #}
-<h3>📋 故事线大纲 ({{ timeline.outlines|length }})</h3>
-{% if timeline.outlines %}
-{% for o in timeline.outlines %}
+<h3>📋 故事线大纲 ({{ storyline.outlines|length }})</h3>
+{% if storyline.outlines %}
+{% for o in storyline.outlines %}
 <div class="accordion">
     <div class="accordion-header">
         <span>{{ o.name }}</span>
@@ -76,7 +76,7 @@
         <p><strong>{{ s.get('name','') }}:</strong> {{ s.get('events', [])|join('、') }}</p>
         {% endfor %}
         {% endif %}
-        {% set ops = timeline.plots|selectattr('outline_id','equalto', o.id)|list %}
+        {% set ops = storyline.plots|selectattr('outline_id','equalto', o.id)|list %}
         {% if ops %}
         <p style="color:#8b949e;font-size:12px;margin-top:8px">桥段 ({{ ops|length }}):</p>
         <div style="display:flex;flex-wrap:wrap;gap:6px">
