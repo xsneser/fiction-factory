@@ -30,7 +30,10 @@ def dashboard():
 # ═══════════════════════════════════════════
 
 def start_new_book():
-    """新书启动 — v2: 先创建故事线配置，再跳转编辑器"""
+    """新书启动 — v3 设定先行：一句话设定 → 世界观设定卡 → 再进大纲生成。
+
+    主表单只留一句话设定 + 流派 + 笔名 + 平台；书名/主角/世界观/模板收进『高级设置』折叠。
+    """
     if request.method == "POST":
         llm = get_llm()
         if not llm:
@@ -41,6 +44,27 @@ def start_new_book():
         sub_genre = request.form.get("sub_genre", "")
         platform = request.form.get("platform", "fanqie")
 
+        # 一句话设定（主入口）→ 存 world_building.description；高级世界观简述追加
+        world_idea = (request.form.get("world_idea", "") or "").strip()
+        advanced_world = (request.form.get("world_desc", "") or "").strip()
+        description = world_idea
+        if advanced_world:
+            description = (world_idea + "。" + advanced_world) if world_idea else advanced_world
+
+        basic_info = {
+            "protagonist": {
+                "name": request.form.get("protag_name", ""),
+                "identity": request.form.get("protag_identity", ""),
+                "personality": request.form.get("protag_personality", ""),
+                "golden_finger": request.form.get("protag_golden_finger", ""),
+            },
+            "world_building": {"description": description},
+        }
+        # 故事线想法：不再立即生成大纲，存入 basic_info 供「一键生成完整大纲」使用
+        storyline_hint = (request.form.get("storyline_hint", "") or "").strip()
+        if storyline_hint:
+            basic_info["storyline_hint"] = storyline_hint
+
         # 创建故事线配置
         storyline = BookStoryline(
             book_title=request.form.get("title", ""),
@@ -49,33 +73,9 @@ def start_new_book():
             words_per_chapter=parse_int(request.form.get("words_per_chapter"), 3000, min_value=500, max_value=20000),
             pen_name=pen_name,
             platform=platform,
-            basic_info={
-                "protagonist": {
-                    "name": request.form.get("protag_name", ""),
-                    "identity": request.form.get("protag_identity", ""),
-                    "personality": request.form.get("protag_personality", ""),
-                    "golden_finger": request.form.get("protag_golden_finger", ""),
-                },
-                "world_building": {
-                    "description": request.form.get("world_desc", ""),
-                },
-            },
+            basic_info=basic_info,
             phase="config",
         )
-
-        # 如果用户给了故事线描述，立即用 AI 生成大纲序列
-        storyline_hint = request.form.get("storyline_hint", "")
-        if storyline_hint:
-            builder = StorylineBuilder(
-                structure_lib=struct_lib,
-                plot_lib=plot_lib,
-                gag_lib=gag_lib,
-                theme_lib=theme_lib,
-                llm_client=llm,
-            )
-            storyline.outlines = builder.build_outline_sequence(
-                genre=genre, sub_genre=sub_genre, custom_context=storyline_hint)
-            storyline.phase = "outlines"
 
         # 直接建正式书（规划书=书目录内的书；草稿目录已废弃）
         book = book_mgr.create(
@@ -84,13 +84,14 @@ def start_new_book():
             genre=genre,
             sub_genre=sub_genre,
             platform=platform,
-            chapter_count=max((o.end_chapter for o in storyline.outlines), default=500),
+            chapter_count=500,
             structure_template_id="storyline",
             style_profile_id="",
         )
         book_mgr.save_storyline(book.book_id, storyline)
 
-        return redirect(url_for("storyline.storyline_edit", storyline_id=book.book_id))
+        # 设定先行：先到世界观设定卡生成/审查设定，确认后再进大纲生成
+        return redirect(url_for("world_builder.world_card", book_id=book.book_id))
 
     return render_template("start_book.html",
         pen_names=profiles.list_all(),

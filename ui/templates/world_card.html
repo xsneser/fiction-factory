@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+{% block title %}世界观设定卡 — NovelEngine{% endblock %}
+{% block content %}
+<h1>🌍 世界观设定卡 <span class="book-id">{{ book_id }}</span></h1>
+<p class="subtitle">用一句话设定生成完整世界观，逐项审查/微调后再进入大纲生成。留空的字段=交给 AI。</p>
+
+<div class="toolbar">
+    <fieldset>
+        <legend>✍️ 一句话设定</legend>
+        <textarea id="world-idea" rows="2" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…">{{ (world_building.get('description') or '') if world_building else '' }}</textarea>
+        <div class="btn-row">
+            <button class="btn-primary" id="btn-generate" onclick="startGenerate('one')">🚀 生成世界观</button>
+            <button class="btn-secondary" id="btn-candidates" onclick="loadCandidates()">🎲 示例候选</button>
+        </div>
+        <div id="candidate-box"></div>
+    </fieldset>
+
+    <fieldset>
+        <legend>📚 从已有书借鉴（提取设定做种子，再微调）</legend>
+        <div class="form-row">
+            <select id="borrow-source">
+                <option value="">选择源书...</option>
+                {% for b in borrow_books %}
+                <option value="{{ b.book_id }}">{{ b.title or b.book_id }}（{{ b.genre }}）</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-row">
+            <input id="borrow-tweak" placeholder="微调句，如：把主角改成穿越来的程序员" value="">
+        </div>
+        <div class="btn-row">
+            <button class="btn-secondary" id="btn-borrow-preview" onclick="borrowPreview()">👀 预览将借鉴的设定</button>
+            <button class="btn-secondary" id="btn-borrow-gen" onclick="startGenerate('borrow')">📚 借鉴生成</button>
+        </div>
+        <div id="borrow-preview-box"></div>
+    </fieldset>
+</div>
+
+<div id="gen-status" class="gen-status"></div>
+
+<form id="world-form" class="form-grid">
+    <fieldset>
+        <legend>🗺️ 世界观（设定圣经）</legend>
+        <div class="form-row">
+            <label>设定概述 world_summary（一段话整体设定）</label>
+            <textarea id="wb-world_summary" rows="3"></textarea>
+        </div>
+        <div class="form-row half">
+            <div><label>时代 era（含年份/纪元）</label><input id="wb-era"></div>
+            <div><label>力量体系 power_system（数值写死）</label><input id="wb-power_system"></div>
+        </div>
+        <div class="form-row half">
+            <div><label>地理 geography</label><input id="wb-geography"></div>
+            <div><label>文化 culture</label><input id="wb-culture"></div>
+        </div>
+        <div class="form-row half">
+            <div><label>历史 history</label><input id="wb-history"></div>
+            <div><label>社会结构 social_structure</label><input id="wb-social_structure"></div>
+        </div>
+        <div class="form-row">
+            <label>核心矛盾 core_conflict（驱动全书的冲突）</label>
+            <input id="wb-core_conflict">
+        </div>
+        <div class="form-row half">
+            <div>
+                <label>势力 factions（用「名:立场」多条，或逗号分隔）</label>
+                <textarea id="wb-factions" rows="3"></textarea>
+            </div>
+            <div>
+                <label>世界规则 rules（每行一条，金手指数值写死）</label>
+                <textarea id="wb-rules" rows="3"></textarea>
+            </div>
+        </div>
+        <div class="form-row hint">一句话种子保存在 description 字段，改上面字段即可；重生成时保留你已填的值。</div>
+    </fieldset>
+
+    <fieldset>
+        <legend>🧑 主角</legend>
+        <div class="form-row half">
+            <div><label>姓名</label><input id="p-name"></div>
+            <div><label>身份/职业</label><input id="p-identity"></div>
+        </div>
+        <div class="form-row half">
+            <div><label>性格</label><input id="p-personality"></div>
+            <div><label>金手指</label><input id="p-golden_finger"></div>
+        </div>
+        <div class="form-row half">
+            <div><label>背景</label><input id="p-background"></div>
+            <div><label>性别</label><input id="p-gender"></div>
+        </div>
+        <div class="form-row half">
+            <div><label>年龄</label><input id="p-age" type="number" min="0"></div>
+            <div><label>死亡年份（重生文用）</label><input id="p-death_year" type="number" min="0"></div>
+        </div>
+    </fieldset>
+
+    <fieldset>
+        <legend>👥 配角（JSON 数组）</legend>
+        <textarea id="sc-json" rows="5" placeholder='[{"name":"","role":"","relation":"","gender":"","title":"","personality":"","catchphrase":"","brief":""}]'></textarea>
+    </fieldset>
+
+    <fieldset>
+        <legend>🎭 基调</legend>
+        <div class="form-row half">
+            <div>
+                <label>基调 tone</label>
+                <select id="bi-tone">
+                    <option value="">（留空由 AI）</option>
+                    <option>轻松</option><option>沉重</option><option>热血</option><option>幽默</option>
+                </select>
+            </div>
+            <div>
+                <label>目标读者</label>
+                <select id="bi-target_audience">
+                    <option value="">（留空由 AI）</option>
+                    <option>男频</option><option>女频</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row half">
+            <div>
+                <label>视角 pov</label>
+                <select id="bi-pov">
+                    <option value="">（留空由 AI）</option>
+                    <option>第一人称</option><option>第三人称</option>
+                </select>
+            </div>
+            <div>
+                <label>时代语言 era_language</label>
+                <input id="bi-era_language" placeholder="如：禁晚于2030年的网络新词">
+            </div>
+        </div>
+    </fieldset>
+
+    <div class="btn-row">
+        <button type="button" class="btn-secondary" onclick="saveWorld()">💾 保存设定</button>
+        <button type="button" class="btn-primary" onclick="confirmWorld()">✅ 确认并进入大纲生成</button>
+    </div>
+</form>
+
+<style>
+.subtitle { color:#8b949e; margin-bottom:20px; }
+.book-id { color:#8b949e; font-size:13px; font-weight:400; }
+.toolbar { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+@media (max-width:900px){ .toolbar { grid-template-columns:1fr; } }
+.toolbar fieldset, .form-grid fieldset { border:1px solid #30363d; border-radius:8px; padding:16px; margin-bottom:16px; }
+legend { color:#58a6ff; font-weight:600; padding:0 8px; }
+.form-grid { max-width:1000px; }
+.form-row { margin-bottom:12px; }
+.form-row label { display:block; color:#c9d1d9; font-size:13px; margin-bottom:4px; }
+.form-row input, .form-row select, .form-row textarea { width:100%; background:#0d1117; border:1px solid #30363d; color:#f0f6fc; padding:8px 12px; border-radius:6px; font-size:14px; box-sizing:border-box; }
+.form-row textarea { resize:vertical; font-family:inherit; }
+.form-row.half { display:flex; gap:12px; }
+.form-row.half > div { flex:1; }
+.form-row.hint { color:#8b949e; font-size:12px; }
+.btn-row { display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; }
+.btn-primary { background:#238636; color:white; border:none; padding:10px 22px; border-radius:8px; font-size:14px; cursor:pointer; }
+.btn-primary:hover { background:#2ea043; }
+.btn-secondary { background:#21262d; color:#c9d1d9; border:1px solid #30363d; padding:10px 22px; border-radius:8px; font-size:14px; cursor:pointer; }
+.btn-secondary:hover { background:#30363d; }
+.gen-status { padding:10px 14px; border-radius:8px; margin-bottom:16px; display:none; }
+.gen-status.on { display:block; background:#0d1117; border:1px solid #30363d; color:#c9d1d9; white-space:pre-wrap; }
+.gen-status.err { border-color:#f85149; color:#f85149; }
+.candidate-card { border:1px solid #30363d; border-radius:8px; padding:12px; margin-top:8px; cursor:pointer; background:#0d1117; }
+.candidate-card:hover { border-color:#58a6ff; }
+.candidate-card h4 { margin:0 0 4px; color:#58a6ff; }
+.candidate-card .ob { color:#8b949e; font-size:12px; }
+</style>
+
+<script>
+var BOOK_ID = "{{ book_id }}";
+var __BI__ = {{ basic_info|tojson }};
+
+function $(id){ return document.getElementById(id); }
+
+/* —— basic_info <-> 表单 —— */
+function biToForm(bi) {
+    bi = bi || {};
+    var wb = bi.world_building || {};
+    $('wb-era').value = wb.era || ''; $('wb-power_system').value = wb.power_system || '';
+    $('wb-geography').value = wb.geography || ''; $('wb-culture').value = wb.culture || '';
+    $('wb-history').value = wb.history || ''; $('wb-social_structure').value = wb.social_structure || '';
+    $('wb-core_conflict').value = wb.core_conflict || ''; $('wb-world_summary').value = wb.world_summary || '';
+    $('wb-factions').value = (wb.factions || []).map(function(f){
+        return (f && typeof f === 'object') ? (f.name + (f.stance ? ':' + f.stance : '')) : f;
+    }).join('\n');
+    $('wb-rules').value = (wb.rules || []).join('\n');
+    var p = bi.protagonist || {};
+    $('p-name').value = p.name || ''; $('p-identity').value = p.identity || '';
+    $('p-personality').value = p.personality || ''; $('p-golden_finger').value = p.golden_finger || '';
+    $('p-background').value = p.background || ''; $('p-gender').value = p.gender || '';
+    $('p-age').value = p.age || ''; $('p-death_year').value = p.death_year || '';
+    $('sc-json').value = JSON.stringify(bi.supporting_cast || [], null, 1);
+    $('bi-tone').value = bi.tone || ''; $('bi-target_audience').value = bi.target_audience || '';
+    $('bi-pov').value = bi.pov || ''; $('bi-era_language').value = bi.era_language || '';
+}
+function formToBi() {
+    function parseFactions(txt) {
+        var out = [];
+        txt.split(/[\n,，、;；]+/).forEach(function(x){
+            x = x.trim(); if (!x) return;
+            var i = x.indexOf(':');
+            if (i > 0) out.push({name: x.slice(0,i).trim(), stance: x.slice(i+1).trim()});
+            else out.push(x);
+        });
+        return out;
+    }
+    function parseRules(txt){ return txt.split('\n').map(function(x){return x.trim();}).filter(Boolean); }
+    var wb = {
+        description: ($('world-idea').value || '').trim(),
+        era: $('wb-era').value.trim(), power_system: $('wb-power_system').value.trim(),
+        geography: $('wb-geography').value.trim(), culture: $('wb-culture').value.trim(),
+        history: $('wb-history').value.trim(), social_structure: $('wb-social_structure').value.trim(),
+        core_conflict: $('wb-core_conflict').value.trim(), world_summary: $('wb-world_summary').value.trim(),
+        factions: parseFactions($('wb-factions').value), rules: parseRules($('wb-rules').value),
+    };
+    var proto = {
+        name: $('p-name').value.trim(), identity: $('p-identity').value.trim(),
+        personality: $('p-personality').value.trim(), golden_finger: $('p-golden_finger').value.trim(),
+        background: $('p-background').value.trim(), gender: $('p-gender').value.trim(),
+        age: parseInt($('p-age').value || '0', 10) || 0,
+        death_year: parseInt($('p-death_year').value || '0', 10) || 0,
+    };
+    var sc = [];
+    try { sc = JSON.parse($('sc-json').value || '[]'); } catch(e) { alert('配角 JSON 格式不对'); return null; }
+    var payload = {
+        protagonist: proto, world_building: wb, supporting_cast: sc,
+        tone: $('bi-tone').value, target_audience: $('bi-target_audience').value,
+        pov: $('bi-pov').value, era_language: $('bi-era_language').value,
+    };
+    return payload;
+}
+
+/* —— SSE：生成世界观 —— */
+function statusShow(msg, cls) {
+    var el = $('gen-status');
+    el.className = 'gen-status on' + (cls ? ' ' + cls : '');
+    el.textContent = msg;
+}
+function startGenerate(mode) {
+    var body = {mode: mode};
+    if (mode === 'one') { body.idea = $('world-idea').value.trim(); }
+    if (mode === 'borrow') {
+        body.source_book_id = $('borrow-source').value;
+        body.tweak = $('borrow-tweak').value.trim();
+        if (!body.source_book_id) { alert('请先选择要借鉴的源书'); return; }
+    }
+    statusShow('生成中…', '');
+    fetch('/api/world-builder/' + BOOK_ID + '/generate', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+    }).then(function(resp) {
+        var reader = resp.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = '';
+        function read() {
+            return reader.read().then(function(r) {
+                if (r.done) return;
+                buf += decoder.decode(r.value, {stream: true});
+                var lines = buf.split('\n');
+                buf = lines.pop() || '';
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i];
+                    if (line.indexOf('data: ') !== 0) continue;
+                    try { handleGen(JSON.parse(line.slice(6))); } catch(e) {}
+                }
+                return read();
+            });
+        }
+        return read();
+    }).catch(function(err) {
+        statusShow('❌ 连接失败: ' + err.message, 'err');
+    });
+}
+function handleGen(evt) {
+    if (evt.event === 'phase' || evt.event === 'progress') {
+        statusShow(evt.message || '…');
+    } else if (evt.event === 'world_summary') {
+        statusShow('📝 ' + (evt.summary || ''));
+    } else if (evt.event === 'phase_done') {
+        statusShow('✅ ' + evt.message);
+    } else if (evt.event === 'done') {
+        statusShow('✅ 世界观生成完成，已刷新下方设定卡', '');
+        if (evt.basic_info) biToForm(evt.basic_info);
+    } else if (evt.event === 'error') {
+        statusShow('❌ ' + evt.message, 'err');
+    }
+}
+
+/* —— 示例候选 —— */
+function loadCandidates() {
+    var idea = $('world-idea').value.trim();
+    $('candidate-box').innerHTML = '<div class="gen-status on">生成候选…</div>';
+    fetch('/api/world-builder/' + BOOK_ID + '/candidates', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({idea: idea})
+    }).then(function(r){ return r.json(); }).then(function(data) {
+        if (!data.ok) { $('candidate-box').innerHTML = '<div class="gen-status err">' + data.error + '</div>'; return; }
+        var html = '';
+        (data.candidates || []).forEach(function(c, idx) {
+            html += '<div class="candidate-card" onclick="pickCandidate(' + idx + ')">'
+                + '<h4>#' + (idx+1) + ' ' + c.title + '</h4>'
+                + '<div class="ob">' + c.one_liner + '</div>'
+                + '<div class="ob">' + (c.world_brief || '') + '</div>'
+                + '<div class="ob">『' + (c.genre_hint || '') + '』</div>'
+                + '</div>';
+        });
+        window.__CANDIDATES__ = data.candidates || [];
+        $('candidate-box').innerHTML = html;
+    }).catch(function(err){ $('candidate-box').innerHTML = '<div class="gen-status err">请求失败: ' + err.message + '</div>'; });
+}
+function pickCandidate(idx) {
+    var c = (window.__CANDIDATES__ || [])[idx];
+    if (!c) return;
+    $('world-idea').value = c.one_liner;
+    if (c.world_brief) $('wb-world_summary').value = c.world_brief;
+    $('candidate-box').innerHTML = '';
+    statusShow('已选中候选：' + c.one_liner + '。点「🚀 生成世界观」展开。');
+}
+
+/* —— 从已有书借鉴 —— */
+function borrowPreview() {
+    var sid = $('borrow-source').value;
+    if (!sid) { alert('请先选择源书'); return; }
+    fetch('/api/world-builder/' + BOOK_ID + '/borrow-preview', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({source_book_id: sid})
+    }).then(function(r){ return r.json(); }).then(function(data) {
+        if (!data.ok) { $('borrow-preview-box').innerHTML = '<div class="gen-status err">' + data.error + '</div>'; return; }
+        var s = data.seed || {};
+        var wb = s.world_building || {};
+        var lines = [];
+        var proto = s.protagonist || {};
+        if (proto.name) lines.push('主角：' + proto.name + (proto.identity ? '（' + proto.identity + '）' : ''));
+        if (wb.era) lines.push('时代：' + wb.era);
+        if (wb.power_system) lines.push('力量体系：' + wb.power_system);
+        if (wb.geography) lines.push('地理：' + wb.geography);
+        if (wb.core_conflict) lines.push('核心矛盾：' + wb.core_conflict);
+        if (s.tone) lines.push('基调：' + s.tone);
+        $('borrow-preview-box').innerHTML = '<div class="gen-status on">将借鉴「' + data.source_title + '」(' + data.source_genre + ')：<br>' + lines.join('<br>') + '</div>';
+    }).catch(function(err){ $('borrow-preview-box').innerHTML = '<div class="gen-status err">请求失败: ' + err.message + '</div>'; });
+}
+
+/* —— 保存 / 确认 —— */
+function saveWorld() {
+    var payload = formToBi();
+    if (!payload) return;
+    fetch('/api/storyline/' + BOOK_ID + '/save-basic-info', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+    }).then(function(r){ return r.json(); }).then(function(data) {
+        statusShow(data.ok ? '✅ 设定已保存' : '❌ 保存失败: ' + (data.error || ''), data.ok ? '' : 'err');
+    }).catch(function(err){ statusShow('❌ 保存失败: ' + err.message, 'err'); });
+}
+function confirmWorld() {
+    var payload = formToBi();
+    if (!payload) return;
+    // 先把当前表单改动保存，再确认进入大纲生成
+    fetch('/api/storyline/' + BOOK_ID + '/save-basic-info', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+    }).then(function(r){ return r.json(); }).then(function() {
+        return fetch('/api/world-builder/' + BOOK_ID + '/confirm', {method: 'POST'});
+    }).then(function(r){ return r.json(); }).then(function(data) {
+        if (data.ok && data.redirect) { window.location.href = data.redirect; }
+        else { statusShow('❌ ' + (data.error || '确认失败'), 'err'); }
+    }).catch(function(err){ statusShow('❌ 确认失败: ' + err.message, 'err'); });
+}
+
+/* 初始化：渲染已有设定到表单 */
+biToForm(__BI__);
+</script>
+{% endblock %}

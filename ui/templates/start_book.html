@@ -4,124 +4,166 @@
 {% from "_flow_stepper.html" import flow_stepper %}
 {{ flow_stepper(1) }}
 <h1>🔰 启动新书</h1>
-<p class="subtitle">填写基本信息即可创建故事线草稿，随后在故事线编辑器里生成完整大纲并开始写作。</p>
+<p class="subtitle">写一句设定即可开书。系统会先生成完整「世界观设定卡」供你审查/微调，确认后再自动规划大纲并开始写作。</p>
 
 <form method="POST" class="form-grid">
-    <fieldset>
-        <legend>📖 基本信息</legend>
+    <fieldset class="main-idea">
+        <legend>✍️ 一句话设定（必填）</legend>
         <div class="form-row">
-            <label>书名（可先留空，引擎会生成）</label>
-            <input name="title" placeholder="书名（可选）" value="{{ request.form.get('title','') }}">
+            <textarea name="world_idea" rows="3" required
+                placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…">{{ request.form.get('world_idea','') }}</textarea>
         </div>
-        <div class="form-row">
-            <label>笔名</label>
-            <select name="pen_name" required>
-                <option value="">选择笔名...</option>
-                {% for p in pen_names %}
-                <option value="{{ p.pen_name }}" {% if request.form.get('pen_name')==p.pen_name %}selected{% endif %}>{{ p.pen_name }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-row half">
-            <label>流派</label>
-            <select name="genre" required>
-                <option value="">选择...</option>
-                <option value="玄幻" {% if request.form.get('genre')=='玄幻' %}selected{% endif %}>玄幻</option>
-                <option value="都市" {% if request.form.get('genre')=='都市' %}selected{% endif %}>都市</option>
-                <option value="言情" {% if request.form.get('genre')=='言情' %}selected{% endif %}>言情</option>
-                <option value="悬疑" {% if request.form.get('genre')=='悬疑' %}selected{% endif %}>悬疑</option>
-                <option value="穿越" {% if request.form.get('genre')=='穿越' %}selected{% endif %}>穿越</option>
-                <option value="科幻" {% if request.form.get('genre')=='科幻' %}selected{% endif %}>科幻</option>
-            </select>
-            <label>子类型</label>
-            <input name="sub_genre" placeholder="如：系统流、重生、逆袭" value="{{ request.form.get('sub_genre','') }}">
-        </div>
-        <div class="form-row half">
-            <label>目标平台</label>
-            <select name="platform">
-                <option value="fanqie" {% if request.form.get('platform')=='fanqie' %}selected{% endif %}>番茄小说</option>
-                <option value="qidian" {% if request.form.get('platform')=='qidian' %}selected{% endif %}>起点中文网</option>
-            </select>
-            <label>每章字数</label>
-            <input name="words_per_chapter" type="number" value="{{ request.form.get('words_per_chapter', 3000) }}" min="1000" max="10000" step="500">
-        </div>
-        <div class="form-row">
-            <label>故事线描述（可选，留空由引擎自动规划）</label>
-            <textarea name="storyline_hint" rows="2" placeholder="如：开头都市爽文30章，穿越到异界接系统升级流...">{{ request.form.get('storyline_hint','') }}</textarea>
-        </div>
+        <div class="form-row hint">系统将从这句话扩展出完整的时代/力量体系/势力/地理/文化等设定。</div>
     </fieldset>
 
     <fieldset>
-        <legend>🧑 主角设定（可选）</legend>
+        <legend>📦 基本信息</legend>
         <div class="form-row half">
-            <label>主角姓名</label>
-            <input name="protag_name" placeholder="留空由 AI 生成" value="{{ request.form.get('protag_name','') }}">
-            <label>身份/职业</label>
-            <input name="protag_identity" placeholder="如：废柴家族少主、程序员" value="{{ request.form.get('protag_identity','') }}">
+            <div>
+                <label>流派</label>
+                <select name="genre" required>
+                    <option value="">选择...</option>
+                    <option value="玄幻" {% if request.form.get('genre')=='玄幻' %}selected{% endif %}>玄幻</option>
+                    <option value="都市" {% if request.form.get('genre')=='都市' %}selected{% endif %}>都市</option>
+                    <option value="言情" {% if request.form.get('genre')=='言情' %}selected{% endif %}>言情</option>
+                    <option value="悬疑" {% if request.form.get('genre')=='悬疑' %}selected{% endif %}>悬疑</option>
+                    <option value="穿越" {% if request.form.get('genre')=='穿越' %}selected{% endif %}>穿越</option>
+                    <option value="科幻" {% if request.form.get('genre')=='科幻' %}selected{% endif %}>科幻</option>
+                </select>
+            </div>
+            <div>
+                <label>笔名</label>
+                <select name="pen_name" required>
+                    <option value="">选择笔名...</option>
+                    {% for p in pen_names %}
+                    <option value="{{ p.pen_name }}" {% if request.form.get('pen_name')==p.pen_name %}selected{% endif %}>{{ p.pen_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
         </div>
         <div class="form-row half">
-            <label>性格特点</label>
-            <input name="protag_personality" placeholder="如：幽默自嘲、冷酷理性" value="{{ request.form.get('protag_personality','') }}">
-            <label>金手指类型</label>
-            <input name="protag_golden_finger" placeholder="如：草民系统、血脉觉醒" value="{{ request.form.get('protag_golden_finger','') }}">
+            <div>
+                <label>目标平台</label>
+                <select name="platform">
+                    <option value="fanqie" {% if request.form.get('platform')=='fanqie' %}selected{% endif %}>番茄小说</option>
+                    <option value="qidian" {% if request.form.get('platform')=='qidian' %}selected{% endif %}>起点中文网</option>
+                </select>
+            </div>
+            <div></div>
         </div>
     </fieldset>
 
-    <fieldset>
-        <legend>🌍 世界观（可选）</legend>
-        <div class="form-row">
-            <label>世界观简述</label>
-            <textarea name="world_desc" rows="2" placeholder="如：灵气复苏后科技与修仙共存、异界大陆七国争霸...">{{ request.form.get('world_desc','') }}</textarea>
-        </div>
-    </fieldset>
+    <details class="advanced">
+        <summary>⚙️ 高级设置（可选，留空由引擎生成）</summary>
 
-    <fieldset>
-        <legend>📐 模板选择（可选，留空由引擎自动匹配）</legend>
-        <div class="form-row">
-            <label>开篇桥段</label>
-            <select name="opening_template_id">
-                <option value="">自动匹配</option>
-                {% for t in openings %}
-                <option value="{{ t.id }}">{{ t.name }} — {{ t.description[:40] }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-row">
-            <label>金手指桥段</label>
-            <select name="golden_finger_template_id">
-                <option value="">自动匹配</option>
-                {% for t in golden_fingers %}
-                <option value="{{ t.id }}">{{ t.name }} — {{ t.description[:40] }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-row">
-            <label>大纲结构</label>
-            <select name="structure_template_id">
-                <option value="">自动匹配</option>
-                {% for s in structures %}
-                <option value="{{ s.id }}">{{ s.name }} ({{ s.total_chapters }}章)</option>
-                {% endfor %}
-            </select>
-        </div>
-    </fieldset>
+        <fieldset>
+            <legend>📖 书名与章节</legend>
+            <div class="form-row half">
+                <div>
+                    <label>书名（可先留空）</label>
+                    <input name="title" placeholder="书名（可选）" value="{{ request.form.get('title','') }}">
+                </div>
+                <div>
+                    <label>子类型</label>
+                    <input name="sub_genre" placeholder="如：系统流、重生、逆袭" value="{{ request.form.get('sub_genre','') }}">
+                </div>
+            </div>
+            <div class="form-row half">
+                <div>
+                    <label>每章字数</label>
+                    <input name="words_per_chapter" type="number" value="{{ request.form.get('words_per_chapter', 3000) }}" min="1000" max="10000" step="500">
+                </div>
+                <div></div>
+            </div>
+            <div class="form-row">
+                <label>故事线描述（可选，留空由引擎自动规划）</label>
+                <textarea name="storyline_hint" rows="2" placeholder="如：开头都市爽文30章，穿越到异界接系统升级流...">{{ request.form.get('storyline_hint','') }}</textarea>
+            </div>
+        </fieldset>
 
-    <button type="submit" class="btn-primary">🚀 启动新书</button>
+        <fieldset>
+            <legend>🧑 主角设定</legend>
+            <div class="form-row half">
+                <div>
+                    <label>主角姓名</label>
+                    <input name="protag_name" placeholder="留空由 AI 生成" value="{{ request.form.get('protag_name','') }}">
+                </div>
+                <div>
+                    <label>身份/职业</label>
+                    <input name="protag_identity" placeholder="如：废柴家族少主、程序员" value="{{ request.form.get('protag_identity','') }}">
+                </div>
+            </div>
+            <div class="form-row half">
+                <div>
+                    <label>性格特点</label>
+                    <input name="protag_personality" placeholder="如：幽默自嘲、冷酷理性" value="{{ request.form.get('protag_personality','') }}">
+                </div>
+                <div>
+                    <label>金手指类型</label>
+                    <input name="protag_golden_finger" placeholder="如：草民系统、血脉觉醒" value="{{ request.form.get('protag_golden_finger','') }}">
+                </div>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>🌍 世界观补充（追加到一句话设定之后）</legend>
+            <div class="form-row">
+                <textarea name="world_desc" rows="2" placeholder="如：灵气复苏后科技与修仙共存、异界大陆七国争霸...">{{ request.form.get('world_desc','') }}</textarea>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>📐 模板选择</legend>
+            <div class="form-row">
+                <label>开篇桥段</label>
+                <select name="opening_template_id">
+                    <option value="">自动匹配</option>
+                    {% for t in openings %}
+                    <option value="{{ t.id }}">{{ t.name }} — {{ t.description[:40] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-row">
+                <label>金手指桥段</label>
+                <select name="golden_finger_template_id">
+                    <option value="">自动匹配</option>
+                    {% for t in golden_fingers %}
+                    <option value="{{ t.id }}">{{ t.name }} — {{ t.description[:40] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-row">
+                <label>大纲结构</label>
+                <select name="structure_template_id">
+                    <option value="">自动匹配</option>
+                    {% for s in structures %}
+                    <option value="{{ s.id }}">{{ s.name }} ({{ s.total_chapters }}章)</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </fieldset>
+    </details>
+
+    <button type="submit" class="btn-primary">🚀 创建书并生成世界观</button>
 </form>
 
 <style>
-.subtitle { color:#8b949e; margin-bottom:24px; }
+.subtitle { color:#8b949e; margin-bottom:24px; max-width:760px; }
 .form-grid { max-width:800px; }
 fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
 legend { color:#58a6ff; font-weight:600; padding:0 8px; }
 .form-row { margin-bottom:14px; }
 .form-row label { display:block; color:#c9d1d9; font-size:13px; margin-bottom:4px; }
-.form-row input, .form-row select { width:100%; background:#0d1117; border:1px solid #30363d; color:#f0f6fc; padding:8px 12px; border-radius:6px; font-size:14px; }
-.form-row input:focus, .form-row select:focus { border-color:#58a6ff; outline:none; }
+.form-row input, .form-row select, .form-row textarea { width:100%; background:#0d1117; border:1px solid #30363d; color:#f0f6fc; padding:8px 12px; border-radius:6px; font-size:14px; box-sizing:border-box; }
+.form-row input:focus, .form-row select:focus, .form-row textarea:focus { border-color:#58a6ff; outline:none; }
+.form-row textarea { resize:vertical; font-family:inherit; }
 .form-row.half { display:flex; gap:12px; }
-.form-row.half > * { flex:1; }
-.form-row.half label { display:block; }
-.form-row.half input, .form-row.half select { width:100%; }
+.form-row.half > div { flex:1; }
+.form-row.hint { color:#8b949e; font-size:12px; margin-top:-6px; }
+.fieldset.main-idea { border-color:#2ea043; }
+.advanced { border:1px solid #30363d; border-radius:8px; padding:12px 16px; margin-bottom:20px; }
+.advanced summary { cursor:pointer; color:#8b949e; font-size:14px; }
+.advanced[open] summary { margin-bottom:12px; color:#c9d1d9; }
 .btn-primary { background:#238636; color:white; border:none; padding:12px 32px; border-radius:8px; font-size:16px; cursor:pointer; transition:all .2s; }
 .btn-primary:hover { background:#2ea043; }
 </style>

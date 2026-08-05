@@ -201,8 +201,9 @@ class WorldBuildingGenerator:
             seed_basic_info=seed_basic_info, platform=platform)
         collected = []
         try:
+            # 推理型模型：max_tokens 必须留足推理余量（同 outline_generator 用 8192）
             for delta_key, text in self.llm.stream_deltas(
-                    WORLD_BUILD_SYSTEM, prompt, temperature=0.8, max_tokens=1500):
+                    WORLD_BUILD_SYSTEM, prompt, temperature=0.8, max_tokens=4096):
                 yield ("thinking", "world_draft", {"stream": text, "mode": delta_key})
                 if delta_key == "content":
                     collected.append(text)
@@ -221,8 +222,9 @@ class WorldBuildingGenerator:
                 seed_basic_info=seed_basic_info, profile=self.profile)
             collected = []
             try:
+                # 推理型模型：max_tokens 留足推理+大 JSON 余量（同 outline_generator 用 8192）
                 for delta_key, text in self.llm.stream_deltas(
-                        WORLD_BUILD_STRUCT_SYSTEM, prompt, temperature=0.5, max_tokens=3000):
+                        WORLD_BUILD_STRUCT_SYSTEM, prompt, temperature=0.5, max_tokens=8192):
                     yield ("thinking", "world_struct", {"stream": text, "mode": delta_key})
                     if delta_key == "content":
                         collected.append(text)
