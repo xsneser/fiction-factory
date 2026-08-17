@@ -236,9 +236,10 @@ D:\NovelEngine/
 ├── test_e2e_pages.py       # 端到端页面测试（12页+11侧栏+3书续写）
 ├── test_reader.py          # 番茄阅读解析测试
 │
-├── docs/                   # 设计文档
-│   ├── 项目规划.md
-│   └── 开源调研.md
+├── docs/                   # 文档
+│   ├── 设计文档-总览-claude.md  # 唯一主设计文档
+│   ├── archive/            # 已合并/历史设计文档（项目规划 v0.6 等）
+│   └── 调研与审查报告（开源调研 / 写作质量对比 / 网文开头 / 人类创作思考路线 / 审查报告 x2 / AGENTS_LEGACY）
 │
 ├── requirements.txt
 └── LICENSE
