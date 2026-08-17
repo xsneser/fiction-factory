@@ -238,8 +238,7 @@ D:\NovelEngine/
 │
 ├── docs/                   # 文档
 │   ├── 设计文档-总览-claude.md  # 唯一主设计文档
-│   ├── archive/            # 已合并/历史设计文档（项目规划 v0.6 等）
-│   └── 调研与审查报告（开源调研 / 写作质量对比 / 网文开头 / 人类创作思考路线 / 审查报告 x2 / AGENTS_LEGACY）
+│   └── archive/            # 全部历史文档归档（设计稿/交接/优化/调研/审查报告等 19 份）
 │
 ├── requirements.txt
 └── LICENSE

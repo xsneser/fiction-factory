@@ -137,7 +137,7 @@ D:\NovelEngine/
 ├── api.json / api.example.json  # API 配置（Key 明文，gitignore）
 ├── test_all.py (94 项) · test_chapters.py · test_e2e_pages.py · test_reader.py
 ├── launch.bat / launch.sh
-└── docs/                        # 主设计文档 + 调研/审查报告 + archive/（历史归档）
+└── docs/                        # 唯一主设计文档 + archive/（全部历史文档归档）
 ```
 
 ### 2.3 架构核心结论
@@ -606,16 +606,12 @@ python test_chapters.py / test_reader.py
 
 ### 14.1 当前文档（docs/ 顶层）
 
+docs/ 顶层仅保留本文档（唯一主设计文档）与 `archive/`（全部历史文档归档）：
+
 | 文档 | 定位 |
 |---|---|
 | `设计文档-总览-claude.md` | **唯一主设计文档**（本文档） |
-| `开源调研.md` | 早期开源项目架构调研 |
-| `写作质量对比-开源项目-2026-08-05.md` | 质量对比 + §六 改进清单 |
-| `网文开头处理-开源调研.md` | 网文开头处理调研 |
-| `人类创作思考路线-开源调研与方案.md` | 创作思考路线 + Tier 落地方案 |
-| `审查报告-设计与实现差异.md` | 08-01 设计-实现差异审查 |
-| `审查报告-完成度核对-2026-08-05.md` | 完成度核对审查（本文档的事实基线） |
-| `AGENTS_LEGACY.md` | 遗留 Agent 文档 |
+| `archive/` | 全部已合并/历史文档（设计稿、交接、优化、UX、任务系统、调研、审查报告等 19 份） |
 
 ### 14.2 归档文档（docs/archive/）
 
@@ -633,12 +629,20 @@ python test_chapters.py / test_reader.py
 | `ui-notes.md` | UI 改进记录 | 已全部完成 → §八.4 |
 | `novel-factory-timeline.html` | 时间线可视化设计稿 | 已实现为 story_line.js → §八.2 |
 | `设计文档.md` | 另一会话合并版 | v1.1 已并入并退役 |
+| `开源调研.md` | 早期开源项目架构调研（07-28） | 竞品全景 → §14.3 |
+| `审查报告-设计与实现差异.md` | 08-01 设计-实现差异审查 | 已被 08-05 核对报告取代 |
+| `人类创作思考路线-开源调研与方案.md` | 创作思考路线 + Tier 落地方案（08-05） | 免费规则改进待办 → §7.3/§13 |
+| `写作质量对比-开源项目-2026-08-05.md` | 质量对比 + §六 改进清单（08-05） | 改进清单 → §7.3/§13 |
+| `网文开头处理-开源调研.md` | 网文开头处理调研（08-05） | 炸裂开场 → §4.4 |
+| `审查报告-完成度核对-2026-08-05.md` | 完成度核对审查 | 本文档的**事实基线** |
+| `AGENTS_LEGACY.md` | 参考项目 show-me-the-story 的 Go AGENTS.md | 与 NovelEngine 无关，仅存档 |
 
 ### 14.3 参考项目
 
 - **[Nigh/show-me-the-story](https://github.com/Nigh/show-me-the-story)** — 核心架构参考（早期 core/ 为 Go→Python 移植）；工程实践清单见 §6.2。
 - **[qiuxinyuan321/novel-writer-master](https://github.com/qiuxinyuan321/novel-writer-master)** — 流式 UI + AI 降重灵感。
-- 写作质量对比（9 家竞品）：`docs/写作质量对比-开源项目-2026-08-05.md`。
-- 人类创作思考路线（11 步认知模型 + 分级落地方案）：`docs/人类创作思考路线-开源调研与方案.md`。
+- 写作质量对比（9 家竞品）：`docs/archive/写作质量对比-开源项目-2026-08-05.md`。
+- 人类创作思考路线（11 步认知模型 + 分级落地方案）：`docs/archive/人类创作思考路线-开源调研与方案.md`。
+- 架构向调研：`docs/archive/开源调研.md`；开头向调研：`docs/archive/网文开头处理-开源调研.md`。
 
 > *"从 show-me-the-story 的架构思想出发，走向真正的网文工业量产。"*
