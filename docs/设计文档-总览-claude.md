@@ -119,7 +119,7 @@ D:\NovelEngine/
 │   ├── text_utils.py            # count_prose_units（中文字数唯一来源）
 │   ├── json_store.py            # read_json / write_json_atomic
 │   ├── safe_paths.py            # ensure_child_path / is_safe_book_id / parse_int
-│   └── embeds/                  # 内置技能
+│   └── embeds/                  # 空目录残留（旧 core/embeds 内置技能已随 v2 收敛删除，无技能文件）
 ├── plugins/                     # 采集与工具
 │   ├── fanqie_scout.py          # 番茄侦察兵（搜/下/析/入库）
 │   ├── font_decoder.py          # PUA 字体解码（362 映射表）
@@ -159,7 +159,7 @@ D:\NovelEngine/
 | 字段 | 说明 |
 |---|---|
 | `book_title/genre/sub_genre/words_per_chapter/pen_name/platform` | 书级元信息 |
-| `basic_info` | 设定卡：protagonist / world_building / supporting_cast / tone / target_audience / pov / era_language / rebirth_time / style |
+| `basic_info` | 设定卡：protagonist / world_building / supporting_cast / tone / target_audience / pov / era_language（`rebirth_time`/`style` 不是 basic_info 顶层键，是书级设定卡的派生渲染段） |
 | `outlines[]` | 大纲槽位（多条，可重叠/接续/融合） |
 | `plots[]` | 桥段槽位（挂在某大纲某阶段下） |
 | `threads[]` | 叙事线程（多线程设局/收局） |
@@ -373,12 +373,12 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 | D | 线程与呼应 | `_plan_threads_and_splits` | 非流式 | 0.3 | **16384** | 设定卡+大纲+桥段≤60 | 每新书 1 次 |
 | E | 内涵复查(4.5) | `_review_theme_assignments` | 流式 | 0.3 | 8192 | 桥段快照≤20 | 每新书 1 次 |
 | F | 一致性验证 | `_validate_with_llm` | 流式 | 0.3 | 8192 | 大纲视图≤10 | 每新书 1 次 |
-| G | 书名生成 | `_generate_book_meta` | 流式 | 0.8 | 1024 | 流派/平台+第1章前1000字 | 详情页手动触发 |
-| H | 简介生成 | `_generate_book_meta` | 流式 | 0.8 | 1024 | 同 G | 同上 |
-| I | 桥段写作 | `StorylineChapterWriter._group_prompt` | 流式 | 0.7 | **1600** | 设定卡精简+计划+摘要+前文窗口+命中提示 | 每短句组 |
-| J | 笑点探测器 | `GagInjector.detect` | 流式 | 0.3 | 400 | ≤500 token（recent 450 字 + 池 4×60） | 每短句组（按频率） |
-| K | 语义摘要 | `engine._summarize_chapter` | 流式 | 0.3 | 1024 | ≤500 token（content 尾 600 字） | 每章 1 次 |
-| L | 大纲助手 | `OutlineAgent._parse` | 流式 | 0.2 | 2048 | 故事线上下文 + 用户指令 | 用户触发 |
+| G | 书名生成 | `_generate_book_meta` | 非流式 | 0.8 | 1024 | 流派/平台+第1章前1000字 | 详情页手动触发 |
+| H | 简介生成 | `_generate_book_meta` | 非流式 | 0.8 | 1024 | 同 G | 同上 |
+| I | 桥段写作 | `StorylineChapterWriter._group_prompt` | 非流式 | 0.7 | **1600** | 设定卡精简+计划+摘要+前文窗口+命中提示 | 每短句组 |
+| J | 笑点探测器 | `GagInjector.detect` | 非流式 | 0.3 | 400 | ≤500 token（recent 450 字 + 池 4×60） | 每短句组（按频率） |
+| K | 语义摘要 | `engine._summarize_chapter` | 非流式 | 0.3 | 1024 | ≤500 token（content 尾 600 字） | 每章 1 次 |
+| L | 大纲助手 | `OutlineAgent._parse` | 非流式 | 0.2 | 2048 | 故事线上下文 + 用户指令 | 用户触发 |
 
 ### 5.4 flash 坑（关键经验）
 
