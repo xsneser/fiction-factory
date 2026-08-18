@@ -21,36 +21,33 @@ def check(name, cond, detail=""):
         FAIL.append(name)
 
 
-# ─── 1) StructureTemplate themes 序列化往返 ───
-t = StructureTemplate(id="t1", name="测试", genre="玄幻", themes=["公平（Justice）"])
-d = t.to_dict()
-t2 = StructureTemplate.from_dict(d)
-check("模板 themes 序列化往返", t2.themes == ["公平（Justice）"])
+# ─── 1) 模板级内涵已移除（内涵唯一来源 = StageNode.themes）───
+t0 = StructureTemplate(id="t1", name="测试", genre="玄幻")
+d0 = t0.to_dict()
+check("模板级无 themes 字段", "themes" not in d0)
+check("模板 from_dict 兼容", StructureTemplate.from_dict({"id": "x", "name": "n", "genre": "g"}).id == "x")
 
-# 存量兼容：无 themes 字段 → []
-t3 = StructureTemplate.from_dict({"id": "x", "name": "n", "genre": "g"})
-check("模板 themes 缺省 []", t3.themes == [])
+# ─── 2) 内置种子：阶段内涵（非模板级）───
+check("内置模板含阶段内涵", any(any(s.themes for s in x.stages) for x in BUILTIN_STRUCTURES))
+check("内置内涵为中英对照", any(s.themes and s.themes[0]["name"] == "公平（Justice）"
+      for s in BUILTIN_STRUCTURES[1].stages))
 
-# ─── 2) 内置种子带内涵 ───
-check("内置模板全带 themes", all(x.themes for x in BUILTIN_STRUCTURES),
-      str([(x.id, x.themes) for x in BUILTIN_STRUCTURES]))
-check("内置内涵为中英对照", "公平（Justice）" in BUILTIN_STRUCTURES[1].themes)
-
-# 结构库实例读取（存量 structures.json 已迁移）
+# 结构库实例读取（存量 jsonl 已迁移：无模板级 themes）
 lib = StructureLibrary()
-empty = [x.id for x in lib.templates if not x.themes]
-check("存量结构库模板全带 themes", not empty, str(empty))
+check("存量模板无顶层 themes", all("themes" not in t.to_dict() for t in lib.templates))
 
-# ─── 3) 生成时从大纲模板取内涵 ───
+# ─── 3) 生成时从阶段内涵取全书内涵（只读阶段级）───
 gen = OutlineGenerator(llm_client=None, structure_lib=lib)
 tl = BookStoryline()
 tl.outlines = [
-    OutlineSlot(id="o1", template_id="struct_xuanhuan_01", name="a"),
-    OutlineSlot(id="o2", template_id="struct_tianwen_01", name="b"),
+    OutlineSlot(id="o1", template_id="struct_xuanhuan_01", name="a",
+                stages=structure_to_stages(lib.get_by_id("struct_xuanhuan_01"))),
+    OutlineSlot(id="o2", template_id="struct_chuanyue_01", name="b",
+                stages=structure_to_stages(lib.get_by_id("struct_chuanyue_01"))),
 ]
 themes = gen._select_book_themes("玄幻", tl)
-check("从大纲模板汇总内涵", "成长的代价（Cost of Growth）" in themes
-      and "传承与突破（Legacy & Breakthrough）" in themes, str(themes))
+check("从阶段内涵汇总全书内涵", "成长的代价（Cost of Growth）" in themes
+      and "复仇（Revenge）" in themes, str(themes))
 check("内涵去重取前3", len(themes) <= 3 and len(set(themes)) == len(themes), str(themes))
 
 # 空大纲 → 兜底默认（可挂桥段）

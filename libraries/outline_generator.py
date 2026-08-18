@@ -819,22 +819,15 @@ class OutlineGenerator:
 
     def _select_book_themes(self, genre: str,
                             tl: Optional[BookStoryline] = None) -> list[str]:
-        """选定全书内涵。
+        """选定全书内涵（只读阶段级，内涵唯一来源 = StageNode.themes）。
 
-        汇总两级内涵名（去重取前 3）：
-          1) 模板级：选中大纲模板的 themes
-          2) 阶段级：各 outline.stages[].themes[].name
+        汇总各 outline.stages[].themes[].name（去重取前 3）；
         全部为空 → 兜底默认（用可挂桥段的中英内涵名）。
         """
         default_themes = ["成长的代价（Cost of Growth）"]
         matched = []
         if tl:
             for o in (tl.outlines or []):
-                if o.template_id and self.structures:
-                    tmpl = self.structures.get_by_id(o.template_id)
-                    for name in (tmpl.themes if tmpl else []):
-                        if name not in matched:
-                            matched.append(name)
                 for stage in (o.stages or []):
                     for m in (stage.get("themes") or []):
                         name = m.get("name") if isinstance(m, dict) else m

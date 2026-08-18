@@ -33,7 +33,6 @@ class StructureTemplate:
     opening_patterns: list[str] = field(default_factory=list)
     climax_patterns: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
-    themes: list[str] = field(default_factory=list)   # 可承载内涵（中英对照名，供书级内涵带出）
     source: str = ""                 # 来源
     created_at: str = "2026-05-01"   # 收录时间
     enabled: bool = True              # 启用状态
@@ -53,7 +52,6 @@ class StructureTemplate:
             "opening_patterns": self.opening_patterns,
             "climax_patterns": self.climax_patterns,
             "tags": self.tags,
-            "themes": self.themes,
             "source": self.source,
             "created_at": self.created_at,
             "enabled": self.enabled,
@@ -70,7 +68,6 @@ class StructureTemplate:
             opening_patterns=d.get("opening_patterns", []),
             climax_patterns=d.get("climax_patterns", []),
             tags=d.get("tags", []),
-            themes=d.get("themes", []),
             source=d.get("source", ""),
             created_at=d.get("created_at", "2026-05-01"),
             enabled=d.get("enabled", True),
@@ -177,7 +174,6 @@ BUILTIN_STRUCTURES = [
         opening_patterns=["plot_dating_011", "plot_dating_012"],  # 穿越开局、系统激活
         climax_patterns=["plot_dating_005", "plot_dating_007", "plot_dating_010"],
         tags=["玄幻", "修仙", "升级", "爽文"],
-        themes=["成长的代价（Cost of Growth）", "传承与突破（Legacy & Breakthrough）"],
     ),
     StructureTemplate(
         id="struct_dushi_01", name="都市爽文（逆袭流）",
@@ -221,7 +217,6 @@ BUILTIN_STRUCTURES = [
         opening_patterns=["plot_dating_011", "plot_dating_001"],  # 重生 + 退婚打脸
         climax_patterns=["plot_dating_005", "plot_dating_010"],
         tags=["都市", "逆袭", "爽文", "现代"],
-        themes=["公平（Justice）", "身份与伪装（Identity & Disguise）"],
     ),
     StructureTemplate(
         id="struct_xuanyi_01", name="悬疑推理（单元剧+主线）",
@@ -253,7 +248,6 @@ BUILTIN_STRUCTURES = [
         opening_patterns=["plot_dating_011"],  # 穿越/转生开局
         climax_patterns=["plot_dating_004"],  # 秘境探险(可用于终局大揭秘)
         tags=["悬疑", "推理", "反转", "单元剧"],
-        themes=["公平（Justice）"],
     ),
     StructureTemplate(
         id="struct_tianwen_01", name="言情甜文（日常向）",
@@ -289,7 +283,6 @@ BUILTIN_STRUCTURES = [
         opening_patterns=["plot_dating_011"],  # 穿越/重生开局
         climax_patterns=["plot_dating_006", "plot_dating_009"],  # 英雄救美、修罗场
         tags=["言情", "甜文", "日常", "短篇"],
-        themes=["归属感（Belonging）", "成长的代价（Cost of Growth）"],
     ),
     StructureTemplate(
         id="struct_chuanyue_01", name="穿越/重生爽文（快节奏）",
@@ -325,6 +318,5 @@ BUILTIN_STRUCTURES = [
         opening_patterns=["plot_dating_011", "plot_dating_012"],  # 穿越开局、金手指
         climax_patterns=["plot_dating_005", "plot_dating_001"],
         tags=["穿越", "重生", "快节奏", "爽文", "短篇"],
-        themes=["身份与伪装（Identity & Disguise）", "成长的代价（Cost of Growth）"],
     ),
 ]
