@@ -1,6 +1,6 @@
 # NovelEngine 设计文档（总览 · 当前状态）
 
-> 版本：v1.1 ｜ 更新：2026-08-17 ｜ 整理：Claude
+> 版本：v1.2 ｜ 更新：2026-08-18 ｜ 整理：Claude
 > 定位：**唯一主设计文档**。本文档合并吸收并取代以下源文档（已归档至 `docs/archive/`）：
 > `项目规划.md`（v0.6）· `交接文档.md` · `harness重构交接文档.md` · `新书创建-Harness架构与LLM提示词.md` · `优化方案-2026-08-04.md` · `优化方案核对-2026-08-04.md` · `待codex处理-2026-08-04.md` · `UX报告-2026-08-05.md` · `task-system-spec.md` · `ui-notes.md` · `novel-factory-timeline.html` · `设计文档.md`（另一会话合并版，v1.1 已并入并退役）
 >
@@ -66,11 +66,11 @@
 | 层 | 选型 | 说明 |
 |---|---|---|
 | 语言 | Python 3.10+ | — |
-| Web | **纯 Flask 3 + Jinja2**（端口 58080） | FastAPI / main.py / run.py 已随 v2 收敛**删除**；`ui/web_ui.py` 仅 35 行壳，注册 10 蓝图 |
+| Web | **纯 Flask 3 + Jinja2**（端口 58080） | FastAPI / main.py / run.py 已随 v2 收敛**删除**；`ui/web_ui.py` 仅 35 行壳，注册 9 蓝图 |
 | LLM | DeepSeek API（`deepseek-v4-flash`，兼容 OpenAI 格式） | `core/llm_client.py` 同步 + 流式 |
 | 存储 | JSON 文件系统 | 无数据库；`core/json_store.py` 原子写 |
 | 采集 | SSR 解析 + PUA 字体解码（fonttools） | 番茄搜索 API 已失效，走 Bing + SSR |
-| 依赖 | urllib3 / requests / flask / jinja2 / fonttools | `requirements.txt` 仅 5 项 |
+| 依赖 | urllib3 / requests / flask / jinja2 / fonttools / mcp | `requirements.txt` 6 项（mcp 仅供 MCP 服务器进程，Web 启动不依赖） |
 
 ### 2.2 目录结构（当前实际）
 
@@ -78,11 +78,11 @@
 D:\NovelEngine/
 ├── ui/                          # Web 层（纯 Flask，无 main.py/run.py）
 │   ├── web_ui.py                # Flask app 创建 + 日志 + 蓝图注册（35 行）
-│   ├── web_blueprints/          # 10 个蓝图（74 路由）
+│   ├── web_blueprints/          # 9 个蓝图（74 路由）
 │   │   ├── ctx.py               # 共享：全局服务/LLM/引擎缓存/故事线统一存取/sse_stream_response
 │   │   ├── dashboard.py         # 仪表盘 + 新书启动（3 路由）
 │   │   ├── storyline.py         # 故事线编辑器/详情 + 全部编辑 API，含 /timeline 302 兼容别名（19 路由）
-│   │   ├── desk.py              # 写作台（三栏）+ SSE 写作端点（9 路由）
+│   │   ├── desk.py              # 写作台（两栏）+ SSE 写作端点（9 路由）
 │   │   ├── books.py             # 书库/详情/书名简介生成（4 路由）
 │   │   ├── libraries.py         # 四大库 + 笔名管理页（12 路由）
 │   │   ├── publish.py           # 上架检查/发布/导出（7 路由）
@@ -233,7 +233,7 @@ D:\NovelEngine/
    - 落盘语义：`merge_basic_info` 保留用户已填非空字段，末尾打 `_world_generated` 标记。
    - 产出「设定圣经」维度：description / era / power_system / factions / rules（数值语义写死，全书唯一口径）/ geography / culture / history / social_structure / core_conflict / world_summary（`DEFAULT_WORLD_BUILDING`）。
    - 若 `basic_info_world_done` 已充实，`OutlineGenerator` Phase 1 可**跳过 LLM 故事分析**直接复用。
-2. 步骤条含世界观步骤；世界卡确认后进入规划态。
+2. 世界卡确认后进入规划态（流程关系以「当前阶段 → 下一步」状态条 + 面包屑表达，原 6 步步骤条已移除）。
 
 ### 4.3 大纲生成引擎（`outline_generator.py`）
 
@@ -392,7 +392,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 - **死代码清理**：旧状态机死函数（step/run/run_full_cycle + 4 个 `_exec_*`）、未用导入、`_api_tasks.json`、scout_debug 调试残留、空壳插件全部删除。
 - **保留** `route()`/`execute()`/`Op`/`Phase`（`test_all.py` Phase 9 依赖其返回值，5 次调用）。
-- **blueprint 拆分**：`web_ui.py` 约 2000 行 → 35 行壳 + 10 蓝图 / 74 路由。
+- **blueprint 拆分**：`web_ui.py` 约 2000 行 → 35 行壳 + 9 蓝图 / 74 路由。
 - **banned_in 修复**：跨书去重加 `book_id` 锚定。
 - **路径锚定**：engine 不再依赖 CWD（`safe_paths.py`）。
 - **成本补输入**：成本统计不再传空串。
@@ -462,14 +462,14 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 ## 八、UI/UX
 
-### 8.1 页面与蓝图（10 蓝图 / 74 路由 / 24 模板）
+### 8.1 页面与蓝图（9 蓝图 / 74 路由 / 22 模板）
 
 | 蓝图 | 主要页面 | 路由数 |
 |---|---|---|
-| `dashboard.py` | `/` 仪表盘、`/books/start` 新书启动 | 3 |
+| `dashboard.py` | `/` 仪表盘（统计+快捷入口+各书下一步）、`/books/start` 新书启动 | 3 |
 | `books.py` | `/books` 书库、`/books/<id>` 书详情（含草稿渲染/书名简介按钮）、generate-meta、delete | 4 |
-| `storyline.py` | `/storyline/<id>/edit|detail` 故事线编辑器/详情 + 编辑 API（含 `/timeline/<id>` 302 兼容别名） | 19 |
-| `desk.py` | `/books/<id>/continue` 写作台（三栏）、SSE 写作端点（write-bridge/write-chapter/step） | 9 |
+| `storyline.py` | 故事线编辑 API（`/storyline/<id>/edit|detail` 已 302 收敛到书详情/写作台，保留 19 个编辑 API，含 `/timeline/<id>` 302 兼容别名） | 19 |
+| `desk.py` | `/books/<id>/continue` 写作台（两栏）、SSE 写作端点（write-bridge/write-chapter/step）、`/desk`→书库 | 9 |
 | `libraries.py` | `/plots` `/structures` `/gags` `/profiles` `/profiles/new` + 启禁删除 API | 12 |
 | `publish.py` | `/publish` 发布索引、`/books/<id>/publish` 上架页 + check/mark-finished/export API | 7 |
 | `settings.py` | `/settings`（API Key/模型/预算/context_budget 配置 + 测试连接）、任务状态 API | 6 |
@@ -477,17 +477,21 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 | `world_builder.py` | `/books/<id>/world` 世界观设定卡 + generate/candidates/borrow-preview/confirm | 5 |
 | `ctx.py` | 共享：全局服务、get_llm、引擎缓存、故事线统一存取、`sse_stream_response` | — |
 
-### 8.2 写作台（三栏布局）
+### 8.2 写作台（两栏布局）
 
 ```
-┌─────────────┬──────────────────────────┬──────────────┐
-│  左：故事线    │        中：连续正文         │  右：生成/规划  │
-│  （垂直甘特图） │  （桥段逐组流式写入，滚动）   │  （写作助手）   │
-└─────────────┴──────────────────────────┴──────────────┘
+┌─────────────┬──────────────────────────────────┐
+│  左：故事线    │     中：连续正文（桥段逐组流式写入）      │
+│  （垂直甘特图） │  控制条（开始/停止/🌍设定）            │
+│              │  📋 规划与生成（折叠区：大纲/桥段/内涵）   │
+│              │  🖋 写作动态（折叠区）                │
+└─────────────┴──────────────────────────────────┘
 ```
 
 - 左侧 `story_line.js` 垂直甘特图（数据驱动）：大纲/桥段/笑点·内涵 + 🧵 线程横带 + 逐桥段高亮。
-- 中间只放正文（2026-08 布局重构后）；右侧承载生成/规划面板，可折叠。
+- 中间只放正文（2026-08 布局重构后）；规划/生成面板与写作动态并入中栏折叠区。
+- 第三栏（写作助手/写作动态）已删去：任务进度/日志由全局右侧栏承载，右侧栏为 **Agent 活动面板**（`🤖 Agent 活动`，见 §8.5）：按 agent 角色（写作/大纲/世界观/书名/大纲助手/侦察兵）展示活动卡片——角色徽标、书上下文、当前步骤/子步骤、`📡 LLM ×N` 次数、进度条、状态点，空闲自动折叠。
+- 基础设定唯一编辑面 = 世界观设定卡（`world_card.html`），写作台仅保留「🌍 设定」入口。
 
 ### 8.3 UX 8 方案（2026-08-05 全部落地）
 
@@ -497,16 +501,31 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 4. 单一渲染器（Jinja/JS 桥段卡对齐 + e2e 断言）
 5. 信息架构合并（书详情 + 时间线详情，草稿场景保留独立视图）
 6. 可读性（字号下限 11px、对比度 `--fg-dim #6e7681`）
-7. 核心工作台重排（基础设定折叠面板下移、流程条压缩、高亮呼吸动画）
+7. 核心工作台重排（基础设定折叠面板下移、6 步步骤条移除改单行流程状态条、高亮呼吸动画）
 8. 抓取页精简（置灰 tab）
 
 ### 8.4 任务系统（`plugins/task_manager.py`）
 
 - **状态机**：`start → running → cancel → cancelled → done/failed`。
 - **核心 API**：`start(task_id,name,title,total)` / `ensure_single(name)`（同工具互斥，新任务替代旧任务）/ `register_cancel` / `cancel` / `is_cancelled` / `progress` / `log` / `done` / `fail` / `get_tasks` / `clear_old(keep_seconds=60)` / `remove`。任务卡片与日志各自独立更新；每个任务最多保留 100 条日志。
+- **Agent 语义**（2026-08-18）：`start()` 增加可选 `agent`（角色）/ `book_id` / `book_title` / `step` / `sub_step` / `llm_calls` 字段（全部向后兼容）；新增 `llm_call` / `set_step` / `get`。各蓝图调用点按 agent 角色上报书上下文，SSE 生成器内按 `group_chunk`/`decision`/`phase_done` 事件近似计 LLM 次数（展示级，成本权威值仍在 `cost.json`）。
 - **端点**（settings 蓝图）：`GET /api/status/tasks`（前端 pollStatus 每 2s 轮询）、`POST /api/status/tasks/close`（关闭卡片，仅 UI 不杀进程）。
 - **前端规范**：卡片（卡头+进度条仅 running+卡底阶段/时间，按开始时间新→旧）；日志（增量追加、颜色区分工具、刷新后丢失）；关闭=取消（运行中 kill 线程，worker 在检查点 `is_cancelled()` 优雅停止）。
 - **状态栏规范**（ui-notes 合并）：每工具单任务互斥；日志统一进右侧状态栏（showAlert/showToast 双通道已移除）；同工具替代时旧日志自动清除（data-task-id 标记）；body 固定 `height:100vh`，main/aside 内部滚动。
+
+### 8.5 MCP 接口（外部 Agent 驱动层，2026-08-18）
+
+把引擎全部需要调用 LLM 的操作暴露为 **MCP 工具**，供外部 Agent（如 Claude Code）通过 `claude mcp add` 以工具调用方式驱动创作全链路（续写/写桥段、改书名/简介、改大纲、生成世界观、大纲序列、桥段填充、加料、大纲助手自然语言改故事线等）。
+
+- **实现**：单文件 `mcp_server.py`（项目根），FastMCP（mcp SDK **1.x**，`requirements.txt` 固定 `mcp>=1.2.0,<2.0`；**mcp 2.0 移除了 FastMCP API，勿升级**）。
+- **形态**：独立 stdio 进程，与 Flask Web 服务并存；数据协调点是 `books/<id>/` 文件 JSON（原子写），**不共享 Web 进程内存引擎缓存**（MCP 进程内按 book_id 缓存 `NovelEngine`，规划类改动后失效重建）。Web 侧 `book_detail` 已加 mtime 重扫，读到 MCP 写入后的新 book.json。
+- **长操作**：写作/生成类全部**阻塞式工具调用**——工具内 `consume_dict_stream` / `consume_triple_stream` 迭代 SSE 生成器到完成，返回最终 JSON（不透传 SSE）。
+- **注册**（项目根执行）：`claude mcp add --scope project novel-engine -- python mcp_server.py`
+- **工具清单（20 个）**：
+  - 只读/建书：`list_books` / `get_book_state` / `get_storyline` / `create_book` / `borrow_preview`
+  - 规划/编辑：`save_basic_info` / `generate_title` / `generate_outlines` / `generate_full_outline` / `extend_outline` / `confirm_outlines` / `fill_plots` / `fill_gags` / `outline_agent` / `generate_world` / `world_candidates` / `confirm_world`
+  - 写作/元数据：`write_next_bridge` / `write_chapter` / `generate_book_meta`
+- **限制**：v1 不做 MCP→Web 侧栏 IPC（Web 侧栏只渲染 Web 进程任务）；双进程勿同时操作同一本书。侦察兵（scout）分析、内容审查、去AI 等工具留 v1.5 扩展。
 
 ---
 
@@ -593,12 +612,13 @@ python test_chapters.py / test_reader.py
 ### 13.2 远期（项目规划 Phase 4/5）
 
 - **Phase 4 质量体系**：全书优化诊断管线（reconcile.py 已删，需重建或放弃）、段落级修订 + diff 追踪、设定协调（改设定后自动调和章节）、审查规则库扩充（当前 reviewer 5 项）。
-- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（tool-calling loop，现有 OutlineAgent 是雏形）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
+- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（tool-calling loop；MCP 工具化已落地 §8.5，Agent 编排逻辑仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
 
 ### 13.3 文档回写清单
 
 - `docs/archive/项目规划.md` 仍描述 v0.5 架构，作为历史归档保留；本文档为唯一技术权威。
 - 改代码必须同步本文档。
+- v1.2（2026-08-18）：右侧栏运行状态 → Agent 活动面板（§8.2/§8.4）；新增 MCP 服务器（§8.5）；`requirements.txt` 增加 mcp。
 
 ---
 

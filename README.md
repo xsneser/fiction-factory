@@ -56,6 +56,17 @@ cp api.example.json api.json
 python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
 ```
 
+### MCP 接口（外部 Agent 驱动）
+
+把引擎全部 LLM 操作（续写/写桥段、书名/简介、大纲、世界观、大纲助手等 20 个工具）暴露为 MCP，供 Claude Code 等 Agent 以工具调用方式驱动创作。注册后 `claude mcp list` 可查：
+
+```bash
+claude mcp add --scope project novel-engine -- python mcp_server.py
+claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
+```
+
+> 独立 stdio 进程，与 Web 服务并存（共享 `books/` 文件，勿同时操作同一本书）。详见主设计文档 §8.5。
+
 ---
 
 ## 引擎核心流程
@@ -190,27 +201,29 @@ D:\NovelEngine/
 │
 ├── ui/                     # Web 用户界面
 │   ├── web_ui.py           # Flask 管理面板
-│   ├── templates/          # Jinja2 模板（20个）
-│       ├── base.html       # 布局骨架
-│       ├── dashboard.html  # 仪表盘
+│   ├── templates/          # Jinja2 模板（22个）
+│       ├── base.html       # 布局骨架（导航/面包屑/右栏 Agent 活动面板）
+│       ├── dashboard.html  # 仪表盘（统计+快捷入口+各书下一步）
 │       ├── books.html      # 图书列表
 │       ├── book_detail.html# 单书详情
-│       ├── start_book.html # 新书启动 ① 选择笔名/流派
-│       ├── storyline_editor.html # 故事线编辑器（写作台）
-│       ├── storyline_detail.html # 故事线草稿详情
+│       ├── start_book.html # 新书启动 ① 一句话设定
+│       ├── world_card.html # 世界观设定卡（设定唯一编辑面）
+│       ├── storyline_write_flow.html # 写作台（两栏：故事线+正文/规划）
 │       ├── storyline_outline_card.html # 大纲卡片组件
-│       ├── storyline_write_flow.html # 蓝图式写作台
-│       ├── desk_empty.html # 写作台空界面（从书库选书进入）
+│       ├── publish.html    # 单书上架/导出
+│       ├── publish_index.html # 上架管理中心
 │       ├── extract.html    # 内容提取
 │       ├── settings.html   # 设置
-│       ├── review_test.html# 审阅测试
-│       ├── deai.html       # 降重测试
+│       ├── review_test.html# 审查测试（调试工具组）
+│       ├── deai.html       # 去AI测试（调试工具组）
 │       ├── plots.html      # 桥段库
 │       ├── structures.html # 大纲库
 │       ├── gags.html       # 笑点库
 │       ├── profiles.html   # 笔名管理
 │       ├── new_profile.html# 新建笔名
-│       └── scout.html      # 番茄侦察兵
+│       ├── scout.html      # 番茄侦察兵
+│       ├── _flow_stepper.html # 流程状态条 + 状态徽标 partial
+│       └── _info_bar.html  # 书信息条 partial
 │   └── static/             # CSS / JS
 │       ├── css/            # base.css / story_line.css
 │       └── js/             # base.js / story_line.js / library_review.js
@@ -233,7 +246,7 @@ D:\NovelEngine/
 │
 ├── test_all.py             # 全模块集成测试
 ├── test_chapters.py        # 章节生成测试
-├── test_e2e_pages.py       # 端到端页面测试（12页+11侧栏+3书续写）
+├── test_e2e_pages.py       # 端到端页面测试（15页+13侧栏+3书续写）
 ├── test_reader.py          # 番茄阅读解析测试
 │
 ├── docs/                   # 文档
@@ -241,6 +254,7 @@ D:\NovelEngine/
 │   └── archive/            # 全部历史文档归档（设计稿/交接/优化/调研/审查报告等 19 份）
 │
 ├── requirements.txt
+├── mcp_server.py            # MCP 服务器（20 个工具，claude mcp add 接入）
 └── LICENSE
 ```
 
