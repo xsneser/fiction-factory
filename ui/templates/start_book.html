@@ -93,27 +93,16 @@
             {% endfor %}
         </fieldset>
         <fieldset>
-            <legend>🎭 主角与配角设定（可手动编辑，也可 AI 生成）</legend>
+            <legend>🎭 角色设定（可手动编辑，也可 AI 从原型库生成）</legend>
             <div class="form-row">
-                <button type="button" class="btn-primary" onclick="WZ.genCharacters()">🎲 生成主角与配角候选</button>
+                <button type="button" class="btn-primary" onclick="WZ.genCharacters()">🎲 生成角色候选（原型库挑选）</button>
             </div>
             <div id="wz-characters-box"></div>
             <fieldset>
-                <legend>🧑 主角（可手动编辑）</legend>
-                <div class="form-row half">
-                    <div><label>主角姓名</label><input id="wz-protag_name"></div>
-                    <div><label>身份/职业</label><input id="wz-protag_identity"></div>
-                </div>
-                <div class="form-row half">
-                    <div><label>性格特点</label><input id="wz-protag_personality"></div>
-                    <div><label>金手指</label><input id="wz-protag_golden"></div>
-                </div>
-            </fieldset>
-            <fieldset>
-                <legend>👥 配角（可多选 / 多次生成 / 手动编辑）</legend>
-                <div id="wz-support-list"></div>
+                <legend>👥 角色列表（重要度：1=主角/核心，数字越小越重要）</legend>
+                <div id="wz-char-list"></div>
                 <div class="btn-row">
-                    <button type="button" class="btn-secondary" onclick="WZ.addSupportRow()">➕ 手动添加配角</button>
+                    <button type="button" class="btn-secondary" onclick="WZ.addCharRow()">➕ 手动添加角色</button>
                 </div>
             </fieldset>
         </fieldset>
@@ -357,7 +346,7 @@ var WZ = {
         var idea = (this.el('wz-world-desc3') && this.el('wz-world-desc3').value.trim()) || this.el('wz-idea').value.trim();
         var title = (this.el('wz-title') && this.el('wz-title').value.trim()) || '';
         var box = this.el('wz-characters-box');
-        box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成主角与配角候选…</div>';
+        box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成角色候选…</div>';
         var self = this;
         fetch('/api/world-builder/characters', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -365,63 +354,67 @@ var WZ = {
         }).then(function(r) { return r.json(); }).then(function(d) {
             if (!d.ok) { box.innerHTML = '❌ ' + d.error; return; }
             window.__CHARACTERS__ = d;
-            var html = '<div class="wz-cand-label">🧑 主角候选（点选 → 填入主角，单主角）：</div>';
+            var html = '<div class="wz-cand-label">🧑 主角候选（重要度 1，点「➕ 添加」追加）：</div>';
             (d.protagonists || []).forEach(function(p, i) {
-                html += '<div class="wz-candidate-card" data-kind="protag" data-idx="' + i + '" onclick="WZ.pickProtag(this)">'
-                    + '<div class="wz-cand-title">' + (p.name || '') + '（' + (p.identity || '') + '）</div>'
+                html += '<div class="wz-candidate-card" style="display:flex;align-items:center;gap:8px" data-kind="protag" data-idx="' + i + '">'
+                    + '<div style="flex:1">'
+                    + '<div class="wz-cand-title">' + (p.name || '') + '（' + (p.identity || '') + '）'
+                    + (p.archetype_id ? ' · 🎭' + p.archetype_id : '') + '</div>'
                     + '<div class="wz-cand-one">性格：' + (p.personality || '') + '｜金手指：' + (p.golden_finger || '') + '</div>'
+                    + '</div>'
+                    + '<button type="button" class="btn-secondary" onclick="WZ.addCharFromCandidate(\'protag\', ' + i + ')">➕ 添加</button>'
                     + '</div>';
             });
             if ((d.supporting_cast || []).length) {
-                html += '<div class="wz-cand-label" style="margin-top:8px">👥 配角候选（点「➕ 添加」→ 追加到下方列表，可多选）：</div>';
+                html += '<div class="wz-cand-label" style="margin-top:8px">👥 其他角色候选（重要度 2-5，点「➕ 添加」追加，可多选）：</div>';
                 (d.supporting_cast || []).forEach(function(c2, i) {
                     html += '<div class="wz-candidate-card" style="display:flex;align-items:center;gap:8px" data-kind="support" data-idx="' + i + '">'
                         + '<div style="flex:1">'
-                        + '<div class="wz-cand-title">' + (c2.name || '') + '（' + (c2.identity || '') + '，' + (c2.relation || '') + '）</div>'
-                        + '<div class="wz-cand-one">性格：' + (c2.personality || '') + (c2.catchphrase ? '｜口癖：' + c2.catchphrase : '') + '</div>'
+                        + '<div class="wz-cand-title">' + (c2.name || '') + '（' + (c2.identity || '') + '，重要度' + (c2.importance || 2) + '）'
+                        + (c2.archetype_id ? ' · 🎭' + c2.archetype_id : '') + '</div>'
+                        + '<div class="wz-cand-one">性格：' + (c2.personality || '') + (c2.catchphrase ? '｜口癖：' + c2.catchphrase : '') + (c2.relation ? '｜关系：' + c2.relation : '') + '</div>'
                         + '</div>'
-                        + '<button type="button" class="btn-secondary" onclick="WZ.addSupportFromCandidate(' + i + ')">➕ 添加</button>'
+                        + '<button type="button" class="btn-secondary" onclick="WZ.addCharFromCandidate(\'support\', ' + i + ')">➕ 添加</button>'
                         + '</div>';
                 });
-                html += '<div class="wz-cand-label" style="margin-top:6px">再次点击「生成」可换一批配角候选（已添加的保留）。</div>';
+                html += '<div class="wz-cand-label" style="margin-top:6px">再次点击「生成」可换一批候选（已添加的保留）。</div>';
             }
             box.innerHTML = html;
         }).catch(function(e) { box.innerHTML = '❌ 请求失败: ' + e.message; });
     },
-    pickProtag: function(elm) {
-        var d = window.__CHARACTERS__;
-        if (!d) return;
-        var p = (d.protagonists || [])[+elm.dataset.idx];
-        if (!p) return;
-        this.el('wz-protag_name').value = p.name || '';
-        this.el('wz-protag_identity').value = p.identity || '';
-        this.el('wz-protag_personality').value = p.personality || '';
-        this.el('wz-protag_golden').value = p.golden_finger || '';
-        document.querySelectorAll('#wz-characters-box .wz-candidate-card[data-kind="protag"]').forEach(function(c) { c.classList.remove('picked'); });
-        elm.classList.add('picked');
-        if (typeof showToast === 'function') showToast('已选定主角，可微调或继续生成配角', 'success');
-    },
-    /* —— 配角列表：手动添加 / 候选追加 / 删除 —— */
-    addSupportRow: function(data) {
+    /* —— 统一角色列表：手动添加 / 候选追加 / 删除 —— */
+    addCharRow: function(data) {
         data = data || {};
-        var list = this.el('wz-support-list');
+        var list = this.el('wz-char-list');
         var row = document.createElement('div');
-        row.className = 'support-row';
-        row.style.cssText = 'display:flex;gap:8px;margin:6px 0;align-items:center';
+        row.className = 'char-row';
+        if (data.archetype_id) row.setAttribute('data-arch', data.archetype_id);
+        row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin:6px 0;padding:8px;background:#0d1117;border:1px solid #21262d;border-radius:6px;align-items:center';
         row.innerHTML =
-            '<input class="sp-name" placeholder="姓名" value="' + (data.name || '') + '" style="flex:1;min-width:0">'
-            + '<input class="sp-identity" placeholder="身份/职业" value="' + (data.identity || '') + '" style="flex:1.4;min-width:0">'
-            + '<input class="sp-relation" placeholder="与主角关系" value="' + (data.relation || '') + '" style="flex:1;min-width:0">'
-            + '<button type="button" class="small" onclick="this.closest(\'.support-row\').remove()">✕</button>';
+            '<input class="ch-name" placeholder="姓名" value="' + (data.name || '') + '" style="flex:1;min-width:70px">'
+            + '<input class="ch-identity" placeholder="身份" value="' + (data.identity || '') + '" style="flex:1.2;min-width:80px">'
+            + '<input class="ch-personality" placeholder="性格" value="' + (data.personality || '') + '" style="flex:1.2;min-width:80px">'
+            + '<input class="ch-catchphrase" placeholder="口癖" value="' + (data.catchphrase || '') + '" style="flex:1;min-width:70px">'
+            + '<select class="ch-importance" title="重要度（1最高）">'
+            + [1, 2, 3, 4, 5].map(function(n) { return '<option value="' + n + '"' + (String(data.importance || 1) === String(n) ? ' selected' : '') + '>' + n + '</option>'; }).join('')
+            + '</select>'
+            + '<input class="ch-golden" placeholder="金手指" value="' + (data.golden_finger || '') + '" style="flex:1;min-width:70px">'
+            + '<input class="ch-relation" placeholder="与主角关系" value="' + (data.relation || '') + '" style="flex:1;min-width:70px">'
+            + '<span class="ch-arch" style="font-size:11px;color:#6e7681">' + (data.archetype_id ? '🎭' + data.archetype_id : '') + '</span>'
+            + '<button type="button" class="small" onclick="this.closest(\'.char-row\').remove()">✕</button>';
         list.appendChild(row);
     },
-    addSupportFromCandidate: function(idx) {
+    addCharFromCandidate: function(kind, idx) {
         var d = window.__CHARACTERS__;
         if (!d) return;
-        var c = (d.supporting_cast || [])[idx];
+        var c = kind === 'protag' ? (d.protagonists || [])[idx] : (d.supporting_cast || [])[idx];
         if (!c) return;
-        this.addSupportRow({ name: c.name, identity: c.identity, relation: c.relation });
-        if (typeof showToast === 'function') showToast('已添加配角「' + c.name + '」，可继续生成更多', 'success');
+        this.addCharRow({ name: c.name, identity: c.identity, personality: c.personality,
+                          catchphrase: c.catchphrase,
+                          importance: c.importance || (kind === 'protag' ? 1 : 2),
+                          golden_finger: c.golden_finger, relation: c.relation,
+                          archetype_id: c.archetype_id });
+        if (typeof showToast === 'function') showToast('已添加角色「' + c.name + '」，可继续生成更多', 'success');
     },
 
     collect: function() {
@@ -436,30 +429,33 @@ var WZ = {
         this.state.platform = 'fanqie';
         this.state.title = (this.el('wz-title') && this.el('wz-title').value.trim()) || '';
         this.state.words_per_chapter = parseInt(this.el('wz-words').value, 10) || 3000;
-        this.state.protag_name = this.el('wz-protag_name').value.trim();
-        this.state.protag_identity = this.el('wz-protag_identity').value.trim();
-        this.state.protag_personality = this.el('wz-protag_personality').value.trim();
-        this.state.protag_golden_finger = this.el('wz-protag_golden').value.trim();
-        // 构建 characters 数组：主角 + 配角（可多选/多次生成/手动增删）
-        var chars = [];
-        if (this.state.protag_name) {
-            chars.push({ name: this.state.protag_name, role: '主角',
-                         identity: this.state.protag_identity,
-                         personality: this.state.protag_personality,
-                         golden_finger: this.state.protag_golden_finger,
-                         gender: '', catchphrase: '', brief: '', title: '',
-                         age: 0, death_year: 0, archetype_id: '', relations: [] });
+        // 构建统一 characters 数组：从 #wz-char-list 每行读（姓名/身份/性格/口癖/重要度/金手指/关系/原型）
+        var charRows = Array.prototype.slice.call(document.querySelectorAll('#wz-char-list .char-row'));
+        var mcName = '';
+        for (var ri = 0; ri < charRows.length; ri++) {
+            if (parseInt(charRows[ri].querySelector('.ch-importance').value, 10) === 1) {
+                mcName = charRows[ri].querySelector('.ch-name').value.trim();
+                break;
+            }
         }
-        var mcName = this.state.protag_name;
-        document.querySelectorAll('#wz-support-list .support-row').forEach(function(row) {
-            var n = row.querySelector('.sp-name').value.trim();
+        var chars = [];
+        charRows.forEach(function(row) {
+            var n = row.querySelector('.ch-name').value.trim();
             if (!n) return;
-            var rel = row.querySelector('.sp-relation').value.trim();
-            chars.push({ name: n, role: '配角',
-                         identity: row.querySelector('.sp-identity').value.trim(),
-                         relations: (rel && mcName) ? [{ name: mcName, relation: rel }] : [],
-                         gender: '', personality: '', catchphrase: '', brief: '', title: '',
-                         golden_finger: '', age: 0, death_year: 0, archetype_id: '' });
+            var imp = parseInt(row.querySelector('.ch-importance').value, 10) || 2;
+            var rel = row.querySelector('.ch-relation').value.trim();
+            chars.push({
+                name: n,
+                role: imp === 1 ? '主角' : '配角',
+                importance: imp,
+                identity: row.querySelector('.ch-identity').value.trim(),
+                personality: row.querySelector('.ch-personality').value.trim(),
+                catchphrase: row.querySelector('.ch-catchphrase').value.trim(),
+                golden_finger: row.querySelector('.ch-golden').value.trim(),
+                archetype_id: row.getAttribute('data-arch') || '',
+                relations: (rel && mcName) ? [{ name: mcName, relation: rel }] : [],
+                gender: '', brief: '', title: '', age: 0, death_year: 0,
+            });
         });
         this.state.characters = chars;
     },
