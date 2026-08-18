@@ -11,8 +11,9 @@ def register_blueprints(app):
     from .settings import bp as settings_bp
     from .publish import bp as publish_bp
     from .world_builder import bp as world_builder_bp
+    from .agent import bp as agent_bp
 
     for bp in (dashboard_bp, storyline_bp, desk_bp, books_bp,
                libraries_bp, tools_bp, settings_bp, publish_bp,
-               world_builder_bp):
+               world_builder_bp, agent_bp):
         app.register_blueprint(bp)
