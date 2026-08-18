@@ -66,14 +66,18 @@
         </fieldset>
     </section>
 
-    {# ─── ③ 微调设定：世界观置顶 + 题材标签 + 书名/主角候选 ─── #}
+    {# ─── ③ 微调设定：世界观（来自②，可编辑）+ 题材标签 + 主角候选（AI 新内容） ─── #}
     <section class="wz-panel" id="panel-3" style="display:none">
         <fieldset>
-            <legend>🌍 世界观</legend>
-            <div class="form-row">
-                <textarea id="wz-idea3" rows="3" readonly></textarea>
+            <legend>🌍 世界观（来自第②步，可编辑）</legend>
+            <div class="form-row half">
+                <div><label>书名</label><input id="wz-title" placeholder="书名（第②步选择，可改）"></div>
+                <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
             </div>
-            <div class="form-row hint">世界观由一句话设定直接生成；如需调整，返回第 1 步修改。</div>
+            <div class="form-row">
+                <label>世界观简述（一句话设定 + 第②步选中方向，可编辑）</label>
+                <textarea id="wz-world-desc3" rows="3"></textarea>
+            </div>
         </fieldset>
         <fieldset>
             <legend>🏷️ 题材标签</legend>
@@ -89,16 +93,12 @@
             {% endfor %}
         </fieldset>
         <fieldset>
-            <legend>📖 书名与主角</legend>
+            <legend>🎭 主角设定（AI 生成新内容）</legend>
             <div class="form-row">
-                <button type="button" class="btn-primary" onclick="WZ.genTitleProtag()">🎲 根据世界观生成书名与主角候选</button>
+                <button type="button" class="btn-primary" onclick="WZ.genProtag()">🎲 根据世界观生成主角候选</button>
             </div>
-            <div id="wz-title-protag-box"></div>
-            <div id="wz-title-protag-confirm" style="display:none">
-                <div class="form-row half">
-                    <div><label>书名</label><input id="wz-title" placeholder="点选书名候选后自动填入"></div>
-                    <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
-                </div>
+            <div id="wz-characters-box"></div>
+            <div id="wz-characters-confirm" style="display:none">
                 <div class="form-row half">
                     <div><label>主角姓名</label><input id="wz-protag_name"></div>
                     <div><label>身份/职业</label><input id="wz-protag_identity"></div>
@@ -245,10 +245,16 @@ var WZ = {
         this.el('wz-next').style.display = (n === 1 || n === 2) ? 'inline-block' : 'none';
         this.el('wz-submit').style.display = (n === 3) ? 'inline-block' : 'none';
         if (this.bookId && n === 4) this.el('wz-prev').style.display = 'none';
-        // 步骤③ 顶部世界观展示：同步一句话设定（只读）
+        // 步骤③ 世界观可编辑：预填书名（来自②选中候选）+ 世界观简述（一句话 + 选中方向）
         if (n === 3) {
-            var idea3 = this.el('wz-idea3');
-            if (idea3) idea3.value = this.el('wz-idea').value.trim();
+            var titleEl = this.el('wz-title');
+            if (titleEl && this.state.title) titleEl.value = this.state.title;
+            var desc3 = this.el('wz-world-desc3');
+            if (desc3 && !desc3.value) {
+                var _base = this.el('wz-idea').value.trim();
+                var _wb = this.state.world_brief || '';
+                desc3.value = _wb ? (_base ? _base + '。' + _wb : _wb) : _base;
+            }
         }
     },
 
@@ -322,7 +328,9 @@ var WZ = {
     pickCandidate: function(idx) {
         var c = (window.__CANDIDATES__ || [])[idx];
         if (!c) return;
-        // 世界观由一句话设定直接生成：把选中候选的 one_liner 并入一句话（不再追加 world_desc/流派）
+        // 书名 = 选中候选标题（第③步展示可编辑，不再生成）；one_liner 并入一句话作世界种子
+        if (c.title) this.state.title = c.title;
+        if (c.world_brief) this.state.world_brief = c.world_brief;
         if (c.one_liner) {
             var ideaEl = this.el('wz-idea');
             if (ideaEl) ideaEl.value = ideaEl.value.trim() ? ideaEl.value.trim() + '。' + c.one_liner : c.one_liner;
@@ -336,68 +344,61 @@ var WZ = {
         this.show(3);
     },
 
-    /* —— ③ 根据世界观生成书名候选 + 主角设定候选（无书端点），点选确定 —— */
-    genTitleProtag: function() {
-        var idea = this.el('wz-idea').value.trim();
-        var box = this.el('wz-title-protag-box');
-        box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成书名与主角候选…</div>';
+    /* —— ③ 根据世界观生成主角候选（书名已在②选中），点选确定 —— */
+    genProtag: function() {
+        var idea = (this.el('wz-world-desc3') && this.el('wz-world-desc3').value.trim()) || this.el('wz-idea').value.trim();
+        var title = (this.el('wz-title') && this.el('wz-title').value.trim()) || '';
+        var box = this.el('wz-characters-box');
+        box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成主角候选…</div>';
         var self = this;
-        fetch('/api/world-builder/title-protag', {
+        fetch('/api/world-builder/characters', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ idea: idea, tags: this.state.tags })
+            body: JSON.stringify({ idea: idea, title: title, tags: this.state.tags })
         }).then(function(r) { return r.json(); }).then(function(d) {
             if (!d.ok) { box.innerHTML = '❌ ' + d.error; return; }
-            window.__TITLE_PROTAG__ = d;
-            var html = '<div class="wz-cand-label">📕 书名候选（点选确定）：</div><div class="wz-cand-row">';
-            (d.titles || []).forEach(function(t, i) {
-                html += '<button type="button" class="chip" data-kind="title" data-idx="' + i + '" onclick="WZ.pickTitleProtag(this)">' + t + '</button>';
-            });
-            html += '</div><div class="wz-cand-label" style="margin-top:8px">🧑 主角候选（点选确定）：</div>';
+            window.__CHARACTERS__ = d;
+            var html = '<div class="wz-cand-label">🧑 主角候选（点选确定）：</div>';
             (d.protagonists || []).forEach(function(p, i) {
-                html += '<div class="wz-candidate-card" data-kind="protag" data-idx="' + i + '" onclick="WZ.pickTitleProtag(this)">'
+                html += '<div class="wz-candidate-card" data-kind="protag" data-idx="' + i + '" onclick="WZ.pickProtag(this)">'
                     + '<div class="wz-cand-title">' + (p.name || '') + '（' + (p.identity || '') + '）</div>'
                     + '<div class="wz-cand-one">性格：' + (p.personality || '') + '｜金手指：' + (p.golden_finger || '') + '</div>'
                     + '</div>';
             });
+            if ((d.supporting_cast || []).length) {
+                html += '<div class="wz-cand-label" style="margin-top:8px">👥 配角候选（可选，点选查看）：</div>';
+                (d.supporting_cast || []).forEach(function(c2, i) {
+                    html += '<div class="wz-cand-one">· ' + c2.name + '（' + (c2.identity || '') + '，' + (c2.relation || '') + '）</div>';
+                });
+            }
             box.innerHTML = html;
         }).catch(function(e) { box.innerHTML = '❌ 请求失败: ' + e.message; });
     },
-    pickTitleProtag: function(elm) {
-        var d = window.__TITLE_PROTAG__;
+    pickProtag: function(elm) {
+        var d = window.__CHARACTERS__;
         if (!d) return;
-        var idx = +elm.dataset.idx;
-        if (elm.dataset.kind === 'title') {
-            var t = d.titles[idx];
-            if (t) {
-                this.el('wz-title').value = t;
-                this.state.title = t;
-                document.querySelectorAll('#wz-title-protag-box .chip[data-kind="title"]').forEach(function(b) { b.classList.remove('on'); });
-                elm.classList.add('on');
-            }
-        } else {
-            var p = d.protagonists[idx];
-            if (p) {
-                this.el('wz-protag_name').value = p.name || '';
-                this.el('wz-protag_identity').value = p.identity || '';
-                this.el('wz-protag_personality').value = p.personality || '';
-                this.el('wz-protag_golden').value = p.golden_finger || '';
-                document.querySelectorAll('#wz-title-protag-box .wz-candidate-card[data-kind="protag"]').forEach(function(c) { c.classList.remove('picked'); });
-                elm.classList.add('picked');
-            }
-        }
-        this.el('wz-title-protag-confirm').style.display = 'block';
-        if (typeof showToast === 'function') showToast('已选定，可微调后进入下一步', 'success');
+        var p = (d.protagonists || [])[+elm.dataset.idx];
+        if (!p) return;
+        this.el('wz-protag_name').value = p.name || '';
+        this.el('wz-protag_identity').value = p.identity || '';
+        this.el('wz-protag_personality').value = p.personality || '';
+        this.el('wz-protag_golden').value = p.golden_finger || '';
+        document.querySelectorAll('#wz-characters-box .wz-candidate-card[data-kind="protag"]').forEach(function(c) { c.classList.remove('picked'); });
+        elm.classList.add('picked');
+        this.el('wz-characters-confirm').style.display = 'block';
+        if (typeof showToast === 'function') showToast('已选定主角，可微调后进入下一步', 'success');
     },
 
     collect: function() {
-        this.state.idea = this.el('wz-idea').value.trim();
+        // 世界观简述（步骤③可编辑）作为世界种子；步骤①一句话作兜底
+        this.state.idea = (this.el('wz-world-desc3') && this.el('wz-world-desc3').value.trim())
+            || this.el('wz-idea').value.trim();
         this.state.pen_name = this.el('wz-pen').value;
         this.state.borrow = { source_book_id: this.el('wz-borrow-source').value,
                               tweak: this.el('wz-borrow-tweak').value.trim() };
         // 流派/平台已从向导移除：流派由后端从题材标签推导；平台留到发布页
         this.state.genre = '';      // 后端 derive_genre(tags) 填充
         this.state.platform = 'fanqie';
-        this.state.title = this.el('wz-title').value.trim();
+        this.state.title = (this.el('wz-title') && this.el('wz-title').value.trim()) || '';
         this.state.words_per_chapter = parseInt(this.el('wz-words').value, 10) || 3000;
         this.state.protag_name = this.el('wz-protag_name').value.trim();
         this.state.protag_identity = this.el('wz-protag_identity').value.trim();

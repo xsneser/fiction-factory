@@ -184,12 +184,13 @@ def api_world_candidates_nobook():
     return jsonify({"ok": True, "candidates": candidates})
 
 
-# 无 book_id 别名：向导③根据世界观生成书名候选 + 主角设定候选（建书前）
-@bp.route("/api/world-builder/title-protag", methods=["POST"])
-def api_world_title_protag_nobook():
-    """根据世界观生成书名候选 + 主角设定候选。body {idea, genre?, tags?}。"""
+# 无 book_id 别名：向导③根据世界观生成主角候选 + 配角候选（书名已在②选中，建书前）
+@bp.route("/api/world-builder/characters", methods=["POST"])
+def api_world_characters_nobook():
+    """根据世界观生成主角候选 + 配角候选。body {idea, title?, genre?, tags?}。"""
     body = request.get_json(silent=True) or {}
     idea = (body.get("idea") or "").strip()
+    title = (body.get("title") or "").strip()
     genre = (body.get("genre") or "").strip()
     tags = body.get("tags") or []
     llm = get_llm()
@@ -199,9 +200,9 @@ def api_world_title_protag_nobook():
     from libraries.prompt_harness import PromptHarness
     harness = PromptHarness()   # 无书：storyline=None
     gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
-    result = gen.generate_title_protag(idea=idea, genre=genre, tags=tags)
+    result = gen.generate_characters(idea=idea, genre=genre, tags=tags, title=title)
     if not result:
-        return jsonify({"ok": False, "error": "书名/主角候选生成失败，请重试"}), 500
+        return jsonify({"ok": False, "error": "主角/配角候选生成失败，请重试"}), 500
     return jsonify({"ok": True, **result})
 
 

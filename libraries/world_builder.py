@@ -219,28 +219,30 @@ class WorldBuildingGenerator:
                 pass
         return []
 
-    def generate_title_protag(self, idea: str, genre: str = "", sub_genre: str = "",
-                              tags=None) -> dict:
-        """根据世界观（一句话+标签）发散书名候选与主角设定候选（非流式，失败重试≤3）。
+    def generate_characters(self, idea: str, genre: str = "", sub_genre: str = "",
+                            tags=None, title: str = "") -> dict:
+        """根据世界观（一句话+标签+书名）发散主角候选与配角候选（非流式，失败重试≤3）。
 
-        返回 {"titles": [...], "protagonists": [{"name","identity","personality","golden_finger"}]}。
+        书名来自向导②选中候选；这里只生成第③步新加的内容。
+        返回 {"protagonists": [...], "supporting_cast": [...]}。
         """
         if not self.llm:
             return None
-        prompt = self.harness.render_title_protag_prompt(
-            idea=idea, genre=genre or "", sub_genre=sub_genre or "", tags=tags)
+        prompt = self.harness.render_characters_prompt(
+            idea=idea, genre=genre or "", sub_genre=sub_genre or "",
+            tags=tags, title=title)
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
                 raw = self.llm.call("你只返回 JSON。", prompt,
                                     temperature=0.8, max_tokens=8192)
                 data = json.loads(extract_json(raw))
-                titles = [t for t in (data.get("titles") or [])
-                          if isinstance(t, str) and t.strip()][:5]
                 protags = [p for p in (data.get("protagonists") or [])
                            if isinstance(p, dict) and str(p.get("name", "") or "").strip()][:3]
-                if titles or protags:
-                    return {"titles": titles, "protagonists": protags}
+                support = [c for c in (data.get("supporting_cast") or [])
+                           if isinstance(c, dict) and str(c.get("name", "") or "").strip()][:3]
+                if protags or support:
+                    return {"protagonists": protags, "supporting_cast": support}
             except Exception:
                 pass
         return None

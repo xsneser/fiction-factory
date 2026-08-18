@@ -900,23 +900,28 @@ class PromptHarness:
             '返回 JSON：{"candidates":[{"title":"候选名/书名","one_liner":"一句话核心设定（可直接作为新书的一句话种子）","world_brief":"120-200字世界观简述","genre_hint":"子流派标签"}]}',
         ])
 
-    def render_title_protag_prompt(self, idea: str, genre: str = "",
-                                   sub_genre: str = "", tags=None) -> str:
-        """根据世界观（一句话 + 题材标签）发散书名候选与主角设定候选（向导③按钮）。"""
+    def render_characters_prompt(self, idea: str, genre: str = "",
+                                 sub_genre: str = "", tags=None, title: str = "") -> str:
+        """根据世界观（一句话 + 题材标签 + 书名）发散主角候选与配角候选（向导③按钮）。
+
+        书名已在向导②选中，这里只生成第③步新加的内容（主角 + 配角）。
+        """
         tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
         parts = [
             f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
-            f"【一句话设定】{idea or '（无，按流派自由发散）'}",
+            f"【书名】{title or '（待定）'}",
+            f"【世界观】{idea or '（无，按流派自由发散）'}",
         ]
         if tags:
             parts.append(f"【题材标签】{'、'.join(tags)}（硬约束，必须契合）")
         parts.append(
-            "你是网文书名与人物策划。根据上述世界观：\n"
-            "1. 发散 5 个书名候选（2-10 字，朗朗上口、有网文味，精准契合题材与读者预期）；\n"
-            "2. 发散 3 个主角设定候选（每个含 姓名/身份/性格/金手指，必须与世界观自洽）。\n"
-            '只返回 JSON：{"titles":["书名1","书名2","书名3","书名4","书名5"],'
-            '"protagonists":[{"name":"","identity":"","personality":"","golden_finger":""},'
+            "你是网文人物策划。根据上述世界观与书名：\n"
+            "1. 发散 3 个主角设定候选（每个含 姓名/身份/性格/金手指，必须与世界观和书名自洽）；\n"
+            "2. 发散 2-3 个配角设定候选（每个含 姓名/身份/与主角的关系/性格/口癖）。\n"
+            '只返回 JSON：{"protagonists":[{"name":"","identity":"","personality":"","golden_finger":""},'
             '{"name":"","identity":"","personality":"","golden_finger":""},'
-            '{"name":"","identity":"","personality":"","golden_finger":""}]}'
+            '{"name":"","identity":"","personality":"","golden_finger":""}],'
+            '"supporting_cast":[{"name":"","identity":"","relation":"","personality":"","catchphrase":""},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":""}]}'
         )
         return "\n".join(parts)
