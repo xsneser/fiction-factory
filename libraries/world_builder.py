@@ -198,7 +198,7 @@ class WorldBuildingGenerator:
     # ═══════════════════════════════════════════
 
     def generate_candidates(self, genre: str = "", sub_genre: str = "",
-                            idea: str = "", count: int = 3) -> list:
+                            idea: str = "", count: int = 5) -> list:
         """示例候选：一次产出 count 个差异化世界观候选（非流式 JSON 端点，失败重试≤3）。"""
         if not self.llm:
             return []

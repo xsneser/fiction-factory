@@ -889,7 +889,7 @@ class PromptHarness:
         return "\n".join(parts)
 
     def render_world_candidates_prompt(self, idea: str, genre: str = "",
-                                       sub_genre: str = "", count: int = 3) -> str:
+                                       sub_genre: str = "", count: int = 5) -> str:
         """示例候选：一次产出 count 个差异化世界观候选。"""
         tb = self._tags_block()
         return "\n".join([
