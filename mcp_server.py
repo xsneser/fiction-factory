@@ -260,10 +260,16 @@ def get_storyline(book_id: str) -> dict:
 
 @mcp.tool()
 def create_book(title: str, pen_name: str, genre: str = "", sub_genre: str = "",
-                platform: str = "fanqie") -> dict:
-    """创建一本新书（建目录 + book.json），返回 book 配置。"""
+                platform: str = "fanqie", basic_info: dict = None) -> dict:
+    """创建一本新书（建目录 + book.json + 初始 storyline.json，phase=config），返回 book 配置。"""
     cfg = bm_().create(title=title, pen_name=pen_name, genre=genre or "",
                        sub_genre=sub_genre or "", platform=platform or "fanqie")
+    tl = BookStoryline(
+        book_title=title, genre=genre or "", sub_genre=sub_genre or "",
+        pen_name=pen_name, platform=platform or "fanqie",
+        basic_info=dict(basic_info or {}), phase="config",
+    )
+    save_tl(cfg.book_id, tl)
     return {
         "book_id": cfg.book_id, "title": cfg.title, "pen_name": cfg.pen_name,
         "genre": cfg.genre, "sub_genre": cfg.sub_genre, "platform": cfg.platform,
