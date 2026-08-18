@@ -1,23 +1,27 @@
 {% extends "base.html" %}
 {% block title %}上架 — {{ book.title or '(待定)' }}{% endblock %}
+{% block crumbs %}
+<div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <a href="/books/{{ book.book_id }}">{{ book.title or '(待定)' }}</a> <span class="sep">›</span> <span class="cur">上架 / 发布</span></div>
+{% endblock %}
 {% block content %}
-{% from "_flow_stepper.html" import flow_stepper, status_badge %}
-{{ flow_stepper(6, book_id=book.book_id, phase='ready',
-                 current_chapter=book.current_chapter, status=book.status,
-                 world_done=True) }}
+{% from "_flow_stepper.html" import status_badge %}
+{% from "_info_bar.html" import info_bar %}
 
 <h1>🚀 上架 / 发布</h1>
-<div class="info-bar">
-    <span>书名：<strong>{{ book.title or '(待定)' }}</strong></span>
-    <span>笔名：<strong>{{ book.pen_name }}</strong></span>
-    <span>流派：<strong>{{ book.genre }}{% if book.sub_genre %}/{{ book.sub_genre }}{% endif %}</strong></span>
-    <span>平台：<strong>{{ book.platform }}</strong></span>
-    <span>进度：<strong>{{ book.current_chapter }}/{{ book.chapter_count }}</strong> 章</span>
-    <span>状态：{{ status_badge(book.status) }}</span>
-    {% if book.finished_at %}<span>完本：<strong>{{ book.finished_at[:16] }}</strong></span>{% endif %}
-    {% if book.published_at %}<span>上架：<strong>{{ book.published_at[:16] }}</strong></span>{% endif %}
-    {% if book.exported_at %}<span>最近导出：<strong>{{ book.exported_at[:16] }}</strong></span>{% endif %}
-</div>
+{{ info_bar(
+    title=book.title or '(待定)',
+    pen_name=book.pen_name,
+    genre=book.genre,
+    sub_genre=book.sub_genre or '',
+    platform=book.platform,
+    progress=(book.current_chapter ~ ' / ' ~ book.chapter_count ~ ' 章'),
+    status_html=status_badge(book.status),
+    extra=(
+        (('<span>完本：<strong>' ~ book.finished_at[:16] ~ '</strong></span>') if book.finished_at else '') ~
+        (('<span>上架：<strong>' ~ book.published_at[:16] ~ '</strong></span>') if book.published_at else '') ~
+        (('<span>最近导出：<strong>' ~ book.exported_at[:16] ~ '</strong></span>') if book.exported_at else '')
+    )
+) }}
 
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
     <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 返回写作</a>

@@ -6,18 +6,13 @@
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css">
 <link rel="stylesheet" href="/static/css/workspace.css">
-{% from "_flow_stepper.html" import flow_status, status_badge %}
+{% from "_flow_stepper.html" import status_badge %}
 {% from "_info_bar.html" import info_bar %}
 <script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
 <script>window.__STORYLINE_ID__ = "{{ state.book_id }}";</script>
 <script>window.__PLANNING__ = {{ 'true' if not (book.current_chapter or 0) else 'false' }};</script>
 <div class="tle-layout">
 <h1>✍️ 写作台</h1>
-{% if not (book.current_chapter or 0) %}
-{{ flow_status('大纲·故事线（规划）', '开始写作') }}
-{% else %}
-{{ flow_status('章节写作（续写）', '上架', '/books/' + state.book_id + '/publish') }}
-{% endif %}
 {{ info_bar(
     title=state.title or '(待定)',
     pen_name=state.pen_name,

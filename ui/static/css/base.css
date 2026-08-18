@@ -259,11 +259,6 @@
 
 
         /* ─── 流程状态条（当前阶段 → 下一步，替代原 6 步步骤条） ─── */
-        .flow-status { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:18px; padding:8px 14px; background:var(--bg-elev); border:1px solid var(--border); border-radius:var(--radius); font-size:12px; color:var(--fg-muted); }
-        .flow-status .fs-cur { color:var(--accent); font-weight:600; }
-        .flow-status .fs-next a { color:var(--success-fg); text-decoration:none; font-weight:500; }
-        .flow-status .fs-next a:hover { text-decoration:underline; }
-
         /* ─── 上架报告 ─── */
         .publish-report { margin-top:16px; }
         .publish-item { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; margin-bottom:8px; background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); }
