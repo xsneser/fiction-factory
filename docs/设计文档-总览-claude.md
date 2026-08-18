@@ -1,6 +1,6 @@
 # NovelEngine 设计文档（总览 · 当前状态）
 
-> 版本：v1.2 ｜ 更新：2026-08-18 ｜ 整理：Claude
+> 版本：v1.3 ｜ 更新：2026-08-18 ｜ 整理：Claude
 > 定位：**唯一主设计文档**。本文档合并吸收并取代以下源文档（已归档至 `docs/archive/`）：
 > `项目规划.md`（v0.6）· `交接文档.md` · `harness重构交接文档.md` · `新书创建-Harness架构与LLM提示词.md` · `优化方案-2026-08-04.md` · `优化方案核对-2026-08-04.md` · `待codex处理-2026-08-04.md` · `UX报告-2026-08-05.md` · `task-system-spec.md` · `ui-notes.md` · `novel-factory-timeline.html` · `设计文档.md`（另一会话合并版，v1.1 已并入并退役）
 >
@@ -490,7 +490,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 - 左侧 `story_line.js` 垂直甘特图（数据驱动）：大纲/桥段/笑点·内涵 + 🧵 线程横带 + 逐桥段高亮。
 - 中间只放正文（2026-08 布局重构后）；规划/生成面板与写作动态并入中栏折叠区。
-- 第三栏（写作助手/写作动态）已删去：任务进度/日志由全局右侧栏承载，右侧栏为 **Agent 活动面板**（`🤖 Agent 活动`，见 §8.5）：按 agent 角色（写作/大纲/世界观/书名/大纲助手/侦察兵）展示活动卡片——角色徽标、书上下文、当前步骤/子步骤、`📡 LLM ×N` 次数、进度条、状态点，空闲自动折叠。
+- 第三栏（写作助手/写作动态）已删去：全局右侧栏为 **Agent 聊天助手面板**（OpenClaw 式，`🤖 Agent`，见 §8.5）：用户在侧栏用自然语言对话，内置 Agent 通过 function calling 循环操作整个创作引擎，工具调用步骤（🔧 工具卡 + 结果摘要）在对话里展示，并可 `navigate` 切页、`canvas_command` 控制写作台故事线画布（滚动/高亮）。
 - 基础设定唯一编辑面 = 世界观设定卡（`world_card.html`），写作台仅保留「🌍 设定」入口。
 
 ### 8.3 UX 8 方案（2026-08-05 全部落地）
@@ -509,23 +509,29 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 - **状态机**：`start → running → cancel → cancelled → done/failed`。
 - **核心 API**：`start(task_id,name,title,total)` / `ensure_single(name)`（同工具互斥，新任务替代旧任务）/ `register_cancel` / `cancel` / `is_cancelled` / `progress` / `log` / `done` / `fail` / `get_tasks` / `clear_old(keep_seconds=60)` / `remove`。任务卡片与日志各自独立更新；每个任务最多保留 100 条日志。
 - **Agent 语义**（2026-08-18）：`start()` 增加可选 `agent`（角色）/ `book_id` / `book_title` / `step` / `sub_step` / `llm_calls` 字段（全部向后兼容）；新增 `llm_call` / `set_step` / `get`。各蓝图调用点按 agent 角色上报书上下文，SSE 生成器内按 `group_chunk`/`decision`/`phase_done` 事件近似计 LLM 次数（展示级，成本权威值仍在 `cost.json`）。
-- **端点**（settings 蓝图）：`GET /api/status/tasks`（前端 pollStatus 每 2s 轮询）、`POST /api/status/tasks/close`（关闭卡片，仅 UI 不杀进程）。
+- **端点**（settings 蓝图）：`GET /api/status/tasks`（保留兼容/e2e，前端侧栏已不再轮询渲染它）、`POST /api/status/tasks/close`（关闭卡片，仅 UI 不杀进程）。
 - **前端规范**：卡片（卡头+进度条仅 running+卡底阶段/时间，按开始时间新→旧）；日志（增量追加、颜色区分工具、刷新后丢失）；关闭=取消（运行中 kill 线程，worker 在检查点 `is_cancelled()` 优雅停止）。
 - **状态栏规范**（ui-notes 合并）：每工具单任务互斥；日志统一进右侧状态栏（showAlert/showToast 双通道已移除）；同工具替代时旧日志自动清除（data-task-id 标记）；body 固定 `height:100vh`，main/aside 内部滚动。
+- **v1.3 变更**（2026-08-18）：右侧栏改为 Agent 聊天面板（§8.5），**不再渲染任务卡片/日志区**；`task_manager` 的 agent 字段与各蓝图上报逻辑保留（供其他页面/SSE 旁路状态与 `/api/status/tasks` 兼容），`base.js` 的 `pollStatus` 已守卫空节点不启动轮询。
 
-### 8.5 MCP 接口（外部 Agent 驱动层，2026-08-18）
+### 8.5 Agent 接口与右侧栏聊天助手（2026-08-18）
 
-把引擎全部需要调用 LLM 的操作暴露为 **MCP 工具**，供外部 Agent（如 Claude Code）通过 `claude mcp add` 以工具调用方式驱动创作全链路（续写/写桥段、改书名/简介、改大纲、生成世界观、大纲序列、桥段填充、加料、大纲助手自然语言改故事线等）。
+把引擎全部操作暴露为**共享工具注册表**，供两个消费方使用：右侧栏**内置 Agent 聊天助手**（OpenClaw 式）与 **MCP 服务器**（Claude Code 等外部客户端）。
 
-- **实现**：单文件 `mcp_server.py`（项目根），FastMCP（mcp SDK **1.x**，`requirements.txt` 固定 `mcp>=1.2.0,<2.0`；**mcp 2.0 移除了 FastMCP API，勿升级**）。
-- **形态**：独立 stdio 进程，与 Flask Web 服务并存；数据协调点是 `books/<id>/` 文件 JSON（原子写），**不共享 Web 进程内存引擎缓存**（MCP 进程内按 book_id 缓存 `NovelEngine`，规划类改动后失效重建）。Web 侧 `book_detail` 已加 mtime 重扫，读到 MCP 写入后的新 book.json。
-- **长操作**：写作/生成类全部**阻塞式工具调用**——工具内 `consume_dict_stream` / `consume_triple_stream` 迭代 SSE 生成器到完成，返回最终 JSON（不透传 SSE）。
-- **注册**（项目根执行）：`claude mcp add --scope project novel-engine -- python mcp_server.py`
-- **工具清单（20 个）**：
-  - 只读/建书：`list_books` / `get_book_state` / `get_storyline` / `create_book` / `borrow_preview`
-  - 规划/编辑：`save_basic_info` / `generate_title` / `generate_outlines` / `generate_full_outline` / `extend_outline` / `confirm_outlines` / `fill_plots` / `fill_gags` / `outline_agent` / `generate_world` / `world_candidates` / `confirm_world`
-  - 写作/元数据：`write_next_bridge` / `write_chapter` / `generate_book_meta`
-- **限制**：v1 不做 MCP→Web 侧栏 IPC（Web 侧栏只渲染 Web 进程任务）；双进程勿同时操作同一本书。侦察兵（scout）分析、内容审查、去AI 等工具留 v1.5 扩展。
+**共享工具注册表 `agent_tools.py`（29 个）**：
+- 单一工具来源 `TOOL_REGISTRY = [{name, description, input_schema, func}]`，schema 用 `inspect.signature` 自动生成。复用 `ctx` 单例——Web 进程内与 UI 共享同一状态；MCP 独立进程各自一份，经 `books/` 文件协调。
+- 覆盖「创建→上架」全链路：只读/建书（`list_books`/`get_book_state`/`get_storyline`/`create_book`/`borrow_preview`）→ 规划（`save_basic_info`/`generate_title`/`generate_outlines`/`generate_full_outline`/`extend_outline`/`confirm_outlines`/`fill_plots`/`fill_gags`/`outline_agent`/`generate_world`/`world_candidates`/`confirm_world`）→ 写作（`write_next_bridge`/`write_chapter`/`generate_book_meta`）→ 上架（`publish_check`/`mark_finished`/`publish_book`/`export_book`）→ 审查/去AI（`review_text`/`deai_text`）→ 书管理（`delete_book`，默认拒绝需 `confirm=True`）→ 导航/画布（`navigate`/`canvas_command`，返回特殊标记由循环转 SSE 事件）。
+- 工具排序把 `navigate`/`canvas_command` 前置（flash 对列表前部工具更敏感，保证"打开X页"正确触发导航）。
+
+**右侧栏 Agent 聊天面板（OpenClaw 式）**：
+- `base.html` 的 `aside#status-bar` 为纯对话：`#agent-chat` 消息区（用户/助手气泡 + 🔧 工具步骤卡，可展开参数）+ `#agent-input` 输入框；`ui/static/js/agent_panel.js` 用 fetch+getReader 手写解析消费 `/api/agent/chat` SSE。
+- **Agent 循环 `plugins/agent_loop.py`**：原生 function calling（`LLMClient.call_tools`，DeepSeek 兼容 OpenAI 格式），`MAX_ITERS=12`、temperature 0.1、max_tokens 8192（flash 推理余量）。系统提示词含「行动优先」原则（能调用工具就调用、禁止只给建议）与导航/破坏性规则。事件：`tool_start`/`tool_result`/`reply`/`navigate`/`canvas`/`error`/`done`。
+- **端点 `ui/web_blueprints/agent.py`**：`POST /api/agent/chat`（SSE），body 为浏览器持有的 user/assistant 消息历史（会话记忆 v1，无状态）。
+- **导航/画布**：`navigate` 事件 → 前端 `navigateTo(url)` 切页；`canvas_command` → `CustomEvent('ne:canvas')` → 写作台 `window.onnecanvas` 单槽位处理器（`story_line.js` 新增 `scrollTo`，`highlight` 已有），经 `__neCanvasReady__` 就绪标志轮询（≤5s）解决「导航后画布未初始化」时序。
+
+**MCP 服务器 `mcp_server.py`（适配层）**：从 `TOOL_REGISTRY` 逐个注册 FastMCP 工具（mcp SDK **1.x**，固定 `mcp>=1.2.0,<2.0`；**mcp 2.0 移除了 FastMCP API，勿升级**）。独立 stdio 进程，与 Web 并存；长操作阻塞式（`consume_dict_stream`/`consume_triple_stream`）。注册：`claude mcp add --scope project novel-engine -- python mcp_server.py`。
+
+**限制**：会话记忆 v1 = 浏览器内历史（服务端持久记忆后续参考开源 deepseek harness 再改）；资产库 CRUD 与 scout 工具留 v1.5；双进程勿同时操作同一本书。
 
 ---
 
@@ -612,13 +618,14 @@ python test_chapters.py / test_reader.py
 ### 13.2 远期（项目规划 Phase 4/5）
 
 - **Phase 4 质量体系**：全书优化诊断管线（reconcile.py 已删，需重建或放弃）、段落级修订 + diff 追踪、设定协调（改设定后自动调和章节）、审查规则库扩充（当前 reviewer 5 项）。
-- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（tool-calling loop；MCP 工具化已落地 §8.5，Agent 编排逻辑仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
+- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（tool-calling loop 已落地 §8.5：右侧栏聊天面板 + 共享 29 工具 + navigate/canvas 控制；服务端持久记忆/自动多步编排仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
 
 ### 13.3 文档回写清单
 
 - `docs/archive/项目规划.md` 仍描述 v0.5 架构，作为历史归档保留；本文档为唯一技术权威。
 - 改代码必须同步本文档。
 - v1.2（2026-08-18）：右侧栏运行状态 → Agent 活动面板（§8.2/§8.4）；新增 MCP 服务器（§8.5）；`requirements.txt` 增加 mcp。
+- v1.3（2026-08-18）：右侧栏 → OpenClaw 式 Agent 聊天助手（§8.2/§8.5）；`agent_tools.py` 共享 29 工具注册表（mcp_server 瘦身为适配层）；`LLMClient.call_tools` 原生 function calling；`/api/agent/chat` SSE + `story_line.js` 新增 `scrollTo` 画布控制。
 
 ---
 

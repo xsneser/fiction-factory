@@ -56,16 +56,18 @@ cp api.example.json api.json
 python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
 ```
 
-### MCP 接口（外部 Agent 驱动）
+### Agent 助手（内置 + MCP）
 
-把引擎全部 LLM 操作（续写/写桥段、书名/简介、大纲、世界观、大纲助手等 20 个工具）暴露为 MCP，供 Claude Code 等 Agent 以工具调用方式驱动创作。注册后 `claude mcp list` 可查：
+**右侧栏内置 Agent 聊天助手**（OpenClaw 式）：启动 Web 面板后在右侧栏直接对话，内置 Agent 通过原生 function calling 操作整个创作引擎——建书、世界观、大纲、写作、审查去 AI、上架导出，还能切页导航、控制写作台故事线画布。试试：「创建一本都市爽文 by 枫落」「给 book_001 生成完整大纲」「打开书库页面」。
+
+**MCP 接口**：同一套 29 个工具也暴露为 MCP，供 Claude Code 等外部 Agent 驱动：
 
 ```bash
 claude mcp add --scope project novel-engine -- python mcp_server.py
 claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 ```
 
-> 独立 stdio 进程，与 Web 服务并存（共享 `books/` 文件，勿同时操作同一本书）。详见主设计文档 §8.5。
+> MCP 为独立 stdio 进程，与 Web 服务并存（共享 `books/` 文件，勿同时操作同一本书）。详见主设计文档 §8.5。
 
 ---
 
@@ -197,12 +199,13 @@ D:\NovelEngine/
 │   ├── font_decoder.py     # PUA 字体解码器
 │   ├── novel_storage.py    # 已下载小说管理
 │   ├── style_analyzer.py   # 写作风格分析
+│   ├── agent_loop.py       # Agent 工具调用循环（function calling）
 │   └── task_manager.py     # 全局任务管理器
 │
 ├── ui/                     # Web 用户界面
 │   ├── web_ui.py           # Flask 管理面板
 │   ├── templates/          # Jinja2 模板（22个）
-│       ├── base.html       # 布局骨架（导航/面包屑/右栏 Agent 活动面板）
+│       ├── base.html       # 布局骨架（导航/面包屑/右栏 Agent 聊天面板）
 │       ├── dashboard.html  # 仪表盘（统计+快捷入口+各书下一步）
 │       ├── books.html      # 图书列表
 │       ├── book_detail.html# 单书详情
@@ -226,7 +229,7 @@ D:\NovelEngine/
 │       └── _info_bar.html  # 书信息条 partial
 │   └── static/             # CSS / JS
 │       ├── css/            # base.css / story_line.css
-│       └── js/             # base.js / story_line.js / library_review.js
+│       └── js/             # base.js / story_line.js / agent_panel.js / library_review.js
 │
 ├── books/                  # 图书数据（.gitignore）
 │   └── {book_id}/
@@ -254,7 +257,8 @@ D:\NovelEngine/
 │   └── archive/            # 全部历史文档归档（设计稿/交接/优化/调研/审查报告等 19 份）
 │
 ├── requirements.txt
-├── mcp_server.py            # MCP 服务器（20 个工具，claude mcp add 接入）
+├── agent_tools.py            # 共享 Agent 工具注册表（29 工具，全链路）
+├── mcp_server.py             # MCP 适配层（从 agent_tools 注册，claude mcp add 接入）
 └── LICENSE
 ```
 
