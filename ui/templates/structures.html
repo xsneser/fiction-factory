@@ -25,7 +25,7 @@
             <div class="stage-theme-editor" data-id="{{ t.id }}" data-idx="{{ loop.index0 }}" style="padding:6px 0 2px 12px">
                 {% for m in (s.themes or []) %}
                 <div class="st-row" style="display:flex;gap:6px;margin:4px 0;align-items:center">
-                    <input class="st-name" placeholder="母题名（如：复仇（Revenge））" value="{{ m.name }}" style="flex:1;min-width:0">
+                    <input class="st-name" placeholder="内涵名（如：复仇（Revenge））" value="{{ m.name }}" style="flex:1;min-width:0">
                     <input class="st-position" placeholder="位置（开头/中段/结尾）" value="{{ m.position }}" style="width:130px">
                     <input class="st-how" placeholder="表达手法" value="{{ m.how }}" style="flex:1.2;min-width:0">
                     <button type="button" class="small" onclick="removeStageTheme(this)">✕</button>
@@ -40,14 +40,14 @@
     </div>
     {% endif %}
     {% if t.tags %}<p style="margin-top:8px">{% for tag in t.tags %}<span class="tag green">{{ tag }}</span>{% endfor %}</p>{% endif %}
-    {% if t.themes %}<p style="margin-top:8px">💡 可承载母题: {% for th in t.themes %}<span class="tag yellow">{{ th }}</span>{% endfor %}</p>{% endif %}
+    {% if t.themes %}<p style="margin-top:8px">💡 可承载内涵: {% for th in t.themes %}<span class="tag yellow">{{ th }}</span>{% endfor %}</p>{% endif %}
     <p style="color:#484f58;font-size:11px;margin-top:8px">
         收录: {{ t.created_at }}
         · 来源: {{ t.source or '创作积累' }}
     </p>
     <p style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <input id="themes-input-{{ t.id }}" value="{{ t.themes|join('、') }}" placeholder="可承载母题（顿号分隔，如：公平（Justice）、成长的代价（Cost of Growth））" style="flex:1;min-width:220px">
-        <button class="small" onclick="saveThemes('{{ t.id }}')">💾 编辑母题</button>
+        <input id="themes-input-{{ t.id }}" value="{{ t.themes|join('、') }}" placeholder="可承载内涵（顿号分隔，如：公平（Justice）、成长的代价（Cost of Growth））" style="flex:1;min-width:220px">
+        <button class="small" onclick="saveThemes('{{ t.id }}')">💾 编辑内涵</button>
         <button class="small" onclick="toggleStruct('{{ t.id }}')">{{ '✅ 启用' if not t.enabled else '⏸ 禁用' }}</button>
         <button class="small danger" onclick="deleteStruct('{{ t.id }}')">🗑 删除</button>
     </p>
@@ -60,7 +60,7 @@ function addStageTheme(btn) {
     var row = document.createElement('div');
     row.className = 'st-row';
     row.style.cssText = 'display:flex;gap:6px;margin:4px 0;align-items:center';
-    row.innerHTML = '<input class="st-name" placeholder="母题名（如：复仇（Revenge））" style="flex:1;min-width:0">'
+    row.innerHTML = '<input class="st-name" placeholder="内涵名（如：复仇（Revenge））" style="flex:1;min-width:0">'
         + '<input class="st-position" placeholder="位置（开头/中段/结尾）" style="width:130px">'
         + '<input class="st-how" placeholder="表达手法" style="flex:1.2;min-width:0">'
         + '<button type="button" class="small" onclick="removeStageTheme(this)">✕</button>';
@@ -92,7 +92,7 @@ async function saveThemes(id) {
         body: JSON.stringify({themes: themes})
     });
     const d = await r.json();
-    if (d.ok) { showToast('✅ 母题已保存', 'success'); location.reload(); }
+    if (d.ok) { showToast('✅ 内涵已保存', 'success'); location.reload(); }
     else showToast('保存失败: ' + (d.error||''), 'error');
 }
 async function toggleStruct(id) {

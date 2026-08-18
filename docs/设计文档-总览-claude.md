@@ -47,7 +47,7 @@
 | 项 | 决策 | 落地 |
 |---|---|---|
 | **笑点** | 完全涌现，大纲不参与 | 删除大纲固定笑点分配（`gag_ids` 字段保留但不再写入）；写作时每写完一组短句由探测器判断是否注入（§4.6） |
-| **内涵** | 跟随桥段 | 用 `THEME_PLOT_COMPAT`（storyline.py:255，桥段模板 id → 可承载母题名）免费规则把母题挂到能承载它的桥段，不强挂（§3.6） |
+| **内涵** | 跟随桥段 | 用 `THEME_PLOT_COMPAT`（storyline.py:255，桥段模板 id → 可承载内涵名）免费规则把内涵挂到能承载它的桥段，不强挂（§3.6） |
 | **长程记忆** | LLM 语义摘要 | 每章写完生成 80-150 字客观摘要存 `summary` 字段，写作时注入最近 5 章（§4.5） |
 | **架构** | 集中式 harness | `prompt_harness.py` 统一产出书级设定卡与全部 prompt（§5） |
 
@@ -163,7 +163,7 @@ D:\NovelEngine/
 | `outlines[]` | 大纲槽位（多条，可重叠/接续/融合） |
 | `plots[]` | 桥段槽位（挂在某大纲某阶段下） |
 | `threads[]` | 叙事线程（多线程设局/收局） |
-| `themes[]` | 全书母题（内含 theme_hints 挂载） |
+| `themes[]` | 全书内涵（内含 theme_hints 挂载） |
 | `promises[]` | 读者承诺台账 |
 | `global_gags[]` | 书级全局笑点线索 |
 | `phase` | 生成进度：config → outlines → plots → gags → ready |
@@ -195,9 +195,9 @@ D:\NovelEngine/
 | 大纲库 | `structure.py` | `structures.json` | 11 模板（5 内置 + 采集） | 卷→弧→章三级骨架，按流派搜索 |
 | 笑点库 | `gag.py` | `gags.json` | 24 模式（10 内置 + 采集） | 探测器候选池（不写进大纲） |
 | 摘录库 | `example_lib.py` | `excerpts.json` | 16 条演示（7 类型） | 真实原文范本，写前按 category 预筛 2 条注入【写法范本】 |
-| 内涵库 | ~~theme.py~~（已删） | `themes.json` | 20 母题 | 书级母题库 + `THEME_PLOT_COMPAT` 免费规则挂载 |
+| 内涵库 | ~~theme.py~~（已删） | `themes.json` | 20 内涵 | 书级内涵库 + `THEME_PLOT_COMPAT` 免费规则挂载 |
 
-- **内涵体系演进**：`theme.py` 模块已删除；`themes.json` 仍作为书级母题库。大纲不再做固定笑点分配；母题挂载改为 `THEME_PLOT_COMPAT` 命中才挂，未命中母题仍随书级设定卡注入作为可用线索。
+- **内涵体系演进**：`theme.py` 模块已删除；`themes.json` 仍作为书级内涵库。大纲不再做固定笑点分配；内涵挂载改为 `THEME_PLOT_COMPAT` 命中才挂，未命中内涵仍随书级设定卡注入作为可用线索。
 - **笔名档案**（`profiles.py`）：`word_print`（common/avoid/dialogue_tags/action_beats）+ `style_fingerprint`（sentence_length/humor_style/action_style/pov_preference）。预设：**枫落**（都市爽文）、**夜雨**（玄幻正剧）、**青衫**（言情甜文）；`profiles/` 现存 profile_001~005。风格以 bullet 注入书级设定卡；幽默风格喂给探测器。
 
 ### 3.7 数据落盘约定
@@ -249,7 +249,7 @@ D:\NovelEngine/
 | Phase 2 故事线规划 | `_ai_sequence` | 流式 0.7, 8192 | 选 2-max_outlines 个模板排时间线（可 overlap 2-5 章）；兜底 `_rule_sequence` |
 | Phase 3 桥段选择 | `_ai_select_plots` | 流式 0.5, 8192 | 每阶段 1-3 个（候选 ≤12）；兜底 `candidates[:2]`；cover_beats=word_range//400，slots 展开，链式嵌套 |
 | Phase 4 线程与呼应 | `_plan_threads_and_splits` | 非流式 0.3, **16384**（空返回重试 3） | threads[]/assignments[]/splits[]（设局→收局）；兜底按分类归线 |
-| Phase 4.5 内涵复查 | `_review_theme_assignments` | 流式 0.3, 8192 | 复查母题挂载（只接受书级母题库内名字，每桥段 ≤2） |
+| Phase 4.5 内涵复查 | `_review_theme_assignments` | 流式 0.3, 8192 | 复查内涵挂载（只接受书级内涵库内名字，每桥段 ≤2） |
 | Phase 5/6 一致性验证 | `_validate`（规则）+ `_validate_with_llm` | 规则先行 + LLM 抽查 | issues/warnings 事件（⚠️ 无自动重试，见 §13） |
 
 **规则校验项**（`_validate`）：章节连续性、重叠区 ≤5 章、桥段覆盖、内涵覆盖率 ≥30%（建议性）、总章节 10-500。
@@ -320,7 +320,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 ### 4.9 写前注入块（免费规则 + 轻量 LLM）
 
-`render_bridge_prompt` 按需注入：书级设定卡（简）→ 开场铁律 → 全书一致性铁律 → 视角铁律 → 所属大纲/当前阶段/事件 → 【桥段骨架】+ 槽位 → 出场人物 → 母题 → 收局/设局 → 灵机一动 →【本桥段吸睛点】（hook_points）→【写法范本】（example_lib 2 条）→【写前编辑诊断】→【读者承诺台账】→ 已完成章节摘要 → 前文上下文 → 平台约束 → 上章审查提示 → 写作要求 7 条。
+`render_bridge_prompt` 按需注入：书级设定卡（简）→ 开场铁律 → 全书一致性铁律 → 视角铁律 → 所属大纲/当前阶段/事件 → 【桥段骨架】+ 槽位 → 出场人物 → 内涵 → 收局/设局 → 灵机一动 →【本桥段吸睛点】（hook_points）→【写法范本】（example_lib 2 条）→【写前编辑诊断】→【读者承诺台账】→ 已完成章节摘要 → 前文上下文 → 平台约束 → 上章审查提示 → 写作要求 7 条。
 
 ### 4.10 发布上架（`publisher.py`）
 
@@ -589,7 +589,7 @@ python test_chapters.py / test_reader.py
 
 ## 十一、数据现状（2026-08-17）
 
-- `books/book_001`：都市/枫落，规划完成（storyline phase=ready，2 大纲 / 29 桥段 / 2 母题），0 章已写。
+- `books/book_001`：都市/枫落，规划完成（storyline phase=ready，2 大纲 / 29 桥段 / 2 内涵），0 章已写。
 - `books/book_003`：都市/枫落，phase=config（仅建书，未生成故事线）。
 - `profiles/`：profile_001~005（预设 枫落/夜雨/青衫 + 后续新增）。
 - 无运行中的 58080 服务。
@@ -643,6 +643,7 @@ docs/ 顶层仅保留本文档（唯一主设计文档）与 `archive/`（全部
 | 文档 | 定位 |
 |---|---|
 | `设计文档-总览-claude.md` | **唯一主设计文档**（本文档） |
+| `agent设计文档.md` | Agent 层专项（工具注册表/循环/Skill 调研，v0.1，2026-08-18，待并入本文档） |
 | `archive/` | 全部已合并/历史文档（设计稿、交接、优化、UX、任务系统、调研、审查报告等 19 份） |
 
 ### 14.2 归档文档（docs/archive/）

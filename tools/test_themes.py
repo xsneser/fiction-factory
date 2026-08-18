@@ -31,17 +31,17 @@ check("模板 themes 序列化往返", t2.themes == ["公平（Justice）"])
 t3 = StructureTemplate.from_dict({"id": "x", "name": "n", "genre": "g"})
 check("模板 themes 缺省 []", t3.themes == [])
 
-# ─── 2) 内置种子带母题 ───
+# ─── 2) 内置种子带内涵 ───
 check("内置模板全带 themes", all(x.themes for x in BUILTIN_STRUCTURES),
       str([(x.id, x.themes) for x in BUILTIN_STRUCTURES]))
-check("内置母题为中英对照", "公平（Justice）" in BUILTIN_STRUCTURES[1].themes)
+check("内置内涵为中英对照", "公平（Justice）" in BUILTIN_STRUCTURES[1].themes)
 
 # 结构库实例读取（存量 structures.json 已迁移）
 lib = StructureLibrary()
 empty = [x.id for x in lib.templates if not x.themes]
 check("存量结构库模板全带 themes", not empty, str(empty))
 
-# ─── 3) 生成时从大纲模板取母题 ───
+# ─── 3) 生成时从大纲模板取内涵 ───
 gen = OutlineGenerator(llm_client=None, structure_lib=lib)
 tl = BookStoryline()
 tl.outlines = [
@@ -49,9 +49,9 @@ tl.outlines = [
     OutlineSlot(id="o2", template_id="struct_tianwen_01", name="b"),
 ]
 themes = gen._select_book_themes("玄幻", tl)
-check("从大纲模板汇总母题", "成长的代价（Cost of Growth）" in themes
+check("从大纲模板汇总内涵", "成长的代价（Cost of Growth）" in themes
       and "传承与突破（Legacy & Breakthrough）" in themes, str(themes))
-check("母题去重取前3", len(themes) <= 3 and len(set(themes)) == len(themes), str(themes))
+check("内涵去重取前3", len(themes) <= 3 and len(set(themes)) == len(themes), str(themes))
 
 # 空大纲 → 兜底默认（可挂桥段）
 tl2 = BookStoryline()
@@ -63,7 +63,7 @@ tl3 = BookStoryline()
 tl3.themes = ["成长的代价（Cost of Growth）"]
 p = PlotSlot(id="p1", template_id="plot_dating_006", name="打脸", slots=[])
 mount_themes_and_hooks(p, tl3.themes)
-check("兜底挂载母题", p.theme_hints == ["成长的代价（Cost of Growth）"], str(p.theme_hints))
+check("兜底挂载内涵", p.theme_hints == ["成长的代价（Cost of Growth）"], str(p.theme_hints))
 check("吸睛点兜底", len(p.hook_points) == 2, str(p.hook_points))
 
 MOMENTS = [
@@ -88,14 +88,14 @@ stages = structure_to_stages(tt)
 check("structure_to_stages 带阶段内涵", stages[0].get("themes") == MOMENTS,
       str(stages[0].get("themes")))
 
-# ─── 6) 书级母题汇总阶段级内涵名 ───
+# ─── 6) 书级与阶段级内涵汇总 ───
 lib2 = StructureLibrary()
 gen2 = OutlineGenerator(llm_client=None, structure_lib=lib2)
 tl4 = BookStoryline()
 tl4.outlines = [OutlineSlot(id="o1", template_id="struct_chuanyue_01", name="穿越",
                             stages=structure_to_stages(lib2.get_by_id("struct_chuanyue_01")))]
 themes4 = gen2._select_book_themes("穿越", tl4)
-check("书级母题含阶段内涵名", "复仇（Revenge）" in themes4, str(themes4))
+check("书级内涵含阶段级内涵名", "复仇（Revenge）" in themes4, str(themes4))
 
 # ─── 7) theme_block rich 渲染（render_bridge_prompt）───
 tl5 = BookStoryline(genre="穿越")
@@ -105,7 +105,7 @@ item = {"outline": OutlineSlot(id="o1", template_id="struct_chuanyue_01", name="
                                                        name="清算", slots=[], theme_moments=MOMENTS)}
 prompt = h.render_bridge_prompt(item, chapter_buffer="", prev_ending="", bridge_text="正文",
                                 budget_remaining=3000)
-check("theme_block 阶段级渲染", "母题（含插入位置）" in prompt
+check("theme_block 阶段级渲染", "内涵（含插入位置）" in prompt
       and "复仇（Revenge）（结尾）：挚友被害真相揭晓" in prompt, prompt[:200])
 
 # ─── 8) JSONL 读写往返 ───

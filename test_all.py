@@ -79,7 +79,7 @@ from libraries.storyline import PlotSlot as _PS, mount_themes_and_hooks as _mth,
 assert_ok("内涵-映射非空", len(_tpc) >= 6, f"{len(_tpc)} 个桥段模板")
 _pc = _PS(id="c", template_id="plot_dating_001", name="退婚", category="爽文", outline_id="o", stage_index=0)
 _mth(_pc, ["公平（Justice）", "牺牲（Sacrifice）"])
-assert_ok("内涵-兼容桥段挂母题", _pc.theme_hints == ["公平（Justice）"], str(_pc.theme_hints))
+assert_ok("内涵-兼容桥段可挂", _pc.theme_hints == ["公平（Justice）"], str(_pc.theme_hints))
 _pp = _PS(id="d", template_id="plot_dating_007", name="擂台", category="战斗", outline_id="o", stage_index=0)
 _mth(_pp, ["公平（Justice）"])
 assert_ok("内涵-不兼容桥段不挂", _pp.theme_hints == [], str(_pp.theme_hints))

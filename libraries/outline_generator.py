@@ -229,10 +229,10 @@ class OutlineGenerator:
 
             # ── Phase 5: 内涵挂载（笑点完全涌现，不在此分配）──
             yield ("phase", "内涵挂载", {"phase": 5, "total": total_phases,
-                   "desc": "把母题挂到能承载它的桥段、标注吸睛点（笑点在写作时涌现）..."})
+                   "desc": "把内涵挂到能承载它的桥段、标注吸睛点（笑点在写作时涌现）..."})
 
             tl.themes = self._select_book_themes(genre, tl)
-            yield ("progress", f"全书母题: {'、'.join(tl.themes[:3])}", {})
+            yield ("progress", f"全书内涵: {'、'.join(tl.themes[:3])}", {})
 
             for pi, plot in enumerate(tl.plots):
                 self._inject_themes_and_hooks(plot, tl)
@@ -243,7 +243,7 @@ class OutlineGenerator:
                 })
 
             # Phase 4.5: LLM 复查内涵挂载（流式思考）
-            yield ("progress", "LLM 复查母题挂载...", {})
+            yield ("progress", "LLM 复查内涵挂载...", {})
             yield from self._review_theme_assignments(tl, genre)
 
             yield ("phase_done", "内涵挂载完成", {
@@ -819,12 +819,12 @@ class OutlineGenerator:
 
     def _select_book_themes(self, genre: str,
                             tl: Optional[BookStoryline] = None) -> list[str]:
-        """选定全书母题（内涵嵌入大纲库）。
+        """选定全书内涵。
 
-        汇总两级母题名（去重取前 3）：
+        汇总两级内涵名（去重取前 3）：
           1) 模板级：选中大纲模板的 themes
           2) 阶段级：各 outline.stages[].themes[].name
-        全部为空 → 兜底默认（用可挂桥段的中英母题名）。
+        全部为空 → 兜底默认（用可挂桥段的中英内涵名）。
         """
         default_themes = ["成长的代价（Cost of Growth）"]
         matched = []
@@ -1056,7 +1056,7 @@ class OutlineGenerator:
         """Phase 4 内涵挂载后的 LLM 复查（流式思考）。
 
         生成器：yield thinking（token 流）+ decision（复查结论），
-        复查"母题是否挂到了能承载它的桥段、分布是否均匀、有无硬挂"。
+        复查"内涵是否挂到了能承载它的桥段、分布是否均匀、有无硬挂"。
         笑点已完全涌现（不在此复查）。
         """
         if not self.llm or not tl.plots:
@@ -1069,7 +1069,7 @@ class OutlineGenerator:
                 "template_id": p.template_id, "theme_hints": p.theme_hints[:2],
             })
 
-        prompt = f"""以下是某本{genre}小说故事线的桥段内涵挂载配置（规则匹配结果）。请复查母题是否挂到了能承载它的桥段、分布是否均匀、有无明显硬挂（桥段承载不了某个母题却挂着）。
+        prompt = f"""以下是某本{genre}小说故事线的桥段内涵挂载配置（规则匹配结果）。请复查内涵是否挂到了能承载它的桥段、分布是否均匀、有无明显硬挂（桥段承载不了某个内涵却挂着）。
 
 {json.dumps(plots_snapshot, ensure_ascii=False, indent=1)}
 
@@ -1079,7 +1079,7 @@ class OutlineGenerator:
         try:
             from core.llm_client import extract_json
             raw = yield from self._stream_decision_content(
-                "theme_review", "你是网文编辑，负责内涵/母题复查。只返回JSON。",
+                "theme_review", "你是网文编辑，负责内涵复查。只返回JSON。",
                 prompt, temperature=0.3, max_tokens=8192)
             data = json.loads(extract_json(raw))
 
@@ -1090,7 +1090,7 @@ class OutlineGenerator:
                 if not plot:
                     continue
                 if corr.get("theme_hints"):
-                    # 只接受书级母题库内的名字
+                    # 只接受书级内涵库内的名字
                     valid = [t for t in corr["theme_hints"] if t in tl.themes]
                     if valid:
                         plot.theme_hints = valid[:2]
@@ -1139,11 +1139,11 @@ class OutlineGenerator:
             if stage_count > 0 and len(o_plots) < stage_count:
                 issues.append(f"大纲「{o.name}」有{stage_count}个阶段但只有{len(o_plots)}个桥段，建议补全")
 
-        # 4. 内涵覆盖率（母题跟随桥段，建议性，不强求）
+        # 4. 内涵覆盖率（内涵跟随桥段，建议性，不强求）
         total_plots = len(tl.plots)
         theme_plots = sum(1 for p in tl.plots if p.theme_hints)
         if tl.themes and total_plots > 0 and theme_plots / total_plots < 0.3:
-            issues.append(f"内涵覆盖率偏低（{theme_plots}/{total_plots}），建议把母题挂到更多能承载的桥段")
+            issues.append(f"内涵覆盖率偏低（{theme_plots}/{total_plots}），建议把内涵挂到更多能承载的桥段")
 
         # 5. 总章节合理性
         if tl.outlines:

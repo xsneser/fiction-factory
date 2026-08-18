@@ -96,7 +96,7 @@ def main():
     themes = result_storyline.get("themes", [])
     bi = result_storyline.get("basic_info", {})
     print(f"\n===== 产出概览 =====")
-    print(f"母题: {themes}")
+    print(f"内涵: {themes}")
     print(f"主角: {bi.get('protagonist', {})}")
     print(f"大纲 {len(outlines)} 条:")
     max_end = 0

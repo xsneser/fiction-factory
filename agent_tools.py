@@ -250,7 +250,7 @@ def get_book_state(book_id: str) -> dict:
 
 
 def get_storyline(book_id: str) -> dict:
-    """读取一本书的故事线（timeline）JSON：大纲/桥段/线程/母题/基础设定。"""
+    """读取一本书的故事线（timeline）JSON：大纲/桥段/线程/内涵/基础设定。"""
     tl = _require_tl(book_id)
     return tl.to_dict()
 

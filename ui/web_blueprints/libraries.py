@@ -74,7 +74,7 @@ def struct_delete(struct_id): return _lib_delete("structures", struct_id)
 
 @bp.route("/api/structures/<struct_id>/themes", methods=["POST"])
 def struct_themes(struct_id):
-    """编辑大纲模板的可承载母题（内涵嵌入大纲库的编辑入口）。"""
+    """编辑大纲模板的可承载内涵（编辑入口）。"""
     t = struct_lib.get_by_id(struct_id)
     if not t:
         return jsonify({"ok": False, "error": "not found"}), 404

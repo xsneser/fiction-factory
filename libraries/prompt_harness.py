@@ -2,7 +2,7 @@
 集中式提示词 harness — 书级设定卡 + 三场景上下文渲染器
 
 统一出口：
-  · 书级设定卡（Book Bible）：主角/世界观/配角/基调/母题/风格 压缩成紧凑 bullet，
+  · 书级设定卡（Book Bible）：主角/世界观/配角/基调/内涵/风格 压缩成紧凑 bullet，
     在全书开始前确立统一的写作风格与世界观，注入所有写作与大纲决策。
   · render_bridge_prompt   ：桥段写作（取代 storyline_writer._group_prompt 的内联拼装）
   · render_detector_prompt ：笑点探测器（gag_injector 用；笑点完全涌现，不写入大纲）
@@ -280,7 +280,7 @@ class PromptHarness:
         themes = [str(t) for t in (tl.themes or [])][:4]
         if not themes:
             return ""
-        return "- 全书母题：" + "、".join(themes)
+        return "- 全书内涵：" + "、".join(themes)
 
     def _supporting_cast_bullets(self) -> str:
         tl = self.storyline
@@ -375,7 +375,7 @@ class PromptHarness:
                 ("视角", self._pov_bullets()),
                 ("时代语言", self._era_language_bullets()),
                 ("时间纪律", self._rebirth_time_bullets()),
-                ("母题", self._theme_bullets()),
+                ("内涵", self._theme_bullets()),
             ]
         return [
             ("主角", self._protagonist_bullets()),
@@ -385,7 +385,7 @@ class PromptHarness:
             ("时代语言", self._era_language_bullets()),
             ("时间纪律", self._rebirth_time_bullets()),
             ("配角", self._supporting_cast_bullets()),
-            ("母题", self._theme_bullets()),
+            ("内涵", self._theme_bullets()),
             ("基调", self._tone_bullets()),
         ]
 
@@ -407,11 +407,11 @@ class PromptHarness:
         return "\n\n".join(out)
 
     def build_book_bible(self, max_chars: int = 1200) -> str:
-        """全量设定卡，按优先级（主角→世界观→风格→配角→母题→基调）累计截断。"""
+        """全量设定卡，按优先级（主角→世界观→风格→配角→内涵→基调）累计截断。"""
         return self._join_sections(self._bible_sections(condensed=False), max_chars)
 
     def build_book_bible_condensed(self, max_chars: int = 600) -> str:
-        """精简版：主角+世界观+风格+母题（写作/探测器用，目标约 440 字）。"""
+        """精简版：主角+世界观+风格+内涵（写作/探测器用，目标约 440 字）。"""
         return self._join_sections(self._bible_sections(condensed=True), max_chars)
 
     # ═══════════════════════════════════════════
@@ -501,13 +501,13 @@ class PromptHarness:
                     seg += f"：{m['how']}"
                 lines.append(seg)
             if lines:
-                theme_block = ("\n【本桥段要自然体现的母题（含插入位置）】\n"
+                theme_block = ("\n【本桥段要自然体现的内涵（含插入位置）】\n"
                                + "\n".join(lines)
                                + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
         else:
             themes = list(getattr(p, "theme_hints", None) or [])
             if themes:
-                theme_block = ("\n【本桥段要自然体现的母题】\n"
+                theme_block = ("\n【本桥段要自然体现的内涵】\n"
                                + "、".join(themes[:3])
                                + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
 
@@ -764,7 +764,7 @@ class PromptHarness:
                 return f"【书级设定（简）】\n{bible}\n" if bible else ""
             if phase_kind == "theme_review":
                 themes = [str(t) for t in (self.storyline.themes or [])][:6] if self.storyline else []
-                return f"【全书母题】{'、'.join(themes) if themes else '（无）'}\n"
+                return f"【全书内涵】{'、'.join(themes) if themes else '（无）'}\n"
             return ""
         finally:
             self.storyline = prev_storyline

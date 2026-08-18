@@ -33,7 +33,7 @@ class StructureTemplate:
     opening_patterns: list[str] = field(default_factory=list)
     climax_patterns: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
-    themes: list[str] = field(default_factory=list)   # 可承载母题/内涵（中英对照名，供书级母题带出）
+    themes: list[str] = field(default_factory=list)   # 可承载内涵（中英对照名，供书级内涵带出）
     source: str = ""                 # 来源
     created_at: str = "2026-05-01"   # 收录时间
     enabled: bool = True              # 启用状态

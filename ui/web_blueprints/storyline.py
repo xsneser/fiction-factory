@@ -530,7 +530,7 @@ def _decision_log_message(kind: str, data: dict) -> str:
         return f"🧩 桥段选择[{step}]：候选 {cands}"
     if kind == "theme_review":
         themes = "、".join((chosen.get("themes") or [])[:3]) or "无"
-        return f"🎭 内涵挂载[{step}]：母题 {themes}"
+        return f"🎭 内涵挂载[{step}]：内涵 {themes}"
     if kind == "thread_split":
         threads = "、".join((chosen.get("threads") or [])[:3]) or "—"
         splits = chosen.get("splits", 0)

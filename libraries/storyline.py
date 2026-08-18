@@ -393,7 +393,7 @@ def structure_to_stages(tmpl) -> list[dict]:
 
 
 # 内涵→桥段兼容映射（免费规则，替代 theme_lib.compatible_plots）
-# 由内置母题 compatible_plots 反查：桥段模板 id → 可承载母题名（保留完整名，与 tl.themes 一致）。
+# 由内置内涵 compatible_plots 反查：桥段模板 id → 可承载内涵名（保留完整名，与 tl.themes 一致）。
 # 删除 theme_lib 后此常量是「内涵跟随桥段」的唯一数据源。
 THEME_PLOT_COMPAT = {
     "plot_dating_001": ["公平（Justice）", "身份与伪装（Identity & Disguise）"],
@@ -412,8 +412,8 @@ def mount_themes_and_hooks(plot: "PlotSlot", storyline_themes: list) -> None:
 
     内涵来源优先级：
       1) 桥段已从所属阶段继承 theme_moments（阶段级内涵，含位置/手法）→ theme_hints 取其名
-      2) 否则按 THEME_PLOT_COMPAT 命中书级母题（免费规则兜底），不强挂
-    未命中的母题仍作为书级可用线索随「书级设定卡」注入写作；笑点完全涌现，不在此分配。
+      2) 否则按 THEME_PLOT_COMPAT 命中书级内涵（免费规则兜底），不强挂
+    未命中的内涵仍作为书级可用线索随「书级设定卡」注入写作；笑点完全涌现，不在此分配。
     """
     moments = list(getattr(plot, "theme_moments", None) or [])
     if moments:
