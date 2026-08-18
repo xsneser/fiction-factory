@@ -16,8 +16,10 @@
         <span class="tag" title="{{ s.description }}">{{ s.name }} ({{ s.min_chapters }}-{{ s.max_chapters }}章)</span>
         {% endfor %}
     </div>
+    {% if t.stages | selectattr('themes') | list %}
     <div style="margin-top:8px">
         {% for s in t.stages %}
+        {% if s.themes %}
         <details class="stage-themes" style="margin:4px 0;font-size:12px">
             <summary style="cursor:pointer;color:#8b949e">🎭 {{ s.name }} 内涵{% if s.themes %}<span class="tag yellow" style="margin-left:6px">{{ s.themes|length }}</span>{% endif %}</summary>
             <div class="stage-theme-editor" data-id="{{ t.id }}" data-idx="{{ loop.index0 }}" style="padding:6px 0 2px 12px">
@@ -33,8 +35,10 @@
                 <button type="button" class="small" onclick="saveStageThemes(this)">💾 保存阶段内涵</button>
             </div>
         </details>
+        {% endif %}
         {% endfor %}
     </div>
+    {% endif %}
     {% if t.tags %}<p style="margin-top:8px">{% for tag in t.tags %}<span class="tag green">{{ tag }}</span>{% endfor %}</p>{% endif %}
     {% if t.themes %}<p style="margin-top:8px">💡 可承载母题: {% for th in t.themes %}<span class="tag yellow">{{ th }}</span>{% endfor %}</p>{% endif %}
     <p style="color:#484f58;font-size:11px;margin-top:8px">
