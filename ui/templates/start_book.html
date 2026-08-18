@@ -592,6 +592,7 @@ var WZ = {
     PERSIST_KEY: 'ne_wizard_state',
     _persistTimer: null,
     persist: function() {
+        if (this.bookId) return;   // 建书后不存草稿：避免恢复已完成向导到生成中的步骤
         try {
             this.collect();   // 从 DOM 刷新 state（含 characters）
             sessionStorage.setItem(this.PERSIST_KEY, JSON.stringify({
