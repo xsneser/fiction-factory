@@ -83,6 +83,7 @@ def start_new_book():
             characters = [{
                 "name": src.get("protag_name", ""),
                 "role": "主角",
+                "importance": 1,
                 "identity": src.get("protag_identity", ""),
                 "personality": src.get("protag_personality", ""),
                 "golden_finger": src.get("protag_golden_finger", ""),

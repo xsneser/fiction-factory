@@ -39,7 +39,7 @@ DEFAULT_WORLD_BUILDING = {
 # ═══════════════════════════════════════════
 
 # 单条角色条目键（顺序即 to_dict 展示顺序）
-_CHAR_FIELDS = ("name", "role", "identity", "gender", "personality",
+_CHAR_FIELDS = ("name", "role", "importance", "identity", "gender", "personality",
                 "catchphrase", "brief", "title", "golden_finger",
                 "age", "death_year", "archetype_id", "relations")
 
@@ -47,10 +47,18 @@ _CHAR_DEFAULT_ROLE = "配角"
 
 
 def _canon_char(c) -> dict:
-    """归一化单条角色：补默认键、age/death_year 强转 int、relations 归一到 [{name,relation}]。"""
+    """归一化单条角色：补默认键、age/death_year/importance 强转 int、relations 归一到 [{name,relation}]。"""
     c = dict(c or {})
     out = {k: c.get(k, "") for k in _CHAR_FIELDS}
     out["role"] = str(out["role"] or "").strip() or _CHAR_DEFAULT_ROLE
+    # importance：排名制 1 最高；缺失默认 主角1 / 其他2
+    try:
+        imp = int(out["importance"] or 0)
+    except (TypeError, ValueError):
+        imp = 0
+    if imp < 1:
+        imp = 1 if out["role"] == "主角" else 2
+    out["importance"] = imp
     try:
         out["age"] = int(out["age"] or 0)
     except (TypeError, ValueError):
@@ -74,6 +82,7 @@ def _char_from_protagonist(p) -> dict:
     return {
         "name": str(p.get("name", "") or ""),
         "role": "主角",
+        "importance": 1,
         "identity": str(p.get("identity", "") or ""),
         "gender": str(p.get("gender", "") or ""),
         "personality": str(p.get("personality", "") or ""),
@@ -98,6 +107,7 @@ def _char_from_support(c, mc_name) -> dict:
     return {
         "name": str(c.get("name", "") or ""),
         "role": _CHAR_DEFAULT_ROLE,                  # 旧结构非主角一律"配角"，分类在新 UI 调整
+        "importance": int(c.get("importance") or 0) or 2,
         "identity": str(c.get("role", "") or ""),   # 旧 role 是职位 → 新 identity
         "gender": str(c.get("gender", "") or ""),
         "personality": str(c.get("personality", "") or ""),
@@ -133,13 +143,15 @@ def normalize_basic_info(bi) -> dict:
             if isinstance(c, dict) and str(c.get("name", "") or "").strip():
                 chars.append(_char_from_support(c, mc_name))
         bi["characters"] = chars
-    # 兜底自动标主角（复刻旧"主角恒首"语义）
+    # 兜底自动标主角（复刻旧"主角恒首"语义）：importance 未设时置 1
     if not any(str(c.get("role", "") or "").strip() == "主角"
                and str(c.get("name", "") or "").strip()
                for c in bi["characters"]):
         for c in bi["characters"]:
             if str(c.get("name", "") or "").strip():
                 c["role"] = "主角"
+                if not (c.get("importance") or 0):
+                    c["importance"] = 1
                 break
     bi.pop("protagonist", None)
     bi.pop("supporting_cast", None)
@@ -155,10 +167,14 @@ def get_characters(bi) -> list:
 
 
 def get_mc(bi) -> dict:
-    """严格取主角：role==主角 且有名字的条目；否则空 dict。"""
-    for c in get_characters(bi):
+    """取主角：role==主角 且有名字优先；否则取 importance==1 且有名字（弱化 role 区分后的兜底）。"""
+    chars = get_characters(bi)
+    for c in chars:
         if str(c.get("role", "") or "").strip() == "主角" \
                 and str(c.get("name", "") or "").strip():
+            return c
+    for c in chars:
+        if str(c.get("name", "") or "").strip() and int(c.get("importance") or 0) == 1:
             return c
     return {}
 

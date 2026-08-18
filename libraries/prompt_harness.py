@@ -274,8 +274,13 @@ class PromptHarness:
                 and str(c["name"]).strip() != mc_name]
         if not cast:
             return ""
+        # 按重要度升序（1 最高）取前 3-5 个，展示更重要的角色
+        try:
+            cast = sorted(cast, key=lambda c: int(c.get("importance") or 2))
+        except (TypeError, ValueError):
+            pass
         lines = []
-        for c in cast[:3]:
+        for c in cast[:5]:
             name = c.get("name", "")
             gender = c.get("gender", "")
             title = c.get("title", "")
