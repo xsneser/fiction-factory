@@ -74,6 +74,16 @@ def api_world_generate(book_id):
 
     def generate():
         import json as _json
+        from plugins import task_manager
+        task_manager.ensure_single("世界观生成")
+        task_id = f"world_{book_id}_{int(time.time())}"
+        task_manager.start(task_id, name="世界观生成",
+                           title=tl.book_title or tl.pen_name or "",
+                           agent="world", book_id=book_id,
+                           book_title=tl.book_title or "",
+                           step=("借鉴生成世界观" if mode == "borrow" else "生成世界观"),
+                           total=2, phase="构思设定...",
+                           url=f"/books/{book_id}")
         try:
             for event_type, message, data_dict in gen.generate(
                 genre=tl.genre, sub_genre=tl.sub_genre, idea=idea,
@@ -86,11 +96,21 @@ def api_world_generate(book_id):
                 payload = {"event": event_type, "message": message}
                 if data_dict:
                     payload.update(data_dict)
+                if event_type == "phase_done":
+                    task_manager.progress(task_id,
+                                          current=data_dict.get("phase", 0),
+                                          phase=message or "")
+                    task_manager.llm_call(task_id)
+                elif event_type == "done":
+                    task_manager.done(task_id, message="世界观生成完成")
+                elif event_type == "error":
+                    task_manager.fail(task_id, message or "世界观生成失败")
                 if event_type in ("world_summary", "phase_done", "done", "error"):
                     payload["basic_info"] = tl.basic_info
                 yield "data: " + _json.dumps(payload, ensure_ascii=False) + "\n\n"
         except Exception as e:
             import traceback
+            task_manager.fail(task_id, str(e))
             err_payload = {"event": "error", "message": str(e),
                            "traceback": traceback.format_exc()}
             yield "data: " + _json.dumps(err_payload, ensure_ascii=False) + "\n\n"
@@ -119,9 +139,27 @@ def api_world_candidates(book_id):
     from libraries.prompt_harness import PromptHarness
     harness = PromptHarness(storyline=tl, profile=profile)
     gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
-    candidates = gen.generate_candidates(genre=tl.genre, sub_genre=tl.sub_genre, idea=idea)
+
+    from plugins import task_manager
+    task_manager.ensure_single("世界观候选")
+    tid = f"worldcand_{book_id}_{int(time.time())}"
+    task_manager.start(tid, name="世界观候选",
+                       title=tl.book_title or tl.pen_name or "",
+                       agent="world", book_id=book_id,
+                       book_title=tl.book_title or "",
+                       step="产出差异化候选", total=1, phase="生成中...",
+                       url=f"/books/{book_id}")
+    try:
+        candidates = gen.generate_candidates(genre=tl.genre, sub_genre=tl.sub_genre, idea=idea)
+        task_manager.llm_call(tid)
+    except Exception as e:
+        task_manager.fail(tid, str(e))
+        raise
     if not candidates:
+        task_manager.fail(tid, "示例候选生成失败")
         return jsonify({"ok": False, "error": "示例候选生成失败，请重试"}), 500
+    task_manager.log(tid, f"产出 {len(candidates)} 个世界观方向", "success")
+    task_manager.done(tid, message="候选生成完成")
     return jsonify({"ok": True, "candidates": candidates})
 
 

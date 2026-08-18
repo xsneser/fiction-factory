@@ -12,12 +12,9 @@ bp = Blueprint("desk", __name__)
 # ═══════════════════════════════════════════
 
 def desk_list():
-    """写作台 — 故事线编辑器（从书库带书进入）。
-
-    写作台按书进入：书库每本书的「✍️ 写作台」入口打开 /storyline/<id>/edit；
-    直接访问 /desk（无书上下文）显示空界面，引导回书库选书。
-    """
-    return render_template("desk_empty.html")
+    """写作台已按书进入（书库每本书的「开始写作/继续写作」入口），
+    /desk 无书上下文时直接引导回书库，避免空页面死胡同。"""
+    return redirect(url_for("books.books"), 302)
 
 
 @bp.route("/books/start/timeline/<timeline_id>/write")
@@ -93,6 +90,9 @@ def storyline_engine_step(engine_id):
     next_ch = engine.state.current_chapter + 1
     total_ch = engine.state.total_chapters or next_ch
     flow_url = url_for("desk.storyline_write_flow", engine_id=engine_id)
+    book = getattr(engine, "book", None)
+    book_id = getattr(book, "book_id", "") or ""
+    book_title = getattr(book, "title", "") or ""
 
     # 注册/更新任务（新书生成 / 续写写作）
     task_name = "续写写作" if is_continue else "新书生成"
@@ -100,9 +100,12 @@ def storyline_engine_step(engine_id):
         task_manager.ensure_single(task_name)
         task_manager.start(task_id, name=task_name,
                           title=engine.state.pen_name or "",
-                          total=max(total_ch, 1), phase=f"第{next_ch}章...", url=flow_url)
+                          agent="writing", book_id=book_id, book_title=book_title,
+                          step=f"写第{next_ch}章", total=max(total_ch, 1),
+                          phase=f"第{next_ch}章...", url=flow_url)
     else:
         task_manager.progress(task_id, current=min(next_ch, total_ch), phase=f"第{next_ch}章...")
+        task_manager.set_step(task_id, step=f"写第{next_ch}章")
     task_manager.log(task_id, f"蓝图写作：第{next_ch}章", "info")
 
     # 全书完成（章节数到顶）
@@ -115,6 +118,7 @@ def storyline_engine_step(engine_id):
     if result.get("error"):
         task_manager.fail(task_id, str(result["error"]))
         return jsonify({"error": result["error"]}), 500
+    task_manager.llm_call(task_id)
     task_manager.log(task_id, f"第{next_ch}章完成 {result.get('word_count', 0)}字", "success")
 
     return jsonify({
@@ -136,17 +140,39 @@ def storyline_engine_write_chapter_sse(engine_id):
     前端据此在右侧逐桥段展示步骤与正文，并高亮左侧故事线对应的大纲/桥段。
     """
     import json as _json
+    from plugins import task_manager
     engine = _engines.get(engine_id)
     if not engine:
         return jsonify({"error": "not found"}), 404
+    chapter_num = engine.state.current_chapter + 1
+    flow_url = url_for("desk.storyline_write_flow", engine_id=engine_id)
+    _book = getattr(engine, "book", None)
+    _book_id = getattr(_book, "book_id", "") or ""
+    _book_title = getattr(_book, "title", "") or ""
 
     def generate():
+        task_manager.ensure_single("整章写作")
+        task_id = f"writechap_{engine_id}_{int(time.time())}"
+        task_manager.start(task_id, name="整章写作",
+                           title=_book_title or "",
+                           agent="writing", book_id=_book_id, book_title=_book_title,
+                           step=f"写第{chapter_num}章", total=1, phase="写作中...",
+                           url=flow_url)
         try:
-            for evt in engine._write_storyline_chapter_stream(
-                    engine.state.current_chapter + 1):
+            for evt in engine._write_storyline_chapter_stream(chapter_num):
+                if isinstance(evt, dict):
+                    t = evt.get("type", "")
+                    if t == "plot_chunk":
+                        task_manager.llm_call(task_id)
+                    elif t == "chapter_done":
+                        task_manager.done(task_id,
+                                          message=f"第{evt.get('chapter', chapter_num)}章完成")
+                    elif t == "error":
+                        task_manager.fail(task_id, str(evt.get("message", "写入失败")))
                 yield "data: " + _json.dumps(evt, ensure_ascii=False) + "\n\n"
         except Exception as e:
             import traceback
+            task_manager.fail(task_id, str(e))
             err = {"type": "error", "message": str(e),
                    "traceback": traceback.format_exc()}
             yield "data: " + _json.dumps(err, ensure_ascii=False) + "\n\n"
@@ -162,16 +188,41 @@ def storyline_engine_write_bridge_sse(engine_id):
     写一个桥段即返回；连续点击则继续写下一个未写桥段，本章满字数自动切章。
     """
     import json as _json
+    from plugins import task_manager
     engine = _engines.get(engine_id)
     if not engine:
         return jsonify({"error": "not found"}), 404
+    flow_url = url_for("desk.storyline_write_flow", engine_id=engine_id)
+    _book = getattr(engine, "book", None)
+    _book_id = getattr(_book, "book_id", "") or ""
+    _book_title = getattr(_book, "title", "") or ""
 
     def generate():
+        task_manager.ensure_single("桥段写作")
+        task_id = f"writebrg_{engine_id}_{int(time.time())}"
+        task_manager.start(task_id, name="桥段写作",
+                           title=_book_title or "",
+                           agent="writing", book_id=_book_id, book_title=_book_title,
+                           step="写下一个桥段", total=1, phase="写作中...",
+                           url=flow_url)
         try:
             for evt in engine._write_next_bridge_stream():
+                if isinstance(evt, dict):
+                    t = evt.get("type", "")
+                    if t == "group_chunk":
+                        task_manager.llm_call(task_id)
+                    elif t == "bridge_done":
+                        task_manager.set_step(task_id, step="桥段完成")
+                    elif t in ("chapter_done", "complete"):
+                        task_manager.done(task_id,
+                                          message=f"第{evt.get('chapter', '')}章完成" if t == "chapter_done"
+                                                  else evt.get("message", "全书完成"))
+                    elif t == "error":
+                        task_manager.fail(task_id, str(evt.get("message", "写入失败")))
                 yield "data: " + _json.dumps(evt, ensure_ascii=False) + "\n\n"
         except Exception as e:
             import traceback
+            task_manager.fail(task_id, str(e))
             err = {"type": "error", "message": str(e),
                    "traceback": traceback.format_exc()}
             yield "data: " + _json.dumps(err, ensure_ascii=False) + "\n\n"

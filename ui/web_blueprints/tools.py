@@ -106,6 +106,7 @@ def scout_run():
         task_manager.ensure_single("小说抓取")
         task_id = f"fetch_{novel.title}"
         task_manager.start(task_id, name="小说抓取", title=novel.title,
+                          agent="scout", step="抓取章节",
                           total=chapters, phase="搜索", url="/scout")
         task_manager.register_cancel(task_id)
         task_manager.log(task_id, f"找到: {novel.title}", "success")
@@ -213,7 +214,9 @@ def scout_ingest():
     # 单任务互斥：资产入库同一时间只允许一个
     task_manager.ensure_single("资产入库")
     task_id = f"ingest_{title}_{int(time.time())}"
-    task_manager.start(task_id, name="资产入库", title=title, total=1, phase="入库中...", url="/extract")
+    task_manager.start(task_id, name="资产入库", title=title,
+                       agent="scout", step="资产入库",
+                       total=1, phase="入库中...", url="/extract")
     task_manager.log(task_id, f"入库: {len(plots)}桥段 {len(structures)}大纲 {len(gags)}笑点 {len(excerpts)}范本", "info")
 
     scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib, example_lib)
@@ -287,7 +290,9 @@ def scout_analyze():
     # 单任务互斥：同一工具（内容分析）同时只允许一个任务，新任务替代旧任务
     task_manager.ensure_single("内容分析")
     task_id = f"analyze_{title}_{int(time.time())}"
-    task_manager.start(task_id, name="内容分析", title=title, total=50, phase="准备中", url="/extract")
+    task_manager.start(task_id, name="内容分析", title=title,
+                       agent="scout", step="LLM 风格分析",
+                       total=50, phase="准备中", url="/extract")
     task_manager.register_cancel(task_id)
     task_manager.log(task_id, f"开始分析: {title} ({len(chapters)}章)", "info")
 

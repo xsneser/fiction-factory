@@ -122,8 +122,14 @@ def extend_outline(storyline_id):
     from plugins import task_manager
     task_manager.ensure_single("扩展故事线")
     tid = f"extend_{storyline_id}_{int(time.time())}"
-    task_manager.start(tid, name="扩展故事线", title=tl.book_title or tl.pen_name or "",
-                       total=1, phase="完成", url=f"/storyline/{storyline_id}/edit")
+    task_manager.start(tid, name="扩展故事线",
+                       title=tl.book_title or tl.pen_name or "",
+                       agent="outline", book_id=storyline_id,
+                       book_title=tl.book_title or "",
+                       step=f"追加弧「{new_arc.name}」", total=1,
+                       phase="完成", url=f"/storyline/{storyline_id}/edit")
+    if mode == "ai":
+        task_manager.llm_call(tid)
     task_manager.log(tid, f"扩展故事线：新弧「{new_arc.name}」第{new_arc.start_chapter}-{new_arc.end_chapter}章 +{len(added)}桥段", "success")
     task_manager.done(tid, message="扩展完成")
 
@@ -146,6 +152,16 @@ def generate_title(storyline_id):
     llm = get_llm()
     if not llm:
         return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+
+    from plugins import task_manager
+    task_manager.ensure_single("AI 生成书名")
+    tid = f"title_{storyline_id}_{int(time.time())}"
+    task_manager.start(tid, name="AI 生成书名",
+                       title=tl.book_title or tl.pen_name or "",
+                       agent="title", book_id=storyline_id,
+                       book_title=tl.book_title or "",
+                       step="构思书名候选", total=1, phase="调用 LLM...",
+                       url=f"/storyline/{storyline_id}/edit")
 
     bi = tl.basic_info or {}
     protag = bi.get("protagonist") or {}
@@ -173,7 +189,12 @@ def generate_title(storyline_id):
     except Exception:
         titles = []
     if not titles:
+        task_manager.fail(tid, "书名生成失败")
         return jsonify({"ok": False, "error": "书名生成失败"}), 500
+
+    task_manager.llm_call(tid)
+    task_manager.log(tid, f"选书名「{titles[0]}」（共 {len(titles)} 候选）", "success")
+    task_manager.done(tid, message="书名生成完成")
 
     tl.book_title = titles[0]
     _save_storyline(tl, storyline_id)
@@ -199,17 +220,34 @@ def api_generate_outlines(storyline_id):
         gag_lib=gag_lib, llm_client=llm,
     )
 
+    from plugins import task_manager
+    task_manager.ensure_single("大纲序列生成")
+    tid = f"genout_{storyline_id}_{int(time.time())}"
+    task_manager.start(tid, name="大纲序列生成",
+                       title=tl.book_title or tl.pen_name or "",
+                       agent="outline", book_id=storyline_id,
+                       book_title=tl.book_title or "",
+                       step="生成大纲序列", total=1, phase="规划中...",
+                       url=f"/storyline/{storyline_id}/edit")
+
     mode = request.args.get("mode", "ai")
-    if mode == "rule":
-        tl.outlines = builder.build_outline_sequence(genre=tl.genre, mode="rule")
-    else:
-        tl.outlines = builder.build_outline_sequence(
-            genre=tl.genre, sub_genre=tl.sub_genre,
-            custom_context=tl.basic_info.get("world_building", {}).get("description", ""),
-            mode="ai",
-        )
+    try:
+        if mode == "rule":
+            tl.outlines = builder.build_outline_sequence(genre=tl.genre, mode="rule")
+        else:
+            tl.outlines = builder.build_outline_sequence(
+                genre=tl.genre, sub_genre=tl.sub_genre,
+                custom_context=tl.basic_info.get("world_building", {}).get("description", ""),
+                mode="ai",
+            )
+            task_manager.llm_call(tid)
+    except Exception as e:
+        task_manager.fail(tid, str(e))
+        raise
     tl.phase = "outlines"
     _save_storyline(tl, storyline_id)
+    task_manager.log(tid, f"生成 {len(tl.outlines)} 段大纲", "success")
+    task_manager.done(tid, message="大纲序列生成完成")
     return jsonify({"ok": True, "count": len(tl.outlines)})
 
 
@@ -241,9 +279,25 @@ def api_fill_plots(storyline_id):
     # seed 计数器，避免新桥段 id 与已有桥段撞号（否则去重会静默丢弃）
     _seed_builder_counter(builder, [p.id for p in tl.plots])
 
+    from plugins import task_manager
+    task_manager.ensure_single("桥段编排")
+    tid = f"fillplots_{storyline_id}_{int(time.time())}"
+    task_manager.start(tid, name="桥段编排",
+                       title=tl.book_title or tl.pen_name or "",
+                       agent="outline", book_id=storyline_id,
+                       book_title=tl.book_title or "",
+                       step="按大纲填充桥段", total=len(tl.outlines) or 1,
+                       phase="编排中...", url=f"/storyline/{storyline_id}/edit")
+
     new_plots = []
-    for o in tl.outlines:
-        new_plots.extend(builder.fill_plots_for_outline(o, tl))
+    try:
+        for i, o in enumerate(tl.outlines, 1):
+            task_manager.progress(tid, current=i, phase=f"桥段填充 · {o.name or '大纲'}{i}...")
+            new_plots.extend(builder.fill_plots_for_outline(o, tl))
+        task_manager.llm_call(tid, max(len(tl.outlines), 1))
+    except Exception as e:
+        task_manager.fail(tid, str(e))
+        raise
 
     # 去重：按 id 合并
     existing_ids = {p.id for p in tl.plots}
@@ -254,6 +308,8 @@ def api_fill_plots(storyline_id):
     from libraries.storyline import annotate_plot_roles
     annotate_plot_roles(tl)
     _save_storyline(tl, storyline_id)
+    task_manager.log(tid, f"共填充 {len(new_plots)} 个桥段（累计 {len(tl.plots)}）", "success")
+    task_manager.done(tid, message="桥段编排完成")
     return jsonify({"ok": True, "plots_added": len(new_plots),
                     "total_plots": len(tl.plots)})
 
@@ -269,11 +325,24 @@ def api_fill_gags(storyline_id):
         structure_lib=struct_lib, plot_lib=plot_lib,
         gag_lib=gag_lib,
     )
+
+    from plugins import task_manager
+    task_manager.ensure_single("加料注入")
+    tid = f"fillgags_{storyline_id}_{int(time.time())}"
+    task_manager.start(tid, name="加料注入",
+                       title=tl.book_title or tl.pen_name or "",
+                       agent="outline", book_id=storyline_id,
+                       book_title=tl.book_title or "",
+                       step="挂载内涵+吸睛", total=1, phase="注入中...",
+                       url=f"/storyline/{storyline_id}/edit")
+
     builder.fill_themes_and_hooks(tl.plots, tl)
     from libraries.storyline import annotate_plot_roles
     annotate_plot_roles(tl)
     tl.phase = "ready" if tl.plots else "gags"
     _save_storyline(tl, storyline_id)
+    task_manager.log(tid, f"内涵/吸睛已挂载（{len(tl.plots)} 桥段）", "success")
+    task_manager.done(tid, message="加料注入完成")
     return jsonify({"ok": True, "phase": tl.phase})
 
 
@@ -521,8 +590,12 @@ def api_generate_full(storyline_id):
     task_manager.ensure_single("完整大纲生成")
     task_id = f"genfull_{storyline_id}_{int(time.time())}"
     task_manager.start(task_id, name="完整大纲生成",
-                       title=tl.pen_name or "", total=6,
-                       phase="故事分析...", url=f"/storyline/{storyline_id}/edit")
+                       title=tl.pen_name or "",
+                       agent="outline", book_id=storyline_id,
+                       book_title=tl.book_title or "",
+                       step="一键完整大纲", sub_step="故事分析...",
+                       total=6, phase="故事分析...",
+                       url=f"/storyline/{storyline_id}/edit")
 
     def generate():
         import json as _json
@@ -548,9 +621,11 @@ def api_generate_full(storyline_id):
                 if event_type == "phase" and data_dict:
                     task_manager.progress(task_id, current=data_dict.get("phase", 0),
                                           phase=message or "")
+                    task_manager.set_step(task_id, sub_step=message or "")
                 if event_type == "phase_done" and data_dict:
                     task_manager.progress(task_id, current=data_dict.get("phase", 0),
                                           phase="完成", message=message)
+                    task_manager.set_step(task_id, sub_step=message or "")
                     task_manager.log(task_id, message, "success")
                 # 快照：内容已变化的 SSE 事件附带 storyline，前端据此逐条实时刷新左侧故事线
                 if event_type in ("outline_added", "outline_plots", "plot_added",
@@ -559,6 +634,7 @@ def api_generate_full(storyline_id):
 
                 # 每个决策写进右侧栏日志（用户能看到"确定了哪个大纲/桥段/笑点"）
                 if event_type == "decision" and data_dict:
+                    task_manager.llm_call(task_id)
                     task_manager.log(task_id,
                                      _decision_log_message(data_dict.get("kind", "decision"), data_dict),
                                      "success")
@@ -619,8 +695,11 @@ def api_storyline_agent(storyline_id):
     task_id = f"agent_{storyline_id}"
     try:
         task_manager.start(task_id, name="大纲助手", title=tl.pen_name or "",
-                           total=1, phase="调整故事线",
+                           agent="outline_agent", book_id=storyline_id,
+                           book_title=tl.book_title or "",
+                           step="解析指令", total=1, phase="调整故事线",
                            url=f"/storyline/{storyline_id}/edit")
+        task_manager.llm_call(task_id)
         task_manager.log(task_id, f"🎙 {message}", "info")
         for line in result.get("summary", []):
             task_manager.log(task_id, line, "success")

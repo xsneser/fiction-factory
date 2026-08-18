@@ -112,6 +112,7 @@ def _basic_info_from_outline(outline, book):
 
 @bp.route("/books/<book_id>")
 def book_detail(book_id):
+    book_mgr.list_all()   # mtime 感知重扫：外部进程（MCP）写入 book.json 后读到新值
     book = book_mgr.get(book_id)
     if not book: return "Not found", 404
     outline = book_mgr.get_outline(book_id)
@@ -190,16 +191,31 @@ def api_book_generate_meta(book_id):
     llm = get_llm()
     if not llm:
         return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+
+    from plugins import task_manager
+    task_manager.ensure_single("生成书名/简介")
+    tid = f"meta_{book_id}_{int(time.time())}"
+    _book_meta = book_mgr.get(book_id)
+    task_manager.start(tid, name="生成书名/简介",
+                       title=getattr(_book_meta, "title", "") or "",
+                       agent="title", book_id=book_id,
+                       book_title=getattr(_book_meta, "title", "") or "",
+                       step="基于第1章生成书名+简介", total=1, phase="调用 LLM...",
+                       url=f"/books/{book_id}")
     try:
         from libraries.engine import NovelEngine
         engine = NovelEngine(llm_client=llm)
         engine.continue_book(book_id)   # 恢复 book/storyline（无 storyline 会报错）
         result = engine._generate_book_meta(ch1["content"])
+        task_manager.llm_call(tid)
+        task_manager.log(tid, f"生成书名「{result.get('title', '')}」", "success")
+        task_manager.done(tid, message="书名/简介生成完成")
         # 使 web_ui 的 book 缓存失效，下次详情页加载读到磁盘新值
         book_mgr._cache.pop(book_id, None)
         _engines.pop(f"cont_{book_id}", None)
         return jsonify({"ok": True, **result})
     except Exception as e:
+        task_manager.fail(tid, str(e))
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
