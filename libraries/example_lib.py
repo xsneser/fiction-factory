@@ -54,7 +54,7 @@ class ExampleLibrary(JsonLibrary):
     _instance = None
     _list_attr = "excerpts"
     _key = "excerpts"
-    _file_name = "excerpts.json"
+    _file_name = "excerpts.jsonl"
 
     @classmethod
     def _from_dict(cls, d: dict) -> "ExampleExcerpt":

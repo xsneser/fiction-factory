@@ -113,6 +113,42 @@ with tempfile.TemporaryDirectory() as td:
     items = read_jsonl(jp)
     check("JSONL 往返", items == [{"a": 1}, {"b": 2}], str(items))
 
+# ─── 9) 基类 JsonLibrary 走 .jsonl（含旧单 JSON 自动迁移）───
+from libraries.base_library import JsonLibrary
+from core.json_store import write_json_atomic
+
+
+class _Obj:
+    def __init__(self, d): self.d = d
+    def to_dict(self): return self.d
+
+
+class _TmpLib(JsonLibrary):
+    _instance = None
+    _list_attr = "items"
+    _key = "items"
+    _file_name = "testlib.jsonl"
+
+    @classmethod
+    def _from_dict(cls, d): return _Obj(d)
+
+    @classmethod
+    def _builtin(cls): return [_Obj({"id": "builtin"})]
+
+
+with tempfile.TemporaryDirectory() as td:
+    write_json_atomic(os.path.join(td, "testlib.json"), {"items": [{"id": "old"}]})
+    lib = _TmpLib(td)
+    check("jsonl 自动迁移旧单JSON", [x.to_dict() for x in lib.items] == [{"id": "old"}],
+          str([x.to_dict() for x in lib.items]))
+    check("迁移后 jsonl 落盘", os.path.exists(os.path.join(td, "testlib.jsonl")))
+    lib.items.append(_Obj({"id": "new"}))
+    lib._save()
+    lib.items = []
+    lib._load()
+    check("jsonl 保存往返", [x.to_dict()["id"] for x in lib.items] == ["old", "new"],
+          str([x.to_dict() for x in lib.items]))
+
 
 if __name__ == "__main__":
     print("═══ 内涵嵌入大纲库 测试 ═══")

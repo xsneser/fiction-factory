@@ -10,7 +10,7 @@ data_dir = Path(__file__).parent / "data"
 deleted = []
 if data_dir.exists():
     for f in data_dir.iterdir():
-        if f.suffix == ".json":
+        if f.suffix in (".json", ".jsonl"):
             f.unlink()
             deleted.append(f.name)
 

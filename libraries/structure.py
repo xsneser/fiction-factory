@@ -2,10 +2,8 @@
 大纲库（Structure Library）
 各类网文流派的故事骨架结构模板
 """
-from pathlib import Path
 from dataclasses import dataclass, field
 from .base_library import JsonLibrary
-from core.json_store import read_json, read_jsonl, write_jsonl_atomic
 
 
 @dataclass
@@ -75,7 +73,7 @@ class StructureTemplate:
 
 
 class StructureLibrary(JsonLibrary):
-    """大纲库管理器（进程内单例，JSONL 一行一模板）"""
+    """大纲库管理器（进程内单例，JSONL 一行一模板，持久化由基类按 .jsonl 后缀处理）"""
     _instance = None
     _list_attr = "templates"
     _key = "templates"
@@ -88,25 +86,6 @@ class StructureLibrary(JsonLibrary):
     @classmethod
     def _builtin(cls) -> list:
         return BUILTIN_STRUCTURES
-
-    def _load(self):
-        """优先读 structures.jsonl；旧单 JSON structures.json 存在则自动迁移。"""
-        legacy = Path(str(self._save_path)).with_suffix(".json")
-        if not self._save_path.exists() and legacy.exists():
-            data = read_json(legacy, {})
-            items = [self._from_dict(d) for d in data.get(self._key, [])]
-            setattr(self, self._list_attr, items)
-            self._save()  # 落盘为 jsonl
-            return
-        if self._save_path.exists():
-            items = [self._from_dict(d) for d in read_jsonl(self._save_path)]
-        else:
-            items = list(self._builtin())
-        setattr(self, self._list_attr, items)
-
-    def _save(self):
-        write_jsonl_atomic(self._save_path,
-                           [t.to_dict() for t in getattr(self, self._list_attr)])
 
     def search(self, genre: str = "", sub_genre: str = "",
                chapter_count: int = 0) -> list[StructureTemplate]:

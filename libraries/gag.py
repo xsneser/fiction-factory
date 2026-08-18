@@ -45,7 +45,7 @@ class GagLibrary(JsonLibrary):
     _instance = None
     _list_attr = "patterns"
     _key = "patterns"
-    _file_name = "gags.json"
+    _file_name = "gags.jsonl"
 
     @classmethod
     def _from_dict(cls, d: dict) -> "GagPattern":

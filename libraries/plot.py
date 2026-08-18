@@ -80,7 +80,7 @@ class PlotLibrary(JsonLibrary):
     _instance = None
     _list_attr = "templates"
     _key = "templates"
-    _file_name = "plots.json"
+    _file_name = "plots.jsonl"
 
     def __init__(self, data_dir: str = ""):
         if getattr(self, "_initialized", False):
