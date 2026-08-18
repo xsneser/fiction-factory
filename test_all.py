@@ -263,10 +263,10 @@ assert_ok("bible-时代语言", "搭子" in _cond and "内卷" in _cond)
 _full = _hB.build_book_bible()
 assert_ok("bible-配角性别口头禅", "男" in _full and "这破公司" in _full)
 
-_sw = _genB._validate_storyline_math({"protagonist": {"death_year": 2010, "age": 25},
+_sw = _genB._validate_storyline_math({"protagonist": {"name": "陈默", "death_year": 2010, "age": 25},
                                      "world_building": {"era": "现代都市 2015"}})
 assert_ok("故事线-矛盾警告", any("重生故事线矛盾" in w for w in _sw))
-_sw2 = _genB._validate_storyline_math({"protagonist": {"age": 25}, "world_building": {"era": "2008年"}})
+_sw2 = _genB._validate_storyline_math({"protagonist": {"name": "陈默", "age": 25}, "world_building": {"era": "2008年"}})
 assert_ok("故事线-自洽无警告", not any("矛盾" in w or "不自洽" in w for w in _sw2))
 
 # ══════════════════════════════════════════════

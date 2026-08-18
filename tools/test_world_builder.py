@@ -72,8 +72,10 @@ def main():
     wb = merged["world_building"]
     check("description 老字段保留", wb.get("description") == "一句话种子", str(wb.get("description")))
     check("扩展维度加入", wb.get("geography") == "九大灵域")
-    check("用户已填字段不覆盖", merged["protagonist"].get("name") == "张三",
-          f"name={merged['protagonist'].get('name')}")
+    # 角色已统一为 characters 数组（protagonist/supporting_cast 迁移）
+    merged_chars = merged.get("characters", [])
+    mc = merged_chars[0] if merged_chars else {}
+    check("用户已填字段不覆盖", mc.get("name") == "张三", f"name={mc.get('name')}")
 
     # ── 真实 LLM 部分 ──
     if not have_llm():
