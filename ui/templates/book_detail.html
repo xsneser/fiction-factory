@@ -3,17 +3,7 @@
 <div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <span class="cur">{{ book.title or '(待定)' }}</span></div>
 {% endblock %}
 {% block content %}
-{% from "_flow_stepper.html" import flow_status, status_badge %}
-{% if book.status in ('finished','published') %}
-    {{ flow_status('上架 / 发布', '查看上架', '/books/' + book.book_id + '/publish') }}
-{% elif book.current_chapter >= 1 %}
-    {{ flow_status('章节写作（续写）', '继续写作', '/books/' + book.book_id + '/continue') }}
-{% elif not world_done %}
-    {{ flow_status('世界观设定', '生成世界观', '#world-edit') }}
-{% else %}
-    {{ flow_status('大纲·故事线', '生成大纲', '/books/' + book.book_id + '/continue') }}
-{% endif %}
-<h1>📖 {{ book.title or '(待定)' }}</h1>
+{% from "_flow_stepper.html" import status_badge %}
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
     {% if basic_info.get('has_storyline') %}
