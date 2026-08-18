@@ -55,13 +55,15 @@
 
 <h2>📌 各书下一步</h2>
 {% if books %}
-<div class="cards">
+<div class="next-strip-list">
     {% for r in books %}
     {% set b = r.book %}
-    <a href="{{ r.next.href if r.next else '/books/' + b.book_id }}" class="card" style="text-decoration:none">
-        <div class="title" style="font-size:15px">{{ b.title or '(待定)' }}</div>
-        <div class="meta">{{ b.pen_name }} · {{ b.genre }}{% if b.sub_genre %}/{{ b.sub_genre }}{% endif %} · {{ b.current_chapter }}/{{ b.chapter_count }}章</div>
-        <div class="next-bar">{{ r.next.label if r.next else '查看详情' }} →</div>
+    <a href="{{ r.next.href if r.next else '/books/' + b.book_id }}" class="next-strip">
+        <div>
+            <div class="ns-title">{{ b.title or '(待定)' }}</div>
+            <div class="ns-meta">{{ b.pen_name }} · {{ b.genre }}{% if b.sub_genre %}/{{ b.sub_genre }}{% endif %} · {{ b.current_chapter }}/{{ b.chapter_count }}章</div>
+        </div>
+        <div class="ns-action">{{ r.next.label if r.next else '查看详情' }} →</div>
     </a>
     {% endfor %}
 </div>

@@ -178,6 +178,16 @@
         /* 卡片底部整宽「下一步」横条（仪表盘各书卡片） */
         .next-bar { display:block; margin-top:14px; padding:10px 16px; border-radius:6px; text-align:center; background:rgba(31,111,235,.16); border:1px solid #1f6feb; color:#58a6ff; font-size:13px; font-weight:600; }
         a.card:hover .next-bar { background:rgba(31,111,235,.28); }
+        /* 仪表盘「各书下一步」横条列表（每书一条：书名/元信息左，下一步 CTA 右） */
+        .next-strip-list { display:flex; flex-direction:column; gap:8px; margin-bottom:24px; }
+        .next-strip { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;
+            background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px 16px; text-decoration:none; transition:all .2s; }
+        .next-strip:hover { border-color:#58a6ff; }
+        .next-strip .ns-title { font-size:15px; font-weight:600; color:#58a6ff; }
+        .next-strip .ns-meta { font-size:12px; color:#8b949e; margin-top:2px; }
+        .next-strip .ns-action { padding:6px 14px; border-radius:6px; background:rgba(31,111,235,.16);
+            border:1px solid #1f6feb; color:#58a6ff; font-size:13px; font-weight:600; white-space:nowrap; }
+        a.next-strip:hover .ns-action { background:rgba(31,111,235,.28); }
         /* Tables */
         table { width:100%; border-collapse:collapse; margin:12px 0; }
         th, td { padding:10px 14px; text-align:left; border-bottom:1px solid #30363d; font-size:13px; }
