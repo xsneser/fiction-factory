@@ -4,6 +4,7 @@
 {% endblock %}
 {% block content %}
 {% from "_flow_stepper.html" import status_badge %}
+<h1>📖 {{ book.title or '(待定)' }}</h1>
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
     {% if basic_info.get('has_storyline') %}
