@@ -1,11 +1,11 @@
 """
-JSON 库基类 — 四大资产库（桥段/大纲/笑点/内涵）共用的单例 + 磁盘读写样板。
+JSON 库基类 — 资产库（桥段/大纲/笑点/角色原型/摘录）共用的单例 + 磁盘读写样板。
 
 子类只需声明：
   _instance     : 本类自己的单例槽位（必须覆写，否则四库共享同一实例）
   _list_attr    : 条目列表属性名（templates / patterns / entries）
   _key          : JSON 顶层键（templates / patterns / entries）
-  _file_name    : 数据文件名（plots.json / structures.json / gags.json / themes.json）
+  _file_name    : 数据文件名（plots.json / structures.json / gags.json / characters.json / excerpts.json）
   _from_dict    : dict → 条目对象
   _builtin      : 内置条目列表（持久文件不存在时使用）
 """

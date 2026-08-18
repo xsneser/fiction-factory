@@ -464,10 +464,10 @@ class StorylineBuilder:
         # 流派→常见大纲序列
         genre_map = {
             "玄幻": ["struct_xuanhuan_01", "struct_xuanhuan_01"],  # 升级×2
-            "都市": ["struct_urban_01", "struct_urban_01"],
-            "言情": ["struct_romance_01", "struct_romance_01"],
-            "悬疑": ["struct_mystery_01", "struct_mystery_01"],
-            "穿越": ["struct_time_travel_01", "struct_xuanhuan_01"],
+            "都市": ["struct_dushi_01", "struct_dushi_01"],
+            "言情": ["struct_tianwen_01", "struct_tianwen_01"],
+            "悬疑": ["struct_xuanyi_01", "struct_xuanyi_01"],
+            "穿越": ["struct_chuanyue_01", "struct_xuanhuan_01"],
         }
 
         template_ids = genre_map.get(genre, ["struct_xuanhuan_01"])
