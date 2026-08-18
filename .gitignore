@@ -41,3 +41,7 @@ app_output.log
 .claude/settings.local.json
 e2e_server.log
 ui_server.log
+
+# 备份数据不入库
+books.bak*/
+*.bak

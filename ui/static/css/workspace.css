@@ -10,7 +10,6 @@ main { overflow: hidden; }
 .editor-scroll { flex:1; min-height:0; overflow:hidden; }
 .editor-storyline { height:100%; min-height:0; background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); padding:12px; }
 .editor-mid { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding-right:4px; }
-.editor-right { width:30%; min-width:300px; flex:0 0 auto; overflow-y:auto; min-height:0; padding-right:4px; }
 
 /* 右栏：规划/生成折叠区（JS 从 view-plan 搬来，生成动态在右，中间只留正文） */
 .right-plan { border:1px solid var(--border-soft); border-radius:var(--radius); padding:10px 12px; margin-bottom:12px; background:var(--bg-elev); }
