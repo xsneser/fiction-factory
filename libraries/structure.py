@@ -3,11 +3,7 @@
 各类网文流派的故事骨架结构模板
 """
 from dataclasses import dataclass, field
-from pathlib import Path
-import json
-
-
-_DEFAULT_DATA_DIR = Path(__file__).parent / "data"
+from .base_library import JsonLibrary
 
 
 @dataclass
@@ -19,6 +15,7 @@ class StageNode:
     max_chapters: int = 10
     key_events: list[str] = field(default_factory=list)
     foreshadow_opportunities: list[str] = field(default_factory=list)  # 埋坑机会
+    themes: list = field(default_factory=list)   # 阶段级内涵 [{name, position, how}]，含插入位置
 
 
 @dataclass
@@ -47,7 +44,8 @@ class StructureTemplate:
             "stages": [{"name": s.name, "description": s.description,
                         "min_chapters": s.min_chapters, "max_chapters": s.max_chapters,
                         "key_events": s.key_events,
-                        "foreshadow_opportunities": s.foreshadow_opportunities}
+                        "foreshadow_opportunities": s.foreshadow_opportunities,
+                        "themes": s.themes}
                        for s in self.stages],
             "opening_patterns": self.opening_patterns,
             "climax_patterns": self.climax_patterns,
@@ -74,39 +72,20 @@ class StructureTemplate:
         )
 
 
-class StructureLibrary:
-    """大纲库管理器"""
+class StructureLibrary(JsonLibrary):
+    """大纲库管理器（进程内单例，JSONL 一行一模板，持久化由基类按 .jsonl 后缀处理）"""
+    _instance = None
+    _list_attr = "templates"
+    _key = "templates"
+    _file_name = "structures.jsonl"
 
-    def __init__(self):
-        self.templates: list[StructureTemplate] = []
-        self._save_path = _DEFAULT_DATA_DIR / "structures.json"
-        self._load()
+    @classmethod
+    def _from_dict(cls, d: dict) -> "StructureTemplate":
+        return StructureTemplate.from_dict(d)
 
-    def _load(self):
-        if self._save_path.exists():
-            with open(self._save_path, encoding="utf-8") as f:
-                data = json.load(f)
-            self.templates = [StructureTemplate.from_dict(d)
-                              for d in data.get("templates", [])]
-        else:
-            self.templates = BUILTIN_STRUCTURES
-
-    def _save(self):
-        self._save_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._save_path, "w", encoding="utf-8") as f:
-            json.dump({"templates": [t.to_dict() for t in self.templates]},
-                      f, ensure_ascii=False, indent=2)
-
-    def load(self, path: str):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        self.templates = [StructureTemplate.from_dict(d)
-                          for d in data.get("templates", [])]
-
-    def save(self, path: str):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"templates": [t.to_dict() for t in self.templates]},
-                      f, ensure_ascii=False, indent=2)
+    @classmethod
+    def _builtin(cls) -> list:
+        return BUILTIN_STRUCTURES
 
     def search(self, genre: str = "", sub_genre: str = "",
                chapter_count: int = 0) -> list[StructureTemplate]:
@@ -167,7 +146,9 @@ BUILTIN_STRUCTURES = [
             StageNode("大结局", "世界新生/新篇章",
                       5, 15,
                       ["最终胜利/牺牲", "新世界秩序", "角色归宿"],
-                      []),
+                      [],
+                      [{"name": "成长的代价（Cost of Growth）", "position": "结尾",
+                        "how": "以牺牲或代价换来的胜利，在结局点题成长"}]),
         ],
         opening_patterns=["plot_dating_011", "plot_dating_012"],  # 穿越开局、系统激活
         climax_patterns=["plot_dating_005", "plot_dating_007", "plot_dating_010"],
@@ -202,11 +183,15 @@ BUILTIN_STRUCTURES = [
             StageNode("王座之路", "成为顶级人物",
                       40, 70,
                       ["建立自己的王朝/势力", "扳倒最大的对手", "用行动改变现状"],
-                      ["金手指/外挂的终极代价"]),
+                      ["金手指/外挂的终极代价"],
+                      [{"name": "公平（Justice）", "position": "中段",
+                        "how": "扳倒不公的对手时以结果证明正义"}]),
             StageNode("收尾", "功成身退或开启新篇",
                       10, 20,
                       ["与各个女主的关系收束", "对手的最终下场", "主角的生活方式选择"],
-                      []),
+                      [],
+                      [{"name": "身份与伪装（Identity & Disguise）", "position": "结尾",
+                        "how": "真身揭晓后的身份认同"}]),
         ],
         opening_patterns=["plot_dating_011", "plot_dating_001"],  # 重生 + 退婚打脸
         climax_patterns=["plot_dating_005", "plot_dating_010"],
@@ -303,7 +288,11 @@ BUILTIN_STRUCTURES = [
             StageNode("最终清算", "与幕后黑手正面决斗",
                       30, 40,
                       ["最终布局", "决斗高潮", "新的开始或总结"],
-                      []),
+                      [],
+                      [{"name": "复仇（Revenge）", "position": "结尾",
+                        "how": "挚友/家人被害的真相揭晓，决斗高潮以复仇意志引爆"},
+                       {"name": "热血（Passion）", "position": "结尾",
+                        "how": "背水一战的高燃时刻，以意志突破极限"}]),
         ],
         opening_patterns=["plot_dating_011", "plot_dating_012"],  # 穿越开局、金手指
         climax_patterns=["plot_dating_005", "plot_dating_001"],

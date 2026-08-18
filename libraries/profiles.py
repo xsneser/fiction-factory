@@ -119,8 +119,12 @@ class PenNameProfile:
 class ProfileManager:
     """笔名档案管理器"""
 
-    def __init__(self, profiles_dir: str = "profiles"):
-        self.dir = Path(profiles_dir)
+    def __init__(self, profiles_dir: str | None = None):
+        # 锚定到项目根目录，避免依赖当前工作目录（从任何目录启动都找得到数据）
+        base = Path(__file__).resolve().parent.parent
+        self.dir = Path(profiles_dir) if profiles_dir else base / "profiles"
+        if not self.dir.is_absolute():
+            self.dir = base / self.dir
         self.dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, PenNameProfile] = {}
         self._load_all()

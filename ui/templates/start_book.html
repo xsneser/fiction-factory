@@ -2,106 +2,654 @@
 {% block title %}启动新书 — NovelEngine{% endblock %}
 {% block content %}
 <h1>🔰 启动新书</h1>
-<p class="subtitle">填写基本信息即可开始，引擎会自动完成规划、前三章和书名生成。</p>
+<p class="subtitle">5 步开书：一句话设定 → 挑选世界观（标签）→ 挑选流派 → 生成大纲 → 前三章撰写。</p>
 
-<form method="POST" class="form-grid">
-    <fieldset>
-        <legend>📖 基本信息</legend>
-        <div class="form-row">
-            <label>书名（可先留空，引擎会生成）</label>
-            <input name="title" placeholder="书名（可选）" value="{{ request.form.get('title','') }}">
-        </div>
-        <div class="form-row">
-            <label>笔名</label>
-            <select name="pen_name" required>
-                <option value="">选择笔名...</option>
-                {% for p in pen_names %}
-                <option value="{{ p.pen_name }}" {% if request.form.get('pen_name')==p.pen_name %}selected{% endif %}>{{ p.pen_name }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-row half">
-            <label>流派</label>
-            <select name="genre" required>
-                <option value="">选择...</option>
-                <option value="玄幻" {% if request.form.get('genre')=='玄幻' %}selected{% endif %}>玄幻</option>
-                <option value="都市" {% if request.form.get('genre')=='都市' %}selected{% endif %}>都市</option>
-                <option value="言情" {% if request.form.get('genre')=='言情' %}selected{% endif %}>言情</option>
-                <option value="悬疑" {% if request.form.get('genre')=='悬疑' %}selected{% endif %}>悬疑</option>
-                <option value="穿越" {% if request.form.get('genre')=='穿越' %}selected{% endif %}>穿越</option>
-                <option value="科幻" {% if request.form.get('genre')=='科幻' %}selected{% endif %}>科幻</option>
-            </select>
-            <label>子类型</label>
-            <input name="sub_genre" placeholder="如：系统流、重生、逆袭" value="{{ request.form.get('sub_genre','') }}">
-        </div>
-        <div class="form-row half">
-            <label>目标平台</label>
-            <select name="platform">
-                <option value="fanqie" {% if request.form.get('platform')=='fanqie' %}selected{% endif %}>番茄小说</option>
-                <option value="qidian" {% if request.form.get('platform')=='qidian' %}selected{% endif %}>起点中文网</option>
-            </select>
-            <label>总章节数</label>
-            <input name="chapter_count" type="number" value="{{ request.form.get('chapter_count', 500) }}" min="10" max="2000">
-        </div>
-        <div class="form-row">
-            <label>笔名风格档案</label>
-            <select name="style_profile_id">
-                <option value="">跟随笔名默认风格</option>
-                {% for p in pen_names %}
-                <option value="profile_{{ '%03d' % (loop.index) }}">{{ p.pen_name }} · 风格档案</option>
-                {% endfor %}
-            </select>
-        </div>
-    </fieldset>
+<ol class="wz-steps" id="wz-steps">
+    <li class="wz-step active" data-step="1"><span class="wz-num">1</span>一句话设定</li>
+    <li class="wz-step" data-step="2"><span class="wz-num">2</span>AI候选挑世界观</li>
+    <li class="wz-step" data-step="3"><span class="wz-num">3</span>微调设定</li>
+    <li class="wz-step" data-step="4"><span class="wz-num">4</span>生成大纲</li>
+    <li class="wz-step" data-step="5"><span class="wz-num">5</span>前三章撰写</li>
+</ol>
 
-    <fieldset>
-        <legend>📐 模板选择（可选，留空由引擎自动匹配）</legend>
-        <div class="form-row">
-            <label>开篇桥段</label>
-            <select name="opening_template_id">
-                <option value="">自动匹配</option>
-                {% for t in openings %}
-                <option value="{{ t.id }}">{{ t.name }} — {{ t.description[:40] }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-row">
-            <label>金手指桥段</label>
-            <select name="golden_finger_template_id">
-                <option value="">自动匹配</option>
-                {% for t in golden_fingers %}
-                <option value="{{ t.id }}">{{ t.name }} — {{ t.description[:40] }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-row">
-            <label>大纲结构</label>
-            <select name="structure_template_id">
-                <option value="">自动匹配</option>
-                {% for s in structures %}
-                <option value="{{ s.id }}">{{ s.name }} ({{ s.total_chapters }}章)</option>
-                {% endfor %}
-            </select>
-        </div>
-    </fieldset>
+<div class="wz-panels">
+    {# ─── ① 一句话设定 ─── #}
+    <section class="wz-panel" id="panel-1">
+        <fieldset>
+            <legend>✍️ 一句话设定（必填）</legend>
+            <div class="form-row">
+                <textarea id="wz-idea" rows="3" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…"></textarea>
+            </div>
+            <div class="form-row hint">系统将结合你挑选的题材标签，从这句话扩展出完整世界观与大纲。</div>
+        </fieldset>
+        <fieldset>
+            <legend>👤 笔名</legend>
+            <div class="form-row">
+                <select id="wz-pen">
+                    <option value="">选择笔名...</option>
+                    {% for p in pen_names %}
+                    <option value="{{ p.pen_name }}">{{ p.pen_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </fieldset>
+    </section>
 
-    <button type="submit" class="btn-primary">🚀 启动新书</button>
-</form>
+    {# ─── ② AI 生成候选（挑世界观方向）+ 从已有书借鉴（备选） ─── #}
+    <section class="wz-panel" id="panel-2" style="display:none">
+        <fieldset>
+            <legend>🎲 AI 生成候选（从一句话设定发散世界观方向）</legend>
+            <div class="form-row">
+                <button type="button" class="btn-primary" onclick="WZ.loadCandidates()">🎲 生成候选</button>
+                <button type="button" class="btn-secondary" onclick="WZ.skipCandidates()">⏭ 跳过，手动设定</button>
+            </div>
+            <div id="wz-candidate-box" class="wz-candidate-box"></div>
+            <div class="form-row hint" id="wz-candidate-hint" style="display:none">挑一个方向，其设定会带入下一步微调。</div>
+        </fieldset>
+        <fieldset>
+            <legend>📚 从已有书借鉴（可选，提取设定做种子再微调）</legend>
+            <div class="form-row">
+                <select id="wz-borrow-source">
+                    <option value="">不借鉴…</option>
+                    {% for b in borrow_books %}
+                    <option value="{{ b.book_id }}">{{ b.title or b.book_id }}（{{ b.genre }}）</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-row">
+                <input id="wz-borrow-tweak" placeholder="微调句，如：把主角改成穿越来的程序员">
+            </div>
+            <div class="form-row">
+                <button type="button" class="btn-secondary" onclick="WZ.borrowPreview()">👀 预览将借鉴的设定</button>
+            </div>
+            <div id="wz-borrow-preview-box" class="wz-borrow-preview"></div>
+        </fieldset>
+    </section>
+
+    {# ─── ③ 微调设定：世界观（来自②，可编辑）+ 题材标签 + 主角候选（AI 新内容） ─── #}
+    <section class="wz-panel" id="panel-3" style="display:none">
+        <fieldset>
+            <legend>🌍 世界观（来自第②步，可编辑）</legend>
+            <div class="form-row half">
+                <div><label>书名</label><input id="wz-title" placeholder="书名（第②步选择，可改）"></div>
+                <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
+            </div>
+            <div class="form-row">
+                <label>世界观简述（一句话设定 + 第②步选中方向，可编辑）</label>
+                <textarea id="wz-world-desc3" rows="3"></textarea>
+            </div>
+        </fieldset>
+        <fieldset>
+            <legend>🏷️ 题材标签</legend>
+            {% for g in world_tags %}
+            <div class="tag-group">
+                <div class="tag-group-name">{{ g.group }}</div>
+                <div class="tag-chips">
+                    {% for t in g.tags %}
+                    <button type="button" class="chip" data-tag="{{ t }}" onclick="WZ.toggleTag(this)">{{ t }}</button>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </fieldset>
+        <fieldset>
+            <legend>🎭 角色设定（可手动编辑，也可 AI 从原型库生成）</legend>
+            <div class="form-row">
+                <button type="button" class="btn-primary" onclick="WZ.genCharacters()">🎲 生成角色候选（原型库挑选）</button>
+            </div>
+            <div id="wz-characters-box"></div>
+            <fieldset>
+                <legend>👥 角色列表（重要度：1=主角/核心，数字越小越重要）</legend>
+                <div id="wz-char-list"></div>
+                <div class="btn-row">
+                    <button type="button" class="btn-secondary" onclick="WZ.addCharRow()">➕ 手动添加角色</button>
+                </div>
+            </fieldset>
+        </fieldset>
+    </section>
+
+    {# ─── ④ 生成大纲：世界 SSE → 完整大纲 SSE ─── #}
+    <section class="wz-panel" id="panel-4" style="display:none">
+        <fieldset>
+            <legend>🚀 正在生成世界观与完整大纲</legend>
+            <div id="wz-feed" class="wz-feed"></div>
+            <button id="wz-skip-world" class="btn" style="display:none" onclick="WZ.runOutlineOnly()">⏭ 跳过世界观，直接生成大纲</button>
+        </fieldset>
+    </section>
+
+    {# ─── ⑤ 前三章撰写：进入写作台 ─── #}
+    <section class="wz-panel" id="panel-5" style="display:none">
+        <fieldset>
+            <legend>🎉 大纲已生成</legend>
+            <p id="wz-done-msg" class="wz-done-msg">世界观与大纲已生成完毕，进入写作台撰写前三章。</p>
+            <div class="form-row" style="display:flex;gap:12px">
+                <button id="wz-enter" class="btn-primary" style="display:none"
+                        onclick="navigateTo('/books/' + WZ.bookId + '/continue')">✍️ 进入写作台（前三章）</button>
+                <button class="btn" onclick="navigateTo('/books/' + WZ.bookId); return false">📖 去书详情</button>
+            </div>
+        </fieldset>
+    </section>
+</div>
+
+<div class="wz-nav">
+    <button id="wz-prev" class="btn" style="display:none" onclick="WZ.prev()">← 上一步</button>
+    <button id="wz-next" class="btn-primary" onclick="WZ.next()">下一步 →</button>
+    <button id="wz-submit" class="btn-primary" style="display:none" onclick="WZ.createBook()">🚀 创建并生成大纲</button>
+</div>
 
 <style>
-.subtitle { color:#8b949e; margin-bottom:24px; }
-.form-grid { max-width:800px; }
-fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
-legend { color:#58a6ff; font-weight:600; padding:0 8px; }
+.subtitle { color:#8b949e; margin-bottom:24px; max-width:760px; }
+.wz-steps { list-style:none; display:flex; gap:8px; margin:0 0 28px; padding:0; flex-wrap:wrap; }
+.wz-step {
+    flex:1; min-width:120px; display:flex; align-items:center; gap:8px;
+    background:#0d1117; border:1px solid #30363d; border-radius:8px;
+    padding:10px 12px; color:#8b949e; font-size:13px; cursor:default;
+    transition:all .2s;
+}
+.wz-step .wz-num {
+    width:22px; height:22px; border-radius:50%; background:#21262d; color:#8b949e;
+    display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0;
+}
+.wz-step.active { border-color:#58a6ff; color:#f0f6fc; }
+.wz-step.active .wz-num { background:#1f6feb; color:#fff; }
+.wz-step.done { border-color:#2ea043; color:#c9d1d9; }
+.wz-step.done .wz-num { background:#238636; color:#fff; }
+.wz-step.locked { opacity:.5; }
+.wz-step.clickable { cursor:pointer; }
+.wz-step.clickable:hover { border-color:#58a6ff; }
+.wz-panels { max-width:800px; }
+.wz-panel fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
+.wz-panel legend { color:#58a6ff; font-weight:600; padding:0 8px; }
 .form-row { margin-bottom:14px; }
 .form-row label { display:block; color:#c9d1d9; font-size:13px; margin-bottom:4px; }
-.form-row input, .form-row select { width:100%; background:#0d1117; border:1px solid #30363d; color:#f0f6fc; padding:8px 12px; border-radius:6px; font-size:14px; }
-.form-row input:focus, .form-row select:focus { border-color:#58a6ff; outline:none; }
+.form-row input, .form-row select, .form-row textarea {
+    width:100%; background:#0d1117; border:1px solid #30363d; color:#f0f6fc;
+    padding:8px 12px; border-radius:6px; font-size:14px; box-sizing:border-box;
+}
+.form-row input:focus, .form-row select:focus, .form-row textarea:focus { border-color:#58a6ff; outline:none; }
+.form-row textarea { resize:vertical; font-family:inherit; }
 .form-row.half { display:flex; gap:12px; }
-.form-row.half > * { flex:1; }
-.form-row.half label { display:block; }
-.form-row.half input, .form-row.half select { width:100%; }
+.form-row.half > div { flex:1; }
+.form-row.hint { color:#8b949e; font-size:12px; margin-top:-6px; }
+.advanced { border:1px solid #30363d; border-radius:8px; padding:12px 16px; margin-bottom:20px; }
+.advanced summary { cursor:pointer; color:#8b949e; font-size:14px; }
+.advanced[open] summary { margin-bottom:12px; color:#c9d1d9; }
+.tag-group { margin-bottom:16px; }
+.tag-group-name { color:#c9d1d9; font-size:13px; margin-bottom:8px; }
+.tag-chips { display:flex; flex-wrap:wrap; gap:8px; }
+.chip {
+    background:#0d1117; border:1px solid #30363d; color:#8b949e; border-radius:16px;
+    padding:5px 14px; font-size:13px; cursor:pointer; transition:all .2s;
+}
+.chip:hover { border-color:#58a6ff; color:#f0f6fc; }
+.chip.on { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+.wz-borrow-preview { font-size:12px; color:#8b949e; line-height:1.6; }
+.wz-candidate-box { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+.wz-candidate-card {
+    background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:10px 12px;
+    cursor:pointer; transition:all .2s;
+}
+.wz-candidate-card:hover { border-color:#58a6ff; }
+.wz-candidate-card.picked { border-color:#3fb950; background:#23863622; }
+.wz-cand-label { color:#8b949e; font-size:12px; margin:8px 0 4px; }
+.wz-cand-row { display:flex; flex-wrap:wrap; gap:8px; }
+.wz-cand-title { color:#58a6ff; font-weight:600; font-size:13px; margin-bottom:4px; }
+.wz-cand-one { color:#c9d1d9; font-size:12px; margin-bottom:4px; }
+.wz-cand-brief { color:#8b949e; font-size:11px; line-height:1.6; margin-bottom:4px; }
+.wz-cand-hint { color:#6e7681; font-size:11px; }
+.wz-feed { font-size:12px; line-height:1.8; max-height:320px; overflow-y:auto; }
+.wz-feed .gf-item { padding:2px 0; border-left:2px solid #30363d; padding-left:8px; margin:1px 0; }
+.wz-feed .gf-item.success { border-left-color:#3fb950; color:#7ee787; }
+.wz-feed .gf-item.error { border-left-color:#f85149; color:#ff7b72; }
+.wz-done-msg { color:#c9d1d9; }
+.wz-nav { display:flex; gap:12px; margin-top:8px; }
+.btn { background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:12px 28px; border-radius:8px; font-size:15px; cursor:pointer; transition:all .2s; }
+.btn:hover { border-color:#58a6ff; color:#f0f6fc; }
+.btn-secondary { background:#21262d; border:1px solid #30363d; color:#c9d1d9; padding:8px 16px; border-radius:6px; font-size:13px; cursor:pointer; }
+.btn-secondary:hover { border-color:#58a6ff; color:#f0f6fc; }
 .btn-primary { background:#238636; color:white; border:none; padding:12px 32px; border-radius:8px; font-size:16px; cursor:pointer; transition:all .2s; }
 .btn-primary:hover { background:#2ea043; }
+.btn-primary:disabled { opacity:.5; cursor:not-allowed; }
 </style>
+
+<script>
+var WZ = {
+    cur: 1, bookId: '', creating: false,
+    state: { idea: '', pen_name: '', tags: [], borrow: { source_book_id: '', tweak: '' },
+             genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
+             storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
+             protag_personality: '', protag_golden_finger: '',
+             opening_template_id: '', golden_finger_template_id: '', structure_template_id: '' },
+
+    el: function(id) { return document.getElementById(id); },
+
+    show: function(n) {
+        for (var i = 1; i <= 5; i++) {
+            var p = this.el('panel-' + i);
+            if (p) p.style.display = i === n ? 'block' : 'none';
+        }
+        var self = this;
+        document.querySelectorAll('.wz-step').forEach(function(s) {
+            var sn = +s.dataset.step;
+            s.classList.toggle('active', sn === n);
+            s.classList.toggle('done', !!self.bookId ? (sn < 4 && sn < n) : sn < n);
+            s.classList.toggle('locked', !!self.bookId && sn <= 3);
+            s.classList.toggle('clickable', !!self.bookId === false && sn < n);
+            s.onclick = (sn < n && !self.bookId) ? function() { self.show(sn); } : null;
+        });
+        this.cur = n;
+        this.el('wz-prev').style.display = (!this.bookId && n > 1 && n <= 3) ? 'inline-block' : 'none';
+        this.el('wz-next').style.display = (n === 1 || n === 2) ? 'inline-block' : 'none';
+        this.el('wz-submit').style.display = (n === 3) ? 'inline-block' : 'none';
+        if (this.bookId && n === 4) this.el('wz-prev').style.display = 'none';
+        // 步骤③ 世界观可编辑：预填书名（来自②选中候选）+ 世界观简述（一句话 + 选中方向）
+        if (n === 3) {
+            var titleEl = this.el('wz-title');
+            if (titleEl && this.state.title) titleEl.value = this.state.title;
+            var desc3 = this.el('wz-world-desc3');
+            if (desc3 && !desc3.value) {
+                var _base = this.el('wz-idea').value.trim();
+                var _wb = this.state.world_brief || '';
+                desc3.value = _wb ? (_base ? _base + '。' + _wb : _wb) : _base;
+            }
+        }
+        this.persist();   // 步骤切换即存草稿
+    },
+
+    validate: function(n) {
+        if (n === 1) return this.el('wz-idea').value.trim() && this.el('wz-pen').value;
+        return true;   // ② 候选可空；③ 标签可选，流派后端从标签推导
+    },
+
+    next: function() {
+        if (!this.validate(this.cur)) {
+            if (typeof showToast === 'function') showToast('请完成本步必填项（一句话设定 + 笔名）', 'error');
+            return;
+        }
+        this.show(this.cur + 1);
+    },
+    prev: function() { this.show(this.cur - 1); },
+
+    toggleTag: function(btn) {
+        btn.classList.toggle('on');
+        this.state.tags = Array.prototype.slice.call(document.querySelectorAll('.chip.on'))
+            .map(function(b) { return b.dataset.tag; });
+    },
+
+    borrowPreview: function() {
+        var src = this.el('wz-borrow-source').value;
+        if (!src) { this.el('wz-borrow-preview-box').textContent = ''; return; }
+        fetch('/api/world-builder/borrow-preview', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source_book_id: src })
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            var box = WZ.el('wz-borrow-preview-box');
+            if (!d.ok) { box.textContent = '❌ ' + d.error; return; }
+            var lines = ['将借鉴「' + d.source_title + '」的设定：'];
+            var seed = d.seed || {};
+            if (seed.protagonist && seed.protagonist.name) lines.push('· 主角：' + seed.protagonist.name + (seed.protagonist.identity ? '（' + seed.protagonist.identity + '）' : ''));
+            var wb = seed.world_building || {};
+            for (var k in { era: '时代', power_system: '力量体系', core_conflict: '核心矛盾' }) {
+                if (wb[k]) lines.push('· ' + k + '：' + String(wb[k]).slice(0, 60));
+            }
+            if (seed.tone) lines.push('· 基调：' + seed.tone);
+            box.textContent = lines.join('\n');
+        }).catch(function() { WZ.el('wz-borrow-preview-box').textContent = '❌ 预览失败'; });
+    },
+
+    /* —— AI 生成候选（无书端点，建书前）—— */
+    loadCandidates: function() {
+        var idea = this.el('wz-idea').value.trim();
+        var box = this.el('wz-candidate-box');
+        box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成候选…</div>';
+        var genre = '';   // 流派由题材标签推导，候选生成无需流派
+        var self = this;
+        fetch('/api/world-builder/candidates', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idea: idea, genre: genre })
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            if (!d.ok) { box.innerHTML = '❌ ' + d.error; return; }
+            window.__CANDIDATES__ = d.candidates || [];
+            var html = '';
+            (window.__CANDIDATES__ || []).forEach(function(c, idx) {
+                html += '<div class="wz-candidate-card" onclick="WZ.pickCandidate(' + idx + ')">'
+                    + '<div class="wz-cand-title">#' + (idx + 1) + ' ' + (c.title || '') + '</div>'
+                    + '<div class="wz-cand-one">' + (c.one_liner || '') + '</div>'
+                    + (c.world_brief ? '<div class="wz-cand-brief">' + c.world_brief + '</div>' : '')
+                    + '<div class="wz-cand-hint">『' + (c.genre_hint || '') + '』</div>'
+                    + '</div>';
+            });
+            box.innerHTML = html;
+            self.el('wz-candidate-hint').style.display = 'block';
+        }).catch(function(e) { box.innerHTML = '❌ 请求失败: ' + e.message; });
+    },
+    pickCandidate: function(idx) {
+        var c = (window.__CANDIDATES__ || [])[idx];
+        if (!c) return;
+        // 书名 = 选中候选标题（第③步展示可编辑，不再生成）；one_liner 并入一句话作世界种子
+        if (c.title) this.state.title = c.title;
+        if (c.world_brief) this.state.world_brief = c.world_brief;
+        if (c.one_liner) {
+            var ideaEl = this.el('wz-idea');
+            if (ideaEl) ideaEl.value = ideaEl.value.trim() ? ideaEl.value.trim() + '。' + c.one_liner : c.one_liner;
+        }
+        var cards = document.querySelectorAll('#wz-candidate-box .wz-candidate-card');
+        for (var i = 0; i < cards.length; i++) cards[i].classList.toggle('picked', i === idx);
+        if (typeof showToast === 'function') showToast('已选中：' + c.title + '，下一步可微调', 'success');
+    },
+    skipCandidates: function() {
+        this.el('wz-candidate-box').innerHTML = '';
+        this.show(3);
+    },
+
+    /* —— ③ 生成主角与配角候选（可重复点：主角单选覆盖、配角多选累积） —— */
+    genCharacters: function() {
+        var idea = (this.el('wz-world-desc3') && this.el('wz-world-desc3').value.trim()) || this.el('wz-idea').value.trim();
+        var title = (this.el('wz-title') && this.el('wz-title').value.trim()) || '';
+        var box = this.el('wz-characters-box');
+        box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成角色候选…</div>';
+        var self = this;
+        fetch('/api/world-builder/characters', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idea: idea, title: title, tags: this.state.tags })
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            if (!d.ok) { box.innerHTML = '❌ ' + d.error; return; }
+            window.__CHARACTERS__ = d;
+            var html = '<div class="wz-cand-label">🧑 主角候选（重要度 1，点「➕ 添加」追加）：</div>';
+            (d.protagonists || []).forEach(function(p, i) {
+                html += '<div class="wz-candidate-card" style="display:flex;align-items:center;gap:8px" data-kind="protag" data-idx="' + i + '">'
+                    + '<div style="flex:1">'
+                    + '<div class="wz-cand-title">' + (p.name || '') + '（' + (p.identity || '') + '）'
+                    + (p.archetype_id ? ' · 🎭' + p.archetype_id : '') + '</div>'
+                    + '<div class="wz-cand-one">性格：' + (p.personality || '') + '｜金手指：' + (p.golden_finger || '') + '</div>'
+                    + '</div>'
+                    + '<button type="button" class="btn-secondary" onclick="WZ.addCharFromCandidate(\'protag\', ' + i + ')">➕ 添加</button>'
+                    + '</div>';
+            });
+            if ((d.supporting_cast || []).length) {
+                html += '<div class="wz-cand-label" style="margin-top:8px">👥 其他角色候选（重要度 2-5，点「➕ 添加」追加，可多选）：</div>';
+                (d.supporting_cast || []).forEach(function(c2, i) {
+                    html += '<div class="wz-candidate-card" style="display:flex;align-items:center;gap:8px" data-kind="support" data-idx="' + i + '">'
+                        + '<div style="flex:1">'
+                        + '<div class="wz-cand-title">' + (c2.name || '') + '（' + (c2.identity || '') + '，重要度' + (c2.importance || 2) + '）'
+                        + (c2.archetype_id ? ' · 🎭' + c2.archetype_id : '') + '</div>'
+                        + '<div class="wz-cand-one">性格：' + (c2.personality || '') + (c2.catchphrase ? '｜口癖：' + c2.catchphrase : '') + (c2.relation ? '｜关系：' + c2.relation : '') + '</div>'
+                        + '</div>'
+                        + '<button type="button" class="btn-secondary" onclick="WZ.addCharFromCandidate(\'support\', ' + i + ')">➕ 添加</button>'
+                        + '</div>';
+                });
+                html += '<div class="wz-cand-label" style="margin-top:6px">再次点击「生成」可换一批候选（已添加的保留）。</div>';
+            }
+            box.innerHTML = html;
+        }).catch(function(e) { box.innerHTML = '❌ 请求失败: ' + e.message; });
+    },
+    /* —— 统一角色列表：手动添加 / 候选追加 / 删除 —— */
+    addCharRow: function(data) {
+        data = data || {};
+        var list = this.el('wz-char-list');
+        var row = document.createElement('div');
+        row.className = 'char-row';
+        if (data.archetype_id) row.setAttribute('data-arch', data.archetype_id);
+        row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin:6px 0;padding:8px;background:#0d1117;border:1px solid #21262d;border-radius:6px;align-items:center';
+        row.innerHTML =
+            '<input class="ch-name" placeholder="姓名" value="' + (data.name || '') + '" style="flex:1;min-width:70px">'
+            + '<input class="ch-identity" placeholder="身份" value="' + (data.identity || '') + '" style="flex:1.2;min-width:80px">'
+            + '<input class="ch-personality" placeholder="性格" value="' + (data.personality || '') + '" style="flex:1.2;min-width:80px">'
+            + '<input class="ch-catchphrase" placeholder="口癖" value="' + (data.catchphrase || '') + '" style="flex:1;min-width:70px">'
+            + '<select class="ch-importance" title="重要度（1最高）">'
+            + [1, 2, 3, 4, 5].map(function(n) { return '<option value="' + n + '"' + (String(data.importance || 1) === String(n) ? ' selected' : '') + '>' + n + '</option>'; }).join('')
+            + '</select>'
+            + '<input class="ch-golden" placeholder="金手指" value="' + (data.golden_finger || '') + '" style="flex:1;min-width:70px">'
+            + '<input class="ch-relation" placeholder="与主角关系" value="' + (data.relation || '') + '" style="flex:1;min-width:70px">'
+            + '<span class="ch-arch" style="font-size:11px;color:#6e7681">' + (data.archetype_id ? '🎭' + data.archetype_id : '') + '</span>'
+            + '<button type="button" class="small" onclick="this.closest(\'.char-row\').remove()">✕</button>';
+        list.appendChild(row);
+    },
+    addCharFromCandidate: function(kind, idx) {
+        var d = window.__CHARACTERS__;
+        if (!d) return;
+        var c = kind === 'protag' ? (d.protagonists || [])[idx] : (d.supporting_cast || [])[idx];
+        if (!c) return;
+        this.addCharRow({ name: c.name, identity: c.identity, personality: c.personality,
+                          catchphrase: c.catchphrase,
+                          importance: c.importance || (kind === 'protag' ? 1 : 2),
+                          golden_finger: c.golden_finger, relation: c.relation,
+                          archetype_id: c.archetype_id });
+        if (typeof showToast === 'function') showToast('已添加角色「' + c.name + '」，可继续生成更多', 'success');
+    },
+
+    collect: function() {
+        // 世界观简述（步骤③可编辑）作为世界种子；步骤①一句话作兜底
+        this.state.idea = (this.el('wz-world-desc3') && this.el('wz-world-desc3').value.trim())
+            || this.el('wz-idea').value.trim();
+        this.state.pen_name = this.el('wz-pen').value;
+        this.state.borrow = { source_book_id: this.el('wz-borrow-source').value,
+                              tweak: this.el('wz-borrow-tweak').value.trim() };
+        // 流派/平台已从向导移除：流派由后端从题材标签推导；平台留到发布页
+        this.state.genre = '';      // 后端 derive_genre(tags) 填充
+        this.state.platform = 'fanqie';
+        this.state.title = (this.el('wz-title') && this.el('wz-title').value.trim()) || '';
+        this.state.words_per_chapter = parseInt(this.el('wz-words').value, 10) || 3000;
+        // 构建统一 characters 数组：从 #wz-char-list 每行读（姓名/身份/性格/口癖/重要度/金手指/关系/原型）
+        var charRows = Array.prototype.slice.call(document.querySelectorAll('#wz-char-list .char-row'));
+        var mcName = '';
+        for (var ri = 0; ri < charRows.length; ri++) {
+            if (parseInt(charRows[ri].querySelector('.ch-importance').value, 10) === 1) {
+                mcName = charRows[ri].querySelector('.ch-name').value.trim();
+                break;
+            }
+        }
+        var chars = [];
+        charRows.forEach(function(row) {
+            var n = row.querySelector('.ch-name').value.trim();
+            if (!n) return;
+            var imp = parseInt(row.querySelector('.ch-importance').value, 10) || 2;
+            var rel = row.querySelector('.ch-relation').value.trim();
+            chars.push({
+                name: n,
+                role: imp === 1 ? '主角' : '配角',
+                importance: imp,
+                identity: row.querySelector('.ch-identity').value.trim(),
+                personality: row.querySelector('.ch-personality').value.trim(),
+                catchphrase: row.querySelector('.ch-catchphrase').value.trim(),
+                golden_finger: row.querySelector('.ch-golden').value.trim(),
+                archetype_id: row.getAttribute('data-arch') || '',
+                relations: (rel && mcName) ? [{ name: mcName, relation: rel }] : [],
+                gender: '', brief: '', title: '', age: 0, death_year: 0,
+            });
+        });
+        this.state.characters = chars;
+    },
+
+    createBook: function() {
+        if (this.creating) return;
+        this.creating = true;
+        this.collect();
+        var btn = this.el('wz-submit');
+        btn.disabled = true; btn.textContent = '⏳ 创建中…';
+        var self = this;
+        fetch('/books/start', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this.state)
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            if (!d.ok) {
+                if (typeof showToast === 'function') showToast('创建失败：' + (d.error || '未知错误'), 'error');
+                btn.disabled = false; btn.textContent = '🚀 创建并生成大纲';
+                self.creating = false;
+                return;
+            }
+            self.bookId = d.book_id;
+            try { sessionStorage.removeItem(self.PERSIST_KEY); } catch (e) {}   // 建书成功清空草稿
+            self.show(4);
+            self.runWorldGen();
+        }).catch(function(e) {
+            if (typeof showToast === 'function') showToast('创建失败：' + e.message, 'error');
+            btn.disabled = false; btn.textContent = '🚀 创建并生成大纲';
+            self.creating = false;
+        });
+    },
+
+    sse: function(url, body, onEvt) {
+        return fetch(url, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        }).then(function(resp) {
+            var rd = resp.body.getReader(), dec = new TextDecoder(), buf = '';
+            function pump() {
+                return rd.read().then(function(r) {
+                    if (r.done) return true;
+                    buf += dec.decode(r.value, { stream: true });
+                    var lines = buf.split('\n');
+                    buf = lines.pop() || '';
+                    for (var i = 0; i < lines.length; i++) {
+                        var ln = lines[i];
+                        if (ln.indexOf('data: ') !== 0) continue;
+                        try {
+                            var evt = JSON.parse(ln.slice(6));
+                            if (evt.event === 'error') return false;
+                            onEvt(evt);
+                        } catch (e) {}
+                    }
+                    return pump();
+                });
+            }
+            return pump();
+        }).catch(function() { return false; });
+    },
+
+    feed: function(msg, cls) {
+        var f = this.el('wz-feed');
+        if (!f) return;
+        var d = document.createElement('div');
+        d.className = 'gf-item ' + (cls || '');
+        d.textContent = msg;
+        f.appendChild(d);
+        f.scrollTop = f.scrollHeight;
+    },
+
+    runWorldGen: function() {
+        var self = this;
+        this.feed('开始生成世界观…', '');
+        var body = { mode: 'one' };
+        if (this.state.borrow.source_book_id) {
+            body = { mode: 'borrow', source_book_id: this.state.borrow.source_book_id,
+                     tweak: this.state.borrow.tweak };
+        }
+        this.sse('/api/world-builder/' + this.bookId + '/generate', body, function(evt) {
+            if (evt.event === 'done') self.feed('✅ 世界观生成完成', 'success');
+            else if (evt.event === 'world_summary') self.feed('📝 世界观设定文已生成', '');
+            else if (evt.message) self.feed(evt.message, '');
+        }).then(function(ok) {
+            if (!ok) {
+                self.feed('❌ 世界观生成失败，可跳过直接生成大纲', 'error');
+                self.el('wz-skip-world').style.display = 'inline-block';
+                return false;
+            }
+            self.feed('开始生成完整大纲（大纲→桥段→内涵→一致性）…', '');
+            return self.sse('/api/storyline/' + self.bookId + '/generate-full', {}, function(evt) {
+                if (evt.event === 'phase') {
+                    var n = evt.phase || 0;
+                    self.feed('【阶段 ' + n + '】' + (evt.message || ''), '');
+                } else if (evt.event === 'phase_done') {
+                    self.feed('✅ ' + (evt.message || '阶段完成'), 'success');
+                } else if (evt.event === 'outline_added') {
+                    self.feed('📋 大纲：' + (evt.message || ''), '');
+                } else if (evt.event === 'plot_added') {
+                    self.feed('🧩 桥段：' + (evt.message || ''), '');
+                } else if (evt.event === 'theme_injected') {
+                    self.feed('🎭 内涵：' + (evt.message || ''), '');
+                } else if (evt.message) {
+                    self.feed(evt.message, '');
+                }
+            });
+        }).then(function(ok) {
+            if (ok) {
+                self.feed('🎉 完整大纲生成完成！', 'success');
+                self.el('wz-enter').style.display = 'inline-block';
+                self.show(5);
+            } else {
+                self.feed('❌ 大纲生成失败，可去书详情重试', 'error');
+            }
+        });
+    },
+
+    runOutlineOnly: function() {
+        this.el('wz-skip-world').style.display = 'none';
+        var self = this;
+        this.feed('直接生成完整大纲（Phase 1 故事分析将兜底世界观）…', '');
+        this.sse('/api/storyline/' + this.bookId + '/generate-full', {}, function(evt) {
+            if (evt.event === 'phase') self.feed('【阶段 ' + (evt.phase || 0) + '】' + (evt.message || ''), '');
+            else if (evt.event === 'phase_done') self.feed('✅ ' + (evt.message || '阶段完成'), 'success');
+            else if (evt.event === 'outline_added') self.feed('📋 大纲：' + (evt.message || ''), '');
+            else if (evt.event === 'plot_added') self.feed('🧩 桥段：' + (evt.message || ''), '');
+            else if (evt.message) self.feed(evt.message, '');
+        }).then(function(ok) {
+            if (ok) { self.feed('🎉 完整大纲生成完成！', 'success'); self.el('wz-enter').style.display = 'inline-block'; self.show(5); }
+            else self.feed('❌ 大纲生成失败，可去书详情重试', 'error');
+        });
+    },
+
+    /* —— 向导草稿持久化：切页/刷新后恢复（sessionStorage，当前会话内） —— */
+    PERSIST_KEY: 'ne_wizard_state',
+    _persistTimer: null,
+    persist: function() {
+        if (this.bookId) return;   // 建书后不存草稿：避免恢复已完成向导到生成中的步骤
+        try {
+            this.collect();   // 从 DOM 刷新 state（含 characters）
+            sessionStorage.setItem(this.PERSIST_KEY, JSON.stringify({
+                state: this.state,
+                cur: this.cur,
+                bookId: this.bookId,
+            }));
+        } catch (e) {}
+    },
+    _schedulePersist: function() {
+        var self = this;
+        if (this._persistTimer) clearTimeout(this._persistTimer);
+        this._persistTimer = setTimeout(function() { self.persist(); }, 300);
+    },
+    restore: function() {
+        var raw;
+        try { raw = sessionStorage.getItem(this.PERSIST_KEY); } catch (e) { return false; }
+        if (!raw) return false;
+        try {
+            var d = JSON.parse(raw);
+            if (!d || !d.state) return false;
+            this.state = Object.assign({}, this.state, d.state);
+            this.cur = d.cur || 1;
+            this.bookId = d.bookId || '';
+            return true;
+        } catch (e) { return false; }
+    },
+    applyState: function() {
+        var s = this.state;
+        if (s.idea) this.el('wz-idea').value = s.idea;
+        if (s.pen_name) this.el('wz-pen').value = s.pen_name;
+        var desc3 = this.el('wz-world-desc3');
+        if (desc3 && s.idea) desc3.value = s.idea;
+        if (s.title) this.el('wz-title').value = s.title;
+        if (s.words_per_chapter) this.el('wz-words').value = s.words_per_chapter;
+        // 题材标签 chips
+        var tags = s.tags || [];
+        document.querySelectorAll('.chip').forEach(function(c) {
+            c.classList.toggle('on', tags.indexOf(c.dataset.tag) >= 0);
+        });
+        // 借鉴
+        if (s.borrow && s.borrow.source_book_id) this.el('wz-borrow-source').value = s.borrow.source_book_id;
+        if (s.borrow && s.borrow.tweak) this.el('wz-borrow-tweak').value = s.borrow.tweak;
+        // 统一角色列表
+        var chars = s.characters || [];
+        chars.forEach(function(c) { WZ.addCharRow(c); });
+    }
+};
+// 初始化：恢复草稿（若有）→ 显示对应步骤；否则从第 1 步开始
+var __restored = WZ.restore();
+if (__restored) WZ.applyState();
+WZ.show(__restored ? WZ.cur : 1);
+// 输入防抖持久化 + 切页前保存（SPA 导航由输入监听兜底）
+(function() {
+    var wrap = document.querySelector('.wz-panels');
+    if (wrap) wrap.addEventListener('input', function() { WZ._schedulePersist(); });
+    window.addEventListener('beforeunload', function() { WZ.persist(); });
+})();
+</script>
 {% endblock %}

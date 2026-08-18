@@ -1,7 +1,6 @@
 """写作风格分析器 — 从小说章节中提取作者的写作风格特征"""
 import json
 import logging
-from typing import Optional
 
 logger = logging.getLogger("style-analyzer")
 

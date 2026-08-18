@@ -3,10 +3,7 @@
 网文高频搞笑模式的结构化模板
 """
 from dataclasses import dataclass, field
-from pathlib import Path
-import json
-
-_DEFAULT_DATA_DIR = Path(__file__).parent / "data"
+from .base_library import JsonLibrary
 
 
 @dataclass
@@ -43,37 +40,20 @@ class GagPattern:
                              if k in GagPattern.__dataclass_fields__})
 
 
-class GagLibrary:
-    def __init__(self):
-        self.patterns: list[GagPattern] = []
-        self._save_path = _DEFAULT_DATA_DIR / "gags.json"
-        self._load()
+class GagLibrary(JsonLibrary):
+    """笑点库管理器（进程内单例，避免每实例重复读 JSON）"""
+    _instance = None
+    _list_attr = "patterns"
+    _key = "patterns"
+    _file_name = "gags.jsonl"
 
-    def _load(self):
-        if self._save_path.exists():
-            with open(self._save_path, encoding="utf-8") as f:
-                data = json.load(f)
-            self.patterns = [GagPattern.from_dict(d)
-                             for d in data.get("patterns", [])]
-        else:
-            self.patterns = BUILTIN_GAGS
+    @classmethod
+    def _from_dict(cls, d: dict) -> "GagPattern":
+        return GagPattern.from_dict(d)
 
-    def _save(self):
-        self._save_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._save_path, "w", encoding="utf-8") as f:
-            json.dump({"patterns": [p.to_dict() for p in self.patterns]},
-                      f, ensure_ascii=False, indent=2)
-
-    def load(self, path: str):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        self.patterns = [GagPattern.from_dict(d)
-                         for d in data.get("patterns", [])]
-
-    def save(self, path: str):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"patterns": [p.to_dict() for p in self.patterns]},
-                      f, ensure_ascii=False, indent=2)
+    @classmethod
+    def _builtin(cls) -> list:
+        return BUILTIN_GAGS
 
     def get_by_id(self, gag_id: str):
         for p in self.patterns:
@@ -93,15 +73,6 @@ class GagLibrary:
             results = [p for p in results if book_id not in p.banned_in]
         results.sort(key=lambda p: p.usage_count)
         return results
-
-    def mark_used(self, pattern_id: str, book_id: str):
-        for p in self.patterns:
-            if p.id == pattern_id:
-                p.usage_count += 1
-                if book_id not in p.banned_in:
-                    p.banned_in.append(book_id)
-                break
-
 
 # ─── 内置笑点模式 ───
 

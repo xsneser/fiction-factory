@@ -1,0 +1,9 @@
+{# ─── 状态徽标（共享 partial，逐页 {% from ... import %}） ───
+   新书启动已改为单页多步向导（start_book.html 内联 wz-steps 步骤条）；
+   单行「当前阶段 → 下一步」状态条已废弃（v1.4 删除）。 #}
+
+{% macro status_badge(status) %}
+{% set cn_map = {'planning':'规划中','ready':'可写作','writing':'写作中','reviewing':'审查中','finished':'完本','published':'已上架','paused':'暂停'} %}
+{% set css_map = {'planning':'yellow','ready':'blue','writing':'green','reviewing':'purple','finished':'blue','published':'green','paused':'red'} %}
+<span class="tag {{ css_map.get(status or '', '') }}">{{ cn_map.get(status or '', status or '') }}</span>
+{% endmacro %}

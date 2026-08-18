@@ -3,8 +3,8 @@
 分层处理：规则替换 → 句式打散 → LLM 重写 → 人工瑕疵注入
 """
 import re
+import random
 from dataclasses import dataclass
-from typing import Optional
 
 
 # ─── AI 高频词替换表 ───
@@ -61,7 +61,6 @@ def apply_word_replacements(text: str) -> tuple[str, int]:
     result = text
     for old, options in AI_WORD_MAP.items():
         if old in result:
-            import random
             replacement = random.choice(options)
             # 只替换部分出现（不是全部）
             occurrences = result.count(old)
@@ -72,23 +71,8 @@ def apply_word_replacements(text: str) -> tuple[str, int]:
     return result, count
 
 
-def split_long_sentences(text: str, max_chars: int = 40) -> str:
-    """句式层：拆分过长的句子"""
-    # 在逗号、句号处拆分超长句
-    parts = re.split(r'([。！？；])', text)
-    result = []
-    for part in parts:
-        if len(part) <= max_chars or part in '。！？；':
-            result.append(part)
-        else:
-            # 在逗号处拆分
-            sub_parts = re.split(r'([，])', part)
-            result.extend(sub_parts)
-    return ''.join(result)
-
-
-def add_human_imperfections(text: str, typo_rate: float = 0.001) -> str:
-    """人为瑕疵注入：极低概率的'错字'模拟"""
+def add_human_imperfections(text: str, typo_rate: float = 0) -> str:
+    """人为瑕疵注入：极低概率的'错字'模拟（默认关闭，调用方显式开启）"""
     # 只处理中文，极低概率
     if typo_rate <= 0:
         return text
@@ -101,7 +85,7 @@ def add_human_imperfections(text: str, typo_rate: float = 0.001) -> str:
 
     result = list(text)
     for i, char in enumerate(result):
-        if char in common_typos and __import__('random').random() < typo_rate:
+        if char in common_typos and random.random() < typo_rate:
             result[i] = common_typos[char]
     return ''.join(result)
 
@@ -160,8 +144,6 @@ class DeAIEngine:
 
     def __init__(self, llm_client=None):
         self.llm = llm_client
-        # 反向统计：每个替换词被用了多少次（在一本书里不能总用同一个替换）
-        self.usage_counter: dict[str, int] = {}
 
     def process_rule_based(self, text: str, style: str = "chatty") -> DeAIResult:
         """纯规则去 AI 味（不需要 LLM，速度快）"""
@@ -175,54 +157,9 @@ class DeAIEngine:
         processed = adjust_paragraph_rhythm(processed, style)
 
         # 3. 极低概率人为瑕疵
-        processed = add_human_imperfections(processed, typo_rate=0.0005)
+        processed = add_human_imperfections(processed, typo_rate=0)
 
         result.processed = processed
-        return result
-
-    def process_llm(self, text: str, pen_name_profile=None) -> DeAIResult:
-        """LLM 去 AI 味（语境感知，更自然但更贵）"""
-        if not self.llm:
-            return DeAIResult(original=text, processed=text)
-
-        system = """你是一位经验丰富的网络小说编辑助手。
-你的任务是把 AI 生成的小说段落改得像真人作者写的。
-
-改写原则：
-1. 保持原意和情节不变
-2. 用更口语化、更自然的表达替换生硬的句式
-3. 对话中加入日常语气（如"啧""嗨""那叫一个"等）
-4. 不要所有句子都主谓宾完整——偶尔留半截话、省略主语
-5. 避免"首先""其次""最后"这种列举句式
-6. 不要把所有情绪都写出来——留白比说透更有力量
-
-请只输出改写后的文本，不要加任何说明。"""
-
-        constraints = ""
-        if pen_name_profile:
-            constraints = pen_name_profile.build_style_prompt()
-
-        user = f"请改写以下小说段落，使其读起来更像真人作者写的：\n\n{text}"
-        if constraints:
-            user = constraints + "\n\n" + user
-
-        try:
-            rewritten = self.llm.call(system, user, temperature=0.6, max_tokens=4096)
-            return DeAIResult(original=text, processed=rewritten.strip(),
-                              llm_rewritten=True)
-        except Exception:
-            return DeAIResult(original=text, processed=text)
-
-    def process_full(self, text: str, pen_name_profile=None,
-                     use_llm: bool = True) -> DeAIResult:
-        """完整去 AI 味管线：规则 → LLM（可选）"""
-        # 第一步：规则层（免费，先过一遍）
-        result = self.process_rule_based(text)
-
-        # 第二步：LLM 层（可选，更自然但花钱）
-        if use_llm and self.llm:
-            result = self.process_llm(result.processed, pen_name_profile)
-
         return result
 
     def build_deai_prompt_snippet(self) -> str:

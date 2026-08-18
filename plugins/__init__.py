@@ -2,8 +2,18 @@
 外部采集插件系统
 从小说平台、社交媒体获取桥段/笑点/梗素材
 """
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+
+
+def _has_pua_chars(text: str) -> bool:
+    """检测文本是否残留 PUA 私用区字符（字体加密未解码的乱码）。
+
+    番茄等平台的正文用自定义字体把汉字映射到 U+E000-U+F8FF，
+    解码失败时正文会整段变成这类私用区乱码，不能直接入库。
+    """
+    return any(0xE000 <= ord(c) <= 0xF8FF for c in text)
 
 
 @dataclass
@@ -80,68 +90,47 @@ class FanqiePlugin(BasePlugin):
 
     def is_available(self) -> bool:
         try:
-            import requests
+            from .fanqie_scout import FanqieCrawler
+            FanqieCrawler()
             return True
-        except ImportError:
+        except Exception:
             return False
 
     def scrape(self, keyword: str = "", max_items: int = 20) -> list[ScrapedMaterial]:
-        # TODO: 实现番茄小说爬虫
-        return []
-
-
-class QidianPlugin(BasePlugin):
-    """起点中文网采集插件"""
-    name = "qidian"
-    description = "从起点中文网采集热门桥段和章节结构"
-
-    def is_available(self) -> bool:
-        return False  # 需要反爬手段
-
-    def scrape(self, keyword: str = "", max_items: int = 20) -> list[ScrapedMaterial]:
-        return []
-
-
-class WeiboPlugin(BasePlugin):
-    """微博热搜/热梗采集"""
-    name = "weibo"
-    description = "从微博热搜采集最新网络热梗和流行语"
-
-    def is_available(self) -> bool:
+        """按书名搜索并下载前若干章，包装成可入库素材。"""
         try:
-            import requests
-            return True
-        except ImportError:
-            return False
-
-    def scrape(self, keyword: str = "", max_items: int = 20) -> list[ScrapedMaterial]:
-        # TODO: 实现微博热搜采集
-        return []
-
-
-class BilibiliPlugin(BasePlugin):
-    """B站弹幕/热词采集"""
-    name = "bilibili"
-    description = "从B站采集弹幕热词和流行文化梗"
-
-    def is_available(self) -> bool:
-        try:
-            import requests
-            return True
-        except ImportError:
-            return False
-
-    def scrape(self, keyword: str = "", max_items: int = 20) -> list[ScrapedMaterial]:
-        return []
+            from .fanqie_scout import FanqieCrawler
+            crawler = FanqieCrawler()
+            novel = crawler.search_novel(keyword)
+            if not novel:
+                return []
+            chapter_list = crawler.get_chapter_list(novel.book_id, max_items)
+            materials = []
+            for ch in chapter_list[:max_items]:
+                content = crawler.download_chapter(novel.book_id, ch.get("id", ""))
+                time.sleep(0.8)  # 礼貌爬取：章节请求间留间隔
+                if not content:
+                    continue
+                # 解码后仍残留 PUA 乱码的内容跳过，避免脏数据入库
+                if _has_pua_chars(content):
+                    continue
+                materials.append(ScrapedMaterial(
+                    source="fanqie",
+                    material_type="plot",
+                    raw_content=content,
+                    cleaned_content=content[:500],
+                    url=f"https://fanqienovel.com/page/{novel.book_id}",
+                    title=ch.get("title", ""),
+                ))
+            return materials
+        except Exception:
+            return []
 
 
 # ─── 插件注册表 ───
 
 PLUGIN_REGISTRY: dict[str, type[BasePlugin]] = {
     "fanqie": FanqiePlugin,
-    "qidian": QidianPlugin,
-    "weibo": WeiboPlugin,
-    "bilibili": BilibiliPlugin,
 }
 
 

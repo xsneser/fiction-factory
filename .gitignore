@@ -36,3 +36,12 @@ libraries/data/
 # 运行时任务缓存
 _api_tasks.json
 app_output.log
+
+# Claude Code 本地会话设置
+.claude/settings.local.json
+e2e_server.log
+ui_server.log
+
+# 备份数据不入库
+books.bak*/
+*.bak

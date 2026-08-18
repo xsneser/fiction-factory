@@ -1,26 +1,58 @@
 {% extends "base.html" %}
+{% block crumbs %}
+<div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <span class="cur">{{ book.title or '(待定)' }}</span></div>
+{% endblock %}
 {% block content %}
-<h1>📖 {{ book.title or '(未命名)' }}</h1>
+{% from "_flow_stepper.html" import status_badge %}
+<h1>📖 {{ book.title or '(待定)' }}</h1>
+
+<div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
+    {% if basic_info.get('has_storyline') %}
+    <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 进入写作台</a>
+    {% endif %}
+    {% if book.current_chapter >= 1 %}
+    <a href="#" class="btn" style="background:#8957e5;color:#fff;text-decoration:none" onclick="generateMeta()">🎬 生成书名/简介</a>
+    {% endif %}
+    <a href="/books/{{ book.book_id }}/publish" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">🚀 上架 / 导出</a>
+    <form method="POST" action="/books/{{ book.book_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ book.title }}》？')">
+        <button class="small danger" style="padding:8px 16px">删除</button>
+    </form>
+</div>
 
 <div class="detail-grid">
     <div class="detail-item"><div class="label">笔名</div><div class="value">{{ book.pen_name }}</div></div>
     <div class="detail-item"><div class="label">流派</div><div class="value">{{ book.genre }}{% if book.sub_genre %} / {{ book.sub_genre }}{% endif %}</div></div>
     <div class="detail-item"><div class="label">平台</div><div class="value">{{ book.platform }}</div></div>
     <div class="detail-item"><div class="label">预算</div><div class="value">¥{{ "%.2f"|format(cost.spent) }} / ¥{{ "%.2f"|format(cost.budget) }}</div></div>
+    <div class="detail-item"><div class="label">进度</div><div class="value">{{ book.current_chapter }}/{{ book.chapter_count }} 章</div><div class="progress-bar"><div class="progress-fill" style="width:{{ (book.current_chapter/book.chapter_count*100)|int if book.chapter_count else 0 }}%"></div></div></div>
+    <div class="detail-item"><div class="label">状态</div><div class="value">{{ status_badge(book.status) }}</div></div>
 </div>
 
-<h3>📊 进度</h3>
-<div class="progress-bar"><div class="progress-fill" style="width:{{ (book.current_chapter/book.chapter_count*100)|int }}%"></div></div>
-<p style="font-size:13px;color:#8b949e">{{ book.current_chapter }} / {{ book.chapter_count }} 章 · 状态：<span class="tag {{ 'green' if book.status=='writing' else 'yellow' }}">{{ book.status }}</span></p>
+{# ─── 设定：直铺可编辑表单（原 world_card.html 迁移，确认后进入大纲生成） ─── #}
+<script>
+var BOOK_ID = "{{ book.book_id }}";
+var __BI__ = {{ basic_info|tojson }};
+var __BOOK_TITLE__ = {{ (book.title or '')|tojson }};
+var storylineId = "{{ book.book_id }}";
+</script>
+<h3 id="world-edit">🌍 设定</h3>
+{% include "_world_edit_form.html" %}
+{% if basic_info.get('synopsis') %}
+<h3>📝 简介</h3>
+<p style="color:#8b949e;margin-bottom:12px">{{ basic_info.get('synopsis') }}</p>
+{% endif %}
 
 {% if characters %}
 <h3>👤 角色状态</h3>
 <table>
-    <thead><tr><th>角色</th><th>位置</th><th>情绪</th><th>实力</th><th>最近出场</th><th>离线</th></tr></thead>
+    <thead><tr><th>角色</th><th>性别</th><th>性格</th><th>关系</th><th>位置</th><th>情绪</th><th>实力</th><th>最近出场</th><th>离线</th></tr></thead>
     <tbody>
     {% for c in characters %}
     <tr>
         <td><strong>{{ c.name }}</strong></td>
+        <td>{{ c.gender or '-' }}</td>
+        <td style="font-size:12px;color:#8b949e">{{ c.personality or '-' }}{% if c.catchphrase %}「{{ c.catchphrase }}」{% endif %}</td>
+        <td>{{ c.relationship_to_mc or '-' }}</td>
         <td>{{ c.location or '-' }}</td>
         <td>{{ c.mood or '-' }}</td>
         <td>{{ c.power_level or '-' }}</td>
@@ -32,7 +64,24 @@
 </table>
 {% endif %}
 
-{% if outline %}
+{# ─── 大纲：故事线优先（可编辑卡片），无则回退结构大纲 ─── #}
+{% if storyline and storyline.outlines %}
+<h3>📋 故事线大纲 ({{ storyline.outlines|length }})</h3>
+<div class="outline-list">
+    {% for o in storyline.outlines %}
+    {% include "storyline_outline_card.html" %}
+    {% set ops = storyline.plots|selectattr('outline_id','equalto', o.id)|list %}
+    {% if ops %}
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px 4px">
+        <span style="color:#8b949e;font-size:12px;margin-right:4px">桥段 ({{ ops|length }})：</span>
+        {% for p in ops %}
+        <span class="tag blue">{{ p.name }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+{% elif outline %}
 <h3>📋 大纲结构</h3>
 {% for stage in outline.get('stages', []) %}
 <div class="accordion"><div class="accordion-header"><span>{{ stage.name }} — {{ stage.description }}</span><span style="color:#8b949e">{{ stage.min_chapters }}-{{ stage.max_chapters }}章</span></div>
@@ -42,19 +91,57 @@
     </div>
 </div>
 {% endfor %}
+{% else %}
+<div class="empty"><div class="icon">📋</div><p>还没有大纲</p></div>
+{% endif %}
+
+{% if draft %}
+<h3>✍️ 进行中草稿（第{{ draft.chapter_num }}章，未固化）</h3>
+<div class="accordion"><div class="accordion-header"><span>第{{ draft.chapter_num }}章草稿</span><span style="color:#8b949e;font-size:12px">📊 {{ draft.words }} 字 · 写作台中断时保留</span></div>
+    <div class="accordion-body">
+        <pre style="white-space:pre-wrap;max-height:480px;overflow-y:auto;background:#1c2128;border:1px solid #30363d;padding:12px;border-radius:6px">{{ draft.text }}</pre>
+    </div>
+</div>
 {% endif %}
 
 {% if chapters %}
 <h3>📄 已生成章节 ({{ chapters|length }})</h3>
 {% for ch in chapters %}
-<div class="accordion"><div class="accordion-header"><span>第{{ ch.num }}章: {{ ch.title }}</span><span style="color:#8b949e;font-size:12px">{{ ch.created_at[:16] if ch.created_at else '' }}</span></div>
+<div class="accordion" id="ch-{{ ch.num }}"><div class="accordion-header"><span>第{{ ch.num }}章: {{ ch.title }}</span><span style="color:#8b949e;font-size:12px">📊 {{ ch.word_count }} 字 · {{ ch.created_at[:16] if ch.created_at else '' }}</span></div>
     <div class="accordion-body">
         {% if ch.summary %}<p style="color:#8b949e">📝 {{ ch.summary }}</p>{% endif %}
-        <pre>{{ ch.content[:500] }}{% if ch.content|length > 500 %}...{% endif %}</pre>
+        {% if ch.review %}
+        <p style="font-size:12px;margin:4px 0">
+            <span class="tag {{ 'green' if ch.review.passed else 'red' }}">🔍 审查 {{ ch.review.score }}分{% if ch.review.passed %} 通过{% else %} 未过{% endif %}</span>
+            {% if ch.review.issues %}
+            <span style="color:#8b949e">{{ ch.review.issues[:3]|map(attribute='description')|join('；') }}</span>
+            {% endif %}
+        </p>
+        {% endif %}
+        <pre style="white-space:pre-wrap;max-height:480px;overflow-y:auto">{{ ch.content }}</pre>
     </div>
 </div>
 {% endfor %}
 {% else %}
 <div class="empty"><div class="icon">✍️</div><p>还没有生成章节</p></div>
 {% endif %}
+<script>
+function generateMeta() {
+    if (!confirm('用第 1 章内容生成书名和简介？将覆盖当前书名/简介。')) return;
+    var btn = event.target;
+    btn.textContent = '⏳ 生成中...';
+    fetch('/api/book/{{ book.book_id }}/generate-meta', {method: 'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (d.ok) {
+                flashToast('✅ 已生成书名：' + d.title + (d.synopsis ? '\n简介：' + d.synopsis : ''), 'success');
+                location.reload();
+            } else {
+                showToast('生成失败：' + (d.error || '未知错误'), 'error');
+                btn.textContent = '🎬 生成书名/简介';
+            }
+        })
+        .catch(function(e){ showToast('生成失败：' + e, 'error'); btn.textContent = '🎬 生成书名/简介'; });
+}
+</script>
 {% endblock %}

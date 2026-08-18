@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+{% from "_flow_stepper.html" import status_badge %}
 <h1>🏠 仪表盘</h1>
 <div class="cards">
     <div class="card">
@@ -23,47 +24,46 @@
         <div class="stat">{{ gag_count }}</div>
     </div>
     <div class="card">
-        <div class="label">内涵母题</div>
-        <div class="stat">{{ theme_count }}</div>
+        <div class="label">角色原型</div>
+        <div class="stat">{{ char_count }}</div>
     </div>
 </div>
 
-<h2>📚 书目概览</h2>
-{% if books %}
-<table>
-    <thead><tr><th>书名</th><th>笔名</th><th>流派</th><th>进度</th><th>状态</th><th>操作</th></tr></thead>
-    <tbody>
-    {% for b in books %}
-    <tr>
-        <td><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title or '(未命名)' }}</a></td>
-        <td>{{ b.pen_name }}</td>
-        <td><span class="tag">{{ b.genre }}</span>{% if b.sub_genre %} <span class="tag blue">{{ b.sub_genre }}</span>{% endif %}</td>
-        <td>
-            <div class="progress-bar" style="width:100px"><div class="progress-fill" style="width:{{ (b.current_chapter/b.chapter_count*100)|int if b.chapter_count else 0 }}%"></div></div>
-            <small>{{ b.current_chapter }}/{{ b.chapter_count }} 章</small>
-        </td>
-        <td><span class="tag {{ 'green' if b.status=='writing' else 'yellow' if b.status=='planning' else 'blue' }}">{{ b.status }}</span></td>
-        <td><a href="/books/{{ b.book_id }}" class="btn small">查看</a></td>
-    </tr>
-    {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<div class="empty"><div class="icon">📚</div><p>还没有创建任何书</p><a href="/books/new" class="btn">创建第一本书</a></div>
-{% endif %}
-
-<h2>👤 笔名一览</h2>
-{% if pen_names %}
+<h2>🚀 快捷入口</h2>
 <div class="cards">
-{% for p in pen_names %}
-<div class="card">
-    <div class="title">{{ p.pen_name }}</div>
-    <div class="meta">{{ p.description }}</div>
-    <div class="meta">关联书籍: {{ p.assigned_books|length }} 本</div>
+    <a href="/books/start" class="card" style="text-decoration:none">
+        <div class="title">🔰 启动新书</div>
+        <div class="meta">一句话设定 → 世界观 → 大纲 → 开写</div>
+    </a>
+    <a href="/books" class="card" style="text-decoration:none">
+        <div class="title">📚 书库</div>
+        <div class="meta">查看 / 进入每本书的写作台</div>
+    </a>
+    <a href="/publish" class="card" style="text-decoration:none">
+        <div class="title">🚀 上架管理</div>
+        <div class="meta">上架检查 · 完本 · 导出投稿包</div>
+    </a>
+    <a href="/plots" class="card" style="text-decoration:none">
+        <div class="title">🧩 资产库</div>
+        <div class="meta">桥段 / 大纲 / 笑点 / 角色原型 库管理</div>
+    </a>
 </div>
-{% endfor %}
+
+<h2>📌 各书下一步</h2>
+{% if books %}
+<div class="next-strip-list">
+    {% for r in books %}
+    {% set b = r.book %}
+    <a href="{{ r.next.href if r.next else '/books/' + b.book_id }}" class="next-strip">
+        <div>
+            <div class="ns-title">{{ b.title or '(待定)' }}</div>
+            <div class="ns-meta">{{ b.pen_name }} · {{ b.genre }}{% if b.sub_genre %}/{{ b.sub_genre }}{% endif %} · {{ b.current_chapter }}/{{ b.chapter_count }}章</div>
+        </div>
+        <div class="ns-action">{{ r.next.label if r.next else '查看详情' }} →</div>
+    </a>
+    {% endfor %}
 </div>
 {% else %}
-<p style="color:#484f58">暂无笔名档案</p>
+<div class="empty"><div class="icon">📚</div><p>还没有创建任何书</p><a href="/books/start" class="btn">创建第一本书</a></div>
 {% endif %}
 {% endblock %}

@@ -2,9 +2,21 @@
 内容审查引擎（Content Reviewer）
 本地规则 + LLM 二次确认的质量把关
 """
-import re
 from dataclasses import dataclass, field
-from typing import Optional
+
+from core.text_utils import count_prose_units
+from .de_ai import AI_WORD_MAP
+
+
+# AI 痕迹词的展示文案（仅文案；词表本体单一来源 = de_ai.AI_WORD_MAP）
+_AI_TELL_DESCRIPTIONS = {
+    "仿佛": "AI高频修饰词",
+    "似乎": "AI高频修饰词",
+    "不禁": "AI高频修饰词",
+    "只见": "AI高频叙述",
+    "但见": "AI高频叙述",
+    "不由得": "AI高频修饰词",
+}
 
 
 @dataclass
@@ -37,7 +49,7 @@ class ContentReviewer:
     def check_word_count(self, content: str, min_words: int = 2000,
                          max_words: int = 5000) -> tuple[bool, int]:
         """字数检查"""
-        chinese = len(re.findall(r'[\u4e00-\u9fff]', content))
+        chinese = count_prose_units(content)
         if chinese < min_words:
             return False, chinese
         if chinese > max_words:
@@ -48,17 +60,11 @@ class ContentReviewer:
         """AI 痕迹检测"""
         issues = []
 
-        # 高频 AI 词汇检测
-        ai_tells = {
-            "仿佛": "AI高频修饰词",
-            "似乎": "AI高频修饰词",
-            "不禁": "AI高频修饰词",
-            "只见": "AI高频叙述",
-            "但见": "AI高频叙述",
-            "不由得": "AI高频修饰词",
-        }
+        # 高频 AI 词汇检测：只查高置信度展示文案词（_AI_TELL_DESCRIPTIONS 6 词），
+        # 词表与替换建议单一来源 = de_ai.AI_WORD_MAP，避免两份清单漂移
+        ai_tells = dict(_AI_TELL_DESCRIPTIONS)
 
-        word_count = len(re.findall(r'[\u4e00-\u9fff]', content))
+        word_count = count_prose_units(content)
         for word, desc in ai_tells.items():
             count = content.count(word)
             if count > 0:
@@ -217,49 +223,6 @@ class ContentReviewer:
 
         return result
 
-    def llm_review(self, content: str, context: str = "") -> ReviewResult:
-        """LLM 深层审查（更全面但更贵）"""
-        if not self.llm:
-            return ReviewResult(passed=True, score=80, summary="跳过 LLM 审查")
-
-        prompt = f"""请审查以下小说章节的质量，从以下维度评估：
-
-1. 叙事连贯性：前后是否衔接自然
-2. 角色行为一致性：角色行为是否符合设定
-3. 节奏感：是否有张有弛
-4. 对话质量：对话是否自然、符合角色性格
-5. 是否有明显的AI生成痕迹
-
-{context}
-
-章节内容：
-{content[:3000]}
-
-请以 JSON 返回：
-{{"score": 0-100, "passed": true/false, "issues": ["问题1", "问题2"], "suggestions": ["建议1"]}}"""
-
-        try:
-            from core.llm_client import extract_json
-            raw = self.llm.call("你是一位专业的网文编辑。", prompt,
-                                temperature=0.3, max_tokens=2048)
-            data = json.loads(extract_json(raw))
-            return ReviewResult(
-                score=data.get("score", 80),
-                passed=data.get("passed", True),
-                issues=[ReviewIssue(description=i, severity="info")
-                        for i in data.get("issues", [])],
-                summary=", ".join(data.get("suggestions", [])),
-            )
-        except Exception:
-            return ReviewResult(passed=True, score=80, summary="LLM 审查异常")
-
     def _get_replacements(self, word: str) -> str:
-        mapping = {
-            "仿佛": "像、好像、跟……似的",
-            "似乎": "好像、感觉、看着像",
-            "不禁": "忍不住、下意识地、不由自主",
-            "只见": "看到、眼前、",
-            "但见": "看到、",
-            "不由得": "忍不住、下意识",
-        }
-        return mapping.get(word, "")
+        options = AI_WORD_MAP.get(word, [])
+        return "、".join(o for o in options if o)

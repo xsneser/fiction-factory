@@ -1,0 +1,41 @@
+/* ─── 工作台公共样式（timeline_editor / timeline_write_flow 共用） ───
+ * 从两个模板的 <style> 块收敛而来，使用 base.css :root 设计令牌。
+ * 页面不滚动，左/右两栏各自内部滚动（单滚动条）。 */
+
+main { overflow: hidden; }
+/* 工作台高度 100%；下方折叠面板（基础设定）展开超出时整体可滚动，避免被裁切 */
+.tle-layout { display:flex; flex-direction:column; height:100%; min-height:0; overflow-y:auto; }
+.editor-split { flex:1; min-height:0; display:flex; gap:16px; align-items:stretch; }
+.editor-left { width:24%; min-width:260px; flex-shrink:0; display:flex; flex-direction:column; min-height:0; }
+.editor-scroll { flex:1; min-height:0; overflow:hidden; }
+.editor-storyline { height:100%; min-height:0; background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); padding:12px; }
+.editor-mid { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding-right:4px; }
+
+/* 右栏：规划/生成折叠区（JS 从 view-plan 搬来，生成动态在右，中间只留正文） */
+.right-plan { border:1px solid var(--border-soft); border-radius:var(--radius); padding:10px 12px; margin-bottom:12px; background:var(--bg-elev); }
+.right-plan summary { cursor:pointer; color:#c9d1d9; font-size:13px; font-weight:600; user-select:none; }
+.right-plan[open] summary { margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border-soft); }
+.right-plan-section { display:block; padding:0; margin:0; overflow:visible; }
+
+/* 中栏：章节正文（连续文本，不再按桥段分卡） */
+.manuscript { background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); padding:16px; font-size:15px; line-height:1.9; color:#c9d1d9; white-space:pre-wrap; word-break:break-word; min-height:0; }
+.manuscript .m-chapter-title { font-size:18px; font-weight:700; color:var(--fg-strong); margin:20px 0 12px; }
+.manuscript .m-chapter-divider { text-align:center; color:var(--fg-dim); font-size:12px; margin:20px 0; letter-spacing:2px; }
+
+.info-bar { display:flex; gap:20px; padding:12px 16px; background:var(--bg-elev); border-radius:var(--radius); margin-bottom:20px; color:var(--fg-muted); font-size:13px; flex-wrap:wrap; }
+.info-bar strong { color:var(--fg-strong); }
+
+.gen-split-title { font-size:12px; color:var(--fg-muted); margin-bottom:8px; }
+
+/* 生成/写作动态（动作流）：每条动作一张卡片，右侧栏滚动 */
+.gen-feed { display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.5; }
+.gf-item { background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius-sm); padding:6px 10px; color:#c9d1d9; }
+.gf-item.info { background:transparent; border:none; padding:2px 10px; color:var(--fg-muted); }
+.gf-item.success { color:var(--success-fg); border-color:var(--success); }
+.gf-item.error { color:var(--danger-fg); border-color:var(--danger-fg); }
+.gf-item.warn { color:var(--warn); border-color:#9e6a03; }
+.gf-item.decision { color:var(--warn); background:#1c1a12; border-color:#8a6a1a; }
+.gf-item.action { border-left:3px solid; font-weight:500; }
+.gf-item.action-outline { border-left-color:#f97583; color:var(--fg-strong); }
+.gf-item.action-plot { border-left-color:#79c0ff; color:var(--fg-strong); }
+.gf-item.action-gag { border-left-color:var(--success-fg); color:var(--fg-strong); }

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}上架管理 — NovelEngine{% endblock %}
+{% block content %}
+{% from "_flow_stepper.html" import status_badge %}
+<h1>🚀 上架管理</h1>
+<p style="color:#8b949e;margin-bottom:16px">所有书籍的上架信息一览：上架检查、字数进度、上架时间与投稿导出。</p>
+
+{% set n_all = books_info|length %}
+{% set n_pub = books_info|selectattr('book.status','equalto','published')|list|length %}
+{% set n_ok = books_info|selectattr('report.can_publish','equalto',true)|list|length %}
+{% set n_wait = books_info|rejectattr('book.status','equalto','published')|list|length %}
+
+<div class="cards" style="margin-bottom:20px">
+    <div class="card"><div class="label">总书目</div><div class="stat">{{ n_all }}</div></div>
+    <div class="card"><div class="label">已上架</div><div class="stat">{{ n_pub }}</div></div>
+    <div class="card"><div class="label">检查通过·可上架</div><div class="stat">{{ n_ok }}</div></div>
+    <div class="card"><div class="label">待处理</div><div class="stat">{{ n_wait }}</div></div>
+</div>
+
+{% if books_info %}
+<table>
+    <thead><tr>
+        <th>书名</th>
+        <th>笔名 / 平台</th>
+        <th>状态</th>
+        <th>进度</th>
+        <th>总字数</th>
+        <th>上架检查</th>
+        <th>上架 / 完本时间</th>
+        <th>操作</th>
+    </tr></thead>
+    <tbody>
+    {% for item in books_info %}
+    {% set b = item.book %}
+    {% set rep = item.report %}
+    <tr>
+        <td><strong><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title or '(待定)' }}</a></strong></td>
+        <td style="white-space:nowrap">{{ b.pen_name }} <span class="tag blue">{{ b.platform }}</span></td>
+        <td>{{ status_badge(b.status) }}</td>
+        <td>{{ b.current_chapter }}/{{ b.chapter_count }} 章</td>
+        <td>{{ rep.total_words }}</td>
+        <td>
+            {% if rep.can_publish %}
+            <span class="tag green">✅ 可上架</span>
+            {% else %}
+            <span class="tag red">❌ {{ rep.items|rejectattr('passed')|list|length }} 项未过</span>
+            <span style="font-size:11px;color:#8b949e;display:block;margin-top:2px">
+                {% for it in rep.items if not it.passed %}{{ it.label }}；{% endfor %}
+            </span>
+            {% endif %}
+        </td>
+        <td style="font-size:11px;color:#8b949e;white-space:nowrap">
+            {% if b.published_at %}🚀 {{ b.published_at[:16] }}{% endif %}
+            {% if b.finished_at %}{% if b.published_at %}<br>{% endif %}完本 {{ b.finished_at[:16] }}{% endif %}
+            {% if not b.finished_at and not b.published_at %}—{% endif %}
+        </td>
+        <td style="white-space:nowrap">
+            <a href="/books/{{ b.book_id }}/publish" class="btn small" style="background:#1f6feb;color:#fff">上架页</a>
+            {% if item.export_zip %}
+            <a href="/api/books/{{ b.book_id }}/export/download" class="btn small" style="background:#6f42c1;color:#fff">⬇ 下载导出</a>
+            {% elif item.can_export %}
+            <a href="/books/{{ b.book_id }}/publish" class="btn small secondary">📦 导出</a>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty" style="padding:60px">
+    <div class="icon" style="font-size:48px">🚀</div>
+    <p style="color:#8b949e;margin-top:12px">还没有可上架的正式书</p>
+    <p style="color:#484f58;font-size:12px;margin-top:6px">先去「启动新书」创建并写作，完成后在此管理上架</p>
+    <a href="/books/start" class="btn" style="margin-top:16px">🔰 启动新书</a>
+</div>
+{% endif %}
+{% endblock %}

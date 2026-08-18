@@ -4,20 +4,25 @@
 
 流程：
   热榜发现 → 下载前N章 → 逐书分析 → 提取桥段/大纲/笑点/内涵 → 入库
+
+⚠️ 合规声明：
+  本模块仅供个人学习、研究网文结构技巧使用。请遵守目标网站的服务条款与
+  相关法律法规：
+  - 番茄小说等内容平台的服务协议普遍禁止自动化数据采集，请勿用于商业用途
+  - 请勿大量下载并二次传播受著作权保护的正文内容，分析应以「模式/结构/
+    桥段」等抽象技巧为主，避免全文存储与转载
+  - PUA 字体解码属于对技术保护措施的绕过，请仅用于个人学习研究
+  使用本模块产生的任何法律风险由使用者自行承担。
 """
 import json
-import os
 import re
 import time
 import logging
+from plugins import font_decoder
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urljoin
-
 import requests
-
-from plugins import BasePlugin, ScrapedMaterial
 
 logger = logging.getLogger("fanqie-scout")
 
@@ -48,7 +53,6 @@ class ScoutResult:
     new_plots: list[dict] = field(default_factory=list)
     new_structures: list[dict] = field(default_factory=list)
     new_gags: list[dict] = field(default_factory=list)
-    new_themes: list[dict] = field(default_factory=list)
     downloaded_chapters: int = 0
     analysis_cost: float = 0.0
 
@@ -62,6 +66,10 @@ class FanqieCrawler:
 
     BASE_URL = "https://fanqienovel.com"
     API_BASE = "https://fanqienovel.com/api"
+
+    # 超时设置：搜索类请求允许较短重试，详情/下载类给足时间避免网络抖动误判
+    SEARCH_TIMEOUT = 5
+    DETAIL_TIMEOUT = 15
 
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -80,13 +88,15 @@ class FanqieCrawler:
         9: "短篇", 10: "现实",
     }
 
-    def __init__(self, cache_dir: str = "storage/fanqie_cache"):
+    def __init__(self, cache_dir: str = "storage/fanqie_cache", verify: bool = True):
+        # verify 默认校验 TLS 证书（安全）；旧证书环境可显式传 verify=False
         self.session = requests.Session()
         self.session.headers.update(self.HEADERS)
-        self.session.verify = False  # 跳过SSL验证（Windows旧证书兼容）
+        self.session.verify = verify
         self.session.trust_env = False  # 不用系统代理，直连访问
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        if not verify:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._decoder = None  # lazy init
@@ -94,10 +104,11 @@ class FanqieCrawler:
     def _init_decoder(self):
         if self._decoder is None:
             from plugins.font_decoder import FanqieDecoder, load_mapping
-            self._decoder = FanqieDecoder()
+            self._decoder = FanqieDecoder(verify=self.session.verify)
             self._cached_mapping = {}
-            # 加载预生成的映射表（可能有多个字体）
-            for mp in Path("storage").glob("font_mapping*.json"):
+            # 加载预生成的映射表（可能有多个字体），锚定项目根避免依赖 CWD
+            storage_dir = Path(__file__).resolve().parent.parent / "storage"
+            for mp in storage_dir.glob("font_mapping*.json"):
                 try:
                     self._cached_mapping.update(load_mapping(str(mp)))
                 except Exception:
@@ -124,7 +135,7 @@ class FanqieCrawler:
 
     def search_novel(self, title: str) -> Optional[NovelInfo]:
         """按书名搜索——Bing搜索 + 页面解析 + fanqie搜索页兜底"""
-        import urllib.parse, unicodedata
+        import unicodedata
         
         # 生成多级搜索查询
         queries = []
@@ -167,7 +178,7 @@ class FanqieCrawler:
         try:
             import urllib.parse as _up
             search_url = f"https://fanqienovel.com/search/{_up.quote(title)}"
-            r = self.session.get(search_url, timeout=2,
+            r = self.session.get(search_url, timeout=self.SEARCH_TIMEOUT,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
             ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
             if ids:
@@ -191,7 +202,7 @@ class FanqieCrawler:
                 try:
                     r = self.session.get(
                         f"{host}/search?q={_up2.quote(query)}",
-                        timeout=2,
+                        timeout=self.SEARCH_TIMEOUT,
                             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
                     if r.status_code != 200:
                         continue
@@ -219,16 +230,21 @@ class FanqieCrawler:
         if len(unique_queries) > 1:
             def _parallel_search():
                 import requests as _req
+                import threading as _threading
                 import urllib3 as _urllib3
-                _urllib3.disable_warnings(_urllib3.exceptions.InsecureRequestWarning)
+                if not self.session.verify:
+                    _urllib3.disable_warnings(_urllib3.exceptions.InsecureRequestWarning)
                 # 每个线程独立 session
                 local_session = _req.Session()
                 local_session.headers.update(self.HEADERS)
-                local_session.verify = False
+                local_session.verify = self.session.verify
                 local_session.trust_env = False
-                
+                # 共享限流锁：并行查询互斥节流，降低对 Bing 的请求频率（防反爬/防滥用）
+                search_lock = _threading.Lock()
                 bing_hosts = ["https://cn.bing.com", "https://www.bing.com"]
                 for host in bing_hosts:
+                    with search_lock:
+                        time.sleep(0.3)  # 每次 Bing 请求间隔 300ms
                     try:
                         r = local_session.get(
                             f"{host}/search?q={_up2.quote(query)}",
@@ -268,7 +284,7 @@ class FanqieCrawler:
         # 全部失败则兜底番茄搜索页
         try:
             search_url = f"https://fanqienovel.com/search/{_up2.quote(title)}"
-            r = self.session.get(search_url, timeout=2,
+            r = self.session.get(search_url, timeout=self.SEARCH_TIMEOUT,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
             ids = re.findall(r'fanqienovel\.com/page/(\d+)', r.text)
             if ids:
@@ -289,7 +305,7 @@ class FanqieCrawler:
         try:
             r = self.session.get(
                 f"{self.BASE_URL}/page/{book_id}",
-                timeout=15,
+                timeout=self.DETAIL_TIMEOUT,
                 headers={"Accept": "text/html,application/xhtml+xml"})
             if r.status_code != 200:
                 return None
@@ -349,7 +365,7 @@ class FanqieCrawler:
         if genre_id > 0:
             params["genre_type"] = genre_id
 
-        resp = self.session.get(url, params=params, timeout=15)
+        resp = self.session.get(url, params=params, timeout=self.DETAIL_TIMEOUT)
         data = resp.json()
 
         novels = []
@@ -372,7 +388,7 @@ class FanqieCrawler:
     def _web_hot_list(self, genre_id: int, count: int) -> list[NovelInfo]:
         """网页抓取热榜（备用方案）"""
         url = f"{self.BASE_URL}/rank/hot"
-        resp = self.session.get(url, timeout=15)
+        resp = self.session.get(url, timeout=self.DETAIL_TIMEOUT)
         text = resp.text
 
         novels = []
@@ -391,7 +407,7 @@ class FanqieCrawler:
         """获取单本书详细信息"""
         try:
             url = f"{self.API_BASE}/reader/book_info/v0"
-            resp = self.session.get(url, params={"book_id": book_id}, timeout=3)
+            resp = self.session.get(url, params={"book_id": book_id}, timeout=self.DETAIL_TIMEOUT)
             data = resp.json()
             info = data.get("data", {})
 
@@ -415,7 +431,7 @@ class FanqieCrawler:
 
         # 方法1: 书籍页SSR → page.chapterListWithVolume
         try:
-            r = self.session.get(f"{self.BASE_URL}/page/{book_id}", timeout=15,
+            r = self.session.get(f"{self.BASE_URL}/page/{book_id}", timeout=self.DETAIL_TIMEOUT,
                 headers={"Accept": "text/html,application/xhtml+xml"})
             if r.status_code == 200:
                 m = re.search(r'window\.__INITIAL_STATE__\s*=\s*({.+?});', r.text, re.DOTALL)
@@ -448,7 +464,7 @@ class FanqieCrawler:
             r = self.session.get(
                 "https://novel.snssdk.com/api/novel/book/directory/list/v1/",
                 params={"book_id": book_id, "offset": 0, "count": max_count},
-                timeout=15,
+                timeout=self.DETAIL_TIMEOUT,
                 headers={"Referer": "https://novel.snssdk.com/"})
             if r.status_code == 200:
                 data = r.json()
@@ -470,7 +486,7 @@ class FanqieCrawler:
         try:
             r = self.session.get(
                 f"{self.BASE_URL}/reader/{chapter_id}",
-                timeout=15,
+                timeout=self.DETAIL_TIMEOUT,
                 headers={"Accept": "text/html,application/xhtml+xml"})
             if r.status_code != 200:
                 return ""
@@ -503,7 +519,7 @@ class FanqieCrawler:
                 self._init_decoder()
                 if any(0xE000 <= ord(c) <= 0xF8FF for c in content[:100]):
                     if self._cached_mapping:
-                        content = __import__('plugins.font_decoder', fromlist=['decode_with_mapping']).decode_with_mapping(
+                        content = font_decoder.decode_with_mapping(
                             content, self._cached_mapping)
                     else:
                         content = self._decoder.decode_page(r.text)
@@ -552,7 +568,7 @@ class NovelAnalyzer:
                       on_progress=None) -> dict:
         """分析一本小说，提取所有可复用元素"""
         if not self.llm:
-            return {"plots": [], "structures": [], "gags": [], "themes": []}
+            return {"plots": [], "structures": [], "gags": []}
 
         samples = self._select_samples(chapters)
 
@@ -567,12 +583,8 @@ class NovelAnalyzer:
         result["structures"] = self.extract_structure(novel, samples)
 
         if on_progress:
-            on_progress("analyze", 3, 4, "提取笑点...")
+            on_progress("analyze", 3, 3, "提取笑点...")
         result["gags"] = self.extract_gags(novel, samples)
-
-        if on_progress:
-            on_progress("analyze", 4, 4, "提取内涵...")
-        result["themes"] = self.extract_themes(novel, samples)
 
         return result
 
@@ -686,38 +698,6 @@ class NovelAnalyzer:
             logger.warning(f"Gag extraction failed: {e}")
             return []
 
-    def extract_themes(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
-        """提取母题/内涵"""
-        text = self._build_sample_text(samples, 1500)
-
-        prompt = f"""分析以下小说的深层母题和内涵表达手法。
-
-每个母题包括：
-1. 母题名称（如"底层逆袭的尊严""知识改变命运"）
-2. 母题描述
-3. 在小说中的具体体现方式
-4. 写作建议（如何在其他小说中复用）
-
-【小说内容样本】
-{text}
-
-返回 JSON：
-{{"themes": [
-  {{"name":"母题名称","description":"描述",
-   "expression":"在小说中的体现方式",
-   "writing_tips":["写作建议1","写作建议2"],
-   "compatible_genres":["玄幻","都市"]}}
-]}}"""
-        try:
-            raw = self.llm.call("你是一位专业的文学分析学者。只返回JSON。",
-                                prompt, temperature=0.5, max_tokens=4096)
-            from core.llm_client import extract_json
-            data = json.loads(extract_json(raw))
-            return data.get("themes", [])
-        except Exception as e:
-            logger.warning(f"Theme extraction failed: {e}")
-            return []
-
     def _build_sample_text(self, samples: list[dict], max_chars: int) -> str:
         """构建样本文本"""
         parts = []
@@ -738,17 +718,16 @@ class NovelAnalyzer:
 # ═══════════════════════════════════════════
 
 class LibraryIngestor:
-    """将分析结果导入四大库"""
+    """将分析结果导入各库（桥段/大纲/笑点）"""
 
-    def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None, theme_lib=None):
+    def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None):
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
         self.gag_lib = gag_lib
-        self.theme_lib = theme_lib
 
     def ingest(self, analysis: dict, source: str = "fanqie") -> dict:
         """导入分析结果到各库"""
-        stats = {"plots": 0, "structures": 0, "gags": 0, "themes": 0}
+        stats = {"plots": 0, "structures": 0, "gags": 0}
 
         for plot in analysis.get("plots", []):
             if self.plot_lib:
@@ -764,11 +743,6 @@ class LibraryIngestor:
             if self.gag_lib:
                 self._add_gag(gag, source)
                 stats["gags"] += 1
-
-        for theme in analysis.get("themes", []):
-            if self.theme_lib:
-                self._add_theme(theme, source)
-                stats["themes"] += 1
 
         return stats
 
@@ -838,20 +812,6 @@ class LibraryIngestor:
         )
         self.gag_lib.patterns.append(pattern)
 
-    def _add_theme(self, data: dict, source: str):
-        from libraries.theme import ThemeEntry
-        tid = f"scout_{source}_{data.get('name','unknown')}"
-        for t in self.theme_lib.entries:
-            if t.id == tid:
-                return
-
-        entry = ThemeEntry(
-            id=tid, name=data.get("name",""),
-            description=data.get("description",""),
-            techniques=data.get("writing_tips",data.get("techniques",[])),
-        )
-        self.theme_lib.entries.append(entry)
-
 
 # ═══════════════════════════════════════════
 # 总调度
@@ -868,14 +828,13 @@ class FanqieScoutAgent:
     """
 
     def __init__(self, llm_client=None, plot_lib=None, struct_lib=None,
-                 gag_lib=None, theme_lib=None):
-        self.crawler = FanqieCrawler()
+                 gag_lib=None, verify: bool = True):
+        self.crawler = FanqieCrawler(verify=verify)
         self.analyzer = NovelAnalyzer(llm_client)
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
         self.gag_lib = gag_lib
-        self.theme_lib = theme_lib
-        self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib, theme_lib)
+        self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib)
 
     def run(self, genre: str = "", book_count: int = 5,
             chapters_per_book: int = 30, delay: float = 1.5,
@@ -921,7 +880,6 @@ class FanqieScoutAgent:
             result.new_plots.extend(analysis.get("plots", []))
             result.new_structures.extend(analysis.get("structures", []))
             result.new_gags.extend(analysis.get("gags", []))
-            result.new_themes.extend(analysis.get("themes", []))
 
             # 入库
             stats = self.ingestor.ingest(analysis, "fanqie")
@@ -933,13 +891,12 @@ class FanqieScoutAgent:
         result.downloaded_chapters = total_downloaded
         logger.info(f"Scout complete: {len(result.new_plots)} plots, "
                      f"{len(result.new_structures)} structures, "
-                     f"{len(result.new_gags)} gags, "
-                     f"{len(result.new_themes)} themes")
+                     f"{len(result.new_gags)} gags")
 
         return result
 
     def fetch_novel(self, title: str, chapters: int = 50,
-                    on_progress=None) -> tuple:
+                    on_progress=None, download_delay: float = 1.0) -> tuple:
         """仅下载（不分析不入库），返回 (NovelInfo, downloaded_chapters)"""
         result = ScoutResult()
 
@@ -962,7 +919,7 @@ class FanqieScoutAgent:
         for i, ch in enumerate(chapter_list):
             content = self.crawler.download_chapter(novel.book_id, ch["id"])
             if content.strip():
-                imported_re = __import__("re")
+                imported_re = re
                 downloaded.append({
                     "index": ch["index"], "title": ch["title"],
                     "content": content,
@@ -971,7 +928,7 @@ class FanqieScoutAgent:
             if on_progress:
                 on_progress("download", i+1, total_ch, ch["title"][:30])
             if i < total_ch - 1:
-                import time as _t; _t.sleep(1.0)
+                time.sleep(download_delay)  # 礼貌爬取间隔
 
         if on_progress:
             on_progress("download", total_ch, total_ch, f"下载完成 {len(downloaded)}章")
@@ -987,7 +944,7 @@ class FanqieScoutAgent:
         return novel, {"folder": folder, "chapters": len(downloaded)}
 
     def scout_single_book(self, title: str, chapters: int = 50,
-                          on_progress=None) -> ScoutResult:
+                          on_progress=None, download_delay: float = 1.0) -> ScoutResult:
         """
         侦察单本书——按书名搜索 → 下载 → 分析 → 入库
 
@@ -1016,7 +973,7 @@ class FanqieScoutAgent:
         for i, ch in enumerate(chapter_list):
             content = self.crawler.download_chapter(novel.book_id, ch["id"])
             if content.strip():
-                imported_re = __import__('re')
+                imported_re = re
                 downloaded.append({
                     "index": ch["index"], "title": ch["title"],
                     "content": content,
@@ -1024,7 +981,7 @@ class FanqieScoutAgent:
                 })
             if on_progress:
                 on_progress("download", i+1, total_ch, ch["title"][:30])
-            time.sleep(1.0)
+            time.sleep(download_delay)  # 礼貌爬取间隔
 
         result.downloaded_chapters = len(downloaded)
         if on_progress:
@@ -1040,21 +997,20 @@ class FanqieScoutAgent:
         result.new_plots = analysis.get("plots", [])
         result.new_structures = analysis.get("structures", [])
         result.new_gags = analysis.get("gags", [])
-        result.new_themes = analysis.get("themes", [])
 
         if on_progress:
-            on_progress("analysis_done", 4, 4, "分析完成，等待入库")
+            on_progress("analysis_done", 3, 3, "分析完成，等待入库")
 
         return result
 
     def ingest_selected(self, plots: list = None, structures: list = None,
-                        gags: list = None, themes: list = None,
+                        gags: list = None,
                         source: str = "fanqie", on_progress=None) -> dict:
         """选择性入库"""
         from datetime import datetime
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        stats = {"plots": 0, "structures": 0, "gags": 0, "themes": 0}
+        stats = {"plots": 0, "structures": 0, "gags": 0}
 
         if plots and self.plot_lib:
             for item in plots:
@@ -1085,16 +1041,6 @@ class FanqieScoutAgent:
             if on_progress:
                 on_progress("ingest", 1, 1, f"笑点已入库 {stats['gags']}个")
             self.gag_lib._save()
-
-        if themes and self.theme_lib:
-            for item in themes:
-                item["source"] = source
-                item["created_at"] = now
-                self.ingestor._add_theme(item, source)
-                stats["themes"] += 1
-            if on_progress:
-                on_progress("ingest", 1, 1, f"内涵已入库 {stats['themes']}个")
-            self.theme_lib._save()
 
         return stats
 
@@ -1136,10 +1082,9 @@ if __name__ == "__main__":
     from libraries.plot import PlotLibrary
     from libraries.structure import StructureLibrary
     from libraries.gag import GagLibrary
-    from libraries.theme import ThemeLibrary
 
     scout = FanqieScoutAgent(llm, PlotLibrary(), StructureLibrary(),
-                              GagLibrary(), ThemeLibrary())
+                              GagLibrary())
     result = scout.run(genre=genre, book_count=book_count,
                        chapters_per_book=chapters)
 
@@ -1149,4 +1094,3 @@ if __name__ == "__main__":
     print(f"New plots: {len(result.new_plots)}")
     print(f"New structures: {len(result.new_structures)}")
     print(f"New gags: {len(result.new_gags)}")
-    print(f"New themes: {len(result.new_themes)}")

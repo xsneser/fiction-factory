@@ -1,0 +1,412 @@
+{# ─── 设定编辑表单（原 world_card.html 迁移；依赖页面级全局 BOOK_ID / __BI__ / __BOOK_TITLE__）─── #}
+<div class="world-edit">
+    <div id="gen-status" class="gen-status"></div>
+
+    <form id="world-form" class="form-grid">
+        <fieldset>
+            <legend>🗺️ 世界观（设定圣经）</legend>
+            <div class="form-row">
+                <label>一句话设定 description</label>
+                <textarea id="world-idea" rows="2" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…"></textarea>
+            </div>
+            <div id="wb-tags-display" class="form-row hint" style="display:none"></div>
+            <div class="btn-row">
+                <button class="btn-primary" id="btn-generate" onclick="startGenerate('one')">🚀 生成世界观</button>
+                <button class="btn-secondary" id="btn-candidates" onclick="loadCandidates()">🎲 示例候选</button>
+            </div>
+            <div id="candidate-box"></div>
+            <div class="form-row">
+                <label>设定概述 world_summary（一段话整体设定）</label>
+                <textarea id="wb-world_summary" rows="3"></textarea>
+            </div>
+            <div class="form-row half">
+                <div><label>时代 era（含年份/纪元）</label><input id="wb-era"></div>
+                <div><label>力量体系 power_system（数值写死）</label><input id="wb-power_system"></div>
+            </div>
+            <div class="form-row half">
+                <div><label>地理 geography</label><input id="wb-geography"></div>
+                <div><label>文化 culture</label><input id="wb-culture"></div>
+            </div>
+            <div class="form-row half">
+                <div><label>历史 history</label><input id="wb-history"></div>
+                <div><label>社会结构 social_structure</label><input id="wb-social_structure"></div>
+            </div>
+            <div class="form-row">
+                <label>核心矛盾 core_conflict（驱动全书的冲突）</label>
+                <input id="wb-core_conflict">
+            </div>
+            <div class="form-row half">
+                <div>
+                    <label>势力 factions（用「名:立场」多条，或逗号分隔）</label>
+                    <textarea id="wb-factions" rows="3"></textarea>
+                </div>
+                <div>
+                    <label>世界规则 rules（每行一条，金手指数值写死）</label>
+                    <textarea id="wb-rules" rows="3"></textarea>
+                </div>
+            </div>
+            <div class="form-row hint">一句话种子保存在 description 字段，改上面字段即可；重生成时保留你已填的值。</div>
+        </fieldset>
+
+        <fieldset>
+            <legend>👥 人物（主角/配角统一）</legend>
+            <div class="form-row hint">每条人物一张卡片：填姓名/身份/性别/性格/口癖/关系等；角色选「主角」即为主角。可用「🎭 套用原型」从角色原型库一键填充性格与口癖。</div>
+            <div id="char-cards"></div>
+            <div class="btn-row">
+                <button type="button" class="btn-secondary" onclick="addCharCard()">➕ 添加人物</button>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>🎭 基调</legend>
+            <div class="form-row half">
+                <div>
+                    <label>基调 tone</label>
+                    <select id="bi-tone">
+                        <option value="">（留空由 AI）</option>
+                        <option>轻松</option><option>沉重</option><option>热血</option><option>幽默</option>
+                    </select>
+                </div>
+                <div>
+                    <label>目标读者</label>
+                    <select id="bi-target_audience">
+                        <option value="">（留空由 AI）</option>
+                        <option>男频</option><option>女频</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row half">
+                <div>
+                    <label>视角 pov</label>
+                    <select id="bi-pov">
+                        <option value="">（留空由 AI）</option>
+                        <option>第一人称</option><option>第三人称</option>
+                    </select>
+                </div>
+                <div>
+                    <label>时代语言 era_language</label>
+                    <input id="bi-era_language" placeholder="如：禁晚于2030年的网络新词">
+                </div>
+            </div>
+        </fieldset>
+
+        <div class="btn-row">
+            <button type="button" class="btn-secondary" onclick="saveWorld()">💾 保存设定</button>
+            <button type="button" class="btn-primary" onclick="confirmWorld()">✅ 确认并进入大纲生成</button>
+        </div>
+    </form>
+</div>
+
+<script>
+function $(id){ return document.getElementById(id); }
+
+/* —— basic_info <-> 表单 —— */
+var __ARCHETYPES__ = [];   // 角色原型库缓存（/api/characters）
+
+function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function emptyChar() {
+    return {name:'', role:'配角', importance:2, identity:'', title:'', gender:'', personality:'',
+            catchphrase:'', brief:'', golden_finger:'', age:0, death_year:0,
+            archetype_id:'', relations:[]};
+}
+function legacyChars(bi) {
+    /* 旧结构 basic_info（protagonist + supporting_cast）→ characters 数组（兜底兼容） */
+    var out = [];
+    var p = bi.protagonist || {};
+    if (p.name) {
+        out.push({name: p.name, role: '主角', identity: p.identity || '',
+                  personality: p.personality || '', golden_finger: p.golden_finger || '',
+                  brief: p.background || '', gender: p.gender || '',
+                  age: p.age || 0, death_year: p.death_year || 0, catchphrase: '', title: '',
+                  archetype_id: '', relations: []});
+    }
+    var mc = (out[0] || {}).name || '';
+    (bi.supporting_cast || []).forEach(function(c) {
+        if (!c.name) return;
+        var rels = [];
+        if (c.relation && mc) rels.push({name: mc, relation: c.relation});
+        out.push({name: c.name, role: c.role || '配角', identity: c.role || '',
+                  personality: c.personality || '', golden_finger: '', brief: c.brief || '',
+                  gender: c.gender || '', age: c.age || 0, death_year: c.death_year || 0,
+                  catchphrase: c.catchphrase || '', title: c.title || '',
+                  archetype_id: c.archetype_id || '', relations: rels});
+    });
+    return out;
+}
+
+/* —— 人物条目卡片渲染 —— */
+function appendCharCard(c) {
+    c = c || emptyChar();
+    var card = document.createElement('div');
+    card.className = 'char-card';
+    card.style.cssText = 'border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px;background:#0d1117';
+    card.innerHTML =
+        '<div class="form-row half">'
+        + '<div><label>姓名</label><input class="cc" data-f="name" value="' + esc(c.name) + '"></div>'
+        + '<div><label>角色</label><select class="cc" data-f="role">'
+        + ['主角','配角','反派','其他'].map(function(r){ return '<option' + (c.role===r?' selected':'') + '>' + r + '</option>'; }).join('')
+        + '</select></div></div>'
+        + '<div class="form-row half">'
+        + '<div><label>重要度（1最高）</label><select class="cc" data-f="importance">'
+        + [1,2,3,4,5].map(function(n){ return '<option value="' + n + '"' + (String(c.importance || 2)===String(n)?' selected':'') + '>' + n + '</option>'; }).join('')
+        + '</select></div>'
+        + '<div></div></div>'
+        + '<div class="form-row half">'
+        + '<div><label>身份/职业</label><input class="cc" data-f="identity" value="' + esc(c.identity) + '"></div>'
+        + '<div><label>称呼</label><input class="cc" data-f="title" value="' + esc(c.title) + '"></div></div>'
+        + '<div class="form-row half">'
+        + '<div><label>性别</label><input class="cc" data-f="gender" placeholder="男/女" value="' + esc(c.gender) + '"></div>'
+        + '<div><label>性格</label><input class="cc" data-f="personality" value="' + esc(c.personality) + '"></div></div>'
+        + '<div class="form-row half">'
+        + '<div><label>口癖</label><input class="cc" data-f="catchphrase" value="' + esc(c.catchphrase) + '"></div>'
+        + '<div><label>简介</label><input class="cc" data-f="brief" value="' + esc(c.brief) + '"></div></div>'
+        + '<div class="form-row half">'
+        + '<div><label>金手指</label><input class="cc" data-f="golden_finger" value="' + esc(c.golden_finger) + '"></div>'
+        + '<div style="display:flex;gap:8px"><div style="flex:1"><label>年龄</label><input class="cc" data-f="age" type="number" min="0" value="' + (c.age||0) + '"></div>'
+        + '<div style="flex:1"><label>死亡年份</label><input class="cc" data-f="death_year" type="number" min="0" value="' + (c.death_year||0) + '"></div></div></div>'
+        + '<div class="form-row" style="align-items:center;gap:8px">'
+        + '<select class="char-archetype" style="max-width:220px"></select>'
+        + '<button type="button" class="small" onclick="applyArchetype(this)">🎭 套用原型</button>'
+        + '<button type="button" class="small danger" style="margin-left:auto" onclick="removeCharCard(this)">🗑 删除此人</button></div>'
+        + '<div class="char-relations">'
+        + '<div style="font-size:12px;color:#8b949e;margin:6px 0 4px">人物关系（对方姓名 / 关系）</div>'
+        + '<div class="rel-rows"></div>'
+        + '<button type="button" class="small" onclick="addRelRow(this)">➕ 加关系</button></div>';
+    $('char-cards').appendChild(card);
+    var sel = card.querySelector('.char-archetype');
+    var opts = '<option value="">（无原型）</option>';
+    __ARCHETYPES__.forEach(function(a) {
+        opts += '<option value="' + esc(a.id) + '"' + (c.archetype_id === a.id ? ' selected' : '') + '>' + esc(a.name) + '</option>';
+    });
+    sel.innerHTML = opts;
+    var relWrap = card.querySelector('.rel-rows');
+    (c.relations || []).forEach(function(r) { appendRelRow(relWrap, r.name, r.relation); });
+}
+function renderCharCards(chars) {
+    var wrap = $('char-cards');
+    wrap.innerHTML = '';
+    (chars && chars.length ? chars : [emptyChar()]).forEach(function(c) { appendCharCard(c); });
+}
+function addCharCard() { appendCharCard(emptyChar()); }
+function removeCharCard(btn) {
+    if (!confirm('删除这条人物？')) return;
+    btn.closest('.char-card').remove();
+}
+function applyArchetype(btn) {
+    var card = btn.closest('.char-card');
+    var id = card.querySelector('.char-archetype').value;
+    var a = null;
+    for (var i = 0; i < __ARCHETYPES__.length; i++) { if (__ARCHETYPES__[i].id === id) { a = __ARCHETYPES__[i]; break; } }
+    if (!a) return;
+    card.querySelector('[data-f="personality"]').value = a.personality || '';
+    card.querySelector('[data-f="catchphrase"]').value = (a.catchphrases && a.catchphrases[0]) || '';
+    card.querySelector('[data-f="brief"]').value = a.description || '';
+    showToast('已套用原型「' + a.name + '」', 'info');
+}
+function appendRelRow(wrap, name, relation) {
+    var row = document.createElement('div');
+    row.className = 'rel-row';
+    row.style.cssText = 'display:flex;gap:6px;margin:4px 0;align-items:center';
+    row.innerHTML = '<input class="cc-rel-name" placeholder="对方姓名" value="' + esc(name||'') + '" style="flex:1;min-width:0">'
+        + '<input class="cc-rel-rel" placeholder="关系（如：师徒/宿敌/闺蜜）" value="' + esc(relation||'') + '" style="flex:1;min-width:0">'
+        + '<button type="button" class="small" onclick="this.closest(\'.rel-row\').remove()">✕</button>';
+    wrap.appendChild(row);
+}
+function addRelRow(btn) { appendRelRow(btn.closest('.char-card').querySelector('.rel-rows')); }
+function removeRelRow(btn) { btn.closest('.rel-row').remove(); }
+
+function collectCharCards() {
+    var out = [];
+    document.querySelectorAll('#char-cards .char-card').forEach(function(card) {
+        var c = {};
+        card.querySelectorAll('.cc').forEach(function(inp) {
+            var k = inp.getAttribute('data-f');
+            c[k] = (k === 'age' || k === 'death_year' || k === 'importance')
+                ? (parseInt(inp.value, 10) || 0) : inp.value.trim();
+        });
+        // archetype_id 存于 .char-archetype 下拉（非 .cc），单独收集
+        var archSel = card.querySelector('.char-archetype');
+        if (archSel) c.archetype_id = archSel.value || '';
+        c.relations = [];
+        card.querySelectorAll('.rel-row').forEach(function(row) {
+            var n = row.querySelector('.cc-rel-name').value.trim();
+            var r = row.querySelector('.cc-rel-rel').value.trim();
+            if (n) c.relations.push({name: n, relation: r});
+        });
+        if (c.name) out.push(c);
+    });
+    return out;
+}
+
+function biToForm(bi) {
+    bi = bi || {};
+    var wb = bi.world_building || {};
+    $('world-idea').value = wb.description || '';
+    var tags = (wb.tags || []).filter(function(t){ return String(t).trim(); });
+    var tagsEl = $('wb-tags-display');
+    if (tagsEl) {
+        if (tags.length) { tagsEl.style.display = 'block'; tagsEl.textContent = '🏷️ 题材标签（启动向导选定，此处只读）：' + tags.join('、'); }
+        else tagsEl.style.display = 'none';
+    }
+    $('wb-era').value = wb.era || ''; $('wb-power_system').value = wb.power_system || '';
+    $('wb-geography').value = wb.geography || ''; $('wb-culture').value = wb.culture || '';
+    $('wb-history').value = wb.history || ''; $('wb-social_structure').value = wb.social_structure || '';
+    $('wb-core_conflict').value = wb.core_conflict || ''; $('wb-world_summary').value = wb.world_summary || '';
+    $('wb-factions').value = factionLinesText(wb.factions);
+    $('wb-rules').value = (wb.rules || []).join('\n');
+    renderCharCards(Array.isArray(bi.characters) ? bi.characters : legacyChars(bi));
+    $('bi-tone').value = bi.tone || ''; $('bi-target_audience').value = bi.target_audience || '';
+    $('bi-pov').value = bi.pov || ''; $('bi-era_language').value = bi.era_language || '';
+}
+function formToBi() {
+    // 标签是启动向导②选定的硬约束，此表单只读透传（保留原值）
+    var _origTags = ((typeof __BI__ !== 'undefined' ? __BI__ : {}) || {}).world_building || {};
+    _origTags = _origTags.tags || [];
+    var wb = {
+        description: ($('world-idea').value || '').trim(),
+        tags: Array.isArray(_origTags) ? _origTags : [],
+        era: $('wb-era').value.trim(), power_system: $('wb-power_system').value.trim(),
+        geography: $('wb-geography').value.trim(), culture: $('wb-culture').value.trim(),
+        history: $('wb-history').value.trim(), social_structure: $('wb-social_structure').value.trim(),
+        core_conflict: $('wb-core_conflict').value.trim(), world_summary: $('wb-world_summary').value.trim(),
+        factions: parseFactionLines($('wb-factions').value), rules: parseRuleLines($('wb-rules').value),
+    };
+    return {
+        book_title: BOOK_TITLE,
+        characters: collectCharCards(),
+        world_building: wb,
+        tone: $('bi-tone').value, target_audience: $('bi-target_audience').value,
+        pov: $('bi-pov').value, era_language: $('bi-era_language').value,
+    };
+}
+
+/* —— SSE：生成世界观 —— */
+function statusShow(msg, cls) {
+    var el = $('gen-status');
+    el.className = 'gen-status on' + (cls ? ' ' + cls : '');
+    el.textContent = msg;
+}
+function startGenerate(mode) {
+    // 借鉴生成已挪到启动新书向导②（/api/world-builder/borrow-preview 无书别名）
+    if (mode !== 'one') return;
+    var body = {mode: 'one', idea: $('world-idea').value.trim()};
+    statusShow('生成中…', '');
+    fetch('/api/world-builder/' + BOOK_ID + '/generate', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+    }).then(function(resp) {
+        var reader = resp.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = '';
+        function read() {
+            return reader.read().then(function(r) {
+                if (r.done) return;
+                buf += decoder.decode(r.value, {stream: true});
+                var lines = buf.split('\n');
+                buf = lines.pop() || '';
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i];
+                    if (line.indexOf('data: ') !== 0) continue;
+                    try { handleGen(JSON.parse(line.slice(6))); } catch(e) {}
+                }
+                return read();
+            });
+        }
+        return read();
+    }).catch(function(err) {
+        statusShow('❌ 连接失败: ' + err.message, 'err');
+    });
+}
+function handleGen(evt) {
+    if (evt.event === 'phase' || evt.event === 'progress') {
+        statusShow(evt.message || '…');
+    } else if (evt.event === 'world_summary') {
+        statusShow('📝 ' + (evt.summary || ''));
+    } else if (evt.event === 'phase_done') {
+        statusShow('✅ ' + evt.message);
+    } else if (evt.event === 'done') {
+        statusShow('✅ 世界观生成完成，已刷新下方设定卡', '');
+        if (evt.basic_info) biToForm(evt.basic_info);
+    } else if (evt.event === 'error') {
+        statusShow('❌ ' + evt.message, 'err');
+    }
+}
+
+/* —— 示例候选 —— */
+function loadCandidates() {
+    var idea = $('world-idea').value.trim();
+    $('candidate-box').innerHTML = '<div class="gen-status on">生成候选…</div>';
+    fetch('/api/world-builder/' + BOOK_ID + '/candidates', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({idea: idea})
+    }).then(function(r){ return r.json(); }).then(function(data) {
+        if (!data.ok) { $('candidate-box').innerHTML = '<div class="gen-status err">' + data.error + '</div>'; return; }
+        var html = '';
+        (data.candidates || []).forEach(function(c, idx) {
+            html += '<div class="candidate-card" onclick="pickCandidate(' + idx + ')">'
+                + '<h4>#' + (idx+1) + ' ' + c.title + '</h4>'
+                + '<div class="ob">' + c.one_liner + '</div>'
+                + '<div class="ob">' + (c.world_brief || '') + '</div>'
+                + '<div class="ob">『' + (c.genre_hint || '') + '』</div>'
+                + '</div>';
+        });
+        window.__CANDIDATES__ = data.candidates || [];
+        $('candidate-box').innerHTML = html;
+    }).catch(function(err){ $('candidate-box').innerHTML = '<div class="gen-status err">请求失败: ' + err.message + '</div>'; });
+}
+function pickCandidate(idx) {
+    var c = (window.__CANDIDATES__ || [])[idx];
+    if (!c) return;
+    $('world-idea').value = c.one_liner;
+    if (c.world_brief) $('wb-world_summary').value = c.world_brief;
+    $('candidate-box').innerHTML = '';
+    statusShow('已选中候选：' + c.one_liner + '。点「🚀 生成世界观」展开。');
+}
+
+/* —— 保存 / 确认 —— */
+function saveWorld() {
+    var payload = formToBi();
+    if (!payload) return;
+    fetch('/api/storyline/' + BOOK_ID + '/save-basic-info', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+    }).then(function(r){ return r.json(); }).then(function(data) {
+        statusShow(data.ok ? '✅ 设定已保存' : '❌ 保存失败: ' + (data.error || ''), data.ok ? '' : 'err');
+    }).catch(function(err){ statusShow('❌ 保存失败: ' + err.message, 'err'); });
+}
+function confirmWorld() {
+    var payload = formToBi();
+    if (!payload) return;
+    // 书名为空或 (待定) 时先自动生成（LLM 失败不阻塞），再保存设定并确认进入大纲生成
+    function ensureTitle() {
+        var t = (BOOK_TITLE || '').trim();
+        if (t && t !== '(待定)') return Promise.resolve(true);
+        return fetch('/api/storyline/' + BOOK_ID + '/generate-title', {method: 'POST'})
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+                if (d.ok) { BOOK_TITLE = d.chosen || ''; payload.book_title = d.chosen || ''; }
+                return true;
+            })
+            .catch(function(){ return false; });
+    }
+    ensureTitle()
+        .then(function(){ return fetch('/api/storyline/' + BOOK_ID + '/save-basic-info', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+        }); })
+        .then(function(r){ return r.json(); })
+        .then(function(){ return fetch('/api/world-builder/' + BOOK_ID + '/confirm', {method: 'POST'}); })
+        .then(function(r){ return r.json(); })
+        .then(function(data) {
+            if (data.ok && data.redirect) { window.location.href = data.redirect; }
+            else { statusShow('❌ ' + (data.error || '确认失败'), 'err'); }
+        })
+        .catch(function(err){ statusShow('❌ 确认失败: ' + err.message, 'err'); });
+}
+
+/* 初始化：先取角色原型库，再渲染已有设定到表单（依赖包含页定义 __BI__ / __BOOK_TITLE__） */
+var BOOK_TITLE = __BOOK_TITLE__ || '';
+fetch('/api/characters')
+    .then(function(r){ return r.json(); })
+    .then(function(list){ __ARCHETYPES__ = list || []; biToForm(__BI__ || {}); })
+    .catch(function(){ biToForm(__BI__ || {}); });
+</script>
