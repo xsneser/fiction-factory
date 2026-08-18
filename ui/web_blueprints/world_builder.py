@@ -199,8 +199,22 @@ def api_world_characters_nobook():
     from libraries.world_builder import WorldBuildingGenerator
     from libraries.prompt_harness import PromptHarness
     harness = PromptHarness()   # 无书：storyline=None
+
+    # 从角色原型库取与题材/流派匹配的原型（供 AI 挑选适配），回退全部启用原型
+    archetypes = []
+    if isinstance(char_lib, object) and getattr(char_lib, "archetypes", None):
+        sel = None
+        if tags:
+            sel = char_lib.search(tag=tags[0])
+        elif genre:
+            sel = char_lib.search(genre=genre)
+        if not sel:
+            sel = [a for a in char_lib.archetypes if a.enabled]
+        archetypes = [a.to_dict() for a in sel][:10]
+
     gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
-    result = gen.generate_characters(idea=idea, genre=genre, tags=tags, title=title)
+    result = gen.generate_characters(idea=idea, genre=genre, tags=tags,
+                                     title=title, archetypes=archetypes)
     if not result:
         return jsonify({"ok": False, "error": "主角/配角候选生成失败，请重试"}), 500
     return jsonify({"ok": True, **result})

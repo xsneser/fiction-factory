@@ -855,10 +855,12 @@ class PromptHarness:
         ])
 
     def render_characters_prompt(self, idea: str, genre: str = "",
-                                 sub_genre: str = "", tags=None, title: str = "") -> str:
-        """根据世界观（一句话 + 题材标签 + 书名）发散主角候选与配角候选（向导③按钮）。
+                                 sub_genre: str = "", tags=None, title: str = "",
+                                 archetypes=None) -> str:
+        """根据世界观（一句话 + 题材标签 + 书名 + 角色原型库）生成角色候选（向导③按钮）。
 
-        书名已在向导②选中，这里只生成第③步新加的内容（主角 + 配角）。
+        书名已在向导②选中；角色从原型库挑选 archetype_id 并适配到本书，输出统一字段
+        （姓名/身份/性格/口癖/重要度/金手指(主角)/关系(其他)）。
         """
         tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
         parts = [
@@ -868,17 +870,30 @@ class PromptHarness:
         ]
         if tags:
             parts.append(f"【题材标签】{'、'.join(tags)}（硬约束，必须契合）")
+        if archetypes:
+            lines = []
+            for a in archetypes[:10]:
+                a_ph = "、".join((a.get("catchphrases") or [])[:2]) or "—"
+                a_tags = "、".join(a.get("tags") or []) or "—"
+                a_genres = "、".join(a.get("fit_genres") or []) or "—"
+                lines.append(f"- {a.get('id')} {a.get('name')}（性格:{a.get('personality') or '—'}｜"
+                             f"标签:{a_tags}｜适配:{a_genres}｜口癖:{a_ph}）")
+            parts.append("【可选角色原型（从中挑选 archetype_id 并适配到本书）】\n" + "\n".join(lines))
         parts.append(
-            "你是网文人物策划。根据上述世界观与书名：\n"
-            "1. 发散 3 个主角设定候选（每个含 姓名/身份/性格/金手指，必须与世界观和书名自洽）；\n"
-            "2. 发散 5 个配角设定候选（每个含 姓名/身份/与主角的关系/性格/口癖，彼此要有区分度）。\n"
-            '只返回 JSON：{"protagonists":[{"name":"","identity":"","personality":"","golden_finger":""},'
-            '{"name":"","identity":"","personality":"","golden_finger":""},'
-            '{"name":"","identity":"","personality":"","golden_finger":""}],'
-            '"supporting_cast":[{"name":"","identity":"","relation":"","personality":"","catchphrase":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":""}]}'
+            "你是网文人物策划。根据上述世界观、书名与可选角色原型：\n"
+            "1. 发散 3 个主角候选（每个含 姓名/身份/性格/口癖/金手指，重要度 importance=1，"
+            "必须与世界观和书名自洽）；\n"
+            "2. 发散 5 个其他角色候选（每个含 姓名/身份/与主角的关系/性格/口癖，"
+            "重要度 importance=2~5 按戏份递减，彼此要有区分度）。\n"
+            "3. 每个角色必须从【可选角色原型】中挑选一个 archetype_id 作为原型基础，"
+            "并把原型适配成符合本书世界观的具体角色；没有合适原型时可省略 archetype_id。\n"
+            '只返回 JSON：{"protagonists":[{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":""},'
+            '{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":""},'
+            '{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":""}],'
+            '"supporting_cast":[{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":2,"archetype_id":""},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":2,"archetype_id":""},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":3,"archetype_id":""},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":3,"archetype_id":""},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":4,"archetype_id":""}]}'
         )
         return "\n".join(parts)

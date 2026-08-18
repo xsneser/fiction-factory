@@ -220,17 +220,17 @@ class WorldBuildingGenerator:
         return []
 
     def generate_characters(self, idea: str, genre: str = "", sub_genre: str = "",
-                            tags=None, title: str = "") -> dict:
-        """根据世界观（一句话+标签+书名）发散主角候选与配角候选（非流式，失败重试≤3）。
+                            tags=None, title: str = "", archetypes=None) -> dict:
+        """根据世界观（一句话+标签+书名+原型库）生成角色候选（非流式，失败重试≤3）。
 
-        书名来自向导②选中候选；这里只生成第③步新加的内容。
+        角色从原型库挑选 archetype_id 并适配到本书；统一字段含 importance。
         返回 {"protagonists": [...], "supporting_cast": [...]}。
         """
         if not self.llm:
             return None
         prompt = self.harness.render_characters_prompt(
             idea=idea, genre=genre or "", sub_genre=sub_genre or "",
-            tags=tags, title=title)
+            tags=tags, title=title, archetypes=archetypes)
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
