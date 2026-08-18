@@ -22,8 +22,19 @@ def _now() -> str:
 
 
 def start(task_id: str, name: str = "", title: str = "",
-           total: int = 0, phase: str = "准备中", url: str = ""):
-    """注册一个新任务（url: 任务对应页面的跳转地址，供侧边栏“查看”按钮使用）"""
+           total: int = 0, phase: str = "准备中", url: str = "",
+           agent: str = "", book_id: str = "", book_title: str = "",
+           step: str = "", sub_step: str = "", llm_calls: int = 0):
+    """注册一个新任务（url: 任务对应页面的跳转地址，供侧边栏“查看”按钮使用）。
+
+    agent 系列字段供右侧栏「Agent 活动面板」使用：
+      agent      — 角色（writing/outline/world/title/outline_agent/scout）
+      book_id    — 操作对象书 id
+      book_title — 书标题（展示用）
+      step       — 当前步骤（如「写桥段·第3章」）
+      sub_step   — 子步骤（如「笑点探测器命中」）
+      llm_calls  — 已发起的 LLM 调用次数（展示级近似计数，非计费）
+    """
     with _lock:
         _tasks[task_id] = {
             "id": task_id,
@@ -37,6 +48,12 @@ def start(task_id: str, name: str = "", title: str = "",
             "started_at_ts": time.time(),
             "status": "running",
             "url": url,
+            "agent": agent,
+            "book_id": book_id,
+            "book_title": book_title,
+            "step": step,
+            "sub_step": sub_step,
+            "llm_calls": llm_calls,
         }
 
 
@@ -110,6 +127,33 @@ def progress(task_id: str, current: int = 0, total: int = 0,
         t["phase_display"] = message or phase
 
 
+def llm_call(task_id: str, n: int = 1):
+    """记录 LLM 调用次数 +n（右侧栏 Agent 卡片展示用近似计数）。"""
+    with _lock:
+        t = _tasks.get(task_id)
+        if not t:
+            return
+        t["llm_calls"] = t.get("llm_calls", 0) + n
+
+
+def set_step(task_id: str, step=None, sub_step=None):
+    """更新当前步骤/子步骤。step/sub_step 为 None 表示不修改，空串表示清空。"""
+    with _lock:
+        t = _tasks.get(task_id)
+        if not t:
+            return
+        if step is not None:
+            t["step"] = step
+        if sub_step is not None:
+            t["sub_step"] = sub_step
+
+
+def get(task_id: str):
+    """返回任务原 dict（内部/调试用），不存在返回 None。"""
+    with _lock:
+        return _tasks.get(task_id)
+
+
 def log(task_id: str, message: str, level: str = "info"):
     """添加日志条目"""
     with _lock:
@@ -170,6 +214,12 @@ def get_tasks() -> list[dict]:
                 "started_at_ts": t.get("started_at_ts", 0),
                 "url": t.get("url", ""),
                 "logs": t.get("logs", [])[-10:],  # 最近10条
+                "agent": t.get("agent", ""),
+                "book_id": t.get("book_id", ""),
+                "book_title": t.get("book_title", ""),
+                "step": t.get("step", ""),
+                "sub_step": t.get("sub_step", ""),
+                "llm_calls": t.get("llm_calls", 0),
             })
         return result
 
