@@ -484,13 +484,32 @@ class PromptHarness:
             summaries_block = ("【已完成章节语义摘要】\n"
                                + summaries_context.strip()[:600] + "\n\n")
 
-        # 内涵跟随桥段：从情节自然流露，不点破
+        # 内涵跟随桥段：从情节自然流露，不点破。阶段级 theme_moments 优先（含位置/手法）。
         theme_block = ""
-        themes = list(getattr(p, "theme_hints", None) or [])
-        if themes:
-            theme_block = ("\n【本桥段要自然体现的母题】\n"
-                           + "、".join(themes[:3])
-                           + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
+        moments = list(getattr(p, "theme_moments", None) or [])
+        if moments:
+            lines = []
+            for m in moments[:3]:
+                if not isinstance(m, dict):
+                    continue
+                seg = m.get("name", "")
+                if not seg:
+                    continue
+                if m.get("position"):
+                    seg += f"（{m['position']}）"
+                if m.get("how"):
+                    seg += f"：{m['how']}"
+                lines.append(seg)
+            if lines:
+                theme_block = ("\n【本桥段要自然体现的母题（含插入位置）】\n"
+                               + "\n".join(lines)
+                               + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
+        else:
+            themes = list(getattr(p, "theme_hints", None) or [])
+            if themes:
+                theme_block = ("\n【本桥段要自然体现的母题】\n"
+                               + "、".join(themes[:3])
+                               + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
 
         # 灵机一动（探测器命中后注入下一组）
         inspiration_block = ""

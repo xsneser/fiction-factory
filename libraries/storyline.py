@@ -218,7 +218,8 @@ class PlotSlot:
 
     # 注入的加料
     gag_ids: list[str] = field(default_factory=list)    # 匹配的笑点
-    theme_hints: list[str] = field(default_factory=list)  # 内涵提示
+    theme_hints: list[str] = field(default_factory=list)  # 内涵提示（名字）
+    theme_moments: list = field(default_factory=list)     # 阶段级内涵 [{name, position, how}]（rich）
     hook_points: list[str] = field(default_factory=list)  # 吸睛点
 
     confirmed: bool = False        # 用户已确认
@@ -304,6 +305,7 @@ class BookStoryline:
                 "template_structure": p.template_structure,
                 "slots": p.slots,
                 "gag_ids": p.gag_ids, "theme_hints": p.theme_hints,
+                "theme_moments": p.theme_moments,
                 "hook_points": p.hook_points,
                 "confirmed": p.confirmed,
                 "written_chapter": p.written_chapter,
@@ -361,6 +363,7 @@ class BookStoryline:
             slots=p.get("slots", []),
             gag_ids=p.get("gag_ids", []),
             theme_hints=p.get("theme_hints", []),
+            theme_moments=p.get("theme_moments", []),
             hook_points=p.get("hook_points", []),
             confirmed=p.get("confirmed", False),
             written_chapter=p.get("written_chapter", 0),
@@ -380,10 +383,11 @@ class BookStoryline:
 # ═══════════════════════════════════════════
 
 def structure_to_stages(tmpl) -> list[dict]:
-    """把结构模板的阶段展开为 stage dict（name/min_ch/max_ch/events）——多实现共用防漂移。"""
+    """把结构模板的阶段展开为 stage dict（name/min_ch/max_ch/events/themes）——多实现共用防漂移。"""
     return [
         {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
-         "events": s.key_events[:5]}
+         "events": s.key_events[:5],
+         "themes": list(s.themes or [])}
         for s in tmpl.stages
     ]
 
@@ -404,14 +408,21 @@ THEME_PLOT_COMPAT = {
 
 
 def mount_themes_and_hooks(plot: "PlotSlot", storyline_themes: list) -> None:
-    """给桥段挂载内涵（跟随桥段）并标注吸睛点 —— StorylineBuilder/OutlineGenerator 共用，单一实现防漂移。
+    """给桥段挂载内涵并标注吸睛点 —— StorylineBuilder/OutlineGenerator 共用，单一实现防漂移。
 
-    内涵只挂到能承载它的桥段（THEME_PLOT_COMPAT 命中），不强挂；
+    内涵来源优先级：
+      1) 桥段已从所属阶段继承 theme_moments（阶段级内涵，含位置/手法）→ theme_hints 取其名
+      2) 否则按 THEME_PLOT_COMPAT 命中书级母题（免费规则兜底），不强挂
     未命中的母题仍作为书级可用线索随「书级设定卡」注入写作；笑点完全涌现，不在此分配。
     """
-    compatible = THEME_PLOT_COMPAT.get(getattr(plot, "template_id", ""), [])
-    theme_hints = [name for name in storyline_themes if name in compatible]
-    plot.theme_hints = theme_hints[:2]
+    moments = list(getattr(plot, "theme_moments", None) or [])
+    if moments:
+        names = [m.get("name", "") if isinstance(m, dict) else str(m) for m in moments]
+        plot.theme_hints = [n for n in names if n][:3]
+    else:
+        compatible = THEME_PLOT_COMPAT.get(getattr(plot, "template_id", ""), [])
+        theme_hints = [name for name in storyline_themes if name in compatible]
+        plot.theme_hints = theme_hints[:2]
 
     hook_candidates = []
     for slot in plot.slots[:3]:
@@ -621,6 +632,7 @@ class StorylineBuilder:
                     template_structure="→".join(tmpl.template_structure) if tmpl.template_structure else "",
                     slots=[{"name": s.name, "default": s.default, "options": s.options}
                            for s in tmpl.slots],
+                    theme_moments=stage.get("themes", []),
                 )
                 new_plots.append(p)
                 if parent_id:

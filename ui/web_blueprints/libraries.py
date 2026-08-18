@@ -86,6 +86,29 @@ def struct_themes(struct_id):
     return jsonify({"ok": True, "themes": t.themes})
 
 
+@bp.route("/api/structures/<struct_id>/stages/<int:idx>/themes", methods=["POST"])
+def struct_stage_themes(struct_id, idx):
+    """编辑某个阶段的阶段级内涵 [{name, position, how}]（含插入位置+表达手法）。"""
+    t = struct_lib.get_by_id(struct_id)
+    if not t:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if not (0 <= idx < len(t.stages)):
+        return jsonify({"ok": False, "error": "stage index out of range"}), 400
+    themes = (request.json or {}).get("themes")
+    if not isinstance(themes, list):
+        return jsonify({"ok": False, "error": "themes must be list"}), 400
+    clean = []
+    for m in themes:
+        if not isinstance(m, dict) or not str(m.get("name", "") or "").strip():
+            continue
+        clean.append({"name": str(m["name"]).strip(),
+                      "position": str(m.get("position", "") or "").strip(),
+                      "how": str(m.get("how", "") or "").strip()})
+    t.stages[idx].themes = clean
+    struct_lib._save()
+    return jsonify({"ok": True, "themes": clean})
+
+
 @bp.route("/api/gags/<gag_id>/toggle", methods=["POST"])
 def gag_toggle(gag_id): return _lib_toggle("gags", gag_id)
 

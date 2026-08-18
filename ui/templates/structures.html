@@ -16,6 +16,25 @@
         <span class="tag" title="{{ s.description }}">{{ s.name }} ({{ s.min_chapters }}-{{ s.max_chapters }}章)</span>
         {% endfor %}
     </div>
+    <div style="margin-top:8px">
+        {% for s in t.stages %}
+        <details class="stage-themes" style="margin:4px 0;font-size:12px">
+            <summary style="cursor:pointer;color:#8b949e">🎭 {{ s.name }} 内涵{% if s.themes %}<span class="tag yellow" style="margin-left:6px">{{ s.themes|length }}</span>{% endif %}</summary>
+            <div class="stage-theme-editor" data-id="{{ t.id }}" data-idx="{{ loop.index0 }}" style="padding:6px 0 2px 12px">
+                {% for m in (s.themes or []) %}
+                <div class="st-row" style="display:flex;gap:6px;margin:4px 0;align-items:center">
+                    <input class="st-name" placeholder="母题名（如：复仇（Revenge））" value="{{ m.name }}" style="flex:1;min-width:0">
+                    <input class="st-position" placeholder="位置（开头/中段/结尾）" value="{{ m.position }}" style="width:130px">
+                    <input class="st-how" placeholder="表达手法" value="{{ m.how }}" style="flex:1.2;min-width:0">
+                    <button type="button" class="small" onclick="removeStageTheme(this)">✕</button>
+                </div>
+                {% endfor %}
+                <button type="button" class="small" onclick="addStageTheme(this)">➕ 内涵</button>
+                <button type="button" class="small" onclick="saveStageThemes(this)">💾 保存阶段内涵</button>
+            </div>
+        </details>
+        {% endfor %}
+    </div>
     {% if t.tags %}<p style="margin-top:8px">{% for tag in t.tags %}<span class="tag green">{{ tag }}</span>{% endfor %}</p>{% endif %}
     {% if t.themes %}<p style="margin-top:8px">💡 可承载母题: {% for th in t.themes %}<span class="tag yellow">{{ th }}</span>{% endfor %}</p>{% endif %}
     <p style="color:#484f58;font-size:11px;margin-top:8px">
@@ -32,6 +51,35 @@
 {% endfor %}
 
 <script>
+function addStageTheme(btn) {
+    var ed = btn.closest('.stage-theme-editor');
+    var row = document.createElement('div');
+    row.className = 'st-row';
+    row.style.cssText = 'display:flex;gap:6px;margin:4px 0;align-items:center';
+    row.innerHTML = '<input class="st-name" placeholder="母题名（如：复仇（Revenge））" style="flex:1;min-width:0">'
+        + '<input class="st-position" placeholder="位置（开头/中段/结尾）" style="width:130px">'
+        + '<input class="st-how" placeholder="表达手法" style="flex:1.2;min-width:0">'
+        + '<button type="button" class="small" onclick="removeStageTheme(this)">✕</button>';
+    ed.insertBefore(row, btn);
+}
+function removeStageTheme(btn) { btn.closest('.st-row').remove(); }
+async function saveStageThemes(btn) {
+    var ed = btn.closest('.stage-theme-editor');
+    var themes = [];
+    ed.querySelectorAll('.st-row').forEach(function(row) {
+        var name = row.querySelector('.st-name').value.trim();
+        var position = row.querySelector('.st-position').value.trim();
+        var how = row.querySelector('.st-how').value.trim();
+        if (name) themes.push({name: name, position: position, how: how});
+    });
+    const r = await fetch('/api/structures/' + ed.dataset.id + '/stages/' + ed.dataset.idx + '/themes', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({themes: themes})
+    });
+    const d = await r.json();
+    if (d.ok) { showToast('✅ 阶段内涵已保存', 'success'); location.reload(); }
+    else showToast('保存失败: ' + (d.error||''), 'error');
+}
 async function saveThemes(id) {
     const input = document.getElementById('themes-input-' + id);
     const themes = input.value.split('、').map(s => s.trim()).filter(Boolean);
