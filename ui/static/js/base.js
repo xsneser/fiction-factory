@@ -1,4 +1,4 @@
-﻿// 通用 HTML 转义工具：所有动态插入 innerHTML 的数据必须过一遍。
+// 通用 HTML 转义工具：所有动态插入 innerHTML 的数据必须过一遍。
         // 放在 <head> 保证各子模板脚本执行前已可用。
         function escapeHtml(str) {
             if (str === null || str === undefined) return '';
@@ -10,24 +10,50 @@
                 .replace(/'/g, '&#39;');
         }
 
-        // 右侧状态栏折叠：localStorage 持久化，折叠时露出右侧 ▶ 展开按钮
+        // 右侧状态栏折叠：localStorage 持久化，折叠时露出右侧 ▶ 展开按钮。
+        // 手动折叠/展开一次即锁定偏好（ne_status_locked），此后不再自动折叠。
         function toggleStatusBar() {
             var bar = document.getElementById('status-bar');
             var reopen = document.getElementById('status-reopen');
             if (!bar) return;
             var collapsed = bar.classList.toggle('collapsed');
             if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
-            try { localStorage.setItem('ne_status_collapsed', collapsed ? '1' : '0'); } catch(e) {}
+            try {
+                localStorage.setItem('ne_status_collapsed', collapsed ? '1' : '0');
+                localStorage.setItem('ne_status_locked', '1');
+            } catch(e) {}
+        }
+        function setStatusCollapsed(collapsed) {
+            var bar = document.getElementById('status-bar');
+            var reopen = document.getElementById('status-reopen');
+            if (!bar) return;
+            bar.classList.toggle('collapsed', collapsed);
+            if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
         }
         function restoreStatusBar() {
             try {
                 if (localStorage.getItem('ne_status_collapsed') === '1') {
-                    var bar = document.getElementById('status-bar');
-                    var reopen = document.getElementById('status-reopen');
-                    if (bar) bar.classList.add('collapsed');
-                    if (reopen) reopen.style.display = 'block';
+                    setStatusCollapsed(true);
                 }
             } catch(e) {}
+        }
+        // 空闲自动折叠：无运行任务且无日志时收起右栏（未手动锁定过偏好才生效），
+        // 有任务出现时自动展开——右栏当前仅承载任务/日志，为未来 Harness 预留。
+        function maybeAutoCollapse(tasks) {
+            var bar = document.getElementById('status-bar');
+            if (!bar) return;
+            try {
+                if (localStorage.getItem('ne_status_locked') === '1') return;
+            } catch(e) {}
+            var logList = document.getElementById('task-log-list');
+            var hasLogs = !!(logList && logList.children.length > 0);
+            var busy = !!(tasks && tasks.length > 0);
+            var collapsed = bar.classList.contains('collapsed');
+            if (busy && collapsed) {
+                setStatusCollapsed(false);
+            } else if (!busy && !hasLogs && !collapsed) {
+                setStatusCollapsed(true);
+            }
         }
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', restoreStatusBar);
@@ -93,8 +119,7 @@
         window.addEventListener('beforeunload', function() {
             sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
         });
-        var STATUS_EMPTY = '<div class="status-empty">⏳ 空闲 · 无运行中的任务</div>';
-
+        var STATUS_EMPTY = '<div class="status-empty">🤖 空闲 · 暂无 Agent 活动</div>';
         function clearLogs() {
             var list = document.getElementById('task-log-list');
             if (list) list.innerHTML = '';
@@ -108,15 +133,30 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({id: taskId})
             }).then(function() {
-                var card = document.querySelector('#status-tasks .status-card[data-id="' + CSS.escape(taskId || '') + '"]');
+                var card = document.querySelector('#status-tasks .agent-card[data-id="' + CSS.escape(taskId || '') + '"]');
                 if (card) card.remove();
-                if (!document.querySelector('#status-tasks .status-card')) {
+                if (!document.querySelector('#status-tasks .agent-card')) {
                     document.getElementById('status-tasks').innerHTML = STATUS_EMPTY;
                 }
             });
         }
 
-        function renderTaskCards(taskArray) {
+        // Agent 角色 → 徽标文案/配色映射（与后端 task_manager.agent 字段对应）
+        var AGENT_META = {
+            writing:       {label: '✍️ 写作',     cls: 'badge-writing'},
+            outline:       {label: '📋 大纲',     cls: 'badge-outline'},
+            world:         {label: '🌍 世界观',   cls: 'badge-world'},
+            title:         {label: '🏷️ 书名',     cls: 'badge-title'},
+            outline_agent: {label: '🤖 大纲助手', cls: 'badge-outline-agent'},
+            scout:         {label: '🔍 侦察兵',   cls: 'badge-scout'},
+            '':            {label: '🤖 Agent',   cls: 'badge-default'}
+        };
+        var AGENT_STATUS_TEXT = {
+            running: 'running', done: 'done', failed: 'failed',
+            cancelled: 'cancelled'
+        };
+
+        function renderAgentCards(taskArray) {
             if (!taskArray || taskArray.length === 0) {
                 return STATUS_EMPTY;
             }
@@ -126,20 +166,36 @@
                 var pct = t.total > 0 ? Math.round((t.current/t.total)*100) : 0;
                 var safeId = escapeHtml(t.id || '');
                 var safeUrl = escapeHtml(t.url || '');
-                html += '<div class="status-card" data-id="' + safeId + '">';
-                // 第一行：工具名（在干什么操作）
-                html += '<div class="task-name">' + escapeHtml(t.name || '任务') + '</div>';
-                // 第二行：对象 + 具体阶段（对谁、干到哪）
-                var detail = (t.title ? escapeHtml(t.title) + ' · ' : '') + escapeHtml(t.phase || '');
-                html += '<div class="task-phase">' + detail + '</div>';
-                if (t.total > 0) html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
-                if (t.time) html += '<div class="task-time">' + escapeHtml(t.time) + '</div>';
-                html += '<div class="task-actions" style="margin-top:6px;display:flex;gap:6px;align-items:center">';
-                // 查看按钮：低调灰色小按钮，hover 提亮
-                if (t.url) html += '<button onclick="navigateTo(this.dataset.url)" data-url="' + safeUrl + '" style="flex:1;background:transparent;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;transition:all .2s" onmouseover="this.style.color=\'#f0f6fc\';this.style.borderColor=\'#58a6ff\'" onmouseout="this.style.color=\'#8b949e\';this.style.borderColor=\'#30363d\'" title="去查看">查看</button>';
-                // 所有任务（运行中/完成/失败）都可以关闭：大一点更显眼，hover 变红
-                html += '<button onclick="closeTask(this.dataset.id)" data-id="' + safeId + '" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px;line-height:1;padding:0 2px;transition:color .2s" onmouseover="this.style.color=\'#f85149\'" onmouseout="this.style.color=\'#8b949e\'" title="关闭">✕</button>';
+                var meta = AGENT_META[t.agent] || AGENT_META[''];
+                var statusCls = AGENT_STATUS_TEXT[t.status] || 'running';
+                // 步骤（step）+ 阶段（phase_display）拼接为"当前动作"
+                var stepTxt = t.step || t.phase || '';
+                var subTxt = t.sub_step && t.sub_step !== stepTxt ? t.sub_step : '';
+                html += '<div class="agent-card" data-id="' + safeId + '">';
+                // 头：角色徽标 + 状态点 + 关闭
+                html += '<div class="agent-head">';
+                html += '<span class="agent-badge ' + meta.cls + '">' + meta.label + '</span>';
+                html += '<span class="agent-status ' + statusCls + '" title="' + escapeHtml(t.status || '') + '"></span>';
+                html += '<button onclick="closeTask(this.dataset.id)" data-id="' + safeId + '" class="agent-close" title="关闭">✕</button>';
                 html += '</div>';
+                // 书上下文
+                if (t.book_title || t.book_id) {
+                    html += '<div class="agent-book">' + escapeHtml(t.book_title || '')
+                        + (t.book_id ? ' <i>' + escapeHtml(t.book_id) + '</i>' : '') + '</div>';
+                } else if (t.name) {
+                    html += '<div class="agent-book">' + escapeHtml(t.name) + '</div>';
+                }
+                // 当前步骤 / 子步骤
+                if (stepTxt) html += '<div class="agent-step">' + escapeHtml(stepTxt) + '</div>';
+                if (subTxt) html += '<div class="agent-substep">' + escapeHtml(subTxt) + '</div>';
+                // 元信息：LLM 次数 + 进度文本
+                html += '<div class="agent-meta">';
+                if (t.llm_calls > 0) html += '<span class="agent-llm">📡 LLM ×' + escapeHtml(t.llm_calls) + '</span>';
+                if (t.total > 0) html += '<span class="agent-progress-text">' + escapeHtml(t.current) + '/' + escapeHtml(t.total) + '</span>';
+                if (t.time) html += '<span class="agent-time">' + escapeHtml(t.time) + '</span>';
+                html += '</div>';
+                if (t.total > 0) html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
+                if (t.url) html += '<div class="agent-actions"><button onclick="navigateTo(this.dataset.url)" data-url="' + safeUrl + '" title="去查看">查看</button></div>';
                 html += '</div>';
             }
             return html;
@@ -196,8 +252,8 @@
                     var logArea = document.getElementById('task-log');
                     var logList = document.getElementById('task-log-list');
                     
-                    // 渲染任务卡片（完整替换，保持最新的进度数据）
-                    var newHtml = renderTaskCards(tasks);
+                    // 渲染 Agent 卡片（完整替换，保持最新的进度数据）
+                    var newHtml = renderAgentCards(tasks);
                     if (el.innerHTML !== newHtml) {
                         el.innerHTML = newHtml;
                     }
@@ -239,6 +295,7 @@
                             logList.scrollTop = logList.scrollHeight;
                         }
                     }
+                    maybeAutoCollapse(tasks);
                 }).catch(function() {});
         }
         pollStatus();

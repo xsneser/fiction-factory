@@ -80,6 +80,46 @@
         aside#status-bar .status-card .task-progress { margin-top:6px; height:4px; background:#21262d; border-radius:2px; overflow:hidden; }
         aside#status-bar .status-card .task-progress-fill { height:100%; background:#238636; border-radius:2px; transition:width .3s; }
         aside#status-bar .status-card .task-time { color:var(--fg-dim); font-size:11px; margin-top:4px; }
+        /* Agent 活动卡片（右侧栏） */
+        aside#status-bar .agent-card {
+            background:#0d1117; border:1px solid #21262d; border-radius:6px;
+            padding:10px 12px; font-size:12px; position:relative;
+        }
+        aside#status-bar .agent-head { display:flex; align-items:center; gap:8px; }
+        aside#status-bar .agent-badge { font-size:11px; padding:1px 8px; border-radius:10px; color:#0d1117; font-weight:600; white-space:nowrap; }
+        aside#status-bar .badge-writing       { background:#3fb950; }
+        aside#status-bar .badge-outline       { background:#58a6ff; }
+        aside#status-bar .badge-world         { background:#d29922; }
+        aside#status-bar .badge-title         { background:#bc8cff; }
+        aside#status-bar .badge-outline-agent { background:#f778ba; }
+        aside#status-bar .badge-scout         { background:#79c0ff; }
+        aside#status-bar .badge-default       { background:#8b949e; }
+        aside#status-bar .agent-status { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+        aside#status-bar .agent-status.running   { background:#3fb950; box-shadow:0 0 6px #3fb950; animation:pulse 1.6s ease-in-out infinite; }
+        aside#status-bar .agent-status.done      { background:#238636; }
+        aside#status-bar .agent-status.failed    { background:#f85149; }
+        aside#status-bar .agent-status.cancelled { background:#6e7681; }
+        aside#status-bar .agent-close {
+            background:none; border:none; color:#8b949e; cursor:pointer; font-size:15px;
+            line-height:1; padding:0 2px; margin-left:auto; transition:color .2s;
+        }
+        aside#status-bar .agent-close:hover { color:#f85149; }
+        aside#status-bar .agent-book { color:#c9d1d9; font-weight:500; margin-top:6px; font-size:12px; }
+        aside#status-bar .agent-book i { color:#6e7681; font-style:normal; font-size:10px; margin-left:4px; }
+        aside#status-bar .agent-step { color:#c9d1d9; margin-top:4px; }
+        aside#status-bar .agent-substep { color:#8b949e; font-size:11px; margin-top:2px; }
+        aside#status-bar .agent-meta { display:flex; gap:10px; align-items:center; color:var(--fg-dim); font-size:11px; margin-top:6px; }
+        aside#status-bar .agent-llm { color:#79c0ff; }
+        aside#status-bar .agent-time { margin-left:auto; }
+        aside#status-bar .agent-card .task-progress { margin-top:6px; height:4px; background:#21262d; border-radius:2px; overflow:hidden; }
+        aside#status-bar .agent-card .task-progress-fill { height:100%; background:#238636; border-radius:2px; transition:width .3s; }
+        aside#status-bar .agent-actions { margin-top:6px; display:flex; gap:6px; }
+        aside#status-bar .agent-actions button {
+            flex:1; background:transparent; border:1px solid #30363d; color:#8b949e;
+            border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; transition:all .2s;
+        }
+        aside#status-bar .agent-actions button:hover { color:#f0f6fc; border-color:#58a6ff; }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
         h1 { font-size:24px; margin-bottom:20px; color:#f0f6fc; }
         h2 { font-size:18px; margin:20px 0 12px; color:#c9d1d9; }
         h3 { font-size:15px; margin:12px 0 8px; color:#8b949e; }

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
@@ -13,31 +13,35 @@
         <a href="/" class="{{ 'active' if request.path == '/' else '' }}">🏠 仪表盘</a>
         <div class="section">创作</div>
         <a href="/books/start" class="{{ 'active' if request.path == '/books/start' else '' }}">🔰 启动新书</a>
-        <a href="/books" class="{{ 'active' if request.path == '/books' else '' }}">📚 书库</a>
-        <a href="/desk" class="{{ 'active' if request.path == '/desk' else '' }}">✍️ 写作台</a>
-        <a href="/publish" class="{{ 'active' if request.path == '/publish' else '' }}">🚀 上架管理</a>
+        <a href="/books" class="{{ 'active' if (request.path == '/books' or request.path.startswith('/books/') and request.path != '/books/start' or request.path.startswith('/storyline/')) else '' }}">📚 书库</a>
+        <a href="/publish" class="{{ 'active' if request.path == '/publish' or request.path.startswith('/publish/') or request.path.startswith('/books/') and '/publish' in request.path else '' }}">🚀 上架管理</a>
         <div class="section">资产库</div>
-        <a href="/plots" class="{{ 'active' if request.path == '/plots' else '' }}">🧩 桥段库</a>
-        <a href="/structures" class="{{ 'active' if request.path == '/structures' else '' }}">📋 大纲库</a>
-        <a href="/gags" class="{{ 'active' if request.path == '/gags' else '' }}">😂 笑点库</a>
+        <a href="/plots" class="{{ 'active' if request.path == '/plots' or request.path.startswith('/plots/') else '' }}">🧩 桥段库</a>
+        <a href="/structures" class="{{ 'active' if request.path == '/structures' or request.path.startswith('/structures/') else '' }}">📋 大纲库</a>
+        <a href="/gags" class="{{ 'active' if request.path == '/gags' or request.path.startswith('/gags/') else '' }}">😂 笑点库</a>
         <div class="section">管理</div>
-        <a href="/profiles" class="{{ 'active' if request.path.startswith('/profiles') else '' }}">👤 笔名档案</a>
+        <a href="/profiles" class="{{ 'active' if request.path == '/profiles' or request.path.startswith('/profiles/') else '' }}">👤 笔名档案</a>
         <a href="/settings" class="{{ 'active' if request.path == '/settings' else '' }}">⚙️ 设置</a>
         <div class="section">工具</div>
         <a href="/scout" class="{{ 'active' if request.path == '/scout' else '' }}">🔍 小说抓取</a>
         <a href="/extract" class="{{ 'active' if request.path == '/extract' else '' }}">📝 内容提取</a>
-        <a href="/deai" class="{{ 'active' if request.path == '/deai' else '' }}">🔄 去AI测试</a>
-        <a href="/review-test" class="{{ 'active' if request.path == '/review-test' else '' }}">🔍 审查测试</a>
+        <details class="nav-debug">
+            <summary>🧪 调试工具</summary>
+            <a href="/deai">🔄 去AI测试</a>
+            <a href="/review-test">🔍 审查测试</a>
+        </details>
     </nav>
     <div class="main-wrapper">
         <main>
+            {% block crumbs %}{% endblock %}
             {% block content %}{% endblock %}
         </main>
         <aside id="status-bar">
             <div class="status-head">
-                <div class="status-title">⏳ 运行状态</div>
-                <button class="status-toggle" onclick="toggleStatusBar()" title="折叠运行状态" aria-label="折叠运行状态">◀</button>
+                <div class="status-title">🤖 Agent 活动</div>
+                <button class="status-toggle" onclick="toggleStatusBar()" title="折叠 Agent 活动" aria-label="折叠 Agent 活动">◀</button>
             </div>
+            {# 右侧边栏 Agent 活动面板：展示各角色 agent（写作/大纲/世界观/书名/大纲助手/侦察兵）的当前步骤与 LLM 调用 #}
             <div id="status-tasks"></div>
             <div id="task-log" style="display:none">
                 <div class="status-title" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">📋 日志
@@ -47,7 +51,7 @@
             </div>
         </aside>
     </div>
-    <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开运行状态" aria-label="展开运行状态">▶</button>
+    <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开 Agent 活动" aria-label="展开 Agent 活动">▶</button>
 
     <div id="toast-root"></div>
 </body>
