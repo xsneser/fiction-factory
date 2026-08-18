@@ -21,7 +21,6 @@
 | **桥段库** (`libraries/plot.py`) | 网文经典桥段的结构化模板（12个内置） | ✅ |
 | **大纲库** (`libraries/structure.py`) | 各流派的卷/弧/章骨架（5个内置） | ✅ |
 | **笑点库** (`libraries/gag.py`) | 搞笑模式模板 + 例句（10个内置） | ✅ |
-| **摘录库** (`libraries/example_lib.py`) | 真实网文原文摘录范本（写作时注入【写法范本】块借鉴语感） | ✅ 新 |
 | **笔名档案** (`libraries/profiles.py`) | 风格指纹 + prompt 注入 | ✅ |
 | **番茄侦察兵** (`plugins/fanqie_scout.py`) | 番茄小说搜索/下载/分析/PUA解码 | ✅ 新 |
 | **AI 降重** (`libraries/de_ai.py`) | 续写流程中的 AI 痕迹消除 | ✅ |
@@ -108,7 +107,7 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 |------|------|------|
 | **搜索** | Bing 搜索 → SSR 页面解析 | 番茄搜索 API 已全部挂掉，走搜索引擎 |
 | **下载** | Reader 页面 SSR → PUA 字体解码 | 使用 `font_decoder.py` + fonttools |
-| **分析** | 4 次 LLM 调用 → 入库各库 | 桥段/大纲/笑点/摘录库自动填充 |
+| **分析** | 4 次 LLM 调用 → 入库各库 | 桥段/大纲/笑点库自动填充 |
 
 PUA 字体解码器 `plugins/font_decoder.py` 内置 362 条映射表，支持逐本小说字体动态解码。
 
@@ -134,12 +133,6 @@ PUA 字体解码器 `plugins/font_decoder.py` 内置 362 条映射表，支持�
 ### 笑点库 —— `libraries/gag.py`
 
 10 模式 × 8 分类：吐槽、误会、打脸、反差、卖萌、装逼、自黑、神逻辑。
-
-### 摘录库 —— `libraries/example_lib.py`
-
-真实网文原文摘录范本，7 类型（开头钩子/主角亮相/高张力对白/打脸爽点/章末钩子/结尾余韵/日常对话）。桥段开写前按分类预筛 2 条注入【写法范本】块，让模型借鉴真实句子的节奏/画面/语气（治「没味儿」）；内容由番茄侦察兵从下载书切取，内置 16 条演示范本。
-
----
 
 ## 笔名风格档案
 
@@ -193,7 +186,6 @@ D:\NovelEngine/
 │   ├── plot.py             # 桥段库（12模板）
 │   ├── structure.py        # 大纲库（5模板）
 │   ├── gag.py              # 笑点库（10模式）
-│   └── example_lib.py      # 摘录库（真实范本，7类型）
 │
 ├── core/                   # LLM 基础设施（v2 引擎共用）
 │   ├── llm_client.py       # API 调用封装

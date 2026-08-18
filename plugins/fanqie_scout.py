@@ -53,7 +53,6 @@ class ScoutResult:
     new_plots: list[dict] = field(default_factory=list)
     new_structures: list[dict] = field(default_factory=list)
     new_gags: list[dict] = field(default_factory=list)
-    new_excerpts: list[dict] = field(default_factory=list)
     downloaded_chapters: int = 0
     analysis_cost: float = 0.0
 
@@ -569,8 +568,7 @@ class NovelAnalyzer:
                       on_progress=None) -> dict:
         """分析一本小说，提取所有可复用元素"""
         if not self.llm:
-            return {"plots": [], "structures": [], "gags": [],
-                    "excerpts": []}
+            return {"plots": [], "structures": [], "gags": []}
 
         samples = self._select_samples(chapters)
 
@@ -585,12 +583,8 @@ class NovelAnalyzer:
         result["structures"] = self.extract_structure(novel, samples)
 
         if on_progress:
-            on_progress("analyze", 3, 4, "提取笑点...")
+            on_progress("analyze", 3, 3, "提取笑点...")
         result["gags"] = self.extract_gags(novel, samples)
-
-        if on_progress:
-            on_progress("analyze", 4, 4, "提取范本摘录...")
-        result["excerpts"] = self.extract_excerpts(novel, samples)
 
         return result
 
@@ -704,51 +698,6 @@ class NovelAnalyzer:
             logger.warning(f"Gag extraction failed: {e}")
             return []
 
-    def extract_excerpts(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
-        """提取写法范本原文摘录（「肉」库来源）。
-
-        从样本中挑选最能代表网文手法的真实段落，**逐字保留 2-3 句**（≤100 字），
-        供写作时借鉴其节奏/画面/语气（example_lib 注入【写法范本】块）。
-        合规：只留短摘录做个人学习，不存全文、不转载。
-        """
-        text = self._build_sample_text(samples, 3000)
-
-        prompt = f"""分析以下小说《{novel.title}》（{novel.genre}）的样本，从中挑选 3-6 处最能代表网文写作手法的原文段落。
-
-每处摘录需要：
-1. type：开头钩子 / 主角亮相 / 高张力对白 / 打脸爽点 / 章末钩子 / 结尾余韵 / 日常对话（选最贴切的一个）
-2. tag：一句话标签（如「当众羞辱」「扮猪吃虎」「系统激活」）
-3. category：适配桥段分类（爽文/开篇/战斗/都市/情感/日常/悬疑/成长/冲突/职场；不确定就填空）
-4. text：原文摘录，2-3 句完整原句、逐字保留、不得改写，≤100 字
-
-【小说内容样本】
-{text}
-
-返回 JSON：
-{{"excerpts": [
-  {{"type":"开头钩子","tag":"当众羞辱","category":"开篇","text":"原文摘录2-3句"}}
-]}}"""
-        try:
-            raw = self.llm.call("你是一位专业的网文拆书分析师，负责摘录最有代表性的原文片段。只返回JSON。",
-                                prompt, temperature=0.5, max_tokens=4096)
-            from core.llm_client import extract_json
-            data = json.loads(extract_json(raw))
-            excerpts = []
-            for e in data.get("excerpts", []):
-                t = str(e.get("text", "")).strip()
-                if not t:
-                    continue
-                excerpts.append({
-                    "type": str(e.get("type", "")).strip(),
-                    "tag": str(e.get("tag", "")).strip(),
-                    "category": str(e.get("category", "")).strip(),
-                    "text": t[:120],   # 每条摘录限 2-3 句（≤120 字）
-                })
-            return excerpts
-        except Exception as e:
-            logger.warning(f"Excerpt extraction failed: {e}")
-            return []
-
     def _build_sample_text(self, samples: list[dict], max_chars: int) -> str:
         """构建样本文本"""
         parts = []
@@ -769,18 +718,16 @@ class NovelAnalyzer:
 # ═══════════════════════════════════════════
 
 class LibraryIngestor:
-    """将分析结果导入各库（桥段/大纲/笑点/摘录）"""
+    """将分析结果导入各库（桥段/大纲/笑点）"""
 
-    def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None,
-                 example_lib=None):
+    def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None):
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
         self.gag_lib = gag_lib
-        self.example_lib = example_lib
 
     def ingest(self, analysis: dict, source: str = "fanqie") -> dict:
         """导入分析结果到各库"""
-        stats = {"plots": 0, "structures": 0, "gags": 0, "excerpts": 0}
+        stats = {"plots": 0, "structures": 0, "gags": 0}
 
         for plot in analysis.get("plots", []):
             if self.plot_lib:
@@ -796,11 +743,6 @@ class LibraryIngestor:
             if self.gag_lib:
                 self._add_gag(gag, source)
                 stats["gags"] += 1
-
-        for ex in analysis.get("excerpts", []):
-            if self.example_lib:
-                self._add_excerpt(ex, source)
-                stats["excerpts"] += 1
 
         return stats
 
@@ -870,31 +812,6 @@ class LibraryIngestor:
         )
         self.gag_lib.patterns.append(pattern)
 
-    def _add_excerpt(self, data: dict, source: str):
-        """导入原文摘录到 example_lib（按文本哈希去重，避免同段重复入库）。"""
-        from libraries.example_lib import ExampleExcerpt
-        import hashlib
-        text = str(data.get("text", "")).strip()
-        if not text:
-            return
-        h = hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
-        eid = f"scout_{source}_{h}"
-        for e in self.example_lib.excerpts:
-            if e.id == eid:
-                return
-        self.example_lib.excerpts.append(ExampleExcerpt(
-            id=eid,
-            type=str(data.get("type", "")).strip(),
-            tag=str(data.get("tag", "")).strip(),
-            text=text[:120],
-            category=str(data.get("category", "")).strip(),
-            source=source,
-        ))
-        try:
-            self.example_lib._save()
-        except Exception:
-            pass
-
 
 # ═══════════════════════════════════════════
 # 总调度
@@ -911,14 +828,13 @@ class FanqieScoutAgent:
     """
 
     def __init__(self, llm_client=None, plot_lib=None, struct_lib=None,
-                 gag_lib=None, example_lib=None, verify: bool = True):
+                 gag_lib=None, verify: bool = True):
         self.crawler = FanqieCrawler(verify=verify)
         self.analyzer = NovelAnalyzer(llm_client)
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
         self.gag_lib = gag_lib
-        self.example_lib = example_lib
-        self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib, example_lib)
+        self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib)
 
     def run(self, genre: str = "", book_count: int = 5,
             chapters_per_book: int = 30, delay: float = 1.5,
@@ -964,7 +880,6 @@ class FanqieScoutAgent:
             result.new_plots.extend(analysis.get("plots", []))
             result.new_structures.extend(analysis.get("structures", []))
             result.new_gags.extend(analysis.get("gags", []))
-            result.new_excerpts.extend(analysis.get("excerpts", []))
 
             # 入库
             stats = self.ingestor.ingest(analysis, "fanqie")
@@ -976,8 +891,7 @@ class FanqieScoutAgent:
         result.downloaded_chapters = total_downloaded
         logger.info(f"Scout complete: {len(result.new_plots)} plots, "
                      f"{len(result.new_structures)} structures, "
-                     f"{len(result.new_gags)} gags, "
-                     f"{len(result.new_excerpts)} excerpts")
+                     f"{len(result.new_gags)} gags")
 
         return result
 
@@ -1083,21 +997,20 @@ class FanqieScoutAgent:
         result.new_plots = analysis.get("plots", [])
         result.new_structures = analysis.get("structures", [])
         result.new_gags = analysis.get("gags", [])
-        result.new_excerpts = analysis.get("excerpts", [])
 
         if on_progress:
-            on_progress("analysis_done", 4, 4, "分析完成，等待入库")
+            on_progress("analysis_done", 3, 3, "分析完成，等待入库")
 
         return result
 
     def ingest_selected(self, plots: list = None, structures: list = None,
-                        gags: list = None, excerpts: list = None,
+                        gags: list = None,
                         source: str = "fanqie", on_progress=None) -> dict:
         """选择性入库"""
         from datetime import datetime
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        stats = {"plots": 0, "structures": 0, "gags": 0, "excerpts": 0}
+        stats = {"plots": 0, "structures": 0, "gags": 0}
 
         if plots and self.plot_lib:
             for item in plots:
@@ -1128,16 +1041,6 @@ class FanqieScoutAgent:
             if on_progress:
                 on_progress("ingest", 1, 1, f"笑点已入库 {stats['gags']}个")
             self.gag_lib._save()
-
-        if excerpts and self.example_lib:
-            for item in excerpts:
-                item["source"] = source
-                item["created_at"] = now
-                self.ingestor._add_excerpt(item, source)
-                stats["excerpts"] += 1
-            if on_progress:
-                on_progress("ingest", 1, 1, f"范本摘录已入库 {stats['excerpts']}个")
-            self.example_lib._save()
 
         return stats
 
@@ -1179,10 +1082,9 @@ if __name__ == "__main__":
     from libraries.plot import PlotLibrary
     from libraries.structure import StructureLibrary
     from libraries.gag import GagLibrary
-    from libraries.example_lib import ExampleLibrary
 
     scout = FanqieScoutAgent(llm, PlotLibrary(), StructureLibrary(),
-                              GagLibrary(), ExampleLibrary())
+                              GagLibrary())
     result = scout.run(genre=genre, book_count=book_count,
                        chapters_per_book=chapters)
 
@@ -1192,4 +1094,3 @@ if __name__ == "__main__":
     print(f"New plots: {len(result.new_plots)}")
     print(f"New structures: {len(result.new_structures)}")
     print(f"New gags: {len(result.new_gags)}")
-    print(f"New excerpts: {len(result.new_excerpts)}")

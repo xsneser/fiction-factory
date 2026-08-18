@@ -100,7 +100,6 @@ D:\NovelEngine/
 │   ├── outline_generator.py     # 大纲 6 阶段 LLM 管线（1212 行）
 │   ├── outline_agent.py         # 大纲助手（自然语言改故事线）
 │   ├── world_builder.py         # 世界观生成器 WorldBuildingGenerator（设定先行）
-│   ├── example_lib.py           # 摘录库（写法范本）
 │   ├── book_meta.py             # 书名/简介/平台约束纯函数
 │   ├── book_manager.py          # 图书 CRUD + 章节摘要读写
 │   ├── character_state.py       # 角色状态跟踪
@@ -112,7 +111,7 @@ D:\NovelEngine/
 │   ├── assembler.py             # 旧书兼容（BookAssemblerPlan/load_plan），不再生成新计划
 │   ├── base_library.py          # JsonLibrary 基类（单例 + 读写）
 │   ├── plot.py / structure.py / gag.py   # 桥段/大纲/笑点库
-│   └── data/                    # plots(47) / structures(11) / gags(24) / themes(20) / excerpts(16) JSON
+│   └── data/                    # plots(47) / structures(11) / gags(24) / characters(10) JSONL
 ├── core/                        # 仅 LLM 基础设施（5 文件 + embeds）
 │   ├── llm_client.py            # LLMClient（同步/流式）+ extract_json
 │   ├── models.py                # APIConfig（context_budget_tokens 字段仅存配置，无计算逻辑）
@@ -185,17 +184,16 @@ D:\NovelEngine/
 
 `title`/`genre`/`sub_genre`/`words_per_chapter`/`pen_name`/`platform`/`status`（planning→writing→finished→published）/`budget`（默认 50 元）/`detector_frequency`（探测器旋钮，默认 1）等。
 
-### 3.6 资产库（四大库 + 摘录库）
+### 3.6 资产库（四大库）
 
-统一基类 `JsonLibrary`（`base_library.py`）：进程内单例 + JSON 读写；条目含 `enabled / usage_count / banned_in[book_id] / source / created_at`。**改 `libraries/data/*.json` 必须重启服务才生效。**
+统一基类 `JsonLibrary`（`base_library.py`）：进程内单例 + JSONL 读写（`.jsonl` 每行一条，旧单 JSON 自动迁移）；条目含 `enabled / usage_count / banned_in[book_id] / source / created_at`。**改 `libraries/data/*.jsonl` 必须重启服务才生效。**
 
 | 库 | 模块 | 数据文件 | 数量 | 用途 |
 |---|---|---|---|---|
-| 桥段库 | `plot.py` | `plots.json` | 47 模板（12 内置 + 采集） | 桥段模板：category / template_structure / slots / fit_contexts；写作时作【桥段骨架】注入 |
-| 大纲库 | `structure.py` | `structures.json` | 11 模板（5 内置 + 采集） | 卷→弧→章三级骨架，按流派搜索 |
-| 笑点库 | `gag.py` | `gags.json` | 24 模式（10 内置 + 采集） | 探测器候选池（不写进大纲） |
-| 摘录库 | `example_lib.py` | `excerpts.json` | 16 条演示（7 类型） | 真实原文范本，写前按 category 预筛 2 条注入【写法范本】 |
-| 内涵库 | ~~theme.py~~（已删） | `themes.json` | 20 内涵 | 书级内涵库 + `THEME_PLOT_COMPAT` 免费规则挂载 |
+| 桥段库 | `plot.py` | `plots.jsonl` | 47 模板（12 内置 + 采集） | 桥段模板：category / template_structure / slots / fit_contexts；写作时作【桥段骨架】注入 |
+| 大纲库 | `structure.py` | `structures.jsonl` | 11 模板（5 内置 + 采集） | 卷→弧→章三级骨架，按流派搜索；阶段级内涵 |
+| 笑点库 | `gag.py` | `gags.jsonl` | 24 模式（10 内置 + 采集） | 探测器候选池（不写进大纲） |
+| 角色原型库 | `character.py` | `characters.jsonl` | 10 原型 | 性格原型 + 代表人物；设定表单「从原型库选」 |
 
 - **内涵体系演进**：`theme.py` 模块已删除；`themes.json` 仍作为书级内涵库。大纲不再做固定笑点分配；内涵挂载改为 `THEME_PLOT_COMPAT` 命中才挂，未命中内涵仍随书级设定卡注入作为可用线索。
 - **笔名档案**（`profiles.py`）：`word_print`（common/avoid/dialogue_tags/action_beats）+ `style_fingerprint`（sentence_length/humor_style/action_style/pov_preference）。预设：**枫落**（都市爽文）、**夜雨**（玄幻正剧）、**青衫**（言情甜文）；`profiles/` 现存 profile_001~005。风格以 bullet 注入书级设定卡；幽默风格喂给探测器。
@@ -321,7 +319,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 ### 4.9 写前注入块（免费规则 + 轻量 LLM）
 
-`render_bridge_prompt` 按需注入：书级设定卡（简）→ 开场铁律 → 全书一致性铁律 → 视角铁律 → 所属大纲/当前阶段/事件 → 【桥段骨架】+ 槽位 → 出场人物 → 内涵 → 收局/设局 → 灵机一动 →【本桥段吸睛点】（hook_points）→【写法范本】（example_lib 2 条）→【写前编辑诊断】→【读者承诺台账】→ 已完成章节摘要 → 前文上下文 → 平台约束 → 上章审查提示 → 写作要求 7 条。
+`render_bridge_prompt` 按需注入：书级设定卡（简）→ 开场铁律 → 全书一致性铁律 → 视角铁律 → 所属大纲/当前阶段/事件 → 【桥段骨架】+ 槽位 → 出场人物 → 内涵 → 收局/设局 → 灵机一动 →【本桥段吸睛点】（hook_points）→【写前编辑诊断】→【读者承诺台账】→ 已完成章节摘要 → 前文上下文 → 平台约束 → 上章审查提示 → 写作要求 7 条。
 
 ### 4.10 发布上架（`publisher.py`）
 
@@ -354,7 +352,6 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 | `render_summary_prompt(...)` | 语义摘要（Prompt K） |
 | `render_outline_context(phase_kind)` | 大纲各阶段上下文（sequence/select_plots/validate/theme_review/thread_split） |
 | `prescreen_gag_pool(plot, book_id)` | 笑点预筛（≤6） |
-| `prescreen_excerpts(plot, book_id, limit=2)` | 写法范本预筛 |
 | `render_world_build_draft_prompt` | 世界观草稿 |
 | `render_world_build_struct_prompt` | 世界观结构化 |
 | `render_world_candidates_prompt` | 候选世界观/书名 |
@@ -432,7 +429,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 ### 7.3 免费规则改进：已做 vs 未做（08-05 两份报告）
 
-**已落地（接线类 + 规则类）**：读者承诺台账、写前编辑诊断、hook_points 吸睛点接线、reviewer 软门禁、平台约束接线、摘录库范本、叙事纪律（§4.5-4.9）。
+**已落地（接线类 + 规则类）**：读者承诺台账、写前编辑诊断、hook_points 吸睛点接线、reviewer 软门禁、平台约束接线、叙事纪律（§4.5-4.9）。
 
 **未落地**：
 

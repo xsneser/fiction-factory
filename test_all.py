@@ -19,7 +19,6 @@ TMP_DIR = tempfile.gettempdir()
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
-from libraries.example_lib import ExampleLibrary
 from libraries.profiles import ProfileManager
 from libraries.book_manager import BookManager
 from libraries.cost_tracker import CostTracker
@@ -67,12 +66,6 @@ assert_ok("大纲库-搜索", len(struct.search(genre="玄幻")) >= 1)
 gag = GagLibrary()
 assert_ok("笑点库-数量", len(gag.patterns) >= 10, f"{len(gag.patterns)} 模式")
 assert_ok("笑点库-搜索", len(gag.search(scene="日常")) > 0)
-
-ex_lib = ExampleLibrary()
-assert_ok("摘录库-数量", len(ex_lib.excerpts) >= 10, f"{len(ex_lib.excerpts)} 条")
-assert_ok("摘录库-类型检索", len(ex_lib.search(type_="开头钩子")) >= 3)
-assert_ok("摘录库-分类检索", len(ex_lib.search(category="爽文")) >= 2)
-assert_ok("摘录库-字段完整", all(e.text and e.type and e.tag for e in ex_lib.excerpts[:5]))
 
 # 内涵跟随 = 免费规则 THEME_PLOT_COMPAT（theme_lib 移除后的唯一数据源）
 from libraries.storyline import PlotSlot as _PS, mount_themes_and_hooks as _mth, THEME_PLOT_COMPAT as _tpc
@@ -148,11 +141,6 @@ open_p = h.render_bridge_prompt(_item, "", "", "", 300, is_opening=True)
 assert_ok("开场-注入铁律", "开场模式" in open_p)
 normal_p = h.render_bridge_prompt(_item, "", "", "", 300, is_opening=False)
 assert_ok("非开场-不含铁律", "开场模式" not in normal_p)
-_hEx = PromptHarness(storyline=None, profile=None, example_lib=ExampleLibrary())
-_ex_p = _hEx.render_bridge_prompt(_item, "", "", "", 300, is_opening=False)
-assert_ok("范本-开篇注入", "【写法范本（本桥段类型）】" in _ex_p)
-assert_ok("范本-含开头钩子范本", "开头钩子" in _ex_p)
-assert_ok("范本-无范本库则不注入", "写法范本" not in normal_p)
 
 # ══════════════════════════════════════════════
 #  Phase 3.5: 线程穿插 + 桥段拆分（无 LLM）

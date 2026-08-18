@@ -25,7 +25,6 @@ function renderReviewCards(d, areaId) {
         {key:'plot', label:'🧩 桥段', items: d.plot_details || []},
         {key:'structure', label:'📋 大纲', items: d.structure_details || []},
         {key:'gag', label:'😂 笑点', items: d.gag_details || []},
-        {key:'excerpt', label:'📖 范本', items: d.excerpt_details || []},
     ];
 
     html += '<div class="tabs" style="margin-bottom:12px">';
@@ -54,9 +53,6 @@ function renderReviewCards(d, areaId) {
                 } else if (c.key === 'gag') {
                     html += '<div><code>' + escapeHtml(item.category||'') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></div>';
                     html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.pattern_description||'').slice(0,120) + '</div>';
-                } else if (c.key === 'excerpt') {
-                    html += '<div><code>' + escapeHtml(item.type||'') + '</code> <strong>' + escapeHtml(item.tag||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.text||'').slice(0,120) + '</div>';
                 }
                 html += '</div></label>';
             });
@@ -79,7 +75,7 @@ function switchReviewTab(key) {
 
 // 收集勾选的条目
 function getCheckedItems() {
-    var result = {plots:[], structures:[], gags:[], excerpts:[]};
+    var result = {plots:[], structures:[], gags:[]};
     if (!window._lastReviewData) return result;
     var cbs = document.querySelectorAll('.review-cb:checked');
     cbs.forEach(function(cb) {
@@ -88,33 +84,31 @@ function getCheckedItems() {
         if (cat === 'plot' && window._lastReviewData.plot_details[idx]) result.plots.push(window._lastReviewData.plot_details[idx]);
         if (cat === 'structure' && window._lastReviewData.structure_details[idx]) result.structures.push(window._lastReviewData.structure_details[idx]);
         if (cat === 'gag' && window._lastReviewData.gag_details[idx]) result.gags.push(window._lastReviewData.gag_details[idx]);
-        if (cat === 'excerpt' && window._lastReviewData.excerpt_details[idx]) result.excerpts.push(window._lastReviewData.excerpt_details[idx]);
     });
     return result;
 }
 
 // 收集全部条目（“全部入库”用，忽略勾选状态）
 function getAllItems() {
-    var result = {plots:[], structures:[], gags:[], excerpts:[]};
+    var result = {plots:[], structures:[], gags:[]};
     var d = window._lastReviewData;
     if (!d) return result;
     result.plots = d.plot_details || [];
     result.structures = d.structure_details || [];
     result.gags = d.gag_details || [];
-    result.excerpts = d.excerpt_details || [];
     return result;
 }
 
 async function ingestAll() {
     var items = getAllItems();
-    var total = items.plots.length + items.structures.length + items.gags.length + items.excerpts.length;
+    var total = items.plots.length + items.structures.length + items.gags.length;
     if (total === 0) return showToast('没有可入库的条目', 'warning');
     await doIngest(items);
 }
 
 async function ingestSelected() {
     var items = getCheckedItems();
-    var total = items.plots.length + items.structures.length + items.gags.length + items.excerpts.length;
+    var total = items.plots.length + items.structures.length + items.gags.length;
     if (total === 0) return showToast('请勾选要入库的条目', 'warning');
     await doIngest(items);
 }
@@ -128,13 +122,13 @@ async function doIngest(items) {
         var r = await fetch('/api/scout/ingest', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({title: title, plots: items.plots, structures: items.structures, gags: items.gags, excerpts: items.excerpts}),
+            body: JSON.stringify({title: title, plots: items.plots, structures: items.structures, gags: items.gags}),
         });
         var d = await r.json();
         if (d.ok) {
             // 成功反馈：toast（后端 task_manager 另记日志到右侧状态栏）
             var n = (items.plots || []).length + (items.structures || []).length
-                    + (items.gags || []).length + (items.excerpts || []).length;
+                    + (items.gags || []).length;
             showToast('✅ 已入库 ' + n + ' 条', 'success');
         } else {
             showToast('❌ 入库失败: ' + (d.error||''), 'error');
