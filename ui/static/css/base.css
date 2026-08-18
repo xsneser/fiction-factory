@@ -51,10 +51,10 @@
         /* Main */
         .main-wrapper { flex:1; display:flex; overflow:hidden; min-height:0; }
         main { flex:1; padding:30px; overflow-y:auto; min-height:0; }
-        /* Right sidebar - 运行状态 */
+        /* Right sidebar - Agent 聊天面板 */
         aside#status-bar {
-            width: 260px; background:#161b22; border-left:1px solid #30363d;
-            padding: 16px; overflow-y:auto; flex-shrink:0; display:flex; flex-direction:column; gap:10px;
+            width: 360px; background:#161b22; border-left:1px solid #30363d;
+            padding: 16px; overflow:hidden; flex-shrink:0; display:flex; flex-direction:column; gap:10px;
             min-height:0; transition: width .2s ease, padding .2s ease, border-color .2s ease;
         }
         aside#status-bar.collapsed { width:0; padding:0; border-left:none; overflow:hidden; }
@@ -120,6 +120,50 @@
         }
         aside#status-bar .agent-actions button:hover { color:#f0f6fc; border-color:#58a6ff; }
         @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+        /* Agent 聊天面板（OpenClaw 式：对话 + 工具步骤卡） */
+        aside#status-bar #agent-chat {
+            flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:8px;
+        }
+        aside#status-bar .agent-msg { display:flex; flex-direction:column; gap:2px; }
+        aside#status-bar .agent-msg-label { font-size:10px; color:var(--fg-dim); }
+        aside#status-bar .agent-msg.user { align-items:flex-end; }
+        aside#status-bar .agent-msg-body {
+            font-size:12px; line-height:1.6; color:#c9d1d9;
+            background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:8px 10px;
+            white-space:pre-wrap; word-break:break-word; max-width:92%;
+        }
+        aside#status-bar .agent-msg.user .agent-msg-body { background:#1f6feb22; border-color:#1f6feb55; }
+        aside#status-bar .agent-tool-card {
+            font-size:11px; background:#0d1117; border:1px solid #21262d;
+            border-left:3px solid #58a6ff; border-radius:6px; padding:6px 10px;
+        }
+        aside#status-bar .agent-tool-card.ok  { border-left-color:#3fb950; }
+        aside#status-bar .agent-tool-card.err { border-left-color:#f85149; }
+        aside#status-bar .agent-tool-head { color:#79c0ff; cursor:pointer; font-weight:500; }
+        aside#status-bar .agent-tool-detail {
+            font-size:10px; color:#8b949e; white-space:pre-wrap; word-break:break-all;
+            margin-top:4px; padding:4px; background:#161b22; border-radius:4px; max-height:180px; overflow-y:auto;
+        }
+        aside#status-bar .agent-tool-status { color:var(--fg-dim); margin-top:4px; }
+        aside#status-bar #agent-input-wrap { flex-shrink:0; display:flex; flex-direction:column; gap:6px; }
+        aside#status-bar #agent-input {
+            width:100%; box-sizing:border-box; resize:none;
+            background:#0d1117; border:1px solid #30363d; border-radius:6px;
+            color:#c9d1d9; font-size:12px; line-height:1.5; padding:8px 10px;
+        }
+        aside#status-bar #agent-input:focus { outline:none; border-color:#58a6ff; }
+        aside#status-bar .agent-input-actions { display:flex; gap:6px; align-items:center; }
+        aside#status-bar #agent-send {
+            flex:1; background:#1f6feb; border:none; color:#fff; border-radius:6px;
+            padding:6px 0; font-size:12px; cursor:pointer; transition:opacity .2s;
+        }
+        aside#status-bar #agent-send:hover { opacity:.85; }
+        aside#status-bar #agent-send:disabled { opacity:.4; cursor:not-allowed; }
+        aside#status-bar #agent-clear {
+            background:none; border:1px solid #30363d; color:#8b949e; border-radius:6px;
+            padding:6px 10px; font-size:12px; cursor:pointer; transition:color .2s, border-color .2s;
+        }
+        aside#status-bar #agent-clear:hover { color:#f0f6fc; border-color:#58a6ff; }
         h1 { font-size:24px; margin-bottom:20px; color:#f0f6fc; }
         h2 { font-size:18px; margin:20px 0 12px; color:#c9d1d9; }
         h3 { font-size:15px; margin:12px 0 8px; color:#8b949e; }

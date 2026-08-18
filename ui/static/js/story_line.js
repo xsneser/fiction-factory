@@ -599,6 +599,22 @@
       }
     },
 
+    /* 纯滚动：把故事线滚动到目标大纲/桥段条可见（不改变高亮状态）。
+       Agent 画布控制 scroll_to_plot / scroll_to_outline 使用。 */
+    scrollTo: function (target) {
+      var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
+      if (!mount) return;
+      var main = mount.querySelector('.sl-main');
+      var anchor = null;
+      if (target && target.plot_id) {
+        anchor = mount.querySelector('.sl-bar-plot[data-pid="' + target.plot_id + '"]');
+      }
+      if (!anchor && target && target.outline_id) {
+        anchor = mount.querySelector('.sl-bar-outline[data-oid="' + target.outline_id + '"]');
+      }
+      if (anchor && main) main.scrollTop = Math.max(0, anchor.offsetTop - main.clientHeight * 0.3);
+    },
+
     /* 纵向缩放：调整内容高度（放大=条间距更大可细看，缩小=更紧凑看全貌）。
        仅 scrollable 模式生效；改动面板高度后整卷重渲染。 */
     setZoom: function (factor) {

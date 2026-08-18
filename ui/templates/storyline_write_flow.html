@@ -1,32 +1,36 @@
 {% extends "base.html" %}
 {% block title %}写作台 — {{ state.title or state.pen_name }}{% endblock %}
+{% block crumbs %}
+<div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <a href="/books/{{ state.book_id }}">{{ state.title or '(待定)' }}</a> <span class="sep">›</span> <span class="cur">写作台</span></div>
+{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css">
 <link rel="stylesheet" href="/static/css/workspace.css">
-{% from "_flow_stepper.html" import flow_stepper, status_badge %}
+{% from "_flow_stepper.html" import flow_status, status_badge %}
+{% from "_info_bar.html" import info_bar %}
 <script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
 <script>window.__STORYLINE_ID__ = "{{ state.book_id }}";</script>
 <script>window.__PLANNING__ = {{ 'true' if not (book.current_chapter or 0) else 'false' }};</script>
 <div class="tle-layout">
 <h1>✍️ 写作台</h1>
-<div class="info-bar">
-    <span>书名：<strong>{{ state.title or '(待定)' }}</strong></span>
-    <span>笔名：<strong>{{ state.pen_name }}</strong></span>
-    <span>流派：<strong>{{ state.genre }}{% if state.sub_genre %}/{{ state.sub_genre }}{% endif %}</strong></span>
-    <span>平台：<strong>{{ state.platform }}</strong></span>
-    <span>每章：<strong>{{ storyline.words_per_chapter }}字</strong></span>
-    <span>进度：<strong id="prog-ch">{{ state.current_chapter }}</strong> / <span id="prog-total">{{ state.total_chapters }}</span> 章</span>
-    <span>本章：<strong id="chp-words">0</strong>/<span id="chp-target">{{ storyline.words_per_chapter }}</span>字</span>
-    <span>状态：{{ status_badge(book.status) if book else status_badge('writing') }}</span>
-</div>
+{% if not (book.current_chapter or 0) %}
+{{ flow_status('大纲·故事线（规划）', '开始写作') }}
+{% else %}
+{{ flow_status('章节写作（续写）', '上架', '/books/' + state.book_id + '/publish') }}
+{% endif %}
+{{ info_bar(
+    title=state.title or '(待定)',
+    pen_name=state.pen_name,
+    genre=state.genre,
+    sub_genre=state.sub_genre or '',
+    platform=state.platform,
+    progress='<span id="prog-ch">' ~ state.current_chapter ~ '</span> / <span id="prog-total">' ~ state.total_chapters ~ '</span> 章',
+    status_html=status_badge(book.status) if book else status_badge('writing'),
+    extra='<span>每章：<strong>' ~ storyline.words_per_chapter ~ '字</strong></span>'
+        ~ '<span>本章：<strong id="chp-words">0</strong>/<span id="chp-target">' ~ storyline.words_per_chapter ~ '</span>字</span>'
+) }}
 
-{{ flow_stepper(4 if state.current_chapter < 2 else 5, book_id=state.book_id,
-                 phase=(storyline.phase if storyline else 'config'),
-                 current_chapter=state.current_chapter,
-                 status=(book.status if book else 'writing'),
-                 world_done=world_done) }}
-
-{# ─── 三栏：左=故事线 | 中=规划↔正文切换 | 右=写作助手+写作动态 ─── #}
+{# ─── 两栏：左=故事线 | 中=控制条+规划/正文/写作动态 ─── #}
 <div class="editor-split">
     <div class="editor-left">
         <div class="gen-split-title">📋 故事线 · 写作中实时高亮（⏳设局 / ✅收局 = 读者承诺）</div>
@@ -34,10 +38,20 @@
     </div>
 
     <div class="editor-mid">
-        <div class="gen-split-title">📖 章节正文</div>
+        {# ─── 写作控制条：开始/停止 + 设定入口（基础设定已收敛到世界观设定卡） ─── #}
+        <div class="wf-toolbar">
+            <span class="wf-toolbar-title">📖 章节正文</span>
+            {% if storyline and storyline.outlines %}
+            <button id="btn-start" class="btn-primary" onclick="startFlow()">▶ 写下一个桥段</button>
+            <button id="btn-stop" class="btn-danger" style="display:none;background:#da3633;color:white;border:none;padding:6px 16px;border-radius:8px;font-size:13px;cursor:pointer" onclick="stopFlow()">⏹ 停止</button>
+            {% endif %}
+            <a href="/books/{{ state.book_id }}/world" class="btn btn-sm" style="background:#30363d;color:#c9d1d9;text-decoration:none">🌍 设定</a>
+        </div>
 
-        {# ─── 规划/生成面板：JS 初始化时搬到右栏（生成动态在右，中间只留正文） ─── #}
-        <div id="view-plan" class="view-pane" style="display:block">
+        {# ─── 规划/生成面板：写作前在此完成 大纲/桥段/内涵 编排（写作开始后可折叠） ─── #}
+        <details id="view-plan" class="right-plan" {% if not (book.current_chapter or 0) %}open{% endif %}>
+        <summary>📋 规划与生成（大纲 / 桥段 / 内涵）</summary>
+        <div class="right-plan-section">
             <div id="gen-panel" style="display:none">
                 <div id="gen-full-box" style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:16px">
                     <div style="display:flex;gap:8px;margin-bottom:8px">
@@ -169,133 +183,8 @@
                 </div>
             </div>
 
-            {# ─── 基础设定（主角/世界观/配角） ─── #}
-            <div class="accordion" style="margin-bottom:0">
-                <div class="accordion-header">
-                    <span>🎯 基础设定（主角 / 世界观 / 配角）</span>
-                    <span style="color:#8b949e;font-size:12px">展开编辑 · 保存后用于生成完整大纲
-                        <span id="bi-dirty-badge" style="display:none;color:#d29922;font-weight:600;margin-left:6px">● 未保存</span>
-                    </span>
-                </div>
-                <div class="accordion-body">
-                    <div class="form-row" style="margin-bottom:14px">
-                        <label>书名
-                            <div style="display:flex;gap:8px">
-                                <input id="bi_title" value="{{ storyline.book_title or '' }}" placeholder="留空可让 AI 生成书名">
-                                <button type="button" class="btn-primary btn-sm" style="background:#6f42c1;flex-shrink:0;width:auto" id="btn-gen-title" onclick="generateTitle()">✨ 生成书名</button>
-                            </div>
-                        </label>
-                    </div>
-                    <div class="form-row half">
-                        <label>主角姓名
-                            <input id="bi_protag_name" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('name','')) }}">
-                        </label>
-                        <label>身份/职业
-                            <input id="bi_protag_identity" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('identity','')) }}">
-                        </label>
-                    </div>
-                    <div class="form-row half">
-                        <label>性格特点
-                            <input id="bi_protag_personality" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('personality','')) }}">
-                        </label>
-                        <label>背景
-                            <input id="bi_protag_background" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('background','')) }}">
-                        </label>
-                    </div>
-                    <div class="form-row">
-                        <label>金手指
-                            <input id="bi_protag_golden" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('golden_finger','')) }}">
-                        </label>
-                    </div>
-                    <div class="form-row half">
-                        <label>性别
-                            <input id="bi_protag_gender" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('gender','')) }}">
-                        </label>
-                        <label>年龄
-                            <input id="bi_protag_age" type="number" min="0" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('age') or '') }}">
-                        </label>
-                    </div>
-                    <div class="form-row half">
-                        <label>死亡年份（重生文用）
-                            <input id="bi_protag_death_year" type="number" min="0" value="{{ ((storyline.basic_info.get('protagonist') or {}).get('death_year') or '') }}">
-                        </label>
-                        <label></label>
-                    </div>
-                    <div class="form-row">
-                        <label>世界观简述
-                            <textarea id="bi_world_desc" rows="2">{{ ((storyline.basic_info.get('world_building') or {}).get('description','')) }}</textarea>
-                        </label>
-                    </div>
-                    <div class="form-row half">
-                        <label>时代背景
-                            <input id="bi_world_era" value="{{ ((storyline.basic_info.get('world_building') or {}).get('era','')) }}">
-                        </label>
-                        <label>力量体系
-                            <input id="bi_world_power" value="{{ ((storyline.basic_info.get('world_building') or {}).get('power_system','')) }}">
-                        </label>
-                    </div>
-                    <div class="form-row">
-                        <label>设定概述（world_summary，一段话整体设定）
-                            <textarea id="bi_world_summary" rows="2">{{ ((storyline.basic_info.get('world_building') or {}).get('world_summary','')) }}</textarea>
-                        </label>
-                    </div>
-                    <div class="form-row half">
-                        <label>地理
-                            <input id="bi_world_geography" value="{{ ((storyline.basic_info.get('world_building') or {}).get('geography','')) }}">
-                        </label>
-                        <label>文化
-                            <input id="bi_world_culture" value="{{ ((storyline.basic_info.get('world_building') or {}).get('culture','')) }}">
-                        </label>
-                    </div>
-                    <div class="form-row half">
-                        <label>历史
-                            <input id="bi_world_history" value="{{ ((storyline.basic_info.get('world_building') or {}).get('history','')) }}">
-                        </label>
-                        <label>社会结构
-                            <input id="bi_world_social" value="{{ ((storyline.basic_info.get('world_building') or {}).get('social_structure','')) }}">
-                        </label>
-                    </div>
-                    <div class="form-row">
-                        <label>核心矛盾
-                            <input id="bi_world_conflict" value="{{ ((storyline.basic_info.get('world_building') or {}).get('core_conflict','')) }}">
-                        </label>
-                    </div>
-                    <div class="form-row half">
-                        <label>势力（"名:立场" 一行/逗号）
-                            {% set _factions = ((storyline.basic_info.get('world_building') or {}).get('factions') or []) %}
-                            <textarea id="bi_world_factions" rows="2">{% for f in _factions %}{% if f is mapping %}{{ f.get('name','') }}{% if f.get('stance') %}:{{ f.get('stance') }}{% endif %}{% else %}{{ f }}{% endif %}
-{% endfor %}</textarea>
-                        </label>
-                        <label>世界规则（每行一条）
-                            <textarea id="bi_world_rules" rows="2">{{ ((storyline.basic_info.get('world_building') or {}).get('rules') or []) | join('\n') }}</textarea>
-                        </label>
-                    </div>
-                    <div class="form-row half">
-                        <label>基调
-                            <input id="bi_tone" placeholder="轻松/沉重/热血/幽默" value="{{ storyline.basic_info.get('tone','') }}">
-                        </label>
-                        <label>目标读者
-                            <input id="bi_audience" value="{{ storyline.basic_info.get('target_audience','') }}">
-                        </label>
-                        <label>视角
-                            <select id="bi_pov">
-                                <option value="第三人称" {{ 'selected' if storyline.basic_info.get('pov','第三人称') == '第三人称' }}>第三人称</option>
-                                <option value="第一人称" {{ 'selected' if storyline.basic_info.get('pov','第三人称') == '第一人称' }}>第一人称</option>
-                            </select>
-                        </label>
-                        <label>时代语言约束
-                            <input id="bi_era_language" placeholder="如：2008年语境，禁止现代网络词" value="{{ storyline.basic_info.get('era_language','') }}">
-                        </label>
-                    </div>
-                    <div class="form-row">
-                        <label>配角（JSON 数组，可选）
-                            <textarea id="bi_supporting_cast" rows="3" placeholder='[{"name":"...","role":"...","relation":"...","gender":"男/女","title":"...","personality":"...","catchphrase":"..."}]'>{{ (storyline.basic_info.get('supporting_cast') or []) | tojson }}</textarea>
-                        </label>
-                    </div>
-                    <button class="btn-primary btn-sm" id="btn-save-basic" onclick="saveBasicInfo()">💾 保存设定</button>
-                </div>
-            </div>
         </div>
+        </details>
 
         {# ─── 正文视图：连续章节文本（中栏永远只显示正文） ───#}
         <div id="view-write" class="view-pane" style="display:block">
@@ -306,28 +195,12 @@
                 {% endfor %}
             </div>
         </div>
-    </div>
 
-    <div class="editor-right">
-        {# ─── 写作助手（大纲助手改名，仅自然语言） ─── #}
-        <div id="agent-panel" class="agent-panel">
-            <div class="agent-header">🤖 写作助手 <span class="agent-hint">续写大纲 / 改桥段 / 加笑点 / 开始写作，直接对我说</span></div>
-            <div id="agent-thread" class="agent-thread"></div>
-            <div class="agent-input-row">
-                <input id="agent-input" class="agent-input" placeholder="例：续写大纲；把第一个桥段改成打脸爽文；开始写作" onkeydown="if(event.key==='Enter')agentSend()">
-                <button class="btn-primary btn-sm" onclick="agentSend()">发送</button>
-            </div>
-        </div>
-        {% if storyline and storyline.outlines %}
-        <div style="display:flex;gap:12px;margin:12px 0;align-items:center">
-            <button id="btn-start" class="btn-primary" onclick="startFlow()">▶ 写下一个桥段</button>
-            <button id="btn-stop" class="btn-danger" style="display:none;background:#da3633;color:white;border:none;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer" onclick="stopFlow()">⏹ 停止</button>
-        </div>
-        {% else %}
-        <div style="margin:12px 0;color:#8b949e;font-size:13px">先生成大纲后再开始写作。</div>
-        {% endif %}
-        <div class="gen-split-title">🖋 写作动态</div>
-        <div id="wf-feed" class="gen-feed"></div>
+        {# ─── 写作动态：实时进度（并入中栏折叠区；未来由全局右栏 Harness 接管） ─── #}
+        <details id="write-log" class="right-plan write-log">
+            <summary>🖋 写作动态</summary>
+            <div id="wf-feed" class="gen-feed"></div>
+        </details>
     </div>
 </div>
 </div>
@@ -336,21 +209,13 @@
 .wf-link { color:#3fb950; text-decoration:none; font-size:13px; }
 .wf-link:hover { text-decoration:underline; }
 .view-pane { flex:1; min-height:0; overflow-y:auto; padding-right:4px; }
-/* 写作助手聊天面板 */
-.agent-panel { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px; margin-bottom:12px; display:flex; flex-direction:column; }
-.agent-header { font-size:13px; font-weight:600; color:#f0f6fc; margin-bottom:8px; display:flex; align-items:center; gap:8px; }
-.agent-hint { font-size:11px; font-weight:400; color:#8b949e; }
-.agent-thread { max-height:220px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }
-.agent-msg { max-width:85%; padding:8px 12px; border-radius:10px; font-size:12px; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
-.agent-msg.user { align-self:flex-end; background:#1f6feb; color:#fff; border-bottom-right-radius:2px; }
-.agent-msg.assistant { align-self:flex-start; background:#0d1117; border:1px solid #21262d; color:#c9d1d9; border-bottom-left-radius:2px; }
-.agent-msg .a-summary { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
-.agent-msg .a-chip { font-size:11px; background:#0a1a0a; color:#3fb950; border:1px solid #238636; border-radius:12px; padding:2px 10px; }
-.agent-msg .a-error { color:#f85149; }
-.agent-input-row { display:flex; gap:8px; align-items:center; }
-.agent-input { flex:1; padding:8px 12px; background:#0d1117; border:1px solid #30363d; border-radius:8px; color:#f0f6fc; font-size:12px; }
-.agent-input:focus { outline:none; border-color:#58a6ff; }
-.agent-typing { color:#8b949e; font-size:11px; padding:2px 4px; }
+/* 中栏写作控制条 */
+.wf-toolbar { display:flex; align-items:center; gap:10px; padding:10px 14px; background:var(--bg-elev); border:1px solid var(--border); border-radius:var(--radius); margin-bottom:12px; flex-wrap:wrap; }
+.wf-toolbar-title { font-size:13px; font-weight:600; color:var(--fg-strong); margin-right:auto; }
+.wf-toolbar .btn { padding:6px 14px; font-size:13px; }
+/* 中栏规划折叠区 + 写作动态折叠区 */
+.write-log { margin-top:12px; }
+.write-log .gen-feed { max-height:240px; overflow-y:auto; }
 </style>
 
 <script src="/static/js/story_line.js"></script>
@@ -363,32 +228,38 @@ let running = false;
 let stopped = false;
 let controller = null;
 
+/* Agent 画布控制就绪标志：侧栏 agent_panel 据此判断何时 dispatch ne:canvas 事件 */
+window.__neCanvasReady__ = false;
+
 /* ─── 初始化故事线 ─── */
 function refreshStoryline(sl) {
     if (window.StoryLine) {
         window.StoryLine.init('editor-storyline', sl || {}, {scrollable: true});
+        window.__neCanvasReady__ = true;
     }
 }
 (function initStoryline() {
     refreshStoryline(window.__BOOK_STORYLINE__);
 })();
 
-/* ─── 布局：规划/生成面板搬到右栏（生成动态在右，中间只留正文） ─── */
+/* ─── Agent 画布控制：单槽位接收 ne:canvas 事件（侧栏 agent_panel 的全局监听委托过来）。
+     用单槽位而非 addEventListener，避免 SPA 反复进入写作台时 window 上堆积监听。 ─── */
+window.onnecanvas = function(e) {
+    var d = (e && e.detail) || {};
+    if (!window.StoryLine || !document.getElementById('editor-storyline')) return;
+    if (d.action === 'highlight_plot') {
+        window.StoryLine.highlight({outline_id: d.outline_id, plot_id: d.plot_id});
+    } else if (d.action === 'scroll_to_plot') {
+        window.StoryLine.scrollTo({plot_id: d.plot_id, outline_id: d.outline_id});
+    } else if (d.action === 'scroll_to_outline') {
+        window.StoryLine.scrollTo({outline_id: d.outline_id});
+    }
+};
+
+/* ─── 规划面板已内置于中栏折叠区（规划态展开，写作态折叠） ─── */
 (function() {
     var plan = document.getElementById('view-plan');
-    var right = document.querySelector('.editor-right');
-    if (!plan || !right) return;
-    plan.style.display = 'block';
-    plan.className = 'right-plan-section';
-    var det = document.createElement('details');
-    det.className = 'right-plan';
-    det.open = !!window.__PLANNING__;   // 规划态默认展开，写作态折叠
-    var sum = document.createElement('summary');
-    sum.textContent = '📋 规划与生成（大纲 / 桥段 / 内涵 / 基础设定）';
-    det.appendChild(sum);
-    det.appendChild(plan);
-    var wf = document.getElementById('wf-feed');
-    right.insertBefore(det, wf || null);
+    if (plan) plan.open = !!window.__PLANNING__;
 })();
 
 /* ─── 中栏视图切换：彻底重构后中栏只有正文，规划面板在右栏；保留此函数兼容旧调用 ─── */
@@ -425,10 +296,10 @@ function manuscriptDivider(text) {
 
 /* ─── 右栏：写作动态 ─── */
 function feedRight() {
-    const right = document.querySelector('.editor-right');
-    if (right && right.scrollHeight - right.scrollTop - right.clientHeight < 80) {
-        right.scrollTop = right.scrollHeight;
-    }
+    const log = document.getElementById('write-log');
+    if (log && !log.open) log.open = true;   // 有动态时自动展开写作动态区
+    const feed = document.getElementById('wf-feed');
+    if (feed) feed.scrollTop = feed.scrollHeight;
 }
 function feedItem(cls, text) {
     const feed = document.getElementById('wf-feed');
@@ -529,10 +400,7 @@ function genFullLog(msg, cls) {
     d.className = 'gf-item' + (cls ? ' ' + cls : '');
     d.textContent = msg;
     feed.appendChild(d);
-    var right = document.querySelector('.editor-right');
-    if (right && right.scrollHeight - right.scrollTop - right.clientHeight < 80) {
-        right.scrollTop = right.scrollHeight;
-    }
+    feed.scrollTop = feed.scrollHeight;
 }
 function genFeedAction(kind, text) { genFullLog(text, 'action action-' + kind); }
 function genFeedDecision(evt) {
@@ -664,267 +532,6 @@ function injectGags() {
 }
 function startWriting() {
     location.href = '/books/' + storylineId + '/continue';
-}
-function generateTitle() {
-    var btn = document.getElementById('btn-gen-title');
-    if (!btn || btn.disabled) return;
-    btn.disabled = true; btn.textContent = '生成中...';
-    fetch('/api/storyline/' + storylineId + '/generate-title', { method: 'POST' })
-        .then(r => r.json()).then(d => {
-            if (d.ok) {
-                document.getElementById('bi_title').value = d.chosen || '';
-                showToast('✨ 书名候选：' + (d.titles || []).join('、') + '\n\n已选用：「' + (d.chosen || '') + '」，保存设定后生效。', 'success');
-            } else showToast(d.error || '书名生成失败', 'error');
-        })
-        .catch(e => showToast('失败: ' + e.message, 'error'))
-        .finally(function(){ btn.disabled = false; btn.textContent = '✨ 生成书名'; });
-}
-function saveBasicInfo() {
-    var payload = {
-        book_title: document.getElementById('bi_title').value.trim(),
-        protagonist: {
-            name: document.getElementById('bi_protag_name').value,
-            identity: document.getElementById('bi_protag_identity').value,
-            personality: document.getElementById('bi_protag_personality').value,
-            background: document.getElementById('bi_protag_background').value,
-            golden_finger: document.getElementById('bi_protag_golden').value,
-            gender: document.getElementById('bi_protag_gender').value.trim(),
-            age: parseInt(document.getElementById('bi_protag_age').value || '0', 10) || 0,
-            death_year: parseInt(document.getElementById('bi_protag_death_year').value || '0', 10) || 0,
-        },
-        world_building: {
-            description: document.getElementById('bi_world_desc').value,
-            era: document.getElementById('bi_world_era').value,
-            power_system: document.getElementById('bi_world_power').value,
-            world_summary: document.getElementById('bi_world_summary').value.trim(),
-            geography: document.getElementById('bi_world_geography').value.trim(),
-            culture: document.getElementById('bi_world_culture').value.trim(),
-            history: document.getElementById('bi_world_history').value.trim(),
-            social_structure: document.getElementById('bi_world_social').value.trim(),
-            core_conflict: document.getElementById('bi_world_conflict').value.trim(),
-            factions: parseFactionLines(document.getElementById('bi_world_factions').value),
-            rules: parseRuleLines(document.getElementById('bi_world_rules').value),
-        },
-        tone: document.getElementById('bi_tone').value,
-        target_audience: document.getElementById('bi_audience').value,
-        pov: document.getElementById('bi_pov').value,
-        era_language: document.getElementById('bi_era_language').value,
-    };
-    var sc = document.getElementById('bi_supporting_cast').value.trim();
-    if (sc) {
-        try { payload.supporting_cast = JSON.parse(sc); }
-        catch (e) { showToast('配角 JSON 格式有误: ' + e.message, 'warning'); return; }
-    }
-    var btn = document.getElementById('btn-save-basic');
-    btn.disabled = true; btn.textContent = '保存中...';
-    fetch('/api/storyline/' + storylineId + '/save-basic-info', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload)
-    }).then(function(r){ return r.json(); }).then(function(d) {
-        if (d.ok) { flashToast('✅ 设定已保存', 'success'); location.reload(); } else showToast(d.error || '保存失败', 'error');
-    }).catch(function(e){ showToast('失败: ' + e.message, 'error'); })
-      .finally(function(){ btn.disabled = false; btn.textContent = '💾 保存设定'; });
-}
-
-/* ─── 基础设定未保存徽标 ─── */
-(function() {
-    var badge = document.getElementById('bi-dirty-badge');
-    if (!badge) return;
-    var fields = document.querySelectorAll('input[id^="bi_"], textarea[id^="bi_"], select[id^="bi_"]');
-    for (var i = 0; i < fields.length; i++) {
-        fields[i].addEventListener('input', function() { badge.style.display = 'inline'; });
-        fields[i].addEventListener('change', function() { badge.style.display = 'inline'; });
-    }
-})();
-
-/* ─── 写作助手（自然语言，改名自大纲助手） ─── */
-var agentBusy = false;
-function agentThreadEl() { return document.getElementById('agent-thread'); }
-function esc(s) {
-    return String(s == null ? '' : s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-function agentAppendUser(text) {
-    var t = agentThreadEl(); if (!t) return;
-    var m = document.createElement('div');
-    m.className = 'agent-msg user';
-    m.textContent = text;
-    t.appendChild(m); t.scrollTop = t.scrollHeight;
-}
-function agentAppendTyping() {
-    var t = agentThreadEl(); if (!t) return;
-    var m = document.createElement('div');
-    m.className = 'agent-msg assistant agent-typing';
-    m.id = 'agent-typing';
-    m.textContent = '🤖 正在处理…';
-    t.appendChild(m); t.scrollTop = t.scrollHeight;
-}
-function agentRemoveTyping() {
-    var el = document.getElementById('agent-typing');
-    if (el) el.remove();
-}
-function agentAppendAssistant(text, summary, isError) {
-    var t = agentThreadEl(); if (!t) return;
-    var m = document.createElement('div');
-    m.className = 'agent-msg assistant';
-    var p = document.createElement('div');
-    p.textContent = text;
-    if (isError) p.className = 'a-error';
-    m.appendChild(p);
-    if (summary && summary.length) {
-        var s = document.createElement('div');
-        s.className = 'a-summary';
-        summary.forEach(function(line) {
-            var chip = document.createElement('span');
-            chip.className = 'a-chip';
-            chip.textContent = '✓ ' + line;
-            s.appendChild(chip);
-        });
-        m.appendChild(s);
-    }
-    t.appendChild(m); t.scrollTop = t.scrollHeight;
-}
-function agentSend() {
-    if (agentBusy) return;
-    var input = document.getElementById('agent-input');
-    if (!input) return;
-    var text = (input.value || '').trim();
-    if (!text) return;
-    if (gFullRunning) {
-        agentAppendAssistant('⏳ 正在生成完整大纲中，请等生成完成后再调整桥段～', [], true);
-        return;
-    }
-    input.value = '';
-    agentAppendUser(text);
-    agentBusy = true;
-    agentAppendTyping();
-    fetch('/api/storyline/' + storylineId + '/agent', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({message: text})
-    }).then(function(r){ return r.json(); }).then(function(d) {
-        agentRemoveTyping();
-        agentBusy = false;
-        if (!d.ok) {
-            agentAppendAssistant(d.error || '操作失败', [], true);
-            return;
-        }
-        agentAppendAssistant(d.reply || '', d.summary || []);
-        if (d.storyline) {
-            window.__BOOK_STORYLINE__ = d.storyline;
-            refreshStoryline(d.storyline);
-            renderPhaseLists(d.storyline);
-        }
-    }).catch(function(e) {
-        agentRemoveTyping();
-        agentBusy = false;
-        agentAppendAssistant('请求失败: ' + e.message, [], true);
-    });
-}
-function renderPhaseLists(sl) {
-    if (!sl) return;
-    var oList = document.getElementById('outline-list');
-    if (oList) renderOutlineList(oList, sl);
-    var pList = document.getElementById('plot-list');
-    if (pList) renderPlotList(pList, sl);
-    var gRes = document.getElementById('gag-result');
-    if (gRes) renderGagResult(gRes, sl);
-}
-function renderOutlineList(container, sl) {
-    var outlines = sl.outlines || [];
-    var empty = document.getElementById('outline-empty');
-    if (empty) empty.style.display = outlines.length ? 'none' : '';
-    if (!outlines.length) { container.innerHTML = ''; return; }
-    var html = outlines.map(function(o) {
-        var meta = esc(o.template_id || '') + ' · ' + esc(o.transition_type || 'sequential');
-        if (o.overlaps_with && o.overlaps_with.length) meta += ' · 重叠: ' + esc(o.overlaps_with.join(', '));
-        var stages = (o.stages || []).map(function(s) {
-            return '<span class="oc-stage">' + esc(s.name || '') + ' (' + esc(s.min_ch) + '-' + esc(s.max_ch) + '章)</span>';
-        }).join('');
-        var labels = {chronological:'顺叙', flashback:'倒叙', interleaved:'插叙'};
-        var narrativeOpts = ['chronological','flashback','interleaved'].map(function(v) {
-            return '<option value="' + v + '"' + ((o.narrative || 'chronological') === v ? ' selected' : '') + '>' + labels[v] + '</option>';
-        }).join('');
-        var notes = o.notes ? '<div style="font-size:11px;color:#8b949e;margin-top:6px">📝 ' + esc(o.notes) + '</div>' : '';
-        return '<div class="outline-card" data-id="' + esc(o.id) + '">' +
-            '<div class="oc-header">' +
-              '<div><div class="oc-name">' + esc(o.name) + '</div>' +
-              '<div style="font-size:11px;color:#484f58;margin-top:2px">' + meta + '</div></div>' +
-              '<div class="oc-actions">' +
-                '<button class="btn btn-sm" style="background:#30363d;color:#c9d1d9;font-size:11px" onclick="moveOutline(\'' + esc(o.id) + '\',\'up\')">↑</button>' +
-                '<button class="btn btn-sm" style="background:#30363d;color:#c9d1d9;font-size:11px" onclick="moveOutline(\'' + esc(o.id) + '\',\'down\')">↓</button>' +
-                '<button class="btn btn-sm danger" style="font-size:11px" onclick="deleteOutline(\'' + esc(o.id) + '\')">删除</button>' +
-              '</div>' +
-            '</div>' +
-            '<div class="oc-range">' +
-              '<label>第</label><input type="number" value="' + esc(o.start_chapter) + '" onchange="updateOutline(\'' + esc(o.id) + '\',\'start_chapter\',this.value)">' +
-              '<label>章 — 第</label><input type="number" value="' + esc(o.end_chapter) + '" onchange="updateOutline(\'' + esc(o.id) + '\',\'end_chapter\',this.value)">' +
-              '<label>章</label>' +
-              '<span style="color:#484f58">（' + (o.end_chapter - o.start_chapter + 1) + '章）</span>' +
-              '<span style="flex:1"></span>' +
-              '<label style="font-size:11px;color:#8b949e">手法</label>' +
-              '<select class="oc-narrative" onchange="setNarrative(\'' + esc(o.id) + '\', this.value, document.getElementById(\'nt-' + esc(o.id) + '\').value)" style="width:auto;padding:3px 6px;font-size:11px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#f0f6fc">' + narrativeOpts + '</select>' +
-              '<input type="text" id="nt-' + esc(o.id) + '" placeholder="叙事目标(如:回忆第5-10章)" value="' + esc(o.narrative_target || '') + '" onchange="setNarrative(\'' + esc(o.id) + '\', this.previousElementSibling.value, this.value)" style="width:130px;padding:3px 6px;font-size:11px">' +
-            '</div>' +
-            (stages ? '<div class="oc-stages">' + stages + '</div>' : '') +
-            notes +
-          '</div>';
-    }).join('');
-    container.innerHTML = html;
-}
-function renderPlotList(container, sl) {
-    var outlines = sl.outlines || [];
-    var plots = sl.plots || [];
-    var html = outlines.map(function(o) {
-        var groupPlots = plots.filter(function(p) { return p.outline_id === o.id; });
-        var cards = groupPlots.map(function(p) {
-            var gag = '<div style="font-size:11px;color:#3fb950;margin-top:4px">🎭 笑点: 写作时灵机一动（不预设）</div>';
-            var theme = (p.theme_hints && p.theme_hints.length) ? '<div style="font-size:11px;color:#c084fc;margin-top:2px">💡 内涵: ' + esc(p.theme_hints.join(', ')) + '</div>' : '';
-            var hook = (p.hook_points && p.hook_points.length) ? '<div style="font-size:11px;color:#d29922;margin-top:2px">⚡ 吸睛: ' + esc(p.hook_points.join(', ')) + '</div>' : '';
-            var structure = p.template_structure ? '<div style="font-size:12px;color:#484f58;margin-top:4px">' + esc(String(p.template_structure).slice(0,120)) + '</div>' : '';
-            var threadB = (p.thread_id) ? '<span class="tag" style="margin-left:6px">线程:' + esc(p.thread_id) + '</span>' : '';
-            var payoffB = (p.resolves_plot_id) ? '<span class="tag" style="color:#f85149;margin-left:6px">↪ 收局·' + esc(p.resolves_name || '') + '</span>' : '';
-            var rolesB = (p.roles && p.roles.length) ? '<div style="font-size:11px;color:#58a6ff;margin-top:2px">👤 出场: ' + esc(p.roles.join('、')) + '</div>' : '';
-            return '<div class="plot-card card">' +
-                '<div style="display:flex;justify-content:space-between;align-items:start">' +
-                  '<div><code>' + esc(p.category || '') + '</code> <strong>' + esc(p.name) + '</strong> ' +
-                  threadB + payoffB +
-                  '<span class="tag">' + (p.cover_beats || 0) + '节拍</span>' +
-                  (p.parent_plot_id ? '<span class="tag blue">嵌套</span>' : '') + '</div>' +
-                  '<div style="display:flex;gap:8px;align-items:center">' +
-                    '<label style="font-size:12px;color:#8b949e;cursor:pointer"><input type="checkbox" ' + (p.confirmed ? 'checked' : '') + ' onchange="togglePlotConfirm(\'' + esc(p.id) + '\', this.checked)"> 确认</label>' +
-                  '</div>' +
-                '</div>' + structure + rolesB + gag + theme + hook +
-              '</div>';
-        }).join('');
-        if (!cards) {
-            cards = '<div class="empty" style="padding:20px"><p style="color:#484f58;font-size:12px">该大纲尚未填充桥段</p></div>';
-        }
-        return '<div class="outline-plot-group" data-outline-id="' + esc(o.id) + '">' +
-            '<h3 style="margin:16px 0 8px;color:#58a6ff">' + esc(o.name) + ' <span style="font-size:12px;color:#8b949e">第' + esc(o.start_chapter) + '-' + esc(o.end_chapter) + '章</span></h3>' + cards + '</div>';
-    }).join('');
-    container.innerHTML = html;
-}
-function renderGagResult(container, sl) {
-    var outlines = sl.outlines || [];
-    var plots = sl.plots || [];
-    var html = outlines.map(function(o) {
-        var groupPlots = plots.filter(function(p) { return p.outline_id === o.id; });
-        var items = groupPlots.map(function(p) {
-            var gags = '写作时灵机一动（不预设）';
-            var themes = (p.theme_hints && p.theme_hints.length) ? p.theme_hints.join('、') : '—';
-            var hooks = (p.hook_points && p.hook_points.length) ? p.hook_points.join('、') : '—';
-            return '<div class="plot-card card" style="font-size:12px">' +
-                '<strong>' + esc(p.name) + '</strong>' +
-                '<div style="color:#3fb950;margin-top:4px">🎭 笑点: ' + esc(gags) + '</div>' +
-                '<div style="color:#c084fc;margin-top:2px">💡 内涵: ' + esc(themes) + '</div>' +
-                '<div style="color:#d29922;margin-top:2px">⚡ 吸睛: ' + esc(hooks) + '</div>' +
-              '</div>';
-        }).join('');
-        return '<h3 style="margin:12px 0 6px;color:#58a6ff;font-size:14px">' + esc(o.name) + '</h3>' + items;
-    }).join('');
-    container.innerHTML = html || '<p style="color:#484f58">暂无桥段</p>';
 }
 
 /* ─── 写作 SSE ─── */

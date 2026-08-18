@@ -41,7 +41,8 @@
         // 有任务出现时自动展开——右栏当前仅承载任务/日志，为未来 Harness 预留。
         function maybeAutoCollapse(tasks) {
             var bar = document.getElementById('status-bar');
-            if (!bar) return;
+            var el = document.getElementById('status-tasks');
+            if (!bar || !el) return;   // 右侧已改为 Agent 聊天面板，不再自动折叠
             try {
                 if (localStorage.getItem('ne_status_locked') === '1') return;
             } catch(e) {}
@@ -245,10 +246,11 @@
         }
         
         function pollStatus() {
+            var el = document.getElementById('status-tasks');
+            if (!el) return;   // 右侧已改为 Agent 聊天面板，无任务卡片区
             fetch('/api/status/tasks')
                 .then(function(r) { return r.json(); })
                 .then(function(tasks) {
-                    var el = document.getElementById('status-tasks');
                     var logArea = document.getElementById('task-log');
                     var logList = document.getElementById('task-log-list');
                     
@@ -299,7 +301,9 @@
                 }).catch(function() {});
         }
         pollStatus();
-        setInterval(pollStatus, 2000);
+        if (document.getElementById('status-tasks')) {
+            setInterval(pollStatus, 2000);
+        }
 
 /* ─── 设定卡共享解析（world_card.html 与 storyline_write_flow.html 共用）─── */
 function parseFactionLines(txt) {
