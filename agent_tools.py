@@ -710,7 +710,11 @@ def delete_book(book_id: str, confirm: bool = False) -> dict:
 # ═══════════════════════════════════════════════════
 
 def navigate(url: str) -> dict:
-    """让浏览器跳转到站内页面（如 /books、/books/<id>、/books/<id>/continue、/publish）。"""
+    """浏览器页面跳转工具：把用户当前看到的页面切换到指定站内 URL（如 /books、/books/123、/books/123/continue、/publish）。
+
+    用户明确要求「打开/跳转/去看看/进入」某页面时必须调用本工具切页。
+    注意：切页与读取数据是两件事——即使已用 get_book_state 读过数据，只要用户要「打开页面」，
+    就还要调用本工具让浏览器实际切过去。"""
     url = (url or "").strip()
     if (not url.startswith("/") or url.startswith("//") or "://" in url
             or url.startswith("javascript:")):
@@ -763,11 +767,16 @@ def _func_to_schema(fn):
 
 
 def _build_registry():
+    # 顺序有讲究：导航/画布排最前（flash 对列表前部工具更敏感，能保证
+    # "打开页面"请求正确触发 navigate），其次只读摸底，再创作链/上架/工具。
     fns = [
-        # 只读 / 建书
-        list_books, get_book_state, get_storyline, create_book, borrow_preview,
-        # 规划 / 编辑
-        save_basic_info, generate_title, generate_outlines, generate_full_outline,
+        # 导航 / 画布（用户高频意图，必须前置）
+        navigate, canvas_command,
+        # 只读摸底
+        list_books, get_book_state, get_storyline, borrow_preview,
+        # 建书 / 规划
+        create_book, save_basic_info,
+        generate_title, generate_outlines, generate_full_outline,
         extend_outline, confirm_outlines, fill_plots, fill_gags, outline_agent,
         generate_world, world_candidates, confirm_world,
         # 写作 / 元数据
@@ -775,8 +784,6 @@ def _build_registry():
         # 上架 / 审查 / 去AI / 书管理
         publish_check, mark_finished, publish_book, export_book,
         review_text, deai_text, delete_book,
-        # 导航 / 画布
-        navigate, canvas_command,
     ]
     return [{
         "name": fn.__name__,
