@@ -26,7 +26,7 @@
         <td>{{ status_badge(b.status) }}</td>
         <td style="white-space:nowrap">
             <a href="/books/{{ b.book_id }}" class="btn small secondary">📖 详情</a>
-            <form method="POST" action="/books/{{ b.book_id }}/delete" style="display:inline" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
+            <form method="POST" action="/books/{{ b.book_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
                 <button class="small danger">删除</button>
             </form>
         </td>

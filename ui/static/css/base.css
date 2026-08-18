@@ -113,9 +113,9 @@
         button, .btn { padding:8px 16px; background:#238636; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500; transition:all .2s; }
         button:hover { background:#2ea043; }
         .btn-primary { background:#238636; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:14px; cursor:pointer; }
-        button.secondary { background:#30363d; }
-        button.danger { background:#da3633; }
-        button.small { padding:4px 10px; font-size:12px; }
+        button.secondary, .btn.secondary { background:#30363d; }
+        button.danger, .btn.danger { background:#da3633; }
+        button.small, .btn.small { padding:4px 10px; font-size:12px; }
         a.btn { text-decoration:none; display:inline-block; }
         /* Tags */
         .tag { display:inline-block; padding:2px 8px; background:#1f2937; border-radius:12px; font-size:11px; color:#8b949e; margin:2px; }
