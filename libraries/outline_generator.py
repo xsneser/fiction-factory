@@ -16,7 +16,7 @@ import json, time
 
 from .storyline import (
     BookStoryline, OutlineSlot, PlotSlot, merge_basic_info, annotate_plot_roles,
-    structure_to_stages, mount_themes_and_hooks, THEME_PLOT_COMPAT,
+    structure_to_stages, mount_themes_and_hooks,
     get_mc, get_characters, normalize_basic_info,
 )
 from .structure import StructureLibrary
@@ -810,19 +810,22 @@ class OutlineGenerator:
 
     def _select_book_themes(self, genre: str,
                             tl: Optional[BookStoryline] = None) -> list[str]:
-        """选定全书母题（内涵跟随桥段的前提）。
+        """选定全书母题（内涵嵌入大纲库：从选中大纲模板的 themes 带出）。
 
-        免费规则：按本书已选桥段模板命中 THEME_PLOT_COMPAT 收集母题（去重取前 2）→ 兜底默认。
+        规则：汇总 tl.outlines[].template_id → 结构库模板的 themes（去重取前 3）；
+        全部为空 → 兜底默认（用可挂桥段的中英母题名）。
         """
-        default_themes = ["成长蜕变", "命运抗争"]
+        default_themes = ["成长的代价（Cost of Growth）"]
         matched = []
         if tl:
-            plot_tids = {p.template_id for p in tl.plots if p.template_id}
-            for tid in plot_tids:
-                for name in THEME_PLOT_COMPAT.get(tid, []):
+            for o in (tl.outlines or []):
+                if not o.template_id:
+                    continue
+                tmpl = self.structures.get_by_id(o.template_id) if self.structures else None
+                for name in (tmpl.themes if tmpl else []):
                     if name not in matched:
                         matched.append(name)
-        return matched[:2] if matched else default_themes
+        return matched[:3] if matched else default_themes
 
     def _inject_themes_and_hooks(
         self, plot: PlotSlot, tl: BookStoryline,
