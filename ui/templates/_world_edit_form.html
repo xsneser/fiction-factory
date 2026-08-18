@@ -108,7 +108,7 @@ function esc(s) {
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function emptyChar() {
-    return {name:'', role:'配角', identity:'', title:'', gender:'', personality:'',
+    return {name:'', role:'配角', importance:2, identity:'', title:'', gender:'', personality:'',
             catchphrase:'', brief:'', golden_finger:'', age:0, death_year:0,
             archetype_id:'', relations:[]};
 }
@@ -149,6 +149,11 @@ function appendCharCard(c) {
         + '<div><label>角色</label><select class="cc" data-f="role">'
         + ['主角','配角','反派','其他'].map(function(r){ return '<option' + (c.role===r?' selected':'') + '>' + r + '</option>'; }).join('')
         + '</select></div></div>'
+        + '<div class="form-row half">'
+        + '<div><label>重要度（1最高）</label><select class="cc" data-f="importance">'
+        + [1,2,3,4,5].map(function(n){ return '<option value="' + n + '"' + (String(c.importance || 2)===String(n)?' selected':'') + '>' + n + '</option>'; }).join('')
+        + '</select></div>'
+        + '<div></div></div>'
         + '<div class="form-row half">'
         + '<div><label>身份/职业</label><input class="cc" data-f="identity" value="' + esc(c.identity) + '"></div>'
         + '<div><label>称呼</label><input class="cc" data-f="title" value="' + esc(c.title) + '"></div></div>'
@@ -219,8 +224,12 @@ function collectCharCards() {
         var c = {};
         card.querySelectorAll('.cc').forEach(function(inp) {
             var k = inp.getAttribute('data-f');
-            c[k] = (k === 'age' || k === 'death_year') ? (parseInt(inp.value, 10) || 0) : inp.value.trim();
+            c[k] = (k === 'age' || k === 'death_year' || k === 'importance')
+                ? (parseInt(inp.value, 10) || 0) : inp.value.trim();
         });
+        // archetype_id 存于 .char-archetype 下拉（非 .cc），单独收集
+        var archSel = card.querySelector('.char-archetype');
+        if (archSel) c.archetype_id = archSel.value || '';
         c.relations = [];
         card.querySelectorAll('.rel-row').forEach(function(row) {
             var n = row.querySelector('.cc-rel-name').value.trim();
