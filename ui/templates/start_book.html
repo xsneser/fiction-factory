@@ -66,10 +66,17 @@
         </fieldset>
     </section>
 
-    {# ─── ③ 微调设定：题材标签 + 流派/平台/书名/主角 ─── #}
+    {# ─── ③ 微调设定：世界观置顶 + 题材标签 + 书名/主角候选 ─── #}
     <section class="wz-panel" id="panel-3" style="display:none">
         <fieldset>
-            <legend>🏷️ 题材标签（流派/题材一体，可多选，如番茄的【双强、末日】）</legend>
+            <legend>🌍 世界观</legend>
+            <div class="form-row">
+                <textarea id="wz-idea3" rows="3" readonly></textarea>
+            </div>
+            <div class="form-row hint">世界观由一句话设定直接生成；如需调整，返回第 1 步修改。</div>
+        </fieldset>
+        <fieldset>
+            <legend>🏷️ 题材标签</legend>
             {% for g in world_tags %}
             <div class="tag-group">
                 <div class="tag-group-name">{{ g.group }}</div>
@@ -82,94 +89,26 @@
             {% endfor %}
         </fieldset>
         <fieldset>
-            <legend>📦 流派与平台</legend>
-            <div class="form-row half">
-                <div>
-                    <label>流派</label>
-                    <select id="wz-genre">
-                        <option value="">选择...</option>
-                        <option value="玄幻">玄幻</option>
-                        <option value="都市">都市</option>
-                        <option value="言情">言情</option>
-                        <option value="悬疑">悬疑</option>
-                        <option value="穿越">穿越</option>
-                        <option value="科幻">科幻</option>
-                    </select>
+            <legend>📖 书名与主角</legend>
+            <div class="form-row">
+                <button type="button" class="btn-primary" onclick="WZ.genTitleProtag()">🎲 根据世界观生成书名与主角候选</button>
+            </div>
+            <div id="wz-title-protag-box"></div>
+            <div id="wz-title-protag-confirm" style="display:none">
+                <div class="form-row half">
+                    <div><label>书名</label><input id="wz-title" placeholder="点选书名候选后自动填入"></div>
+                    <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
                 </div>
-                <div>
-                    <label>目标平台</label>
-                    <select id="wz-platform">
-                        <option value="fanqie">番茄小说</option>
-                        <option value="qidian">起点中文网</option>
-                    </select>
+                <div class="form-row half">
+                    <div><label>主角姓名</label><input id="wz-protag_name"></div>
+                    <div><label>身份/职业</label><input id="wz-protag_identity"></div>
+                </div>
+                <div class="form-row half">
+                    <div><label>性格特点</label><input id="wz-protag_personality"></div>
+                    <div><label>金手指</label><input id="wz-protag_golden"></div>
                 </div>
             </div>
         </fieldset>
-        <details class="advanced" open>
-            <summary>⚙️ 书名与主角（可选，留空由引擎生成）</summary>
-            <fieldset>
-                <legend>📖 书名与章节</legend>
-                <div class="form-row half">
-                    <div><label>书名（可先留空）</label><input id="wz-title" placeholder="书名（可选）"></div>
-                    <div><label>子类型</label><input id="wz-sub_genre" placeholder="如：系统流、重生、逆袭"></div>
-                </div>
-                <div class="form-row half">
-                    <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
-                    <div></div>
-                </div>
-                <div class="form-row">
-                    <label>故事线描述（可选，留空由引擎自动规划）</label>
-                    <textarea id="wz-hint" rows="2" placeholder="如：开头都市爽文30章，穿越到异界接系统升级流..."></textarea>
-                </div>
-            </fieldset>
-            <fieldset>
-                <legend>🧑 主角设定</legend>
-                <div class="form-row half">
-                    <div><label>主角姓名</label><input id="wz-protag_name" placeholder="留空由 AI 生成"></div>
-                    <div><label>身份/职业</label><input id="wz-protag_identity" placeholder="如：废柴家族少主、程序员"></div>
-                </div>
-                <div class="form-row half">
-                    <div><label>性格特点</label><input id="wz-protag_personality" placeholder="如：幽默自嘲、冷酷理性"></div>
-                    <div><label>金手指类型</label><input id="wz-protag_golden" placeholder="如：草民系统、血脉觉醒"></div>
-                </div>
-            </fieldset>
-            <fieldset>
-                <legend>🌍 世界观补充（追加到一句话设定之后）</legend>
-                <div class="form-row">
-                    <textarea id="wz-world_desc" rows="2" placeholder="如：灵气复苏后科技与修仙共存、异界大陆七国争霸..."></textarea>
-                </div>
-            </fieldset>
-            <fieldset>
-                <legend>📐 模板选择</legend>
-                <div class="form-row">
-                    <label>开篇桥段</label>
-                    <select id="wz-opening">
-                        <option value="">自动匹配</option>
-                        {% for t in openings %}
-                        <option value="{{ t.id }}">{{ t.name }} — {{ t.description[:40] }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-row">
-                    <label>金手指桥段</label>
-                    <select id="wz-golden_finger">
-                        <option value="">自动匹配</option>
-                        {% for t in golden_fingers %}
-                        <option value="{{ t.id }}">{{ t.name }} — {{ t.description[:40] }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="form-row">
-                    <label>大纲结构</label>
-                    <select id="wz-structure">
-                        <option value="">自动匹配</option>
-                        {% for s in structures %}
-                        <option value="{{ s.id }}">{{ s.name }} ({{ s.total_chapters }}章)</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </fieldset>
-        </details>
     </section>
 
     {# ─── ④ 生成大纲：世界 SSE → 完整大纲 SSE ─── #}
@@ -255,6 +194,8 @@
 }
 .wz-candidate-card:hover { border-color:#58a6ff; }
 .wz-candidate-card.picked { border-color:#3fb950; background:#23863622; }
+.wz-cand-label { color:#8b949e; font-size:12px; margin:8px 0 4px; }
+.wz-cand-row { display:flex; flex-wrap:wrap; gap:8px; }
 .wz-cand-title { color:#58a6ff; font-weight:600; font-size:13px; margin-bottom:4px; }
 .wz-cand-one { color:#c9d1d9; font-size:12px; margin-bottom:4px; }
 .wz-cand-brief { color:#8b949e; font-size:11px; line-height:1.6; margin-bottom:4px; }
@@ -304,11 +245,16 @@ var WZ = {
         this.el('wz-next').style.display = (n === 1 || n === 2) ? 'inline-block' : 'none';
         this.el('wz-submit').style.display = (n === 3) ? 'inline-block' : 'none';
         if (this.bookId && n === 4) this.el('wz-prev').style.display = 'none';
+        // 步骤③ 顶部世界观展示：同步一句话设定（只读）
+        if (n === 3) {
+            var idea3 = this.el('wz-idea3');
+            if (idea3) idea3.value = this.el('wz-idea').value.trim();
+        }
     },
 
     validate: function(n) {
         if (n === 1) return this.el('wz-idea').value.trim() && this.el('wz-pen').value;
-        return true;   // ② 标签可空；③ 流派留空后端默认 '玄幻'
+        return true;   // ② 候选可空；③ 标签可选，流派后端从标签推导
     },
 
     next: function() {
@@ -352,7 +298,7 @@ var WZ = {
         var idea = this.el('wz-idea').value.trim();
         var box = this.el('wz-candidate-box');
         box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成候选…</div>';
-        var genre = (this.el('wz-genre') && this.el('wz-genre').value) || '';
+        var genre = '';   // 流派由题材标签推导，候选生成无需流派
         var self = this;
         fetch('/api/world-builder/candidates', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -376,18 +322,10 @@ var WZ = {
     pickCandidate: function(idx) {
         var c = (window.__CANDIDATES__ || [])[idx];
         if (!c) return;
-        // 并入而非覆盖：one_liner 进一句话、world_brief 进世界观补充、genre_hint 预填子类型
+        // 世界观由一句话设定直接生成：把选中候选的 one_liner 并入一句话（不再追加 world_desc/流派）
         if (c.one_liner) {
             var ideaEl = this.el('wz-idea');
             if (ideaEl) ideaEl.value = ideaEl.value.trim() ? ideaEl.value.trim() + '。' + c.one_liner : c.one_liner;
-        }
-        if (c.world_brief) {
-            var wd = this.el('wz-world_desc');
-            if (wd) wd.value = wd.value.trim() ? wd.value.trim() + '。' + c.world_brief : c.world_brief;
-        }
-        if (c.genre_hint) {
-            var sg = this.el('wz-sub_genre');
-            if (sg) sg.value = c.genre_hint;
         }
         var cards = document.querySelectorAll('#wz-candidate-box .wz-candidate-card');
         for (var i = 0; i < cards.length; i++) cards[i].classList.toggle('picked', i === idx);
@@ -398,25 +336,73 @@ var WZ = {
         this.show(3);
     },
 
+    /* —— ③ 根据世界观生成书名候选 + 主角设定候选（无书端点），点选确定 —— */
+    genTitleProtag: function() {
+        var idea = this.el('wz-idea').value.trim();
+        var box = this.el('wz-title-protag-box');
+        box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成书名与主角候选…</div>';
+        var self = this;
+        fetch('/api/world-builder/title-protag', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idea: idea, tags: this.state.tags })
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            if (!d.ok) { box.innerHTML = '❌ ' + d.error; return; }
+            window.__TITLE_PROTAG__ = d;
+            var html = '<div class="wz-cand-label">📕 书名候选（点选确定）：</div><div class="wz-cand-row">';
+            (d.titles || []).forEach(function(t, i) {
+                html += '<button type="button" class="chip" data-kind="title" data-idx="' + i + '" onclick="WZ.pickTitleProtag(this)">' + t + '</button>';
+            });
+            html += '</div><div class="wz-cand-label" style="margin-top:8px">🧑 主角候选（点选确定）：</div>';
+            (d.protagonists || []).forEach(function(p, i) {
+                html += '<div class="wz-candidate-card" data-kind="protag" data-idx="' + i + '" onclick="WZ.pickTitleProtag(this)">'
+                    + '<div class="wz-cand-title">' + (p.name || '') + '（' + (p.identity || '') + '）</div>'
+                    + '<div class="wz-cand-one">性格：' + (p.personality || '') + '｜金手指：' + (p.golden_finger || '') + '</div>'
+                    + '</div>';
+            });
+            box.innerHTML = html;
+        }).catch(function(e) { box.innerHTML = '❌ 请求失败: ' + e.message; });
+    },
+    pickTitleProtag: function(elm) {
+        var d = window.__TITLE_PROTAG__;
+        if (!d) return;
+        var idx = +elm.dataset.idx;
+        if (elm.dataset.kind === 'title') {
+            var t = d.titles[idx];
+            if (t) {
+                this.el('wz-title').value = t;
+                this.state.title = t;
+                document.querySelectorAll('#wz-title-protag-box .chip[data-kind="title"]').forEach(function(b) { b.classList.remove('on'); });
+                elm.classList.add('on');
+            }
+        } else {
+            var p = d.protagonists[idx];
+            if (p) {
+                this.el('wz-protag_name').value = p.name || '';
+                this.el('wz-protag_identity').value = p.identity || '';
+                this.el('wz-protag_personality').value = p.personality || '';
+                this.el('wz-protag_golden').value = p.golden_finger || '';
+                document.querySelectorAll('#wz-title-protag-box .wz-candidate-card[data-kind="protag"]').forEach(function(c) { c.classList.remove('picked'); });
+                elm.classList.add('picked');
+            }
+        }
+        this.el('wz-title-protag-confirm').style.display = 'block';
+        if (typeof showToast === 'function') showToast('已选定，可微调后进入下一步', 'success');
+    },
+
     collect: function() {
         this.state.idea = this.el('wz-idea').value.trim();
         this.state.pen_name = this.el('wz-pen').value;
         this.state.borrow = { source_book_id: this.el('wz-borrow-source').value,
                               tweak: this.el('wz-borrow-tweak').value.trim() };
-        this.state.genre = this.el('wz-genre').value || '玄幻';
-        this.state.platform = this.el('wz-platform').value || 'fanqie';
-        this.state.sub_genre = this.el('wz-sub_genre').value.trim();
+        // 流派/平台已从向导移除：流派由后端从题材标签推导；平台留到发布页
+        this.state.genre = '';      // 后端 derive_genre(tags) 填充
+        this.state.platform = 'fanqie';
         this.state.title = this.el('wz-title').value.trim();
         this.state.words_per_chapter = parseInt(this.el('wz-words').value, 10) || 3000;
-        this.state.storyline_hint = this.el('wz-hint').value.trim();
-        this.state.world_desc = this.el('wz-world_desc').value.trim();
         this.state.protag_name = this.el('wz-protag_name').value.trim();
         this.state.protag_identity = this.el('wz-protag_identity').value.trim();
         this.state.protag_personality = this.el('wz-protag_personality').value.trim();
         this.state.protag_golden_finger = this.el('wz-protag_golden').value.trim();
-        this.state.opening_template_id = this.el('wz-opening').value;
-        this.state.golden_finger_template_id = this.el('wz-golden_finger').value;
-        this.state.structure_template_id = this.el('wz-structure').value;
     },
 
     createBook: function() {
