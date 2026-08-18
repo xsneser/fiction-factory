@@ -219,6 +219,32 @@ class WorldBuildingGenerator:
                 pass
         return []
 
+    def generate_title_protag(self, idea: str, genre: str = "", sub_genre: str = "",
+                              tags=None) -> dict:
+        """根据世界观（一句话+标签）发散书名候选与主角设定候选（非流式，失败重试≤3）。
+
+        返回 {"titles": [...], "protagonists": [{"name","identity","personality","golden_finger"}]}。
+        """
+        if not self.llm:
+            return None
+        prompt = self.harness.render_title_protag_prompt(
+            idea=idea, genre=genre or "", sub_genre=sub_genre or "", tags=tags)
+        from core.llm_client import extract_json
+        for attempt in range(3):
+            try:
+                raw = self.llm.call("你只返回 JSON。", prompt,
+                                    temperature=0.8, max_tokens=8192)
+                data = json.loads(extract_json(raw))
+                titles = [t for t in (data.get("titles") or [])
+                          if isinstance(t, str) and t.strip()][:5]
+                protags = [p for p in (data.get("protagonists") or [])
+                           if isinstance(p, dict) and str(p.get("name", "") or "").strip()][:3]
+                if titles or protags:
+                    return {"titles": titles, "protagonists": protags}
+            except Exception:
+                pass
+        return None
+
     # ═══════════════════════════════════════════
     # 内部：2 次链式 LLM 调用
     # ═══════════════════════════════════════════

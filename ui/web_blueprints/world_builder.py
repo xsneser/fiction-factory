@@ -184,6 +184,27 @@ def api_world_candidates_nobook():
     return jsonify({"ok": True, "candidates": candidates})
 
 
+# 无 book_id 别名：向导③根据世界观生成书名候选 + 主角设定候选（建书前）
+@bp.route("/api/world-builder/title-protag", methods=["POST"])
+def api_world_title_protag_nobook():
+    """根据世界观生成书名候选 + 主角设定候选。body {idea, genre?, tags?}。"""
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    tags = body.get("tags") or []
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置，请先在设置页配置 API"}), 500
+    from libraries.world_builder import WorldBuildingGenerator
+    from libraries.prompt_harness import PromptHarness
+    harness = PromptHarness()   # 无书：storyline=None
+    gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
+    result = gen.generate_title_protag(idea=idea, genre=genre, tags=tags)
+    if not result:
+        return jsonify({"ok": False, "error": "书名/主角候选生成失败，请重试"}), 500
+    return jsonify({"ok": True, **result})
+
+
 # ═══════════════════════════════════════════
 # API：从已有书借鉴预览
 # ═══════════════════════════════════════════

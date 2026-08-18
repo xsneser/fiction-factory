@@ -899,3 +899,24 @@ class PromptHarness:
             f"【要求】从这句话/流派发散出 {count} 个截然不同的世界观方向，方向之间差异要明显（如：废土系统流 / 灵气复苏权谋流 / 异界学院召唤流）。",
             '返回 JSON：{"candidates":[{"title":"候选名/书名","one_liner":"一句话核心设定（可直接作为新书的一句话种子）","world_brief":"120-200字世界观简述","genre_hint":"子流派标签"}]}',
         ])
+
+    def render_title_protag_prompt(self, idea: str, genre: str = "",
+                                   sub_genre: str = "", tags=None) -> str:
+        """根据世界观（一句话 + 题材标签）发散书名候选与主角设定候选（向导③按钮）。"""
+        tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
+        parts = [
+            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
+            f"【一句话设定】{idea or '（无，按流派自由发散）'}",
+        ]
+        if tags:
+            parts.append(f"【题材标签】{'、'.join(tags)}（硬约束，必须契合）")
+        parts.append(
+            "你是网文书名与人物策划。根据上述世界观：\n"
+            "1. 发散 5 个书名候选（2-10 字，朗朗上口、有网文味，精准契合题材与读者预期）；\n"
+            "2. 发散 3 个主角设定候选（每个含 姓名/身份/性格/金手指，必须与世界观自洽）。\n"
+            '只返回 JSON：{"titles":["书名1","书名2","书名3","书名4","书名5"],'
+            '"protagonists":[{"name":"","identity":"","personality":"","golden_finger":""},'
+            '{"name":"","identity":"","personality":"","golden_finger":""},'
+            '{"name":"","identity":"","personality":"","golden_finger":""}]}'
+        )
+        return "\n".join(parts)

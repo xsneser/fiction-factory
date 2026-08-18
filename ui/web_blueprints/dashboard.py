@@ -63,19 +63,19 @@ def start_new_book():
         pen_name = src.get("pen_name", "")
         genre = src.get("genre", "")
         sub_genre = src.get("sub_genre", "")
-        platform = src.get("platform", "fanqie")
+        platform = src.get("platform", "") or "fanqie"
 
-        # 一句话设定（主入口）→ 存 world_building.description；高级世界观简述追加
+        # 一句话设定（主入口）→ 存 world_building.description（世界观由它直接生成，不再追加）
         world_idea = (src.get("world_idea", "") or "").strip()
-        advanced_world = (src.get("world_desc", "") or "").strip()
         description = world_idea
-        if advanced_world:
-            description = (world_idea + "。" + advanced_world) if world_idea else advanced_world
 
-        # 题材标签（番茄式硬约束，向导②多选 chips）
+        # 题材标签（番茄式硬约束，向导③多选 chips）；流派与标签同源，为空时从标签推导
         tags = data.get("tags") if is_json else []
         if not isinstance(tags, list):
             tags = []
+        if not genre:
+            from libraries.world_tags import derive_genre
+            genre = derive_genre(tags)
 
         basic_info = {
             "characters": [{
