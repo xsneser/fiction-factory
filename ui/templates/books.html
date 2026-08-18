@@ -25,8 +25,6 @@
         <td>{{ b.current_chapter }}/{{ b.chapter_count }}</td>
         <td>{{ status_badge(b.status) }}</td>
         <td style="white-space:nowrap">
-            {% if r.next %}<a href="{{ r.next.href }}" class="btn small" style="background:#1f6feb;color:#fff">{{ r.next.label }}</a>{% endif %}
-            {% if r.has_storyline %}<a href="/books/{{ b.book_id }}/world" class="btn small secondary" title="世界观设定卡">🌍 设定</a>{% endif %}
             <a href="/books/{{ b.book_id }}" class="btn small secondary">📖 详情</a>
             <form method="POST" action="/books/{{ b.book_id }}/delete" style="display:inline" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
                 <button class="small danger">删除</button>

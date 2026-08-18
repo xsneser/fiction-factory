@@ -6,7 +6,7 @@
 import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from flask import Blueprint, render_template, request, jsonify, redirect, url_for
+from flask import Blueprint, request, jsonify, redirect, url_for
 from .ctx import *
 
 bp = Blueprint("world_builder", __name__)
@@ -28,37 +28,11 @@ def _profile_for(tl):
 
 @bp.route("/books/<book_id>/world")
 def world_card(book_id):
-    """世界观设定卡：展示/编辑已生成设定，支持重新生成、示例候选、从已有书借鉴。
+    """世界观设定已并入书详情页（book_detail 内嵌可编辑表单），此入口 302 重定向。
 
-    无故事线的书（未走设定先行流程）优雅回退到书详情页，而非硬 404。
+    保留路由与全部 /api/world-builder/* API，兼容旧入口/书签/仪表盘下一步。
     """
-    tl = _resolve_storyline(book_id)
-    if not tl:
-        return redirect(url_for("books.book_detail", book_id=book_id))
-    bi = tl.basic_info or {}
-    borrow_books = []
-    for b in book_mgr.list_all():
-        if b.book_id == book_id:
-            continue
-        src = _resolve_storyline(b.book_id)
-        if src and (src.basic_info or {}):
-            borrow_books.append({"book_id": b.book_id,
-                                 "title": src.book_title or b.title,
-                                 "genre": src.genre or b.genre})
-    return render_template("world_card.html",
-        book_id=book_id,
-        storyline=tl,
-        basic_info=bi,
-        world_building=bi.get("world_building", {}) or {},
-        protagonist=bi.get("protagonist", {}) or {},
-        supporting_cast=bi.get("supporting_cast", []) or [],
-        tone=bi.get("tone", ""),
-        target_audience=bi.get("target_audience", ""),
-        pov=bi.get("pov", ""),
-        era_language=bi.get("era_language", ""),
-        borrow_books=borrow_books,
-        world_generated=bool(bi.get("_world_generated")),
-    )
+    return redirect(url_for("books.book_detail", book_id=book_id))
 
 
 # ═══════════════════════════════════════════

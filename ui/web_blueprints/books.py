@@ -156,12 +156,23 @@ def book_detail(book_id):
     from libraries.storyline import basic_info_world_done
     world_done = basic_info_world_done(storyline.basic_info if storyline else None)
     has_outlines = bool(storyline and storyline.outlines)
+    # 设定表单「从已有书借鉴」所需：其他有设定(故事线)的书
+    borrow_books = []
+    for b in book_mgr.list_all():
+        if b.book_id == book_id:
+            continue
+        src = book_mgr.load_storyline(b.book_id)
+        if src and (src.basic_info or {}):
+            borrow_books.append({"book_id": b.book_id,
+                                 "title": src.book_title or b.title,
+                                 "genre": src.genre or b.genre})
     return render_template("book_detail.html", book=book,
         outline=outline, chapters=chapters,
         storyline=storyline,
         basic_info=basic_info,
         cost=cost.summary(), characters=csm.characters, draft=draft,
-        world_done=world_done, has_outlines=has_outlines)
+        world_done=world_done, has_outlines=has_outlines,
+        borrow_books=borrow_books)
 
 
 @bp.route("/api/book/<book_id>/generate-meta", methods=["POST"])

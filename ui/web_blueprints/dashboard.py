@@ -90,8 +90,8 @@ def start_new_book():
         )
         book_mgr.save_storyline(book.book_id, storyline)
 
-        # 设定先行：先到世界观设定卡生成/审查设定，确认后再进大纲生成
-        return redirect(url_for("world_builder.world_card", book_id=book.book_id))
+        # 设定先行：设定已并入书详情页（内嵌可编辑表单），生成/确认后进大纲生成
+        return redirect(url_for("books.book_detail", book_id=book.book_id))
 
     return render_template("start_book.html",
         pen_names=profiles.list_all(),
