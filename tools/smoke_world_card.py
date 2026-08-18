@@ -44,17 +44,17 @@ def run_smoke():
         print("[3] borrow-preview ->", d.get("ok"), "| seed 含:", list((d.get("seed") or {}).keys())[:3])
         assert d.get("ok") and d.get("seed")
 
-        # 3.5) 无书 title-protag（向导③按钮，真实 LLM）→ 书名+主角候选
-        r = client.post("/api/world-builder/title-protag",
+        # 3.5) 无书 characters（向导③按钮，真实 LLM）→ 主角候选 + 配角候选（书名已在②选）
+        r = client.post("/api/world-builder/characters",
                         json={"idea": "灵气复苏后我觉醒了复制异能，绑定了一个专坑宿主的菜鸡系统",
-                              "tags": ["双强"]})
+                              "title": "复制之王", "tags": ["双强"]})
         d = r.get_json()
-        print("[3.5] title-protag ->", d.get("ok"),
-              "| titles:", len(d.get("titles") or []),
-              "| protagonists:", len(d.get("protagonists") or []))
-        assert d.get("ok"), "title-protag 应 ok"
-        assert len(d.get("titles") or []) >= 3, "书名候选应 ≥3"
+        print("[3.5] characters ->", d.get("ok"),
+              "| protagonists:", len(d.get("protagonists") or []),
+              "| supporting_cast:", len(d.get("supporting_cast") or []))
+        assert d.get("ok"), "characters 应 ok"
         assert len(d.get("protagonists") or []) >= 1, "主角候选应 ≥1"
+        assert len(d.get("supporting_cast") or []) >= 1, "配角候选应 ≥1"
 
         # 3.6) 无书 candidates（向导②，真实 LLM）→ 5 个世界观方向
         r = client.post("/api/world-builder/candidates",
