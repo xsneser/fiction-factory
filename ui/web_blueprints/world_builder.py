@@ -167,9 +167,8 @@ def api_world_candidates(book_id):
 # API：从已有书借鉴预览
 # ═══════════════════════════════════════════
 
-@bp.route("/api/world-builder/<book_id>/borrow-preview", methods=["POST"])
-def api_world_borrow_preview(book_id):
-    """预览将借鉴源书的哪些设定（extract_seed 结果）。"""
+def _borrow_preview():
+    """从源书抽取借鉴种子（extract_seed）。"""
     body = request.get_json(silent=True) or {}
     source_book_id = (body.get("source_book_id") or "").strip()
     src = _resolve_storyline(source_book_id) if source_book_id else None
@@ -182,6 +181,19 @@ def api_world_borrow_preview(book_id):
     return jsonify({"ok": True, "seed": seed,
                     "source_title": src.book_title or src.pen_name or source_book_id,
                     "source_genre": src.genre})
+
+
+@bp.route("/api/world-builder/<book_id>/borrow-preview", methods=["POST"])
+def api_world_borrow_preview(book_id):
+    """预览将借鉴源书的哪些设定（extract_seed 结果）。兼容旧路由。"""
+    return _borrow_preview()
+
+
+# 无 book_id 别名：启动向导②在建书前预览借鉴设定（该端点本就不读目标书）
+@bp.route("/api/world-builder/borrow-preview", methods=["POST"])
+def api_world_borrow_preview_nobook():
+    """预览借鉴设定（无目标书版本，供新书启动向导②）。"""
+    return _borrow_preview()
 
 
 # ═══════════════════════════════════════════
