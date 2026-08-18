@@ -21,6 +21,7 @@ from core.json_store import read_json, write_json_atomic
 # description 是"一句话种子"老字段（新书启动页写入），结构化维度全空时作兜底注入。
 DEFAULT_WORLD_BUILDING = {
     "description": "",        # 一句话设定种子（老字段，保持兼容）
+    "tags": [],               # 题材标签（番茄式硬约束，多选；世界观/大纲/写作 prompt 注入）
     "era": "",                # 时代背景（含年份/纪元，如"灵气复苏后2030年"）
     "power_system": "",       # 力量体系（数值/技能语义全书唯一口径）
     "factions": [],           # 势力派系 [str] 或 [{name, stance, ...}]
@@ -96,8 +97,8 @@ def _char_from_support(c, mc_name) -> dict:
         rels.append({"name": mc_name, "relation": rel})
     return {
         "name": str(c.get("name", "") or ""),
-        "role": str(c.get("role", "") or "").strip() or _CHAR_DEFAULT_ROLE,
-        "identity": str(c.get("role", "") or ""),   # 旧 role 是职位
+        "role": _CHAR_DEFAULT_ROLE,                  # 旧结构非主角一律"配角"，分类在新 UI 调整
+        "identity": str(c.get("role", "") or ""),   # 旧 role 是职位 → 新 identity
         "gender": str(c.get("gender", "") or ""),
         "personality": str(c.get("personality", "") or ""),
         "catchphrase": str(c.get("catchphrase", "") or ""),

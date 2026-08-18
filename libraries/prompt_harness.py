@@ -113,6 +113,7 @@ WORLD_CANDIDATES_SYSTEM = (
 
 # 世界观各维度要求 —— 每次生成都注入，确保产出"可写的设定圣经"而非空话
 WORLD_BUILDING_SCHEMA_HINT = """世界观各维度要求（每一项都要具体可写，避免空泛）：
+- 若已指定题材标签(tags)，世界观各维度必须与其强绑定（标签=读者预期，不可漂移）
 - era 时代背景：含年份/纪元（如"灵气复苏后2030年"）
 - power_system 力量体系：体系名+层级+晋升路径；金手指的数值/技能语义必须写死（如"效率×2"具体指什么翻倍），全书口径唯一
 - factions 势力派系：2-4 个，每个给名称+立场
@@ -200,6 +201,19 @@ class PromptHarness:
             parts.append(f"  背景：{background[:60]}")
         return "\n".join(parts)
 
+    def _tags_block(self) -> str:
+        """【题材标签（硬约束）】块 —— 已选 tags 时注入世界/大纲/写作 prompt。"""
+        tl = self.storyline
+        if not tl:
+            return ""
+        wb = (tl.basic_info or {}).get("world_building", {}) or {}
+        tags = [str(t).strip() for t in (wb.get("tags") or []) if str(t).strip()]
+        if not tags:
+            return ""
+        return ("【题材标签（硬约束）】本书已确定题材标签：" + "、".join(tags)
+                + "。世界观设定、主角/金手指、剧情节奏必须严格契合这些标签的网文套路"
+                  "与读者预期，禁止漂移到标签之外题材。")
+
     def _world_bullets(self) -> str:
         tl = self.storyline
         if not tl:
@@ -211,9 +225,15 @@ class PromptHarness:
         if not any(str(wb.get(k, "") or "").strip() for k in structured_keys) \
                 and not (wb.get("factions") or wb.get("rules") or wb.get("world_summary")):
             desc = str(wb.get("description", "") or "").strip()
-            return f"- 世界观：{desc[:120]}" if desc else ""
+            tags = [str(t) for t in (wb.get("tags") or []) if str(t).strip()]
+            head = f"- 题材标签（硬约束）：{'、'.join(tags)}" if tags else ""
+            line = f"- 世界观：{desc[:120]}" if desc else ""
+            return "\n".join(x for x in (head, line) if x)
 
         parts = ["- 世界观："]
+        tags = [str(t) for t in (wb.get("tags") or []) if str(t).strip()]
+        if tags:
+            parts.append(f"  题材标签（硬约束）：{'、'.join(tags)}")
         summary = str(wb.get("world_summary", "") or "").strip()
         if summary:
             parts.append(f"  概览：{summary[:120]}")
@@ -805,6 +825,9 @@ class PromptHarness:
             parts.append(f"【风格偏好】\n{style}")
         if seed_basic_info:
             parts.append(self._seed_block(seed_basic_info))
+        tb = self._tags_block()
+        if tb:
+            parts.append(tb)
         parts.append("")
         parts.append("短文要用叙事化的语言把这个世界讲清楚，覆盖：时代、力量体系、地理、文化、历史、社会结构、核心矛盾。具体有画面，禁止空泛说教。")
         return "\n".join(parts)
@@ -822,6 +845,9 @@ class PromptHarness:
             parts.append(f"\n【已构思的世界观设定文】\n{str(world_summary).strip()}")
         if style:
             parts.append(f"\n【风格偏好】\n{style}")
+        tb = self._tags_block()
+        if tb:
+            parts.append(f"\n{tb}")
         parts.append(
             "\n【任务】先审视上面的世界观设定文，再在其上完成以下结构化提取，严格返回 JSON（不要任何额外文字）：\n"
             "1. 先确认/补全世界观各维度（与设定文一致，可适度延伸）。\n"
@@ -846,9 +872,11 @@ class PromptHarness:
     def render_world_candidates_prompt(self, idea: str, genre: str = "",
                                        sub_genre: str = "", count: int = 3) -> str:
         """示例候选：一次产出 count 个差异化世界观候选。"""
+        tb = self._tags_block()
         return "\n".join([
             f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
             f"【一句话设定】{idea or '（无，按流派自由发散）'}",
+            tb if tb else "",
             f"【要求】从这句话/流派发散出 {count} 个截然不同的世界观方向，方向之间差异要明显（如：废土系统流 / 灵气复苏权谋流 / 异界学院召唤流）。",
             '返回 JSON：{"candidates":[{"title":"候选名/书名","one_liner":"一句话核心设定（可直接作为新书的一句话种子）","world_brief":"120-200字世界观简述","genre_hint":"子流派标签"}]}',
         ])
