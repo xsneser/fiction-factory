@@ -147,7 +147,9 @@ class OutlineGenerator:
             if skip:
                 yield ("progress", "复用已生成的世界观/主角设定，跳过 LLM 故事分析...", {})
             else:
-                basic_info = self._analyze_story(genre, sub_genre, custom_context, pen_name)
+                _wb_tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
+                basic_info = self._analyze_story(genre, sub_genre, custom_context, pen_name,
+                                                 tags=_wb_tags)
                 if basic_info:
                     # 原地累加：保留用户已填的基础设定（主角/世界观等非空字段不覆盖）
                     tl.basic_info = merge_basic_info(tl.basic_info, basic_info)
@@ -297,8 +299,9 @@ class OutlineGenerator:
     def _analyze_story(
         self, genre: str, sub_genre: str,
         custom_context: str, pen_name: str,
+        tags: list = None,
     ) -> dict:
-        """分析故事要素 → 主角/世界观/基调/目标读者"""
+        """分析故事要素 → 主角/世界观/基调/目标读者。tags 为题材标签硬约束。"""
         if not self.llm:
             return self._default_basic_info(genre)
         if genre == "custom" and not custom_context:
@@ -323,12 +326,17 @@ class OutlineGenerator:
                 + (f"，视角偏好={pov_pref}" if pov_pref else "")
             )
 
+        tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
+        tags_block = ("\n【题材标签（硬约束）】" + "、".join(tags)
+                      + "。主角/世界观/剧情必须严格契合这些标签的网文套路与读者预期，禁止漂移。"
+                      if tags else "")
         prompt = f"""你是一位资深网文策划编辑。请为以下小说构思基础设定。
 
 【基本信息】
 流派：{genre}{'/'+sub_genre if sub_genre else ''}
 每章目标：3000字
 {style_hint}
+{tags_block}
 
 【用户想法】
 {custom_context or '按该流派标准开局'}
