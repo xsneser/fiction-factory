@@ -221,6 +221,11 @@
         .tabs { display:flex; gap:4px; margin-bottom:20px; border-bottom:1px solid #30363d; }
         .tabs a { padding:8px 16px; color:#8b949e; text-decoration:none; font-size:13px; border-bottom:2px solid transparent; }
         .tabs a.active, .tabs a:hover { color:#f0f6fc; border-bottom-color:#58a6ff; }
+        /* Agent 面板页签（右侧侧栏） */
+        .agent-tabs { display:flex; gap:2px; border-bottom:1px solid #21262d; margin-bottom:8px; }
+        .agent-tabs a { flex:1; text-align:center; padding:6px 0; color:#8b949e; cursor:pointer; font-size:12px; border-bottom:2px solid transparent; }
+        .agent-tabs a.active, .agent-tabs a:hover { color:#f0f6fc; border-bottom-color:#58a6ff; }
+        #agent-tools-log { flex:1; overflow-y:auto; min-height:0; }
         /* Alerts */
         .alert { padding:12px 16px; border-radius:6px; margin-bottom:16px; font-size:13px; }
         .alert.success { background:#0d3322; border:1px solid #238636; color:#3fb950; }

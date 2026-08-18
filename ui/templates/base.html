@@ -42,8 +42,13 @@
                 <div class="status-title">🤖 Agent</div>
                 <button class="status-toggle" onclick="toggleStatusBar()" title="折叠 Agent" aria-label="折叠 Agent">◀</button>
             </div>
+            <div class="agent-tabs">
+                <a data-tab="chat" class="active" onclick="switchAgentTab('chat')">💬 对话</a>
+                <a data-tab="tools" onclick="switchAgentTab('tools')">🔧 工具日志</a>
+            </div>
             {# OpenClaw 式 Agent 聊天助手：对话 + 工具步骤卡，可操作全链路（创建→上架）并导航页面 #}
             <div id="agent-chat"></div>
+            <div id="agent-tools-log" style="display:none"></div>
             <div id="agent-input-wrap">
                 <textarea id="agent-input" rows="2"
                     placeholder="让 Agent 帮你建书 / 生成大纲 / 续写 / 上架…"></textarea>

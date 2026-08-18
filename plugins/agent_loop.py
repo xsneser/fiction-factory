@@ -10,11 +10,41 @@ SSE 事件发射回调（返回格式化后的 SSE 行字符串），生成器�
   error {message} / done
 """
 import json
+import threading
+import time
 
 from ui.web_blueprints.ctx import get_llm
 from agent_tools import TOOL_REGISTRY
 
 MAX_ITERS = 12
+
+# ─── 工具调用日志（内存环形缓冲，最近 _MAX_TOOL_LOG 条；重启即清，符合"当前会话"语义） ───
+_TOOL_LOG: list = []
+_TOOL_LOCK = threading.Lock()
+_MAX_TOOL_LOG = 200
+
+
+def log_tool_call(entry: dict) -> None:
+    """记录一条工具调用（并发安全）。"""
+    with _TOOL_LOCK:
+        _TOOL_LOG.append(entry)
+        if len(_TOOL_LOG) > _MAX_TOOL_LOG:
+            del _TOOL_LOG[:len(_TOOL_LOG) - _MAX_TOOL_LOG]
+
+
+def get_tool_log(limit: int = 200) -> list:
+    """返回最近 N 条工具调用日志快照（新→旧）。"""
+    with _TOOL_LOCK:
+        return list(reversed(_TOOL_LOG[-limit:]))
+
+
+def clear_tool_log() -> None:
+    with _TOOL_LOCK:
+        _TOOL_LOG.clear()
+
+
+def _now_ts() -> str:
+    return time.strftime("%H:%M:%S")
 
 SYSTEM_PROMPT = """你是 NovelEngine 的内置 Agent 助手，通过 function calling 操作整个创作引擎。
 
@@ -145,6 +175,9 @@ def run_agent_loop(messages, emit, system_prompt: str = SYSTEM_PROMPT):
 
             entry = by_name.get(fn_name)
             if not entry:
+                log_tool_call({"time": _now_ts(), "run_id": run_id, "tool": fn_name,
+                               "args": args, "ok": False, "summary": "未知工具",
+                               "duration_ms": 0})
                 yield emit({"type": "tool_result", "run_id": run_id, "tool": fn_name,
                             "ok": False, "summary": "未知工具"})
                 conv.append({"role": "tool", "tool_call_id": tc.get("id", ""),
@@ -152,6 +185,7 @@ def run_agent_loop(messages, emit, system_prompt: str = SYSTEM_PROMPT):
                                                    ensure_ascii=False)})
                 continue
 
+            t0 = time.time()
             yield emit({"type": "tool_start", "run_id": run_id, "tool": fn_name, "args": args})
             try:
                 result = entry["func"](**args)
@@ -170,6 +204,9 @@ def run_agent_loop(messages, emit, system_prompt: str = SYSTEM_PROMPT):
             else:
                 summary = _summary(result)
 
+            log_tool_call({"time": _now_ts(), "run_id": run_id, "tool": fn_name,
+                           "args": args, "ok": ok, "summary": summary,
+                           "duration_ms": round((time.time() - t0) * 1000)})
             yield emit({"type": "tool_result", "run_id": run_id, "tool": fn_name,
                         "ok": ok, "summary": summary})
             conv.append({"role": "tool", "tool_call_id": tc.get("id", ""),

@@ -5,12 +5,14 @@
     var input = document.getElementById('agent-input');
     var sendBtn = document.getElementById('agent-send');
     var clearBtn = document.getElementById('agent-clear');
+    var toolsLog = document.getElementById('agent-tools-log');
     if (!chat || !input || !sendBtn) return;   // 布局缺失则静默跳过
 
     var HISTORY_KEY = 'ne_agent_history';
     var HISTORY_LIMIT = 40;
     var busy = false;
     var currentToolRun = null;                  // 当前工具卡引用
+    var toolPollTimer = null;                   // 工具日志轮询定时器
 
     function loadHistory() {
         try { return JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]'); }
@@ -65,6 +67,71 @@
         card.status.textContent = (ok ? '✅ ' : '❌ ') + (summary || '');
         card.card.classList.add(ok ? 'ok' : 'err');
     }
+
+    // ─── 工具日志页签（右侧面板「💬 对话 / 🔧 工具日志」切换）───
+    function switchAgentTab(key) {
+        var chatPane = document.getElementById('agent-chat');
+        document.querySelectorAll('.agent-tabs a').forEach(function(a) {
+            a.classList.toggle('active', a.getAttribute('data-tab') === key);
+        });
+        if (chatPane) chatPane.style.display = (key === 'chat') ? '' : 'none';
+        if (toolsLog) toolsLog.style.display = (key === 'chat') ? 'none' : '';
+        if (key === 'tools') {
+            loadToolLog();
+            if (!toolPollTimer) toolPollTimer = setInterval(loadToolLog, 3000);
+        } else {
+            if (toolPollTimer) { clearInterval(toolPollTimer); toolPollTimer = null; }
+        }
+    }
+
+    function escArg(args) {
+        try { return JSON.stringify(args, null, 1).slice(0, 500); } catch (e) { return String(args); }
+    }
+
+    function loadToolLog() {
+        if (!toolsLog) return;
+        fetch('/api/agent/tool-log')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d || !d.ok) return;
+                var html = '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">'
+                    + '已暴露 <strong>' + d.tools_exposed + '</strong> 工具 · 本次调用 <strong>' + d.total
+                    + '</strong> 次 · 成功 <span style="color:#3fb950">' + d.success
+                    + '</span> 失败 <span style="color:#f85149">' + d.failed + '</span>'
+                    + ' <button class="small" onclick="window.loadToolLog()">🔄 刷新</button>'
+                    + ' <button class="small" onclick="window.clearToolLog()">🗑 清空</button>'
+                    + '</div>';
+                (d.log || []).forEach(function(x) {
+                    html += '<div class="agent-tool-card ' + (x.ok ? 'ok' : 'err') + '">'
+                        + '<div class="agent-tool-head">' + escapeHtml((x.time || '') + ' ' + (x.ok ? '✅' : '❌') + ' ' + x.tool)
+                        + ' <span style="color:#8b949e;font-weight:normal">' + (x.duration_ms || 0) + 'ms</span></div>';
+                    if (x.args && typeof x.args === 'object' && Object.keys(x.args).length) {
+                        html += '<div class="agent-tool-detail" style="display:none">' + escArg(x.args) + '</div>';
+                    }
+                    html += '<div class="agent-tool-status">' + (x.ok ? '' : '❌ ') + escapeHtml(x.summary || '') + '</div></div>';
+                });
+                toolsLog.innerHTML = html;
+                toolsLog.querySelectorAll('.agent-tool-card').forEach(function(card) {
+                    var head = card.querySelector('.agent-tool-head');
+                    var detail = card.querySelector('.agent-tool-detail');
+                    if (head && detail) head.addEventListener('click', function() {
+                        detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+                    });
+                });
+            })
+            .catch(function() {});
+    }
+
+    function clearToolLog() {
+        fetch('/api/agent/tool-log/clear', { method: 'POST' })
+            .then(function() { loadToolLog(); })
+            .catch(function() {});
+    }
+
+    // 供 base.html inline onclick 调用
+    window.switchAgentTab = switchAgentTab;
+    window.loadToolLog = loadToolLog;
+    window.clearToolLog = clearToolLog;
 
     // ─── SSE 消费（fetch + getReader 手写解析，项目现有模式）───
     function consumeSSE(body) {
