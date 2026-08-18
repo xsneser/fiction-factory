@@ -240,7 +240,7 @@ class WorldBuildingGenerator:
                 protags = [p for p in (data.get("protagonists") or [])
                            if isinstance(p, dict) and str(p.get("name", "") or "").strip()][:3]
                 support = [c for c in (data.get("supporting_cast") or [])
-                           if isinstance(c, dict) and str(c.get("name", "") or "").strip()][:3]
+                           if isinstance(c, dict) and str(c.get("name", "") or "").strip()][:5]
                 if protags or support:
                     return {"protagonists": protags, "supporting_cast": support}
             except Exception:
