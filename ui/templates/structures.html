@@ -17,11 +17,14 @@
         {% endfor %}
     </div>
     {% if t.tags %}<p style="margin-top:8px">{% for tag in t.tags %}<span class="tag green">{{ tag }}</span>{% endfor %}</p>{% endif %}
+    {% if t.themes %}<p style="margin-top:8px">💡 可承载母题: {% for th in t.themes %}<span class="tag yellow">{{ th }}</span>{% endfor %}</p>{% endif %}
     <p style="color:#484f58;font-size:11px;margin-top:8px">
         收录: {{ t.created_at }}
         · 来源: {{ t.source or '创作积累' }}
     </p>
-    <p style="margin-top:8px">
+    <p style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="themes-input-{{ t.id }}" value="{{ t.themes|join('、') }}" placeholder="可承载母题（顿号分隔，如：公平（Justice）、成长的代价（Cost of Growth））" style="flex:1;min-width:220px">
+        <button class="small" onclick="saveThemes('{{ t.id }}')">💾 编辑母题</button>
         <button class="small" onclick="toggleStruct('{{ t.id }}')">{{ '✅ 启用' if not t.enabled else '⏸ 禁用' }}</button>
         <button class="small danger" onclick="deleteStruct('{{ t.id }}')">🗑 删除</button>
     </p>
@@ -29,6 +32,17 @@
 {% endfor %}
 
 <script>
+async function saveThemes(id) {
+    const input = document.getElementById('themes-input-' + id);
+    const themes = input.value.split('、').map(s => s.trim()).filter(Boolean);
+    const r = await fetch('/api/structures/' + id + '/themes', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({themes: themes})
+    });
+    const d = await r.json();
+    if (d.ok) { showToast('✅ 母题已保存', 'success'); location.reload(); }
+    else showToast('保存失败: ' + (d.error||''), 'error');
+}
 async function toggleStruct(id) {
     const r = await fetch('/api/structures/' + id + '/toggle', {method:'POST'});
     const d = await r.json();
