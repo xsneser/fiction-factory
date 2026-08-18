@@ -77,8 +77,11 @@ def start_new_book():
             from libraries.world_tags import derive_genre
             genre = derive_genre(tags)
 
-        basic_info = {
-            "characters": [{
+        # 主角 + 配角（向导③可多选/多次生成/手动编辑）：JSON 带 characters 数组直接用；
+        # form（smoke 兼容）回退 protag_* 单主角
+        characters = data.get("characters") if is_json else None
+        if not isinstance(characters, list) or not characters:
+            characters = [{
                 "name": src.get("protag_name", ""),
                 "role": "主角",
                 "identity": src.get("protag_identity", ""),
@@ -86,7 +89,10 @@ def start_new_book():
                 "golden_finger": src.get("protag_golden_finger", ""),
                 "gender": "", "catchphrase": "", "brief": "", "title": "",
                 "age": 0, "death_year": 0, "archetype_id": "", "relations": [],
-            }],
+            }]
+
+        basic_info = {
+            "characters": characters,
             "world_building": {"description": description, "tags": tags},
         }
         # 故事线想法：不再立即生成大纲，存入 basic_info 供「一键生成完整大纲」使用
