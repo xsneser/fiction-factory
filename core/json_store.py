@@ -78,3 +78,48 @@ def write_json_atomic(path: str | Path, data: Any, *, indent: int = 2) -> None:
                 tmp_path.unlink(missing_ok=True)
             finally:
                 raise
+
+
+def read_jsonl(path: str | Path) -> list:
+    """读取 JSONL（每行一个 JSON 对象）；文件不存在返回 []，跳过空行/坏行。"""
+    p = Path(path)
+    with file_lock(p):
+        if not p.exists():
+            return []
+        items = []
+        with p.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    items.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return items
+
+
+def write_jsonl_atomic(path: str | Path, items: list) -> None:
+    """原子保存 JSONL（每行一个 JSON 对象，ensure_ascii=False，临时文件+os.replace）。"""
+    p = Path(path)
+    with file_lock(p):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{p.name}.",
+            suffix=".tmp",
+            dir=str(p.parent),
+            text=True,
+        )
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                for item in items:
+                    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, p)
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            finally:
+                raise
