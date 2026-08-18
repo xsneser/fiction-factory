@@ -253,6 +253,7 @@ var WZ = {
                 desc3.value = _wb ? (_base ? _base + '。' + _wb : _wb) : _base;
             }
         }
+        this.persist();   // 步骤切换即存草稿
     },
 
     validate: function(n) {
@@ -478,6 +479,7 @@ var WZ = {
                 return;
             }
             self.bookId = d.book_id;
+            try { sessionStorage.removeItem(self.PERSIST_KEY); } catch (e) {}   // 建书成功清空草稿
             self.show(4);
             self.runWorldGen();
         }).catch(function(e) {
@@ -584,8 +586,69 @@ var WZ = {
             if (ok) { self.feed('🎉 完整大纲生成完成！', 'success'); self.el('wz-enter').style.display = 'inline-block'; self.show(5); }
             else self.feed('❌ 大纲生成失败，可去书详情重试', 'error');
         });
+    },
+
+    /* —— 向导草稿持久化：切页/刷新后恢复（sessionStorage，当前会话内） —— */
+    PERSIST_KEY: 'ne_wizard_state',
+    _persistTimer: null,
+    persist: function() {
+        try {
+            this.collect();   // 从 DOM 刷新 state（含 characters）
+            sessionStorage.setItem(this.PERSIST_KEY, JSON.stringify({
+                state: this.state,
+                cur: this.cur,
+                bookId: this.bookId,
+            }));
+        } catch (e) {}
+    },
+    _schedulePersist: function() {
+        var self = this;
+        if (this._persistTimer) clearTimeout(this._persistTimer);
+        this._persistTimer = setTimeout(function() { self.persist(); }, 300);
+    },
+    restore: function() {
+        var raw;
+        try { raw = sessionStorage.getItem(this.PERSIST_KEY); } catch (e) { return false; }
+        if (!raw) return false;
+        try {
+            var d = JSON.parse(raw);
+            if (!d || !d.state) return false;
+            this.state = Object.assign({}, this.state, d.state);
+            this.cur = d.cur || 1;
+            this.bookId = d.bookId || '';
+            return true;
+        } catch (e) { return false; }
+    },
+    applyState: function() {
+        var s = this.state;
+        if (s.idea) this.el('wz-idea').value = s.idea;
+        if (s.pen_name) this.el('wz-pen').value = s.pen_name;
+        var desc3 = this.el('wz-world-desc3');
+        if (desc3 && s.idea) desc3.value = s.idea;
+        if (s.title) this.el('wz-title').value = s.title;
+        if (s.words_per_chapter) this.el('wz-words').value = s.words_per_chapter;
+        // 题材标签 chips
+        var tags = s.tags || [];
+        document.querySelectorAll('.chip').forEach(function(c) {
+            c.classList.toggle('on', tags.indexOf(c.dataset.tag) >= 0);
+        });
+        // 借鉴
+        if (s.borrow && s.borrow.source_book_id) this.el('wz-borrow-source').value = s.borrow.source_book_id;
+        if (s.borrow && s.borrow.tweak) this.el('wz-borrow-tweak').value = s.borrow.tweak;
+        // 统一角色列表
+        var chars = s.characters || [];
+        chars.forEach(function(c) { WZ.addCharRow(c); });
     }
 };
-WZ.show(1);
+// 初始化：恢复草稿（若有）→ 显示对应步骤；否则从第 1 步开始
+var __restored = WZ.restore();
+if (__restored) WZ.applyState();
+WZ.show(__restored ? WZ.cur : 1);
+// 输入防抖持久化 + 切页前保存（SPA 导航由输入监听兜底）
+(function() {
+    var wrap = document.querySelector('.wz-panels');
+    if (wrap) wrap.addEventListener('input', function() { WZ._schedulePersist(); });
+    window.addEventListener('beforeunload', function() { WZ.persist(); });
+})();
 </script>
 {% endblock %}
