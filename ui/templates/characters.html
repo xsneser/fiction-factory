@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🎭 角色原型库 <span style="font-size:14px;color:#8b949e">（{{ archetypes|length }} 原型）</span></h1>
+
+<div class="tabs" style="margin-bottom:16px">
+    <a href="/characters" class="{{ 'active' if not current_cat else '' }}">全部</a>
+    {% for c in categories %}
+    <a href="/characters?tag={{ c }}" class="{{ 'active' if c == current_cat else '' }}">{{ c }}</a>
+    {% endfor %}
+</div>
+
+{% for a in archetypes %}
+<div class="accordion" id="char-{{ a.id }}" style="opacity:{{ '0.5' if not a.enabled else '1' }}">
+    <div class="accordion-header">
+        <span>
+            <strong>{{ a.name }}</strong>
+            {% for t in a.tags %}<span class="tag blue">{{ t }}</span>{% endfor %}
+            {% if not a.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
+        </span>
+        <span style="color:#8b949e;font-size:12px">{{ a.personality }}</span>
+    </div>
+    <div class="accordion-body">
+        <p style="color:#c9d1d9">{{ a.description }}</p>
+        {% if a.examples %}
+        <p><strong>代表人物:</strong></p>
+        {% for e in a.examples %}<p style="font-size:13px;padding-left:12px;border-left:2px solid #30363d">· {{ e }}</p>{% endfor %}
+        {% endif %}
+        {% if a.catchphrases %}
+        <p><strong>口癖示例:</strong> {% for c in a.catchphrases %}<span class="tag yellow">「{{ c }}」</span>{% endfor %}</p>
+        {% endif %}
+        {% if a.fit_genres %}
+        <p><strong>适配流派:</strong> {% for g in a.fit_genres %}<span class="tag green">{{ g }}</span>{% endfor %}</p>
+        {% endif %}
+        <p style="color:#484f58;font-size:11px">
+            收录: {{ a.created_at }}
+            · 来源: {{ a.source or '创作积累' }}
+        </p>
+        <p style="margin-top:8px">
+            <button class="small" onclick="toggleChar('{{ a.id }}')">{{ '✅ 启用' if not a.enabled else '⏸ 禁用' }}</button>
+            <button class="small danger" onclick="deleteChar('{{ a.id }}')">🗑 删除</button>
+        </p>
+    </div>
+</div>
+{% else %}
+<div class="empty"><div class="icon">🎭</div><p>还没有角色原型</p></div>
+{% endfor %}
+
+<script>
+async function toggleChar(id) {
+    const r = await fetch('/api/characters/' + id + '/toggle', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else showToast('操作失败: ' + (d.error||''), 'error');
+}
+async function deleteChar(id) {
+    if (!confirm('确认删除角色原型「' + id + '」？')) return;
+    const r = await fetch('/api/characters/' + id + '/delete', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else showToast('删除失败: ' + (d.error||''), 'error');
+}
+</script>
+{% endblock %}

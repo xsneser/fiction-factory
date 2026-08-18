@@ -10,6 +10,7 @@ from flask import Response, stream_with_context
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
+from libraries.character import CharacterLibrary
 from libraries.example_lib import ExampleLibrary
 from libraries.profiles import ProfileManager
 from libraries.book_manager import BookManager
@@ -30,6 +31,7 @@ from libraries.storyline import (
 plot_lib = PlotLibrary()
 struct_lib = StructureLibrary()
 gag_lib = GagLibrary()
+char_lib = CharacterLibrary()
 example_lib = ExampleLibrary()
 profiles = ProfileManager("profiles")
 book_mgr = BookManager("books")
@@ -114,7 +116,7 @@ def _seed_builder_counter(builder, ids) -> None:
 
 
 __all__ = [
-    "plot_lib", "struct_lib", "gag_lib", "example_lib", "profiles", "book_mgr",
+    "plot_lib", "struct_lib", "gag_lib", "char_lib", "example_lib", "profiles", "book_mgr",
     "get_llm", "sse_stream_response",
     "_engines", "_storylines", "_storyline_lock",
     "_storyline_filepath", "_resolve_storyline", "_save_storyline",

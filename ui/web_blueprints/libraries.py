@@ -30,6 +30,7 @@ _LIB_TABLE = {
     "plots": (plot_lib, "templates"),
     "structures": (struct_lib, "templates"),
     "gags": (gag_lib, "patterns"),
+    "characters": (char_lib, "archetypes"),
 }
 
 
@@ -77,6 +78,29 @@ def gag_toggle(gag_id): return _lib_toggle("gags", gag_id)
 
 @bp.route("/api/gags/<gag_id>/delete", methods=["POST"])
 def gag_delete(gag_id): return _lib_delete("gags", gag_id)
+
+
+@bp.route("/api/characters/<char_id>/toggle", methods=["POST"])
+def character_toggle(char_id): return _lib_toggle("characters", char_id)
+
+
+@bp.route("/api/characters/<char_id>/delete", methods=["POST"])
+def character_delete(char_id): return _lib_delete("characters", char_id)
+
+
+@bp.route("/characters")
+def characters():
+    cat = request.args.get("tag", "")
+    archetypes = char_lib.search(tag=cat) if cat else char_lib.archetypes
+    return render_template("characters.html",
+        archetypes=archetypes, categories=char_lib.categories(),
+        current_cat=cat)
+
+
+@bp.route("/api/characters")
+def characters_api():
+    """启用中的角色原型列表（供设定表单「从原型库选」下拉）。"""
+    return jsonify([a.to_dict() for a in char_lib.archetypes if a.enabled])
 
 
 @bp.route("/structures")
