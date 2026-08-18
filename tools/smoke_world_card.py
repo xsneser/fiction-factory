@@ -62,7 +62,12 @@ def run_smoke():
         done_evt = [e for e in events if e.get("event") == "done"][0]
         bi = done_evt.get("basic_info") or {}
         wb = bi.get("world_building") or {}
-        proto = bi.get("protagonist") or {}
+        # 主角已随 characters 迁移统一存 characters 数组（role=主角）；旧 protagonist 键已被 normalize 删除
+        proto = {}
+        for _c in (bi.get("characters") or []):
+            if _c.get("role") == "主角" and _c.get("name"):
+                proto = _c
+                break
         filled = sum(1 for k in ("era", "power_system", "geography", "culture",
                                  "history", "social_structure", "core_conflict")
                      if str(wb.get(k, "") or "").strip())

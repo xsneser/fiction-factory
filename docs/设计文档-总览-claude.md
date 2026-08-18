@@ -1,6 +1,6 @@
 # NovelEngine 设计文档（总览 · 当前状态）
 
-> 版本：v1.3 ｜ 更新：2026-08-18 ｜ 整理：Claude
+> 版本：v1.4 ｜ 更新：2026-08-18 ｜ 整理：Claude
 > 定位：**唯一主设计文档**。本文档合并吸收并取代以下源文档（已归档至 `docs/archive/`）：
 > `项目规划.md`（v0.6）· `交接文档.md` · `harness重构交接文档.md` · `新书创建-Harness架构与LLM提示词.md` · `优化方案-2026-08-04.md` · `优化方案核对-2026-08-04.md` · `待codex处理-2026-08-04.md` · `UX报告-2026-08-05.md` · `task-system-spec.md` · `ui-notes.md` · `novel-factory-timeline.html` · `设计文档.md`（另一会话合并版，v1.1 已并入并退役）
 >
@@ -159,7 +159,7 @@ D:\NovelEngine/
 | 字段 | 说明 |
 |---|---|
 | `book_title/genre/sub_genre/words_per_chapter/pen_name/platform` | 书级元信息 |
-| `basic_info` | 设定卡：protagonist / world_building / supporting_cast / tone / target_audience / pov / era_language（`rebirth_time`/`style` 不是 basic_info 顶层键，是书级设定卡的派生渲染段） |
+| `basic_info` | 设定卡：protagonist / world_building / supporting_cast / tone / target_audience / pov / era_language（`rebirth_time`/`style` 不是 basic_info 顶层键，是书级设定卡的派生渲染段；`world_building.tags` 为题材标签硬约束，v1.4 新增） |
 | `outlines[]` | 大纲槽位（多条，可重叠/接续/融合） |
 | `plots[]` | 桥段槽位（挂在某大纲某阶段下） |
 | `threads[]` | 叙事线程（多线程设局/收局） |
@@ -226,14 +226,18 @@ D:\NovelEngine/
 
 所有写作（含新书启动）走**同一条桥段管线**；开场只是它的一种模式（§4.4）。
 
-### 4.2 新书创建（设定先行 + 世界观卡）
+### 4.2 新书创建（单页多步向导，v1.4）
 
-1. 用户在启动页输入想法 → **世界观设定卡页**（`world_builder.py` 的 `WorldBuildingGenerator`，独立于大纲引擎）。
-   - 三种启动方式：① 一句话自由输入（Call A 流式叙事化短文 temp≈0.8 → Call B 结构化 JSON temp≈0.5、失败重试 ≤3）；② 示例候选点选回填；③ 从已有书借鉴（`extract_seed`）。
-   - 落盘语义：`merge_basic_info` 保留用户已填非空字段，末尾打 `_world_generated` 标记。
-   - 产出「设定圣经」维度：description / era / power_system / factions / rules（数值语义写死，全书唯一口径）/ geography / culture / history / social_structure / core_conflict / world_summary（`DEFAULT_WORLD_BUILDING`）。
-   - 若 `basic_info_world_done` 已充实，`OutlineGenerator` Phase 1 可**跳过 LLM 故事分析**直接复用。
-2. 世界卡确认后进入规划态（流程关系以「当前阶段 → 下一步」状态条 + 面包屑表达，原 6 步步骤条已移除）。
+启动新书改为**单页 5 步向导**（`start_book.html`，横条步骤条 wz-steps，JS 切换）：
+1. **①一句话设定**（必填 + 笔名）。
+2. **②挑选世界观**：预置题材标签 chips 多选（番茄式【双强、末日】，`libraries/world_tags.py` 30 标签 3 组，存入 `world_building.tags`）+ **从已有书借鉴**（挪到这里，`borrow-preview` 无书别名预览，`extract_seed`）。
+3. **③挑选流派** / 平台 / 书名 / 主角 / 高级（前端收集，不落盘）。
+4. **④创建并生成大纲**：③提交 JSON 建书（POST /books/start 双轨：JSON→book_id、form→302）→ 内联跑 `WorldBuildingGenerator.generate`（SSE，tags 作硬约束注入 prompt）→ 世界 `done` 自动衔接 `generate-full`（`skip_analyze` 因 `_world_generated` 自动跳过 Phase 1）；世界失败可「跳过世界观」走 Phase 1 兜底（此时 tags 也注入 `_analyze_story`）。
+5. **⑤前三章撰写**：进入写作台（`/books/<id>/continue`，沿用桥段写作流程）。
+
+- 产出「设定圣经」维度：tags / description / era / power_system / factions / rules（数值语义写死，全书唯一口径）/ geography / culture / history / social_structure / core_conflict / world_summary（`DEFAULT_WORLD_BUILDING`）。
+- 书详情页设定表单保留可编辑世界/人物/基调 + 保存/确认，保留「🚀 生成世界观」「🎲 示例候选」作存量书回退；借鉴已移入向导②。
+- 全站单行「当前阶段 → 下一步」状态条（`flow_status` 宏）已删除（v1.4），仅新书向导保留步骤条；`status_badge` 徽标保留。
 
 ### 4.3 大纲生成引擎（`outline_generator.py`）
 
@@ -626,6 +630,7 @@ python test_chapters.py / test_reader.py
 - 改代码必须同步本文档。
 - v1.2（2026-08-18）：右侧栏运行状态 → Agent 活动面板（§8.2/§8.4）；新增 MCP 服务器（§8.5）；`requirements.txt` 增加 mcp。
 - v1.3（2026-08-18）：右侧栏 → OpenClaw 式 Agent 聊天助手（§8.2/§8.5）；`agent_tools.py` 共享 29 工具注册表（mcp_server 瘦身为适配层）；`LLMClient.call_tools` 原生 function calling；`/api/agent/chat` SSE + `story_line.js` 新增 `scrollTo` 画布控制。
+- v1.4（2026-08-18）：新书启动改单页 5 步向导（§4.2）；`world_building.tags` 题材标签 + `world_tags.py` 预置库 + prompt 硬约束；借鉴挪入向导②；删除全站 `flow_status` 单行状态条（§8.2）。
 
 ---
 
