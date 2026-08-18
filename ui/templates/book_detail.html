@@ -16,7 +16,6 @@
 <h1>📖 {{ book.title or '(待定)' }}</h1>
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
-    <span>状态：{{ status_badge(book.status) }}</span>
     {% if basic_info.get('has_storyline') %}
     <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 进入写作台</a>
     {% endif %}
@@ -34,6 +33,8 @@
     <div class="detail-item"><div class="label">流派</div><div class="value">{{ book.genre }}{% if book.sub_genre %} / {{ book.sub_genre }}{% endif %}</div></div>
     <div class="detail-item"><div class="label">平台</div><div class="value">{{ book.platform }}</div></div>
     <div class="detail-item"><div class="label">预算</div><div class="value">¥{{ "%.2f"|format(cost.spent) }} / ¥{{ "%.2f"|format(cost.budget) }}</div></div>
+    <div class="detail-item"><div class="label">进度</div><div class="value">{{ book.current_chapter }}/{{ book.chapter_count }} 章</div><div class="progress-bar"><div class="progress-fill" style="width:{{ (book.current_chapter/book.chapter_count*100)|int if book.chapter_count else 0 }}%"></div></div></div>
+    <div class="detail-item"><div class="label">状态</div><div class="value">{{ status_badge(book.status) }}</div></div>
 </div>
 
 {# ─── 设定：直铺可编辑表单（原 world_card.html 迁移，确认后进入大纲生成） ─── #}
@@ -49,10 +50,6 @@ var storylineId = "{{ book.book_id }}";
 <h3>📝 简介</h3>
 <p style="color:#8b949e;margin-bottom:12px">{{ basic_info.get('synopsis') }}</p>
 {% endif %}
-
-<h3>📊 进度</h3>
-<div class="progress-bar"><div class="progress-fill" style="width:{{ (book.current_chapter/book.chapter_count*100)|int if book.chapter_count else 0 }}%"></div></div>
-<p style="font-size:13px;color:#8b949e">{{ book.current_chapter }} / {{ book.chapter_count }} 章 · 状态：<span class="tag {{ 'green' if book.status=='writing' else 'yellow' }}">{{ book.status }}</span></p>
 
 {% if characters %}
 <h3>👤 角色状态</h3>
