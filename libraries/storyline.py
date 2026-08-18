@@ -33,6 +33,146 @@ DEFAULT_WORLD_BUILDING = {
     "world_summary": "",      # 设定文：一段整体世界观概述（200-300 字）
 }
 
+# ═══════════════════════════════════════════
+# 角色统一存储（characters 数组，主角/配角合一）
+# ═══════════════════════════════════════════
+
+# 单条角色条目键（顺序即 to_dict 展示顺序）
+_CHAR_FIELDS = ("name", "role", "identity", "gender", "personality",
+                "catchphrase", "brief", "title", "golden_finger",
+                "age", "death_year", "archetype_id", "relations")
+
+_CHAR_DEFAULT_ROLE = "配角"
+
+
+def _canon_char(c) -> dict:
+    """归一化单条角色：补默认键、age/death_year 强转 int、relations 归一到 [{name,relation}]。"""
+    c = dict(c or {})
+    out = {k: c.get(k, "") for k in _CHAR_FIELDS}
+    out["role"] = str(out["role"] or "").strip() or _CHAR_DEFAULT_ROLE
+    try:
+        out["age"] = int(out["age"] or 0)
+    except (TypeError, ValueError):
+        out["age"] = 0
+    try:
+        out["death_year"] = int(out["death_year"] or 0)
+    except (TypeError, ValueError):
+        out["death_year"] = 0
+    rels = []
+    for r in (c.get("relations") or []):
+        if isinstance(r, dict) and str(r.get("name", "") or "").strip():
+            rels.append({"name": str(r["name"]).strip(),
+                         "relation": str(r.get("relation", "") or "")})
+    out["relations"] = rels
+    return out
+
+
+def _char_from_protagonist(p) -> dict:
+    """旧 protagonist(dict) → 统一条目（role=主角，background→brief）。"""
+    p = p or {}
+    return {
+        "name": str(p.get("name", "") or ""),
+        "role": "主角",
+        "identity": str(p.get("identity", "") or ""),
+        "gender": str(p.get("gender", "") or ""),
+        "personality": str(p.get("personality", "") or ""),
+        "catchphrase": "",
+        "brief": str(p.get("background", "") or ""),
+        "title": "",
+        "golden_finger": str(p.get("golden_finger", "") or ""),
+        "age": int(p.get("age") or 0),
+        "death_year": int(p.get("death_year") or 0),
+        "archetype_id": "",
+        "relations": [],
+    }
+
+
+def _char_from_support(c, mc_name) -> dict:
+    """旧 supporting_cast 元素 → 统一条目（旧 role=职位 → 新 identity；旧 relation→relations[0]）。"""
+    c = dict(c or {})
+    rels = []
+    rel = str(c.get("relation", "") or "").strip()
+    if rel and mc_name:
+        rels.append({"name": mc_name, "relation": rel})
+    return {
+        "name": str(c.get("name", "") or ""),
+        "role": str(c.get("role", "") or "").strip() or _CHAR_DEFAULT_ROLE,
+        "identity": str(c.get("role", "") or ""),   # 旧 role 是职位
+        "gender": str(c.get("gender", "") or ""),
+        "personality": str(c.get("personality", "") or ""),
+        "catchphrase": str(c.get("catchphrase", "") or ""),
+        "brief": str(c.get("brief", "") or ""),
+        "title": str(c.get("title", "") or ""),
+        "golden_finger": "",
+        "age": int(c.get("age") or 0),
+        "death_year": int(c.get("death_year") or 0),
+        "archetype_id": str(c.get("archetype_id", "") or ""),
+        "relations": rels,
+    }
+
+
+def normalize_basic_info(bi) -> dict:
+    """把 basic_info 统一为 characters 数组（主角/配角合一）。旧结构自动迁移，幂等。
+
+    - characters 已存在 → 逐条 _canon_char
+    - 否则从 protagonist(dict) + supporting_cast(list) 派生
+    - 兜底：无 role==主角 的有名字条目时，首个有名字条目标为主角
+    - 移除旧键 protagonist/supporting_cast
+    """
+    bi = dict(bi or {})
+    if isinstance(bi.get("characters"), list):
+        chars = [_canon_char(c) for c in bi["characters"] if isinstance(c, dict)]
+    else:
+        chars = []
+        protag = bi.get("protagonist") or {}
+        if str(protag.get("name", "") or "").strip():
+            chars.append(_char_from_protagonist(protag))
+        mc_name = chars[0]["name"] if chars else ""
+        for c in (bi.get("supporting_cast") or []):
+            if isinstance(c, dict) and str(c.get("name", "") or "").strip():
+                chars.append(_char_from_support(c, mc_name))
+        bi["characters"] = chars
+    # 兜底自动标主角（复刻旧"主角恒首"语义）
+    if not any(str(c.get("role", "") or "").strip() == "主角"
+               and str(c.get("name", "") or "").strip()
+               for c in bi["characters"]):
+        for c in bi["characters"]:
+            if str(c.get("name", "") or "").strip():
+                c["role"] = "主角"
+                break
+    bi.pop("protagonist", None)
+    bi.pop("supporting_cast", None)
+    return bi
+
+
+def get_characters(bi) -> list:
+    """读角色统一列表（读侧容忍旧键：characters 缺失时从旧键派生）。"""
+    bi = bi or {}
+    if isinstance(bi.get("characters"), list):
+        return bi["characters"]
+    return normalize_basic_info(bi).get("characters", [])
+
+
+def get_mc(bi) -> dict:
+    """严格取主角：role==主角 且有名字的条目；否则空 dict。"""
+    for c in get_characters(bi):
+        if str(c.get("role", "") or "").strip() == "主角" \
+                and str(c.get("name", "") or "").strip():
+            return c
+    return {}
+
+
+def relation_to_mc(c, bi) -> str:
+    """取角色与主角的关系：扫描 relations 中 name==主角名；兜底旧 relation 字段。"""
+    c = c or {}
+    mc_name = str(get_mc(bi).get("name", "") or "").strip()
+    if mc_name:
+        for r in (c.get("relations") or []):
+            if isinstance(r, dict) \
+                    and str(r.get("name", "") or "").strip() == mc_name:
+                return str(r.get("relation", "") or "")
+    return str(c.get("relation", "") or "")
+
 @dataclass
 class OutlineSlot:
     """一个大纲在故事线上的位置"""
@@ -105,10 +245,8 @@ class BookStoryline:
 
     # 基础信息库（参考 show-me-the-story 的设定体系）
     basic_info: dict = field(default_factory=lambda: {
-        "protagonist": {"name": "", "identity": "", "personality": "", "background": "",
-                        "golden_finger": "", "gender": "", "age": 0, "death_year": 0},
+        "characters": [],  # 角色统一列表（主角/配角合一，role 字段标记主角）
         "world_building": dict(DEFAULT_WORLD_BUILDING),
-        "supporting_cast": [],
         "tone": "",        # 轻松/沉重/热血/幽默
         "target_audience": "",
         "pov": "第三人称",  # 第一人称/第三人称（全篇统一，防人称漂移）
@@ -191,7 +329,7 @@ class BookStoryline:
             words_per_chapter=d.get("words_per_chapter", 3000),
             pen_name=d.get("pen_name", ""),
             platform=d.get("platform", "fanqie"),
-            basic_info=d.get("basic_info", {}),
+            basic_info=normalize_basic_info(d.get("basic_info", {})),
             themes=d.get("themes", []),
             global_gags=d.get("global_gags", []),
             phase=d.get("phase", "config"),
@@ -525,22 +663,68 @@ def load_storyline(path: str) -> Optional[BookStoryline]:
         return None
 
 
+def _deep_keep_existing(existing: dict, generated: dict) -> dict:
+    """以 generated 为基础，existing 里非空字段覆盖（dict 递归）。"""
+    existing = existing or {}
+    generated = generated or {}
+    merged = dict(generated)
+    for k, ev in existing.items():
+        gv = merged.get(k)
+        if isinstance(ev, dict) and isinstance(gv, dict):
+            merged[k] = _deep_keep_existing(ev, gv)
+        elif ev not in (None, "", [], {}):
+            merged[k] = ev
+    return merged
+
+
+def _merge_characters(existing_chars, generated_chars) -> list:
+    """characters 数组合并：
+    - MC 逐字段深合并（existing 非空字段保留，generated 补空）
+    - 非 MC：existing 非空则整组保留，否则用 generated（复刻旧 supporting_cast 语义）
+    """
+    existing_chars = list(existing_chars or [])
+    generated_chars = list(generated_chars or [])
+
+    def _is_mc(c):
+        return str(c.get("role", "") or "").strip() == "主角" \
+            and str(c.get("name", "") or "").strip()
+
+    ex_mc = next((c for c in existing_chars if _is_mc(c)), None)
+    gen_mc = next((c for c in generated_chars if _is_mc(c)), None)
+    merged = []
+    if ex_mc:
+        merged.append(_deep_keep_existing(ex_mc, gen_mc or {}))
+    elif gen_mc:
+        merged.append(dict(gen_mc))
+
+    ex_nonmc = [c for c in existing_chars if c is not ex_mc]
+    gen_nonmc = [c for c in generated_chars if c is not gen_mc]
+    merged.extend(ex_nonmc or gen_nonmc)
+    # 兜底标主角
+    if merged and not _is_mc(merged[0]):
+        for c in merged:
+            if str(c.get("name", "") or "").strip():
+                c["role"] = "主角"
+                break
+    return merged
+
+
 def merge_basic_info(existing: dict, generated: dict) -> dict:
     """以 generated 为基础，保留 existing 里用户已填的非空字段（原地累加用）。
 
+    characters 单独合并（_merge_characters）；其余键沿用旧 dict 深合并语义。
     供大纲生成器与 web_ui 共用，避免同一逻辑两份拷贝。
     """
-    existing = existing or {}
-    generated = generated or {}
+    existing = normalize_basic_info(existing)
+    generated = normalize_basic_info(generated)
     merged = {}
     for key, gv in generated.items():
         ev = existing.get(key)
-        if isinstance(gv, dict) and isinstance(ev, dict):
-            sub = dict(gv)
-            for sk, sv in ev.items():
-                if sv not in (None, "", [], {}):
-                    sub[sk] = sv
-            merged[key] = sub
+        if key == "characters":
+            merged[key] = _merge_characters(
+                existing.get("characters", []), gv)
+        elif isinstance(gv, dict) and isinstance(ev, dict):
+            merged[key] = _deep_keep_existing(ev, gv)
         elif ev not in (None, "", [], {}):
             merged[key] = ev
         else:
@@ -554,7 +738,7 @@ def merge_basic_info(existing: dict, generated: dict) -> dict:
 def basic_info_world_done(basic_info) -> bool:
     """basic_info 是否已具备世界观设定（宽松判定）。
 
-    供引擎规划态进入 + 步骤条「世界观」done 态共用。
+    供引擎规划态进入 + 书详情「当前阶段」判定共用。
     - _world_generated 标记（世界卡已确认）→ True
     - world_building 任一维度（含 description 一句话种子）填充 或 主角名非空 → True
     - 空 basic_info → False（无设定也无大纲的老书走报错路径）
@@ -571,7 +755,7 @@ def basic_info_world_done(basic_info) -> bool:
         v = wb.get(k)
         if (isinstance(v, list) and v) or str(v or "").strip():
             filled += 1
-    protag_name = str((bi.get("protagonist") or {}).get("name", "") or "").strip()
+    protag_name = str(get_mc(bi).get("name", "") or "").strip()
     return filled >= 1 or bool(protag_name)
 
 
@@ -604,11 +788,13 @@ def annotate_plot_roles(tl: BookStoryline) -> int:
     if not tl or not tl.plots:
         return 0
     bi = tl.basic_info or {}
-    protag_name = str((bi.get("protagonist") or {}).get("name", "") or "").strip()
+    protag_name = str(get_mc(bi).get("name", "") or "").strip()
     cast_map = {}
-    for c in (bi.get("supporting_cast") or []):
+    for c in get_characters(bi):
         if isinstance(c, dict) and c.get("name"):
-            cast_map[str(c["name"]).strip()] = c
+            n = str(c["name"]).strip()
+            if n != protag_name:
+                cast_map[n] = c
     names = [n for n in cast_map if len(n) >= 2 and n not in _ROLE_STOPWORDS]
     if protag_name:
         names.insert(0, protag_name)
@@ -645,7 +831,9 @@ def annotate_plot_roles(tl: BookStoryline) -> int:
             for n, c in cast_map.items():
                 if n == protag_name or n in roles:
                     continue
-                role_relation = str(c.get("role", "")) + str(c.get("relation", ""))
+                rel_txt = "".join(str(r.get("relation", "") or "")
+                                  for r in (c.get("relations") or []) if isinstance(r, dict))
+                role_relation = str(c.get("identity", "")) + str(c.get("title", "")) + rel_txt
                 if any(k in role_relation for k in rel_kws):
                     roles.append(n)
                     if len(roles) >= 3:

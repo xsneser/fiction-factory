@@ -29,7 +29,8 @@ from ui.web_blueprints.ctx import (  # noqa: E402
     ContentReviewer, DeAIEngine,
 )
 from core.text_utils import count_prose_units  # noqa: E402
-from libraries.storyline import OutlineSlot, annotate_plot_roles  # noqa: E402
+from libraries.storyline import OutlineSlot, annotate_plot_roles, \
+    get_mc, normalize_basic_info  # noqa: E402
 
 
 # ─── 基础辅助 ───
@@ -292,9 +293,14 @@ def borrow_preview(source_book_id: str) -> dict:
 # ═══════════════════════════════════════════════════
 
 def save_basic_info(book_id: str, basic_info: dict) -> dict:
-    """保存基础设定（主角/世界观/配角/基调/目标读者，深合并保留已填值），可带 book_title。"""
+    """保存基础设定（人物/世界观/基调/目标读者，深合并保留已填值），可带 book_title。
+    新 payload 传 characters 整体替换；旧 payload 传 protagonist/supporting_cast 兼容。"""
     tl = _require_tl(book_id)
     bi = dict(tl.basic_info or {})
+    if isinstance(basic_info.get("characters"), list):
+        bi["characters"] = basic_info["characters"]
+        bi.pop("protagonist", None)
+        bi.pop("supporting_cast", None)
     for section in ("protagonist", "world_building"):
         incoming = basic_info.get(section)
         if isinstance(incoming, dict):
@@ -306,6 +312,7 @@ def save_basic_info(book_id: str, basic_info: dict) -> dict:
     for field in ("supporting_cast", "tone", "target_audience", "pov", "era_language"):
         if basic_info.get(field) not in (None, ""):
             bi[field] = basic_info[field]
+    bi = normalize_basic_info(bi)
     tl.basic_info = bi
     if basic_info.get("book_title") not in (None, ""):
         tl.book_title = basic_info["book_title"]
@@ -324,7 +331,7 @@ def generate_title(book_id: str) -> dict:
     tl = _require_tl(book_id)
     llm = _require_llm()
     bi = tl.basic_info or {}
-    protag = bi.get("protagonist") or {}
+    protag = get_mc(bi)
     world = bi.get("world_building") or {}
     ctx = f"流派：{tl.genre}{'/' + tl.sub_genre if tl.sub_genre else ''}"
     if protag.get("name"):
@@ -392,7 +399,7 @@ def generate_full_outline(book_id: str) -> dict:
 
     bi = tl.basic_info or {}
     world = bi.get("world_building", {}) or {}
-    protag = bi.get("protagonist", {}) or {}
+    protag = get_mc(bi)
     ctx_parts = []
     if world.get("world_summary"):
         ctx_parts.append(f"世界观概述：{world['world_summary']}")

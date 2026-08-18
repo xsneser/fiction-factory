@@ -93,20 +93,22 @@ def _book_rows():
 
 def _basic_info_from_outline(outline, book):
     """无 timeline 的书（旧引擎路径）：从结构大纲尽力还原 basic_info 供详情页展示。"""
-    bi = {"protagonist": {}, "world_building": {}, "supporting_cast": [],
+    bi = {"characters": [], "world_building": {},
           "tone": "", "target_audience": "", "synopsis": ""}
     if not outline:
         return bi
     bi["synopsis"] = outline.get("synopsis", "") or ""
     chars = outline.get("characters", []) or []
     if isinstance(chars, list):
+        first = True
         for c in chars:
-            if not isinstance(c, dict):
+            if not isinstance(c, dict) or not c.get("name"):
                 continue
-            if not bi["protagonist"]:
-                bi["protagonist"] = c
-            else:
-                bi["supporting_cast"].append(c)
+            item = dict(c)
+            item.setdefault("role", "主角" if first else "配角")
+            item.setdefault("relations", [])
+            bi["characters"].append(item)
+            first = False
     return bi
 
 

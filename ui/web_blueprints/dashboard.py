@@ -53,12 +53,15 @@ def start_new_book():
             description = (world_idea + "。" + advanced_world) if world_idea else advanced_world
 
         basic_info = {
-            "protagonist": {
+            "characters": [{
                 "name": request.form.get("protag_name", ""),
+                "role": "主角",
                 "identity": request.form.get("protag_identity", ""),
                 "personality": request.form.get("protag_personality", ""),
                 "golden_finger": request.form.get("protag_golden_finger", ""),
-            },
+                "gender": "", "catchphrase": "", "brief": "", "title": "",
+                "age": 0, "death_year": 0, "archetype_id": "", "relations": [],
+            }],
             "world_building": {"description": description},
         }
         # 故事线想法：不再立即生成大纲，存入 basic_info 供「一键生成完整大纲」使用

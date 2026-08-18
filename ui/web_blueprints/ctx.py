@@ -25,6 +25,7 @@ from core.json_store import read_json, write_json_atomic
 from core.safe_paths import ensure_child_path, parse_int
 from libraries.storyline import (
     BookStoryline, save_storyline, load_storyline, StorylineBuilder,
+    get_mc, get_characters, relation_to_mc, normalize_basic_info,
 )
 
 # ─── 全局服务 ───
@@ -126,4 +127,5 @@ __all__ = [
     "LLMClient", "APIConfig",
     "read_json", "write_json_atomic", "ensure_child_path", "parse_int",
     "BookStoryline", "save_storyline", "load_storyline", "StorylineBuilder",
+    "get_mc", "get_characters", "relation_to_mc", "normalize_basic_info",
 ]

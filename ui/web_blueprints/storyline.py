@@ -164,7 +164,7 @@ def generate_title(storyline_id):
                        url=f"/storyline/{storyline_id}/edit")
 
     bi = tl.basic_info or {}
-    protag = bi.get("protagonist") or {}
+    protag = get_mc(bi)
     world = bi.get("world_building") or {}
     ctx = f"流派：{tl.genre}{'/' + tl.sub_genre if tl.sub_genre else ''}"
     if protag.get("name"):
@@ -458,20 +458,27 @@ def api_delete_outline(storyline_id):
 # ═══════════════════════════════════════════
 
 def api_save_basic_info(storyline_id):
-    """保存基础设定（主角/世界观/配角/基调/目标读者）。
+    """保存基础设定（人物/世界观/基调/目标读者）。
 
-    兼容草稿(tl_*)与正式书(book_*)；主角/世界观逐 key 深合并，保留用户已填值。
+    兼容草稿(tl_*)与正式书(book_*)；新 payload 传 characters 整体替换，旧 payload
+    传 protagonist/world_building 逐 key 深合并、supporting_cast 整体替换（兼容）。
+    末尾统一 normalize_basic_info 迁移旧键。
     """
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
     data = request.json or {}
-    bi = tl.basic_info or {}
+    bi = dict(tl.basic_info or {})
+
+    if isinstance(data.get("characters"), list):
+        bi["characters"] = data["characters"]
+        bi.pop("protagonist", None)
+        bi.pop("supporting_cast", None)
 
     for section in ("protagonist", "world_building"):
         incoming = data.get(section)
         if isinstance(incoming, dict):
-            base = bi.get(section, {}) or {}
+            base = dict(bi.get(section, {}) or {})
             for k, v in incoming.items():
                 if v not in (None, ""):
                     base[k] = v
@@ -481,6 +488,7 @@ def api_save_basic_info(storyline_id):
         if data.get(field) not in (None, ""):
             bi[field] = data[field]
 
+    bi = normalize_basic_info(bi)
     tl.basic_info = bi
     # 书名（与基础设定一起保存，正式书同步更新 book.json）
     if data.get("book_title") not in (None, ""):
@@ -574,7 +582,7 @@ def api_generate_full(storyline_id):
     # 用草稿已填的基础信息做上下文（保留用户输入）
     bi = tl.basic_info or {}
     world = bi.get("world_building", {}) or {}
-    protag = bi.get("protagonist", {}) or {}
+    protag = get_mc(bi)
     ctx_parts = []
     if world.get("world_summary"):
         ctx_parts.append(f"世界观概述：{world['world_summary']}")

@@ -18,16 +18,15 @@
 from typing import Callable, Optional
 import json
 
-from .storyline import BookStoryline, merge_basic_info, DEFAULT_WORLD_BUILDING
+from .storyline import (
+    BookStoryline, merge_basic_info, DEFAULT_WORLD_BUILDING,
+    get_mc, get_characters, relation_to_mc, normalize_basic_info,
+)
 from .prompt_harness import (
     PromptHarness, WORLD_BUILD_SYSTEM, WORLD_BUILD_STRUCT_SYSTEM, WORLD_CANDIDATES_SYSTEM,
 )
 
 
-_PROTAG_DEFAULTS = {
-    "name": "", "identity": "", "personality": "", "background": "",
-    "golden_finger": "", "gender": "", "age": 0, "death_year": 0,
-}
 _WORLD_SCALAR_KEYS = ("description", "era", "power_system", "geography", "culture",
                       "history", "social_structure", "core_conflict", "world_summary")
 
@@ -46,17 +45,43 @@ class WorldBuildingGenerator:
 
     @staticmethod
     def extract_seed(basic_info: dict) -> dict:
-        """从已有书 basic_info 抽非空字段做借鉴种子。"""
+        """从已有书 basic_info 抽非空字段做借鉴种子（输出旧形态 protagonist/supporting_cast，
+        保持 seed_to_text 与『从已有书借鉴』LLM 链路零改动）。"""
         basic_info = basic_info or {}
         seed = {}
-        for section in ("protagonist", "world_building", "supporting_cast"):
-            v = basic_info.get(section)
-            if isinstance(v, dict):
-                filled = {k: vv for k, vv in v.items() if vv not in (None, "", [], {})}
-                if filled:
-                    seed[section] = filled
-            elif v not in (None, "", [], {}):
-                seed[section] = v
+        mc = get_mc(basic_info)
+        proto_filled = {k: vv for k, vv in mc.items()
+                        if k not in ("relations", "archetype_id")
+                        and vv not in (None, "", [], {})}
+        if proto_filled:
+            seed["protagonist"] = {
+                "name": mc.get("name", ""), "identity": mc.get("identity", ""),
+                "personality": mc.get("personality", ""),
+                "golden_finger": mc.get("golden_finger", ""),
+                "background": mc.get("brief", "") or mc.get("background", ""),
+                "gender": mc.get("gender", ""),
+            }
+        mc_name = str(mc.get("name", "") or "").strip()
+        cast = []
+        for c in get_characters(basic_info):
+            if str(c.get("name", "") or "").strip() == mc_name:
+                continue
+            item = {
+                "name": c.get("name", ""), "role": c.get("identity", ""),
+                "relation": relation_to_mc(c, basic_info),
+                "gender": c.get("gender", ""), "title": c.get("title", ""),
+                "personality": c.get("personality", ""),
+                "catchphrase": c.get("catchphrase", ""),
+                "brief": c.get("brief", ""),
+            }
+            if item["name"]:
+                cast.append(item)
+        if cast:
+            seed["supporting_cast"] = cast
+        wb = basic_info.get("world_building") or {}
+        filled_wb = {k: vv for k, vv in wb.items() if vv not in (None, "", [], {})}
+        if filled_wb:
+            seed["world_building"] = filled_wb
         for field in ("tone", "target_audience", "pov", "era_language"):
             v = basic_info.get(field)
             if v not in (None, "", [], {}):
@@ -158,7 +183,7 @@ class WorldBuildingGenerator:
             merged["_world_generated"] = True
             tl.basic_info = merged
             yield ("phase_done", "结构化提取完成", {"phase": 2, "data": {
-                "protagonist": merged.get("protagonist", {}),
+                "protagonist": get_mc(merged),
                 "world_building": merged.get("world_building", {}),
             }})
             if on_save:
@@ -253,7 +278,7 @@ class WorldBuildingGenerator:
 
     @staticmethod
     def _backfill_schema(basic_info: dict) -> None:
-        """兜底补齐 world_building / protagonist 的规范键，避免旧书缺字段。"""
+        """兜底补齐 world_building 规范键 + characters 数组规范化（含旧键迁移），避免旧书缺字段。"""
         bi = basic_info or {}
         wb = bi.get("world_building")
         if isinstance(wb, dict):
@@ -262,8 +287,6 @@ class WorldBuildingGenerator:
                     v = DEFAULT_WORLD_BUILDING[k]
                     wb[k] = list(v) if isinstance(v, list) else v
             bi["world_building"] = wb
-        proto = bi.get("protagonist")
-        if isinstance(proto, dict):
-            for k, dv in _PROTAG_DEFAULTS.items():
-                proto.setdefault(k, dv)
-            bi["protagonist"] = proto
+        nb = normalize_basic_info(bi)
+        bi.clear()
+        bi.update(nb)

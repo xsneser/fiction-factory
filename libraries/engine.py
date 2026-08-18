@@ -26,7 +26,7 @@ from libraries.reviewer import ContentReviewer
 from libraries.assembler import BookAssemblerPlan
 from libraries.prompt_harness import PromptHarness
 from libraries.gag_injector import GagInjector
-from libraries.storyline import basic_info_world_done
+from libraries.storyline import basic_info_world_done, get_characters, get_mc, relation_to_mc
 from core.text_utils import count_prose_units
 
 
@@ -158,32 +158,25 @@ class NovelEngine:
     # ═══════════════════════════════════════════
 
     def _register_storyline_characters(self, tl):
-        """从 storyline.basic_info 注册主角与配角到 char_states（性别/性格/惯用语句/简介）。
+        """从 storyline.basic_info.characters 注册所有角色（主角/配角统一列表）到 char_states。
 
         register 重名去重保证续写不覆盖动态状态（location/mood/goal）。
         """
         if not tl:
             return
         bi = tl.basic_info or {}
-        protag = bi.get("protagonist") or {}
-        if protag.get("name"):
-            self.char_states.register(
-                protag["name"], identity=protag.get("identity", ""),
-                gender=protag.get("gender", ""),
-                personality=protag.get("personality", ""),
-                brief=protag.get("background", ""),
-                relationship_to_mc="主角",
-            )
-        for c in (bi.get("supporting_cast") or []):
+        mc_name = str(get_mc(bi).get("name", "") or "").strip()
+        for c in get_characters(bi):
             if not isinstance(c, dict) or not c.get("name"):
                 continue
+            is_mc = bool(mc_name) and str(c.get("name", "") or "").strip() == mc_name
             self.char_states.register(
-                c["name"], identity=c.get("role", ""),
+                c["name"], identity=c.get("identity", ""),
                 gender=c.get("gender", ""),
                 personality=c.get("personality", ""),
                 catchphrase=c.get("catchphrase", ""),
-                brief=c.get("brief", ""),
-                relationship_to_mc=c.get("relation", ""),
+                brief=c.get("brief", "") or c.get("background", ""),
+                relationship_to_mc="主角" if is_mc else relation_to_mc(c, bi),
             )
 
     def continue_book(self, book_id: str) -> EngineState:

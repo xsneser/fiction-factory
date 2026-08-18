@@ -15,7 +15,7 @@
 """
 from typing import Optional
 
-from .storyline import BookStoryline
+from .storyline import BookStoryline, get_characters, get_mc, relation_to_mc
 
 
 # 桥段 category → 适合的笑点 fit_scene 关键词（免费规则，不写进大纲）
@@ -185,7 +185,7 @@ class PromptHarness:
         tl = self.storyline
         if not tl:
             return ""
-        proto = (tl.basic_info or {}).get("protagonist", {}) or {}
+        proto = get_mc(tl.basic_info or {})
         if not proto.get("name"):
             return ""
         parts = [f"- 主角：{proto['name']}"]
@@ -195,8 +195,9 @@ class PromptHarness:
             parts.append(f"  性格：{proto['personality'][:80]}")
         if proto.get("golden_finger"):
             parts.append(f"  金手指：{proto['golden_finger'][:80]}")
-        if proto.get("background"):
-            parts.append(f"  背景：{proto['background'][:60]}")
+        background = proto.get("brief") or proto.get("background") or ""
+        if background:
+            parts.append(f"  背景：{background[:60]}")
         return "\n".join(parts)
 
     def _world_bullets(self) -> str:
@@ -265,18 +266,22 @@ class PromptHarness:
         tl = self.storyline
         if not tl:
             return ""
-        cast = (tl.basic_info or {}).get("supporting_cast", []) or []
+        bi = tl.basic_info or {}
+        mc_name = str(get_mc(bi).get("name", "") or "").strip()
+        cast = [c for c in get_characters(bi)
+                if isinstance(c, dict) and c.get("name")
+                and str(c["name"]).strip() != mc_name]
         if not cast:
             return ""
         lines = []
         for c in cast[:3]:
-            name = c.get("name", "") if isinstance(c, dict) else str(c)
-            gender = c.get("gender", "") if isinstance(c, dict) else ""
-            title = c.get("title", "") if isinstance(c, dict) else ""
-            role = c.get("role", "") if isinstance(c, dict) else ""
-            rel = c.get("relation", "") if isinstance(c, dict) else ""
-            personality = (c.get("personality", "") if isinstance(c, dict) else "")[:40]
-            catchphrase = (c.get("catchphrase", "") if isinstance(c, dict) else "")[:40]
+            name = c.get("name", "")
+            gender = c.get("gender", "")
+            title = c.get("title", "")
+            role = c.get("identity", "")       # 旧 role(职位) → identity
+            rel = relation_to_mc(c, bi)
+            personality = (c.get("personality", "") or "")[:40]
+            catchphrase = (c.get("catchphrase", "") or "")[:40]
             seg = f"- 配角：{name}"
             if title:
                 seg += f"（{title}）"
@@ -328,7 +333,7 @@ class PromptHarness:
         if not tl:
             return ""
         bi = tl.basic_info or {}
-        protag = bi.get("protagonist") or {}
+        protag = get_mc(bi)
         identity = str(protag.get("identity", "") or "")
         try:
             death_year = int(protag.get("death_year", 0) or 0)
@@ -605,14 +610,17 @@ class PromptHarness:
         if not self.storyline:
             return ""
         bi = self.storyline.basic_info or {}
-        protag = bi.get("protagonist") or {}
+        protag = get_mc(bi)
+        mc_name = str(protag.get("name", "") or "").strip()
         cast_map = {}
-        for c in (bi.get("supporting_cast") or []):
+        for c in get_characters(bi):
             if isinstance(c, dict) and c.get("name"):
-                cast_map[str(c["name"]).strip()] = c
+                n = str(c["name"]).strip()
+                if n != mc_name:
+                    cast_map[n] = c
         lines = []
         for rname in (p.roles or [])[:4]:
-            if rname == protag.get("name"):
+            if rname == mc_name:
                 seg = f"- {rname}（主角）"
                 if protag.get("gender"):
                     seg += f"[{protag['gender']}]"

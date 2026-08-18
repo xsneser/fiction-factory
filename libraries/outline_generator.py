@@ -17,6 +17,7 @@ import json, time
 from .storyline import (
     BookStoryline, OutlineSlot, PlotSlot, merge_basic_info, annotate_plot_roles,
     structure_to_stages, mount_themes_and_hooks, THEME_PLOT_COMPAT,
+    get_mc, get_characters, normalize_basic_info,
 )
 from .structure import StructureLibrary
 from .plot import PlotLibrary
@@ -41,7 +42,7 @@ def basic_info_is_rich(basic_info: dict) -> bool:
         v = wb.get(k)
         if (isinstance(v, list) and v) or str(v or "").strip():
             filled += 1
-    protag_name = str((bi.get("protagonist") or {}).get("name", "") or "").strip()
+    protag_name = str(get_mc(bi).get("name", "") or "").strip()
     return filled >= 4 and bool(protag_name)
 
 
@@ -157,7 +158,7 @@ class OutlineGenerator:
                     "issues": list(storyline_warnings), "phase": 1,
                 })
             yield ("phase_done", "故事分析完成", {
-                "phase": 1, "data": {"protagonist": tl.basic_info.get("protagonist", {})}
+                "phase": 1, "data": {"protagonist": get_mc(tl.basic_info)}
             })
             if on_save:
                 on_save(tl)
@@ -365,12 +366,9 @@ class OutlineGenerator:
 
     def _default_basic_info(self, genre: str) -> dict:
         return {
-            "protagonist": {"name": "", "identity": "", "personality": "",
-                            "background": "", "golden_finger": "",
-                            "gender": "", "age": 0, "death_year": 0},
+            "characters": [],
             "world_building": {"era": "异世界", "power_system": "等级制",
                                "factions": [], "rules": []},
-            "supporting_cast": [],
             "tone": "轻松爽文",
             "target_audience": "男频",
             "pov": "第三人称",
@@ -385,7 +383,7 @@ class OutlineGenerator:
         """Phase 1 后规则校验：重生/年龄/年份关系自洽（纯规则，不调 LLM）。"""
         warnings = []
         bi = basic_info or {}
-        protag = bi.get("protagonist") or {}
+        protag = get_mc(bi)
         world = bi.get("world_building") or {}
         import re as _re
         m = _re.search(r'(19|20)\d{2}', str(world.get("era", "") or ""))
@@ -494,7 +492,7 @@ class OutlineGenerator:
         )
 
         # 前文已有分析结果
-        protag = tl.basic_info.get("protagonist", {})
+        protag = get_mc(tl.basic_info)
         world = tl.basic_info.get("world_building", {})
 
         bible_block = self.harness.render_outline_context("sequence", tl) if self.harness else ""
