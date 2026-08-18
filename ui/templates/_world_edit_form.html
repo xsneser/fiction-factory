@@ -1,42 +1,20 @@
 {# ─── 设定编辑表单（原 world_card.html 迁移；依赖页面级全局 BOOK_ID / __BI__ / __BOOK_TITLE__）─── #}
 <div class="world-edit">
-    <div class="toolbar">
-        <fieldset>
-            <legend>✍️ 一句话设定</legend>
-            <textarea id="world-idea" rows="2" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…"></textarea>
-            <div class="btn-row">
-                <button class="btn-primary" id="btn-generate" onclick="startGenerate('one')">🚀 生成世界观</button>
-                <button class="btn-secondary" id="btn-candidates" onclick="loadCandidates()">🎲 示例候选</button>
-            </div>
-            <div id="candidate-box"></div>
-        </fieldset>
-
-        <fieldset>
-            <legend>📚 从已有书借鉴（提取设定做种子，再微调）</legend>
-            <div class="form-row">
-                <select id="borrow-source">
-                    <option value="">选择源书...</option>
-                    {% for b in borrow_books %}
-                    <option value="{{ b.book_id }}">{{ b.title or b.book_id }}（{{ b.genre }}）</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="form-row">
-                <input id="borrow-tweak" placeholder="微调句，如：把主角改成穿越来的程序员" value="">
-            </div>
-            <div class="btn-row">
-                <button class="btn-secondary" id="btn-borrow-preview" onclick="borrowPreview()">👀 预览将借鉴的设定</button>
-                <button class="btn-secondary" id="btn-borrow-gen" onclick="startGenerate('borrow')">📚 借鉴生成</button>
-            </div>
-            <div id="borrow-preview-box"></div>
-        </fieldset>
-    </div>
-
     <div id="gen-status" class="gen-status"></div>
 
     <form id="world-form" class="form-grid">
         <fieldset>
             <legend>🗺️ 世界观（设定圣经）</legend>
+            <div class="form-row">
+                <label>一句话设定 description</label>
+                <textarea id="world-idea" rows="2" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…"></textarea>
+            </div>
+            <div id="wb-tags-display" class="form-row hint" style="display:none"></div>
+            <div class="btn-row">
+                <button class="btn-primary" id="btn-generate" onclick="startGenerate('one')">🚀 生成世界观</button>
+                <button class="btn-secondary" id="btn-candidates" onclick="loadCandidates()">🎲 示例候选</button>
+            </div>
+            <div id="candidate-box"></div>
             <div class="form-row">
                 <label>设定概述 world_summary（一段话整体设定）</label>
                 <textarea id="wb-world_summary" rows="3"></textarea>
@@ -258,6 +236,12 @@ function biToForm(bi) {
     bi = bi || {};
     var wb = bi.world_building || {};
     $('world-idea').value = wb.description || '';
+    var tags = (wb.tags || []).filter(function(t){ return String(t).trim(); });
+    var tagsEl = $('wb-tags-display');
+    if (tagsEl) {
+        if (tags.length) { tagsEl.style.display = 'block'; tagsEl.textContent = '🏷️ 题材标签（启动向导选定，此处只读）：' + tags.join('、'); }
+        else tagsEl.style.display = 'none';
+    }
     $('wb-era').value = wb.era || ''; $('wb-power_system').value = wb.power_system || '';
     $('wb-geography').value = wb.geography || ''; $('wb-culture').value = wb.culture || '';
     $('wb-history').value = wb.history || ''; $('wb-social_structure').value = wb.social_structure || '';
@@ -269,8 +253,12 @@ function biToForm(bi) {
     $('bi-pov').value = bi.pov || ''; $('bi-era_language').value = bi.era_language || '';
 }
 function formToBi() {
+    // 标签是启动向导②选定的硬约束，此表单只读透传（保留原值）
+    var _origTags = ((typeof __BI__ !== 'undefined' ? __BI__ : {}) || {}).world_building || {};
+    _origTags = _origTags.tags || [];
     var wb = {
         description: ($('world-idea').value || '').trim(),
+        tags: Array.isArray(_origTags) ? _origTags : [],
         era: $('wb-era').value.trim(), power_system: $('wb-power_system').value.trim(),
         geography: $('wb-geography').value.trim(), culture: $('wb-culture').value.trim(),
         history: $('wb-history').value.trim(), social_structure: $('wb-social_structure').value.trim(),
@@ -293,13 +281,9 @@ function statusShow(msg, cls) {
     el.textContent = msg;
 }
 function startGenerate(mode) {
-    var body = {mode: mode};
-    if (mode === 'one') { body.idea = $('world-idea').value.trim(); }
-    if (mode === 'borrow') {
-        body.source_book_id = $('borrow-source').value;
-        body.tweak = $('borrow-tweak').value.trim();
-        if (!body.source_book_id) { alert('请先选择要借鉴的源书'); return; }
-    }
+    // 借鉴生成已挪到启动新书向导②（/api/world-builder/borrow-preview 无书别名）
+    if (mode !== 'one') return;
+    var body = {mode: 'one', idea: $('world-idea').value.trim()};
     statusShow('生成中…', '');
     fetch('/api/world-builder/' + BOOK_ID + '/generate', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
@@ -369,28 +353,6 @@ function pickCandidate(idx) {
     if (c.world_brief) $('wb-world_summary').value = c.world_brief;
     $('candidate-box').innerHTML = '';
     statusShow('已选中候选：' + c.one_liner + '。点「🚀 生成世界观」展开。');
-}
-
-/* —— 从已有书借鉴 —— */
-function borrowPreview() {
-    var sid = $('borrow-source').value;
-    if (!sid) { alert('请先选择源书'); return; }
-    fetch('/api/world-builder/' + BOOK_ID + '/borrow-preview', {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({source_book_id: sid})
-    }).then(function(r){ return r.json(); }).then(function(data) {
-        if (!data.ok) { $('borrow-preview-box').innerHTML = '<div class="gen-status err">' + data.error + '</div>'; return; }
-        var s = data.seed || {};
-        var wb = s.world_building || {};
-        var lines = [];
-        var proto = s.protagonist || {};
-        if (proto.name) lines.push('主角：' + proto.name + (proto.identity ? '（' + proto.identity + '）' : ''));
-        if (wb.era) lines.push('时代：' + wb.era);
-        if (wb.power_system) lines.push('力量体系：' + wb.power_system);
-        if (wb.geography) lines.push('地理：' + wb.geography);
-        if (wb.core_conflict) lines.push('核心矛盾：' + wb.core_conflict);
-        if (s.tone) lines.push('基调：' + s.tone);
-        $('borrow-preview-box').innerHTML = '<div class="gen-status on">将借鉴「' + data.source_title + '」(' + data.source_genre + ')：<br>' + lines.join('<br>') + '</div>';
-    }).catch(function(err){ $('borrow-preview-box').innerHTML = '<div class="gen-status err">请求失败: ' + err.message + '</div>'; });
 }
 
 /* —— 保存 / 确认 —— */

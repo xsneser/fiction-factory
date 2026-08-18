@@ -26,8 +26,7 @@ def dashboard():
 
 
 # ═══════════════════════════════════════════
-# 🔰 新书启动（两步走）
-@bp.route("/books/start", methods=["GET", "POST"])
+# 🔰 新书启动（单页多步向导）
 # ═══════════════════════════════════════════
 
 def _borrow_books(exclude_book_id: str = ""):
@@ -44,6 +43,7 @@ def _borrow_books(exclude_book_id: str = ""):
     return rows
 
 
+@bp.route("/books/start", methods=["GET", "POST"])
 def start_new_book():
     """新书启动 — v4 单页多步向导：一句话设定 → 挑选世界观(标签) → 流派 → 大纲 → 前三章。
 
