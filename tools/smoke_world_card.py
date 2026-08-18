@@ -16,22 +16,26 @@ def run_smoke():
     client = app.test_client()
     book_id = None
     try:
-        # 1) 一句话启动 → 应 302 到世界卡
+        # 1) 一句话启动 → 应 302 到书详情页（设定已并入详情页）
         r = client.post("/books/start", data={
             "world_idea": "灵气复苏后我觉醒了复制异能，绑定了一个专坑宿主的菜鸡系统",
             "genre": "玄幻", "pen_name": "枫落", "platform": "fanqie",
         })
         loc = r.headers.get("Location", "")
         print("[1] POST /books/start ->", r.status_code, loc)
-        assert r.status_code == 302 and "/world" in loc, "应重定向到世界卡"
-        book_id = loc.split("/books/")[1].split("/world")[0] if "/books/" in loc else None
+        assert r.status_code == 302 and loc.startswith("/books/"), "应重定向到书详情页"
+        assert "/world" not in loc, "不再跳独立世界卡页"
+        book_id = loc.rstrip("/").split("/books/")[1] if "/books/" in loc else None
         assert book_id, "解析 book_id 失败"
 
-        # 2) GET 世界卡页
-        r = client.get(f"/books/{book_id}/world")
+        # 2) GET 书详情页 → 应含内嵌设定编辑表单；/world 旧入口 302 回详情
+        r = client.get(f"/books/{book_id}")
         html = r.get_data(as_text=True)
-        print("[2] GET 世界卡 ->", r.status_code, "含关键词:", "世界观设定卡" in html)
-        assert r.status_code == 200 and "世界观设定卡" in html
+        print("[2] GET 详情页 ->", r.status_code, "| 内嵌设定表单:", 'id="world-idea"' in html)
+        assert r.status_code == 200 and 'id="world-idea"' in html, "详情页应内嵌设定表单"
+        rw = client.get(f"/books/{book_id}/world")
+        print("    /world 旧入口 ->", rw.status_code, "| Location:", rw.headers.get("Location", ""))
+        assert rw.status_code == 302 and f"/books/{book_id}" in rw.headers.get("Location", ""), "旧 /world 应 302 回详情"
 
         # 3) borrow-preview（借用 book_001 的种子，不调 LLM）
         r = client.post(f"/api/world-builder/{book_id}/borrow-preview",

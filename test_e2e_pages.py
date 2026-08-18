@@ -139,11 +139,10 @@ def run_tests():
         ("Dashboard", "/", ["NovelEngine", "仪表盘"]),
         ("Books", "/books", ["书库", "book"]),
         ("Start New Book", "/books/start", ["启动新书", "form"]),
-        ("Writing Desk", "/desk", ["写作台"]),
+        ("Writing Desk", "/desk", ["书库"]),  # /desk 已 302 到书库（写作台按书进入）
         ("Plots", "/plots", ["桥段库", "plot"]),
         ("Structures", "/structures", ["大纲库", "structure"]),
         ("Gags", "/gags", ["笑点库", "gag"]),
-        ("Themes", "/themes", ["内涵库", "theme"]),
         ("Profiles", "/profiles", ["笔名档案", "profile"]),
         ("New Profile", "/profiles/new", ["创建笔名", "form"]),
         ("Settings", "/settings", ["设置", "api"]),
@@ -151,6 +150,7 @@ def run_tests():
         ("DeAI Test", "/deai", ["去AI", "测试"]),
         ("Review Test", "/review-test", ["审查", "测试"]),
         ("Scout", "/scout", ["抓取", "scout"]),
+        ("Publish", "/publish", ["上架管理"]),
     ]
 
     print("\n--- Page Routes ---")
@@ -194,11 +194,10 @@ def run_tests():
         ("/", "仪表盘"),
         ("/books/start", "启动新书"),
         ("/books", "书库"),
-        ("/desk", "写作台"),
+        ("/publish", "上架管理"),
         ("/plots", "桥段库"),
         ("/structures", "大纲库"),
         ("/gags", "笑点库"),
-        ("/themes", "内涵库"),
         ("/profiles", "笔名档案"),
         ("/settings", "设置"),
         ("/scout", "小说抓取"),
@@ -228,6 +227,22 @@ def run_tests():
             check(f"Book detail ({bid})", r.status_code == 200,
                   f"got {r.status_code}")
 
+            if r.status_code == 200:
+                # 设定已并入详情页：应含可编辑设定表单（一句话设定 textarea）
+                check(f"Detail world form ({bid})",
+                      'id="world-idea"' in r.text,
+                      "world edit form not embedded in detail")
+                # 大纲已并入详情页：有故事线的书应含可编辑大纲卡片
+                if "📋 故事线大纲" in r.text:
+                    check(f"Detail outline cards ({bid})",
+                          'class="outline-card"' in r.text,
+                          "editable outline cards not in detail")
+                # 顶部按钮行不再含跳转设定/大纲的按钮（设定=页内锚点 #world-edit）
+                check(f"Detail no world/outline jump ({bid})",
+                      f'href="/books/{bid}/world"' not in r.text
+                      and f'href="/storyline/{bid}/edit"' not in r.text,
+                      "detail still has world/outline jump buttons")
+
             r = get(f"/books/{bid}/continue")
             check(f"Write flow page ({bid})", r.status_code == 200,
                   f"got {r.status_code}")
@@ -237,25 +252,21 @@ def run_tests():
                       "✍️ 写作台" in r.text or bid in r.text,
                       f"write flow marker not found for {bid}")
 
-            # 世界观设定卡页（只读校验；confirm 会 mutate，交给 tools/smoke_world_card.py 的临时书覆盖）
-            # 无故事线的遗留书会 302 回书详情——两种都算可达；不跟随重定向以便区分
+            # /world 已并入详情页：始终 302 到书详情（旧入口/书签兼容；confirm 会 mutate，交给 tools/smoke_world_card.py）
             r = s.get(urljoin(BASE, f"/books/{bid}/world"), timeout=15, allow_redirects=False)
-            if r.status_code == 302:
-                loc = r.headers.get("Location", "")
-                check(f"World card redirect ({bid})", f"/books/{bid}" in loc,
-                      f"redirect to {loc}")
-            elif r.status_code == 200:
-                check(f"World card marker ({bid})",
-                      "世界观设定卡" in r.text,
-                      "world card marker not found")
-            else:
-                check(f"World card page ({bid})", False, f"got {r.status_code}")
+            loc = r.headers.get("Location", "") if r.status_code == 302 else ""
+            check(f"World redirects to detail ({bid})",
+                  r.status_code == 302 and f"/books/{bid}" in loc,
+                  f"got {r.status_code} → {loc}")
 
-    # 书库列表：有 storyline 的书应见「🌍 设定」入口
+    # 书库操作列：只保留 详情/删除（设定/大纲已并入详情页）
     r = get("/books")
     check("Books list renders", r.status_code == 200, f"got {r.status_code}")
-    if r.status_code == 200 and "🌍 设定" not in r.text:
-        print("  (no storyline books in library - skipping world-entry check)")
+    if r.status_code == 200:
+        check("Library ops trimmed (no world btn)", "🌍 设定" not in r.text,
+              "library still shows world entry")
+        check("Library ops has delete btn", "删除" in r.text,
+              "library missing delete button")
 
     # 书详情状态感知引导：planning 无章节书不应出现「🎬 生成书名/简介」按钮（需第1章）
     for bid in book_ids[:3] if book_ids else []:
@@ -278,16 +289,19 @@ def run_tests():
     # ═══ Storyline renderer consistency ═══
     # 方案4：服务端 Jinja 渲染的桥段卡应与 JS 重绘（renderPlotList）字段一致，
     # 必须包含 线程/收局/内涵 三个徽标，防止双份渲染漂移。
+    # 依赖数据：仅当页面实际渲染了桥段卡（该书有桥段）时校验，否则跳过。
     print("\n--- Storyline Renderer Consistency ---")
     tl_editor = None
     for cand in book_ids[:3] if book_ids else []:
         r = get(f"/storyline/{cand}/edit")
-        # 规划已并入统一写作台（/storyline/<id>/edit 重定向到三栏页）；用「✍️ 写作台」标记匹配
+        # 规划已并入统一写作台（/storyline/<id>/edit 重定向到写作台页）；用「✍️ 写作台」标记匹配
         if r.status_code == 200 and "✍️ 写作台" in r.text:
             tl_editor = r
             break
     if tl_editor is None:
         print("  (no storyline editor page found - skipping renderer check)")
+    elif "plot-card" not in tl_editor.text:
+        print("  (no book with plots in library - skipping plot-card badge check)")
     else:
         for badge, label in [("线程:", "thread badge"),
                              ("↪ 收局", "payoff badge"),
