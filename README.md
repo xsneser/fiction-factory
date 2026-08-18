@@ -77,13 +77,15 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 
 ### 新书启动（单页 5 步向导）
 
-`/books/start` 为横条步骤条向导：**一句话设定 → 挑选世界观（番茄式题材标签【双强、末日】多选 + 从已有书借鉴）→ 挑选流派 → 创建并生成大纲（内联世界观 + 完整大纲 SSE）→ 进入写作台写前三章**。
+`/books/start` 为横条步骤条向导：**一句话设定 → AI 候选挑世界观（5 个方向，可借鉴）→ 微调设定（世界观置顶 + 50 题材标签 + 根据世界观生成书名/主角候选）→ 创建并生成大纲（内联世界观 + 完整大纲 SSE）→ 进入写作台写前三章**。
 
 ```
-一句话设定 → 标签/借鉴 → 流派 → 建书 → 世界生成 → 完整大纲 → 写作台（前三章）
+一句话设定 → AI候选(5方向) → 标签 + 书名/主角候选 → 建书 → 世界生成 → 完整大纲 → 写作台（前三章）
 ```
 
-题材标签存入 `world_building.tags`（预置 30 标签 `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束。
+- 题材标签存入 `world_building.tags`（预置 **50 标签 5 组** `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束。
+- 流派由标签推导（`TAG_GENRE_MAP`）；平台留到发布页。
+- 书名/主角候选走无书端点 `POST /api/world-builder/title-protag`（5 书名 + 3 主角）。
 
 ### 续写循环
 
@@ -180,7 +182,7 @@ D:\NovelEngine/
 │   ├── outline_agent.py    # 大纲助手（自然语言调整故事线）
 │   ├── base_library.py     # 四大库共用基类（单例+读写）
 │   ├── prompt_harness.py   # 集中式 prompt（书级设定卡+渲染器）
-│   ├── world_tags.py       # 预置题材标签库（番茄式【双强、末日】）
+│   ├── world_tags.py       # 预置题材标签库（50 标签 + 流派推导 TAG_GENRE_MAP）
 │   ├── book_manager.py     # 图书管理器
 │   ├── profiles.py         # 笔名风格档案
 │   ├── de_ai.py            # AI 降重
