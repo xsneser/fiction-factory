@@ -45,13 +45,14 @@ var storylineId = "{{ book.book_id }}";
 {% if characters %}
 <h3>👤 角色状态</h3>
 <table>
-    <thead><tr><th>角色</th><th>性别</th><th>性格</th><th>位置</th><th>情绪</th><th>实力</th><th>最近出场</th><th>离线</th></tr></thead>
+    <thead><tr><th>角色</th><th>性别</th><th>性格</th><th>关系</th><th>位置</th><th>情绪</th><th>实力</th><th>最近出场</th><th>离线</th></tr></thead>
     <tbody>
     {% for c in characters %}
     <tr>
         <td><strong>{{ c.name }}</strong></td>
         <td>{{ c.gender or '-' }}</td>
         <td style="font-size:12px;color:#8b949e">{{ c.personality or '-' }}{% if c.catchphrase %}「{{ c.catchphrase }}」{% endif %}</td>
+        <td>{{ c.relationship_to_mc or '-' }}</td>
         <td>{{ c.location or '-' }}</td>
         <td>{{ c.mood or '-' }}</td>
         <td>{{ c.power_level or '-' }}</td>

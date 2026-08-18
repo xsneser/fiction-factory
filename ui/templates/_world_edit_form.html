@@ -71,28 +71,12 @@
         </fieldset>
 
         <fieldset>
-            <legend>🧑 主角</legend>
-            <div class="form-row half">
-                <div><label>姓名</label><input id="p-name"></div>
-                <div><label>身份/职业</label><input id="p-identity"></div>
+            <legend>👥 人物（主角/配角统一）</legend>
+            <div class="form-row hint">每条人物一张卡片：填姓名/身份/性别/性格/口癖/关系等；角色选「主角」即为主角。可用「🎭 套用原型」从角色原型库一键填充性格与口癖。</div>
+            <div id="char-cards"></div>
+            <div class="btn-row">
+                <button type="button" class="btn-secondary" onclick="addCharCard()">➕ 添加人物</button>
             </div>
-            <div class="form-row half">
-                <div><label>性格</label><input id="p-personality"></div>
-                <div><label>金手指</label><input id="p-golden_finger"></div>
-            </div>
-            <div class="form-row half">
-                <div><label>背景</label><input id="p-background"></div>
-                <div><label>性别</label><input id="p-gender"></div>
-            </div>
-            <div class="form-row half">
-                <div><label>年龄</label><input id="p-age" type="number" min="0"></div>
-                <div><label>死亡年份（重生文用）</label><input id="p-death_year" type="number" min="0"></div>
-            </div>
-        </fieldset>
-
-        <fieldset>
-            <legend>👥 配角（JSON 数组）</legend>
-            <textarea id="sc-json" rows="5" placeholder='[{"name":"","role":"","relation":"","gender":"","title":"","personality":"","catchphrase":"","brief":""}]'></textarea>
         </fieldset>
 
         <fieldset>
@@ -139,6 +123,137 @@
 function $(id){ return document.getElementById(id); }
 
 /* —— basic_info <-> 表单 —— */
+var __ARCHETYPES__ = [];   // 角色原型库缓存（/api/characters）
+
+function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function emptyChar() {
+    return {name:'', role:'配角', identity:'', title:'', gender:'', personality:'',
+            catchphrase:'', brief:'', golden_finger:'', age:0, death_year:0,
+            archetype_id:'', relations:[]};
+}
+function legacyChars(bi) {
+    /* 旧结构 basic_info（protagonist + supporting_cast）→ characters 数组（兜底兼容） */
+    var out = [];
+    var p = bi.protagonist || {};
+    if (p.name) {
+        out.push({name: p.name, role: '主角', identity: p.identity || '',
+                  personality: p.personality || '', golden_finger: p.golden_finger || '',
+                  brief: p.background || '', gender: p.gender || '',
+                  age: p.age || 0, death_year: p.death_year || 0, catchphrase: '', title: '',
+                  archetype_id: '', relations: []});
+    }
+    var mc = (out[0] || {}).name || '';
+    (bi.supporting_cast || []).forEach(function(c) {
+        if (!c.name) return;
+        var rels = [];
+        if (c.relation && mc) rels.push({name: mc, relation: c.relation});
+        out.push({name: c.name, role: c.role || '配角', identity: c.role || '',
+                  personality: c.personality || '', golden_finger: '', brief: c.brief || '',
+                  gender: c.gender || '', age: c.age || 0, death_year: c.death_year || 0,
+                  catchphrase: c.catchphrase || '', title: c.title || '',
+                  archetype_id: c.archetype_id || '', relations: rels});
+    });
+    return out;
+}
+
+/* —— 人物条目卡片渲染 —— */
+function appendCharCard(c) {
+    c = c || emptyChar();
+    var card = document.createElement('div');
+    card.className = 'char-card';
+    card.style.cssText = 'border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px;background:#0d1117';
+    card.innerHTML =
+        '<div class="form-row half">'
+        + '<div><label>姓名</label><input class="cc" data-f="name" value="' + esc(c.name) + '"></div>'
+        + '<div><label>角色</label><select class="cc" data-f="role">'
+        + ['主角','配角','反派','其他'].map(function(r){ return '<option' + (c.role===r?' selected':'') + '>' + r + '</option>'; }).join('')
+        + '</select></div></div>'
+        + '<div class="form-row half">'
+        + '<div><label>身份/职业</label><input class="cc" data-f="identity" value="' + esc(c.identity) + '"></div>'
+        + '<div><label>称呼</label><input class="cc" data-f="title" value="' + esc(c.title) + '"></div></div>'
+        + '<div class="form-row half">'
+        + '<div><label>性别</label><input class="cc" data-f="gender" placeholder="男/女" value="' + esc(c.gender) + '"></div>'
+        + '<div><label>性格</label><input class="cc" data-f="personality" value="' + esc(c.personality) + '"></div></div>'
+        + '<div class="form-row half">'
+        + '<div><label>口癖</label><input class="cc" data-f="catchphrase" value="' + esc(c.catchphrase) + '"></div>'
+        + '<div><label>简介</label><input class="cc" data-f="brief" value="' + esc(c.brief) + '"></div></div>'
+        + '<div class="form-row half">'
+        + '<div><label>金手指</label><input class="cc" data-f="golden_finger" value="' + esc(c.golden_finger) + '"></div>'
+        + '<div style="display:flex;gap:8px"><div style="flex:1"><label>年龄</label><input class="cc" data-f="age" type="number" min="0" value="' + (c.age||0) + '"></div>'
+        + '<div style="flex:1"><label>死亡年份</label><input class="cc" data-f="death_year" type="number" min="0" value="' + (c.death_year||0) + '"></div></div></div>'
+        + '<div class="form-row" style="align-items:center;gap:8px">'
+        + '<select class="char-archetype" style="max-width:220px"></select>'
+        + '<button type="button" class="small" onclick="applyArchetype(this)">🎭 套用原型</button>'
+        + '<button type="button" class="small danger" style="margin-left:auto" onclick="removeCharCard(this)">🗑 删除此人</button></div>'
+        + '<div class="char-relations">'
+        + '<div style="font-size:12px;color:#8b949e;margin:6px 0 4px">人物关系（对方姓名 / 关系）</div>'
+        + '<div class="rel-rows"></div>'
+        + '<button type="button" class="small" onclick="addRelRow(this)">➕ 加关系</button></div>';
+    $('char-cards').appendChild(card);
+    var sel = card.querySelector('.char-archetype');
+    var opts = '<option value="">（无原型）</option>';
+    __ARCHETYPES__.forEach(function(a) {
+        opts += '<option value="' + esc(a.id) + '"' + (c.archetype_id === a.id ? ' selected' : '') + '>' + esc(a.name) + '</option>';
+    });
+    sel.innerHTML = opts;
+    var relWrap = card.querySelector('.rel-rows');
+    (c.relations || []).forEach(function(r) { appendRelRow(relWrap, r.name, r.relation); });
+}
+function renderCharCards(chars) {
+    var wrap = $('char-cards');
+    wrap.innerHTML = '';
+    (chars && chars.length ? chars : [emptyChar()]).forEach(function(c) { appendCharCard(c); });
+}
+function addCharCard() { appendCharCard(emptyChar()); }
+function removeCharCard(btn) {
+    if (!confirm('删除这条人物？')) return;
+    btn.closest('.char-card').remove();
+}
+function applyArchetype(btn) {
+    var card = btn.closest('.char-card');
+    var id = card.querySelector('.char-archetype').value;
+    var a = null;
+    for (var i = 0; i < __ARCHETYPES__.length; i++) { if (__ARCHETYPES__[i].id === id) { a = __ARCHETYPES__[i]; break; } }
+    if (!a) return;
+    card.querySelector('[data-f="personality"]').value = a.personality || '';
+    card.querySelector('[data-f="catchphrase"]').value = (a.catchphrases && a.catchphrases[0]) || '';
+    card.querySelector('[data-f="brief"]').value = a.description || '';
+    showToast('已套用原型「' + a.name + '」', 'info');
+}
+function appendRelRow(wrap, name, relation) {
+    var row = document.createElement('div');
+    row.className = 'rel-row';
+    row.style.cssText = 'display:flex;gap:6px;margin:4px 0;align-items:center';
+    row.innerHTML = '<input class="cc-rel-name" placeholder="对方姓名" value="' + esc(name||'') + '" style="flex:1;min-width:0">'
+        + '<input class="cc-rel-rel" placeholder="关系（如：师徒/宿敌/闺蜜）" value="' + esc(relation||'') + '" style="flex:1;min-width:0">'
+        + '<button type="button" class="small" onclick="this.closest(\'.rel-row\').remove()">✕</button>';
+    wrap.appendChild(row);
+}
+function addRelRow(btn) { appendRelRow(btn.closest('.char-card').querySelector('.rel-rows')); }
+function removeRelRow(btn) { btn.closest('.rel-row').remove(); }
+
+function collectCharCards() {
+    var out = [];
+    document.querySelectorAll('#char-cards .char-card').forEach(function(card) {
+        var c = {};
+        card.querySelectorAll('.cc').forEach(function(inp) {
+            var k = inp.getAttribute('data-f');
+            c[k] = (k === 'age' || k === 'death_year') ? (parseInt(inp.value, 10) || 0) : inp.value.trim();
+        });
+        c.relations = [];
+        card.querySelectorAll('.rel-row').forEach(function(row) {
+            var n = row.querySelector('.cc-rel-name').value.trim();
+            var r = row.querySelector('.cc-rel-rel').value.trim();
+            if (n) c.relations.push({name: n, relation: r});
+        });
+        if (c.name) out.push(c);
+    });
+    return out;
+}
+
 function biToForm(bi) {
     bi = bi || {};
     var wb = bi.world_building || {};
@@ -149,12 +264,7 @@ function biToForm(bi) {
     $('wb-core_conflict').value = wb.core_conflict || ''; $('wb-world_summary').value = wb.world_summary || '';
     $('wb-factions').value = factionLinesText(wb.factions);
     $('wb-rules').value = (wb.rules || []).join('\n');
-    var p = bi.protagonist || {};
-    $('p-name').value = p.name || ''; $('p-identity').value = p.identity || '';
-    $('p-personality').value = p.personality || ''; $('p-golden_finger').value = p.golden_finger || '';
-    $('p-background').value = p.background || ''; $('p-gender').value = p.gender || '';
-    $('p-age').value = p.age || ''; $('p-death_year').value = p.death_year || '';
-    $('sc-json').value = JSON.stringify(bi.supporting_cast || [], null, 1);
+    renderCharCards(Array.isArray(bi.characters) ? bi.characters : legacyChars(bi));
     $('bi-tone').value = bi.tone || ''; $('bi-target_audience').value = bi.target_audience || '';
     $('bi-pov').value = bi.pov || ''; $('bi-era_language').value = bi.era_language || '';
 }
@@ -167,22 +277,13 @@ function formToBi() {
         core_conflict: $('wb-core_conflict').value.trim(), world_summary: $('wb-world_summary').value.trim(),
         factions: parseFactionLines($('wb-factions').value), rules: parseRuleLines($('wb-rules').value),
     };
-    var proto = {
-        name: $('p-name').value.trim(), identity: $('p-identity').value.trim(),
-        personality: $('p-personality').value.trim(), golden_finger: $('p-golden_finger').value.trim(),
-        background: $('p-background').value.trim(), gender: $('p-gender').value.trim(),
-        age: parseInt($('p-age').value || '0', 10) || 0,
-        death_year: parseInt($('p-death_year').value || '0', 10) || 0,
-    };
-    var sc = [];
-    try { sc = JSON.parse($('sc-json').value || '[]'); } catch(e) { alert('配角 JSON 格式不对'); return null; }
-    var payload = {
+    return {
         book_title: BOOK_TITLE,
-        protagonist: proto, world_building: wb, supporting_cast: sc,
+        characters: collectCharCards(),
+        world_building: wb,
         tone: $('bi-tone').value, target_audience: $('bi-target_audience').value,
         pov: $('bi-pov').value, era_language: $('bi-era_language').value,
     };
-    return payload;
 }
 
 /* —— SSE：生成世界观 —— */
@@ -331,7 +432,10 @@ function confirmWorld() {
         .catch(function(err){ statusShow('❌ 确认失败: ' + err.message, 'err'); });
 }
 
-/* 初始化：渲染已有设定到表单（依赖包含页定义 __BI__ / __BOOK_TITLE__） */
-biToForm(__BI__ || {});
+/* 初始化：先取角色原型库，再渲染已有设定到表单（依赖包含页定义 __BI__ / __BOOK_TITLE__） */
 var BOOK_TITLE = __BOOK_TITLE__ || '';
+fetch('/api/characters')
+    .then(function(r){ return r.json(); })
+    .then(function(list){ __ARCHETYPES__ = list || []; biToForm(__BI__ || {}); })
+    .catch(function(){ biToForm(__BI__ || {}); });
 </script>
