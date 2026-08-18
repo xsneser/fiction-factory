@@ -6,8 +6,8 @@
 
 <ol class="wz-steps" id="wz-steps">
     <li class="wz-step active" data-step="1"><span class="wz-num">1</span>一句话设定</li>
-    <li class="wz-step" data-step="2"><span class="wz-num">2</span>挑选世界观</li>
-    <li class="wz-step" data-step="3"><span class="wz-num">3</span>挑选流派</li>
+    <li class="wz-step" data-step="2"><span class="wz-num">2</span>AI候选挑世界观</li>
+    <li class="wz-step" data-step="3"><span class="wz-num">3</span>微调设定</li>
     <li class="wz-step" data-step="4"><span class="wz-num">4</span>生成大纲</li>
     <li class="wz-step" data-step="5"><span class="wz-num">5</span>前三章撰写</li>
 </ol>
@@ -35,20 +35,16 @@
         </fieldset>
     </section>
 
-    {# ─── ② 挑选世界观：标签 chips + 从已有书借鉴 ─── #}
+    {# ─── ② AI 生成候选（挑世界观方向）+ 从已有书借鉴（备选） ─── #}
     <section class="wz-panel" id="panel-2" style="display:none">
         <fieldset>
-            <legend>🏷️ 题材标签（可多选，决定世界观套路，如番茄的【双强、末日】）</legend>
-            {% for g in world_tags %}
-            <div class="tag-group">
-                <div class="tag-group-name">{{ g.group }}</div>
-                <div class="tag-chips">
-                    {% for t in g.tags %}
-                    <button type="button" class="chip" data-tag="{{ t }}" onclick="WZ.toggleTag(this)">{{ t }}</button>
-                    {% endfor %}
-                </div>
+            <legend>🎲 AI 生成候选（从一句话设定发散世界观方向）</legend>
+            <div class="form-row">
+                <button type="button" class="btn-primary" onclick="WZ.loadCandidates()">🎲 生成候选</button>
+                <button type="button" class="btn-secondary" onclick="WZ.skipCandidates()">⏭ 跳过，手动设定</button>
             </div>
-            {% endfor %}
+            <div id="wz-candidate-box" class="wz-candidate-box"></div>
+            <div class="form-row hint" id="wz-candidate-hint" style="display:none">挑一个方向，其设定会带入下一步微调。</div>
         </fieldset>
         <fieldset>
             <legend>📚 从已有书借鉴（可选，提取设定做种子再微调）</legend>
@@ -70,8 +66,21 @@
         </fieldset>
     </section>
 
-    {# ─── ③ 流派 / 平台 / 书名与主角 ─── #}
+    {# ─── ③ 微调设定：题材标签 + 流派/平台/书名/主角 ─── #}
     <section class="wz-panel" id="panel-3" style="display:none">
+        <fieldset>
+            <legend>🏷️ 题材标签（流派/题材一体，可多选，如番茄的【双强、末日】）</legend>
+            {% for g in world_tags %}
+            <div class="tag-group">
+                <div class="tag-group-name">{{ g.group }}</div>
+                <div class="tag-chips">
+                    {% for t in g.tags %}
+                    <button type="button" class="chip" data-tag="{{ t }}" onclick="WZ.toggleTag(this)">{{ t }}</button>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </fieldset>
         <fieldset>
             <legend>📦 流派与平台</legend>
             <div class="form-row half">
@@ -239,6 +248,17 @@
 .chip:hover { border-color:#58a6ff; color:#f0f6fc; }
 .chip.on { background:#1f6feb; border-color:#1f6feb; color:#fff; }
 .wz-borrow-preview { font-size:12px; color:#8b949e; line-height:1.6; }
+.wz-candidate-box { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+.wz-candidate-card {
+    background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:10px 12px;
+    cursor:pointer; transition:all .2s;
+}
+.wz-candidate-card:hover { border-color:#58a6ff; }
+.wz-candidate-card.picked { border-color:#3fb950; background:#23863622; }
+.wz-cand-title { color:#58a6ff; font-weight:600; font-size:13px; margin-bottom:4px; }
+.wz-cand-one { color:#c9d1d9; font-size:12px; margin-bottom:4px; }
+.wz-cand-brief { color:#8b949e; font-size:11px; line-height:1.6; margin-bottom:4px; }
+.wz-cand-hint { color:#6e7681; font-size:11px; }
 .wz-feed { font-size:12px; line-height:1.8; max-height:320px; overflow-y:auto; }
 .wz-feed .gf-item { padding:2px 0; border-left:2px solid #30363d; padding-left:8px; margin:1px 0; }
 .wz-feed .gf-item.success { border-left-color:#3fb950; color:#7ee787; }
@@ -325,6 +345,57 @@ var WZ = {
             if (seed.tone) lines.push('· 基调：' + seed.tone);
             box.textContent = lines.join('\n');
         }).catch(function() { WZ.el('wz-borrow-preview-box').textContent = '❌ 预览失败'; });
+    },
+
+    /* —— AI 生成候选（无书端点，建书前）—— */
+    loadCandidates: function() {
+        var idea = this.el('wz-idea').value.trim();
+        var box = this.el('wz-candidate-box');
+        box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成候选…</div>';
+        var genre = (this.el('wz-genre') && this.el('wz-genre').value) || '';
+        var self = this;
+        fetch('/api/world-builder/candidates', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idea: idea, genre: genre })
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            if (!d.ok) { box.innerHTML = '❌ ' + d.error; return; }
+            window.__CANDIDATES__ = d.candidates || [];
+            var html = '';
+            (window.__CANDIDATES__ || []).forEach(function(c, idx) {
+                html += '<div class="wz-candidate-card" onclick="WZ.pickCandidate(' + idx + ')">'
+                    + '<div class="wz-cand-title">#' + (idx + 1) + ' ' + (c.title || '') + '</div>'
+                    + '<div class="wz-cand-one">' + (c.one_liner || '') + '</div>'
+                    + (c.world_brief ? '<div class="wz-cand-brief">' + c.world_brief + '</div>' : '')
+                    + '<div class="wz-cand-hint">『' + (c.genre_hint || '') + '』</div>'
+                    + '</div>';
+            });
+            box.innerHTML = html;
+            self.el('wz-candidate-hint').style.display = 'block';
+        }).catch(function(e) { box.innerHTML = '❌ 请求失败: ' + e.message; });
+    },
+    pickCandidate: function(idx) {
+        var c = (window.__CANDIDATES__ || [])[idx];
+        if (!c) return;
+        // 并入而非覆盖：one_liner 进一句话、world_brief 进世界观补充、genre_hint 预填子类型
+        if (c.one_liner) {
+            var ideaEl = this.el('wz-idea');
+            if (ideaEl) ideaEl.value = ideaEl.value.trim() ? ideaEl.value.trim() + '。' + c.one_liner : c.one_liner;
+        }
+        if (c.world_brief) {
+            var wd = this.el('wz-world_desc');
+            if (wd) wd.value = wd.value.trim() ? wd.value.trim() + '。' + c.world_brief : c.world_brief;
+        }
+        if (c.genre_hint) {
+            var sg = this.el('wz-sub_genre');
+            if (sg) sg.value = c.genre_hint;
+        }
+        var cards = document.querySelectorAll('#wz-candidate-box .wz-candidate-card');
+        for (var i = 0; i < cards.length; i++) cards[i].classList.toggle('picked', i === idx);
+        if (typeof showToast === 'function') showToast('已选中：' + c.title + '，下一步可微调', 'success');
+    },
+    skipCandidates: function() {
+        this.el('wz-candidate-box').innerHTML = '';
+        this.show(3);
     },
 
     collect: function() {

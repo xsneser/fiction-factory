@@ -163,6 +163,27 @@ def api_world_candidates(book_id):
     return jsonify({"ok": True, "candidates": candidates})
 
 
+# 无 book_id 别名：新书启动向导②在建书前生成 AI 候选（generate_candidates 本就不读目标书）
+@bp.route("/api/world-builder/candidates", methods=["POST"])
+def api_world_candidates_nobook():
+    """示例候选（无目标书版本，供启动向导②）：body {idea, genre?, sub_genre?}。"""
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    sub_genre = (body.get("sub_genre") or "").strip()
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置，请先在设置页配置 API"}), 500
+    from libraries.world_builder import WorldBuildingGenerator
+    from libraries.prompt_harness import PromptHarness
+    harness = PromptHarness()   # 无书：storyline=None，_tags_block 空
+    gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
+    candidates = gen.generate_candidates(genre=genre, sub_genre=sub_genre, idea=idea)
+    if not candidates:
+        return jsonify({"ok": False, "error": "示例候选生成失败，请重试"}), 500
+    return jsonify({"ok": True, "candidates": candidates})
+
+
 # ═══════════════════════════════════════════
 # API：从已有书借鉴预览
 # ═══════════════════════════════════════════
