@@ -55,8 +55,13 @@ description: >-
 2. 在聊天里定：方向、笔名、一句话种子（上面的决策点）。
 3. `drive_ui(set_field {field:"idea", value:种子})` + `drive_ui(set_field {field:"pen", value:笔名})` + `drive_ui(next)`——**同批推送，浏览器按序应用**（向导步 1 校验 idea+pen 非空后进步 2）。
 4. **世界观候选（必须完成，见上）**：默认路线 A——`drive_ui(load_candidates)` → 用户在平台点选候选卡 → 确认后 `drive_ui(next)`。
-5. 向导步 3：`drive_ui(set_tags {tags:[题材标签]})`（必做，标签从平台 `WORLD_TAGS` 挑，流派随之推导）；**书名已由候选带入步 3，用户想改才 `drive_ui(set_field title=...)`**；可选 `drive_ui(gen_characters)` 让用户在浏览器点「添加」角色。
-6. `drive_ui(submit)` → **系统** `POST /books/start` 建书（phase=config）——**不再自动生成**，世界观+大纲由 agent 生成（见下）。
+5. 向导步 3：`drive_ui(set_tags {tags:[题材标签]})`（必做，标签从平台 `WORLD_TAGS` 挑，流派随之推导）；**书名已由候选带入步 3，用户想改才 `drive_ui(set_field title=...)`**。
+6. **角色（agent 自动生成，不询问、不让用户点浏览器按钮）**：
+   - `query_characters` 看角色原型库 → 分析哪些原型契合当前题材/标签/流派。
+   - `generate_characters(idea=世界观简述, title, tags, genre, archetype_ids=选中的原型)` 生成主角+配角候选。
+   - `drive_ui(set_characters, {characters:[平铺映射后的列表]})` 推给页面角色列表（主角补 importance=1、配角补 relation，字段 name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id）。
+   - 用户在浏览器可编辑/删角色行后继续。
+7. `drive_ui(submit)` → **系统** `POST /books/start` 建书（phase=config）——**不再自动生成**，世界观+大纲由 agent 生成（见下）。
 
 ## submit 后：agent 经 MCP 生成世界观 + 完整大纲（关键）
 - `drive_ui(submit)` 建书后，向导第 4 步显示故事线 Gantt 空态并轮询填充。
