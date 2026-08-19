@@ -59,7 +59,7 @@ description: >-
 6. **角色（agent 自动生成，不询问、不让用户点浏览器按钮）**：
    - `query_characters` 看角色原型库 → 分析哪些原型契合当前题材/标签/流派。
    - `generate_characters(idea=世界观简述, title, tags, genre, archetype_ids=选中的原型)` 生成主角+配角候选。
-   - `drive_ui(set_characters, {characters:[平铺映射后的列表]})` 推给页面角色列表（主角补 importance=1、配角补 relation，字段 name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id）。
+   - `drive_ui(set_characters, {characters:[平铺映射后的列表]})` 推给页面角色列表——**传全 14 字段**：`name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id/gender/brief/title/age/death_year/role`（主角 importance=1、配角补 relation；gender/brief/title/age/death_year 由 generate_characters 产出，agent 原样透传，向导不展示但会保到建书，详情页可编辑）。
    - 用户在浏览器可编辑/删角色行后继续。
 7. `drive_ui(submit)` → **系统** `POST /books/start` 建书（phase=config）——**不再自动生成**，世界观+大纲由 agent 生成（见下）。
 
@@ -67,7 +67,7 @@ description: >-
 - `drive_ui(submit)` 建书后，向导第 4 步显示故事线 Gantt 空态并轮询填充。
 - 用只读工具轮询定位新书：
   1. `list_books` → 找到新书 `book_id`。
-  2. **生成世界观**：`generate_world(book_id, mode="one", idea=所选候选的 one_liner)`（阻塞，写入 basic_info）。
+  2. **生成世界观（必须调，跳过即详情页 12 维度残缺）**：`generate_world(book_id, mode="one", idea=所选候选的 one_liner)`（阻塞，写入 basic_info——era/power_system/factions/rules/geography/culture/history/social_structure/core_conflict/world_summary 全填）。
   3. **生成完整大纲**：`generate_full_outline(book_id)`（阻塞数分钟，逐步落盘——向导第 4 步 Gantt 实时填充）。
   4. `get_book_detail(book_id)` 确认 `phase == "ready"`。
   5. `navigate(url="/books/<book_id>/continue")` 交棒写作台写前三章。
