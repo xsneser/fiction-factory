@@ -893,13 +893,20 @@ class PromptHarness:
 
     def render_world_candidates_prompt(self, idea: str, genre: str = "",
                                        sub_genre: str = "", count: int = 5) -> str:
-        """示例候选：一次产出 count 个差异化世界观候选。"""
+        """示例候选：一次产出 count 个差异化世界观候选。
+
+        步 1 用户只给一句话设定、不选流派——【流派】未指定时要求 AI 自行推导该设定
+        隐含的题材/流派，再在其框架内发散差异明显的方向；不注入固定子流派示例，
+        避免输出被示例模板固化。
+        """
         tb = self._tags_block()
         return "\n".join([
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
+            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else "（未指定，由你从一句话设定推导）"),
             f"【一句话设定】{idea or '（无，按流派自由发散）'}",
             tb if tb else "",
-            f"【要求】从这句话/流派发散出 {count} 个截然不同的世界观方向，方向之间差异要明显（如：废土系统流 / 灵气复苏权谋流 / 异界学院召唤流）。",
+            f"【要求】从这句话发散出 {count} 个截然不同的世界观方向，方向之间差异要明显。"
+            f"若【流派】未指定：先自行推导这句话隐含的题材/流派（例如用户想写的是都市、玄幻、科幻、悬疑、历史等），"
+            f"再在该题材框架内发散差异明显的方向；不要套用固定的子流派模板，候选应体现同源设定下的不同走向。",
             '返回 JSON：{"candidates":[{"title":"候选名/书名","one_liner":"一句话核心设定（可直接作为新书的一句话种子）","world_brief":"120-200字世界观简述","genre_hint":"子流派标签"}]}',
         ])
 
