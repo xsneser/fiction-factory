@@ -1,10 +1,10 @@
 # NovelEngine — Claude Code 工作台
 
-NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 36 个工具（MCP 面 35，`canvas_command` 仅 Web），Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
+NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 38 个工具（MCP 面 35，`canvas_command` 仅 Web），Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
 
 | 阶段 | 分 skill | 前置 phase | 出口 | 主要工具 |
 |---|---|---|---|---|
-| 建书 | `novel-build` | 无书 / phase=config | `config` + `_world_generated` | create_book / world_candidates / generate_world / save_basic_info / confirm_world / generate_title |
+| 建书 | `novel-build` | 无书 / phase=config | `config` + `_world_generated` | drive_ui（驱动建书向导）/ world_candidates / generate_world / save_basic_info / confirm_world / generate_title |
 | 大纲 | `novel-outline` | `config` 且 basic_info 充实 | `ready` | outline_material_candidates / generate_full_outline / generate_outlines / confirm_outlines / fill_plots / fill_gags / extend_outline |
 | 写作 | `novel-write` | `ready` | 章节/桥段写完 | write_next_bridge / write_chapter / generate_book_meta / review_text / deai_text / diagnose_retention / tag_punch_points |
 | 上架 | `novel-publish` | 已有第 1 章正文 | `published` / `finished` | publish_check / publish_book / mark_finished / export_book |

@@ -22,7 +22,7 @@
 ```
 ┌─ 外部驱动层（P0，新增）────────────────────────┐
 │  launch.bat 入口                                │
-│  MCP 工具面（37 工具，MCP 面 36，surface 分离）   │
+│  MCP 工具面（38 工具，MCP 面 35，surface 分离）   │
 │  navigate 外部驱动桥（意图队列 → 浏览器轮询）      │  ← 新增
 │  外部工具日志打通（mcp 调用进 tool-log）           │  ← 新增
 │  外部 harness 接入（Claude Code / OpenClaw ACP） │
@@ -90,9 +90,9 @@
 
 ### 1.2 MCP 工具面（现状，已核实）
 
-- `agent_tools.py` 的 `TOOL_REGISTRY`（37 工具，MCP 面 36）是单一来源；`mcp_server.py`（纯适配）逐个 `mcp.tool()` 注册（按 surface 过滤 + `functools.wraps` 落日志），stdio；Web 侧栏 `agent_loop`（`plugins/agent_loop.py`）复用同一注册表。**双端共享同一工具面。**
+- `agent_tools.py` 的 `TOOL_REGISTRY`（38 工具，MCP 面 35）是单一来源；`mcp_server.py`（纯适配）逐个 `mcp.tool()` 注册（按 surface 过滤 + `functools.wraps` 落日志），stdio；Web 侧栏 `agent_loop`（`plugins/agent_loop.py`）复用同一注册表。**双端共享同一工具面。**
 - 工具分组（`_build_registry` 顺序）：
-  - 导航：`navigate` / `canvas_command`（`canvas_command` 为 web-only，MCP 面 36 不含）
+  - 导航/向导：`navigate` / `canvas_command` / `drive_ui`（`canvas_command`/`create_book`/`delete_book` 为 web-only——建书/删书必须走系统界面，MCP 面 35 不含；`drive_ui` 外部经意图桥驱动建书向导表单）
   - 只读：`list_books` / `get_book_state` / `get_storyline` / `borrow_preview` / `get_book_detail` / `query_structures` / `query_plots` / `query_gags` / `query_profiles`
   - 建书规划：`create_book` / `save_basic_info` / `generate_title` / `generate_outlines` / `generate_full_outline` / `extend_outline` / `confirm_outlines` / `fill_plots` / `fill_gags` / `outline_agent` / `outline_material_candidates` / `generate_world` / `world_candidates` / `confirm_world`
   - 写作：`write_next_bridge` / `write_chapter` / `generate_book_meta`
@@ -356,14 +356,14 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
 - P4：工具 `get_book_detail` / `query_structures` / `query_plots` / `query_gags` / `query_profiles`（只读 both）+ `libraries/retention.py` 追读诊断 + `libraries/tag_generator.py` 爽点标注（工具 `diagnose_retention` / `tag_punch_points`）。注册表 29→36 工具。
 
 **外部驱动验收记录（2026-08-19）**：
-- **MCP 注册**：`.mcp.json`（project 级），Claude Code 重启会话后自动加载，MCP 面 **36 工具**（`navigate` 在列、`canvas_command` web-only 不在列）。
+- **MCP 注册**：`.mcp.json`（project 级），Claude Code 重启会话后自动加载，MCP 面 **35 工具**（`navigate`/`drive_ui` 在列；`create_book`/`delete_book`/`canvas_command` web-only 不在列——建书/删书护栏）。
 - **`tools/mcp_smoke.py` 协议验收 17/17 通过**：`initialize` 握手 → `tools/list`（36 工具）→ `tools/call` 真实往返（create_book → save_basic_info → generate_outlines(rule) → confirm_outlines → fill_gags → get_book_detail）→ navigate 写入意图队列 → tool-log `source="mcp"`（14 条）→ delete_book 安全门。零 LLM 成本，跑完清理。
 - **过程中修复两处 MCP 面 bug**：
   1. `navigate` 误标 `surface="web"` → 外部 MCP 调不到、意图桥失效 → 改 `surface="both"`（内部 SSE 直达 + 外部意图桥，同一函数写 `nav_intent.json`）。
   2. `_wrap_book_lock` 手写包装只设 `__name__`/`__doc__` → `inspect.signature` 看到 `(**kwargs)` → FastMCP 给 `fill_gags` 等 10 个锁定工具生成错误 schema → 改 `functools.wraps` 保留 `__wrapped__` 签名链。
 - **真实 LLM 驱动延后**（用户择机）：`generate_full_outline`（6 阶段）/ `write_next_bridge` 经 MCP 的 LLM 往返，以及 Claude Code 新会话 prompt 驱动（浏览器可视化 + tool-log `source=mcp`）——含 deepseek-v4-flash 成本。
 
-**与 v0.2 批次映射**：v0.2 的 P0-a/P0-b（llm_client / 遥测 / 路由）在 v0.3 中并入 §五，**不阻塞 P1**——P1 外部驱动桥依赖的是现状 37 工具（MCP 面 36），不依赖遥测/路由。P1 落地后再补 §5.1-5.3，用真实 usage 观测外部驱动的成本与缓存命中率。
+**与 v0.2 批次映射**：v0.2 的 P0-a/P0-b（llm_client / 遥测 / 路由）在 v0.3 中并入 §五，**不阻塞 P1**——P1 外部驱动桥依赖的是现状 38 工具（MCP 面 35），不依赖遥测/路由。P1 落地后再补 §5.1-5.3，用真实 usage 观测外部驱动的成本与缓存命中率。
 
 ---
 
