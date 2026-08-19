@@ -38,15 +38,12 @@
             {% block content %}{% endblock %}
         </main>
         <aside id="status-bar">
-            <div class="status-head">
-                <div class="status-title">🤖 Agent</div>
-                <button class="status-toggle" onclick="toggleStatusBar()" title="折叠 Agent" aria-label="折叠 Agent">◀</button>
-            </div>
             <div class="agent-tabs">
                 <a data-tab="chat" class="active" onclick="switchAgentTab('chat')">💬 对话</a>
                 <a data-tab="tools" onclick="switchAgentTab('tools')">🔧 工具日志</a>
+                <button class="status-toggle" onclick="toggleStatusBar()" title="折叠" aria-label="折叠">◀</button>
             </div>
-            {# OpenClaw 式 Agent 聊天助手：对话 + 工具步骤卡，可操作全链路（创建→上架）并导航页面 #}
+            {# 内嵌 Agent 对话（左页签）与外部 MCP 工具日志（右页签）为两种模式，输入区只属于对话页签 #}
             <div id="agent-chat"></div>
             <div id="agent-tools-log" style="display:none"></div>
             <div id="agent-input-wrap">
@@ -59,7 +56,7 @@
             </div>
         </aside>
     </div>
-    <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开 Agent" aria-label="展开 Agent">▶</button>
+    <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开" aria-label="展开">▶</button>
 
     <div id="toast-root"></div>
     <script src="{{ url_for('static', filename='js/agent_panel.js') }}"></script>
