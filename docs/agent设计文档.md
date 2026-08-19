@@ -337,17 +337,23 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
 
 ## 六、落地路线图（步骤规划）
 
-| Phase | 内容 | 优先级 | 依赖 | 验证 |
-|---|---|---|---|---|
-| P1 | **外部驱动桥**：navigate 意图队列（§1.3）+ 外部工具日志（§1.4）+ MCP surface 分离与书锁（§1.6）→ 跑通「外部 agent 建书→大纲→写作」最小闭环 | P0 | 无 | Claude Code 挂 MCP，prompt「新建一本 X 小说并写前三章」，浏览器跟随可视化 + tool-log 记录外部调用 |
-| P2 | **大纲 skill**：agent 选材决策点（§2.2，选模板/选桥段） | P1 | P1 | 对比有无选材决策点的故事线质量与一致性 |
-| P3 | **写作 skill**：分角色扩充 + 有界自评（§2.3） | P1 | P1 | 对比有无自评的章节审校分 / AI 痕迹 |
-| P4 | **上架 skill + 信息工具补全**（§2.4/§4.2）+ 追读诊断（§4.3 可选） | P2 | P1 | agent 完成发布流程 |
+| Phase | 内容 | 优先级 | 依赖 | 验证 | 状态 |
+|---|---|---|---|---|---|
+| P1 | **外部驱动桥**：navigate 意图队列（§1.3）+ 外部工具日志（§1.4）+ MCP surface 分离与书锁（§1.6）→ 跑通「外部 agent 建书→大纲→写作」最小闭环 | P0 | 无 | Claude Code 挂 MCP，prompt「新建一本 X 小说并写前三章」，浏览器跟随可视化 + tool-log 记录外部调用 | ✅ 已落地 |
+| P2 | **大纲 skill**：agent 选材决策点（§2.2，选模板/选桥段） | P1 | P1 | 对比有无选材决策点的故事线质量与一致性 | ✅ 已落地 |
+| P3 | **写作 skill**：分角色扩充 + 有界自评（§2.3） | P1 | P1 | 对比有无自评的章节审校分 / AI 痕迹 | ✅ 已落地 |
+| P4 | **上架 skill + 信息工具补全**（§2.4/§4.2）+ 追读诊断（§4.3 可选） | P2 | P1 | agent 完成发布流程 | ✅ 已落地 |
 
 **里程碑**：
 - **P1 落地 = 「外部可驱动的 skill 平台」的最小闭环成立**，是本次定位的起点。
 - P2/P3 落地 = 「决策点 + 批处理」原则在创作链上兑现。
 - P4 落地 = 全链路可被外部 agent 驱动。
+
+**实现记录（2026-08-19，dev 分支）**：
+- P1：`libraries/book_lock.py`（书级文件锁）、`agent_tools` surface 分离 + `tools_for_surface` + 写工具书锁包装、`libraries/nav_intent.py`（意图队列 + TTL）、`navigate` 写意图 + `tab` 参数、`GET /api/agent/nav-intents`、`libraries/tool_log.py`（web/mcp 合并日志）、`mcp_server` functools.wraps 落 source=mcp 日志。
+- P2：`OutlineGenerator.generate(agent_picks=)`——决策点 A 预选模板（`_sequence_from_picks`）+ 选材复查 pass（`_review_outline_sequence`，多次思考保证稳定）；决策点 B 预选桥段（`_arrange_plots_for_outline` 逐阶段校验）；工具 `outline_material_candidates` 暴露候选池。
+- P3：`prompt_harness._roles_status_block` 分角色态势表（规则层零成本）；`storyline_writer` flash 自检（`_self_check_group`）+ 限 1 次重写（`_rewrite_group_once`），`SELF_CHECK_ENABLED` 开关。
+- P4：工具 `get_book_detail` / `query_structures` / `query_plots` / `query_gags`（只读 both）+ `libraries/retention.py` 追读诊断 + `libraries/tag_generator.py` 爽点标注（工具 `diagnose_retention` / `tag_punch_points`）。注册表 29→36 工具。
 
 **与 v0.2 批次映射**：v0.2 的 P0-a/P0-b（llm_client / 遥测 / 路由）在 v0.3 中并入 §五，**不阻塞 P1**——P1 外部驱动桥依赖的是现状 29 工具，不依赖遥测/路由。P1 落地后再补 §5.1-5.3，用真实 usage 观测外部驱动的成本与缓存命中率。
 
@@ -355,10 +361,10 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
 
 ## 七、待人工确认清单
 
-1. **有界自评 vs 成本纪律**：写作 skill 的 flash 自检（§2.3 B）反转 memory「写作质量优化不加 LLM 后处理」——建议确认反转（低成本、限 1 次重写、有成本上限）。
-2. **大纲选材决策点的介入位置**（§2.2）：阶段 2 前选模板 + 阶段 3 前选桥段（建议），还是只选其一；模型用 reasoner（建议）还是 flash。
-3. **navigate 桥实现形态**（§1.3）：JSON 意图队列 + 浏览器 3s 轮询（建议），TTL 30s。
-4. **信息工具粒度**（§4.2）：是否全要（4 枚），还是先最小两枚（`get_book_detail` / `query_plots`）。
+1. **有界自评 vs 成本纪律**：✅ 已按建议落地（`SELF_CHECK_ENABLED=True`，flash 自检 + 限 1 次重写 + 成本有界）；此实现反转 memory「写作质量优化不加 LLM 后处理」，**仍需用户复核是否保留**（如不认可可把常量改 False）。
+2. **大纲选材决策点**：✅ 已落地（阶段 2 前选模板 + 阶段 3 前选桥段，`agent_picks` 外部预选 + 选材复查 pass）；模型沿用管线默认 flash（reasoner 可选，未强制）。
+3. **navigate 桥实现形态**：✅ 已按建议落地（JSON 意图队列 + 浏览器 2.5s 轮询 + TTL 30s）。
+4. **信息工具粒度**：✅ 已全量落地（`get_book_detail` / `query_structures` / `query_plots` / `query_gags`，另加 `diagnose_retention` / `tag_punch_points`）。
 5. 原 v0.2 §十三 遗留项（保留，按 v0.2 建议值）：
    - Op→模型默认表：`outline_plot` 是否降 flash；`world_struct` 是否 reasoner
    - 降级阈值：预算 50%/20%/5%；上下文 70%/85%
