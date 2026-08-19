@@ -46,6 +46,35 @@ def basic_info_is_rich(basic_info: dict) -> bool:
     return filled >= 4 and bool(protag_name)
 
 
+def normalize_plot_picks(picks):
+    """把外部预选桥段归一化为「扁平优先序列表」。
+
+    兼容两种形态：
+      - 推荐：扁平列表 [plot_id, ...]（与 outline_material_candidates 返回的 plots 形状一致）。
+        语义 = 全书出现优先级；每个阶段消费队首第一个命中候选池的未消费预选作锚点，
+        其余槽位规则回填，随后阶段继续按序消费；用尽即回退 AI/规则。
+      - 兼容（旧契约，已弃用）：{"<outline_id>": ["plot_id", ...]}。
+        outline_id 在选材阶段尚不存在（大纲在 generate 内生成），无法按弧映射，
+        故按 dict 值序展开成扁平列表处理。
+    去重后返回扁平 id 列表；无预选返回 []。
+    """
+    plots = (picks or {}).get("plots") if isinstance(picks, dict) else []
+    if not plots:
+        return []
+    if isinstance(plots, dict):
+        flat = [x for v in plots.values() for x in (v or [])]
+    elif isinstance(plots, (list, tuple)):
+        flat = list(plots)
+    else:
+        return []
+    seen, out = set(), []
+    for x in flat:
+        if isinstance(x, str) and x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
 # ═══════════════════════════════════════════
 # 生成器
 # ═══════════════════════════════════════════
@@ -126,6 +155,9 @@ class OutlineGenerator:
 
         storyline: 传入现有 BookStoryline 则原地累加（供逐步落盘）；None 则新建。
         on_save:  每阶段完成后回调 on_save(tl)，用于把大纲/桥段/内涵"挨个步骤写进配置文件"。
+        agent_picks: 决策点预选（可选）。{"templates": [structure_id, ...],
+            "plots": [plot_id, ...]}——plots 为扁平优先序列表（normalize_plot_picks 归一化），
+            语义=全书出现优先级，跨 outline/跨阶段按序消费；兼容旧 dict 形态（按值序展开，已弃用）。
         """
         tl = storyline if storyline is not None else BookStoryline(
             genre=genre, sub_genre=sub_genre,
@@ -133,6 +165,10 @@ class OutlineGenerator:
         )
         if self.harness:
             self.harness.storyline = tl
+
+        # 决策点 B 状态：外部预选桥段（扁平优先序）→ 跨 outline/跨阶段按序消费
+        plot_queue = normalize_plot_picks(agent_picks)
+        picks_state = {"queue": plot_queue, "consumed": set()} if plot_queue else None
 
         total_phases = 6
         issues = []
@@ -200,7 +236,7 @@ class OutlineGenerator:
                 yield ("progress",
                        f"编排桥段: {outline.name} ({oi+1}/{len(outlines)})", {})
                 plots = yield from self._arrange_plots_for_outline(
-                    outline, tl, genre, agent_picks=agent_picks)
+                    outline, tl, genre, picks_state=picks_state)
                 all_plots = tl.plots  # 桥段已逐个落库，供实时刷新
                 yield ("outline_plots", outline.name, {
                     "outline_id": outline.id, "plot_count": len(plots),
@@ -770,18 +806,26 @@ class OutlineGenerator:
 
     def _arrange_plots_for_outline(
         self, outline: OutlineSlot, tl: BookStoryline, genre: str,
-        agent_picks: Optional[dict] = None,
+        picks_state: Optional[dict] = None,
     ):
         """为一个大纲的每个阶段匹配桥段（AI 选择，避免跨阶段重复与类型错配）。
 
         生成器：yield thinking/decision/plot_added 事件，最终 return list[PlotSlot]。
-        决策点 B：agent_picks["plots"][outline_id] 为外部预选桥段模板 id（优先使用）。
+        决策点 B：picks_state["queue"] 为外部预选桥段的扁平优先序（normalize_plot_picks
+        归一化）；每个阶段从候选池中命中「未消费的最高优先级预选」，消费 1 个作锚点，
+        其余槽位规则回填（回填排除全部预选 id，避免把后续阶段的预选提前顺走）；
+        无预选命中则回退 AI/规则。
         """
         if not self.plots:
             return []
 
-        picks_for = ((agent_picks or {}).get("plots") or {})
-        pre_pick_ids = [i for i in (picks_for.get(outline.id) or []) if i]
+        queue = (picks_state or {}).get("queue")
+        consumed = (picks_state or {}).get("consumed")
+        if queue is None:
+            queue = []
+        if consumed is None:
+            consumed = set()
+        pri = {pid: i for i, pid in enumerate(queue)}   # 优先序索引（候选池保序≠优先序）
 
         new_plots = []
         used_ids = set()   # 本大纲内已用桥段模板 id，避免跨阶段重复
@@ -802,21 +846,30 @@ class OutlineGenerator:
             elif unused:
                 candidates = unused + [t for t in candidates if t.id in used_ids]
 
-            selected = candidates[:min(3, len(candidates))]  # 每阶段 1-3 个桥段
-            pre = [t for t in candidates if t.id in pre_pick_ids] if pre_pick_ids else []
+            selected = candidates[:min(3, len(candidates))]  # 默认兜底（防空阶段）
+            pre = [t for t in candidates if t.id in pri and t.id not in consumed]
+            # 预选只能经「锚点」机制进入：reserved 把本阶段候选池里全部预选（含已消费）
+            # 挡在规则/AI 回填之外，防止未消费预选被 filler 顺走造成跨弧重复
+            reserved = {t.id for t in candidates if t.id in pri}
+            filler_pool = [t for t in candidates if t.id not in reserved]
             if pre:
-                # 决策点 B：外部预选桥段（校验在候选池内才用；某阶段不匹配则本阶段回退 AI）
-                selected = pre[:3]
+                # 决策点 B：按全局优先序每阶段消费 1 个锚点 + 非预选规则回填（零额外 LLM 成本）
+                pre.sort(key=lambda t: pri[t.id])
+                chosen = pre[0]
+                consumed.add(chosen.id)
+                selected = [chosen] + filler_pool[:2]
                 yield ("decision", "plot_choice", {
                     "step": f"「{outline.name}」· 阶段「{stage_name}」桥段（外部预选）",
                     "candidates": [{"id": t.id, "name": t.name}
                                    for t in candidates[:10]],
                     "chosen": [{"id": t.id, "name": t.name} for t in selected],
-                    "reason": "外部 agent 预选（决策点 B）",
+                    "reason": "外部预选（决策点 B）· 按优先序每阶段消费 1 个，其余规则回填",
                 })
-            elif self.llm and len(candidates) >= 2:
+            elif self.llm and len(candidates) >= 2 and filler_pool:
                 selected = yield from self._ai_select_plots(
-                    outline, stage, candidates, genre, used_ids)
+                    outline, stage, filler_pool, genre, used_ids)
+            elif filler_pool:
+                selected = filler_pool[:min(3, len(filler_pool))]
 
             # 链式嵌套 + 记录已用
             parent_id = ""

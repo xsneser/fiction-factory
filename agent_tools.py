@@ -478,8 +478,10 @@ def generate_full_outline(book_id: str, picks: dict = None) -> dict:
     """一键生成完整大纲（5 阶段：分析→大纲→桥段→内涵/吸睛→一致性），原地累加并逐步落盘。
 
     picks（可选，决策点预选）形如 {"templates": ["structure_id", ...],
-    "plots": {"<outline_id>": ["plot_id", ...]}}——外部 agent 先调 outline_material_candidates
-    看候选，选定后传入即按预选排布；不传则走管线内 AI/规则选材。
+    "plots": ["plot_id", ...]}——plots 为扁平优先序列表（与 outline_material_candidates
+    返回的 plots 形状一致，语义=全书出现优先级）；兼容旧 dict 形态 {outline_id: [plot_id]}
+    （已弃用，按值序展开）。外部 agent 先调 outline_material_candidates 看候选，选定后
+    传入即按预选排布；不传则走管线内 AI/规则选材。
     阻塞运行至完成（可能数分钟），返回最终 timeline 快照。
     """
     tl = _require_tl(book_id)
