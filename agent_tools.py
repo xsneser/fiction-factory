@@ -454,8 +454,11 @@ def generate_outlines(book_id: str, mode: str = "ai", max_outlines: int = 5) -> 
     return {"ok": True, "count": len(tl.outlines)}
 
 
-def outline_material_candidates(book_id: str, max_outlines: int = 5) -> dict:
-    """选材决策点候选池：大纲库模板 + 桥段库（供外部 agent 预选后把 picks 传给 generate_full_outline）。"""
+def outline_material_candidates(book_id: str) -> dict:
+    """选材决策点候选池：大纲库模板 + 桥段库（供外部 agent 预选后把 picks 传给 generate_full_outline）。
+
+    返回的 plots 为扁平列表（{id,name,category}），可直接作 generate_full_outline 的
+    picks["plots"]（扁平优先序：想先出现的桥段排前）。"""
     tl = _require_tl(book_id)
     candidates = struct_lib.search(genre=tl.genre, sub_genre=tl.sub_genre)
     if not candidates:
@@ -828,15 +831,16 @@ def tag_punch_points(book_id: str, chapter_num: int = 0) -> dict:
         raise RuntimeError(f"第 {n} 章无正文")
     from libraries.tag_generator import tag_chapter
     result = tag_chapter(ch["content"])
+    tags_saved, tags_save_error = True, ""
     try:
-        import os as _os
-        tags_path = _os.path.join("books", book_id, "tags.json")
+        tags_path = os.path.join(_ROOT, "books", book_id, "tags.json")
         with open(tags_path, "w", encoding="utf-8") as _f:
             json.dump({"chapter": n, "tags": result["tags"]}, _f,
                       ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-    return {"chapter": n, "tag_count": len(result["tags"]), "tags": result["tags"]}
+    except OSError as e:
+        tags_saved, tags_save_error = False, str(e)
+    return {"chapter": n, "tag_count": len(result["tags"]), "tags": result["tags"],
+            "tags_saved": tags_saved, "tags_save_error": tags_save_error}
 
 
 def delete_book(book_id: str, confirm: bool = False) -> dict:
