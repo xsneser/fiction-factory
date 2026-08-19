@@ -18,6 +18,7 @@ import json
 import time
 import inspect
 import typing
+import functools
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _ROOT)
@@ -927,7 +928,12 @@ _LOCKED_TOOLS = {
 
 
 def _wrap_book_lock(fn):
-    """把写工具包上书锁：acquire 失败抛 BookBusyError（另一进程在操作），finally 释放。"""
+    """把写工具包上书锁：acquire 失败抛 BookBusyError（另一进程在操作），finally 释放。
+
+    functools.wraps 保留原签名/__wrapped__，MCP 端 FastMCP 据此生成正确 JSON Schema
+    （否则锁包装的 **kwargs 会让 inspect.signature 丢失 book_id 等参数，schema 错乱）。
+    """
+    @functools.wraps(fn)
     def wrapper(**kwargs):
         book_id = kwargs.get("book_id") or ""
         lock = BookLock(book_id) if book_id else None
@@ -938,8 +944,6 @@ def _wrap_book_lock(fn):
         finally:
             if lock is not None:
                 lock.release()
-    wrapper.__name__ = fn.__name__
-    wrapper.__doc__ = fn.__doc__
     return wrapper
 
 
