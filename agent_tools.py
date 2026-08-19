@@ -381,9 +381,29 @@ def generate_outlines(book_id: str, mode: str = "ai", max_outlines: int = 5) -> 
     return {"ok": True, "count": len(tl.outlines)}
 
 
-def generate_full_outline(book_id: str) -> dict:
+def outline_material_candidates(book_id: str, max_outlines: int = 5) -> dict:
+    """选材决策点候选池：大纲库模板 + 桥段库（供外部 agent 预选后把 picks 传给 generate_full_outline）。"""
+    tl = _require_tl(book_id)
+    candidates = struct_lib.search(genre=tl.genre, sub_genre=tl.sub_genre)
+    if not candidates:
+        candidates = struct_lib.templates[:5]
+    templates = [{
+        "id": t.id, "name": t.name, "total_chapters": t.total_chapters,
+        "stages": [s.name for s in (t.stages or [])[:5]],
+    } for t in (candidates or [])[:10]]
+    plots = [{
+        "id": t.id, "name": t.name, "category": t.category,
+        "sub_category": t.sub_category or "",
+    } for t in (plot_lib.templates or [])[:30]]
+    return {"templates": templates, "plots": plots}
+
+
+def generate_full_outline(book_id: str, picks: dict = None) -> dict:
     """一键生成完整大纲（5 阶段：分析→大纲→桥段→内涵/吸睛→一致性），原地累加并逐步落盘。
 
+    picks（可选，决策点预选）形如 {"templates": ["structure_id", ...],
+    "plots": {"<outline_id>": ["plot_id", ...]}}——外部 agent 先调 outline_material_candidates
+    看候选，选定后传入即按预选排布；不传则走管线内 AI/规则选材。
     阻塞运行至完成（可能数分钟），返回最终 timeline 快照。
     """
     tl = _require_tl(book_id)
@@ -417,7 +437,8 @@ def generate_full_outline(book_id: str) -> dict:
         custom_context=custom_context, pen_name=tl.pen_name,
         words_per_chapter=tl.words_per_chapter,
         storyline=tl, on_save=lambda _tl: save_tl(book_id, _tl),
-        skip_analyze=bool((tl.basic_info or {}).get("_world_generated"))))
+        skip_analyze=bool((tl.basic_info or {}).get("_world_generated")),
+        agent_picks=picks))
 
     tl = load_tl(book_id)  # on_save 已逐步落盘，重新读取最终快照
     _drop_engine(book_id)
@@ -823,6 +844,7 @@ def _build_registry():
         create_book, save_basic_info,
         generate_title, generate_outlines, generate_full_outline,
         extend_outline, confirm_outlines, fill_plots, fill_gags, outline_agent,
+        outline_material_candidates,
         generate_world, world_candidates, confirm_world,
         # 写作 / 元数据
         write_next_bridge, write_chapter, generate_book_meta,
