@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}启动新书 — NovelEngine{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/story_line.css') }}">
+{% endblock %}
 {% block content %}
 <h1>🔰 启动新书</h1>
 <p class="subtitle">5 步开书：一句话设定 → 挑选世界观（标签）→ 挑选流派 → 生成大纲 → 前三章撰写。</p>
@@ -108,21 +111,13 @@
         </fieldset>
     </section>
 
-    {# ─── ④ 生成大纲：世界 SSE → 完整大纲 SSE ─── #}
+    {# ─── ④ 建书完成：故事线实时填充（世界观+完整大纲由 Agent 经 MCP 生成） ─── #}
     <section class="wz-panel" id="panel-4" style="display:none">
         <fieldset>
-            <legend>🚀 正在生成世界观与完整大纲</legend>
-            <div id="wz-feed" class="wz-feed"></div>
-            <button id="wz-skip-world" class="btn" style="display:none" onclick="WZ.runOutlineOnly()">⏭ 跳过世界观，直接生成大纲</button>
-        </fieldset>
-    </section>
-
-    {# ─── ⑤ 前三章撰写：进入写作台 ─── #}
-    <section class="wz-panel" id="panel-5" style="display:none">
-        <fieldset>
-            <legend>🎉 大纲已生成</legend>
-            <p id="wz-done-msg" class="wz-done-msg">世界观与大纲已生成完毕，进入写作台撰写前三章。</p>
-            <div class="form-row" style="display:flex;gap:12px">
+            <legend>✅ 书已创建，故事线实时填充</legend>
+            <div id="wz-storyline" style="height:520px"></div>
+            <p style="font-size:13px;color:#8b949e;margin-top:8px">世界观与完整大纲由 Agent 生成中，故事线将逐桥段实时填充；生成到 <code>ready</code> 后自动停轮询。</p>
+            <div class="form-row" style="display:flex;gap:12px;margin-top:8px">
                 <button id="wz-enter" class="btn-primary" style="display:none"
                         onclick="navigateTo('/books/' + WZ.bookId + '/continue')">✍️ 进入写作台（前三章）</button>
                 <button class="btn" onclick="navigateTo('/books/' + WZ.bookId); return false">📖 去书详情</button>
@@ -212,6 +207,7 @@
 .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
 </style>
 
+<script src="/static/js/story_line.js"></script>
 <script>
 var WZ = {
     cur: 1, bookId: '', creating: false,
@@ -480,13 +476,33 @@ var WZ = {
             }
             self.bookId = d.book_id;
             try { sessionStorage.removeItem(self.PERSIST_KEY); } catch (e) {}   // 建书成功清空草稿
+            // 世界观+完整大纲改由外部 Agent 经 MCP 生成（generate_world/generate_full_outline），
+            // 向导不再自动跑 SSE；第 4 步轮询 GET /api/storyline/<id> 渲染 Gantt 实时填充
             self.show(4);
-            self.runWorldGen();
+            var _en = self.el('wz-enter');
+            if (_en) _en.style.display = 'inline-block';   // 建书即显示「进入写作台」
+            self.startStorylinePoll();
         }).catch(function(e) {
             if (typeof showToast === 'function') showToast('创建失败：' + e.message, 'error');
             btn.disabled = false; btn.textContent = '🚀 创建并生成大纲';
             self.creating = false;
         });
+    },
+
+    // 第 4 步故事线实时填充：轮询 GET /api/storyline/<id> 渲染 Gantt（agent 生成时逐步落盘）。
+    // #wz-storyline 消失（离开向导页）或 phase=ready 时自停；StoryLine 对空 dict 安全（渲染空态）。
+    startStorylinePoll: function() {
+        var bid = this.bookId; if (!bid) return;
+        var self = this;
+        this._slPoll && clearInterval(this._slPoll);
+        this._slPoll = setInterval(function() {
+            if (!document.getElementById('wz-storyline')) { clearInterval(self._slPoll); return; }
+            fetch('/api/storyline/' + bid).then(function(r) { return r.json(); }).then(function(d) {
+                if (!d || !d.ok || !d.storyline) return;
+                if (window.StoryLine) StoryLine.init('wz-storyline', d.storyline, { scrollable: true });
+                if ((d.storyline.phase || '') === 'ready') { clearInterval(self._slPoll); return; }
+            }).catch(function() {});
+        }, 2500);
     },
 
     sse: function(url, body, onEvt) {
