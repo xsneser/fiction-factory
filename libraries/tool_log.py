@@ -4,7 +4,8 @@
 外部 MCP 调用（source=mcp）另追加 `storage/tool_log.jsonl`；Web 端
 `get_tool_log` 合并两处按 ts 倒序展示（设计文档 §1.4）。
 
-日志写入尽力而为，异常静默降级，不阻塞主链路。
+日志写入尽力而为，异常静默降级，不阻塞主链路。JSONL 超长自动截断
+（字节阈值快筛 + 行数上限，见 _trim_ext）。
 """
 import json
 import os
@@ -13,6 +14,12 @@ import time
 
 _MAX_TOOL_LOG = 200
 _EXT_LIMIT = 200
+
+# JSONL 超长自动截断：文件超过 _MAX_EXT_BYTES 才读行数检查（O(1) 快筛），
+# 行数超 _MAX_EXT_LINES 则截为最近 _KEEP_EXT_LINES 行，避免磁盘无限增长。
+_MAX_EXT_BYTES = 256 * 1024       # 256KB
+_MAX_EXT_LINES = 1000             # 超过此行数触发截断
+_KEEP_EXT_LINES = 500             # 截断后保留行数
 
 _TOOL_LOG: list = []
 _TOOL_LOCK = threading.Lock()
@@ -38,6 +45,25 @@ def _append_ext(entry: dict) -> None:
         os.makedirs(os.path.dirname(_EXT_PATH) or ".", exist_ok=True)
         with open(_EXT_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        _trim_ext()
+    except Exception:
+        pass
+
+
+def _trim_ext() -> None:
+    """JSONL 超长自动截断：超过 _MAX_EXT_BYTES 才读行数检查，超 _MAX_EXT_LINES 截为最近 _KEEP_EXT_LINES 行。
+
+    用字节阈值做 O(1) 快筛，避免每次追加都全量读文件；异常静默降级（日志尽力而为）。
+    """
+    try:
+        if os.path.getsize(_EXT_PATH) <= _MAX_EXT_BYTES:
+            return
+        with open(_EXT_PATH, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        if len(lines) <= _MAX_EXT_LINES:
+            return
+        with open(_EXT_PATH, "w", encoding="utf-8") as f:
+            f.writelines(lines[-_KEEP_EXT_LINES:])
     except Exception:
         pass
 
