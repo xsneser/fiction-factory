@@ -24,7 +24,7 @@ _ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _ROOT)
 
 from ui.web_blueprints.ctx import (  # noqa: E402
-    plot_lib, struct_lib, gag_lib, profiles, book_mgr,
+    plot_lib, struct_lib, gag_lib, char_lib, profiles, book_mgr,
     get_llm, _engines, _resolve_storyline, _save_storyline,
     NovelEngine, BookStoryline, StorylineBuilder,
     ContentReviewer, DeAIEngine,
@@ -383,6 +383,13 @@ def query_profiles(keyword: str = "") -> dict:
     } for p in rows[:30]]}
 
 
+def query_characters(keyword: str = "", tag: str = "", genre: str = "") -> dict:
+    """查角色原型库：按标签/适配流派/关键词返回启用原型，供外部 agent 选原型生成角色。"""
+    kw = (keyword or "").strip()
+    rows = char_lib.search(tag=tag, genre=genre, kw=kw)
+    return {"archetypes": [a.to_dict() for a in rows if getattr(a, "enabled", True)][:20]}
+
+
 # ═══════════════════════════════════════════════════
 # 规划 / 编辑类（调 LLM，成功后使引擎会话过期）
 # ═══════════════════════════════════════════════════
@@ -708,6 +715,35 @@ def world_candidates(book_id: str = "", idea: str = "", genre: str = "", sub_gen
     return {"candidates": candidates}
 
 
+def generate_characters(idea: str, genre: str = "", sub_genre: str = "",
+                        tags: list = None, title: str = "",
+                        archetype_ids: list = None) -> dict:
+    """生成角色候选（无书，建书向导步 3 用）：主角 + 配角，供 drive_ui(set_characters) 推给页面。
+
+    原型选择：archetype_ids 非空则按 id 取；否则按 tags[0]→genre→启用原型回退（照旧
+    /api/world-builder/characters 端点逻辑）。返回 {"protagonists": [...], "supporting_cast": [...]}。
+    """
+    llm = _require_llm()
+    from libraries.world_builder import WorldBuildingGenerator
+    from libraries.prompt_harness import PromptHarness
+    harness = PromptHarness()   # 无书：storyline=None
+    gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
+    if archetype_ids:
+        archetypes = [a.to_dict() for i in archetype_ids
+                      if (a := char_lib.get_by_id(i)) is not None][:10]
+    elif tags:
+        archetypes = [a.to_dict() for a in char_lib.search(tag=str(tags[0]).strip())][:10]
+    elif genre:
+        archetypes = [a.to_dict() for a in char_lib.search(genre=genre)][:10]
+    else:
+        archetypes = [a.to_dict() for a in char_lib.archetypes if getattr(a, "enabled", True)][:10]
+    result = gen.generate_characters(
+        idea=idea or "", genre=genre, sub_genre=sub_genre,
+        tags=list(tags or []), title=title or "", archetypes=archetypes)
+    if not result:
+        raise RuntimeError("角色候选生成失败，请重试")
+    return result
+
 def confirm_world(book_id: str) -> dict:
     """确认世界观设定：basic_info 够充实则打标 _world_generated（后续大纲跳过 Phase 1 分析）。"""
     tl = _require_tl(book_id)
@@ -924,16 +960,17 @@ def canvas_command(book_id: str, action: str, outline_id: str = "",
 _WIZARD_CMDS = {
     "set_field": ("field", "value"),
     "set_tags": ("tags",),
+    "set_characters": ("characters",),   # 角色列表整体替换（agent 生成后推送）
     "pick_candidate": ("idx",),   # 可带 candidate={title, world_brief, one_liner}
     "next": (), "prev": (),
     "load_candidates": (), "skip_candidates": (),
-    "gen_characters": (), "submit": (),
+    "submit": (),
 }
 
 
 def drive_ui(cmd: str, args: dict = None) -> dict:
-    """驱动「启动新书」向导 UI（命令桥）：set_field/set_tags/next/prev/load_candidates/
-    skip_candidates/pick_candidate/gen_characters/submit。
+    """驱动「启动新书」向导 UI（命令桥）：set_field/set_tags/set_characters/next/prev/
+    load_candidates/skip_candidates/pick_candidate/submit。
 
     非阻塞：把命令写入意图队列，浏览器每 ~2.5s 轮询消费（start_book.html 的
     window.onnecommand 执行）。不入书锁（不写书）。
@@ -1034,13 +1071,13 @@ def _build_registry():
         navigate, canvas_command, drive_ui,
         # 只读摸底
         list_books, get_book_state, get_storyline, borrow_preview,
-        get_book_detail, query_structures, query_plots, query_gags, query_profiles,
+        get_book_detail, query_structures, query_plots, query_gags, query_profiles, query_characters,
         # 建书 / 规划
         create_book, save_basic_info,
         generate_title, generate_outlines, generate_full_outline,
         extend_outline, confirm_outlines, fill_plots, fill_gags, outline_agent,
         outline_material_candidates,
-        generate_world, world_candidates, confirm_world,
+        generate_world, world_candidates, generate_characters, confirm_world,
         # 写作 / 元数据
         write_next_bridge, write_chapter, generate_book_meta,
         # 上架 / 审查 / 去AI / 书管理 / 质量分析
