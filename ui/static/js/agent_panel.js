@@ -100,17 +100,26 @@
                 // 只展示外部 MCP 调用（source=mcp）；内嵌 agent 的 web 调用留在对话页签的工具卡片里
                 var log = (d.log || []).filter(function(x) { return x.source === 'mcp'; });
                 var success = log.filter(function(x) { return x.ok; }).length;
+                // 超长自动清理：只渲染最近 DISPLAY_LIMIT 条，避免 DOM 无限膨胀拖垮侧栏
+                var DISPLAY_LIMIT = 80;
+                var show = log.slice(-DISPLAY_LIMIT);
+                // 自动滚到底：渲染前记录是否在底部附近（跟随中）；新工具到达时跟随到底，
+                // 不在底部（在翻旧记录）则按比例还原位置，不被 3s 轮询顶回顶部
+                var h0 = toolsLog.scrollHeight;
+                var ratio = h0 ? toolsLog.scrollTop / h0 : 0;
+                var nearBottom = h0 - toolsLog.scrollTop - toolsLog.clientHeight < 80;
                 var html = '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">'
                     + '已暴露 <strong>' + d.tools_exposed + '</strong> 工具 · MCP 调用 <strong>' + log.length
                     + '</strong> 次 · 成功 <span style="color:#3fb950">' + success
                     + '</span> 失败 <span style="color:#f85149">' + (log.length - success) + '</span>'
                     + ' <button class="small" onclick="window.loadToolLog()">🔄 刷新</button>'
                     + ' <button class="small" onclick="window.clearToolLog()">🗑 清空</button>'
+                    + (log.length > DISPLAY_LIMIT ? ' <span style="color:#8b949e">仅显示最近 ' + DISPLAY_LIMIT + ' 条（共 ' + log.length + '）</span>' : '')
                     + '</div>';
                 if (!log.length) {
                     html += '<div style="font-size:12px;color:#8b949e;padding:8px 4px">暂无外部 MCP 调用记录（由 Claude Code 经 MCP 驱动时产生）。</div>';
                 }
-                log.forEach(function(x) {
+                show.forEach(function(x) {
                     html += '<div class="agent-tool-card ' + (x.ok ? 'ok' : 'err') + '">'
                         + '<div class="agent-tool-head">' + escapeHtml((x.time || '') + ' ' + (x.ok ? '✅' : '❌') + ' ' + x.tool)
                         + ' <span style="color:#8b949e;font-weight:normal">' + (x.duration_ms || 0) + 'ms</span></div>';
@@ -120,6 +129,9 @@
                     html += '<div class="agent-tool-status">' + (x.ok ? '' : '❌ ') + escapeHtml(x.summary || '') + '</div></div>';
                 });
                 toolsLog.innerHTML = html;
+                // 渲染后滚动：跟随中→贴底（新工具自动可见）；翻旧记录→按比例还原位置
+                if (nearBottom) toolsLog.scrollTop = toolsLog.scrollHeight;
+                else toolsLog.scrollTop = Math.round(ratio * toolsLog.scrollHeight);
                 toolsLog.querySelectorAll('.agent-tool-card').forEach(function(card) {
                     var head = card.querySelector('.agent-tool-head');
                     var detail = card.querySelector('.agent-tool-detail');
