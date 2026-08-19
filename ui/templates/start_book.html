@@ -96,11 +96,7 @@
             {% endfor %}
         </fieldset>
         <fieldset>
-            <legend>🎭 角色设定（可手动编辑，也可 AI 从原型库生成）</legend>
-            <div class="form-row">
-                <button type="button" class="btn-primary" onclick="WZ.genCharacters()">🎲 生成角色候选（原型库挑选）</button>
-            </div>
-            <div id="wz-characters-box"></div>
+            <legend>🎭 角色设定（由 Agent 从原型库生成并填入，可手动编辑）</legend>
             <fieldset>
                 <legend>👥 角色列表（重要度：1=主角/核心，数字越小越重要）</legend>
                 <div id="wz-char-list"></div>
@@ -333,48 +329,7 @@ var WZ = {
         this.show(3);
     },
 
-    /* —— ③ 生成主角与配角候选（可重复点：主角单选覆盖、配角多选累积） —— */
-    genCharacters: function() {
-        var idea = (this.el('wz-world-desc3') && this.el('wz-world-desc3').value.trim()) || this.el('wz-idea').value.trim();
-        var title = (this.el('wz-title') && this.el('wz-title').value.trim()) || '';
-        var box = this.el('wz-characters-box');
-        box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成角色候选…</div>';
-        var self = this;
-        fetch('/api/world-builder/characters', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ idea: idea, title: title, tags: this.state.tags })
-        }).then(function(r) { return r.json(); }).then(function(d) {
-            if (!d.ok) { box.innerHTML = '❌ ' + d.error; return; }
-            window.__CHARACTERS__ = d;
-            var html = '<div class="wz-cand-label">🧑 主角候选（重要度 1，点「➕ 添加」追加）：</div>';
-            (d.protagonists || []).forEach(function(p, i) {
-                html += '<div class="wz-candidate-card" style="display:flex;align-items:center;gap:8px" data-kind="protag" data-idx="' + i + '">'
-                    + '<div style="flex:1">'
-                    + '<div class="wz-cand-title">' + (p.name || '') + '（' + (p.identity || '') + '）'
-                    + (p.archetype_id ? ' · 🎭' + p.archetype_id : '') + '</div>'
-                    + '<div class="wz-cand-one">性格：' + (p.personality || '') + '｜金手指：' + (p.golden_finger || '') + '</div>'
-                    + '</div>'
-                    + '<button type="button" class="btn-secondary" onclick="WZ.addCharFromCandidate(\'protag\', ' + i + ')">➕ 添加</button>'
-                    + '</div>';
-            });
-            if ((d.supporting_cast || []).length) {
-                html += '<div class="wz-cand-label" style="margin-top:8px">👥 其他角色候选（重要度 2-5，点「➕ 添加」追加，可多选）：</div>';
-                (d.supporting_cast || []).forEach(function(c2, i) {
-                    html += '<div class="wz-candidate-card" style="display:flex;align-items:center;gap:8px" data-kind="support" data-idx="' + i + '">'
-                        + '<div style="flex:1">'
-                        + '<div class="wz-cand-title">' + (c2.name || '') + '（' + (c2.identity || '') + '，重要度' + (c2.importance || 2) + '）'
-                        + (c2.archetype_id ? ' · 🎭' + c2.archetype_id : '') + '</div>'
-                        + '<div class="wz-cand-one">性格：' + (c2.personality || '') + (c2.catchphrase ? '｜口癖：' + c2.catchphrase : '') + (c2.relation ? '｜关系：' + c2.relation : '') + '</div>'
-                        + '</div>'
-                        + '<button type="button" class="btn-secondary" onclick="WZ.addCharFromCandidate(\'support\', ' + i + ')">➕ 添加</button>'
-                        + '</div>';
-                });
-                html += '<div class="wz-cand-label" style="margin-top:6px">再次点击「生成」可换一批候选（已添加的保留）。</div>';
-            }
-            box.innerHTML = html;
-        }).catch(function(e) { box.innerHTML = '❌ 请求失败: ' + e.message; });
-    },
-    /* —— 统一角色列表：手动添加 / 候选追加 / 删除 —— */
+    /* —— 统一角色列表：手动添加 / Agent 推送 / 删除 —— */
     addCharRow: function(data) {
         data = data || {};
         var list = this.el('wz-char-list');
@@ -395,18 +350,6 @@ var WZ = {
             + '<span class="ch-arch" style="font-size:11px;color:#6e7681">' + (data.archetype_id ? '🎭' + data.archetype_id : '') + '</span>'
             + '<button type="button" class="small" onclick="this.closest(\'.char-row\').remove()">✕</button>';
         list.appendChild(row);
-    },
-    addCharFromCandidate: function(kind, idx) {
-        var d = window.__CHARACTERS__;
-        if (!d) return;
-        var c = kind === 'protag' ? (d.protagonists || [])[idx] : (d.supporting_cast || [])[idx];
-        if (!c) return;
-        this.addCharRow({ name: c.name, identity: c.identity, personality: c.personality,
-                          catchphrase: c.catchphrase,
-                          importance: c.importance || (kind === 'protag' ? 1 : 2),
-                          golden_finger: c.golden_finger, relation: c.relation,
-                          archetype_id: c.archetype_id });
-        if (typeof showToast === 'function') showToast('已添加角色「' + c.name + '」，可继续生成更多', 'success');
     },
 
     collect: function() {
@@ -607,11 +550,17 @@ window.onnecommand = function(e) {
         for (var i = 0; i < cards.length; i++) cards[i].classList.remove('picked');
         if (typeof args.idx === 'number' && cards[args.idx]) cards[args.idx].classList.add('picked');
         if (typeof showToast === 'function') showToast('已选中：' + (cand.title || ''), 'success');
+    } else if (cmd === 'set_characters') {
+        // 角色列表整体替换（agent 生成后推送）；复用 addCharRow 建行 + collect 收进 state
+        var cl = WZ.el('wz-char-list');
+        if (!cl) return;
+        cl.innerHTML = '';
+        (args.characters || []).forEach(function(c) { WZ.addCharRow(c); });
+        WZ.collect();
     } else if (cmd === 'next') { WZ.next(); }
     else if (cmd === 'prev') { WZ.prev(); }
     else if (cmd === 'load_candidates') { WZ.loadCandidates(); }
     else if (cmd === 'skip_candidates') { WZ.skipCandidates(); }
-    else if (cmd === 'gen_characters') { WZ.genCharacters(); }
     else if (cmd === 'submit') { WZ.createBook(); }
 };
 // 输入防抖持久化 + 切页前保存（SPA 导航由输入监听兜底）
