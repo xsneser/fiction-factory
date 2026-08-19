@@ -16,4 +16,4 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 - 状态信号：`storyline.phase ∈ config/outlines/plots/ready`；`book.status ∈ planning/writing/reviewing/finished/published/paused`。
 - 写类工具带书级文件锁，冲突抛 `BookBusyError`，稍后重试；`budget_paused` 表示预算/额度触发，停下问用户。
 - 需要可视化页面时用 `mcp__novel-engine__navigate` 切站内页（`/books/start` 建书、`/books/generator` 大纲、`/books/<book_id>` 详情、`/books/<book_id>/continue` 写作台、`/publish` 上架）。切页与读数据是两回事：即使已用 get_book_state 读过数据，只要用户要「打开页面」就要再调 navigate。
-- 平台 Web 服务端口 `58080`（`launch.bat` 启动）。主 skill 会探测并拉起，勿重复启动。
+- 平台 Web 服务端口 `58080`（`launch.bat` 启动）。主 skill 会探测并拉起，**拉起成功后自动打开浏览器页面**（复刻 launch.bat 的 `start "" http://localhost:58080` 行为），勿重复启动。

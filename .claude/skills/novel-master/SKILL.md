@@ -11,11 +11,14 @@ description: >-
 
 ## 第一步：启动平台（只做一次）
 
-1. 探测 `http://localhost:58080` 是否可访问（`curl -s -m 3 http://localhost:58080` 或读 `/books`）。
+1. 探测 `http://localhost:58080` 是否可访问（`curl -s -m 3 http://localhost:58080`）。
 2. 未启动 → 用 Bash **后台**拉起服务（不要阻塞当前会话）：
-   - 项目根目录下 `python ui/web_ui.py`（run_in_background），或 `start "" python ui/web_ui.py`。
+   - 项目根目录下 `python ui/web_ui.py`（run_in_background）。**不要用 `launch.bat` 直接跑**——它前台阻塞且交互式（pause/start）。
    - 等 1-2 秒再探测一次；仍未起则提示用户手动跑 `launch.bat`。
-3. 已启动 → 直接继续。不要重复启动。
+3. 服务就绪后**自动打开浏览器页面**（复刻 launch.bat 第 65 行的 `start "" http://localhost:58080`，这一步**必做**，否则用户看不到可视化）：
+   - 推荐 `python -m webbrowser http://localhost:58080`（跨 shell 无引号坑）；
+   - 或 Git Bash 里 `cmd //c start "" http://localhost:58080`。
+4. 服务本已就绪 → 不重复启动，用 `mcp__novel-engine__navigate` 切到相关页面（浏览器已在轮询，能消费意图）。
 
 ## 第二步：判断用户意图，分发到分 skill
 
