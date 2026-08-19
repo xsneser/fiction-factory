@@ -31,6 +31,7 @@ from ui.web_blueprints.ctx import (  # noqa: E402
 from core.text_utils import count_prose_units  # noqa: E402
 from libraries.storyline import OutlineSlot, annotate_plot_roles, \
     get_mc, normalize_basic_info  # noqa: E402
+from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
 
 
 # ─── 基础辅助 ───
@@ -773,6 +774,40 @@ def _func_to_schema(fn):
     return {"type": "object", "properties": properties, "required": required}
 
 
+# 只暴露给 Web 侧栏 Agent 面（MCP 客户端无页面/画布语义；外部驱动改走 §1.3 意图桥）
+_WEB_ONLY_TOOLS = {"navigate", "canvas_command"}
+
+# 写类工具：进入前须拿书锁（防 Web / MCP 双进程同书撞写），退出释放。
+_LOCKED_TOOLS = {
+    "write_next_bridge", "write_chapter", "generate_full_outline",
+    "generate_world", "world_candidates", "confirm_world",
+    "outline_agent", "fill_plots", "fill_gags", "generate_book_meta",
+}
+
+
+def _wrap_book_lock(fn):
+    """把写工具包上书锁：acquire 失败抛 BookBusyError（另一进程在操作），finally 释放。"""
+    def wrapper(**kwargs):
+        book_id = kwargs.get("book_id") or ""
+        lock = BookLock(book_id) if book_id else None
+        if lock is not None and not lock.acquire(timeout=30.0, purpose=fn.__name__):
+            raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
+        try:
+            return fn(**kwargs)
+        finally:
+            if lock is not None:
+                lock.release()
+    wrapper.__name__ = fn.__name__
+    wrapper.__doc__ = fn.__doc__
+    return wrapper
+
+
+def tools_for_surface(surface: str) -> list:
+    """按 surface 过滤工具条目（surface ∈ web|mcp，返回该面可见项）。"""
+    s = (surface or "").lower()
+    return [t for t in TOOL_REGISTRY if t.get("surface", "both") in (s, "both")]
+
+
 def _build_registry():
     # 顺序有讲究：导航/画布排最前（flash 对列表前部工具更敏感，能保证
     # "打开页面"请求正确触发 navigate），其次只读摸底，再创作链/上架/工具。
@@ -792,12 +827,24 @@ def _build_registry():
         publish_check, mark_finished, publish_book, export_book,
         review_text, deai_text, delete_book,
     ]
-    return [{
-        "name": fn.__name__,
-        "description": (inspect.getdoc(fn) or "").strip(),
-        "input_schema": _func_to_schema(fn),
-        "func": fn,
-    } for fn in fns]
+    seen = set()
+    entries = []
+    for fn in fns:
+        name = fn.__name__
+        surface = "web" if name in _WEB_ONLY_TOOLS else "both"
+        key = (name, surface)
+        if key in seen:
+            raise RuntimeError(
+                f"工具注册表去重失败：同名同 surface 出现两次（{name} / {surface}）")
+        seen.add(key)
+        entries.append({
+            "name": name,
+            "description": (inspect.getdoc(fn) or "").strip(),
+            "input_schema": _func_to_schema(fn),
+            "func": _wrap_book_lock(fn) if name in _LOCKED_TOOLS else fn,
+            "surface": surface,
+        })
+    return entries
 
 
 TOOL_REGISTRY = _build_registry()

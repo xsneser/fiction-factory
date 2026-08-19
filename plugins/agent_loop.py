@@ -80,12 +80,17 @@ canvas_command(book_id=..., action="highlight_plot", outline_id=..., plot_id=...
 - 一次只做用户要求的一件事，不擅自多做。"""
 
 
+def _visible_tools() -> list:
+    """Web 侧栏 Agent 面可见工具：surface ∈ {web, both}。"""
+    return [t for t in TOOL_REGISTRY if t.get("surface", "both") in ("web", "both")]
+
+
 def _tools_schema() -> list:
     return [{"type": "function", "function": {
         "name": t["name"],
         "description": t["description"],
         "parameters": t["input_schema"],
-    }} for t in TOOL_REGISTRY]
+    }} for t in _visible_tools()]
 
 
 def _summary(result) -> str:
@@ -140,7 +145,7 @@ def run_agent_loop(messages, emit, system_prompt: str = SYSTEM_PROMPT):
         yield emit({"type": "done"})
         return
 
-    by_name = {t["name"]: t for t in TOOL_REGISTRY}
+    by_name = {t["name"]: t for t in _visible_tools()}
     tools_schema = _tools_schema()
     conv = ([{"role": "system", "content": system_prompt}] if system_prompt else []) \
         + list(messages)[-20:]

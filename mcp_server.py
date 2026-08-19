@@ -23,8 +23,12 @@ from agent_tools import TOOL_REGISTRY  # noqa: E402
 
 mcp = FastMCP("novel-engine")
 
-# 逐个注册（工具名/描述/schema 由函数签名+docstring 自动生成）
+# 逐个注册（工具名/描述/schema 由函数签名+docstring 自动生成）。
+# 只注册 mcp/both 面工具：navigate / canvas_command 标记 surface="web"，
+# MCP 客户端无页面/画布语义，不暴露（外部驱动走 navigate 意图桥，见设计文档 §1.3）。
 for _entry in TOOL_REGISTRY:
+    if _entry.get("surface", "both") not in ("mcp", "both"):
+        continue
     mcp.tool()(_entry["func"])
 
 if __name__ == "__main__":
