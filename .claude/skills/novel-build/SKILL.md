@@ -34,17 +34,19 @@ description: >-
    - 档案里没有合意的 → 让用户报一个新笔名（后续可在 `/profiles` 建档案）。
    - 用户说「你定」→ 按写作方向挑最匹配的现有笔名；没有合适的就起一个新的。
    - **不要一上来开放式问「用什么笔名」**——现有档案要先摆出来。
-3. **世界观方向**：三选一，让用户定：
-   - 从零构思 → `mcp__novel-engine__world_candidates(book_id, idea=用户一句话)` 出 2-3 个差异化方向 → 把候选贴给用户挑。
-   - 用户已有想法 → `generate_world(mode="one", idea=...)`。
-   - 借鉴已有书 → `mcp__novel-engine__borrow_preview(source_book_id=...)` 预览会借鉴哪些设定 → 用户确认 → `generate_world(mode="borrow", source_book_id=...)`。
-4. **微调设定 / 题材标签**：生成后把世界观摘要+主角摆给用户看，问要不要改（改哪个字段用 `save_basic_info` 只覆盖那一项）；题材标签（`world_building.tags`）让用户从平台 `WORLD_TAGS` 里挑，流派随之推导。
+3. **一句话种子设定**：问主角核心卖点 / 一句话设定（如「都市爽文，2050 太阳熄灭」）——它决定世界观候选方向。
+4. **世界观候选（建书前，向导②顺序）**：
+   - 从零构思 → `mcp__novel-engine__world_candidates(book_id="", idea=种子, genre=方向genre)` —— **无书即可出候选**（book_id 留空，这是向导②的建书前调用）→ 把每个候选的 `one_liner` 编号列出让用户挑。
+   - 借鉴已有书 → `mcp__novel-engine__borrow_preview(source_book_id=...)` 预览 → 用户确认走借鉴路线（该路需先建书再 `generate_world(mode="borrow")`）。
+   - **不要先 create_book 再 world_candidates**——候选在无书阶段就能出，保持向导②的顺序。
+5. **微调设定 / 题材标签**：生成后把世界观摘要+主角摆给用户看，问要不要改（改哪个字段用 `save_basic_info` 只覆盖那一项）；题材标签（`world_building.tags`）让用户从平台 `WORLD_TAGS` 里挑，流派随之推导。
 
-## 批处理
-1. `mcp__novel-engine__create_book(title, pen_name, genre, sub_genre, ...)` → 记下返回的 `book_id`。
-2. `world_candidates` / `generate_world` 产出 `basic_info`。
-3. `mcp__novel-engine__save_basic_info(book_id, basic_info=...)` 落库（深合并，只覆盖要改的字段）。
-4. `mcp__novel-engine__confirm_world(book_id)` → 返回 `world_generated=true` 才算锁定过关；`false` 说明 basic_info 不够充实（世界观维度或主角缺失），补设定后重试。
+## 批处理（按向导顺序：先世界观候选 → 建书 → 生成世界观 → 微调 → 锁定）
+1. `mcp__novel-engine__world_candidates(book_id="", idea=种子, genre=方向genre, sub_genre=...)` → 出候选，把每个候选的 `one_liner` 编号让用户挑一个。
+2. `mcp__novel-engine__create_book(title=种子工作名, pen_name, genre=方向genre, sub_genre=...)` → 记下返回的 `book_id`。
+3. `mcp__novel-engine__generate_world(book_id, mode="one", idea=所选候选的 one_liner)` 生成实际世界观（借鉴路线则 `mode="borrow", source_book_id=...`）。
+4. `mcp__novel-engine__save_basic_info(book_id, basic_info=...)` 落库（深合并，只覆盖要改的字段）+ 微调/题材标签。
+5. `mcp__novel-engine__confirm_world(book_id)` → 返回 `world_generated=true` 才算锁定过关；`false` 说明 basic_info 不够充实（世界观维度或主角缺失），补设定后重试。
 
 ## 前三章开篇钩子（指令层，本 skill 内置）
 前三章是吸睛关键，无论是否立即进入写作，都按此规则把握：

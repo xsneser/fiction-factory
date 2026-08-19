@@ -681,17 +681,28 @@ def generate_world(book_id: str, mode: str = "one", idea: str = "",
             "event_count": len(events), "done_data": last_d}
 
 
-def world_candidates(book_id: str, idea: str = "") -> dict:
-    """一次产出 2-3 个差异化世界观方向供选择（LLM）。"""
-    tl = _require_tl(book_id)
+def world_candidates(book_id: str = "", idea: str = "", genre: str = "", sub_genre: str = "") -> dict:
+    """一次产出 2-3 个差异化世界观方向供选择（LLM）。
+
+    book_id 为空 = 建书前调用（新书向导②）：用传入 genre/sub_genre 生成候选，无需先建书；
+    book_id 非空 = 用该书的 genre/sub_genre（忽略传入 genre）。候选含 one_liner，供 generate_world 复用。
+    """
     llm = _require_llm()
     idea = (idea or "").strip()
-    profile = _profile_for(tl)
     from libraries.world_builder import WorldBuildingGenerator
     from libraries.prompt_harness import PromptHarness
-    harness = PromptHarness(storyline=tl, profile=profile)
-    gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
-    candidates = gen.generate_candidates(genre=tl.genre, sub_genre=tl.sub_genre, idea=idea)
+    if book_id:
+        tl = _require_tl(book_id)
+        genre = genre or tl.genre
+        sub_genre = sub_genre or tl.sub_genre
+        profile = _profile_for(tl)
+        harness = PromptHarness(storyline=tl, profile=profile)
+        gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
+    else:
+        # 无书（向导②）：generate_candidates 本就不读目标书
+        harness = PromptHarness()   # storyline=None
+        gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
+    candidates = gen.generate_candidates(genre=genre or "都市", sub_genre=sub_genre or "", idea=idea)
     if not candidates:
         raise RuntimeError("示例候选生成失败，请重试")
     return {"candidates": candidates}
