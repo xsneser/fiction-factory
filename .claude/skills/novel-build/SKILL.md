@@ -41,17 +41,21 @@ description: >-
 
 ## 世界观候选（submit 的硬前置——没让用户挑候选前，不得 submit）
 
-> 先定路线再进向导步 2。**硬规则：候选挑选必须完成并经用户确认，否则不得 `drive_ui(submit)`。** 这是用户明确要求的决策点，不可跳过。
+> **硬规则：候选挑选必须完成并经用户确认，否则不得 `drive_ui(submit)`。** 这是用户明确要求的决策点，不可跳过。
 
-- **路线 A（默认，用户浏览器点）**：`drive_ui(load_candidates)` → 浏览器渲染候选卡 → **必须 AskUserQuestion 问用户点了哪个候选** → 用户确认后才 `drive_ui(next)`。
-- **路线 B（agent 聊天给候选，全 agent 驱动）**：`world_candidates(book_id="", idea=种子, genre=方向genre)` 出候选 → 聊天里编号让用户挑 → `drive_ui(pick_candidate, {idx, candidate:{title, world_brief, one_liner}})`（候选内嵌，不依赖浏览器渲染）；或 `drive_ui(skip_candidates)` + `drive_ui(set_field world_desc=手动拼好的世界观简述)`——**skip 也要向用户说明**，不能无声跳过。
+**默认路线 A（唯一推荐）——让用户直接在平台向导里点选**：
+1. `drive_ui(load_candidates)` → 向导步 2 点「🎲 生成候选」，平台渲染候选卡片。
+2. **告诉用户在平台上直接点击喜欢的候选方向**（agent 不要把候选搬到聊天里——平台的卡片点选会自然带入书名/世界观简述到步 3）。
+3. 用户确认已点选后 → `drive_ui(next)` 进步 3。
+
+**路线 B（仅兜底）**：只在 `load_candidates` 失败/浏览器候选不可用时才用——`world_candidates(book_id="", idea=种子, genre=方向genre)` 聊天给候选 → `drive_ui(pick_candidate, {idx, candidate:{title, world_brief, one_liner}})`（候选内嵌）；或 `drive_ui(skip_candidates)` + `drive_ui(set_field world_desc=手动拼好的世界观简述)`——**skip 也要向用户说明**，不能无声跳过。
 
 ## 批处理（驱动向导 UI；agent 只填表单/点按钮，由系统建书）
 1. `navigate(url="/books/start")`。
 2. 在聊天里定：方向、笔名、一句话种子（上面的决策点）。
 3. `drive_ui(set_field {field:"idea", value:种子})` + `drive_ui(set_field {field:"pen", value:笔名})` + `drive_ui(next)`——**同批推送，浏览器按序应用**（向导步 1 校验 idea+pen 非空后进步 2）。
-4. **世界观候选（必须完成，见上）**：路线 A 或 B 走完、用户确认后 `drive_ui(next)`。
-5. 向导步 3：`drive_ui(set_field {field:"title", value:书名})` + `drive_ui(set_tags {tags:[题材标签]})`（标签从平台 `WORLD_TAGS` 挑，流派随之推导）；可选 `drive_ui(gen_characters)` 让用户在浏览器点「添加」角色。
+4. **世界观候选（必须完成，见上）**：默认路线 A——`drive_ui(load_candidates)` → 用户在平台点选候选卡 → 确认后 `drive_ui(next)`。
+5. 向导步 3：`drive_ui(set_tags {tags:[题材标签]})`（必做，标签从平台 `WORLD_TAGS` 挑，流派随之推导）；**书名已由候选带入步 3，用户想改才 `drive_ui(set_field title=...)`**；可选 `drive_ui(gen_characters)` 让用户在浏览器点「添加」角色。
 6. `drive_ui(submit)` → **系统** `POST /books/start` 建书（phase=config）——**不再自动生成**，世界观+大纲由 agent 生成（见下）。
 
 ## submit 后：agent 经 MCP 生成世界观 + 完整大纲（关键）
