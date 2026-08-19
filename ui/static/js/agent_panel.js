@@ -187,6 +187,22 @@
         }
     }
 
+    // ─── navigate 外部驱动桥（P1b）：轮询 MCP 写入的导航意图，取到即翻页/切页签 ───
+    var navTimer = null;
+    function pollNavIntents() {
+        fetch('/api/agent/nav-intents')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d || !d.ok) return;
+                (d.intents || []).forEach(function(it) {
+                    if (it.url) handleNavigate(it.url);
+                    if (it.tab && (it.tab === 'chat' || it.tab === 'tools')) switchAgentTab(it.tab);
+                });
+            })
+            .catch(function() {});
+    }
+    navTimer = setInterval(pollNavIntents, 2500);
+
     // ─── 导航 / 画布（Phase 7 机制）───
     // 重置画布就绪标志后再切页；写作台脚本会重新置 true
     function handleNavigate(url) {

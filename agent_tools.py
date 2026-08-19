@@ -717,16 +717,19 @@ def delete_book(book_id: str, confirm: bool = False) -> dict:
 # 导航 / 画布控制（返回特殊标记，由 Agent 循环转成 SSE 事件）
 # ═══════════════════════════════════════════════════
 
-def navigate(url: str) -> dict:
+def navigate(url: str, tab: str = "") -> dict:
     """浏览器页面跳转工具：把用户当前看到的页面切换到指定站内 URL（如 /books、/books/123、/books/123/continue、/publish）。
 
     用户明确要求「打开/跳转/去看看/进入」某页面时必须调用本工具切页。
     注意：切页与读取数据是两件事——即使已用 get_book_state 读过数据，只要用户要「打开页面」，
-    就还要调用本工具让浏览器实际切过去。"""
+    就还要调用本工具让浏览器实际切过去。
+    外部（MCP）调用时无 SSE 通道，本工具同时写入意图队列由浏览器轮询消费（tab 可切右侧工具日志页签）。"""
     url = (url or "").strip()
     if (not url.startswith("/") or url.startswith("//") or "://" in url
             or url.startswith("javascript:")):
         raise RuntimeError(f"仅允许站内路径，收到：{url}")
+    from libraries.nav_intent import push_nav_intent
+    push_nav_intent(url, tab=(tab or "").strip())
     return {"__navigate__": url}
 
 

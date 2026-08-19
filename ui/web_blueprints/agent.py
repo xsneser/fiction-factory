@@ -12,6 +12,7 @@ from flask import Blueprint, request, jsonify  # noqa: E402
 from .ctx import sse_stream_response  # noqa: E402
 from plugins.agent_loop import run_agent_loop, get_tool_log, clear_tool_log  # noqa: E402
 from agent_tools import TOOL_REGISTRY  # noqa: E402
+from libraries.nav_intent import take_nav_intents  # noqa: E402
 
 bp = Blueprint("agent", __name__)
 
@@ -65,3 +66,9 @@ def agent_tool_log():
 def agent_tool_log_clear():
     clear_tool_log()
     return jsonify({"ok": True, "total": 0})
+
+
+@bp.route("/api/agent/nav-intents", methods=["GET"])
+def agent_nav_intents():
+    """navigate 外部驱动桥：浏览器轮询消费外部（MCP）写入的跳转意图（取后即清空）。"""
+    return jsonify({"ok": True, "intents": take_nav_intents()})
