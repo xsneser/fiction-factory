@@ -76,6 +76,9 @@
         });
         if (chatPane) chatPane.style.display = (key === 'chat') ? '' : 'none';
         if (toolsLog) toolsLog.style.display = (key === 'chat') ? 'none' : '';
+        // 输入框/发送只属于「💬 对话」页签；工具日志页签下不出现对话框
+        var inputWrap = document.getElementById('agent-input-wrap');
+        if (inputWrap) inputWrap.style.display = (key === 'chat') ? '' : 'none';
         if (key === 'tools') {
             loadToolLog();
             if (!toolPollTimer) toolPollTimer = setInterval(loadToolLog, 3000);
@@ -94,14 +97,20 @@
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d || !d.ok) return;
+                // 只展示外部 MCP 调用（source=mcp）；内嵌 agent 的 web 调用留在对话页签的工具卡片里
+                var log = (d.log || []).filter(function(x) { return x.source === 'mcp'; });
+                var success = log.filter(function(x) { return x.ok; }).length;
                 var html = '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">'
-                    + '已暴露 <strong>' + d.tools_exposed + '</strong> 工具 · 本次调用 <strong>' + d.total
-                    + '</strong> 次 · 成功 <span style="color:#3fb950">' + d.success
-                    + '</span> 失败 <span style="color:#f85149">' + d.failed + '</span>'
+                    + '已暴露 <strong>' + d.tools_exposed + '</strong> 工具 · MCP 调用 <strong>' + log.length
+                    + '</strong> 次 · 成功 <span style="color:#3fb950">' + success
+                    + '</span> 失败 <span style="color:#f85149">' + (log.length - success) + '</span>'
                     + ' <button class="small" onclick="window.loadToolLog()">🔄 刷新</button>'
                     + ' <button class="small" onclick="window.clearToolLog()">🗑 清空</button>'
                     + '</div>';
-                (d.log || []).forEach(function(x) {
+                if (!log.length) {
+                    html += '<div style="font-size:12px;color:#8b949e;padding:8px 4px">暂无外部 MCP 调用记录（由 Claude Code 经 MCP 驱动时产生）。</div>';
+                }
+                log.forEach(function(x) {
                     html += '<div class="agent-tool-card ' + (x.ok ? 'ok' : 'err') + '">'
                         + '<div class="agent-tool-head">' + escapeHtml((x.time || '') + ' ' + (x.ok ? '✅' : '❌') + ' ' + x.tool)
                         + ' <span style="color:#8b949e;font-weight:normal">' + (x.duration_ms || 0) + 'ms</span></div>';
