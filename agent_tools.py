@@ -362,6 +362,27 @@ def query_gags(category: str = "", scene: str = "", keyword: str = "") -> dict:
     } for t in rows[:20]]}
 
 
+def query_profiles(keyword: str = "") -> dict:
+    """查笔名档案：返回现有笔名（预设 + 用户自建，含风格指纹摘要），供外部 agent 选笔名/写作风格参考。"""
+    kw = (keyword or "").strip()
+    rows = profiles.list_all()
+    if kw:
+        rows = [p for p in rows if kw in (p.pen_name or "") or kw in (p.description or "")]
+    return {"profiles": [{
+        "id": p.id, "pen_name": p.pen_name, "description": p.description,
+        "assigned_books": list(p.assigned_books or [])[:10],
+        "style": {
+            "sentence_length": (p.style_fingerprint or {}).get("sentence_length", ""),
+            "dialogue_ratio": (p.style_fingerprint or {}).get("dialogue_ratio", 0),
+            "paragraph_style": (p.style_fingerprint or {}).get("paragraph_style", ""),
+            "humor_style": (p.style_fingerprint or {}).get("humor_style", ""),
+            "action_style": (p.style_fingerprint or {}).get("action_style", ""),
+            "scene_pacing": (p.tropes or {}).get("scene_pacing", ""),
+            "chapter_hook_style": (p.tropes or {}).get("chapter_hook_style", ""),
+        },
+    } for p in rows[:30]]}
+
+
 # ═══════════════════════════════════════════════════
 # 规划 / 编辑类（调 LLM，成功后使引擎会话过期）
 # ═══════════════════════════════════════════════════
@@ -967,7 +988,7 @@ def _build_registry():
         navigate, canvas_command,
         # 只读摸底
         list_books, get_book_state, get_storyline, borrow_preview,
-        get_book_detail, query_structures, query_plots, query_gags,
+        get_book_detail, query_structures, query_plots, query_gags, query_profiles,
         # 建书 / 规划
         create_book, save_basic_info,
         generate_title, generate_outlines, generate_full_outline,

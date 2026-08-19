@@ -2,12 +2,12 @@
 """MCP 协议验收 — 脚本化 MCP 客户端驱动 NovelEngine 最小闭环（零/低成本，不调 LLM 写作）。
 
 用 mcp.client.stdio 连接 `python mcp_server.py`，走完整协议：
-  initialize 握手 → tools/list（断言 35 个 mcp 面工具）→ tools/call 真实往返：
+  initialize 握手 → tools/list（断言 36 个 mcp 面工具）→ tools/call 真实往返：
   create_book → save_basic_info → generate_outlines(rule) → confirm_outlines → fill_gags
   → get_book_detail → navigate（断言意图队列）→ delete_book 清理。
 
 断言：
-  1) MCP 面工具数 = 35；navigate 在列；canvas_command 不在列；query_plots/diagnose_retention 在列
+  1) MCP 面工具数 = 36；navigate 在列；canvas_command 不在列；query_plots/diagnose_retention/query_profiles 在列
   2) create→rule 大纲→get_book_detail 全往返成功
   3) navigate 写入 storage/nav_intent.json
   4) storage/tool_log.jsonl 出现 source="mcp" 调用条目
@@ -31,7 +31,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 35
+EXPECT_MCP_TOOLS = 36
 PASS, FAIL = [], []
 
 
@@ -74,7 +74,7 @@ async def main():
                   len(names) == EXPECT_MCP_TOOLS, f"(实际 {len(names)})")
             check("navigate 在列（外部经意图桥驱动浏览器）", "navigate" in names)
             check("canvas_command 不在列（web-only）", "canvas_command" not in names)
-            for t in ("query_plots", "diagnose_retention", "generate_full_outline"):
+            for t in ("query_plots", "diagnose_retention", "generate_full_outline", "query_profiles"):
                 check(f"工具 {t} 在列", t in names)
 
             # ── 2. create → rule 大纲 → get_book_detail 往返 ──

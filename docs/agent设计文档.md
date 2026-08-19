@@ -22,7 +22,7 @@
 ```
 ┌─ 外部驱动层（P0，新增）────────────────────────┐
 │  launch.bat 入口                                │
-│  MCP 工具面（36 工具，MCP 面 35，surface 分离）   │
+│  MCP 工具面（37 工具，MCP 面 36，surface 分离）   │
 │  navigate 外部驱动桥（意图队列 → 浏览器轮询）      │  ← 新增
 │  外部工具日志打通（mcp 调用进 tool-log）           │  ← 新增
 │  外部 harness 接入（Claude Code / OpenClaw ACP） │
@@ -90,10 +90,10 @@
 
 ### 1.2 MCP 工具面（现状，已核实）
 
-- `agent_tools.py` 的 `TOOL_REGISTRY`（36 工具，MCP 面 35）是单一来源；`mcp_server.py`（纯适配）逐个 `mcp.tool()` 注册（按 surface 过滤 + `functools.wraps` 落日志），stdio；Web 侧栏 `agent_loop`（`plugins/agent_loop.py`）复用同一注册表。**双端共享同一工具面。**
+- `agent_tools.py` 的 `TOOL_REGISTRY`（37 工具，MCP 面 36）是单一来源；`mcp_server.py`（纯适配）逐个 `mcp.tool()` 注册（按 surface 过滤 + `functools.wraps` 落日志），stdio；Web 侧栏 `agent_loop`（`plugins/agent_loop.py`）复用同一注册表。**双端共享同一工具面。**
 - 工具分组（`_build_registry` 顺序）：
-  - 导航：`navigate` / `canvas_command`（`canvas_command` 为 web-only，MCP 面 35 不含）
-  - 只读：`list_books` / `get_book_state` / `get_storyline` / `borrow_preview` / `get_book_detail` / `query_structures` / `query_plots` / `query_gags`
+  - 导航：`navigate` / `canvas_command`（`canvas_command` 为 web-only，MCP 面 36 不含）
+  - 只读：`list_books` / `get_book_state` / `get_storyline` / `borrow_preview` / `get_book_detail` / `query_structures` / `query_plots` / `query_gags` / `query_profiles`
   - 建书规划：`create_book` / `save_basic_info` / `generate_title` / `generate_outlines` / `generate_full_outline` / `extend_outline` / `confirm_outlines` / `fill_plots` / `fill_gags` / `outline_agent` / `outline_material_candidates` / `generate_world` / `world_candidates` / `confirm_world`
   - 写作：`write_next_bridge` / `write_chapter` / `generate_book_meta`
   - 上架/审查/去AI/质量分析：`publish_check` / `mark_finished` / `publish_book` / `export_book` / `review_text` / `deai_text` / `diagnose_retention` / `tag_punch_points` / `delete_book`（`delete_book` 需 `confirm=True`）
@@ -131,7 +131,7 @@ Web 侧 agent_panel.js 现有 3s 轮询通道（tool-log 轮询）复用/扩展
 
 ### 1.5 外部 harness 接入路径
 
-- **直接（最小闭环验证路径）**：Claude Code 挂 MCP → 用户 prompt 驱动 → Claude Code 调 35 工具（MCP 面）。这是 P1 路线图的验证入口。
+- **直接（最小闭环验证路径）**：Claude Code 挂 MCP → 用户 prompt 驱动 → Claude Code 调 36 工具（MCP 面）。这是 P1 路线图的验证入口。
 - **多层（长期）**：OpenClaw 作 meta-agent（自由循环）→ ACP `sessions_spawn({runtime: "acp"})` 拉起 Claude Code → Claude Code 挂 NovelEngine MCP。OpenClaw 自带 loop 护栏（`maxToolCalls` / `timeout` / `runtimeToolPolicy`），工具白名单可限到写作组，`delete_book` 这类高风险工具不暴露给外部。
 
 ### 1.6 外部安全前置（设计，保留 v0.2 §11.1/§11.2）
@@ -353,17 +353,17 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
 - P1：`libraries/book_lock.py`（书级文件锁）、`agent_tools` surface 分离 + `tools_for_surface` + 写工具书锁包装、`libraries/nav_intent.py`（意图队列 + TTL）、`navigate` 写意图 + `tab` 参数、`GET /api/agent/nav-intents`、`libraries/tool_log.py`（web/mcp 合并日志）、`mcp_server` functools.wraps 落 source=mcp 日志。
 - P2：`OutlineGenerator.generate(agent_picks=)`——决策点 A 预选模板（`_sequence_from_picks`）+ 选材复查 pass（`_review_outline_sequence`，多次思考保证稳定）；决策点 B 预选桥段（`_arrange_plots_for_outline` 逐阶段校验）；工具 `outline_material_candidates` 暴露候选池。
 - P3：`prompt_harness._roles_status_block` 分角色态势表（规则层零成本）；`storyline_writer` flash 自检（`_self_check_group`）+ 限 1 次重写（`_rewrite_group_once`），`SELF_CHECK_ENABLED` 开关。
-- P4：工具 `get_book_detail` / `query_structures` / `query_plots` / `query_gags`（只读 both）+ `libraries/retention.py` 追读诊断 + `libraries/tag_generator.py` 爽点标注（工具 `diagnose_retention` / `tag_punch_points`）。注册表 29→36 工具。
+- P4：工具 `get_book_detail` / `query_structures` / `query_plots` / `query_gags` / `query_profiles`（只读 both）+ `libraries/retention.py` 追读诊断 + `libraries/tag_generator.py` 爽点标注（工具 `diagnose_retention` / `tag_punch_points`）。注册表 29→36 工具。
 
 **外部驱动验收记录（2026-08-19）**：
-- **MCP 注册**：`.mcp.json`（project 级），Claude Code 重启会话后自动加载，MCP 面 **35 工具**（`navigate` 在列、`canvas_command` web-only 不在列）。
-- **`tools/mcp_smoke.py` 协议验收 17/17 通过**：`initialize` 握手 → `tools/list`（35 工具）→ `tools/call` 真实往返（create_book → save_basic_info → generate_outlines(rule) → confirm_outlines → fill_gags → get_book_detail）→ navigate 写入意图队列 → tool-log `source="mcp"`（14 条）→ delete_book 安全门。零 LLM 成本，跑完清理。
+- **MCP 注册**：`.mcp.json`（project 级），Claude Code 重启会话后自动加载，MCP 面 **36 工具**（`navigate` 在列、`canvas_command` web-only 不在列）。
+- **`tools/mcp_smoke.py` 协议验收 17/17 通过**：`initialize` 握手 → `tools/list`（36 工具）→ `tools/call` 真实往返（create_book → save_basic_info → generate_outlines(rule) → confirm_outlines → fill_gags → get_book_detail）→ navigate 写入意图队列 → tool-log `source="mcp"`（14 条）→ delete_book 安全门。零 LLM 成本，跑完清理。
 - **过程中修复两处 MCP 面 bug**：
   1. `navigate` 误标 `surface="web"` → 外部 MCP 调不到、意图桥失效 → 改 `surface="both"`（内部 SSE 直达 + 外部意图桥，同一函数写 `nav_intent.json`）。
   2. `_wrap_book_lock` 手写包装只设 `__name__`/`__doc__` → `inspect.signature` 看到 `(**kwargs)` → FastMCP 给 `fill_gags` 等 10 个锁定工具生成错误 schema → 改 `functools.wraps` 保留 `__wrapped__` 签名链。
 - **真实 LLM 驱动延后**（用户择机）：`generate_full_outline`（6 阶段）/ `write_next_bridge` 经 MCP 的 LLM 往返，以及 Claude Code 新会话 prompt 驱动（浏览器可视化 + tool-log `source=mcp`）——含 deepseek-v4-flash 成本。
 
-**与 v0.2 批次映射**：v0.2 的 P0-a/P0-b（llm_client / 遥测 / 路由）在 v0.3 中并入 §五，**不阻塞 P1**——P1 外部驱动桥依赖的是现状 36 工具（MCP 面 35），不依赖遥测/路由。P1 落地后再补 §5.1-5.3，用真实 usage 观测外部驱动的成本与缓存命中率。
+**与 v0.2 批次映射**：v0.2 的 P0-a/P0-b（llm_client / 遥测 / 路由）在 v0.3 中并入 §五，**不阻塞 P1**——P1 外部驱动桥依赖的是现状 37 工具（MCP 面 36），不依赖遥测/路由。P1 落地后再补 §5.1-5.3，用真实 usage 观测外部驱动的成本与缓存命中率。
 
 ---
 
@@ -372,7 +372,7 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
 1. **有界自评 vs 成本纪律**：✅ 已按建议落地（`SELF_CHECK_ENABLED=True`，flash 自检 + 限 1 次重写 + 成本有界）；此实现反转 memory「写作质量优化不加 LLM 后处理」，**仍需用户复核是否保留**（如不认可可把常量改 False）。
 2. **大纲选材决策点**：✅ 已落地（阶段 2 前选模板 + 阶段 3 前选桥段，`agent_picks` 外部预选 + 选材复查 pass）；模型沿用管线默认 flash（reasoner 可选，未强制）。
 3. **navigate 桥实现形态**：✅ 已按建议落地（JSON 意图队列 + 浏览器 2.5s 轮询 + TTL 30s）。
-4. **信息工具粒度**：✅ 已全量落地（`get_book_detail` / `query_structures` / `query_plots` / `query_gags`，另加 `diagnose_retention` / `tag_punch_points`）。
+4. **信息工具粒度**：✅ 已全量落地（`get_book_detail` / `query_structures` / `query_plots` / `query_gags` / `query_profiles`，另加 `diagnose_retention` / `tag_punch_points`）。
 5. 原 v0.2 §十三 遗留项（保留，按 v0.2 建议值）：
    - Op→模型默认表：`outline_plot` 是否降 flash；`world_struct` 是否 reasoner
    - 降级阈值：预算 50%/20%/5%；上下文 70%/85%
