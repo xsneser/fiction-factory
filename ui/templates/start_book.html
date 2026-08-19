@@ -78,7 +78,7 @@
                 <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
             </div>
             <div class="form-row">
-                <label>世界观简述（一句话设定 + 第②步选中方向，可编辑）</label>
+                <label>世界观简述（第②步选中方向，可编辑）</label>
                 <textarea id="wz-world-desc3" rows="3"></textarea>
             </div>
         </fieldset>
@@ -234,15 +234,14 @@ var WZ = {
         this.el('wz-next').style.display = (n === 1 || n === 2) ? 'inline-block' : 'none';
         this.el('wz-submit').style.display = (n === 3) ? 'inline-block' : 'none';
         if (this.bookId && n === 4) this.el('wz-prev').style.display = 'none';
-        // 步骤③ 世界观可编辑：预填书名（来自②选中候选）+ 世界观简述（一句话 + 选中方向）
+        // 步骤③ 世界观可编辑：预填书名（来自②选中候选）+ 世界观简述（只填②选中方向——
+        // 一句话设定已在步 1 的 #wz-idea，世界观简述本来就是由它发散来的，不重复拼）
         if (n === 3) {
             var titleEl = this.el('wz-title');
             if (titleEl && this.state.title) titleEl.value = this.state.title;
             var desc3 = this.el('wz-world-desc3');
             if (desc3 && !desc3.value) {
-                var _base = this.el('wz-idea').value.trim();
-                var _wb = this.state.world_brief || '';
-                desc3.value = _wb ? (_base ? _base + '。' + _wb : _wb) : _base;
+                desc3.value = this.state.world_brief || '';
             }
         }
         this.persist();   // 步骤切换即存草稿
