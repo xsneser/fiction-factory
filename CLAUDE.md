@@ -15,5 +15,33 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 - 每个分 skill 先用 `mcp__novel-engine__get_book_detail` / `get_book_state` 做前置 phase 检查；phase 不满足时引导前一阶段，不要跨阶段硬做。
 - 状态信号：`storyline.phase ∈ config/outlines/plots/ready`；`book.status ∈ planning/writing/reviewing/finished/published/paused`。
 - 写类工具带书级文件锁，冲突抛 `BookBusyError`，稍后重试；`budget_paused` 表示预算/额度触发，停下问用户。
-- 需要可视化页面时用 `mcp__novel-engine__navigate` 切站内页（`/books/start` 建书、`/books/generator` 大纲、`/books/<book_id>` 详情、`/books/<book_id>/continue` 写作台、`/publish` 上架）。切页与读数据是两回事：即使已用 get_book_state 读过数据，只要用户要「打开页面」就要再调 navigate。
+- 需要可视化页面时用 `mcp__novel-engine__navigate` 切站内页（完整路由表见下）。切页与读数据是两回事：即使已用 get_book_state 读过数据，只要用户要「打开页面」就要再调 navigate。
+
+## 站内页面路由表（navigate 用；无书时部分页 302 重定向）
+
+| 页面 | URL | 需要书 | 无书时 |
+|---|---|---|---|
+| 仪表盘 | `/` | 否 | — |
+| 书库 | `/books` | 否 | — |
+| 建书向导 | `/books/start` | 否 | — |
+| 大纲生成 | `/books/generator` | 否 | 302→`/books/start` |
+| 书详情 | `/books/<book_id>` | 是 | — |
+| 世界观设定 | `/books/<book_id>/world` | 是 | — |
+| 写作台 | `/books/<book_id>/continue` | 是 | — |
+| 单本上架 | `/books/<book_id>/publish` | 是 | — |
+| 上架总览 | `/publish` | 否 | — |
+| 桥段库 | `/plots` | 否 | — |
+| 角色库 | `/characters` | 否 | — |
+| 大纲库 | `/structures` | 否 | — |
+| 笑点库 | `/gags` | 否 | — |
+| 笔名档案 | `/profiles` | 否 | — |
+| 新建笔名 | `/profiles/new` | 否 | — |
+| 写作工具 | `/write` | 否 | 302→`/books` |
+| 去AI味 | `/deai` | 否 | — |
+| 审阅测试 | `/review-test` | 否 | — |
+| 提取 | `/extract` | 否 | — |
+| 番茄侦察兵 | `/scout` | 否 | — |
+| 设置 | `/settings` | 否 | — |
+
+（旧/内部路由 `/desk`、`/timeline/<id>/edit`、`/storyline/<id>/edit` 等为引擎内部页，agent 一般不用。）
 - 平台 Web 服务端口 `58080`（`launch.bat` 启动）。主 skill 会探测并拉起，**拉起成功后自动打开浏览器页面**（复刻 launch.bat 的 `start "" http://localhost:58080` 行为），勿重复启动。
