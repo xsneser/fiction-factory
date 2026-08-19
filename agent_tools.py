@@ -30,7 +30,7 @@ from ui.web_blueprints.ctx import (  # noqa: E402
 )
 from core.text_utils import count_prose_units  # noqa: E402
 from libraries.storyline import OutlineSlot, annotate_plot_roles, \
-    get_mc, normalize_basic_info  # noqa: E402
+    get_mc, get_characters, normalize_basic_info  # noqa: E402
 from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
 
 
@@ -287,6 +287,78 @@ def borrow_preview(source_book_id: str) -> dict:
     return {"seed": seed,
             "source_title": src.book_title or src.pen_name or source_book_id,
             "source_genre": src.genre}
+
+
+# ═══════════════════════════════════════════════════
+# 信息工具层（P4，只读、无副作用，供外部 agent 选材/续写/上架决策）
+# ═══════════════════════════════════════════════════
+
+def get_book_detail(book_id: str) -> dict:
+    """读取一本书的完整详情：书名/简介/角色/世界观/进度（供外部 agent 决策）。"""
+    book = book_mgr.get(book_id)
+    if not book:
+        raise RuntimeError(f"书 {book_id} 不存在")
+    tl = book_mgr.load_storyline(book_id)
+    bi = (tl.basic_info or {}) if tl else {}
+    chars = get_characters(bi) or []
+    outline = book_mgr.get_outline(book_id) or {}
+    return {
+        "book_id": book.book_id, "title": book.title, "pen_name": book.pen_name,
+        "genre": book.genre, "sub_genre": book.sub_genre, "platform": book.platform,
+        "status": book.status, "current_chapter": book.current_chapter,
+        "chapter_count": book.chapter_count, "total_words": book.total_words or 0,
+        "synopsis": (outline.get("synopsis") or ""),
+        "protagonist": get_mc(bi),
+        "characters": chars[:10],
+        "world_building": (bi or {}).get("world_building"),
+        "tone": (bi or {}).get("tone"),
+        "pov": (bi or {}).get("pov"),
+        "phase": tl.phase if tl else "",
+        "outlines": [{"id": o.id, "name": o.name}
+                     for o in (tl.outlines or [])][:10] if tl else [],
+        "plots": [{"id": p.id, "name": p.name}
+                  for p in (tl.plots or [])][:20] if tl else [],
+    }
+
+
+def query_structures(keyword: str = "", genre: str = "", sub_genre: str = "") -> dict:
+    """查大纲库：按流派/子流派/关键词（名称）返回模板清单。"""
+    kw = (keyword or "").strip()
+    rows = struct_lib.search(genre=genre, sub_genre=sub_genre)
+    if kw:
+        rows = [t for t in rows if kw in (t.name or "")]
+    return {"templates": [{
+        "id": t.id, "name": t.name, "genre": t.genre, "sub_genre": t.sub_genre,
+        "total_chapters": t.total_chapters,
+        "stages": [s.name for s in (t.stages or [])[:5]],
+    } for t in rows[:20]]}
+
+
+def query_plots(category: str = "", context: str = "", keyword: str = "") -> dict:
+    """查桥段库：按分类/场景/关键词（名称）返回桥段模板清单。"""
+    kw = (keyword or "").strip()
+    rows = plot_lib.search(category=category, context=context)
+    if kw:
+        rows = [t for t in rows if kw in (t.name or "")]
+    return {"plots": [{
+        "id": t.id, "name": t.name, "category": t.category,
+        "sub_category": t.sub_category or "",
+        "fit_contexts": list(getattr(t, "fit_contexts", None) or [])[:3],
+        "template_structure": (t.template_structure or "")[:80],
+    } for t in rows[:20]]}
+
+
+def query_gags(category: str = "", scene: str = "", keyword: str = "") -> dict:
+    """查笑点库：按分类/场景/关键词（名称）返回笑点模式清单。"""
+    kw = (keyword or "").strip()
+    rows = gag_lib.search(category=category, scene=scene)
+    if kw:
+        rows = [t for t in rows if kw in (t.name or "")]
+    return {"gags": [{
+        "id": t.id, "name": t.name, "category": getattr(t, "category", ""),
+        "fit_scenes": list(getattr(t, "fit_scenes", None) or [])[:3],
+        "pattern_description": (getattr(t, "pattern_description", "") or "")[:80],
+    } for t in rows[:20]]}
 
 
 # ═══════════════════════════════════════════════════
@@ -840,6 +912,7 @@ def _build_registry():
         navigate, canvas_command,
         # 只读摸底
         list_books, get_book_state, get_storyline, borrow_preview,
+        get_book_detail, query_structures, query_plots, query_gags,
         # 建书 / 规划
         create_book, save_basic_info,
         generate_title, generate_outlines, generate_full_outline,
