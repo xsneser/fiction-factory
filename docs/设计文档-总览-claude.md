@@ -230,7 +230,7 @@ D:\NovelEngine/
 1. **①一句话设定**（必填 + 笔名）。
 2. **②AI 候选挑世界观**：从一句话设定生成 **5 个**世界观方向（无书 `POST /api/world-builder/candidates`，`generate_candidates` count=5），挑一个（`one_liner` 并入一句话设定）；「从已有书借鉴」备选（`borrow-preview` 无书别名预览，`extract_seed`）；可「跳过，手动设定」。
 3. **③微调设定**：🌍 世界观置顶（只读同步一句话）→ 🏷️ 题材标签 chips（**50 标签 5 组**，`libraries/world_tags.py`，流派/题材一体，存入 `world_building.tags`）→ 📖 书名与主角（「🎲 根据世界观生成书名与主角候选」→ 无书 `POST /api/world-builder/title-protag` → **5 书名 + 3 主角**候选点选确定 → 可微调 + 每章字数）。
-4. **④创建并生成大纲**：③提交 JSON 建书（POST /books/start 双轨：JSON→book_id、form→302；**流派由 tags 经 `derive_genre` 推导**、平台默认 fanqie，留发布页调整）→ 内联跑 `WorldBuildingGenerator.generate`（SSE，tags 作硬约束注入 prompt）→ 世界 `done` 自动衔接 `generate-full`（`skip_analyze` 因 `_world_generated` 自动跳过 Phase 1）；世界失败可「跳过世界观」走 Phase 1 兜底（此时 tags 也注入 `_analyze_story`）。
+4. **④创建书**：③提交 JSON 建书（POST /books/start 双轨：JSON→book_id、form→302；**流派由 tags 经 `derive_genre` 推导**、平台默认 fanqie，留发布页调整），建书 phase=config。**向导不再自动跑 SSE**——世界观（`WorldBuildingGenerator.generate`）与完整大纲（`generate-full`）由外部 Agent 经 MCP `generate_world` / `generate_full_outline` 生成（逐步落盘）；第 4 步内嵌故事线 Gantt（`window.StoryLine`），轮询 `GET /api/storyline/<id>` 实时填充，phase=ready 自停。
 5. **⑤前三章撰写**：进入写作台（`/books/<id>/continue`，沿用桥段写作流程）。
 
 - 产出「设定圣经」维度：tags / description / era / power_system / factions / rules（数值语义写死，全书唯一口径）/ geography / culture / history / social_structure / core_conflict / world_summary（`DEFAULT_WORLD_BUILDING`）。

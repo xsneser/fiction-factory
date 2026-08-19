@@ -151,10 +151,10 @@ Web 侧 agent_panel.js 现有 3s 轮询通道（tool-log 轮询）复用/扩展
 
 ### 2.1 建书 skill
 
-- **已具备**：5 步向导 `GET /books/start`（一句话设定 → AI 候选世界观/借书 → 微调设定 → 生成大纲 → 前三章）+ `create_book` 工具（`dashboard.py` 约 45-142 行）。
-- **决策点**：世界观候选选择、设定微调——agent 可在此介入。
-- **批处理**：`WorldBuildingGenerator.generate` / `generate_full_outline`（SSE）。
-- **外部驱动**：外部 agent 用 navigate（§1.3）翻到 `/books/start`，逐面板填入并提交；向导状态存 `sessionStorage`（`ne_wizard_state`），外部驱动时以服务端接口为准。
+- **已具备**：5 步向导 `GET /books/start`（一句话设定 → AI 候选世界观/借书 → 微调设定 → 建书 → 前三章）。
+- **决策点（submit 硬前置）**：世界观候选选择必须经用户确认，未挑候选不得提交。
+- **批处理**：建书由系统向导完成（`POST /books/start`，phase=config，向导**不再自动跑 SSE**）；世界观与完整大纲由 agent 经 MCP `generate_world` / `generate_full_outline` 生成（逐步落盘），向导第 4 步内嵌故事线 Gantt（`window.StoryLine`）轮询 `GET /api/storyline/<id>` 实时填充。
+- **外部驱动**：外部 agent 用 navigate（§1.3）翻到 `/books/start`，经 `drive_ui`（§1.6）逐面板填表单/点下一步/提交；`create_book`/`delete_book` 为 web-only 护栏（建书走系统向导、删书走书库页手动）；向导状态存 `sessionStorage`（`ne_wizard_state`），外部驱动时以服务端接口为准。
 
 ### 2.2 大纲 skill（agent 选材决策点 ★）
 

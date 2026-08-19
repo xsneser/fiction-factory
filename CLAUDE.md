@@ -4,7 +4,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 
 | 阶段 | 分 skill | 前置 phase | 出口 | 主要工具 |
 |---|---|---|---|---|
-| 建书 | `novel-build` | 无书 / phase=config | `config` + `_world_generated` | drive_ui（驱动建书向导）/ world_candidates / generate_world / save_basic_info / confirm_world / generate_title |
+| 建书 | `novel-build` | 无书 / phase=config | `ready`（世界观+完整大纲由 agent 经 MCP 生成，向导第 4 步 Gantt 实时展示） | drive_ui（驱动建书向导）/ world_candidates / generate_world / generate_full_outline / save_basic_info / confirm_world / generate_title |
 | 大纲 | `novel-outline` | `config` 且 basic_info 充实 | `ready` | outline_material_candidates / generate_full_outline / generate_outlines / confirm_outlines / fill_plots / fill_gags / extend_outline |
 | 写作 | `novel-write` | `ready` | 章节/桥段写完 | write_next_bridge / write_chapter / generate_book_meta / review_text / deai_text / diagnose_retention / tag_punch_points |
 | 上架 | `novel-publish` | 已有第 1 章正文 | `published` / `finished` | publish_check / publish_book / mark_finished / export_book |
@@ -16,7 +16,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 - 状态信号：`storyline.phase ∈ config/outlines/plots/ready`；`book.status ∈ planning/writing/reviewing/finished/published/paused`。
 - 写类工具带书级文件锁，冲突抛 `BookBusyError`，稍后重试；`budget_paused` 表示预算/额度触发，停下问用户。
 - 需要可视化页面时用 `mcp__novel-engine__navigate` 切站内页（完整路由表见下）。切页与读数据是两回事：即使已用 get_book_state 读过数据，只要用户要「打开页面」就要再调 navigate。
-- **护栏（必须遵守）**：`create_book` / `delete_book` 已从 MCP 面移除。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
+- **护栏（必须遵守）**：`create_book` / `delete_book` 已从 MCP 面移除。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；**建书后世界观+完整大纲由 agent 经 MCP `generate_world` / `generate_full_outline` 生成**（向导不再自动跑 SSE，第 4 步 Gantt 轮询实时填充）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
 
 ## 站内页面路由表（navigate 用；无书时部分页 302 重定向）
 
