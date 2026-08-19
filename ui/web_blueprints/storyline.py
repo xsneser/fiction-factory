@@ -25,6 +25,20 @@ def storyline_detail(storyline_id):
     return redirect(url_for("books.book_detail", book_id=storyline_id))
 
 
+@bp.route("/api/storyline/<book_id>", methods=["GET"])
+def api_storyline_get(book_id):
+    """返回书的故事线 JSON（供建书向导第 4 步轮询渲染 Gantt）。
+
+    必须直接从磁盘 load（不能用 ctx 缓存 _resolve_storyline）——外部 agent 是独立进程，
+    经文件落盘，web 进程缓存会过期。agent 生成世界观/大纲时逐步落盘，轮询即见实时填充。
+    """
+    from libraries.storyline import load_storyline
+    tl = load_storyline(_storyline_filepath(book_id))
+    if tl is None:
+        return jsonify({"ok": False, "error": f"书 {book_id} 无故事线"}), 404
+    return jsonify({"ok": True, "storyline": tl.to_dict()})
+
+
 def _build_next_arc(builder, tl, mode="rule"):
     """在故事线末尾追加下一段大纲弧。rule=确定性模板循环；ai=单弧 LLM 再锚定。"""
     if mode == "ai":
