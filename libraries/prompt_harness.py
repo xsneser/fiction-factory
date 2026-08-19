@@ -943,13 +943,16 @@ class PromptHarness:
             "重要度 importance=2~5 按戏份递减，彼此要有区分度）。\n"
             "3. 每个角色必须从【可选角色原型】中挑选一个 archetype_id 作为原型基础，"
             "并把原型适配成符合本书世界观的具体角色；没有合适原型时可省略 archetype_id。\n"
-            '只返回 JSON：{"protagonists":[{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":""},'
-            '{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":""},'
-            '{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":""}],'
-            '"supporting_cast":[{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":2,"archetype_id":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":2,"archetype_id":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":3,"archetype_id":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":3,"archetype_id":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":4,"archetype_id":""}]}'
+            "4. 每个角色补充：gender 性别、age 年龄（数字，未知填 0）、death_year 死亡年份"
+            "（数字，未定/健在填 0）、title 称呼/称号、brief 100 字内人物简介——"
+            "这些字段让书详情页人物卡片完整，不要留空。\n"
+            '只返回 JSON：{"protagonists":[{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":"","gender":"","age":0,"death_year":0,"title":"","brief":""},'
+            '{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":"","gender":"","age":0,"death_year":0,"title":"","brief":""},'
+            '{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":"","gender":"","age":0,"death_year":0,"title":"","brief":""}],'
+            '"supporting_cast":[{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":2,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":2,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":3,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":3,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":4,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0}]}'
         )
         return "\n".join(parts)

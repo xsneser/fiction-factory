@@ -336,6 +336,11 @@ var WZ = {
         var row = document.createElement('div');
         row.className = 'char-row';
         if (data.archetype_id) row.setAttribute('data-arch', data.archetype_id);
+        // 透传 5 个丰富字段（性别/简介/称呼/年龄/死亡年份）：向导不展示，collect 读回保到建书，详情页可编辑
+        ['gender', 'brief', 'title', 'age', 'death_year'].forEach(function(k) {
+            if (data[k] !== undefined && data[k] !== null && String(data[k]) !== '')
+                row.setAttribute('data-' + k, data[k]);
+        });
         row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin:6px 0;padding:8px;background:#0d1117;border:1px solid #21262d;border-radius:6px;align-items:center';
         row.innerHTML =
             '<input class="ch-name" placeholder="姓名" value="' + (data.name || '') + '" style="flex:1;min-width:70px">'
@@ -389,7 +394,11 @@ var WZ = {
                 golden_finger: row.querySelector('.ch-golden').value.trim(),
                 archetype_id: row.getAttribute('data-arch') || '',
                 relations: (rel && mcName) ? [{ name: mcName, relation: rel }] : [],
-                gender: '', brief: '', title: '', age: 0, death_year: 0,
+                gender: row.getAttribute('data-gender') || '',
+                brief: row.getAttribute('data-brief') || '',
+                title: row.getAttribute('data-title') || '',
+                age: parseInt(row.getAttribute('data-age'), 10) || 0,
+                death_year: parseInt(row.getAttribute('data-death_year'), 10) || 0,
             });
         });
         this.state.characters = chars;

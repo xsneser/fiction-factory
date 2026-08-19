@@ -694,7 +694,10 @@ def load_storyline(path: str) -> Optional[BookStoryline]:
 
 
 def _deep_keep_existing(existing: dict, generated: dict) -> dict:
-    """以 generated 为基础，existing 里非空字段覆盖（dict 递归）。"""
+    """以 generated 为基础，existing 里非空字段覆盖（dict 递归）。
+
+    age/death_year 的 0 视为"未知"（跳过，保留 generated 真值），否则 0 会覆盖生成值。
+    """
     existing = existing or {}
     generated = generated or {}
     merged = dict(generated)
@@ -702,7 +705,7 @@ def _deep_keep_existing(existing: dict, generated: dict) -> dict:
         gv = merged.get(k)
         if isinstance(ev, dict) and isinstance(gv, dict):
             merged[k] = _deep_keep_existing(ev, gv)
-        elif ev not in (None, "", [], {}):
+        elif ev not in (None, "", [], {}, 0):
             merged[k] = ev
     return merged
 
@@ -710,7 +713,8 @@ def _deep_keep_existing(existing: dict, generated: dict) -> dict:
 def _merge_characters(existing_chars, generated_chars) -> list:
     """characters 数组合并：
     - MC 逐字段深合并（existing 非空字段保留，generated 补空）
-    - 非 MC：existing 非空则整组保留，否则用 generated（复刻旧 supporting_cast 语义）
+    - 非 MC：按姓名逐字段补全——existing 空字段（性别/简介/称呼/年龄等）由 generated 补，
+      generated 里没有 existing 对应角色的追加（不复刻"整组保留/整组丢弃"）
     """
     existing_chars = list(existing_chars or [])
     generated_chars = list(generated_chars or [])
@@ -729,7 +733,15 @@ def _merge_characters(existing_chars, generated_chars) -> list:
 
     ex_nonmc = [c for c in existing_chars if c is not ex_mc]
     gen_nonmc = [c for c in generated_chars if c is not gen_mc]
-    merged.extend(ex_nonmc or gen_nonmc)
+    gen_by_name = {str(c.get("name", "") or "").strip(): c
+                   for c in gen_nonmc if str(c.get("name", "") or "").strip()}
+    for c in ex_nonmc:
+        merged.append(_deep_keep_existing(
+            c, gen_by_name.get(str(c.get("name", "") or "").strip()) or {}))
+    ex_names = {str(c.get("name", "") or "").strip() for c in ex_nonmc}
+    for g in gen_nonmc:
+        if str(g.get("name", "") or "").strip() not in ex_names:
+            merged.append(dict(g))
     # 兜底标主角
     if merged and not _is_mc(merged[0]):
         for c in merged:
