@@ -59,11 +59,12 @@
         }
         aside#status-bar.collapsed { width:0; padding:0; border-left:none; overflow:hidden; }
         aside#status-bar .status-head { display:flex; align-items:center; justify-content:space-between; }
-        aside#status-bar .status-title { font-size:12px; color:var(--fg-dim); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; }
         aside#status-bar .status-toggle {
             background:none; border:none; color:var(--fg-dim); cursor:pointer; font-size:11px; padding:0 2px 8px; line-height:1;
         }
         aside#status-bar .status-toggle:hover { color:#f0f6fc; }
+        /* 页签行内的折叠按钮（Agent 标题已去掉，折叠控制并入页签行末） */
+        aside#status-bar .agent-tabs .status-toggle { margin-left:auto; align-self:flex-end; padding:0 4px 6px; }
         button.status-reopen {
             position:fixed; right:0; top:50%; transform:translateY(-50%);
             background:#161b22; border:1px solid #30363d; border-right:none; color:#8b949e;
