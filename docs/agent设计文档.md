@@ -355,6 +355,14 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
 - P3：`prompt_harness._roles_status_block` 分角色态势表（规则层零成本）；`storyline_writer` flash 自检（`_self_check_group`）+ 限 1 次重写（`_rewrite_group_once`），`SELF_CHECK_ENABLED` 开关。
 - P4：工具 `get_book_detail` / `query_structures` / `query_plots` / `query_gags`（只读 both）+ `libraries/retention.py` 追读诊断 + `libraries/tag_generator.py` 爽点标注（工具 `diagnose_retention` / `tag_punch_points`）。注册表 29→36 工具。
 
+**外部驱动验收记录（2026-08-19）**：
+- **MCP 注册**：`.mcp.json`（project 级），Claude Code 重启会话后自动加载，MCP 面 **35 工具**（`navigate` 在列、`canvas_command` web-only 不在列）。
+- **`tools/mcp_smoke.py` 协议验收 17/17 通过**：`initialize` 握手 → `tools/list`（35 工具）→ `tools/call` 真实往返（create_book → save_basic_info → generate_outlines(rule) → confirm_outlines → fill_gags → get_book_detail）→ navigate 写入意图队列 → tool-log `source="mcp"`（14 条）→ delete_book 安全门。零 LLM 成本，跑完清理。
+- **过程中修复两处 MCP 面 bug**：
+  1. `navigate` 误标 `surface="web"` → 外部 MCP 调不到、意图桥失效 → 改 `surface="both"`（内部 SSE 直达 + 外部意图桥，同一函数写 `nav_intent.json`）。
+  2. `_wrap_book_lock` 手写包装只设 `__name__`/`__doc__` → `inspect.signature` 看到 `(**kwargs)` → FastMCP 给 `fill_gags` 等 10 个锁定工具生成错误 schema → 改 `functools.wraps` 保留 `__wrapped__` 签名链。
+- **真实 LLM 驱动延后**（用户择机）：`generate_full_outline`（6 阶段）/ `write_next_bridge` 经 MCP 的 LLM 往返，以及 Claude Code 新会话 prompt 驱动（浏览器可视化 + tool-log `source=mcp`）——含 deepseek-v4-flash 成本。
+
 **与 v0.2 批次映射**：v0.2 的 P0-a/P0-b（llm_client / 遥测 / 路由）在 v0.3 中并入 §五，**不阻塞 P1**——P1 外部驱动桥依赖的是现状 29 工具，不依赖遥测/路由。P1 落地后再补 §5.1-5.3，用真实 usage 观测外部驱动的成本与缓存命中率。
 
 ---
