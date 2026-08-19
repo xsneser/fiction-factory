@@ -645,6 +645,63 @@ var WZ = {
 var __restored = WZ.restore();
 if (__restored) WZ.applyState();
 WZ.show(__restored ? WZ.cur : 1);
+
+// ─── 建书向导命令桥（外部 agent 经 drive_ui 驱动 UI，非直建）───
+// 守卫：不在向导页（无 #wz-idea）/ 未初始化 / 已建书 时不处理。
+window.onnecommand = function(e) {
+    if (!window.WZ || !document.getElementById('wz-idea') || WZ.bookId) return;
+    var d = (e && e.detail) || {};
+    var cmd = d.cmd, args = d.args || {};
+    var FIELDS = {
+        idea: 'wz-idea', pen: 'wz-pen', title: 'wz-title', words: 'wz-words',
+        world_desc: 'wz-world-desc3', world_desc3: 'wz-world-desc3',
+        borrow_source: 'wz-borrow-source', borrow_tweak: 'wz-borrow-tweak',
+    };
+    if (cmd === 'set_field') {
+        var f = args.field, v = String(args.value === undefined ? '' : args.value);
+        var el = FIELDS[f] ? WZ.el(FIELDS[f]) : null;
+        if (!el) { if (typeof showToast === 'function') showToast('未知字段：' + f, 'error'); return; }
+        // select 硬校验：值不在现有 option 里会落空，先补 option（如外部新笔名）
+        if ((f === 'pen' || f === 'borrow_source') && v) {
+            var has = Array.prototype.slice.call(el.options).some(function(o) { return o.value === v; });
+            if (!has) { var o = document.createElement('option'); o.value = v; o.textContent = v; el.appendChild(o); }
+        }
+        el.value = v;
+        // 同步 WZ.state：collect() 读 DOM，但 show(3) 用 state.title 覆盖 #wz-title、state.tags 只由 toggleTag 维护
+        if (f === 'idea') WZ.state.idea = v;
+        else if (f === 'pen') WZ.state.pen_name = v;
+        else if (f === 'title') WZ.state.title = v;
+        else if (f === 'words') WZ.state.words_per_chapter = parseInt(v, 10) || 3000;
+        else if (f === 'world_desc' || f === 'world_desc3') WZ.state.idea = v;
+    } else if (cmd === 'set_tags') {
+        var targets = (args.tags || []).map(String);
+        document.querySelectorAll('.chip.on').forEach(function(c) { WZ.toggleTag(c); });
+        document.querySelectorAll('.chip').forEach(function(c) {
+            if (targets.indexOf(c.dataset.tag) >= 0 && !c.classList.contains('on')) WZ.toggleTag(c);
+        });
+    } else if (cmd === 'pick_candidate') {
+        // MCP 路线：浏览器 __CANDIDATES__ 可能未加载，candidate 由 agent 内嵌传入
+        var cand = (args.candidate && typeof args.candidate === 'object') ? args.candidate : {};
+        if (cand.title) WZ.state.title = cand.title;
+        if (cand.world_brief) WZ.state.world_brief = cand.world_brief;
+        if (cand.one_liner) {
+            var ideaEl = WZ.el('wz-idea');
+            var cur = ideaEl ? ideaEl.value.trim() : '';
+            var merged = cur ? cur + '。' + cand.one_liner : cand.one_liner;
+            if (ideaEl) ideaEl.value = merged;
+            WZ.state.idea = merged;
+        }
+        var cards = document.querySelectorAll('#wz-candidate-box .wz-candidate-card');
+        for (var i = 0; i < cards.length; i++) cards[i].classList.remove('picked');
+        if (typeof args.idx === 'number' && cards[args.idx]) cards[args.idx].classList.add('picked');
+        if (typeof showToast === 'function') showToast('已选中：' + (cand.title || ''), 'success');
+    } else if (cmd === 'next') { WZ.next(); }
+    else if (cmd === 'prev') { WZ.prev(); }
+    else if (cmd === 'load_candidates') { WZ.loadCandidates(); }
+    else if (cmd === 'skip_candidates') { WZ.skipCandidates(); }
+    else if (cmd === 'gen_characters') { WZ.genCharacters(); }
+    else if (cmd === 'submit') { WZ.createBook(); }
+};
 // 输入防抖持久化 + 切页前保存（SPA 导航由输入监听兜底）
 (function() {
     var wrap = document.querySelector('.wz-panels');

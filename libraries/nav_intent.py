@@ -1,13 +1,14 @@
-"""navigate 外部驱动桥 — JSON 意图队列。
+"""外部驱动桥 — JSON 意图队列（导航 + 建书向导 UI 命令）。
 
-外部 agent（MCP）调用 navigate 时，把跳转意图写入 `storage/nav_intent.json`；
-Web 浏览器每 ~2.5s 轮询 `GET /api/agent/nav-intents` 消费（取后即清空）。
-与内部 agent_loop 的 SSE 路径并存：内部直达 SSE（立即翻页），外部走本队列。
+外部 agent（MCP）调用 navigate / drive_ui 时，把跳转/UI 命令意图写入
+`storage/nav_intent.json`；Web 浏览器每 ~2.5s 轮询 `GET /api/agent/nav-intents` 消费（取后即清空）。
+与内部 agent_loop 的 SSE 路径并存：内部直达 SSE（立即执行），外部走本队列。
 
 边界：
 - intent 带 id，取即删（消费语义）
 - TTL 30s：未消费自动过期（外部 agent 已转投它处时不残留脏意图）
 - 写入用 write_json_atomic（原子替换，防半写）
+- kind 区分：navigate（切页）/ ui_command（建书向导填表/点下一步，由 start_book.html 的 onnecommand 执行）
 """
 import json
 import os
@@ -22,15 +23,8 @@ _TTL_S = 30.0
 _LOCK = threading.Lock()
 
 
-def push_nav_intent(url: str, tab: str = "", params: dict = None) -> dict:
-    """写入一条导航意图，返回 intent dict（供调用方记录/返回）。"""
-    intent = {
-        "id": uuid.uuid4().hex[:12],
-        "ts": time.time(),
-        "url": url,
-        "tab": tab or "",
-        "params": params or {},
-    }
+def _push(intent: dict) -> dict:
+    """写入一条意图（TTL 过滤 + 原子追加），返回 intent dict。"""
     with _LOCK:
         items = read_json(_PATH, []) or []
         now = time.time()
@@ -38,6 +32,35 @@ def push_nav_intent(url: str, tab: str = "", params: dict = None) -> dict:
         items.append(intent)
         write_json_atomic(_PATH, items)
     return intent
+
+
+def push_nav_intent(url: str, tab: str = "", params: dict = None) -> dict:
+    """写入一条导航意图（kind=navigate），返回 intent dict。"""
+    return _push({
+        "id": uuid.uuid4().hex[:12],
+        "ts": time.time(),
+        "url": url,
+        "tab": tab or "",
+        "params": params or {},
+        "kind": "navigate",
+    })
+
+
+def push_ui_command(cmd: str, args: dict = None) -> dict:
+    """写入一条 UI 命令意图（kind=ui_command，建书向导桥）。
+
+    cmd ∈ drive_ui 白名单（agent_tools._WIZARD_CMDS）；args 传给浏览器
+    start_book.html 的 window.onnecommand 执行。
+    """
+    return _push({
+        "id": uuid.uuid4().hex[:12],
+        "ts": time.time(),
+        "url": "",
+        "tab": "",
+        "kind": "ui_command",
+        "cmd": cmd,
+        "args": args or {},
+    })
 
 
 def take_nav_intents() -> list:

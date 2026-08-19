@@ -919,6 +919,39 @@ def canvas_command(book_id: str, action: str, outline_id: str = "",
                            "plot_id": plot_id or None}}
 
 
+# 建书向导命令白名单（cmd → 必填 args 键；空元组=无必填）。
+# 命令桥安全护栏：只允许这些页面已声明的操作，禁止任意 DOM/JS 注入。
+_WIZARD_CMDS = {
+    "set_field": ("field", "value"),
+    "set_tags": ("tags",),
+    "pick_candidate": ("idx",),   # 可带 candidate={title, world_brief, one_liner}
+    "next": (), "prev": (),
+    "load_candidates": (), "skip_candidates": (),
+    "gen_characters": (), "submit": (),
+}
+
+
+def drive_ui(cmd: str, args: dict = None) -> dict:
+    """驱动「启动新书」向导 UI（命令桥）：set_field/set_tags/next/prev/load_candidates/
+    skip_candidates/pick_candidate/gen_characters/submit。
+
+    非阻塞：把命令写入意图队列，浏览器每 ~2.5s 轮询消费（start_book.html 的
+    window.onnecommand 执行）。不入书锁（不写书）。
+    建书仍走系统向导（/books/start POST）：agent 只驱动表单、点下一步/提交，
+    **不能绕过向导直建**（create_book 已从 MCP 面移除，护栏）。
+    """
+    cmd = (cmd or "").strip()
+    if cmd not in _WIZARD_CMDS:
+        raise RuntimeError(f"未知向导命令：{cmd}，可选 {sorted(_WIZARD_CMDS)}")
+    args = dict(args or {})
+    for k in _WIZARD_CMDS[cmd]:
+        if not args.get(k):
+            raise RuntimeError(f"命令 {cmd} 缺少必填参数：{k}")
+    from libraries.nav_intent import push_ui_command
+    push_ui_command(cmd, args)
+    return {"__ui_command__": cmd, "cmd": cmd}
+
+
 # ═══════════════════════════════════════════════════
 # 工具注册表（自动从函数签名生成 JSON Schema，MCP 与 agent 循环共用）
 # ═══════════════════════════════════════════════════
@@ -953,9 +986,11 @@ def _func_to_schema(fn):
     return {"type": "object", "properties": properties, "required": required}
 
 
-# 只暴露给 Web 侧栏 Agent 面。canvas_command 无外部语义故 web-only；
-# navigate 为 both——内部走 SSE 直达，外部（MCP）经 §1.3 意图桥驱动浏览器（同样写 nav_intent.json）。
-_WEB_ONLY_TOOLS = {"canvas_command"}
+# 只暴露给 Web 侧栏 Agent 面。护栏：建书/删书必须走系统界面（create_book/delete_book 由
+# 向导 UI 与书库页承载），外部 MCP 拿不到；canvas_command 无外部语义故 web-only。
+# navigate 为 both——内部走 SSE 直达，外部（MCP）经 §1.3 意图桥驱动浏览器（同样写 nav_intent.json）；
+# drive_ui 为 both——外部经意图桥驱动建书向导 UI（仅填表单/点下一步，不直建书）。
+_WEB_ONLY_TOOLS = {"canvas_command", "create_book", "delete_book"}
 
 # 写类工具：进入前须拿书锁（防 Web / MCP 双进程同书撞写），退出释放。
 _LOCKED_TOOLS = {
@@ -995,8 +1030,8 @@ def _build_registry():
     # 顺序有讲究：导航/画布排最前（flash 对列表前部工具更敏感，能保证
     # "打开页面"请求正确触发 navigate），其次只读摸底，再创作链/上架/工具。
     fns = [
-        # 导航 / 画布（用户高频意图，必须前置）
-        navigate, canvas_command,
+        # 导航 / 画布 / 建书向导驱动（用户高频意图，必须前置）
+        navigate, canvas_command, drive_ui,
         # 只读摸底
         list_books, get_book_state, get_storyline, borrow_preview,
         get_book_detail, query_structures, query_plots, query_gags, query_profiles,

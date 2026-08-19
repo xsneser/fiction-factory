@@ -1,6 +1,6 @@
 """NovelEngine MCP 服务器 — 从 agent_tools 注册全部工具为 MCP（stdio，供 Claude Code 等客户端驱动）。
 
-工具本体在 `agent_tools.py`（共享注册表 TOOL_REGISTRY，37 个，MCP 面 36），本文件只做适配：
+工具本体在 `agent_tools.py`（共享注册表 TOOL_REGISTRY，38 个，MCP 面 35），本文件只做适配：
 把每个工具注册为 FastMCP 工具，并在执行时落工具日志（source=mcp，供 Web 端
 `/api/agent/tool-log` 展示外部调用）。MCP 与 Web 侧栏 Agent（plugins/agent_loop.py）
 共用同一套工具实现；MCP 是独立进程，与 Web 通过 books/ 文件 JSON 协调。
@@ -50,7 +50,7 @@ def _mcp_summary(result) -> str:
             return f"失败：{result['error']}"
         for k in ("ok", "status", "count", "plots_added", "total_plots",
                   "total_chapters", "chapter", "word_count", "phase",
-                  "passed", "score", "chosen", "book_id", "deleted"):
+                  "passed", "score", "chosen", "book_id", "deleted", "cmd"):
             if k in result and result[k] not in (None, "", False):
                 return f"{k}={result[k]}"
         for k in ("summary", "message", "reply"):
@@ -103,8 +103,10 @@ def _wrap_logged(fn):
 
 
 # 逐个注册（工具名/描述/schema 由函数签名+docstring 自动生成）。
-# 只注册 mcp/both 面工具：canvas_command 标记 surface="web"（MCP 无画布语义）不暴露；
-# navigate 为 both——内部走 SSE 直达、外部（MCP）经 §1.3 意图桥驱动浏览器（写 nav_intent.json）。
+# 只注册 mcp/both 面工具。web-only 护栏：canvas_command（无外部语义）、
+# create_book / delete_book（建书/删书必须走系统界面——agent 经 drive_ui 驱动建书向导、删书走书库页手动）。
+# navigate 为 both——内部走 SSE 直达、外部（MCP）经 §1.3 意图桥驱动浏览器（写 nav_intent.json）；
+# drive_ui 为 both——外部经意图桥驱动建书向导 UI（仅填表单/点下一步，不直建书）。
 for _entry in TOOL_REGISTRY:
     if _entry.get("surface", "both") not in ("mcp", "both"):
         continue

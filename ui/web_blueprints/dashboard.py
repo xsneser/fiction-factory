@@ -65,7 +65,8 @@ def start_new_book():
         platform = src.get("platform", "") or "fanqie"
 
         # 一句话设定（主入口）→ 存 world_building.description（世界观由它直接生成，不再追加）
-        world_idea = (src.get("world_idea", "") or "").strip()
+        # 向导 JS 发 idea；旧 form 入口发 world_idea → 两者都收，避免一句话设定存成空串
+        world_idea = (src.get("idea") or src.get("world_idea", "") or "").strip()
         description = world_idea
 
         # 题材标签（番茄式硬约束，向导③多选 chips）；流派与标签同源，为空时从标签推导

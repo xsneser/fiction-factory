@@ -216,6 +216,7 @@
             .then(function(d) {
                 if (!d || !d.ok) return;
                 (d.intents || []).forEach(function(it) {
+                    if (it.kind === 'ui_command') { dispatchCommand(it); return; }
                     if (it.url) handleNavigate(it.url);
                     if (it.tab && (it.tab === 'chat' || it.tab === 'tools')) switchAgentTab(it.tab);
                 });
@@ -245,6 +246,27 @@
                 setTimeout(poll, 100);
             } else {
                 if (typeof showToast === 'function') showToast('写作台画布未就绪，无法操作', 'error');
+            }
+        })();
+    }
+    // 全局唯一 ne:command 监听，委托给各页面注册的单槽位 window.onnecommand（建书向导等）
+    window.addEventListener('ne:command', function(e) {
+        if (typeof window.onnecommand === 'function') window.onnecommand(e);
+    });
+    // 建书向导命令桥：等「向导 DOM 就绪」后 dispatch（≤10s，给 SPA navigate 加载留余量）。
+    // 就绪信号用 #wz-idea 存在而非 __neWizardReady__ 标志——SPA navigate 不触发 unload，
+    // 标志会在离开向导页后残留，导致在别的页误派发。
+    function dispatchCommand(it) {
+        var tries = 0;
+        (function poll() {
+            if (window.WZ && document.getElementById('wz-idea')) {
+                window.dispatchEvent(new CustomEvent('ne:command', {
+                    detail: { cmd: it.cmd, args: it.args || {} } }));
+            } else if (++tries <= 100) {
+                setTimeout(poll, 100);
+            } else {
+                if (typeof showToast === 'function')
+                    showToast('建书向导未就绪（请确认已打开 /books/start 后重试）', 'error');
             }
         })();
     }

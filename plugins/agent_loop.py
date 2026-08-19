@@ -90,7 +90,7 @@ def _summary(result) -> str:
         for k in ("ok", "status", "count", "plots_added", "total_plots",
                   "total_chapters", "chapter", "word_count", "words", "target",
                   "phase", "passed", "score", "chosen", "book_id", "deleted",
-                  "event_count"):
+                  "event_count", "cmd"):
             if k in result and result[k] not in (None, "", False):
                 pairs.append(f"{k}={result[k]}")
         text = "；".join(pairs)

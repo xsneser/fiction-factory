@@ -125,13 +125,14 @@ def _char_from_support(c, mc_name) -> dict:
 def normalize_basic_info(bi) -> dict:
     """把 basic_info 统一为 characters 数组（主角/配角合一）。旧结构自动迁移，幂等。
 
-    - characters 已存在 → 逐条 _canon_char
-    - 否则从 protagonist(dict) + supporting_cast(list) 派生
+    - characters 已存在且非空 → 逐条 _canon_char
+    - 否则（含 characters 为空列表）从 protagonist(dict) + supporting_cast(list) 派生
+      —— 空 characters 时仍回退派生，避免 'characters: []' 吞掉旧格式 protagonist
     - 兜底：无 role==主角 的有名字条目时，首个有名字条目标为主角
     - 移除旧键 protagonist/supporting_cast
     """
     bi = dict(bi or {})
-    if isinstance(bi.get("characters"), list):
+    if isinstance(bi.get("characters"), list) and bi["characters"]:
         chars = [_canon_char(c) for c in bi["characters"] if isinstance(c, dict)]
     else:
         chars = []
