@@ -138,7 +138,7 @@ Web 侧 agent_panel.js 现有 3s 轮询通道（tool-log 轮询）复用/扩展
 
 - **surface 分离**：`_build_registry()` 条目加 `surface` 字段（`"web"|"mcp"|"both"`，默认 `"both"` 向后兼容）。
   - `mcp_server.py` 只注册 `surface ∈ {mcp, both}`；`agent_loop._tools_schema()` 只加载 `surface ∈ {web, both}`。
-  - `navigate` / `canvas_command` 标记 `surface="web"`（外部无页面跳转语义，转由 §1.3 桥承载）。
+  - `canvas_command` 标记 `surface="web"`（MCP 无画布语义）；`navigate` 保持 `surface="both"`——内部走 SSE 直达、外部（MCP）经 §1.3 意图桥驱动浏览器（同一函数写意图队列）。
   - 同名同 surface 重复 → `_build_registry` 启动去重 Fail-Fast。
 - **书级文件锁 `books/<id>/.lock`**：进程内 `threading.Lock`（每 book 缓存）+ 进程间文件锁（Windows `msvcrt.locking` / POSIX `fcntl.flock`），锁内容写 `{pid, ts, purpose}`，**不删除锁文件**。检查点：`agent_tools` 所有写工具入口 + `task_manager.start()` + `mcp_server.py` 外层 wrapper。超时返回 False → `BookBusyError` 落 error.jsonl，任务 `fail()`。
 - **外部 harness 工具白名单**（配合 OpenClaw `runtimeToolPolicy`）：外部会话默认禁 `delete_book`；`confirm_outlines` / `mark_finished` 等确认型工具需白名单显式开启。

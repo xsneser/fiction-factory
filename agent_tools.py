@@ -914,8 +914,9 @@ def _func_to_schema(fn):
     return {"type": "object", "properties": properties, "required": required}
 
 
-# 只暴露给 Web 侧栏 Agent 面（MCP 客户端无页面/画布语义；外部驱动改走 §1.3 意图桥）
-_WEB_ONLY_TOOLS = {"navigate", "canvas_command"}
+# 只暴露给 Web 侧栏 Agent 面。canvas_command 无外部语义故 web-only；
+# navigate 为 both——内部走 SSE 直达，外部（MCP）经 §1.3 意图桥驱动浏览器（同样写 nav_intent.json）。
+_WEB_ONLY_TOOLS = {"canvas_command"}
 
 # 写类工具：进入前须拿书锁（防 Web / MCP 双进程同书撞写），退出释放。
 _LOCKED_TOOLS = {
