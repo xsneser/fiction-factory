@@ -22,7 +22,7 @@
 ```
 ┌─ 外部驱动层（P0，新增）────────────────────────┐
 │  launch.bat 入口                                │
-│  MCP 工具面（29 工具，surface 分离）              │
+│  MCP 工具面（36 工具，MCP 面 35，surface 分离）   │
 │  navigate 外部驱动桥（意图队列 → 浏览器轮询）      │  ← 新增
 │  外部工具日志打通（mcp 调用进 tool-log）           │  ← 新增
 │  外部 harness 接入（Claude Code / OpenClaw ACP） │
@@ -90,13 +90,13 @@
 
 ### 1.2 MCP 工具面（现状，已核实）
 
-- `agent_tools.py` 的 `TOOL_REGISTRY`（29 工具）是单一来源；`mcp_server.py`（32 行，纯适配）逐个 `mcp.tool()(_entry["func"])` 注册，stdio；Web 侧栏 `agent_loop`（`plugins/agent_loop.py`）复用同一注册表。**双端共享同一工具面。**
+- `agent_tools.py` 的 `TOOL_REGISTRY`（36 工具，MCP 面 35）是单一来源；`mcp_server.py`（纯适配）逐个 `mcp.tool()` 注册（按 surface 过滤 + `functools.wraps` 落日志），stdio；Web 侧栏 `agent_loop`（`plugins/agent_loop.py`）复用同一注册表。**双端共享同一工具面。**
 - 工具分组（`_build_registry` 顺序）：
-  - 导航：`navigate` / `canvas_command`
-  - 只读：`list_books` / `get_book_state` / `get_storyline` / `borrow_preview`
-  - 建书规划：`create_book` / `save_basic_info` / `generate_title` / `generate_outlines` / `generate_full_outline` / `extend_outline` / `confirm_outlines` / `fill_plots` / `fill_gags` / `outline_agent` / `generate_world` / `world_candidates` / `confirm_world`
+  - 导航：`navigate` / `canvas_command`（`canvas_command` 为 web-only，MCP 面 35 不含）
+  - 只读：`list_books` / `get_book_state` / `get_storyline` / `borrow_preview` / `get_book_detail` / `query_structures` / `query_plots` / `query_gags`
+  - 建书规划：`create_book` / `save_basic_info` / `generate_title` / `generate_outlines` / `generate_full_outline` / `extend_outline` / `confirm_outlines` / `fill_plots` / `fill_gags` / `outline_agent` / `outline_material_candidates` / `generate_world` / `world_candidates` / `confirm_world`
   - 写作：`write_next_bridge` / `write_chapter` / `generate_book_meta`
-  - 上架/管理：`publish_check` / `mark_finished` / `publish_book` / `export_book` / `review_text` / `deai_text` / `delete_book`（`delete_book` 需 `confirm=True`）
+  - 上架/审查/去AI/质量分析：`publish_check` / `mark_finished` / `publish_book` / `export_book` / `review_text` / `deai_text` / `diagnose_retention` / `tag_punch_points` / `delete_book`（`delete_book` 需 `confirm=True`）
 - schema 由 `_func_to_schema`（`inspect.signature` + type hints + docstring）自动生成。
 - 进程间协调：Web 进程内工具走 `ui/web_blueprints/ctx.py` 单例（共享内存态）；MCP 独立进程 import 后各自建副本，靠 `books/` JSON 落盘协调。
 
@@ -131,7 +131,7 @@ Web 侧 agent_panel.js 现有 3s 轮询通道（tool-log 轮询）复用/扩展
 
 ### 1.5 外部 harness 接入路径
 
-- **直接（最小闭环验证路径）**：Claude Code 挂 MCP → 用户 prompt 驱动 → Claude Code 调 29 工具。这是 P1 路线图的验证入口。
+- **直接（最小闭环验证路径）**：Claude Code 挂 MCP → 用户 prompt 驱动 → Claude Code 调 35 工具（MCP 面）。这是 P1 路线图的验证入口。
 - **多层（长期）**：OpenClaw 作 meta-agent（自由循环）→ ACP `sessions_spawn({runtime: "acp"})` 拉起 Claude Code → Claude Code 挂 NovelEngine MCP。OpenClaw 自带 loop 护栏（`maxToolCalls` / `timeout` / `runtimeToolPolicy`），工具白名单可限到写作组，`delete_book` 这类高风险工具不暴露给外部。
 
 ### 1.6 外部安全前置（设计，保留 v0.2 §11.1/§11.2）
@@ -363,7 +363,7 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
   2. `_wrap_book_lock` 手写包装只设 `__name__`/`__doc__` → `inspect.signature` 看到 `(**kwargs)` → FastMCP 给 `fill_gags` 等 10 个锁定工具生成错误 schema → 改 `functools.wraps` 保留 `__wrapped__` 签名链。
 - **真实 LLM 驱动延后**（用户择机）：`generate_full_outline`（6 阶段）/ `write_next_bridge` 经 MCP 的 LLM 往返，以及 Claude Code 新会话 prompt 驱动（浏览器可视化 + tool-log `source=mcp`）——含 deepseek-v4-flash 成本。
 
-**与 v0.2 批次映射**：v0.2 的 P0-a/P0-b（llm_client / 遥测 / 路由）在 v0.3 中并入 §五，**不阻塞 P1**——P1 外部驱动桥依赖的是现状 29 工具，不依赖遥测/路由。P1 落地后再补 §5.1-5.3，用真实 usage 观测外部驱动的成本与缓存命中率。
+**与 v0.2 批次映射**：v0.2 的 P0-a/P0-b（llm_client / 遥测 / 路由）在 v0.3 中并入 §五，**不阻塞 P1**——P1 外部驱动桥依赖的是现状 36 工具（MCP 面 35），不依赖遥测/路由。P1 落地后再补 §5.1-5.3，用真实 usage 观测外部驱动的成本与缓存命中率。
 
 ---
 

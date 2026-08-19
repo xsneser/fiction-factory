@@ -520,7 +520,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 把引擎全部操作暴露为**共享工具注册表**，供两个消费方使用：右侧栏**内置 Agent 聊天助手**（OpenClaw 式）与 **MCP 服务器**（Claude Code 等外部客户端）。
 
-**共享工具注册表 `agent_tools.py`（29 个）**：
+**共享工具注册表 `agent_tools.py`（36 个，MCP 面 35）**：
 - 单一工具来源 `TOOL_REGISTRY = [{name, description, input_schema, func}]`，schema 用 `inspect.signature` 自动生成。复用 `ctx` 单例——Web 进程内与 UI 共享同一状态；MCP 独立进程各自一份，经 `books/` 文件协调。
 - 覆盖「创建→上架」全链路：只读/建书（`list_books`/`get_book_state`/`get_storyline`/`create_book`/`borrow_preview`）→ 规划（`save_basic_info`/`generate_title`/`generate_outlines`/`generate_full_outline`/`extend_outline`/`confirm_outlines`/`fill_plots`/`fill_gags`/`outline_agent`/`generate_world`/`world_candidates`/`confirm_world`）→ 写作（`write_next_bridge`/`write_chapter`/`generate_book_meta`）→ 上架（`publish_check`/`mark_finished`/`publish_book`/`export_book`）→ 审查/去AI（`review_text`/`deai_text`）→ 书管理（`delete_book`，默认拒绝需 `confirm=True`）→ 导航/画布（`navigate`/`canvas_command`，返回特殊标记由循环转 SSE 事件）。
 - 工具排序把 `navigate`/`canvas_command` 前置（flash 对列表前部工具更敏感，保证"打开X页"正确触发导航）。
@@ -620,14 +620,14 @@ python test_chapters.py / test_reader.py
 ### 13.2 远期（项目规划 Phase 4/5）
 
 - **Phase 4 质量体系**：全书优化诊断管线（reconcile.py 已删，需重建或放弃）、段落级修订 + diff 追踪、设定协调（改设定后自动调和章节）、审查规则库扩充（当前 reviewer 5 项）。
-- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（tool-calling loop 已落地 §8.5：右侧栏聊天面板 + 共享 29 工具 + navigate/canvas 控制；服务端持久记忆/自动多步编排仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
+- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（tool-calling loop 已落地 §8.5：右侧栏聊天面板 + 共享 36 工具（MCP 面 35）+ navigate/canvas 控制；服务端持久记忆/自动多步编排仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
 
 ### 13.3 文档回写清单
 
 - `docs/archive/项目规划.md` 仍描述 v0.5 架构，作为历史归档保留；本文档为唯一技术权威。
 - 改代码必须同步本文档。
 - v1.2（2026-08-18）：右侧栏运行状态 → Agent 活动面板（§8.2/§8.4）；新增 MCP 服务器（§8.5）；`requirements.txt` 增加 mcp。
-- v1.3（2026-08-18）：右侧栏 → OpenClaw 式 Agent 聊天助手（§8.2/§8.5）；`agent_tools.py` 共享 29 工具注册表（mcp_server 瘦身为适配层）；`LLMClient.call_tools` 原生 function calling；`/api/agent/chat` SSE + `story_line.js` 新增 `scrollTo` 画布控制。
+- v1.3（2026-08-18）：右侧栏 → OpenClaw 式 Agent 聊天助手（§8.2/§8.5）；`agent_tools.py` 共享 36 工具注册表（MCP 面 35，mcp_server 瘦身为适配层）；`LLMClient.call_tools` 原生 function calling；`/api/agent/chat` SSE + `story_line.js` 新增 `scrollTo` 画布控制。
 - v1.4（2026-08-18）：新书启动改单页 5 步向导（§4.2）；`world_building.tags` 题材标签 + `world_tags.py` 预置库 + prompt 硬约束；借鉴挪入向导②；删除全站 `flow_status` 单行状态条（§8.2）。
 - v1.5（2026-08-18）：向导②③去重 —— ②改 AI 候选（无书 candidates 端点，5 方向），③并入标签 + 流派；候选 3→5。
 - v1.6（2026-08-18）：标签库扩至 50 个 + `TAG_GENRE_MAP` 流派推导（删流派/平台 UI）；③精简为世界观置顶 + 标签 + 书名/主角候选生成（无书 `title-protag` 端点 5 书名 + 3 主角）；删模板选择/世界观补充/故事线描述；真实 LLM 冒烟 + smoke 断言补齐。
