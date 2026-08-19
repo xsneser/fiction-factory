@@ -794,6 +794,50 @@ def deai_text(text: str, style: str = "chatty") -> dict:
             "processed_length": len(r.processed)}
 
 
+def diagnose_retention(book_id: str, recent_n: int = 5) -> dict:
+    """追读诊断：最近 N 章正文 → 章级钩子强度/掉读风险 + 建议（规则层，零成本）。"""
+    book = book_mgr.get(book_id)
+    if not book:
+        raise RuntimeError(f"书 {book_id} 不存在")
+    chapters = []
+    start = max(1, book.current_chapter - recent_n + 1)
+    for n in range(start, book.current_chapter + 1):
+        ch = book_mgr.load_chapter(book_id, n)
+        if ch:
+            chapters.append({
+                "num": n, "title": ch.get("title", ""),
+                "content": ch.get("content", ""),
+                "summary": ch.get("summary", ""),
+            })
+    if not chapters:
+        return {"chapter_level": [], "suggestions": ["尚无已写章节"]}
+    from libraries.retention import diagnose_chapters
+    return diagnose_chapters(chapters)
+
+
+def tag_punch_points(book_id: str, chapter_num: int = 0) -> dict:
+    """爽点标注：单章正文 → 爽点标签（打脸/升级/伏笔回收/装逼/甜宠/反转），
+    chapter_num=0 用最近一章；结果落盘 books/<id>/tags.json。"""
+    book = book_mgr.get(book_id)
+    if not book:
+        raise RuntimeError(f"书 {book_id} 不存在")
+    n = chapter_num or book.current_chapter
+    ch = book_mgr.load_chapter(book_id, n)
+    if not ch or not ch.get("content"):
+        raise RuntimeError(f"第 {n} 章无正文")
+    from libraries.tag_generator import tag_chapter
+    result = tag_chapter(ch["content"])
+    try:
+        import os as _os
+        tags_path = _os.path.join("books", book_id, "tags.json")
+        with open(tags_path, "w", encoding="utf-8") as _f:
+            json.dump({"chapter": n, "tags": result["tags"]}, _f,
+                      ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return {"chapter": n, "tag_count": len(result["tags"]), "tags": result["tags"]}
+
+
 def delete_book(book_id: str, confirm: bool = False) -> dict:
     """删除一本书（不可恢复）。confirm 必须显式为 True 才执行。"""
     if not confirm:
@@ -921,9 +965,11 @@ def _build_registry():
         generate_world, world_candidates, confirm_world,
         # 写作 / 元数据
         write_next_bridge, write_chapter, generate_book_meta,
-        # 上架 / 审查 / 去AI / 书管理
+        # 上架 / 审查 / 去AI / 书管理 / 质量分析
         publish_check, mark_finished, publish_book, export_book,
-        review_text, deai_text, delete_book,
+        review_text, deai_text,
+        diagnose_retention, tag_punch_points,
+        delete_book,
     ]
     seen = set()
     entries = []
