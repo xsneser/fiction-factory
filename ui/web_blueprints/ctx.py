@@ -5,6 +5,8 @@
 import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from flask import Response, stream_with_context
 
 from libraries.plot import PlotLibrary
@@ -42,7 +44,7 @@ def get_llm():
     global _llm_client
     if _llm_client is not None:
         return _llm_client
-    api_path = "api.json"
+    api_path = os.path.join(_REPO_ROOT, "api.json")
     if os.path.exists(api_path):
         cfg = read_json(api_path, {})
         api_cfg = APIConfig(
@@ -56,6 +58,15 @@ def get_llm():
         _llm_client = LLMClient(api_cfg)
         return _llm_client
     return None
+
+
+def invalidate_llm():
+    """清除缓存的 LLM 客户端：设置保存后调用，使下一次 get_llm() 按新配置重建。
+
+    必须在本模块内改全局（from .ctx import * 只会拷贝引用，外部赋值清不掉缓存）。
+    """
+    global _llm_client
+    _llm_client = None
 
 
 def sse_stream_response(gen):
@@ -116,7 +127,7 @@ def _seed_builder_counter(builder, ids) -> None:
 
 __all__ = [
     "plot_lib", "struct_lib", "gag_lib", "char_lib", "profiles", "book_mgr",
-    "get_llm", "sse_stream_response",
+    "get_llm", "invalidate_llm", "sse_stream_response",
     "_engines", "_storylines", "_storyline_lock",
     "_storyline_filepath", "_resolve_storyline", "_save_storyline",
     "_max_id_suffix", "_seed_builder_counter",

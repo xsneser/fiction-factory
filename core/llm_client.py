@@ -211,8 +211,10 @@ class LLMClient:
 
     def test_connection(self) -> dict:
         try:
-            result = self.call("", "Hi", max_tokens=50)
-            return {"success": True, "sample": result[:100]}
+            # max_tokens 需留足推理余量：deepseek-v4-flash 是推理型模型，
+            # 预算过小会被思考耗尽，content 为空/None 导致误报"连接失败"
+            result = self.call("", "Hi", max_tokens=2048)
+            return {"success": True, "sample": (result or "")[:100]}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

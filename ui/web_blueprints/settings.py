@@ -2,6 +2,8 @@
 import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
 from .ctx import *
 
@@ -30,9 +32,18 @@ def status_tasks_close():
     return jsonify({"ok": False, "error": "missing id"})
 
 
+def _api_config_path() -> str:
+    """项目根 api.json —— 引擎（ctx.get_llm 及各工具）统一读取的配置文件。
+
+    不能从 web_blueprints 只往上退一层（那是 ui/api.json，引擎不读、保存了也不生效），
+    必须退到项目根，与 ctx.get_llm / fanqie_scout / tools 等保持一致。
+    """
+    return os.path.join(_REPO_ROOT, "api.json")
+
+
 def _load_api_config() -> dict:
-    """读取 api.json（不存在返回空 dict）"""
-    api_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api.json")
+    """读取项目根 api.json（不存在返回空 dict）"""
+    api_path = _api_config_path()
     if os.path.exists(api_path):
         return read_json(api_path, {})
     return {}
@@ -71,7 +82,7 @@ def settings_page():
 def settings_save():
     """保存设置"""
     data = request.json or {}
-    api_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api.json")
+    api_path = _api_config_path()
 
     # 读取当前配置，只覆盖传入的字段
     cfg = _load_api_config()
@@ -102,9 +113,8 @@ def settings_save():
     except Exception as e:
         return jsonify({"ok": False, "error": f"写入失败: {e}"}), 500
 
-    # 清除缓存的 LLM 客户端
-    global _llm_client
-    _llm_client = None
+    # 清除缓存的 LLM 客户端，确保新配置立即生效（无需重启）
+    invalidate_llm()
 
     return jsonify({"ok": True, "message": "设置已保存"})
 
@@ -117,15 +127,20 @@ def settings_test():
     from core.llm_client import LLMClient
     from core.models import APIConfig
 
+    saved = _load_api_config()
+
     # 前端传回掩码/空值 → 用当前已保存的 key 测试（避免 key 进入浏览器后回传）
     api_key = data.get("api_key", "")
     if not api_key or "****" in api_key:
-        api_key = _load_api_config().get("api_key", "")
+        api_key = saved.get("api_key", "")
 
+    # 证书开关等未在前端展示的字段回退到已保存配置，
+    # 保证"测试连接"与实际生成走完全相同的 TLS 路径（否则 verify_ssl=false 环境会误报失败）
     api_cfg = APIConfig(
         api_key=api_key,
-        base_url=data.get("base_url", "https://api.deepseek.com"),
-        model=data.get("model", "deepseek-chat"),
+        base_url=data.get("base_url") or saved.get("base_url") or "https://api.deepseek.com",
+        model=data.get("model") or saved.get("model") or "deepseek-chat",
+        verify_ssl=saved.get("verify_ssl", True),
         http_timeout_seconds=10,
     )
 
