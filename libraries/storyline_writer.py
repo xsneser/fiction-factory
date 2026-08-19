@@ -26,6 +26,18 @@ WRITER_EMPTY_RETRIES = 2      # 写作空响应重试次数（模型偶发返回
 OPENING_WORD_LIMIT = 800      # 炸裂开场：第一章前 800 字
 OPENING_MAX_BRIDGES = 3       # 且最多前 3 个桥段
 
+WRITER_SYSTEM = ("你是一位专业的中文网络小说作者，擅长对话、动作驱动的快节奏网文，正在逐段续写一章正文。"
+                 "每轮只输出 3-5 个句子（约 150-250 个汉字），只输出正文，不要任何解释。"
+                 "文笔铁律：1) 画面优先，用动作、对话、感官细节推进，拒绝形容词堆砌和抽象抒情；"
+                 "2) 短句为基干、一句一行，句长需长短交错（8-15字为主、穿插25-45字），避免全文句式单一；"
+                 "3) 对话独立成段并带神态/动作，避免连续纯叙述；"
+                 "4) 视角始终锁定主角，不切换；"
+                 "5) 严禁使用：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。")
+
+SELF_CHECK_ENABLED = True     # 有界自评总开关（设计文档 §2.3 设计 B）：每短句组 flash 自检
+SELF_CHECK_THRESHOLD = 6      # 自评分 <6 或 has_rewrite=true → 触发一次重写
+SELF_CHECK_MAX_TOKENS = 2048  # 自检输出小（≤150字），留 flash 推理余量即可
+
 
 def opening_mode_active(chapter_num: int, chapter_words: int, written_count: int) -> bool:
     """炸裂开场判定：第 1 章、本章未写满 800 字、且已消耗桥段 < 3。"""
@@ -298,13 +310,7 @@ class StorylineChapterWriter:
                     p_attempt = prompt + "\n【重写提示】" + retry_hint
                 self._input_texts.append(p_attempt)
                 raw = self.llm.call(
-                    ("你是一位专业的中文网络小说作者，擅长对话、动作驱动的快节奏网文，正在逐段续写一章正文。"
-                     "每轮只输出 3-5 个句子（约 150-250 个汉字），只输出正文，不要任何解释。"
-                     "文笔铁律：1) 画面优先，用动作、对话、感官细节推进，拒绝形容词堆砌和抽象抒情；"
-                     "2) 短句为基干、一句一行，句长需长短交错（8-15字为主、穿插25-45字），避免全文句式单一；"
-                     "3) 对话独立成段并带神态/动作，避免连续纯叙述；"
-                     "4) 视角始终锁定主角，不切换；"
-                     "5) 严禁使用：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。"),
+                    WRITER_SYSTEM,
                     p_attempt, temperature=0.7, max_tokens=WRITER_MAX_TOKENS)
                 text = (raw or "").strip().lstrip('"“')
                 if not text:
@@ -323,6 +329,18 @@ class StorylineChapterWriter:
             words = count_prose_units(text)
             if words <= 0:
                 break
+            # 有界自评（P3）：flash 自检 0-10 分 + 是否重写，低分/标记重写 → 重写 1 次（硬上限），
+            # 仍低或重写失败则原样落盘（不循环重试，成本有界）
+            if SELF_CHECK_ENABLED:
+                verdict = self._self_check_group(text, item)
+                if verdict.get("rewrite") or int(verdict.get("score", 10) or 10) < SELF_CHECK_THRESHOLD:
+                    rewritten = self._rewrite_group_once(
+                        text, item, verdict.get("reason") or "质量未达标")
+                    if rewritten and rewritten != text:
+                        text = rewritten
+                        words = count_prose_units(text)
+                        if words <= 0:
+                            break
             bridge_text += text
             bridge_words += words
             last_groups.append(text)
@@ -356,6 +374,54 @@ class StorylineChapterWriter:
         else:
             fp = self.profile.get("style_fingerprint", {}) or {}
         return str(fp.get("humor_style", "") or "") if isinstance(fp, dict) else ""
+
+    # ── 有界自评（设计文档 §2.3 设计 B）：flash 自检 + 限 1 次重写 ──
+    def _self_check_group(self, text: str, item) -> dict:
+        """flash 自检：0-10 分 + 是否需重写 + 一句理由。失败返回高分放行，不打断写作。"""
+        if not self.llm or not text:
+            return {"score": 10, "rewrite": False, "reason": ""}
+        p = item.get("plot")
+        bridge_name = getattr(p, "name", "") if p else ""
+        prompt = (f"你是小说审校编辑。为下面这段网文正文打分（这是「{bridge_name}」桥段的一小段，"
+                  f"约150-250字）。\n\n【正文】\n{text}\n\n"
+                  f"【检查要点】1) 有无AI腔/模板词（然而/不禁/仿佛/瞬间/顿时/缓缓/微微等）；"
+                  f"2) 是否画面感强、靠动作/对话推进；3) 是否与桥段目标契合；"
+                  f"4) 有无重复啰嗦/多角色同质化。\n"
+                  f"返回 JSON：{{\"score\": 0-10的整数, \"rewrite\": true/false, "
+                  f"\"reason\": \"一句话理由\"}}")
+        try:
+            from core.llm_client import extract_json
+            raw = self.llm.call(
+                "你是资深网文审校编辑。只返回JSON，不要任何额外文字。", prompt,
+                temperature=0.2, max_tokens=SELF_CHECK_MAX_TOKENS)
+            data = json.loads(extract_json(raw))
+            try:
+                score = int(data.get("score", 10) or 10)
+            except (TypeError, ValueError):
+                score = 10
+            return {"score": max(0, min(10, score)),
+                    "rewrite": bool(data.get("rewrite", False)),
+                    "reason": str(data.get("reason", ""))[:80]}
+        except Exception:
+            return {"score": 10, "rewrite": False, "reason": ""}
+
+    def _rewrite_group_once(self, text: str, item, reason: str) -> str:
+        """有界自评重写：带自评提示重写一次（硬上限 1 次），失败/反而有重复词则返回原文。"""
+        p = item.get("plot")
+        bridge_name = getattr(p, "name", "") if p else ""
+        try:
+            raw = self.llm.call(
+                WRITER_SYSTEM,
+                f"上一段正文经审校未达标：{reason}\n\n【原正文】\n{text}\n\n"
+                f"请重写这一段：改进上述问题，仍写桥段「{bridge_name}」的正文，"
+                f"3-5 个句子（约150-250字），一句一行，只输出正文。",
+                temperature=0.7, max_tokens=WRITER_MAX_TOKENS)
+            rewritten = (raw or "").strip().lstrip('"“')
+            if not rewritten or has_repeated_token(rewritten):
+                return text
+            return rewritten
+        except Exception:
+            return text
 
     # ── 写一个桥段（新核心：按桥段撰写）──
     def write_bridge_stepwise(self, chapter_num: int, prev_ending: str = "",

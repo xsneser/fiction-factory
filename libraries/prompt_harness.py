@@ -517,6 +517,8 @@ class PromptHarness:
 
         # 本桥段出场人物（性格/性别/口头禅，防"她"字错误、保持声线）
         roles_block = self._roles_block(p) if getattr(p, "roles", None) else ""
+        # 分角色态势表：本桥段每个出场角色的行动方向/去向/内心/语气（规则层，零成本）
+        roles_status_block = self._roles_status_block(item) if getattr(p, "roles", None) else ""
 
         bible = self.build_book_bible_condensed()
         bible_block = f"【书级设定（简）】\n{bible}\n\n" if bible else ""
@@ -544,6 +546,7 @@ class PromptHarness:
 {diag_block}
 {hook_block}
 {roles_block}
+{roles_status_block}
 {theme_block}
 {payoff_block}
 {setup_block}
@@ -657,6 +660,52 @@ class PromptHarness:
         if not lines:
             return ""
         return ("\n【本桥段出场人物——严格保持其性别/声线/口头禅，人称别写错】\n"
+                + "\n".join(lines))
+
+    def _roles_status_block(self, item) -> str:
+        """分角色态势表：本桥段每个出场角色的行动方向/去向/内心/语气。
+
+        规则层零成本：主角占主导推进位、配角按性格反应；每个角色给独立声线，
+        避免多角色同质化（设计文档 §2.3 设计 A）。
+        """
+        if not self.storyline:
+            return ""
+        p = item.get("plot")
+        if not p:
+            return ""
+        roles = list(getattr(p, "roles", None) or [])[:4]
+        if not roles:
+            return ""
+        bi = self.storyline.basic_info or {}
+        protag = get_mc(bi)
+        mc_name = str(protag.get("name", "") or "").strip()
+        cast_map = {str(c.get("name", "")).strip(): c
+                    for c in get_characters(bi) if isinstance(c, dict) and c.get("name")}
+        stage = item.get("stage") or {}
+        events = stage.get("events", []) if isinstance(stage, dict) else []
+        event_txt = "、".join(str(e) for e in events[:2]) if events else "本阶段事件"
+        lines = []
+        for rname in roles:
+            rname = str(rname or "").strip()
+            if not rname:
+                continue
+            if rname == mc_name:
+                lines.append(
+                    f"- 「{rname}」（主角）：本桥段{event_txt}的主角位——主动行动/决断/推进剧情；"
+                    f"内心可流露但克制，视角锁定主角；语气："
+                    f"{str(protag.get('personality', ''))[:30] or '果断、干练'}")
+            else:
+                c = cast_map.get(rname, {}) or {}
+                rel = str(c.get("relation", "") or "")
+                lines.append(
+                    f"- 「{rname}」（{'主角的' + rel if rel else '配角'}）："
+                    f"对{event_txt}做出符合其性格的反应，去向跟随剧情走向；"
+                    f"给一句符合人设的言行或心声，与主角声线区分；"
+                    f"性格：{str(c.get('personality', ''))[:30] or '待定'}，"
+                    f"口头禅「{str(c.get('catchphrase', ''))[:20] or '无'}」")
+        if not lines:
+            return ""
+        return ("\n【分角色态势表——每个出场角色要有各自的行动/去向/内心/语气，避免同质化】\n"
                 + "\n".join(lines))
 
     # ═══════════════════════════════════════════
