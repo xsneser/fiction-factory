@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 35
+EXPECT_MCP_TOOLS = 37
 # web-only 护栏：这三个工具不得出现在 MCP 面（建书/删书必须走系统界面）
 WEB_ONLY_ABSENT = ["create_book", "delete_book", "canvas_command"]
 PASS, FAIL = [], []
@@ -104,7 +104,8 @@ async def main():
                     check(f"{t} 不在 MCP 面（web-only 护栏）", t not in names)
                 check("drive_ui 在列（建书向导命令桥）", "drive_ui" in names)
                 check("navigate 在列（外部经意图桥驱动浏览器）", "navigate" in names)
-                for t in ("query_plots", "diagnose_retention", "generate_full_outline", "query_profiles"):
+                for t in ("query_plots", "diagnose_retention", "generate_full_outline", "query_profiles",
+                          "query_characters", "generate_characters"):
                     check(f"工具 {t} 在列", t in names)
 
                 # Web 面保留 create/delete（护栏双面互证）

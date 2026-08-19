@@ -1,6 +1,6 @@
 """NovelEngine MCP 服务器 — 从 agent_tools 注册全部工具为 MCP（stdio，供 Claude Code 等客户端驱动）。
 
-工具本体在 `agent_tools.py`（共享注册表 TOOL_REGISTRY，38 个，MCP 面 35），本文件只做适配：
+工具本体在 `agent_tools.py`（共享注册表 TOOL_REGISTRY，40 个，MCP 面 37），本文件只做适配：
 把每个工具注册为 FastMCP 工具，并在执行时落工具日志（source=mcp，供 Web 端
 `/api/agent/tool-log` 展示外部调用）。MCP 与 Web 侧栏 Agent（plugins/agent_loop.py）
 共用同一套工具实现；MCP 是独立进程，与 Web 通过 books/ 文件 JSON 协调。
