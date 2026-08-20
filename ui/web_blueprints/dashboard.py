@@ -44,7 +44,7 @@ def _borrow_books(exclude_book_id: str = ""):
 
 @bp.route("/books/start", methods=["GET", "POST"])
 def start_new_book():
-    """新书启动 — v4 单页多步向导：一句话设定 → 挑选世界观(标签) → 流派 → 大纲 → 前三章。
+    """新书启动 — v4 单页多步向导：一句话设定（含题材标签）→ AI 候选挑世界观 → 微调设定 → 生成大纲 → 前三章撰写。
 
     POST 双轨：
       - JSON（向导用）：body 含 tags/borrow 等全部字段 → 返回 {"ok", "book_id", "redirect"}
@@ -69,7 +69,7 @@ def start_new_book():
         world_idea = (src.get("idea") or src.get("world_idea", "") or "").strip()
         description = world_idea
 
-        # 题材标签（番茄式硬约束，向导③多选 chips）；流派与标签同源，为空时从标签推导
+        # 题材标签（番茄式硬约束，向导①多选 chips）；流派与标签同源，为空时从标签推导
         tags = data.get("tags") if is_json else []
         if not isinstance(tags, list):
             tags = []

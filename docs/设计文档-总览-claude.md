@@ -227,9 +227,9 @@ D:\NovelEngine/
 ### 4.2 新书创建（单页多步向导，v1.6）
 
 启动新书改为**单页 5 步向导**（`start_book.html`，横条步骤条 wz-steps，JS 切换）：
-1. **①一句话设定**（必填 + 笔名）。
-2. **②AI 候选挑世界观**：从一句话设定生成 **5 个**世界观方向（无书 `POST /api/world-builder/candidates`，`generate_candidates` count=5），挑一个（`one_liner` 并入一句话设定）；「从已有书借鉴」备选（`borrow-preview` 无书别名预览，`extract_seed`）；可「跳过，手动设定」。
-3. **③微调设定**：🌍 世界观置顶（只读同步一句话）→ 🏷️ 题材标签 chips（**50 标签 5 组**，`libraries/world_tags.py`，流派/题材一体，存入 `world_building.tags`）→ 📖 书名与主角（「🎲 根据世界观生成书名与主角候选」→ 无书 `POST /api/world-builder/title-protag` → **5 书名 + 3 主角**候选点选确定 → 可微调 + 每章字数）。
+1. **①一句话设定**（必填 idea + 笔名 + 🏷️ 题材标签 chips——**50 标签 5 组**，`libraries/world_tags.py`，流派/题材一体，存入 `world_building.tags`）。
+2. **②AI 候选挑世界观**：受题材标签硬约束（`generate_candidates` 注入【题材标签（硬约束）】，genre 空时 `derive_genre(tags)` 推导），从一句话设定生成 **5 个**世界观方向（无书 `POST /api/world-builder/candidates`，count=5），挑一个（`one_liner` 并入一句话设定）；「从已有书借鉴」备选（`borrow-preview` 无书别名预览，`extract_seed`）；可「跳过，手动设定」。
+3. **③微调设定**：🌍 世界观置顶（只读同步一句话）→ 📖 书名（由②选中候选带入，可改）+ 每章字数 → 🎭 角色候选（外部 Agent 经 `generate_characters`/`set_characters` 填入，可手动编辑）。
 4. **④创建书**：③提交 JSON 建书（POST /books/start 双轨：JSON→book_id、form→302；**流派由 tags 经 `derive_genre` 推导**、平台默认 fanqie，留发布页调整），建书 phase=config。**向导不再自动跑 SSE**——世界观（`WorldBuildingGenerator.generate`）与完整大纲（`generate-full`）由外部 Agent 经 MCP `generate_world` / `generate_full_outline` 生成（逐步落盘）；第 4 步内嵌故事线 Gantt（`window.StoryLine`），轮询 `GET /api/storyline/<id>` 实时填充，phase=ready 自停。
 5. **⑤前三章撰写**：进入写作台（`/books/<id>/continue`，沿用桥段写作流程）。
 

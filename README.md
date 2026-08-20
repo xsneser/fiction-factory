@@ -83,15 +83,15 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 
 ### 新书启动（单页 5 步向导）
 
-`/books/start` 为横条步骤条向导：**一句话设定 → AI 候选挑世界观（5 个方向，可借鉴）→ 微调设定（世界观置顶 + 50 题材标签 + 根据世界观生成书名/主角候选）→ 创建书（系统建书；世界观+完整大纲由外部 Agent 经 MCP `generate_world`/`generate_full_outline` 生成，第 4 步故事线 Gantt 实时填充）→ 进入写作台写前三章**。
+`/books/start` 为横条步骤条向导：**一句话设定（含题材标签）→ AI 候选挑世界观（5 个方向，受题材标签约束，可借鉴）→ 微调设定（世界观置顶 + 角色候选）→ 创建书（系统建书；世界观+完整大纲由外部 Agent 经 MCP `generate_world`/`generate_full_outline` 生成，第 4 步故事线 Gantt 实时填充）→ 进入写作台写前三章**。
 
 ```
-一句话设定 → AI候选(5方向) → 标签 + 书名/主角候选 → 建书 → 世界生成 → 完整大纲 → 写作台（前三章）
+一句话设定（含题材标签）→ AI候选(5方向,受标签约束) → 角色候选 → 建书 → 世界生成 → 完整大纲 → 写作台（前三章）
 ```
 
-- 题材标签存入 `world_building.tags`（预置 **50 标签 5 组** `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束。
+- 题材标签在步 1 选择，存入 `world_building.tags`（预置 **50 标签 5 组** `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束，并约束步 2 候选生成。
 - 流派由标签推导（`TAG_GENRE_MAP`）；平台留到发布页。
-- 书名/主角候选走无书端点 `POST /api/world-builder/title-protag`（5 书名 + 3 主角）。
+- 角色由外部 Agent 从原型库生成（`generate_characters`）经 `drive_ui(set_characters)` 填入步 3，可手动编辑；书名由步 2 选中候选带入步 3 可改。
 
 ### 续写循环
 

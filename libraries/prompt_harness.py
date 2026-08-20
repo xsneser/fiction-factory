@@ -920,10 +920,10 @@ class PromptHarness:
     def render_characters_prompt(self, idea: str, genre: str = "",
                                  sub_genre: str = "", tags=None, title: str = "",
                                  archetypes=None) -> str:
-        """根据世界观（一句话 + 题材标签 + 书名 + 角色原型库）生成角色候选（向导③按钮）。
+        """根据世界观（一句话 + 题材标签 + 书名 + 角色原型库）生成角色候选（向导③，Agent 经 set_characters 填入）。
 
-        书名已在向导②选中；角色从原型库挑选 archetype_id 并适配到本书，输出统一字段
-        （姓名/身份/性格/口癖/重要度/金手指(主角)/关系(其他)）。
+        题材标签在向导步 1 选择、书名由步 2 选中候选带入步 3；角色从原型库挑选
+        archetype_id 并适配到本书，输出统一字段（姓名/身份/性格/口癖/重要度/金手指(主角)/关系(其他)）。
         """
         tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
         parts = [

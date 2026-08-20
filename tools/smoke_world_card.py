@@ -44,7 +44,7 @@ def run_smoke():
         print("[3] borrow-preview ->", d.get("ok"), "| seed 含:", list((d.get("seed") or {}).keys())[:3])
         assert d.get("ok") and d.get("seed")
 
-        # 3.5) 无书 characters（向导③按钮，真实 LLM）→ 主角候选 + 配角候选（书名已在②选）
+        # 3.5) 无书 characters（向导③角色，Agent 经 generate_characters 填入，真实 LLM）→ 主角候选 + 配角候选
         r = client.post("/api/world-builder/characters",
                         json={"idea": "灵气复苏后我觉醒了复制异能，绑定了一个专坑宿主的菜鸡系统",
                               "title": "复制之王", "tags": ["双强"]})

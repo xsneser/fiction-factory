@@ -1,6 +1,6 @@
 """预置题材标签库（番茄式【双强、末日】硬约束）。
 
-供新书启动向导步骤③渲染 chips（dashboard.py GET 传入 start_book.html），
+供新书启动向导步骤①渲染 chips（dashboard.py GET 传入 start_book.html），
 及 prompt_harness 校验/展示（_tags_block 读 world_building.tags 时用）。
 标签是读者预期：世界观/大纲/写作 prompt 必须严格契合所选标签的网文套路。
 
