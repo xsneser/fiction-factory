@@ -23,7 +23,7 @@
             <div class="form-row">
                 <textarea id="wz-idea" rows="3" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…"></textarea>
             </div>
-            <div class="form-row hint">系统将结合你挑选的题材标签，从这句话扩展出完整世界观与大纲。</div>
+            <div class="form-row hint">系统将结合你挑选的题材标签，从这句话扩展出完整世界观与大纲。填好后点下方「🎲 生成候选 · 下一步」进入挑世界观方向。</div>
         </fieldset>
         <fieldset>
             <legend>👤 笔名</legend>
@@ -48,12 +48,6 @@
                 </div>
             </div>
             {% endfor %}
-        </fieldset>
-        <fieldset>
-            <legend>🎲 AI 生成候选（从一句话设定发散世界观方向）</legend>
-            <div class="form-row">
-                <button type="button" class="btn-primary" onclick="WZ.loadCandidates()">🎲 生成候选</button>
-            </div>
         </fieldset>
     </section>
 
@@ -126,8 +120,9 @@
 
 <div class="wz-nav">
     <button id="wz-prev" class="btn" style="display:none" onclick="WZ.prev()">← 上一步</button>
+    <button id="wz-gen" class="btn-primary" style="display:none" onclick="WZ.loadCandidates()">🎲 生成候选 · 下一步 →</button>
     <button id="wz-skip" class="btn-secondary" style="display:none" onclick="WZ.skipCandidates()">⏭ 跳过，手动设定</button>
-    <button id="wz-next" class="btn-primary" onclick="WZ.next()">已挑选完毕 →</button>
+    <button id="wz-next" class="btn-primary" style="display:none" onclick="WZ.next()">已挑选完毕 →</button>
     <button id="wz-submit" class="btn-primary" style="display:none" onclick="WZ.createBook()">🚀 创建并生成大纲</button>
 </div>
 
@@ -230,7 +225,8 @@ var WZ = {
         });
         this.cur = n;
         this.el('wz-prev').style.display = (!this.bookId && n > 1 && n <= 3) ? 'inline-block' : 'none';
-        this.el('wz-next').style.display = (n === 2) ? 'inline-block' : 'none';   // 步 1 无 next，「🎲 生成候选」替代；步 2=「已挑选完毕」
+        this.el('wz-gen').style.display = (n === 1 && !this.bookId) ? 'inline-block' : 'none';   // 步 1 主按钮：生成候选=进入下一步
+        this.el('wz-next').style.display = (n === 2) ? 'inline-block' : 'none';   // 步 2=「已挑选完毕」
         this.el('wz-skip').style.display = (n === 2) ? 'inline-block' : 'none';   // 「跳过，手动设定」在步 2→3 之间
         this.el('wz-submit').style.display = (n === 3) ? 'inline-block' : 'none';
         if (this.bookId && n === 4) this.el('wz-prev').style.display = 'none';
