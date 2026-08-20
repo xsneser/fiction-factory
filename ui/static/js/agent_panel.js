@@ -63,11 +63,6 @@
         scrollBottom();
         return { card: card, status: status };
     }
-    function setToolResult(card, ok, summary) {
-        card.status.textContent = (ok ? '✅ ' : '❌ ') + (summary || '');
-        card.card.classList.add(ok ? 'ok' : 'err');
-    }
-
     // ─── 工具日志页签（右侧面板「💬 对话 / 🔧 工具日志」切换）───
     function switchAgentTab(key) {
         var chatPane = document.getElementById('agent-chat');
@@ -196,7 +191,9 @@
             saveHistory(history);
         } else if (t === 'error') {
             addMsg('assistant', '⚠️ ' + (evt.message || '发生错误'));
+            if (currentToolRun) currentToolRun.status.textContent = '❌ 失败';
         } else if (t === 'done') {
+            if (currentToolRun) { currentToolRun.status.textContent = '✅ 完成'; currentToolRun = null; }
             busy = false;
             setSendEnabled(true);
         }
