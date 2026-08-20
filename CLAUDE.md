@@ -14,12 +14,12 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 
 ## 发现与编排规则
 
-- 用户提「开新书 / 写设定 / 建书」→ `novel-build`；「大纲 / 排故事线 / 选桥段 / 续写」→ `novel-outline`；「写正文 / 写下一章 / 继续写」→ `novel-write`；「上架 / 发布 / 完本 / 导出」→ `novel-publish`。拿不准时先跑 `novel-master`，由它启动平台并分发。
+- **意图 → skill 分发表**（Claude Code 与 dsh 共用）：「开新书 / 写设定 / 建书 / 构思世界观 / 借鉴已有书 / 写开头几章」→ `novel-build`；「生成大纲 / 排故事线 / 选桥段 / 一键完整大纲 / 续写 / 扩写」→ `novel-outline`；「写正文 / 写下一章 / 继续写 / 写桥段」→ `novel-write`；「上架 / 发布 / 完本 / 导出 / 生成书名简介 / 检查能否发书」→ `novel-publish`。「删书」**无 skill**——`navigate("/books")` 让用户手动点删除（delete_book 不在 MCP 面）。拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」。（Claude Code 端也可直接跑 `novel-master` 统一调度，dsh 端无此 skill，按上表自分发。）
 - 每个分 skill 先用 `mcp__novel-engine__get_book_detail` / `get_book_state` 做前置 phase 检查；phase 不满足时引导前一阶段，不要跨阶段硬做。
 - 状态信号：`storyline.phase ∈ config/outlines/plots/ready`；`book.status ∈ planning/writing/reviewing/finished/published/paused`。
 - 写类工具带书级文件锁，冲突抛 `BookBusyError`，稍后重试；`budget_paused` 表示预算/额度触发，停下问用户。
 - 需要可视化页面时用 `mcp__novel-engine__navigate` 切站内页（完整路由表见下）。切页与读数据是两回事：即使已用 get_book_state 读过数据，只要用户要「打开页面」就要再调 navigate。
-- **护栏（必须遵守）**：`create_book` / `delete_book` 已从 MCP 面移除。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；**世界观在向导步 3「世界观补全」自动生成并随提交落库，提交后入库跳书详情；完整大纲由 agent 经 MCP `generate_full_outline` 生成**（3 步建书，`generate_world` 仅世界观单薄时兜底）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
+- **护栏（必须遵守）**：`create_book` / `delete_book` 已从 MCP 面移除。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；**世界观在向导步 3「内容构建工作台」分阶段构建（core_conflict→大纲/桥段 picks→势力→人物→其余维度）并随提交落库，提交后入库跳书详情；完整大纲由 agent 经 MCP `generate_full_outline` 生成**（`generate_world` 仅世界观单薄时兜底）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
 
 ## 站内页面路由表（navigate 用；无书时部分页 302 重定向）
 

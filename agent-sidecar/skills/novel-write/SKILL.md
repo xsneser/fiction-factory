@@ -6,7 +6,8 @@ description: 写作阶段。写正文/写下一章/继续写/写桥段。流程:
 # 写作阶段（novel-write）— dsh 侧车版
 
 ## 前置检查（必做）
-1. `mcp__novelengine__get_book_state(book_id)`：`phase != ready` → 先 novel-outline；看 `current_chapter` 与草稿定位续写点。
+1. **确认 LLM 已配置**：`api.json` 有 `api_key`（deepseek-v4-flash）——无配置写作会空内容/报错，先提示配置再继续。
+2. `mcp__novelengine__get_book_state(book_id)`：`phase != ready` → 先 novel-outline；看 `current_chapter` 与草稿定位续写点。
 
 ## 上下文组装（渐进式披露 — 不要把整本书灌进上下文）
 1. `get_book_detail(book_id)` → 书元数据/写作风格/基调。
@@ -28,7 +29,7 @@ description: 写作阶段。写正文/写下一章/继续写/写桥段。流程:
 `diagnose_retention(book_id, recent_n=5)` / `tag_punch_points(book_id, chapter_num=0)` / `review_text(text, target_words)` / `deai_text(text, style)`。
 
 ## 退出状态
-桥段写完：`bridge_written`；整章写完：`chapter_done` + `word_count` + `review`。全书完 → novel-publish。
+桥段写完：`bridge_written`；整章写完：`chapter_done` + `word_count` + `review`；`navigate(url="/books/<book_id>/continue")` 切写作台可视化。全书完 → novel-publish。
 
 ## 失败处置
 - phase 不过 → 引导 novel-outline。`BookBusyError` → 稍后重试。`budget_paused` → 停，报告。

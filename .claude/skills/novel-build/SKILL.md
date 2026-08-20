@@ -52,6 +52,7 @@ description: >-
 
 ## 批处理（驱动向导 UI；agent 只填表单/点按钮，由系统建书）
 1. `navigate(url="/books/start")`。
+1.5. **`drive_ui(reset)`**：每次建书前先重置向导 state（除笔名），清除上一本残留草稿对 set_field/set_tags 的干扰（建书保真度护栏，spike 实测 issue）。
 2. 在聊天里定：方向、笔名、一句话种子、题材标签（上面的决策点）。
 3. `drive_ui(set_field {field:"idea", value:种子})` + `drive_ui(set_field {field:"pen", value:笔名})` + `drive_ui(set_tags {tags:[题材标签]})`——**同批推送，浏览器按序应用**（步 1 校验 idea+pen 非空；题材标签在步 1 多选，流派随之推导，并作候选生成硬约束）。**步 1 已无「下一步」**——由步 1 底部「🎲 生成候选」替代（见下条）。
 4. **世界观候选（必须完成，见上）**：默认路线 A——`drive_ui(load_candidates)`（携带步 1 已选标签作约束；生成中自动进步 2 展示候选卡）→ 用户在平台点选候选卡 → 确认后 `drive_ui(next)`（步 2 按钮「已挑选完毕」进步 3）。
@@ -70,6 +71,7 @@ description: >-
 - 用只读工具轮询定位新书：
   1. `list_books` → 找到新书 `book_id`。
   2. `get_book_detail(book_id)` 检查世界观是否已充实（`basic_info.world_building` 各维非空）。通常已是——步 3 各段已随 submit 落库；仅当单薄（如 ⑤ 未做或 LLM 失败用户仍提交）才兜底 `generate_world(book_id, mode="one", idea=...)`。
+  2.5 **保真度校验（必做）**：核对 `genre` / `sub_genre` / `tags` 与用户设定一致；漂移 → `navigate("/books/start")` + `drive_ui(reset)` + 重填 set_field/set_tags 重走批处理（最多重试 1 次，仍漂移则如实汇报停止）。
   3. **生成完整大纲（必须调）**：`generate_full_outline(book_id)`（阻塞数分钟，逐步落盘；**自动消费 `_outline_picks`（②选定的模板/桥段）**；世界观充实自动跳过 Phase 1 故事分析）。
   4. `get_book_detail(book_id)` 确认 `phase == "ready"`。
   5. `navigate(url="/books/<book_id>/continue")` 交棒写作台写前三章。

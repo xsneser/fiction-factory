@@ -11,6 +11,7 @@ description: 上架阶段。上架/发布/完本/导出投稿包/生成书名+�
 
 ## 决策点
 - `publish_check` 报告：全部通过 → 直接 `publish_book`；有不过项 → **报告问题让用户决策**（force 强发 or 先修），headless 不擅自 force。
+- **可选打磨**（上架前质量提升，规则层零成本）：`review_text`（章节规则审查）/ `deai_text`（去 AI 味）/ `diagnose_retention`（掉读诊断）——用户要求打磨时先跑，再 `publish_check`。
 - 完本 → `mark_finished`；导出投稿包 → `export_book`。
 
 ## 批处理
@@ -19,7 +20,7 @@ description: 上架阶段。上架/发布/完本/导出投稿包/生成书名+�
 3. 决策后：`publish_book(book_id, force=False)` / `mark_finished(book_id)` / `export_book(book_id)`。
 
 ## 退出状态
-`published` / `finished` / manifest（zip_path）。
+`published` / `finished` / manifest（zip_path）；`navigate(url="/publish")` 切上架总览可视化。
 
 ## 失败处置
 - 检查未过且未 force → 逐项列问题。`publish_book` 未过检查又没 force → 会报错，需 force 或先修。

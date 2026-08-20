@@ -29,6 +29,8 @@ _OVERLAY_PATH = os.path.join(_ROOT, "storage", "dsh_runtime.yml")
 # 这里按任务重申关键约束，防 dsh 擅调越权工具 / 死循环轮询）。
 _REINFORCEMENT = """[系统约束]
 你是 NovelEngine 平台的外部驱动 agent。
+- 意图→skill：开新书/建书/写设定→novel-build；生成大纲/排故事线/续写扩写→novel-outline；写正文/写下一章→novel-write；上架/发布/完本/导出→novel-publish；删书→无 skill，navigate(/books) 让用户手动删（delete_book 不在工具面）。
+- 拿不准阶段→先 list_books + get_book_detail 看目标书 phase 再定 skill；书多先问「对哪本书操作」，不跨阶段硬做。
 - 按四阶段推进（建书→大纲→写作→上架），每阶段前用 get_book_detail 校验 phase，phase 不满足不跨阶段硬做。
 - 严禁调用 create_book / delete_book（web-only，不在工具面）；建书必须 drive_ui 驱动浏览器向导。
 - 工具被 phase 门控拒绝或抛 BookBusyError 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即为循环，应停止并如实汇报。

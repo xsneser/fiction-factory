@@ -14,7 +14,7 @@ description: >-
 3. 有第 1 章但无 synopsis / 书名不佳 → 先 `generate_book_meta`。
 
 ## 决策点
-- `publish_check` 报告出来后：全部通过 → 直接 `publish_book`；有不过项 → **问用户**「force 强发 or 先修问题」。
+- `publish_check` 报告出来后：全部通过 → 直接 `publish_book`；有不过项 → **问用户**「force 强发 or 先修问题」——**不擅自 force**（force 需用户显式确认）。
 - 用户想完本 → `mark_finished`；想导出投稿包 → `export_book`。
 - 可选打磨：`review_text` 审单章、`deai_text` 去 AI 味、`diagnose_retention` 看追读。
 
