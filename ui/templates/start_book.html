@@ -45,17 +45,9 @@
             </div>
             {% endfor %}
         </fieldset>
-    </section>
-
-    {# ─── ② 候选结果展示（挑世界观方向）+ 从已有书借鉴（备选）；生成触发在步 1 ─── #}
-    <section class="wz-panel" id="panel-2" style="display:none">
-        <fieldset>
-            <legend>🎲 候选世界观方向（已生成，挑一个）</legend>
-            <div id="wz-candidate-box" class="wz-candidate-box"></div>
-            <div class="form-row hint" id="wz-candidate-hint" style="display:none">挑一个方向，其设定会带入下一步微调；直接点下方「已挑选完毕」可跳过。</div>
-        </fieldset>
-        <fieldset>
-            <legend>📚 从已有书借鉴（可选，提取设定做种子再微调）</legend>
+        {# ─── 从已有书借鉴（暂时弃用：外部 agent 经 borrow_preview MCP 驱动；保留 UI 供手动参考）─── #}
+        <fieldset style="opacity:.6;filter:grayscale(.3)">
+            <legend>📚 从已有书借鉴 <span style="color:#8b949e;font-size:12px">（暂时弃用）</span></legend>
             <div class="form-row">
                 <select id="wz-borrow-source">
                     <option value="">不借鉴…</option>
@@ -71,6 +63,15 @@
                 <button type="button" class="btn-secondary" onclick="WZ.borrowPreview()">👀 预览将借鉴的设定</button>
             </div>
             <div id="wz-borrow-preview-box" class="wz-borrow-preview"></div>
+        </fieldset>
+    </section>
+
+    {# ─── ② 候选结果展示（挑世界观方向）；生成触发在步 1 ─── #}
+    <section class="wz-panel" id="panel-2" style="display:none">
+        <fieldset>
+            <legend>🎲 候选世界观方向（已生成，挑一个）</legend>
+            <div id="wz-candidate-box" class="wz-candidate-box"></div>
+            <div class="form-row hint" id="wz-candidate-hint" style="display:none">挑一个方向，其设定会带入下一步微调；直接点下方「已挑选完毕」可跳过。</div>
         </fieldset>
     </section>
 
