@@ -19,7 +19,7 @@
             <div class="form-row">
                 <textarea id="wz-idea" rows="3" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…"></textarea>
             </div>
-            <div class="form-row hint">系统将结合你挑选的题材标签，从这句话扩展出完整世界观与大纲。填好后点下方「🎲 生成候选 · 下一步」进入挑世界观方向。</div>
+            <div class="form-row hint">系统将结合你挑选的题材标签，从这句话扩展出完整世界观与大纲。填好后点下方「🚀 让 Agent 构建」，Agent 会驱动建书向导（挑世界观方向、补全世界观、生成大纲），右侧面板实时显示每一步。</div>
         </fieldset>
         <fieldset>
             <legend>👤 笔名</legend>
@@ -181,7 +181,7 @@
 
 <div class="wz-nav">
     <button id="wz-prev" class="btn" style="display:none" onclick="WZ.prev()">← 上一步</button>
-    <button id="wz-gen" class="btn-primary" style="display:none" onclick="WZ.loadCandidates()">🎲 生成候选 · 下一步 →</button>
+    <button id="wz-gen" class="btn-primary" style="display:none" onclick="WZ.agentBuild()">🚀 让 Agent 构建 →</button>
     <button id="wz-skip" class="btn-secondary" style="display:none" onclick="WZ.skipCandidates()">⏭ 跳过，手动设定</button>
     <button id="wz-next" class="btn-primary" style="display:none" onclick="WZ.next()">已挑选完毕 →</button>
     <button id="wz-submit" class="btn-primary" style="display:none" onclick="WZ.createBook()">🚀 创建并生成大纲</button>
@@ -356,42 +356,29 @@ var WZ = {
         }).catch(function() { WZ.el('wz-borrow-preview-box').textContent = '❌ 预览失败'; });
     },
 
-    /* —— AI 生成候选（无书端点，建书前；步 1 底部按钮触发，生成中即进步 2 展示）—— */
-    loadCandidates: function() {
-        if (!this.validate(1)) {
-            if (typeof showToast === 'function') showToast('请先完成本步必填项（一句话设定 + 笔名）', 'error');
+    /* —— 让 Agent 构建（步 1 主按钮）：收集输入 → 侧栏 agentSendTask 跑 novel-build —— */
+    agentBuild: function() {
+        if (!this.el('wz-idea').value.trim()) {
+            if (typeof showToast === 'function') showToast('请先填一句话设定', 'error');
             return;
         }
-        this._picked = false;   // 新一批候选未选，需重新点选后才可「已挑选完毕」
-        this._worldFilled = false;   // 重生成候选 → 步 3 按新种子重新补全
-        this._outline_picks = null;
         var idea = this.el('wz-idea').value.trim();
-        var box = this.el('wz-candidate-box');
-        box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成候选…</div>';
-        this.el('wz-candidate-hint').style.display = 'none';
-        this.show(2);   // 生成中即切到步 2，结果直接显示在候选区
-        var genre = '';   // 流派由题材标签推导（后端 derive_genre）；tags 一并传给候选端点作硬约束
+        var pen = this.el('wz-pen').value || '';
         var tags = Array.prototype.slice.call(document.querySelectorAll('.chip.on'))
             .map(function(b) { return b.dataset.tag; });
-        var self = this;
-        fetch('/api/world-builder/candidates', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ idea: idea, genre: genre, tags: tags })
-        }).then(function(r) { return r.json(); }).then(function(d) {
-            if (!d.ok) { box.innerHTML = '❌ ' + d.error; return; }
-            window.__CANDIDATES__ = d.candidates || [];
-            var html = '';
-            (window.__CANDIDATES__ || []).forEach(function(c, idx) {
-                html += '<div class="wz-candidate-card" onclick="WZ.pickCandidate(' + idx + ')">'
-                    + '<div class="wz-cand-title">#' + (idx + 1) + ' ' + (c.title || '') + '</div>'
-                    + '<div class="wz-cand-one">' + (c.one_liner || '') + '</div>'
-                    + (c.world_brief ? '<div class="wz-cand-brief">' + c.world_brief + '</div>' : '')
-                    + '<div class="wz-cand-hint">『' + (c.genre_hint || '') + '』</div>'
-                    + '</div>';
-            });
-            box.innerHTML = html;
-            self.el('wz-candidate-hint').style.display = 'block';
-        }).catch(function(e) { box.innerHTML = '❌ 请求失败: ' + e.message; });
+        var task = '用 novel-build 流程建一本新书：一句话设定「' + idea + '」'
+            + '题材标签「' + (tags.join('、') || '（未选）') + '」'
+            + '笔名「' + (pen || '（未选，请帮我选）') + '」。驱动 /books/start 向导完成建书。';
+        if (typeof window.agentSendTask === 'function') {
+            window.agentSendTask(task);
+        } else {
+            if (typeof showToast === 'function') showToast('Agent 面板未就绪，请刷新页面', 'error');
+        }
+    },
+    /* —— 候选生成已改为 Agent 驱动（world_candidates + drive_ui(pick_candidate)）；保留命令兼容，不再前端 fetch —— */
+    loadCandidates: function() {
+        if (typeof showToast === 'function')
+            showToast('候选生成已改为 Agent 驱动：点「🚀 让 Agent 构建」，或直接在侧栏说「开一本新书」', 'info');
     },
     pickCandidate: function(idx) {
         var c = (window.__CANDIDATES__ || [])[idx];
@@ -772,10 +759,20 @@ window.onnecommand = function(e) {
             if (targets.indexOf(c.dataset.tag) >= 0 && !c.classList.contains('on')) WZ.toggleTag(c);
         });
     } else if (cmd === 'pick_candidate') {
-        // MCP 路线：浏览器 __CANDIDATES__ 可能未加载，candidate 由 agent 内嵌传入
+        // MCP 路线：candidate 由 agent 内嵌传入（前端固定候选管线已移除），渲染卡片供实时显示
         var cand = (args.candidate && typeof args.candidate === 'object') ? args.candidate : {};
         if (cand.title) WZ.state.title = cand.title;
         if (cand.world_brief) WZ.state.world_brief = cand.world_brief;
+        (function() {
+            var box = WZ.el('wz-candidate-box');
+            if (!box || !cand.title) return;
+            box.innerHTML = '<div class="wz-candidate-card picked">'
+                + '<div class="wz-cand-title">#1 ' + (cand.title || '') + '</div>'
+                + (cand.one_liner ? '<div class="wz-cand-one">' + cand.one_liner + '</div>' : '')
+                + (cand.world_brief ? '<div class="wz-cand-brief">' + cand.world_brief + '</div>' : '')
+                + '<div class="wz-cand-hint">『Agent 已选中此方向』</div>'
+                + '</div>';
+        })();
         if (cand.one_liner) {
             var ideaEl = WZ.el('wz-idea');
             var cur = ideaEl ? ideaEl.value.trim() : '';
