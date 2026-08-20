@@ -1,9 +1,10 @@
-# NovelEngine Agent 设计文档 v0.3
+# NovelEngine Agent 设计文档 v0.4
 
-> 版本：v0.3 ｜ 更新：2026-08-19 ｜ 整理：未初
-> 定位：**可视化、外部 agent 可驱动的多阶段 skill 创作平台**——外部 harness（Claude Code / OpenClaw）经 MCP 工具 + navigate 桥驱动整本书创作；浏览器页面实时可视化每步操作；右侧工具日志记录每次工具调用；每个阶段（建书/大纲/写作/上架）是一个可编排的 skill——**agent 管决策点，确定性管线管批处理**。
+> 版本：v0.4 ｜ 更新：2026-08-20 ｜ 整理：Claude
+> 定位：**可视化、外部 agent 可驱动 + 系统内自主 agent 的多阶段 skill 创作平台**——外部 harness（Claude Code / OpenClaw）经 MCP 工具 + navigate 桥驱动整本书创作；**系统内自主 agent**（侧栏交互 + 后台批量）在 Web 进程内跑同样的工具链自主推进全流程；浏览器页面实时可视化每步操作；右侧工具日志记录每次工具调用；每个阶段（建书/大纲/写作/上架）是一个可编排的 skill——**agent 管决策点，确定性管线管批处理**。
 > 与总览文档关系：待并入 `设计文档-总览-claude.md`（按项目惯例：子文档 → 并入 → 归档）。
 > v0.3（2026-08-19）定位从 v0.2「确定性引擎 + 内部 agent 三层模型」演进为「外部可驱动的 skill 平台」：新增 §〇 目标架构、§一 外部驱动层、§二 Skill 层、§四 信息工具层、§六 落地路线图；原 §2.1-§2.4 与 §3-§11 重组为 §三 批处理层与 §五 基础设施；原 §12/§13 更新为 §六/§七。
+> **v0.4（2026-08-20）**：新增「系统内自主 agent」层（§一 1.7 部署方案 + §五 5.9-5.11 落地设计 + §六 路线图 P5-P7），定位补充「外部可驱动 + 系统内自主」双轨；借鉴 deepseek-harness / OpenClaw 开源架构移植模式（事件日志派生会话、工具白名单、写栅栏、护栏），全部 **Python 重写、不引 Node/TS 依赖**。本版仍为设计文档，P5-P7 实现留待立项。
 >
 > **全局约定**：不引入 jsonschema / fastapi 等重依赖；落盘文件均 UTF-8；所有「待人工确认」项集中在 §七，全文 `待确认` 标记与之一一对应。
 
@@ -13,19 +14,24 @@
 
 ### 0.1 一句话定位
 
-**NovelEngine = 可视化、外部 agent 可驱动的多阶段 skill 创作平台。**
+**NovelEngine = 可视化、外部 agent 可驱动 + 系统内自主 agent 的多阶段 skill 创作平台。**
 
-它的工作方式：外部 agent（Claude Code / OpenClaw 等 harness）先运行 `launch.bat` 启动项目 → 读取用户需求 → 通过暴露的 MCP 工具 + navigate 桥，一步步驱动浏览器走完建书→大纲→写作→上架每个阶段；每一步操作在浏览器页面实时可视化，右侧工具日志记录每一次工具调用。每个阶段是一个独立的 skill——agent 在决策点（选什么素材 / 要不要重写）上思考并决定，确定性管线在批处理点批量执行。
+它的工作方式：外部 agent（Claude Code / OpenClaw 等 harness）先运行 `launch.bat` 启动项目 → 读取用户需求 → 通过暴露的 MCP 工具 + navigate 桥，一步步驱动浏览器走完建书→大纲→写作→上架每个阶段；**系统内自主 agent**（§一 1.7）在 Web 进程内跑同样的 40 工具注册表，支持侧栏交互（人在环）与后台批量产书（无人值守）两种形态自主推进全流程。每一步操作在浏览器页面实时可视化，右侧工具日志记录每一次工具调用。每个阶段是一个独立的 skill——agent 在决策点（选什么素材 / 要不要重写）上思考并决定，确定性管线在批处理点批量执行。
 
-### 0.2 架构总览（四层）
+### 0.2 架构总览（四层 + 系统内自主层）
 
 ```
-┌─ 外部驱动层（P0，新增）────────────────────────┐
+┌─ 外部驱动层（P0，已落地）───────────────────────┐
 │  launch.bat 入口                                │
 │  MCP 工具面（40 工具，MCP 面 37，surface 分离）   │
-│  navigate 外部驱动桥（意图队列 → 浏览器轮询）      │  ← 新增
-│  外部工具日志打通（mcp 调用进 tool-log）           │  ← 新增
+│  navigate 外部驱动桥（意图队列 → 浏览器轮询）      │
+│  外部工具日志打通（mcp 调用进 tool-log）           │
 │  外部 harness 接入（Claude Code / OpenClaw ACP） │
+├─ 系统内自主 Agent 层（v0.4 新增，设计未实现）──────┤
+│  AgentLoop（现有单轮工具循环）                    │
+│  AgentRuntime（会话 + 记忆 + 护栏，状态化包装）    │  ← 新增
+│  AgentTask（自主任务编排 + 队列/后台/心跳）        │  ← 新增
+│  形态：侧栏交互（人在环） + 后台批量产书（无人值守） │
 ├─ Skill 层：四阶段（每阶段 = 决策点 + 批处理）──────┤
 │  建书 skill：5步向导（已具备）+ 外部驱动           │
 │  大纲 skill：agent 选材决策点 + 6阶段批处理        │  ← 选材决策点新增
@@ -58,7 +64,7 @@
 |---|---|
 | §2.1 现状盘点（工具注册表/agent_loop/MCP/PromptHarness/成本/引擎/任务） | 保留，重组入 §一/§三/§五 |
 | §2.2 大纲编撰 vs 文章撰写（分离判断） | 保留，入 §三 3.4 |
-| §2.3 三层 Agent 模型（受管/自由/主编） | 重构：受管 → 批处理层，自由 → 外部驱动层，主编 → §5.7 |
+| §2.3 三层 Agent 模型（受管/自由/主编） | 重构：受管 → 批处理层，自由 → 外部驱动层（v0.4 起同时承接为系统内自主 agent，§1.7），主编 → §5.7/§5.11 |
 | §2.4 llm_client 改造 | 保留，入 §五 5.1 |
 | §3 Skill 资产化 | 重构：Skill 理念升级为「可编排的阶段工作流」，见 §二 |
 | §4-§10（遥测/路由/契约/降级/插件/主编/会话） | 保留，入 §五 |
@@ -75,6 +81,8 @@
 - NovelEngine 侧只需：MCP surface 分离 + 书级文件锁（§1.6）+ 写作有界自评（§2.3）
 
 **教训**：没有一个 harness 靠「让 LLM 自判好坏」来防失控——终止机制全在 LLM 外面，由运行时/代理/契约强制。自评只用于「质量」判断，不用于「循环」控制。
+
+> **v0.4 更新**：上述「不自造」适用于**外部** harness（Claude Code/OpenClaw 自带护栏）。系统内自主 agent 运行在平台自己进程里，**护栏必须自建**——按同一原则（终止机制在 LLM 外面）移植 OpenClaw/dsh 的 max_turns / 工具白名单 / 语义环 / 预算熔断到 §5.10，不靠「让模型自判」防失控。
 
 ---
 
@@ -142,6 +150,43 @@ Web 侧 agent_panel.js 现有 3s 轮询通道（tool-log 轮询）复用/扩展
   - 同名同 surface 重复 → `_build_registry` 启动去重 Fail-Fast。
 - **书级文件锁 `books/<id>/.lock`**：进程内 `threading.Lock`（每 book 缓存）+ 进程间文件锁（Windows `msvcrt.locking` / POSIX `fcntl.flock`），锁内容写 `{pid, ts, purpose}`，**不删除锁文件**。检查点：`agent_tools` 所有写工具入口 + `task_manager.start()` + `mcp_server.py` 外层 wrapper。超时返回 False → `BookBusyError` 落 error.jsonl，任务 `fail()`。
 - **外部 harness 工具白名单**（配合 OpenClaw `runtimeToolPolicy`）：外部会话默认禁 `delete_book`；`confirm_outlines` / `mark_finished` 等确认型工具需白名单显式开启。
+
+### 1.7 系统内自主 Agent 部署 ★（v0.4 新增，设计未实现）
+
+**现状缺口**：`plugins/agent_loop.py`（`run_agent_loop(messages, emit)`）已是最小 function-calling 循环，但无状态（messages 由浏览器 `sessionStorage` 持有，关窗即失）、无会话持久化、无记忆、无护栏（仅 `MAX_ITERS=12` 硬上限）、无自主任务编排、无后台批量。外部驱动（MCP）虽闭环，但平台自身不能脱离 Claude Code 会话自主产书。
+
+**设计：三层可组合架构（全部在 Web 进程内，复用 ctx 单例，不新增进程）**
+
+```
+AgentTask(plugins/agent_task.py)          ← 自主任务编排 + 队列/后台/主编心跳
+  调用
+AgentRuntime(libraries/agent_runtime.py)   ← 会话 + 记忆 + 护栏（状态化包装）
+  包装
+AgentLoop(plugins/agent_loop.py)          ← 现有单轮 function-calling 循环（主体不动）
+```
+
+| 层 | 文件 | 职责 | 改动性质 |
+|---|---|---|---|
+| AgentLoop | `plugins/agent_loop.py` | 单轮循环 | **增量**：`run_agent_loop(..., tools=None, persist=None)`——tools 供决策子环用工具子集；persist 是会话写入回调，循环内每构造一条 conv 消息调一次。改动 ≤15 行 |
+| AgentRuntime | `libraries/agent_runtime.py`（新） | 持有 session_id，组装 system prompt + 会话摘要 + 最近消息 → 跑 loop → 增量持久化；执行前套护栏（ToolPolicy/BudgetGuard），注入 `guard_warn`/`budget_paused` 事件 | 新增 |
+| 会话存储 | `libraries/session_store.py`（新） | `storage/sessions/<id>.json` 读写、`derive_messages()` 崩溃恢复、滚动摘要（dsh event-log 模式） | 新增 |
+| 护栏 | `libraries/agent_guards.py`（新） | `ToolPolicy`（白名单）/ `LoopGuard`（语义环）/ `BudgetGuard`（预算预检） | 新增 |
+| 自主编排 | `libraries/agent_pipeline.py`（新） | 脚本骨架（建书→世界→大纲→写作→上架）+ 决策点子环；phase 校验/断点续跑 | 新增 |
+| 任务运行时 | `plugins/agent_task.py`（新） | 任务生命周期（复用 `plugins/task_manager.py`）、后台 worker、`storage/task_queue.json`、主编心跳 drain | 新增 |
+| Web 适配 | `ui/web_blueprints/agent.py` | `/api/agent/chat` 增可选 `session_id`；新增 `/api/agent/sessions` CRUD、`/api/agent/tasks` | 修改 + 新增 |
+| 前端 | `ui/static/js/agent_panel.js` | 会话 id 存 localStorage、「新会话」按钮、新 SSE 事件分支 | 修改 |
+| 工具日志 | `libraries/tool_log.py` | `source` 增 `"task"`，`_append_ext` 对 task/scheduler 也写 JSONL | 修改（2 行） |
+| 摘要 prompt | `libraries/prompt_harness.py` | 新增 `render_session_summary_prompt`（仿 `render_summary_prompt`，默认不启用） | 修改 |
+| 配置 | `config.json`（项目根，新） | `{agent:{max_iters, wall_timeout, concurrency}, sessions:{ttl_days, max_messages, llm_summary}, editor_in_chief:{enabled, check_interval, idle_after}}` | 新增 |
+
+**复用清单（精确到函数）**：`ctx.get_llm()` / `sse_stream_response()`；`json_store.write_json_atomic`；`safe_paths.ensure_child_path`；`book_lock.BookLock`/`BookBusyError`；`nav_intent.push_nav_intent`；`cost_tracker.CostTracker.load(books/<id>/cost.json).remaining()`；`task_manager.start/progress/log/done/fail/cancel/is_cancelled`；`agent_tools.TOOL_REGISTRY` / `tools_for_surface("web")` / `consume_dict_stream`；`storyline.basic_info_world_done`；`outline_generator.basic_info_is_rich`；`prompt_harness.render_summary_prompt`。
+
+**create_book 双轨决策（待确认 #6）**：护栏本意是「create_book 不进 MCP 面」；系统内 agent 分两档——
+- 聊天 agent（人在环）：保留 `create_book`（现状 Web 面即有，用户实时看可中断）。
+- 自主任务（无人值守）：直接 `create_book` 但**强校验**（genre/pen_name 非空 + basic_info 带 `world_building.description`，拒绝裸建「(待定)」书）；`delete_book` 一律默认 deny，聊天场景需会话级显式授权。
+- drive_ui 向导路径保留给外部 MCP 与可视化聊天，两者并存，**40/37 语义零回归**。
+
+**护栏与编排**：per-session 工具白名单（ToolPolicy）、语义环检测（LoopGuard）、预算预检（BudgetGuard）见 §五 5.10；自主任务骨架 + 决策点子环 + 断点续跑见 §五 5.12；后台批量 + 主编心跳见 §五 5.11。落地路线 P5-P7 见 §六。
 
 ---
 
@@ -327,11 +372,55 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
 - 任务表：P1 审校已写章节（`ContentReviewer.review` 规则层零成本，写回 `review` 字段）/ P2 番茄侦察补库（>12h）/ P3 批量续写队列（`POST /api/editor/enqueue`）。
 - 复用 `task_manager` + 书级文件锁；用户控制走 `config.json.editor_in_chief` + 每书 `book.json.editor_in_chief_enabled`。
 
-### 5.8 会话记忆 v2（P2，只设计不实现）
+### 5.8 会话记忆 v2（P2，只设计不实现）→ 已被 §5.9 会话记忆 v3 替代
 
 - `storage/sessions/<id>.json`：`{id, created_at, updated_at, summary, message_count, messages[], meta}`，只存 user/assistant。
 - API：`POST /api/agent/chat` 增可选 `session_id`（服务端存储优先 / sessionStorage 迁移兜底）+ `GET/DELETE /api/agent/sessions`。
 - 过期：LRU 上限 200 / TTL 7 天 / 消息上限 100（`config.json.sessions`）。
+
+### 5.9 会话记忆 v3（v0.4 落地设计，实现 P5）
+
+> 替代 §5.8。移植 deepseek-harness 的 **event-sourced 会话日志 + deriveMessages** 模式（`Model-visible means logged`），Python 重写。
+
+- **存储** `storage/sessions/<id>.json`：`{id, created_at, updated_at, message_count, summary, meta:{last_book_id, mode}, events[]}`。
+- **只存 model-visible 消息**：`events` 每条约 `{ts, type: user|assistant_text|assistant_toolcalls|tool, content, tool_calls?, tool_call_id?}`。相比现状（浏览器只持 user/assistant 文本），补上 tool 消息后**跨轮模型能看到自己调过哪些工具**——这是长程自主任务的记忆底座。书内容不进会话（`books/<id>/` 是事实源），`meta.last_book_id` 只存轻量指针。
+- **崩溃恢复（补 turn/end）**：`session_store.derive_messages()` 返回 `(messages, recovery_note)`——从 events 顺序重建消息；发现末尾 `assistant_toolcalls` 缺对应 `tool` 结果（SSE 中断）时**丢弃该孤儿 tool_calls 消息**，置 `recovery_note="上一次会话在工具调用『<tool>』后中断，结果未确认——建议先 get_book_state 核对再继续"`；下轮把 `recovery_note` 拼进 system prompt。诚实补 turn、不虚构结果、不把未确认副作用当真相。
+- **滚动摘要**：MVP 纯截断（只留最近 `config.sessions.max_messages`（默认 40）条 + summary），不额外 LLM 调用（守「不加后处理」纪律）；`config.sessions.llm_summary=true` 时（可选 P7）超上限触发一次 `llm.call` 用 `render_session_summary_prompt`（仿 `render_summary_prompt` 的 80-150 字格式）压缩旧段。成本有界（每会话约 1 次）。
+- **过期**：TTL 7 天 / LRU 上限 200（`config.sessions`）。
+
+### 5.10 护栏落地（v0.4，实现 P5）
+
+> 移植 OpenClaw `ToolDescriptor.availability` + dsh `schemas()` 白名单投影 + `max_turns`；`libraries/agent_guards.py`。
+
+- **ToolPolicy（per-session 工具白名单）**：`{allowed:set, deny:set, require_confirm:set, max_iters:int=12, max_calls:int=0(会话累计上限), wall_timeout_s:int=0}`，`deny` 优先。
+  - 聊天 agent：`allowed = tools_for_surface("web") − {delete_book}`；`delete_book` 需会话级显式授权一次才放行（现状仅靠 `confirm=True` 参数，自主场景太弱）。
+  - 自主任务：`allowed = web_tools − {delete_book, canvas_command}`；`create_book` 放行但强校验（§1.7 待确认 #6）。
+- **LoopGuard（语义环检测，纯规则零 LLM）**：工具签名 `(tool, json.dumps(args, sort_keys=True))` 近 5 步内 ≥3 次重复 → `guard_warn`；再犯 → `error` 熔断；连续 ≥5 次工具失败 → 熔断。
+- **BudgetGuard（预算预检）**：写类工具（`_LOCKED_TOOLS` 交集）执行前 `CostTracker.load("books/<id>/cost.json")`；`remaining()<=0` → 返回 `tool_result{ok:false}` + `budget_paused` 事件，任务置暂停态。引擎侧 `write_next_bridge` 的 `budget_paused` 已透传，双保险。
+- **超时/迭代**：`MAX_ITERS` 改读 `config.agent.max_iters`（默认 12）；决策子环独立小上限（默认 8）；墙钟超时 `wall_timeout_s` 熔断。
+
+### 5.11 主编 Agent 落地（v0.4 最小版，实现 P7）
+
+> 落地 §5.7 的 daemon 心跳，但先只做**队列 drain + 定时批量**两条，P1 审校/番茄补库留 v0.4 之外。
+
+- `plugins/editor_in_chief.py`（Web 进程内 daemon 线程）：`sleep(check_interval); tick()`；tick 内调 `agent_task.drain_queue()` + 可选 `config.agent.schedule` 间隔批量（如每 6h 跑一条 spec）。
+- 并发上限 `config.agent.concurrency`（默认 2）；同书书锁互斥（复用 `BookLock`）；`task_manager` 状态机（新增 `pause` 预算态 / `interrupted` 崩溃态）。
+
+### 5.12 自主任务编排 AgentPipeline（v0.4，实现 P6）
+
+> **脚本骨架 + 决策点子环**（非硬编码、非全自驱）。确定性骨架按序调用 `agent_tools` 现有工具，agent 只在选材/发布判断点介入（每次决策 = 受限工具子集跑一次小循环，失败回落规则兜底）。骨架**不接触** `generate_full_outline` 内部 6 阶段、**不接触** `storyline_writer` 逐桥段 LLM——完全符合「管线不重写、agent 只做决策点」。
+
+- **骨架伪码** `AgentPipeline.run(spec)`（`spec={genre, sub_genre, pen_name, title?, idea?, tags?, target_chapters}`）：
+  ```
+  phases = [create → world → outline → write → meta → publish]
+  for phase_name, step in phases:
+      _assert_phase(book_id, phase_name)   # get_book_detail().phase 校验，不符则纠正/跳过
+      step()
+  ```
+- `_world_phase`：`world_candidates` → 决策子环选候选 → `generate_world` → `confirm_world`；`_outline_phase`：`outline_material_candidates` → 决策子环选模板/桥段（picks）→ `generate_full_outline`。
+- `_write_phase`：**while 循环**逐桥段调 `write_next_bridge`（内部已有有界自评），累计 `book.current_chapter` 达标即停；每 N 次检查 `task_manager.is_cancelled` 与 `budget_paused`。**不指望单次 agent 调用写三章**。
+- **断点续跑 = 书自身是检查点**：`storyline.json.phase` + `book.json.current_chapter` 即事实源；崩溃后扫描 `storage/tasks/` 标 interrupted，续跑按 phase 重入。
+- **BookBusyError 重试**：写工具 `try/except BookBusyError` 指数退避 3 次（5s 起），仍忙则任务 `fail`（agent 循环内已由 `entry["func"]` 捕获转为 tool_result）。
 
 ---
 
@@ -343,11 +432,15 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
 | P2 | **大纲 skill**：agent 选材决策点（§2.2，选模板/选桥段） | P1 | P1 | 对比有无选材决策点的故事线质量与一致性 | ✅ 已落地 |
 | P3 | **写作 skill**：分角色扩充 + 有界自评（§2.3） | P1 | P1 | 对比有无自评的章节审校分 / AI 痕迹 | ✅ 已落地 |
 | P4 | **上架 skill + 信息工具补全**（§2.4/§4.2）+ 追读诊断（§4.3 可选） | P2 | P1 | agent 完成发布流程 | ✅ 已落地 |
+| P5 | **系统内会话 + 护栏 MVP**（v0.4）：`session_store` / `agent_guards` / `agent_runtime` / `/api/agent/chat?session_id` + sessions CRUD / 前端 localStorage + 新会话按钮 / `config.json` | P1 | P1 | 无 LLM 单测（Phase 12/13：崩溃恢复/白名单/LoopGuard/BudgetGuard）；手动：刷新浏览器对话仍连续 | 📋 设计（§5.9/§5.10） |
+| P6 | **自主任务编排**（v0.4）：`agent_pipeline` 骨架 + 决策子环 + `agent_task` 生命周期 + 任务面板 + `source=task` 日志 | P1 | P5 | 无 LLM 单测（Phase 14：rule 模式跑通 create→world→outline→write 3 章、断点续跑、BookBusyError 重试） | 📋 设计（§5.12） |
+| P7 | **后台批量/主编心跳**（v0.4）：队列 + `editor_in_chief` drain + 定时批量 + `budget_paused` 任务态 | P2 | P6 | 无 LLM 单测：入队 2 本并发消费、取消、预算耗尽停；`publish_check` 通过 | 📋 设计（§5.11） |
 
 **里程碑**：
 - **P1 落地 = 「外部可驱动的 skill 平台」的最小闭环成立**，是本次定位的起点。
 - P2/P3 落地 = 「决策点 + 批处理」原则在创作链上兑现。
 - P4 落地 = 全链路可被外部 agent 驱动。
+- **P5-P7（v0.4）落地 = 平台自身具备系统内自主 agent（侧栏交互 + 后台批量），不依赖外部 harness 会话。** 当前仅设计，未实现。
 
 **实现记录（2026-08-19，dev 分支）**：
 - P1：`libraries/book_lock.py`（书级文件锁）、`agent_tools` surface 分离 + `tools_for_surface` + 写工具书锁包装、`libraries/nav_intent.py`（意图队列 + TTL）、`navigate` 写意图 + `tab` 参数、`GET /api/agent/nav-intents`、`libraries/tool_log.py`（web/mcp 合并日志）、`mcp_server` functools.wraps 落 source=mcp 日志。
@@ -381,6 +474,10 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
    - 追读诊断/爽点标注是否立项（建议：是，最小范围）
    - 会话记忆 TTL/上限默认值（7 天 / 200 会话 / 100 条）
    - `on_usage` 是否覆盖 `test_connection`（建议：覆盖但不落存储）
+6. **create_book 内部授权 / 外部禁止双轨**（v0.4，§1.7）：系统内自主任务直接 `create_book`（强校验 basic_info，拒绝裸建），drive_ui 向导路径保留给外部 MCP 与可视化聊天。建议：采纳——护栏语义是「不进 MCP 面」，内部 Web 进程 create_book 本就是 sanctioned 路径；40/37 语义零回归。
+7. **会话滚动摘要 `llm_summary` 默认关**（v0.4，§5.9）：MVP 纯截断，语义摘要为 config 开关默认关，守「不加后处理」纪律。建议：采纳。
+8. **后台并发 `config.agent.concurrency` 默认 2**（v0.4，§5.11）：同书书锁互斥，异书并发上限 2。建议：采纳，可在设置页暴露。
+9. **P5-P7 是否立项**（v0.4）：系统内自主 agent 从「设计」转「实现」需立项；建议按 P5(MVP 会话+护栏)→P6(自主任务)→P7(批量/心跳) 分期实施。
 
 ---
 
@@ -390,5 +487,10 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
 - OpenClaw：本地文档 `agent-runtime-architecture.md` / `concepts/agent-runtimes.md`；[ACP agents 文档](https://docs2.openclaw.ai/tools/acp-agents)；[ACP agents setup](https://docs2.openclaw.ai/tools/acp-agents-setup)；[per-spawn tool policies PR #78441](https://github.com/openclaw/openclaw/pull/78441)；[iteration budget PR #97485](https://github.com/openclaw/openclaw/pull/97485)
 - 自由循环防失控（2026-08 检索）：[harness-sdk max_turns/max_token_budget](https://github.com/strands-agents/harness-sdk/issues/2124)、[killcord 语义环检测](https://www.npmjs.com/package/killcord)、[Tura 架构性减少模型往返](https://www.aitoolnet.com/tura)
 - Skill 生态：GitHub API 检索（2026-08-18），各仓库 README
+- **v0.4 系统内自主 agent（2026-08-20 检索）**：
+  - deepseek-harness（[github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)，TS/Node，MIT，developer preview）——移植 event-sourced 会话日志 + `deriveMessages`（`packages/core/session`）、工具 `defineTool`/`schemas()` 白名单投影（`packages/core/tools`）、compaction seam（`packages/compaction`）。
+  - OpenClaw（[github.com/openclaw/openclaw](https://github.com/openclaw/openclaw)，TS/Node，MIT）——移植 `runEmbeddedAgent` 写栅栏思路（`activeWriterRunId`，与 NovelEngine 书锁同构）、工具 `ToolDescriptor.availability` 门控、上下文 compaction、任务级护栏（max_turns/timeout/tool policy）、记忆分层（书级 chapter summary 已等价实现，会话级用滚动摘要）。
+  - 两者均为 TS/Node → **只移植架构模式，Python 重写，不引 Node/TS 依赖**；砍掉消息渠道/语音/多租户/通用 shell/embedding 向量检索/插件 runtime。
 
 > v0.3（2026-08-19）：定位演进为「可视化、外部 agent 可驱动的多阶段 skill 创作平台」。新增 §〇 目标架构、§一 外部驱动层、§二 Skill 层、§四 信息工具层、§六 落地路线图；§三/§五 承接 v0.2 批处理内核与基础设施设计；§七 更新待确认清单（新增有界自评成本纪律反转、选材介入点、navigate 桥形态、信息工具粒度）。
+> **v0.4（2026-08-20）：定位补充「系统内自主 agent」双轨。新增 §一 1.7 部署方案（三层可组合架构）、§五 5.9-5.12 落地设计（会话记忆 v3 / 护栏 / 主编心跳最小版 / 自主任务编排）、§六 路线图 P5-P7、§七 待确认 #6-#9；附录补 deepseek-harness / OpenClaw 架构模式借鉴。本版为设计文档，P5-P7 未实现。**
