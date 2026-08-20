@@ -38,7 +38,7 @@ _REINFORCEMENT = """[系统约束]
 
 
 def _agent_cfg(key: str, default):
-    """读根 config.json agent.dsh 字段；读失败/缺失回退默认。"""
+    """读根 config.json agent.dsh 字段（现仅 profile）；读失败/缺失回退默认。"""
     try:
         from core.json_store import read_json
         cfg = read_json(os.path.join(_ROOT, "config.json"), {}) or {}
@@ -48,28 +48,14 @@ def _agent_cfg(key: str, default):
 
 
 def get_dsh_argv() -> list:
-    """dsh 启动前缀（argv 列表）：优先指向项目内 vendor/dsh-ne/lib/bin.js。
+    """dsh 启动前缀（argv 列表）：`node vendor/dsh-ne/lib/bin.js`。
 
     dsh 已 vendor 到本仓库 `vendor/dsh-ne/`（精简核心，改名 dsh-ne，见交接文档），
     用 `node vendor/dsh-ne/lib/bin.js` 直启——不依赖全局 npm 安装，且绕开 Windows
     .CMD shim 对中文参数按 ANSI 转码的坑（Node 经 CreateProcessW 收 UTF-16，中文无损）。
-
-    兜底：vendor 缺失时回退全局 dsh（同样解析到 node <bin.js>）。
     """
     vendored = os.path.join(_ROOT, "vendor", "dsh-ne", "lib", "bin.js")
-    if os.path.exists(vendored):
-        return [shutil.which("node") or "node", vendored]
-    binary = _agent_cfg("binary", "dsh")
-    resolved = shutil.which(binary)
-    if not resolved:
-        return [binary]
-    low = resolved.lower()
-    if low.endswith((".cmd", ".bat")):
-        pkg = os.path.join(os.path.dirname(resolved), "node_modules", "@deepseek-ai", "dsh")
-        binjs = os.path.join(pkg, "lib", "bin.js")
-        if os.path.exists(binjs):
-            return [shutil.which("node") or "node", binjs]
-    return [resolved]
+    return [shutil.which("node") or "node", vendored]
 
 
 def get_dsh_profile() -> str:
@@ -161,7 +147,8 @@ def run_dsh_task(task: str, history: list | None = None,
         return
     except FileNotFoundError:
         yield {"type": "error",
-               "message": "dsh 未安装或不在 PATH：请 `npm i -g @deepseek-ai/dsh`（0.1.0-rc.x）"}
+               "message": "vendor/dsh-ne 或 node 缺失：请确认 `vendor/dsh-ne/node_modules` 已 `npm install`"
+                          "（源码入库，依赖重建），且 Node 在 PATH"}
         yield {"type": "done"}
         return
 

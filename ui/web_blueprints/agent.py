@@ -57,12 +57,6 @@ def agent_chat():
     return sse_stream_response(generate())
 
 
-@bp.route("/api/agent/driver", methods=["GET"])
-def agent_driver():
-    """当前聊天大脑 driver（恒为 dsh，内置 agent 已删除），供前端展示。"""
-    return jsonify({"ok": True, "driver": "dsh"})
-
-
 @bp.route("/api/agent/tool-log", methods=["GET"])
 def agent_tool_log():
     """右侧面板「工具日志」页签数据：所有暴露工具数 + 工具调用汇总与时间线。"""
