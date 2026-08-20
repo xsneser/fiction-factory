@@ -176,6 +176,15 @@
         .card .meta { font-size:12px; color:#8b949e; margin-bottom:6px; }
         .card .stat { font-size:32px; font-weight:bold; color:#f0f6fc; }
         .card .label { font-size:11px; color:#8b949e; }
+        /* 仪表盘「已有书目」紧凑横条（每书一条：书名/元信息左，状态徽标右） */
+        .book-strip-list { display:flex; flex-direction:column; gap:8px; margin-bottom:24px; }
+        .book-strip { display:flex; align-items:center; gap:16px;
+            background:#161b22; border:1px solid #30363d; border-radius:8px; padding:10px 16px; text-decoration:none; transition:all .2s; }
+        .book-strip:hover { border-color:#58a6ff; }
+        .book-strip .bs-info { flex:1; min-width:0; }
+        .book-strip .bs-title { font-size:14px; font-weight:600; color:#58a6ff; }
+        .book-strip .bs-meta { font-size:12px; color:#8b949e; margin-top:2px; }
+        .book-strip .bs-badge { white-space:nowrap; flex-shrink:0; }
         /* Tables */
         table { width:100%; border-collapse:collapse; margin:12px 0; }
         th, td { padding:10px 14px; text-align:left; border-bottom:1px solid #30363d; font-size:13px; }

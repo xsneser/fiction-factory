@@ -51,13 +51,15 @@
 
 <h2>📚 已有书目</h2>
 {% if books %}
-<div class="cards">
+<div class="book-strip-list">
     {% for r in books %}
     {% set b = r.book %}
-    <a href="/books/{{ b.book_id }}" class="card" style="text-decoration:none">
-        <div class="title">{{ b.title or '(待定)' }}</div>
-        <div class="meta">{{ b.pen_name }} · {{ b.genre }}{% if b.sub_genre %}/{{ b.sub_genre }}{% endif %} · 已写 {{ b.current_chapter }} 章{% if r.word_count %} · {{ r.word_count }} 字{% endif %}{% if r.cost_spent %} · 花费 ¥{{ '%.2f'|format(r.cost_spent) }}{% endif %}</div>
-        <div>{{ status_badge(b.status) }}</div>
+    <a href="/books/{{ b.book_id }}" class="book-strip">
+        <div class="bs-info">
+            <div class="bs-title">{{ b.title or '(待定)' }}</div>
+            <div class="bs-meta">{{ b.pen_name }} · {{ b.genre }}{% if b.sub_genre %}/{{ b.sub_genre }}{% endif %} · 已写 {{ b.current_chapter }} 章{% if r.word_count %} · {{ r.word_count }} 字{% endif %}{% if r.cost_spent %} · 花费 ¥{{ '%.2f'|format(r.cost_spent) }}{% endif %}</div>
+        </div>
+        <div class="bs-badge">{{ status_badge(b.status) }}</div>
     </a>
     {% endfor %}
 </div>
