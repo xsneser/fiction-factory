@@ -16,14 +16,14 @@
 
 **NovelEngine = 可视化、外部 agent 可驱动 + 系统内自主 agent 的多阶段 skill 创作平台。**
 
-它的工作方式：外部 agent（Claude Code / OpenClaw 等 harness）先运行 `launch.bat` 启动项目 → 读取用户需求 → 通过暴露的 MCP 工具 + navigate 桥，一步步驱动浏览器走完建书→大纲→写作→上架每个阶段；**系统内自主 agent**（§一 1.7）在 Web 进程内跑同样的 40 工具注册表，支持侧栏交互（人在环）与后台批量产书（无人值守）两种形态自主推进全流程。每一步操作在浏览器页面实时可视化，右侧工具日志记录每一次工具调用。每个阶段是一个独立的 skill——agent 在决策点（选什么素材 / 要不要重写）上思考并决定，确定性管线在批处理点批量执行。
+它的工作方式：外部 agent（Claude Code / OpenClaw 等 harness）先运行 `launch.bat` 启动项目 → 读取用户需求 → 通过暴露的 MCP 工具 + navigate 桥，一步步驱动浏览器走完建书→大纲→写作→上架每个阶段；**系统内自主 agent**（§一 1.7）在 Web 进程内跑同样的 43 工具注册表，支持侧栏交互（人在环）与后台批量产书（无人值守）两种形态自主推进全流程。每一步操作在浏览器页面实时可视化，右侧工具日志记录每一次工具调用。每个阶段是一个独立的 skill——agent 在决策点（选什么素材 / 要不要重写）上思考并决定，确定性管线在批处理点批量执行。
 
 ### 0.2 架构总览（四层 + 系统内自主层）
 
 ```
 ┌─ 外部驱动层（P0，已落地）───────────────────────┐
 │  launch.bat 入口                                │
-│  MCP 工具面（40 工具，MCP 面 37，surface 分离）   │
+│  MCP 工具面（43 工具，MCP 面 40，surface 分离）  │
 │  navigate 外部驱动桥（意图队列 → 浏览器轮询）      │
 │  外部工具日志打通（mcp 调用进 tool-log）           │
 │  外部 harness 接入（Claude Code / OpenClaw ACP） │
@@ -98,9 +98,9 @@
 
 ### 1.2 MCP 工具面（现状，已核实）
 
-- `agent_tools.py` 的 `TOOL_REGISTRY`（40 工具，MCP 面 37）是单一来源；`mcp_server.py`（纯适配）逐个 `mcp.tool()` 注册（按 surface 过滤 + `functools.wraps` 落日志），stdio；Web 侧栏 `agent_loop`（`plugins/agent_loop.py`）复用同一注册表。**双端共享同一工具面。**
+- `agent_tools.py` 的 `TOOL_REGISTRY`（43 工具，MCP 面 40）是单一来源；`mcp_server.py`（纯适配）逐个 `mcp.tool()` 注册（按 surface 过滤 + `functools.wraps` 落日志），stdio；Web 侧栏 `agent_loop`（`plugins/agent_loop.py`）复用同一注册表。**双端共享同一工具面。**
 - 工具分组（`_build_registry` 顺序）：
-  - 导航/向导：`navigate` / `canvas_command` / `drive_ui`（`canvas_command`/`create_book`/`delete_book` 为 web-only——建书/删书必须走系统界面，MCP 面 37 不含；`drive_ui` 外部经意图桥驱动建书向导表单）
+  - 导航/向导：`navigate` / `canvas_command` / `drive_ui`（`canvas_command`/`create_book`/`delete_book` 为 web-only——建书/删书必须走系统界面，MCP 面 40 不含；`drive_ui` 外部经意图桥驱动建书向导表单）
   - 只读：`list_books` / `get_book_state` / `get_storyline` / `borrow_preview` / `get_book_detail` / `query_structures` / `query_plots` / `query_gags` / `query_profiles` / `query_characters`
   - 建书规划：`create_book` / `save_basic_info` / `generate_title` / `generate_outlines` / `generate_full_outline` / `extend_outline` / `confirm_outlines` / `fill_plots` / `fill_gags` / `outline_agent` / `outline_material_candidates` / `generate_world` / `world_candidates` / `generate_characters` / `confirm_world`
   - 写作：`write_next_bridge` / `write_chapter` / `generate_book_meta`
@@ -184,7 +184,7 @@ AgentLoop(plugins/agent_loop.py)          ← 现有单轮 function-calling 循�
 **create_book 双轨决策（待确认 #6）**：护栏本意是「create_book 不进 MCP 面」；系统内 agent 分两档——
 - 聊天 agent（人在环）：保留 `create_book`（现状 Web 面即有，用户实时看可中断）。
 - 自主任务（无人值守）：直接 `create_book` 但**强校验**（genre/pen_name 非空 + basic_info 带 `world_building.description`，拒绝裸建「(待定)」书）；`delete_book` 一律默认 deny，聊天场景需会话级显式授权。
-- drive_ui 向导路径保留给外部 MCP 与可视化聊天，两者并存，**40/37 语义零回归**。
+- drive_ui 向导路径保留给外部 MCP 与可视化聊天，两者并存，**43/40 语义零回归**。
 
 **护栏与编排**：per-session 工具白名单（ToolPolicy）、语义环检测（LoopGuard）、预算预检（BudgetGuard）见 §五 5.10；自主任务骨架 + 决策点子环 + 断点续跑见 §五 5.12；后台批量 + 主编心跳见 §五 5.11。落地路线 P5-P7 见 §六。
 
@@ -456,7 +456,7 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
   2. `_wrap_book_lock` 手写包装只设 `__name__`/`__doc__` → `inspect.signature` 看到 `(**kwargs)` → FastMCP 给 `fill_gags` 等 10 个锁定工具生成错误 schema → 改 `functools.wraps` 保留 `__wrapped__` 签名链。
 - **真实 LLM 驱动延后**（用户择机）：`generate_full_outline`（6 阶段）/ `write_next_bridge` 经 MCP 的 LLM 往返，以及 Claude Code 新会话 prompt 驱动（浏览器可视化 + tool-log `source=mcp`）——含 deepseek-v4-flash 成本。
 
-**与 v0.2 批次映射**：v0.2 的 P0-a/P0-b（llm_client / 遥测 / 路由）在 v0.3 中并入 §五，**不阻塞 P1**——P1 外部驱动桥依赖的是现状 40 工具（MCP 面 37），不依赖遥测/路由。P1 落地后再补 §5.1-5.3，用真实 usage 观测外部驱动的成本与缓存命中率。
+**与 v0.2 批次映射**：v0.2 的 P0-a/P0-b（llm_client / 遥测 / 路由）在 v0.3 中并入 §五，**不阻塞 P1**——P1 外部驱动桥依赖的是现状 43 工具（MCP 面 40），不依赖遥测/路由。P1 落地后再补 §5.1-5.3，用真实 usage 观测外部驱动的成本与缓存命中率。
 
 ---
 
@@ -474,7 +474,7 @@ def call_tools(self, messages, tools, temperature=0.2, max_tokens=8192,
    - 追读诊断/爽点标注是否立项（建议：是，最小范围）
    - 会话记忆 TTL/上限默认值（7 天 / 200 会话 / 100 条）
    - `on_usage` 是否覆盖 `test_connection`（建议：覆盖但不落存储）
-6. **create_book 内部授权 / 外部禁止双轨**（v0.4，§1.7）：系统内自主任务直接 `create_book`（强校验 basic_info，拒绝裸建），drive_ui 向导路径保留给外部 MCP 与可视化聊天。建议：采纳——护栏语义是「不进 MCP 面」，内部 Web 进程 create_book 本就是 sanctioned 路径；40/37 语义零回归。
+6. **create_book 内部授权 / 外部禁止双轨**（v0.4，§1.7）：系统内自主任务直接 `create_book`（强校验 basic_info，拒绝裸建），drive_ui 向导路径保留给外部 MCP 与可视化聊天。建议：采纳——护栏语义是「不进 MCP 面」，内部 Web 进程 create_book 本就是 sanctioned 路径；43/40 语义零回归。
 7. **会话滚动摘要 `llm_summary` 默认关**（v0.4，§5.9）：MVP 纯截断，语义摘要为 config 开关默认关，守「不加后处理」纪律。建议：采纳。
 8. **后台并发 `config.agent.concurrency` 默认 2**（v0.4，§5.11）：同书书锁互斥，异书并发上限 2。建议：采纳，可在设置页暴露。
 9. **P5-P7 是否立项**（v0.4）：系统内自主 agent 从「设计」转「实现」需立项；建议按 P5(MVP 会话+护栏)→P6(自主任务)→P7(批量/心跳) 分期实施。

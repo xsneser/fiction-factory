@@ -13,7 +13,7 @@
 | 验证项 | 结果 | 说明 |
 |---|---|---|
 | dsh 安装 / headless profile | ✅ | Node v24.19.0;`npm i -g @deepseek-ai/dsh`(0.1.0-rc.7);headless profile 内置 `deepseek-official / deepseek-v4-flash` 默认模型,与项目纪律一致 |
-| MCP 桥接 | ✅ | `@deepseek-ai/dsh-mcp-client` 挂 `python mcp_server.py`(stdio),37 工具变成 `mcp__novelengine__*` 原生工具;`dsh --profile headless` 只读任务(list_books/get_book_detail)推理准确,自己判断出「phase=config 应进大纲阶段」 |
+| MCP 桥接 | ✅ | `@deepseek-ai/dsh-mcp-client` 挂 `python mcp_server.py`(stdio),40 工具变成 `mcp__novelengine__*` 原生工具;`dsh --profile headless` 只读任务(list_books/get_book_detail)推理准确,自己判断出「phase=config 应进大纲阶段」 |
 | 建书向导(drive_ui) | ✅ | dsh 跑完整序列 navigate→set_field→set_tags→pick_candidate→next→set_characters→submit,**真建出书**(book_002,phase=config,世界观 12 维 + 6 角色落库) |
 | 大纲生成 | ⚠️ 失败 | dsh 经 MCP 调 `generate_full_outline` 返回「已执行」但 **0 大纲产出**,随后反复轮询 `get_book_detail` 等 phase=ready 陷入死循环;进程内直调同一工具却能正常产出大纲(2 outlines)。疑似 **MCP 3 分钟 toolCallTimeout 掐断长调用** 或 dsh 擅自 `save_basic_info` 破坏状态 |
 | 写作阶段 | 未验证 | 停止前未跑 |
@@ -39,7 +39,7 @@
 - v0.4(系统内自主 agent)保持「设计未实现」,其价值(长工具不超时、护栏内建、create_book 双轨、无 Node 依赖)被本 spike 摩擦点印证。
 - **建议**:
   - 若坚持侧车路线,需先补:长工具 MCP 超时调大、护栏层循环熔断(如轮询 >N 次报错)、工具白名单收紧(禁 dsh 擅调 save_basic_info 等)、建书保真度(向导状态保护/重置)。**工作量大,不亚于自建薄包装。**
-  - 更经济的路径:**回 v0.4 系统内方案**——自己写薄包装(复用现有 agent_loop + 40 工具),或退一步直接沿用 Claude Code 外部驱动(v0.3 已闭环,零新增)。
+  - 更经济的路径:**回 v0.4 系统内方案**——自己写薄包装(复用现有 agent_loop + 43 工具),或退一步直接沿用 Claude Code 外部驱动(v0.3 已闭环,零新增)。
   - 混合形态(侧车交互 + v0.4 批量)留待后续立项,需先议建书护栏。
 
 ## 清理

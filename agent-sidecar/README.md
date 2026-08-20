@@ -31,7 +31,7 @@ dsh --profile headless "用 novel-build 流程建一本..."   # 全流程(建书
 - **长工具超时**:`generate_full_outline` 阻塞数分钟,`toolCallTimeoutMs` 必须 ≥600000。
 - **循环失控**:phase 未达 ready 时 agent 会反复轮询 `get_book_detail`,需护栏层熔断。
 - **建书保真度**:set_field/set_tags/pick_candidate 未忠实传达任务设定,需向导状态保护。
-- **护栏**:create_book/delete_book 不在 MCP 面(37 工具),建书必须经浏览器向导 drive_ui。
+- **护栏**:create_book/delete_book 不在 MCP 面(40 工具),建书必须经浏览器向导 drive_ui。
 
 ## 结论
 

@@ -5,7 +5,7 @@
 > `项目规划.md`（v0.6）· `交接文档.md` · `harness重构交接文档.md` · `新书创建-Harness架构与LLM提示词.md` · `优化方案-2026-08-04.md` · `优化方案核对-2026-08-04.md` · `待codex处理-2026-08-04.md` · `UX报告-2026-08-05.md` · `task-system-spec.md` · `ui-notes.md` · `novel-factory-timeline.html` · `设计文档.md`（另一会话合并版，v1.1 已并入并退役）
 >
 > **代码是最终真相**：本文档所有架构事实均以当前代码为准（HEAD `53cee50`）。若与代码冲突，以代码为准并回写本文档。
-> 测试基线：`python test_all.py` **94/94** 通过。
+> 测试基线：`python test_all.py` **87/87** 通过。
 
 ---
 
@@ -456,7 +456,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 | 测试 | 内容 | 基线 |
 |---|---|---|
-| `test_all.py` | 11 个 Phase 无 LLM 健全性（四大库/档案/写作核心统一/线程拆分/叙事纪律/成本/去AI/角色/审查/引擎路由/持久化/规划态） | **94/94** |
+| `test_all.py` | 11 个 Phase 无 LLM 健全性（四大库/档案/写作核心统一/线程拆分/叙事纪律/成本/去AI/角色/审查/引擎路由/持久化/规划态） | **87/87** |
 | `test_e2e_pages.py` | 端到端页面回归（自动起 58080 服务，`--no-start` 可复用） | ALL CHECKS PASSED |
 | `test_chapters.py` / `test_reader.py` | 章节生成 / 番茄解析 | — |
 | `tools/test_full_flow.py` | 真实 LLM E2E（约 30 分钟，自建自删测试书） | 手动 |
@@ -522,7 +522,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 把引擎全部操作暴露为**共享工具注册表**，供两个消费方使用：右侧栏**内置 Agent 聊天助手**（OpenClaw 式）与 **MCP 服务器**（Claude Code 等外部客户端）。
 
-**共享工具注册表 `agent_tools.py`（40 个，MCP 面 37）**：
+**共享工具注册表 `agent_tools.py`（43 个，MCP 面 40）**：
 - 单一工具来源 `TOOL_REGISTRY = [{name, description, input_schema, func}]`，schema 用 `inspect.signature` 自动生成。复用 `ctx` 单例——Web 进程内与 UI 共享同一状态；MCP 独立进程各自一份，经 `books/` 文件协调。
 - 覆盖「创建→上架」全链路：只读/建书（`list_books`/`get_book_state`/`get_storyline`/`create_book`/`borrow_preview`）→ 规划（`save_basic_info`/`generate_title`/`generate_outlines`/`generate_full_outline`/`extend_outline`/`confirm_outlines`/`fill_plots`/`fill_gags`/`outline_agent`/`generate_world`/`world_candidates`/`confirm_world`）→ 写作（`write_next_bridge`/`write_chapter`/`generate_book_meta`）→ 上架（`publish_check`/`mark_finished`/`publish_book`/`export_book`）→ 审查/去AI（`review_text`/`deai_text`）→ 书管理（`delete_book`，默认拒绝需 `confirm=True`）→ 导航/画布（`navigate`/`canvas_command`，返回特殊标记由循环转 SSE 事件）。
 - 工具排序把 `navigate`/`canvas_command` 前置（flash 对列表前部工具更敏感，保证"打开X页"正确触发导航）。
@@ -570,7 +570,7 @@ python ui/web_ui.py      # 127.0.0.1:58080；NOVEL_DEBUG=1 开启 debug
 ### 10.2 测试
 
 ```bash
-python test_all.py       # 94/94 通过（无 LLM 健全性，含 Phase 3/3.5/3.6/9/11）
+python test_all.py       # 87/87 通过（无 LLM 健全性，含 Phase 3/3.5/3.6/9/11）
 python test_e2e_pages.py # 端到端页面回归
 python test_chapters.py / test_reader.py
 ```
@@ -622,14 +622,14 @@ python test_chapters.py / test_reader.py
 ### 13.2 远期（项目规划 Phase 4/5）
 
 - **Phase 4 质量体系**：全书优化诊断管线（reconcile.py 已删，需重建或放弃）、段落级修订 + diff 追踪、设定协调（改设定后自动调和章节）、审查规则库扩充（当前 reviewer 5 项）。
-- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（tool-calling loop 已落地 §8.5：右侧栏聊天面板 + 共享 40 工具（MCP 面 37）+ navigate/canvas 控制；服务端持久记忆/自动多步编排仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
+- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（tool-calling loop 已落地 §8.5：右侧栏聊天面板 + 共享 43 工具（MCP 面 40）+ navigate/canvas 控制；服务端持久记忆/自动多步编排仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
 
 ### 13.3 文档回写清单
 
 - `docs/archive/项目规划.md` 仍描述 v0.5 架构，作为历史归档保留；本文档为唯一技术权威。
 - 改代码必须同步本文档。
 - v1.2（2026-08-18）：右侧栏运行状态 → Agent 活动面板（§8.2/§8.4）；新增 MCP 服务器（§8.5）；`requirements.txt` 增加 mcp。
-- v1.3（2026-08-18）：右侧栏 → OpenClaw 式 Agent 聊天助手（§8.2/§8.5）；`agent_tools.py` 共享 40 工具注册表（MCP 面 37，mcp_server 瘦身为适配层）；`LLMClient.call_tools` 原生 function calling；`/api/agent/chat` SSE + `story_line.js` 新增 `scrollTo` 画布控制。
+- v1.3（2026-08-18）：右侧栏 → OpenClaw 式 Agent 聊天助手（§8.2/§8.5）；`agent_tools.py` 共享 43 工具注册表（MCP 面 40，mcp_server 瘦身为适配层）；`LLMClient.call_tools` 原生 function calling；`/api/agent/chat` SSE + `story_line.js` 新增 `scrollTo` 画布控制。
 - v1.4（2026-08-18）：新书启动改单页 5 步向导（§4.2）；`world_building.tags` 题材标签 + `world_tags.py` 预置库 + prompt 硬约束；借鉴挪入向导②；删除全站 `flow_status` 单行状态条（§8.2）。
 - v1.5（2026-08-18）：向导②③去重 —— ②改 AI 候选（无书 candidates 端点，5 方向），③并入标签 + 流派；候选 3→5。
 - v1.6（2026-08-18）：标签库扩至 50 个 + `TAG_GENRE_MAP` 流派推导（删流派/平台 UI）；③精简为世界观置顶 + 标签 + 书名/主角候选生成（无书 `title-protag` 端点 5 书名 + 3 主角）；删模板选择/世界观补充/故事线描述；真实 LLM 冒烟 + smoke 断言补齐。
@@ -640,13 +640,17 @@ python test_chapters.py / test_reader.py
 
 ### 14.1 当前文档（docs/ 顶层）
 
-docs/ 顶层仅保留本文档（唯一主设计文档）与 `archive/`（全部历史文档归档）：
+docs/ 顶层当前文档（唯一主设计文档 = 本文档；交接/上手速查 = 架构总览；其余专项文档；`archive/` 为全部历史文档归档）：
 
 | 文档 | 定位 |
 |---|---|
 | `设计文档-总览-claude.md` | **唯一主设计文档**（本文档） |
-| `agent设计文档.md` | Agent 层专项（工具注册表/循环/Skill 调研 + 系统内自主 agent v0.4 设计，2026-08-20 更新至 v0.4，待并入本文档） |
-| `archive/` | 全部已合并/历史文档（设计稿、交接、优化、UX、任务系统、调研、审查报告等 19 份） |
+| `架构总览.md` | **交接/上手速查**（系统分层/工具面/双通道/管线入口/坑；2026-08-20 新增） |
+| `交接文档-2026-08-20-dsh替换内置agent.md` | dsh 替换内置 agent 的决策 + 护栏待办 + 状态回写 |
+| `交接文档-2026-08-19-agent驱动改造.md` | v0.3 外部驱动改造的护栏背景 |
+| `agent-sidecar-spike-2026-08-20.md` | dsh 侧车 spike 实测（3 摩擦点） |
+| `agent设计文档.md` | Agent 层专项（工具注册表/循环/Skill 调研 + 系统内自主 agent v0.4 设计，2026-08-20 更新至 v0.4，**被 dsh 路线取代的备选基线**） |
+| `archive/` | 全部已合并/历史文档（设计稿、交接、优化、UX、任务系统、调研、审查报告等 19 份，时间胶囊不改） |
 
 ### 14.2 归档文档（docs/archive/）
 
