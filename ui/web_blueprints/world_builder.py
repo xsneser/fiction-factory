@@ -255,6 +255,147 @@ def api_world_complete_nobook():
 
 
 # ═══════════════════════════════════════════
+# 分阶段内容构建端点（无书，供内部 agent / skill 逐步填充向导步 3）
+# ═══════════════════════════════════════════
+
+def _stage_gen(llm, pen_name=""):
+    """构造无书 WorldBuildingGenerator（带笔名风格档案，无则 None）。"""
+    from libraries.world_builder import WorldBuildingGenerator
+    from libraries.prompt_harness import PromptHarness
+    from libraries.storyline import BookStoryline
+    profile = None
+    if pen_name:
+        profile = _profile_for(BookStoryline(pen_name=pen_name))
+    harness = PromptHarness(profile=profile)
+    return WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
+
+
+@bp.route("/api/world-builder/stage/core-conflict", methods=["POST"])
+def api_stage_core_conflict():
+    """分阶段构建①：从一句话设定+题材标签推导主线核心矛盾。
+
+    body {idea, world_brief?, tags?, genre?, sub_genre?, pen_name?} → {core_conflict, genre}。
+    """
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    world_brief = (body.get("world_brief") or "").strip()
+    pen_name = (body.get("pen_name") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    sub_genre = (body.get("sub_genre") or "").strip()
+    tags = [str(t).strip() for t in (body.get("tags") or []) if isinstance(t, str) and t.strip()]
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+    gen = _stage_gen(llm, pen_name)
+    conflict = gen.generate_core_conflict(
+        genre=genre, sub_genre=sub_genre, idea=world_brief or idea,
+        tags=tags, pen_name=pen_name)
+    if not conflict:
+        return jsonify({"ok": False, "error": "核心矛盾生成失败，请重试"}), 500
+    return jsonify({"ok": True, "core_conflict": conflict, "genre": genre})
+
+
+@bp.route("/api/world-builder/stage/factions", methods=["POST"])
+def api_stage_factions():
+    """分阶段构建③：从一句话+核心矛盾发散世界里的势力派系。
+
+    body {idea, world_brief?, core_conflict?, tags?, genre?, sub_genre?} → {factions}。
+    """
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    world_brief = (body.get("world_brief") or "").strip()
+    core_conflict = (body.get("core_conflict") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    sub_genre = (body.get("sub_genre") or "").strip()
+    tags = [str(t).strip() for t in (body.get("tags") or []) if isinstance(t, str) and t.strip()]
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+    gen = _stage_gen(llm)
+    factions = gen.generate_factions(
+        genre=genre, sub_genre=sub_genre, idea=world_brief or idea,
+        core_conflict=core_conflict, tags=tags)
+    if not factions:
+        return jsonify({"ok": False, "error": "势力生成失败，请重试"}), 500
+    return jsonify({"ok": True, "factions": factions})
+
+
+@bp.route("/api/world-builder/stage/rest-world", methods=["POST"])
+def api_stage_rest_world():
+    """分阶段构建⑤：大纲确定后补全其余世界观维度 + 基调（保留 core_conflict/factions）。
+
+    body {idea, world_brief?, core_conflict?, factions?, outline_preview?, tags?,
+          genre?, sub_genre?, pen_name?} → {world_building:{...8维}, tone, target_audience, pov, era_language}。
+    """
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    world_brief = (body.get("world_brief") or "").strip()
+    core_conflict = (body.get("core_conflict") or "").strip()
+    outline_preview = (body.get("outline_preview") or "").strip()
+    pen_name = (body.get("pen_name") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    sub_genre = (body.get("sub_genre") or "").strip()
+    raw_factions = body.get("factions") or []
+    factions = [f for f in raw_factions if isinstance(f, dict)] or []
+    tags = [str(t).strip() for t in (body.get("tags") or []) if isinstance(t, str) and t.strip()]
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+    gen = _stage_gen(llm, pen_name)
+    result = gen.generate_rest_world(
+        genre=genre, sub_genre=sub_genre, idea=idea, world_brief=world_brief,
+        core_conflict=core_conflict, factions=factions,
+        outline_preview=outline_preview, tags=tags, pen_name=pen_name)
+    if not result.get("world_building"):
+        return jsonify({"ok": False, "error": "世界观维度补全失败，请重试"}), 500
+    return jsonify({"ok": True, **result})
+
+
+@bp.route("/api/world-builder/characters", methods=["POST"])
+def api_stage_characters():
+    """分阶段构建④：从一句话+已定核心矛盾/势力/开篇大纲桥段生成角色候选。
+
+    body {idea, world_brief?, core_conflict?, factions?, outline_preview?, tags?, title?,
+          genre?, sub_genre?} → {protagonists, supporting_cast}。
+    """
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    world_brief = (body.get("world_brief") or "").strip()
+    core_conflict = (body.get("core_conflict") or "").strip()
+    outline_preview = (body.get("outline_preview") or "").strip()
+    title = (body.get("title") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    sub_genre = (body.get("sub_genre") or "").strip()
+    raw_factions = body.get("factions") or []
+    factions = [f for f in raw_factions if isinstance(f, dict)] or []
+    tags = [str(t).strip() for t in (body.get("tags") or []) if isinstance(t, str) and t.strip()]
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+    gen = _stage_gen(llm)
+    result = gen.generate_characters(
+        idea=world_brief or idea, genre=genre, sub_genre=sub_genre, tags=tags,
+        title=title, core_conflict=core_conflict, factions=factions,
+        outline_preview=outline_preview)
+    if not result:
+        return jsonify({"ok": False, "error": "角色候选生成失败，请重试"}), 500
+    return jsonify({"ok": True, "protagonists": result.get("protagonists", []),
+                    "supporting_cast": result.get("supporting_cast", [])})
+
+
+# ═══════════════════════════════════════════
 # API：从已有书借鉴预览
 # ═══════════════════════════════════════════
 
