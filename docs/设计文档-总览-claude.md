@@ -535,7 +535,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 **MCP 服务器 `mcp_server.py`（适配层）**：从 `TOOL_REGISTRY` 逐个注册 FastMCP 工具（mcp SDK **1.x**，固定 `mcp>=1.2.0,<2.0`；**mcp 2.0 移除了 FastMCP API，勿升级**）。独立 stdio 进程，与 Web 并存；长操作阻塞式（`consume_dict_stream`/`consume_triple_stream`）。注册：`claude mcp add --scope project novel-engine -- python mcp_server.py`。
 
-**限制**：会话记忆 v1 = 浏览器内历史；**系统内自主 agent v0.4 设计已废弃**——方向转向 dsh 核心替换内置 agent（见 `docs/交接文档-2026-08-20-dsh替换内置agent.md`；v0.4 设计文档已删，ToolPolicy/LoopGuard 概念在 Phase 1 落地为 `libraries/tool_policy.py` / `loop_guard.py`）；资产库 CRUD 与 scout 工具留 v1.5；双进程勿同时操作同一本书。
+**限制**：会话记忆 v1 = 浏览器内历史；**系统内自主 agent v0.4 设计已废弃**——方向转向 dsh 核心替换内置 agent（见 `docs/交接文档-2026-08-20-dsh整体.md`；v0.4 设计文档已删，ToolPolicy/LoopGuard 概念在 Phase 1 落地为 `libraries/tool_policy.py` / `loop_guard.py`）；资产库 CRUD 与 scout 工具留 v1.5；双进程勿同时操作同一本书。
 
 ---
 
@@ -646,7 +646,7 @@ docs/ 顶层当前文档（唯一主设计文档 = 本文档；交接/上手速�
 |---|---|
 | `设计文档-总览-claude.md` | **唯一主设计文档**（本文档） |
 | `架构总览.md` | **交接/上手速查**（系统分层/工具面/双通道/管线入口/坑；2026-08-20 新增） |
-| `交接文档-2026-08-20-dsh替换内置agent.md` | dsh 替换内置 agent 的决策 + 护栏待办 + 状态回写 |
+| `交接文档-2026-08-20-dsh整体.md` | agent 侧唯一交接文档：事件流/建书 agent 驱动/单任务打断/建书状态工具 + 待办 + 坑 |
 | `skill设计思路，人工手写版本.md` | 早期 skill 设计语音草稿（原始想法，仅供参考） |
 | `archive/` | 全部已合并/历史文档（设计稿、交接、优化、UX、任务系统、调研、审查报告等 19 份，时间胶囊不改） |
 

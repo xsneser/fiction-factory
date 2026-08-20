@@ -48,4 +48,4 @@ node vendor/dsh-ne/lib/bin.js --profile headless \
 
 ## 结论
 
-侧车路线已投产为侧栏唯一大脑:三摩擦点分别被 `toolCallTimeoutMs=600000`(长工具超时)、`loop_guard.py` 语义环熔断(循环失控)、`tool_policy.py` phase 门控 + 建书 reset(建书保真度/越权)承接;事件流 runner 让工具进度/导航实时推送。历史结论(v0.4 自建 / 纯 Claude Code 外部驱动)已被用户拍板的 dsh 替换路线取代,见 `docs/交接文档-2026-08-20-dsh替换内置agent.md`。
+侧车路线已投产为侧栏唯一大脑:三摩擦点分别被 `toolCallTimeoutMs=600000`(长工具超时)、`loop_guard.py` 语义环熔断(循环失控)、`tool_policy.py` phase 门控 + 建书 reset(建书保真度/越权)承接;事件流 runner 让工具进度/导航实时推送。历史结论(v0.4 自建 / 纯 Claude Code 外部驱动)已被用户拍板的 dsh 替换路线取代,见 `docs/交接文档-2026-08-20-dsh整体.md`。
