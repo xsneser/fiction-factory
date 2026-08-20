@@ -31,7 +31,7 @@ description: 建书阶段。开新书/写设定/构思世界观。建书必须�
 1. `navigate(url="/books/start")`（若已在向导页则无害）。
 2. **（仅侧栏路径）**`drive_ui(reset)`：重置向导 state（除笔名），清除残留草稿。**（按钮路径已由 web 自动 reset，跳过）**。
 3. **（仅侧栏路径）**`drive_ui(set_field, {field:"idea", value:种子})` + `drive_ui(set_field, {field:"pen", value:笔名})` + `drive_ui(set_tags, {tags:[题材标签]})`，再 `drive_ui(next)`（步 1 → 步 2）。
-4. **世界观候选（步 2，路线 B）**：`world_candidates(book_id="", idea, genre, tags)`（LLM 调用约 2-5s）→ `drive_ui(pick_candidate, {idx, candidate:{title, world_brief, one_liner}})`（注入，浏览器实时渲染候选卡）→ **`drive_ui(next)`（步 2「已挑选完毕」→ 步 3）**；候选质量差 / 用户要求手定 → `drive_ui(skip_candidates)`（跳过挑选直接进步 3）。
+4. **世界观候选（步 2，路线 B）**：`world_candidates(book_id="", idea, genre, tags)`（LLM 调用约 2-5s）→ `drive_ui(pick_candidate, {candidate:{title, world_brief, one_liner}})`（**`idx` 可省略**——候选内容在 `candidate` 内嵌传入，`idx` 仅卡片高亮用；至少传 `candidate` 或 `idx` 其一）→ 浏览器实时渲染候选卡 → **`drive_ui(next)`（步 2「已挑选完毕」→ 步 3）**；候选质量差 / 用户要求手定 → `drive_ui(skip_candidates)`（跳过挑选直接进步 3）。
 5. **步 3 = 内容构建工作台（分阶段，agent 自主驱动）**：浏览器不再自动一键补全（旧 `world-complete` 保留为「✨ 重新补全」兜底按钮）。按顺序逐段构建，每段经 `drive_ui` 落进表单，步 3 顶部状态区 5 个徽标实时显示 ✅/未填：
    - ① **核心矛盾**：`generate_core_conflict(idea=世界观简述, world_brief=候选简述, tags, pen_name)` → `drive_ui(set_world, {world_building:{core_conflict:"..."}})`（返回 genre 供②查库）。
    - ② **开篇大纲+桥段**（agent 自主决策，不询问）：`query_structures(genre=①)` **一次拉全**模板清单，直接从返回挑 1-2 个最匹配，**不要换 keyword/sub_genre 重查**；`query_plots(category="开篇")` 同理一次拉全。选定立即 `drive_ui(set_picks, {templates:[{id,name}], plots:[{id,name}]})` → `_outline_picks` 随 submit 落库，submit 后 `generate_full_outline` 自动消费。
