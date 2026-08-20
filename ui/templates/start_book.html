@@ -77,6 +77,17 @@
     {# ─── ③ 世界观补全：AI 自动补全 12 维 + 基调（可编辑）+ 角色候选 ─── #}
     <section class="wz-panel" id="panel-3" style="display:none">
         <fieldset>
+            <legend>🧩 内容分阶段构建（Agent 驱动，可直接编辑）</legend>
+            <div id="wz-stage-status" class="wz-stage-status">
+                <span class="wz-stage" data-stage="core_conflict">① 核心矛盾</span>
+                <span class="wz-stage" data-stage="outline">② 开篇大纲+桥段</span>
+                <span class="wz-stage" data-stage="factions">③ 势力</span>
+                <span class="wz-stage" data-stage="characters">④ 主要人物</span>
+                <span class="wz-stage" data-stage="rest">⑤ 其余世界观</span>
+            </div>
+            <div id="wz-picks-preview" class="wz-borrow-preview">尚未选择开篇大纲/桥段。</div>
+        </fieldset>
+        <fieldset>
             <legend>🌍 世界观（AI 自动补全，可编辑）</legend>
             <div class="form-row half">
                 <div><label>书名</label><input id="wz-title" placeholder="书名（第②步选择，可改）"></div>
@@ -223,6 +234,12 @@
 .chip:hover { border-color:#58a6ff; color:#f0f6fc; }
 .chip.on { background:#1f6feb; border-color:#1f6feb; color:#fff; }
 .wz-borrow-preview { font-size:12px; color:#8b949e; line-height:1.6; }
+.wz-stage-status { display:flex; flex-wrap:wrap; gap:8px; margin:4px 0 8px; }
+.wz-stage {
+    font-size:12px; color:#8b949e; background:#0d1117; border:1px solid #30363d;
+    border-radius:12px; padding:3px 10px;
+}
+.wz-stage.done { color:#3fb950; border-color:#238636; }
 .wz-candidate-box { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
 .wz-candidate-card {
     background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:10px 12px;
@@ -256,7 +273,8 @@ var WZ = {
              storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
              protag_personality: '', protag_golden_finger: '',
              opening_template_id: '', golden_finger_template_id: '', structure_template_id: '',
-             world_building: null, tone: '', target_audience: '', pov: '第三人称', era_language: '' },
+             world_building: null, tone: '', target_audience: '', pov: '第三人称', era_language: '',
+             _outline_picks: null, _outline_picks_names: null },
 
     el: function(id) { return document.getElementById(id); },
 
@@ -346,6 +364,7 @@ var WZ = {
         }
         this._picked = false;   // 新一批候选未选，需重新点选后才可「已挑选完毕」
         this._worldFilled = false;   // 重生成候选 → 步 3 按新种子重新补全
+        this._outline_picks = null;
         var idea = this.el('wz-idea').value.trim();
         var box = this.el('wz-candidate-box');
         box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成候选…</div>';
@@ -388,12 +407,14 @@ var WZ = {
         for (var i = 0; i < cards.length; i++) cards[i].classList.toggle('picked', i === idx);
         this._picked = true;   // 已选中方向，「已挑选完毕」校验放行
         this._worldFilled = false;   // 新候选方向 → 步 3 按新种子重新补全
+        this._outline_picks = null;
         if (typeof showToast === 'function') showToast('已选中：' + c.title + '，下一步可微调', 'success');
     },
     skipCandidates: function() {
         this.el('wz-candidate-box').innerHTML = '';
         this._picked = false;   // 跳过=未选方向，回步 2 时「已挑选完毕」不放行
         this._worldFilled = false;   // 跳过 → 步 3 按一句话设定重新补全
+        this._outline_picks = null;
         if (typeof showToast === 'function') showToast('已跳过候选，直接进入微调设定', 'success');
         this.show(3);
     },
@@ -508,6 +529,7 @@ var WZ = {
             if (sub) sub.disabled = false;
             if (rf) rf.disabled = false;
             if (typeof showToast === 'function') showToast('世界观已自动补全，可手动微调', 'success');
+            self.updateStageStatus();
             self.persist();
         }).catch(function(e) {
             self._worldFilled = false;
@@ -521,6 +543,43 @@ var WZ = {
     refillWorld: function() {
         this._worldFilled = false;
         this.fillWorld();
+    },
+
+    /* —— 分阶段构建状态区：按内容判定 5 个徽标 ✅/未填 —— */
+    renderPicks: function() {
+        var el = this.el('wz-picks-preview');
+        if (!el) return;
+        var p = this.state._outline_picks, pn = this.state._outline_picks_names || {};
+        if (!p || (!p.templates && !p.plots)) { el.textContent = '尚未选择开篇大纲/桥段。'; return; }
+        var parts = [];
+        if (p.templates && p.templates.length)
+            parts.push('模板：' + (pn.templates && pn.templates.length ? pn.templates.join('、') : p.templates.join('、')));
+        if (p.plots && p.plots.length)
+            parts.push('桥段：' + (pn.plots && pn.plots.length ? pn.plots.join('、') : p.plots.join('、')));
+        el.textContent = '✅ ' + parts.join(' · ');
+    },
+    updateStageStatus: function() {
+        var self = this;
+        var s = this.state;
+        var wb = s.world_building || {};
+        var checks = {
+            core_conflict: function() { return !!(wb.core_conflict && String(wb.core_conflict).trim()); },
+            outline: function() { return !!(s._outline_picks && (s._outline_picks.templates || s._outline_picks.plots)); },
+            factions: function() { return !!(wb.factions && wb.factions.length); },
+            characters: function() { return document.querySelectorAll('#wz-char-list .char-row').length > 0; },
+            rest: function() {
+                return ['era','power_system','geography','culture','history',
+                        'social_structure','world_summary','rules'].some(function(k) {
+                    var v = wb[k];
+                    return (Array.isArray(v) && v.length) || (typeof v === 'string' && v.trim());
+                }) || !!(s.tone && String(s.tone).trim());
+            },
+        };
+        document.querySelectorAll('.wz-stage').forEach(function(b) {
+            var st = b.getAttribute('data-stage');
+            b.classList.toggle('done', !!(checks[st] && checks[st]()));
+        });
+        this.renderPicks();
     },
 
     collect: function() {
@@ -665,6 +724,7 @@ var WZ = {
         // 统一角色列表
         var chars = s.characters || [];
         chars.forEach(function(c) { WZ.addCharRow(c); });
+        this.updateStageStatus();
     }
 };
 // 初始化：恢复草稿（若有）→ 显示对应步骤；否则从第 1 步开始
@@ -725,6 +785,7 @@ window.onnecommand = function(e) {
         if (typeof args.idx === 'number' && cards[args.idx]) cards[args.idx].classList.add('picked');
         WZ._picked = true;   // MCP 内嵌候选也算已选，「已挑选完毕」放行
         WZ._worldFilled = false;   // 新候选方向 → 步 3 重新补全
+        WZ._outline_picks = null;
         if (typeof showToast === 'function') showToast('已选中：' + (cand.title || ''), 'success');
     } else if (cmd === 'set_characters') {
         // 角色列表整体替换（agent 生成后推送）；复用 addCharRow 建行 + collect 收进 state
@@ -733,6 +794,40 @@ window.onnecommand = function(e) {
         cl.innerHTML = '';
         (args.characters || []).forEach(function(c) { WZ.addCharRow(c); });
         WZ.collect();
+        WZ.updateStageStatus();
+    } else if (cmd === 'set_world') {
+        // 分阶段内容构建：部分世界观 dict 合并进步 3 表单（不覆盖已填的其余字段）
+        var wb = (args.world_building && typeof args.world_building === 'object') ? args.world_building : {};
+        var cur = WZ.state.world_building || {};
+        Object.keys(wb).forEach(function(k) {
+            var v = wb[k];
+            if (v !== undefined && v !== null && v !== '') cur[k] = v;
+        });
+        WZ.state.world_building = cur;
+        ['tone', 'target_audience', 'pov', 'era_language'].forEach(function(k) {
+            if (args[k] !== undefined && args[k] !== '') WZ.state[k] = args[k];
+        });
+        WZ.worldToForm({ world_building: cur, tone: WZ.state.tone, target_audience: WZ.state.target_audience,
+                         pov: WZ.state.pov, era_language: WZ.state.era_language });
+        WZ.updateStageStatus();
+        if (typeof showToast === 'function') showToast('世界观内容已更新，可直接编辑', 'success');
+    } else if (cmd === 'set_picks') {
+        // 开篇大纲/桥段选择（分阶段②）：存 _outline_picks（扁平 id 列表）+ 预览渲染
+        // 支持 {id,name} 对象或纯 id 字符串；预览用 name（无 name 则用 id）
+        var tplNames = [], tplIds = [];
+        (args.templates || []).forEach(function(x) {
+            if (x && typeof x === 'object') { if (x.id) tplIds.push(String(x.id)); if (x.name) tplNames.push(String(x.name)); }
+            else if (x) tplIds.push(String(x));
+        });
+        var plotNames = [], plotIds = [];
+        (args.plots || []).forEach(function(x) {
+            if (x && typeof x === 'object') { if (x.id) plotIds.push(String(x.id)); if (x.name) plotNames.push(String(x.name)); }
+            else if (x) plotIds.push(String(x));
+        });
+        WZ.state._outline_picks = { templates: tplIds, plots: plotIds };
+        WZ.state._outline_picks_names = { templates: tplNames, plots: plotNames };
+        WZ.updateStageStatus();
+        if (typeof showToast === 'function') showToast('已记录开篇大纲/桥段选择', 'success');
     } else if (cmd === 'next') { WZ.next(); }
     else if (cmd === 'prev') { WZ.prev(); }
     else if (cmd === 'load_candidates') { WZ.loadCandidates(); }
