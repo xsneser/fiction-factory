@@ -892,16 +892,23 @@ class PromptHarness:
         return "\n".join(parts)
 
     def render_world_candidates_prompt(self, idea: str, genre: str = "",
-                                       sub_genre: str = "", count: int = 5) -> str:
+                                       sub_genre: str = "", count: int = 5,
+                                       tags=None) -> str:
         """示例候选：一次产出 count 个差异化世界观候选。
 
-        步 1 用户只给一句话设定、不选流派——【流派】未指定时要求 AI 自行推导该设定
-        隐含的题材/流派，再在其框架内发散差异明显的方向；不注入固定子流派示例，
-        避免输出被示例模板固化。
+        步 1 用户给一句话设定 + 题材标签、不显式选流派——【流派】未指定时要求 AI
+        从一句话/题材标签自行推导，再在其框架内发散差异明显的方向；不注入固定
+        子流派示例，避免输出被示例模板固化。
         """
-        tb = self._tags_block()
+        tb = self._tags_block()   # 书内已有标签时走它（书内端点/存量书路径）
+        if not tb and tags:
+            _tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
+            if _tags:
+                tb = ("【题材标签（硬约束）】" + "、".join(_tags)
+                      + "。世界观候选必须契合这些标签的网文套路与读者预期，"
+                        "禁止漂移到标签之外题材。")
         return "\n".join([
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else "（未指定，由你从一句话设定推导）"),
+            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else "（未指定，由你从一句话设定/题材标签推导）"),
             f"【一句话设定】{idea or '（无，按流派自由发散）'}",
             tb if tb else "",
             f"【要求】从这句话发散出 {count} 个截然不同的世界观方向，方向之间差异要明显。"

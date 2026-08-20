@@ -688,10 +688,12 @@ def generate_world(book_id: str, mode: str = "one", idea: str = "",
             "event_count": len(events), "done_data": last_d}
 
 
-def world_candidates(book_id: str = "", idea: str = "", genre: str = "", sub_genre: str = "") -> dict:
+def world_candidates(book_id: str = "", idea: str = "", genre: str = "",
+                     sub_genre: str = "", tags: list = None) -> dict:
     """一次产出 2-3 个差异化世界观方向供选择（LLM）。
 
     book_id 为空 = 建书前调用（新书向导②）：用传入 genre/sub_genre 生成候选，无需先建书；
+    候选受 tags（题材标签）硬约束，genre 为空时由 tags 经 derive_genre 推导；
     book_id 非空 = 用该书的 genre/sub_genre（忽略传入 genre）。候选含 one_liner，供 generate_world 复用。
     """
     llm = _require_llm()
@@ -707,9 +709,13 @@ def world_candidates(book_id: str = "", idea: str = "", genre: str = "", sub_gen
         gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
     else:
         # 无书（向导②）：generate_candidates 本就不读目标书
-        harness = PromptHarness()   # storyline=None
+        harness = PromptHarness()   # storyline=None；tags 由 generate_candidates 透传
         gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
-    candidates = gen.generate_candidates(genre=genre or "都市", sub_genre=sub_genre or "", idea=idea)
+        if not genre and tags:
+            from libraries.world_tags import derive_genre
+            genre = derive_genre(list(tags or []))
+    candidates = gen.generate_candidates(genre=genre or "都市", sub_genre=sub_genre or "",
+                                         idea=idea, tags=list(tags or []))
     if not candidates:
         raise RuntimeError("示例候选生成失败，请重试")
     return {"candidates": candidates}

@@ -198,12 +198,16 @@ class WorldBuildingGenerator:
     # ═══════════════════════════════════════════
 
     def generate_candidates(self, genre: str = "", sub_genre: str = "",
-                            idea: str = "", count: int = 5) -> list:
-        """示例候选：一次产出 count 个差异化世界观候选（非流式 JSON 端点，失败重试≤3）。"""
+                            idea: str = "", count: int = 5, tags=None) -> list:
+        """示例候选：一次产出 count 个差异化世界观候选（非流式 JSON 端点，失败重试≤3）。
+
+        tags 为题材标签（硬约束）；genre 为空时由调用方按 tags 经 derive_genre 推导。
+        """
         if not self.llm:
             return []
         prompt = self.harness.render_world_candidates_prompt(
-            idea=idea, genre=genre or "", sub_genre=sub_genre or "", count=count)
+            idea=idea, genre=genre or "", sub_genre=sub_genre or "",
+            count=count, tags=tags)
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
