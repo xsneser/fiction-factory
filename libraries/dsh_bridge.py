@@ -32,6 +32,59 @@ import time
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _OVERLAY_PATH = os.path.join(_ROOT, "storage", "dsh_runtime.yml")
 
+# ─── 全服务单任务：当前 dsh 子进程 + 打断（kill 整树）───
+_current_proc = None
+_current_proc_lock = threading.Lock()
+_last_interrupted_pid = None
+
+
+def _set_current_proc(proc):
+    global _current_proc
+    with _current_proc_lock:
+        _current_proc = proc
+
+
+def _clear_current_proc(proc):
+    global _current_proc
+    with _current_proc_lock:
+        if _current_proc is proc:
+            _current_proc = None
+
+
+def interrupt_current_task() -> bool:
+    """打断当前正在跑的 dsh 子进程（kill 整树）。
+
+    dsh 的 node 进程会 spawn `python mcp_server.py` 子进程，`Popen.kill()` 只杀父进程
+    会让 python 变孤儿（还可能持书锁），故 Windows 用 `taskkill /F /T` 杀整树。
+    返回是否真打断了（无任务/已退出返回 False，幂等）。被打断的任务会在其
+    run_dsh_task 里以 error+done 收尾，前端 busy 复位。
+    """
+    global _current_proc, _last_interrupted_pid
+    with _current_proc_lock:
+        proc = _current_proc
+        _current_proc = None
+        if proc is None or proc.poll() is not None:
+            return False
+        _last_interrupted_pid = proc.pid
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True, timeout=10,
+                )
+            else:
+                proc.kill()
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            pass
+        return True
+
 # 强化指令：拼在任务文本前的护栏/编排提醒（persona 已在 headless profile 注入，
 # 这里按任务重申关键约束，防 dsh 擅调越权工具 / 死循环轮询）。
 _REINFORCEMENT = """[系统约束]
@@ -248,86 +301,111 @@ def run_dsh_task(task: str, history: list | None = None,
 
     事件序列（由 events-runner 的 NDJSON 流实时驱动）：tool_call / tool_result /
     navigate / ui_command …… → reply（最终回复）→ done。
-    失败/异常：error + done。task 为最新用户消息，history 为浏览器持有的消息列表。
+    失败/异常/被打断：error + done。task 为最新用户消息，history 为浏览器持有的消息列表。
 
-    说明：Popen 起子进程，读线程逐行读 stdout（事件流每行一条 NDJSON），每行实时
-    转 SSE yield；超时 kill、文件缺失、非零退出各有兜底。stderr 由独立线程读走
-    （防管道缓冲堵死），仅失败时用于报错摘要。实时工具进度本身由事件流呈现，
-    工具日志页签仍由浏览器 3s 轮询 tool-log 聚合（source=mcp）。
+    全服务单任务：本任务启动前先 interrupt_current_task() 打断任何正在跑的 dsh；
+    本任务也可被后续任务 / `/api/agent/chat/cancel` 打断（被打断则 error+done 收尾）。
+    finally 里收尸（杀残留 proc + wait），避免孤儿进程。
     """
     overlay = _write_runtime_overlay()
     cmd = get_dsh_argv() + [
         "--profile", get_dsh_profile(),
         "--patch", overlay, _build_task_text(task, history),
     ]
-    try:
-        proc = subprocess.Popen(
-            cmd, cwd=_ROOT,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace",
-        )
-    except FileNotFoundError:
-        yield {"type": "error",
-               "message": "vendor/dsh-ne 或 node 缺失：请确认 `vendor/dsh-ne/node_modules` 已 `npm install`"
-                          "（源码入库，依赖重建），且 Node 在 PATH"}
-        yield {"type": "done"}
-        return
+    # 全服务单任务：新任务先打断正在跑的旧任务
+    interrupt_current_task()
 
-    q = queue.Queue()
-    stderr_buf = []
-
-    def _reader():
-        try:
-            for line in proc.stdout:
-                q.put(("line", line))
-            q.put(("eof", None))
-        except Exception as e:  # pragma: no cover
-            q.put(("read_error", e))
-
-    def _stderr_reader():
-        try:
-            for chunk in proc.stderr:
-                stderr_buf.append(chunk)
-        except Exception:  # pragma: no cover
-            pass
-
-    threading.Thread(target=_reader, daemon=True).start()
-    threading.Thread(target=_stderr_reader, daemon=True).start()
-
-    pending = {}
-    started = time.time()
+    proc = None
     saw_any = False
-    while True:
+    saw_done_event = False
+    try:
         try:
-            kind, payload = q.get(timeout=0.5)
-        except queue.Empty:
-            # 子进程退出后 stdout 关闭，reader 必发 eof；此处只做超时兜底
-            if time.time() - started > timeout_s:
-                proc.kill()
-                yield {"type": "error",
-                       "message": f"dsh 任务超时（>{timeout_s}s），请拆分任务或稍后重试"}
-                yield {"type": "done"}
-                return
-            continue
-        if kind == "line":
-            line = payload.strip()
-            if not line or not line.startswith("{"):
-                continue
-            try:
-                evt = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            saw_any = True
-            for sse in _map_dsh_event(evt, pending):
-                yield sse
-        elif kind == "eof":
-            break
-        else:
-            break
+            proc = subprocess.Popen(
+                cmd, cwd=_ROOT,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+            )
+        except FileNotFoundError:
+            yield {"type": "error",
+                   "message": "vendor/dsh-ne 或 node 缺失：请确认 `vendor/dsh-ne/node_modules` 已 `npm install`"
+                              "（源码入库，依赖重建），且 Node 在 PATH"}
+            yield {"type": "done"}
+            return
+        _set_current_proc(proc)
 
-    exit_code = proc.wait()
-    if exit_code != 0 and not saw_any:
-        # 进程在产出任何事件前就崩溃（如插件加载失败）：stderr 兜底报错
-        err = "".join(stderr_buf)[-500:].strip() or "(dsh 无输出)"
-        yield {"type": "error", "message": f"dsh 任务失败（exit {exit_code}）：{err}"}
-        yield {"type": "done"}
+        q = queue.Queue()
+        stderr_buf = []
+
+        def _reader():
+            try:
+                for line in proc.stdout:
+                    q.put(("line", line))
+                q.put(("eof", None))
+            except Exception as e:  # pragma: no cover
+                q.put(("read_error", e))
+
+        def _stderr_reader():
+            try:
+                for chunk in proc.stderr:
+                    stderr_buf.append(chunk)
+            except Exception:  # pragma: no cover
+                pass
+
+        threading.Thread(target=_reader, daemon=True).start()
+        threading.Thread(target=_stderr_reader, daemon=True).start()
+
+        pending = {}
+        started = time.time()
+        while True:
+            try:
+                kind, payload = q.get(timeout=0.5)
+            except queue.Empty:
+                # 子进程退出后 stdout 关闭，reader 必发 eof；此处只做超时兜底
+                if time.time() - started > timeout_s:
+                    proc.kill()
+                    yield {"type": "error",
+                           "message": f"dsh 任务超时（>{timeout_s}s），请拆分任务或稍后重试"}
+                    yield {"type": "done"}
+                    return
+                continue
+            if kind == "line":
+                line = payload.strip()
+                if not line or not line.startswith("{"):
+                    continue
+                try:
+                    evt = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                saw_any = True
+                for sse in _map_dsh_event(evt, pending):
+                    if sse.get("type") == "done":
+                        saw_done_event = True
+                    yield sse
+            elif kind == "eof":
+                break
+            else:
+                break
+
+        exit_code = proc.wait()
+        # 未以 done 收尾且退出非 0：判为被打断 / 崩溃（events-runner 正常结束必有 done 事件）
+        if exit_code != 0 and not saw_done_event:
+            if _last_interrupted_pid == proc.pid:
+                yield {"type": "error", "message": "任务已被打断"}
+            elif not saw_any:
+                err = "".join(stderr_buf)[-500:].strip() or "(dsh 无输出)"
+                yield {"type": "error", "message": f"dsh 任务失败（exit {exit_code}）：{err}"}
+            else:
+                yield {"type": "error", "message": f"dsh 任务异常退出（exit {exit_code}）"}
+            yield {"type": "done"}
+    finally:
+        _clear_current_proc(proc)
+        if proc is not None and proc.poll() is None:
+            # 生成器被提前关闭（客户端断连）时收尸：杀残留 proc 并 wait
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
