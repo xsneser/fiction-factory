@@ -63,31 +63,16 @@ def step_scout(page, book_title, chapters=8):
     page.click("#btn-scout")
     log("已点击「开始抓取」，等待下载...")
 
-    # 观察侧边栏任务状态：等待"下载完成"或按钮恢复
+    # 等待按钮恢复 disabled=None（任务完成信号；侧边栏任务卡片/相位已随内置 agent 删除）
     deadline = time.time() + 180
     download_ok = False
     while time.time() < deadline:
-        # 侧边栏任务相位
-        phases = page.locator(".task-phase").all_text_contents()
-        if any("下载完成" in p for p in phases):
-            download_ok = True
-            break
-        # 按钮恢复 disabled=None
         if page.locator("#btn-scout").get_attribute("disabled") is None:
-            # 等 2 秒确认任务状态
-            time.sleep(2)
-            phases = page.locator(".task-phase").all_text_contents()
-            if any("下载完成" in p for p in phases):
-                download_ok = True
-                break
-        # 任务日志报错
-        log_text = page.locator("#task-log-list div").all_text_contents()
-        if any("失败" in t or "错误" in t for t in log_text):
-            log(f"任务日志报错: {[t for t in log_text if '失败' in t or '错误' in t][-1][:80]}", "fail")
+            download_ok = True
             break
         time.sleep(3)
     shot(page, "03_scout_done")
-    log(f"爬取下载: 完成={download_ok}（任务相位: {[p for p in phases][-1][:40] if phases else '无'}）")
+    log(f"爬取下载: 完成={download_ok}（按钮恢复 disabled=None）")
     return download_ok
 
 

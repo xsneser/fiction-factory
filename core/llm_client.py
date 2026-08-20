@@ -180,35 +180,6 @@ class LLMClient:
         finally:
             resp.release_conn()
 
-    def call_tools(self, messages: list, tools: list,
-                   temperature: float = 0.2, max_tokens: int = 8192) -> dict:
-        """原生 function calling：body 加 tools，返回 choices[0].message dict。
-
-        message 形如 {role, content: str|None, tool_calls: [{id, type, function:{name, arguments}}]}。
-        messages 为完整对话（含 system），调用方保证 tool 消息的 tool_call_id 对齐。
-
-        max_tokens 默认 8192：deepseek-v4-flash 是推理型模型，需留足推理余量，
-        否则推理把输出配额吃光会导致 content 为空 / tool_calls 截断。
-        """
-        headers = {"Authorization": f"Bearer {self.cfg.api_key}"}
-        body = {"model": self.cfg.model, "messages": messages,
-                "temperature": temperature, "max_tokens": max_tokens or 8192,
-                "tools": tools}
-        last_err = None
-        for attempt in range(3):
-            try:
-                data = _http_post(self.api_url, headers, body,
-                                  self.cfg.http_timeout_seconds,
-                                  verify=self.cfg.verify_ssl)
-                return json.loads(data)["choices"][0]["message"]
-            except Exception as e:
-                last_err = e
-                if is_fatal_error(e):
-                    raise
-                if attempt < 2:
-                    time.sleep(2 ** attempt)
-        raise last_err
-
     def test_connection(self) -> dict:
         try:
             # max_tokens 需留足推理余量：deepseek-v4-flash 是推理型模型，
