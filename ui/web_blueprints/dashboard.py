@@ -116,6 +116,10 @@ def start_new_book():
             from libraries.outline_generator import basic_info_is_rich
             if basic_info_is_rich(basic_info):
                 basic_info["_world_generated"] = True
+            # 分阶段构建②选定的开篇大纲/桥段（generate_full_outline picks=None 时自动消费）
+            picks = data.get("_outline_picks")
+            if isinstance(picks, dict) and (picks.get("templates") or picks.get("plots")):
+                basic_info["_outline_picks"] = picks
         # 故事线想法：不再立即生成大纲，存入 basic_info 供「一键生成完整大纲」使用
         storyline_hint = (src.get("storyline_hint", "") or "").strip()
         if storyline_hint:
