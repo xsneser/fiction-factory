@@ -40,7 +40,7 @@
             </div>
             <div class="form-row">
                 <label>世界规则 rules（每行一条，金手指数值写死）</label>
-                <textarea id="wb-rules" rows="3"></textarea>
+                <textarea id="wb-rules" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea>
             </div>
             <div class="form-row hint">一句话种子保存在 description 字段，改上面字段即可；重生成时保留你已填的值。</div>
         </fieldset>
@@ -363,7 +363,7 @@ function biToForm(bi) {
     $('wb-core_conflict').value = wb.core_conflict || '';
     $('wb-world_summary').value = wb.world_summary || ''; autoSizeTextarea($('wb-world_summary'));
     renderFactions(wb.factions);
-    $('wb-rules').value = (wb.rules || []).join('\n');
+    $('wb-rules').value = (wb.rules || []).join('\n'); autoSizeTextarea($('wb-rules'));
     renderCharCards(Array.isArray(bi.characters) ? bi.characters : legacyChars(bi));
     $('bi-tone').value = bi.tone || ''; $('bi-target_audience').value = bi.target_audience || '';
     $('bi-pov').value = bi.pov || ''; $('bi-era_language').value = bi.era_language || '';
