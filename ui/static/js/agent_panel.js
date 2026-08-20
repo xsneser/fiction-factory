@@ -319,13 +319,28 @@ console.log('[agent-panel] v3 events-stream');
             }
         });
     }
-    function agentSendTask(text) {
+    // 建书任务卡（「让 Agent 构建」按钮触发时替代用户气泡展示，任务文本仍进 history 供 SSE 取）
+    function addBuildCard(text) {
+        var card = el('div', 'agent-tool-card');
+        card.appendChild(el('div', 'agent-tool-head', '🚀 建书任务'));
+        var body = el('div', 'agent-tool-detail', text || '');
+        body.style.display = 'block';
+        card.appendChild(body);
+        chat.appendChild(card);
+        scrollBottom();
+        return card;
+    }
+    function agentSendTask(text, opts) {
         var taskText = String(text || '').trim();
         if (!taskText) return;
         history.push({ role: 'user', content: taskText });
         saveHistory(history);
         input.value = '';
-        addMsg('user', taskText);
+        if (opts && opts.card) {
+            addBuildCard(taskText);   // 向导按钮 → 卡片，不渲染用户气泡
+        } else {
+            addMsg('user', taskText);
+        }
         if (busy) {
             // 打断当前任务，排队新任务；当前流的 done 处理器接力 pendingTask
             pendingTask = taskText;

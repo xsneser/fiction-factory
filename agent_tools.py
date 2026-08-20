@@ -305,6 +305,17 @@ def get_book_detail(book_id: str) -> dict:
     }
 
 
+def get_build_status() -> dict:
+    """读取建书向导当前状态（浏览器 WZ 上报到 storage/build_status.json）。
+
+    供 agent 在建书流程中感知进度：当前步 cur、是否已建书 created/book_id、
+    候选是否已选 _picked、步 3 是否已填世界观/选材。drive_ui(submit) 非阻塞，
+    agent 用本工具拿 book_id 再去 get_book_detail 校验。无记录时返回默认（cur=1）。
+    """
+    from libraries.build_status import get_build_status as _read
+    return _read()
+
+
 def query_structures(keyword: str = "", genre: str = "", sub_genre: str = "") -> dict:
     """查大纲库：按流派/子流派/关键词（名称）返回模板清单。"""
     kw = (keyword or "").strip()
@@ -1128,7 +1139,7 @@ def _build_registry():
         navigate, drive_ui,
         # 只读摸底
         list_books, get_book_state, get_storyline, borrow_preview,
-        get_book_detail, query_structures, query_plots, query_gags, query_profiles, query_characters,
+        get_book_detail, get_build_status, query_structures, query_plots, query_gags, query_profiles, query_characters,
         # 规划
         save_basic_info,
         generate_title, generate_outlines, generate_full_outline,

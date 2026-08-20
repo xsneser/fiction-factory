@@ -17,6 +17,7 @@ from .ctx import sse_stream_response  # noqa: E402
 from agent_tools import TOOL_REGISTRY  # noqa: E402
 from libraries.nav_intent import take_nav_intents  # noqa: E402
 from libraries.dsh_bridge import run_dsh_task, interrupt_current_task  # noqa: E402
+from libraries.build_status import set_build_status  # noqa: E402
 from libraries.tool_log import get_tool_log, clear_tool_log  # noqa: E402
 
 bp = Blueprint("agent", __name__)
@@ -62,6 +63,14 @@ def agent_chat_cancel():
     """打断当前正在跑的 dsh 任务（全服务单任务；无任务也返回 ok，幂等）。"""
     interrupted = interrupt_current_task()
     return jsonify({"ok": True, "interrupted": interrupted})
+
+
+@bp.route("/api/agent/build-status", methods=["POST"])
+def agent_build_status():
+    """浏览器上报建书向导状态（WZ.reportStatus），写入 storage/build_status.json 供 MCP 工具读取。"""
+    data = request.get_json(silent=True) or {}
+    set_build_status(data)
+    return jsonify({"ok": True})
 
 
 @bp.route("/api/agent/tool-log", methods=["GET"])

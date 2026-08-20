@@ -307,6 +307,7 @@ var WZ = {
             if (!this._worldFilled && !this._worldFilling && hasSeed) this.fillWorld();
         }
         this.persist();   // 步骤切换即存草稿
+        this.reportStatus();   // 上报建书状态（agent 经 get_build_status 感知进度）
     },
 
     validate: function(n) {
@@ -370,7 +371,7 @@ var WZ = {
             + '题材标签「' + (tags.join('、') || '（未选）') + '」'
             + '笔名「' + (pen || '（未选，请帮我选）') + '」。驱动 /books/start 向导完成建书。';
         if (typeof window.agentSendTask === 'function') {
-            window.agentSendTask(task);
+            window.agentSendTask(task, { card: true });   // 右侧显示「🚀 建书任务」卡片，而非用户气泡
         } else {
             if (typeof showToast === 'function') showToast('Agent 面板未就绪，请刷新页面', 'error');
         }
@@ -644,6 +645,7 @@ var WZ = {
                 return;
             }
             self.bookId = d.book_id;
+            self.reportStatus();   // 上报 bookId → agent get_build_status 拿到建书结果
             try { sessionStorage.removeItem(self.PERSIST_KEY); } catch (e) {}   // 建书成功清空草稿
             // 3 步建书结束：直接入库 → 跳书详情；世界观已在步 3 补全并随 submit 落库，
             // 完整大纲由外部 Agent 后续经 MCP generate_full_outline 生成后进入写作台。
@@ -676,6 +678,22 @@ var WZ = {
         var self = this;
         if (this._persistTimer) clearTimeout(this._persistTimer);
         this._persistTimer = setTimeout(function() { self.persist(); }, 300);
+    },
+    // 上报建书状态到后端（storage/build_status.json，供 MCP 工具 get_build_status 读）
+    reportStatus: function() {
+        try {
+            fetch('/api/agent/build-status', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    cur: this.cur,
+                    bookId: this.bookId || '',
+                    creating: !!this.creating,
+                    _picked: !!this._picked,
+                    has_world: !!(this.state && this.state.world_building),
+                    has_picks: !!(this.state && this.state._outline_picks)
+                })
+            }).catch(function() {});
+        } catch (e) {}
     },
     restore: function() {
         var raw;
@@ -856,6 +874,7 @@ window.onnecommand = function(e) {
         if (typeof showToast === 'function') showToast('向导已重置（保留笔名）', 'success');
     }
     else if (cmd === 'submit') { WZ.createBook(); }
+    WZ.reportStatus();   // 每次命令执行后上报（pick_candidate/set_world/set_picks/next 等 → agent 感知）
 };
 // 输入防抖持久化 + 切页前保存（SPA 导航由输入监听兜底）
 (function() {
