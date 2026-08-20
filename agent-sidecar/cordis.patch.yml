@@ -1,0 +1,29 @@
+# NovelEngine × dsh headless 侧车 —— 配置模板
+# 用法:拷到 ~/.dsh/profiles/headless/cordis.patch.yml(或作为 --patch 覆盖层)
+# 语法要点:dsh 的 patch 层只支持 id-targeted override;新增条目必须用 `insert`(不带 id)。
+# 运行:cd D:/NovelEngine && dsh --profile headless "任务"
+- insert:
+    - id: mcp-novelengine
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: novelengine
+        transport: stdio
+        command: python
+        args: ['mcp_server.py']
+        cwd: 'D:/NovelEngine'
+        # 长耗时工具(generate_full_outline 等)必须 > 10 分钟,否则被掐断
+        toolCallTimeoutMs: 600000
+# 特化 persona:reinforce NovelEngine 四阶段编排(详情以 CLAUDE.md / skills 为准)
+- id: system-prompt
+  config:
+    persona: >-
+      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
+      You are driving the NovelEngine novel-creation platform through its MCP tools
+      (mcp__novelengine__*). Follow the four-stage workflow: novel-build (create via the
+      system wizard with drive_ui — NEVER call create_book/delete_book, they are web-only)
+      → novel-outline (outline_material_candidates then generate_full_outline)
+      → novel-write (loop write_next_bridge until the chapter target or budget_paused)
+      → novel-publish (generate_book_meta → publish_check → publish_book/mark_finished/export_book).
+      Check phase with get_book_detail before each stage and do not skip ahead; retry on
+      BookBusyError; on budget_paused stop and report. Read CLAUDE.md and the novel-* skills
+      in your instructions for the full rules.
