@@ -2,7 +2,7 @@
 
 外部 agent（MCP）调用 navigate / drive_ui 时，把跳转/UI 命令意图写入
 `storage/nav_intent.json`；Web 浏览器每 ~2.5s 轮询 `GET /api/agent/nav-intents` 消费（取后即清空）。
-与内部 agent_loop 的 SSE 路径并存：内部直达 SSE（立即执行），外部走本队列。
+（内置 agent 已删，此队列是 navigate/drive_ui 的唯一消费通道。）
 
 边界：
 - intent 带 id，取即删（消费语义）

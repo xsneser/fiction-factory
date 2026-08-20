@@ -1,7 +1,7 @@
 """dsh headless 驱动桥 —— 侧栏聊天后端转发到 dsh 一次性子进程。
 
 背景：用户拍板用 dsh（DeepSeek Harness，Node agent 框架）核心替换内置 agent
-（plugins/agent_loop.py），见 docs/交接文档-2026-08-20-dsh替换内置agent.md。
+（plugins/agent_loop.py 已删除），见 docs/交接文档-2026-08-20-dsh替换内置agent.md。
 dsh headless profile 是 one-shot：给一个任务文本，内部反复调 MCP 工具直到完成，
 打印最终回复后退出。本桥把浏览器持有的消息历史拼进任务文本，subprocess 跑 dsh，
 把最终回复作为 SSE reply 事件返回。

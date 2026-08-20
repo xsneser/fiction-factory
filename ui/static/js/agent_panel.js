@@ -108,7 +108,7 @@
                 var h0 = toolsLog.scrollHeight;
                 var ratio = h0 ? toolsLog.scrollTop / h0 : 0;
                 var nearBottom = h0 - toolsLog.scrollTop - toolsLog.clientHeight < 80;
-                var html = '<div style="font-size:12px;color:#8b949e;margin-bottom:8px">'
+                var html = '<div style="position:sticky;top:0;z-index:1;background:#161b22;font-size:12px;color:#8b949e;padding:4px 0 8px;margin-bottom:4px">'
                     + '已暴露 <strong>' + d.tools_exposed + '</strong> 工具 · MCP 调用 <strong>' + log.length
                     + '</strong> 次 · 成功 <span style="color:#3fb950">' + success
                     + '</span> 失败 <span style="color:#f85149">' + (log.length - success) + '</span>'
@@ -190,16 +190,10 @@
         var t = evt.type;
         if (t === 'tool_start') {
             currentToolRun = addToolCard(evt.tool, evt.args);
-        } else if (t === 'tool_result') {
-            if (currentToolRun) { setToolResult(currentToolRun, evt.ok, evt.summary); currentToolRun = null; }
         } else if (t === 'reply') {
             addMsg('assistant', evt.content);
             history.push({ role: 'assistant', content: evt.content });
             saveHistory(history);
-        } else if (t === 'navigate') {
-            handleNavigate(evt.url);
-        } else if (t === 'canvas') {
-            dispatchCanvas(evt);
         } else if (t === 'error') {
             addMsg('assistant', '⚠️ ' + (evt.message || '发生错误'));
         } else if (t === 'done') {
@@ -225,29 +219,10 @@
     }
     navTimer = setInterval(pollNavIntents, 2500);
 
-    // ─── 导航 / 画布（Phase 7 机制）───
-    // 重置画布就绪标志后再切页；写作台脚本会重新置 true
+    // ─── 导航（内置 agent 已删；navigate 走下方 ne:command / pollNavIntents 意图桥）───
     function handleNavigate(url) {
-        window.__neCanvasReady__ = false;
         if (typeof navigateTo === 'function') navigateTo(url);
         else window.location.href = url;
-    }
-    // 全局唯一 ne:canvas 监听，委托给写作台页注册的单槽位 window.onnecanvas
-    window.addEventListener('ne:canvas', function(e) {
-        if (typeof window.onnecanvas === 'function') window.onnecanvas(e);
-    });
-    // 轮询写作台画布就绪后 dispatch（≤5s）
-    function dispatchCanvas(payload) {
-        var tries = 0;
-        (function poll() {
-            if (window.__neCanvasReady__) {
-                window.dispatchEvent(new CustomEvent('ne:canvas', { detail: payload }));
-            } else if (++tries <= 50) {
-                setTimeout(poll, 100);
-            } else {
-                if (typeof showToast === 'function') showToast('写作台画布未就绪，无法操作', 'error');
-            }
-        })();
     }
     // 全局唯一 ne:command 监听，委托给各页面注册的单槽位 window.onnecommand（建书向导等）
     window.addEventListener('ne:command', function(e) {

@@ -5,7 +5,7 @@
     python tools/smoke_llm_tools.py --no-call   # 只构造，不发请求（离线检查）
 
 Phase 0 预检：若打印 tool_calls 为空或请求报错，说明 flash 不兼容原生 function
-calling，agent_loop 需走 JSON 降级协议。
+calling 协议。
 """
 import sys
 import os
@@ -55,7 +55,7 @@ def main():
     if tcs:
         print("[OK] flash 返回 tool_calls，原生 function calling 可用")
         return 0
-    print("[FALLBACK] flash 未返回 tool_calls → agent_loop 需走 JSON 降级协议")
+    print("[FALLBACK] flash 未返回 tool_calls")
     return 2
 
 

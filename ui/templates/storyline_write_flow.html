@@ -223,33 +223,15 @@ let running = false;
 let stopped = false;
 let controller = null;
 
-/* Agent 画布控制就绪标志：侧栏 agent_panel 据此判断何时 dispatch ne:canvas 事件 */
-window.__neCanvasReady__ = false;
-
 /* ─── 初始化故事线 ─── */
 function refreshStoryline(sl) {
     if (window.StoryLine) {
         window.StoryLine.init('editor-storyline', sl || {}, {scrollable: true});
-        window.__neCanvasReady__ = true;
     }
 }
 (function initStoryline() {
     refreshStoryline(window.__BOOK_STORYLINE__);
 })();
-
-/* ─── Agent 画布控制：单槽位接收 ne:canvas 事件（侧栏 agent_panel 的全局监听委托过来）。
-     用单槽位而非 addEventListener，避免 SPA 反复进入写作台时 window 上堆积监听。 ─── */
-window.onnecanvas = function(e) {
-    var d = (e && e.detail) || {};
-    if (!window.StoryLine || !document.getElementById('editor-storyline')) return;
-    if (d.action === 'highlight_plot') {
-        window.StoryLine.highlight({outline_id: d.outline_id, plot_id: d.plot_id});
-    } else if (d.action === 'scroll_to_plot') {
-        window.StoryLine.scrollTo({plot_id: d.plot_id, outline_id: d.outline_id});
-    } else if (d.action === 'scroll_to_outline') {
-        window.StoryLine.scrollTo({outline_id: d.outline_id});
-    }
-};
 
 /* ─── 规划面板已内置于中栏折叠区（规划态展开，写作态折叠） ─── */
 (function() {
