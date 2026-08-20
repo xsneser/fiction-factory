@@ -33,6 +33,7 @@ from core.text_utils import count_prose_units  # noqa: E402
 from libraries.storyline import OutlineSlot, annotate_plot_roles, \
     get_mc, get_characters, normalize_basic_info  # noqa: E402
 from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
+from libraries.tool_policy import _wrap_phase_gate  # noqa: E402
 
 
 # ─── 基础辅助 ───
@@ -1065,13 +1066,14 @@ _WIZARD_CMDS = {
     "next": (), "prev": (),
     "load_candidates": (), "skip_candidates": (),
     "fill_world": (),   # 步骤③世界观重新补全（Agent 兜底/重试）
+    "reset": (),   # 清空向导 state（除 pen_name/库表外字段）——建书前先 reset，防残留干扰保真度
     "submit": (),
 }
 
 
 def drive_ui(cmd: str, args: dict = None) -> dict:
     """驱动「启动新书」向导 UI（命令桥）：set_field/set_tags/set_characters/next/prev/
-    load_candidates/skip_candidates/pick_candidate/submit。
+    load_candidates/skip_candidates/pick_candidate/reset/submit。
 
     非阻塞：把命令写入意图队列，浏览器每 ~2.5s 轮询消费（start_book.html 的
     window.onnecommand 执行）。不入书锁（不写书）。
@@ -1202,11 +1204,16 @@ def _build_registry():
             raise RuntimeError(
                 f"工具注册表去重失败：同名同 surface 出现两次（{name} / {surface}）")
         seen.add(key)
+        # 包装顺序：phase 门控最外层（phase 不对就不等锁）→ 书锁 → 原函数。
+        # 门控对未收录工具原样返回；锁只对 _LOCKED_TOOLS 生效。functools.wraps
+        # 逐层保留 __name__/__wrapped__，MCP 端 schema 不受影响。
+        wrapped = _wrap_book_lock(fn) if name in _LOCKED_TOOLS else fn
+        wrapped = _wrap_phase_gate(wrapped)
         entries.append({
             "name": name,
             "description": (inspect.getdoc(fn) or "").strip(),
             "input_schema": _func_to_schema(fn),
-            "func": _wrap_book_lock(fn) if name in _LOCKED_TOOLS else fn,
+            "func": wrapped,
             "surface": surface,
         })
     return entries

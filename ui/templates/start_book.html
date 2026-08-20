@@ -833,6 +833,28 @@ window.onnecommand = function(e) {
     else if (cmd === 'load_candidates') { WZ.loadCandidates(); }
     else if (cmd === 'skip_candidates') { WZ.skipCandidates(); }
     else if (cmd === 'fill_world') { WZ.refillWorld(); }   // 世界观重新补全（Agent 兜底/重试）
+    else if (cmd === 'reset') {
+        // 清空向导 state（除 pen_name 与库表字段），防上一本残留草稿干扰建书保真度
+        var keepPen = WZ.state.pen_name || '';
+        WZ.state = { idea: '', pen_name: keepPen, tags: [], borrow: { source_book_id: '', tweak: '' },
+                     genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
+                     storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
+                     protag_personality: '', protag_golden_finger: '',
+                     opening_template_id: '', golden_finger_template_id: '', structure_template_id: '',
+                     world_building: null, tone: '', target_audience: '', pov: '第三人称', era_language: '',
+                     _outline_picks: null, _outline_picks_names: null };
+        WZ._picked = false; WZ._worldFilled = false; WZ._worldFilling = false; WZ.bookId = ''; WZ.creating = false;
+        ['wz-idea', 'wz-title', 'wz-wb-description', 'wz-borrow-source', 'wz-borrow-tweak'].forEach(function(id) {
+            var el = WZ.el(id); if (el) el.value = '';
+        });
+        if (WZ.el('wz-pen')) WZ.el('wz-pen').value = keepPen;
+        document.querySelectorAll('.chip.on').forEach(function(c) { WZ.toggleTag(c); });
+        var cl = WZ.el('wz-char-list'); if (cl) cl.innerHTML = '';
+        try { sessionStorage.removeItem(WZ.PERSIST_KEY); } catch (e) {}
+        WZ.show(1);
+        WZ.updateStageStatus();
+        if (typeof showToast === 'function') showToast('向导已重置（保留笔名）', 'success');
+    }
     else if (cmd === 'submit') { WZ.createBook(); }
 };
 // 输入防抖持久化 + 切页前保存（SPA 导航由输入监听兜底）

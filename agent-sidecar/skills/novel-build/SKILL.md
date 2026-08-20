@@ -19,16 +19,18 @@ description: 建书阶段。开新书/写设定/构思世界观。建书必须�
 
 ## 批处理（驱动向导 UI，由系统建书）
 1. `navigate(url="/books/start")`。
-2. `drive_ui(set_field, {field:"idea", value:种子})` + `drive_ui(set_field, {field:"pen", value:笔名})` + `drive_ui(set_tags, {tags:[题材标签]})`（同批推送，浏览器按序应用）。
+2. **`drive_ui(reset)`**：每次建书前先重置向导 state（除笔名），清除上一本残留草稿对 set_field/set_tags 的干扰（建书保真度护栏，spike 实测 issue）。
+3. `drive_ui(set_field, {field:"idea", value:种子})` + `drive_ui(set_field, {field:"pen", value:笔名})` + `drive_ui(set_tags, {tags:[题材标签]})`（同批推送，浏览器按序应用）。
 3. **世界观候选**：`world_candidates` → `drive_ui(pick_candidate, {...})` → `drive_ui(next)`（步 2「已挑选完毕」进步 3）。
 4. **步 3 世界观补全自动**（浏览器 `world-complete` 补 12 维 + 基调，约 30-60s）；必要时 `drive_ui(fill_world)` 重触发。
 5. **角色**：`query_characters` → `generate_characters(idea, title, tags, genre, archetype_ids)` → `drive_ui(set_characters, {characters:[全 14 字段列表]})`（name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id/gender/brief/title/age/death_year/role）。
 6. **等世界观补全完成再 submit**（进入步 3 后等待约 45-60s）→ `drive_ui(submit)` → 系统建书（phase=config）。
 
-## submit 后：生成完整大纲
+## submit 后：校验 + 生成完整大纲
 1. `list_books` 定位新书 `book_id` → `get_book_detail(book_id)` 看世界观充实度（步 3 已落库，通常充实；单薄才 `generate_world(book_id, mode="one", idea=...)` 兜底）。
-2. **必须调** `mcp__novelengine__generate_full_outline(book_id)`（阻塞数分钟，逐步落盘，向导第 4 步 Gantt 轮询填充）。
-3. `get_book_detail` 确认 `phase=="ready"` → `navigate(url="/books/<book_id>/continue")` 交棒写作。
+2. **保真度校验（必做）**：核对 `genre` / `sub_genre` / `tags` 与任务设定一致；漂移 → `navigate(url="/books/start")` + `drive_ui(reset)` + 重填 set_field/set_tags 后重新走批处理（最多重试 1 次，仍漂移则如实汇报停止）。
+3. **必须调** `mcp__novelengine__generate_full_outline(book_id)`（阻塞数分钟，逐步落盘，向导第 4 步 Gantt 轮询填充）。
+4. `get_book_detail` 确认 `phase=="ready"` → `navigate(url="/books/<book_id>/continue")` 交棒写作。
 
 ## 退出状态
 成功：世界观 + 大纲完成，`phase=ready`。下一步：novel-write（写前三章）。

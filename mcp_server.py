@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover
 
 from agent_tools import TOOL_REGISTRY  # noqa: E402
 from libraries.tool_log import log_tool_call  # noqa: E402
+from libraries.loop_guard import get_loop_guard  # noqa: E402
 
 mcp = FastMCP("novel-engine")
 
@@ -64,16 +65,22 @@ def _mcp_summary(result) -> str:
 
 
 def _wrap_logged(fn):
-    """包装 MCP 工具：执行前后落工具日志（source=mcp）。
+    """包装 MCP 工具：语义环熔断 + 执行前后落工具日志（source=mcp）。
 
     functools.wraps 保留 __name__/__doc__/__wrapped__，FastMCP 据此生成
     工具名、描述与 JSON Schema（签名不变）。
+
+    LoopGuard：MCP 是外部 agent → 平台的唯一咽喉，在这里做确定性熔断
+    （libraries/loop_guard.py）——同参同结果轮询 / 连续失败即报错，所有 MCP
+    客户端（dsh / Claude Code）都受益。
     """
     @functools.wraps(fn)
     def _wrapped(*args, **kwargs):
         t0 = time.time()
         ok, summary = True, ""
+        merged_args = _mcp_args(fn, args, kwargs)
         try:
+            get_loop_guard().before_call(fn.__name__, merged_args)
             result = fn(*args, **kwargs)
             if isinstance(result, dict) and "__navigate__" in result:
                 summary = f"已请求跳转 {result['__navigate__']}"
@@ -85,13 +92,18 @@ def _wrap_logged(fn):
             summary = str(e)
             raise
         finally:
+            # 熔断异常（无进展循环）直接向上抛，阻止 dsh 继续死循环
+            try:
+                get_loop_guard().after_call(fn.__name__, merged_args, ok, summary)
+            except Exception:
+                raise
             try:
                 log_tool_call({
                     "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "time": time.strftime("%H:%M:%S"),
                     "run_id": f"mcp.{int(time.time())}",
                     "tool": fn.__name__,
-                    "args": _mcp_args(fn, args, kwargs),
+                    "args": merged_args,
                     "ok": ok,
                     "summary": summary,
                     "duration_ms": round((time.time() - t0) * 1000),

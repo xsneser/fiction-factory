@@ -1,0 +1,10 @@
+{
+  "agent": {
+    "driver": "builtin",
+    "dsh": {
+      "profile": "headless",
+      "binary": "dsh",
+      "timeout_s": 900
+    }
+  }
+}
