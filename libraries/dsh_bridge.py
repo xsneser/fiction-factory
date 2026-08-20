@@ -1,26 +1,33 @@
-"""dsh headless 驱动桥 —— 侧栏聊天后端转发到 dsh 一次性子进程。
+"""dsh headless 驱动桥 —— 侧栏聊天后端转发到 dsh 一次性子进程（事件流版）。
 
 背景：用户拍板用 dsh（DeepSeek Harness，Node agent 框架）核心替换内置 agent
 （plugins/agent_loop.py 已删除），见 docs/交接文档-2026-08-20-dsh替换内置agent.md。
-dsh headless profile 是 one-shot：给一个任务文本，内部反复调 MCP 工具直到完成，
-打印最终回复后退出。本桥把浏览器持有的消息历史拼进任务文本，subprocess 跑 dsh，
-把最终回复作为 SSE reply 事件返回。
+dsh headless profile 是 one-shot：给一个任务文本，内部反复调 MCP 工具直到完成。
+本桥把浏览器持有的消息历史拼进任务文本，Popen 起 dsh 子进程并**实时逐行读
+stdout 事件流**——vendor/dsh-ne/events-runner.mjs 把每个 tool/call、tool/result
+写成一行 NDJSON（已替换 headless-runner 的 summarize 丢弃）——转成 SSE 事件推给
+浏览器。浏览器侧栏实时看到工具步骤，不再靠 2.5s/3s 轮询补实时感。
 
-实时进度：不重复实现逐工具 SSE —— 浏览器工具日志页签本就 3s 轮询
-libraries/tool_log.py（dsh 经 MCP 的真实调用写 source=mcp 到 storage/tool_log.jsonl，
-跨进程可见）。
+实时进度：dsh 侧由 events-runner 逐事件推（工具名/参数/结果）；MCP 侧仍照写
+storage/tool_log.jsonl（source=mcp）供「工具日志」页签轮询聚合（兼作外部
+Claude Code 经 MCP 调用的总览）。
 
 护栏：
   - 运行期 overlay 强制注入 toolCallTimeoutMs=600000（generate_full_outline /
-    write_next_bridge 阻塞数分钟，否则被 MCP 掐断，spike 已验证）。
+    write_next_bridge 阻塞数分钟，否则被 MCP 掐断，spike 已验证），并同时挂
+    events-runner（禁 headless-runner 的 summarize、换事件流输出）。
   - 强化指令拼进任务文本前缀（persona 已在 headless profile 注入，这里按任务重申
     护栏：禁 create_book/delete_book、phase 门控、防死循环轮询）。
 
-本模块零新增 Python 依赖（subprocess + 已有 core.json_store.read_json）。
+本模块零新增 Python 依赖（subprocess + 标准库 + core.json_store.read_json）。
 """
+import json
 import os
+import queue
 import shutil
 import subprocess
+import threading
+import time
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _OVERLAY_PATH = os.path.join(_ROOT, "storage", "dsh_runtime.yml")
@@ -63,18 +70,26 @@ def get_dsh_profile() -> str:
     return _agent_cfg("profile", "headless")
 
 
-def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
-    """写运行期 overlay（storage/dsh_runtime.yml）：强制长工具超时。
+def _events_runner_url() -> str:
+    """events-runner 插件的 file:/// 绝对 URL（Cordis loader 按 ESM 路径 import）。"""
+    runner = os.path.join(_ROOT, "vendor", "dsh-ne", "events-runner.mjs")
+    return "file:///" + runner.replace(os.sep, "/")
 
-    dsh patch 层对 id-targeted entry 是「整体替换 config」（非深合并），故这里
-    必须给全 mcp-novelengine 的 config——与已装 headless profile / 仓库模板
+
+def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
+    """写运行期 overlay（storage/dsh_runtime.yml）：长工具超时 + 事件流 runner。
+
+    dsh patch 层对 id-targeted entry 是「整体替换 config」（非深合并），故 mcp
+    段必须给全 config——与已装 headless profile / 仓库模板
     agent-sidecar/cordis.patch.yml 保持一致——并把超时钉到 600000。
+    事件流段：disabled 掉 headless-runner（summarize 丢弃中间事件），insert
+    events-runner（vendor/dsh-ne/events-runner.mjs）逐事件推 NDJSON。
     双保险：即使已装 profile 旧值回归（如 180000），长工具也不被 MCP 掐断。
     任务级强化走任务文本（_REINFORCEMENT），不碰 persona。
     """
     cwd = _ROOT.replace(os.sep, "/")   # YAML 用正斜杠，与模板一致
     yaml_text = (
-        "# dsh 运行期 overlay（dsh_bridge 生成）—— 强制长工具超时。\n"
+        "# dsh 运行期 overlay（dsh_bridge 生成）—— 强制长工具超时 + 事件流 runner。\n"
         "# 注意：dsh patch 对 id-targeted entry 整体替换 config，必须给全；\n"
         "# 与 headless profile / agent-sidecar/cordis.patch.yml 保持同步。\n"
         "- id: mcp-novelengine\n"
@@ -85,6 +100,15 @@ def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
         "    args: ['mcp_server.py']\n"
         f"    cwd: '{cwd}'\n"
         f"    toolCallTimeoutMs: {timeout_ms}\n"
+        "# 事件流：禁 headless-runner（只打印最终文本），换 events-runner 推 NDJSON。\n"
+        "- id: headless-runner\n"
+        "  disabled: true\n"
+        "- insert:\n"
+        "    - id: events-runner\n"
+        f"      name: '{_events_runner_url()}'\n"
+        "      inject: [headlessStartup]\n"
+        "      config:\n"
+        "        task: !!js ctx.headlessStartup.task\n"
     )
     os.makedirs(os.path.dirname(_OVERLAY_PATH), exist_ok=True)
     with open(_OVERLAY_PATH, "w", encoding="utf-8") as f:
@@ -117,34 +141,128 @@ def _build_task_text(task: str, history: list | None) -> str:
     return prefix + "\n\n...(历史过长已截断，仅保留最近内容)...\n\n" + kept_body + "\n\n" + final
 
 
+# ─── NDJSON 事件 → SSE 事件映射 ───
+
+def _short_name(name: str) -> str:
+    """MCP 客户端工具名 `mcp__<server>__<tool>` → `<tool>`。"""
+    if not name:
+        return ""
+    for prefix in ("mcp__novelengine__", "mcp__novel-engine__", "mcp__"):
+        if name.startswith(prefix):
+            return name[len(prefix):]
+    return name
+
+
+def _parse_args(raw) -> dict:
+    """tool/call 的 arguments（JSON 字符串或 dict）→ dict。"""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+def _result_error(msg: dict) -> bool:
+    """tool/result 的 message 是否携带 isError（content 块内）。"""
+    try:
+        for block in (msg.get("content") or []):
+            if isinstance(block, dict) and block.get("isError"):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _extract_tool_summary(msg: dict) -> str:
+    """从 tool/result 的 message 抽一行摘要（content 可能是 string 或 text blocks）。"""
+    try:
+        parts = []
+        for block in (msg.get("content") or []):
+            if isinstance(block, dict):
+                inner = block.get("content")
+                if isinstance(inner, str):
+                    parts.append(inner)
+                elif isinstance(inner, list):
+                    for b in inner:
+                        if isinstance(b, dict) and b.get("type") == "text":
+                            parts.append(b.get("text") or "")
+        return (" ".join(p for p in parts if p)).strip()[:200]
+    except Exception:
+        return ""
+
+
+def _map_dsh_event(evt: dict, pending: dict):
+    """一行 NDJSON 事件 → SSE 事件（生成器，可产 0..N 条）。
+
+    pending: {f"{turn}.{step}": {"name","callId"}} —— tool/call 记、tool/result 取，
+    用来给 result 补工具名（result 自身不带 name，只有 message.source.callId）。
+    navigate / drive_ui 的 tool/call 直接转成 navigate / ui_command 推送（浏览器
+    执行跳转/向导命令），不生成 tool_call 卡片。
+    """
+    t = evt.get("type")
+    data = evt.get("data") or {}
+    if t == "tool/call":
+        name = _short_name(data.get("name", ""))
+        key = f"{data.get('turn')}.{data.get('step')}"
+        call_id = data.get("callId", "")
+        args = _parse_args(data.get("arguments"))
+        pending[key] = {"name": name, "callId": call_id}
+        if name == "navigate":
+            url = args.get("url") if isinstance(args, dict) else ""
+            if url:
+                yield {"type": "navigate", "url": url}
+        elif name == "drive_ui":
+            yield {"type": "ui_command",
+                   "cmd": args.get("cmd") if isinstance(args, dict) else "",
+                   "args": args if isinstance(args, dict) else {}}
+        else:
+            yield {"type": "tool_call", "name": name, "args": args, "callId": call_id}
+    elif t == "tool/result":
+        msg = data.get("message") or {}
+        source = msg.get("source") or {}
+        key = f"{data.get('turn')}.{data.get('step')}"
+        p = pending.pop(key, {}) or {}
+        ok = not data.get("error") and not _result_error(msg)
+        yield {"type": "tool_result",
+               "name": p.get("name") or "",
+               "callId": source.get("callId") or p.get("callId") or "",
+               "ok": ok,
+               "summary": _extract_tool_summary(msg)}
+    elif t == "reply":
+        yield {"type": "reply", "content": data.get("text") or ""}
+    elif t == "error":
+        yield {"type": "error", "message": data.get("message") or "dsh 任务出错"}
+    elif t == "done":
+        yield {"type": "done"}
+
+
 def run_dsh_task(task: str, history: list | None = None,
                  timeout_s: int = 900):
-    """跑一次 dsh headless 任务，产出 SSE 事件 dict。
+    """跑一次 dsh headless 任务，实时产出 SSE 事件 dict。
 
-    事件序列：tool_start（伪条目 dsh.task）→ reply（最终回复）→ done。
-    失败：error + done。task 为最新用户消息，history 为浏览器持有的消息列表。
+    事件序列（由 events-runner 的 NDJSON 流实时驱动）：tool_call / tool_result /
+    navigate / ui_command …… → reply（最终回复）→ done。
+    失败/异常：error + done。task 为最新用户消息，history 为浏览器持有的消息列表。
 
-    说明：headless 是 one-shot，最终回复一次性打印（无真正的流式），
-    故 reply 事件单条返回；实时工具进度靠浏览器 tool-log 3s 轮询呈现。
+    说明：Popen 起子进程，读线程逐行读 stdout（事件流每行一条 NDJSON），每行实时
+    转 SSE yield；超时 kill、文件缺失、非零退出各有兜底。stderr 由独立线程读走
+    （防管道缓冲堵死），仅失败时用于报错摘要。实时工具进度本身由事件流呈现，
+    工具日志页签仍由浏览器 3s 轮询 tool-log 聚合（source=mcp）。
     """
     overlay = _write_runtime_overlay()
     cmd = get_dsh_argv() + [
         "--profile", get_dsh_profile(),
         "--patch", overlay, _build_task_text(task, history),
     ]
-    yield {
-        "type": "tool_start", "tool": "dsh.task",
-        "args": {"profile": get_dsh_profile(), "task": (task or "")[:200]},
-    }
     try:
-        proc = subprocess.run(
-            cmd, cwd=_ROOT, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=timeout_s,
+        proc = subprocess.Popen(
+            cmd, cwd=_ROOT,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace",
         )
-    except subprocess.TimeoutExpired:
-        yield {"type": "error", "message": f"dsh 任务超时（>{timeout_s}s），请拆分任务或稍后重试"}
-        yield {"type": "done"}
-        return
     except FileNotFoundError:
         yield {"type": "error",
                "message": "vendor/dsh-ne 或 node 缺失：请确认 `vendor/dsh-ne/node_modules` 已 `npm install`"
@@ -152,15 +270,61 @@ def run_dsh_task(task: str, history: list | None = None,
         yield {"type": "done"}
         return
 
-    out = (proc.stdout or "").strip()
-    err = (proc.stderr or "").strip()
-    if proc.returncode != 0:
-        snippet = (err or out)[-500:]
-        yield {"type": "error", "message": f"dsh 任务失败（exit {proc.returncode}）：{snippet}"}
+    q = queue.Queue()
+    stderr_buf = []
+
+    def _reader():
+        try:
+            for line in proc.stdout:
+                q.put(("line", line))
+            q.put(("eof", None))
+        except Exception as e:  # pragma: no cover
+            q.put(("read_error", e))
+
+    def _stderr_reader():
+        try:
+            for chunk in proc.stderr:
+                stderr_buf.append(chunk)
+        except Exception:  # pragma: no cover
+            pass
+
+    threading.Thread(target=_reader, daemon=True).start()
+    threading.Thread(target=_stderr_reader, daemon=True).start()
+
+    pending = {}
+    started = time.time()
+    saw_any = False
+    while True:
+        try:
+            kind, payload = q.get(timeout=0.5)
+        except queue.Empty:
+            # 子进程退出后 stdout 关闭，reader 必发 eof；此处只做超时兜底
+            if time.time() - started > timeout_s:
+                proc.kill()
+                yield {"type": "error",
+                       "message": f"dsh 任务超时（>{timeout_s}s），请拆分任务或稍后重试"}
+                yield {"type": "done"}
+                return
+            continue
+        if kind == "line":
+            line = payload.strip()
+            if not line or not line.startswith("{"):
+                continue
+            try:
+                evt = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            saw_any = True
+            for sse in _map_dsh_event(evt, pending):
+                yield sse
+        elif kind == "eof":
+            break
+        else:
+            break
+
+    exit_code = proc.wait()
+    if exit_code != 0 and not saw_any:
+        # 进程在产出任何事件前就崩溃（如插件加载失败）：stderr 兜底报错
+        err = "".join(stderr_buf)[-500:].strip() or "(dsh 无输出)"
+        yield {"type": "error", "message": f"dsh 任务失败（exit {exit_code}）：{err}"}
         yield {"type": "done"}
-        return
-    if out:
-        yield {"type": "reply", "content": out}
-    else:
-        yield {"type": "reply", "content": err or "(dsh 无输出)"}
-    yield {"type": "done"}

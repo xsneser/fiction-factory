@@ -13,6 +13,9 @@
     var busy = false;
     var currentToolRun = null;                  // 当前工具卡引用
     var toolPollTimer = null;                   // 工具日志轮询定时器
+    var toolCards = {};                         // callId → 工具卡（事件流配对）
+    var toolCardOrder = [];                     // 工具卡创建顺序（上限裁剪用）
+    var TOOL_CARD_LIMIT = 20;                   // 对话页签工具卡上限（防 DOM 膨胀）
 
     function loadHistory() {
         try { return JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]'); }
@@ -62,6 +65,28 @@
         chat.appendChild(card);
         scrollBottom();
         return { card: card, status: status };
+    }
+
+    // 事件流工具卡：按 callId 建档，超上限裁剪最旧（防 DOM 无限膨胀）
+    function addToolCardFor(name, args, callId) {
+        var run = addToolCard(name, args);
+        if (callId) toolCards[callId] = run;
+        toolCardOrder.push(callId || ('#' + toolCardOrder.length));
+        if (toolCardOrder.length > TOOL_CARD_LIMIT) {
+            var old = toolCardOrder.shift();
+            var oldRun = toolCards[old];
+            if (oldRun && oldRun.card && oldRun.card.parentNode) oldRun.card.parentNode.removeChild(oldRun.card);
+            delete toolCards[old];
+        }
+        return run;
+    }
+
+    // 工具卡收尾：状态文本 + ok/err 类名
+    function finishToolCard(run, text) {
+        if (!run || !run.status) return;
+        run.status.textContent = text || '';
+        run.status.className = (text && text.indexOf('✅') === 0)
+            ? 'agent-tool-status ok' : 'agent-tool-status err';
     }
     // ─── 工具日志页签（右侧面板「💬 对话 / 🔧 工具日志」切换）───
     function switchAgentTab(key) {
@@ -184,16 +209,29 @@
     function handleEvent(evt) {
         var t = evt.type;
         if (t === 'tool_start') {
-            currentToolRun = addToolCard(evt.tool, evt.args);
+            // 兼容旧桥（现已不再发送）；事件流统一走 tool_call
+            currentToolRun = addToolCardFor(evt.tool, evt.args, evt.callId);
+        } else if (t === 'tool_call') {
+            // dsh 核心实时推送：工具开始 → 建卡
+            currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId);
+        } else if (t === 'tool_result') {
+            // 配对卡（callId 优先，兜底最近一张），标 ✅/❌ + 摘要
+            var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : currentToolRun;
+            if (evt.callId) delete toolCards[evt.callId];
+            finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + (evt.summary || ''));
+        } else if (t === 'navigate') {
+            handleNavigate(evt.url);            // dsh 调用 navigate → 实时切页
+        } else if (t === 'ui_command') {
+            dispatchCommand({ cmd: evt.cmd, args: evt.args || {} });  // drive_ui → 驱动建书向导
         } else if (t === 'reply') {
             addMsg('assistant', evt.content);
             history.push({ role: 'assistant', content: evt.content });
             saveHistory(history);
         } else if (t === 'error') {
             addMsg('assistant', '⚠️ ' + (evt.message || '发生错误'));
-            if (currentToolRun) currentToolRun.status.textContent = '❌ 失败';
+            if (currentToolRun) finishToolCard(currentToolRun, '❌ 失败');
         } else if (t === 'done') {
-            if (currentToolRun) { currentToolRun.status.textContent = '✅ 完成'; currentToolRun = null; }
+            if (currentToolRun) { finishToolCard(currentToolRun, '✅ 完成'); currentToolRun = null; }
             busy = false;
             setSendEnabled(true);
         }
@@ -202,6 +240,7 @@
     // ─── navigate 外部驱动桥（P1b）：轮询 MCP 写入的导航意图，取到即翻页/切页签 ───
     var navTimer = null;
     function pollNavIntents() {
+        if (busy) return;   // dsh 会话进行中：导航/命令已由事件流实时推送，跳过轮询防双触发
         fetch('/api/agent/nav-intents')
             .then(function(r) { return r.json(); })
             .then(function(d) {
