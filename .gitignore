@@ -48,3 +48,6 @@ books.bak*/
 
 # dsh 侧车技能联接(不入库)
 .dsh/
+
+# vendored dsh-ne：源码入库，依赖重建（npm install 生成，不入库）
+vendor/dsh-ne/node_modules/

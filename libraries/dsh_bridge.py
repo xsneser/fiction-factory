@@ -46,13 +46,17 @@ def _agent_cfg(key: str, default):
 
 
 def get_dsh_argv() -> list:
-    """dsh 启动前缀（argv 列表）。
+    """dsh 启动前缀（argv 列表）：优先指向项目内 vendor/dsh-ne/lib/bin.js。
 
-    Windows 下 npm 全局装的 dsh 是 .CMD shim——批处理会把中文参数按 ANSI 编码
-    弄坏（cmd.exe 转码，实测 exit 1）。故把 .cmd 解析到真正的 Node 入口
-    `lib/bin.js`，用 `node <bin.js>` 直接启动：Node 经 CreateProcessW 收 UTF-16
-    参数，中文无损。非 .cmd（用户自配可执行名）原样返回。
+    dsh 已 vendor 到本仓库 `vendor/dsh-ne/`（精简核心，改名 dsh-ne，见交接文档），
+    用 `node vendor/dsh-ne/lib/bin.js` 直启——不依赖全局 npm 安装，且绕开 Windows
+    .CMD shim 对中文参数按 ANSI 转码的坑（Node 经 CreateProcessW 收 UTF-16，中文无损）。
+
+    兜底：vendor 缺失时回退全局 dsh（同样解析到 node <bin.js>）。
     """
+    vendored = os.path.join(_ROOT, "vendor", "dsh-ne", "lib", "bin.js")
+    if os.path.exists(vendored):
+        return [shutil.which("node") or "node", vendored]
     binary = _agent_cfg("binary", "dsh")
     resolved = shutil.which(binary)
     if not resolved:
