@@ -1,7 +1,10 @@
 """工具调用日志 — 进程内环形缓冲 + 跨进程 JSONL（外部 MCP 调用对 Web 可见）。
 
-内置 agent 已删，外部 MCP 调用（source=mcp）写内存环形缓冲 + 追加
+内置 agent 已删。外部 MCP 调用（source=mcp）写内存环形缓冲 + 追加
 `storage/tool_log.jsonl`；Web 端 `get_tool_log` 合并两处按 ts 倒序展示。
+dsh 内部调用（mcp_server 带 `--source dsh` 拉起 → source=dsh）只写进程内缓冲、
+**不写 JSONL**——「工具日志」页签（前端 filter source=mcp）只展示外部 agent 调用，
+内部 dsh 不混入。
 
 日志写入尽力而为，异常静默降级，不阻塞主链路。JSONL 超长自动截断
 （字节阈值快筛 + 行数上限，见 _trim_ext）。

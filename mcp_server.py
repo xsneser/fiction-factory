@@ -28,6 +28,12 @@ from agent_tools import TOOL_REGISTRY  # noqa: E402
 from libraries.tool_log import log_tool_call  # noqa: E402
 from libraries.loop_guard import get_loop_guard  # noqa: E402
 
+# 工具日志 source 区分：dsh 内部调用经 runtime overlay 带 `--source dsh` 拉起
+# （source=dsh，tool_log 不写 storage/tool_log.jsonl——「工具日志」页签只展示
+# 外部 agent 的 source=mcp 调用，内部 dsh 不混入）；外部拉起（.mcp.json / mcp_smoke）
+# 无此参数 → source=mcp。
+_SOURCE = "dsh" if "--source" in sys.argv else "mcp"
+
 mcp = FastMCP("novel-engine")
 
 
@@ -107,7 +113,7 @@ def _wrap_logged(fn):
                     "ok": ok,
                     "summary": summary,
                     "duration_ms": round((time.time() - t0) * 1000),
-                    "source": "mcp",
+                    "source": _SOURCE,
                 })
             except Exception:
                 pass

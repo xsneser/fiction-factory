@@ -659,8 +659,11 @@ var WZ = {
             self.bookId = d.book_id;
             try { sessionStorage.removeItem(self.PERSIST_KEY); } catch (e) {}   // 建书成功清空草稿
             // 3 步建书结束：直接入库 → 跳书详情；世界观已在步 3 补全并随 submit 落库，
-            // 完整大纲由外部 Agent 后续经 MCP generate_full_outline 生成后进入写作台
-            window.location.href = '/books/' + d.book_id;
+            // 完整大纲由外部 Agent 后续经 MCP generate_full_outline 生成后进入写作台。
+            // SPA 跳转（navigateTo 失败自动 fallback 整页）：不卸载页面，保留进行中的
+            // SSE 事件流会话，使 dsh 的最终 reply 与工具卡不因页面刷新而丢失
+            if (typeof navigateTo === 'function') navigateTo('/books/' + d.book_id);
+            else window.location.href = '/books/' + d.book_id;
         }).catch(function(e) {
             if (typeof showToast === 'function') showToast('创建失败：' + e.message, 'error');
             btn.disabled = false; btn.textContent = '🚀 创建并生成大纲';
