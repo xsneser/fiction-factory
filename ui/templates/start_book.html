@@ -49,18 +49,20 @@
             </div>
             {% endfor %}
         </fieldset>
-    </section>
-
-    {# ─── ② AI 生成候选（挑世界观方向）+ 从已有书借鉴（备选） ─── #}
-    <section class="wz-panel" id="panel-2" style="display:none">
         <fieldset>
             <legend>🎲 AI 生成候选（从一句话设定发散世界观方向）</legend>
             <div class="form-row">
                 <button type="button" class="btn-primary" onclick="WZ.loadCandidates()">🎲 生成候选</button>
-                <button type="button" class="btn-secondary" onclick="WZ.skipCandidates()">⏭ 跳过，手动设定</button>
             </div>
+        </fieldset>
+    </section>
+
+    {# ─── ② 候选结果展示（挑世界观方向）+ 从已有书借鉴（备选）；生成触发在步 1 ─── #}
+    <section class="wz-panel" id="panel-2" style="display:none">
+        <fieldset>
+            <legend>🎲 候选世界观方向（已生成，挑一个）</legend>
             <div id="wz-candidate-box" class="wz-candidate-box"></div>
-            <div class="form-row hint" id="wz-candidate-hint" style="display:none">挑一个方向，其设定会带入下一步微调。</div>
+            <div class="form-row hint" id="wz-candidate-hint" style="display:none">挑一个方向，其设定会带入下一步微调；直接点下方「已挑选完毕」可跳过。</div>
         </fieldset>
         <fieldset>
             <legend>📚 从已有书借鉴（可选，提取设定做种子再微调）</legend>
@@ -124,7 +126,8 @@
 
 <div class="wz-nav">
     <button id="wz-prev" class="btn" style="display:none" onclick="WZ.prev()">← 上一步</button>
-    <button id="wz-next" class="btn-primary" onclick="WZ.next()">下一步 →</button>
+    <button id="wz-skip" class="btn-secondary" style="display:none" onclick="WZ.skipCandidates()">⏭ 跳过，手动设定</button>
+    <button id="wz-next" class="btn-primary" onclick="WZ.next()">已挑选完毕 →</button>
     <button id="wz-submit" class="btn-primary" style="display:none" onclick="WZ.createBook()">🚀 创建并生成大纲</button>
 </div>
 
@@ -227,7 +230,8 @@ var WZ = {
         });
         this.cur = n;
         this.el('wz-prev').style.display = (!this.bookId && n > 1 && n <= 3) ? 'inline-block' : 'none';
-        this.el('wz-next').style.display = (n === 1 || n === 2) ? 'inline-block' : 'none';
+        this.el('wz-next').style.display = (n === 2) ? 'inline-block' : 'none';   // 步 1 无 next，「🎲 生成候选」替代；步 2=「已挑选完毕」
+        this.el('wz-skip').style.display = (n === 2) ? 'inline-block' : 'none';   // 「跳过，手动设定」在步 2→3 之间
         this.el('wz-submit').style.display = (n === 3) ? 'inline-block' : 'none';
         if (this.bookId && n === 4) this.el('wz-prev').style.display = 'none';
         // 步骤③ 世界观可编辑：预填书名（来自②选中候选）+ 世界观简述（只填②选中方向——
@@ -284,11 +288,17 @@ var WZ = {
         }).catch(function() { WZ.el('wz-borrow-preview-box').textContent = '❌ 预览失败'; });
     },
 
-    /* —— AI 生成候选（无书端点，建书前）—— */
+    /* —— AI 生成候选（无书端点，建书前；步 1 底部按钮触发，生成中即进步 2 展示）—— */
     loadCandidates: function() {
+        if (!this.validate(1)) {
+            if (typeof showToast === 'function') showToast('请先完成本步必填项（一句话设定 + 笔名）', 'error');
+            return;
+        }
         var idea = this.el('wz-idea').value.trim();
         var box = this.el('wz-candidate-box');
         box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成候选…</div>';
+        this.el('wz-candidate-hint').style.display = 'none';
+        this.show(2);   // 生成中即切到步 2，结果直接显示在候选区
         var genre = '';   // 流派由题材标签推导（后端 derive_genre）；tags 一并传给候选端点作硬约束
         var tags = Array.prototype.slice.call(document.querySelectorAll('.chip.on'))
             .map(function(b) { return b.dataset.tag; });
@@ -328,6 +338,7 @@ var WZ = {
     },
     skipCandidates: function() {
         this.el('wz-candidate-box').innerHTML = '';
+        if (typeof showToast === 'function') showToast('已跳过候选，直接进入微调设定', 'success');
         this.show(3);
     },
 
