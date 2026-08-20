@@ -295,9 +295,10 @@
         .world-edit .candidate-card:hover { border-color:#58a6ff; }
         .world-edit .candidate-card h4 { margin:0 0 4px; color:#58a6ff; }
         .world-edit .candidate-card .ob { color:#8b949e; font-size:12px; }
-        /* 设定卡：减少嵌套横向缩进——人物势力分组不画框、内容占满容器宽度 */
-        .world-edit .accordion { background:transparent; border:0; border-radius:0; margin-bottom:8px; }
-        .world-edit .accordion-header { padding:10px 0; }
+        /* 设定卡：减少嵌套横向缩进——人物势力分组内容占满容器宽度；势力块之间用虚线上边线分隔 */
+        .world-edit .accordion { background:transparent; border:0; border-top:1px dashed #30363d; border-radius:0; margin:10px 0; }
+        .world-edit .accordion:first-child { border-top:0; margin-top:0; }
+        .world-edit .accordion-header { padding:8px 0; }
         .world-edit .accordion-body { padding:0; }
 
         /* ─── 大纲可编辑卡片（详情页内嵌，与写作台共用 storyline_outline_card.html） ─── */

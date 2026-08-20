@@ -12,8 +12,8 @@
             <div id="wb-tags-display" class="form-row hint" style="display:none"></div>
             <div id="candidate-box"></div>
             <div class="form-row">
-                <label>设定概述 world_summary（一段话整体设定）</label>
-                <textarea id="wb-world_summary" rows="3"></textarea>
+                <label>设定概述 world_summary（一段话整体设定，自动展开不滚动）</label>
+                <textarea id="wb-world_summary" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea>
             </div>
             <div class="form-row half">
                 <div><label>时代 era（含年份/纪元）</label><input id="wb-era"></div>
@@ -103,6 +103,12 @@ var __ARCHETYPES__ = [];   // 角色原型库缓存（/api/characters）
 function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+/* textarea 自动增高：内容多时完全展开，不出现滚动条 */
+function autoSizeTextarea(el) {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = (el.scrollHeight + 2) + 'px';
 }
 function emptyChar() {
     return {name:'', role:'配角', importance:2, identity:'', title:'', gender:'', personality:'',
@@ -255,7 +261,7 @@ function renderCharCards(chars) {
         card.style.cssText = 'margin-bottom:8px';
         card.innerHTML = '<div class="accordion-header"><span>🏛 ' + esc(f) + '</span>'
             + '<span style="color:#8b949e;font-size:12px">' + grp.length + ' 人</span></div>'
-            + '<div class="accordion-body"></div>';
+            + '<div class="accordion-body show"></div>';   // show = 默认展开，直接看到该势力人物
         var body = card.querySelector('.accordion-body');
         grp.forEach(function(c) { appendCharCard(c, body); });
         wrap.appendChild(card);
@@ -354,7 +360,8 @@ function biToForm(bi) {
     $('wb-era').value = wb.era || ''; $('wb-power_system').value = wb.power_system || '';
     $('wb-geography').value = wb.geography || ''; $('wb-culture').value = wb.culture || '';
     $('wb-history').value = wb.history || ''; $('wb-social_structure').value = wb.social_structure || '';
-    $('wb-core_conflict').value = wb.core_conflict || ''; $('wb-world_summary').value = wb.world_summary || '';
+    $('wb-core_conflict').value = wb.core_conflict || '';
+    $('wb-world_summary').value = wb.world_summary || ''; autoSizeTextarea($('wb-world_summary'));
     renderFactions(wb.factions);
     $('wb-rules').value = (wb.rules || []).join('\n');
     renderCharCards(Array.isArray(bi.characters) ? bi.characters : legacyChars(bi));
@@ -459,7 +466,7 @@ function pickCandidate(idx) {
     var c = (window.__CANDIDATES__ || [])[idx];
     if (!c) return;
     $('world-idea').value = c.one_liner;
-    if (c.world_brief) $('wb-world_summary').value = c.world_brief;
+    if (c.world_brief) { $('wb-world_summary').value = c.world_brief; autoSizeTextarea($('wb-world_summary')); }
     $('candidate-box').innerHTML = '';
     statusShow('已选中候选：' + c.one_liner + '。点「🚀 生成世界观」展开。');
 }
