@@ -81,12 +81,12 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 
 引擎支持双模式，由 `libraries/engine.py` 驱动：
 
-### 新书启动（单页 5 步向导）
+### 新书启动（单页 3 步向导）
 
-`/books/start` 为横条步骤条向导：**一句话设定（含题材标签）→ 挑选世界观（5 个方向，受题材标签约束，可借鉴）→ 世界观补全（进入自动 AI 补全 12 维 + 基调，可编辑）→ 创建书（系统建书，世界观随提交落库；完整大纲由外部 Agent 经 MCP `generate_full_outline` 生成，第 4 步故事线 Gantt 实时填充）→ 进入写作台写前三章**。
+`/books/start` 为横条步骤条向导：**一句话设定（含题材标签）→ 挑选世界观（5 个方向，受题材标签约束，可借鉴）→ 世界观补全（进入自动 AI 补全 12 维 + 基调，可编辑；提交即入库跳书详情）→ 完整大纲由外部 Agent 经 MCP `generate_full_outline` 生成 → 进入写作台写前三章**。
 
 ```
-一句话设定（含题材标签）→ 挑选世界观 → 世界观补全（12维+基调）→ 角色 → 建书 → 完整大纲 → 写作台（前三章）
+一句话设定（含题材标签）→ 挑选世界观 → 世界观补全（12维+基调）→ 角色 → 建书（入库）→ 完整大纲 → 写作台（前三章）
 ```
 
 - 题材标签在步 1 选择，存入 `world_building.tags`（预置 **50 标签 5 组** `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束，并约束步 2 候选生成。
@@ -223,7 +223,7 @@ D:\NovelEngine/
 │       ├── dashboard.html  # 仪表盘（统计+快捷入口+各书下一步横条）
 │       ├── books.html      # 图书列表
 │       ├── book_detail.html# 单书详情（设定/人物条目/大纲/章节）
-│       ├── start_book.html # 新书启动 5 步向导
+│       ├── start_book.html # 新书启动 3 步向导
 │       ├── storyline_write_flow.html # 写作台（两栏：故事线+正文/规划）
 │       ├── storyline_outline_card.html # 大纲卡片组件
 │       ├── publish.html / publish_index.html # 上架 / 导出
