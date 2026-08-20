@@ -23,9 +23,11 @@ Spike 结论与 dsh 现状见 `docs/架构总览.md` §七(3 摩擦点;spike 文
 cd D:/NovelEngine
 dsh --profile headless --dump-config        # 验证配置树含 mcp__novelengine 工具
 dsh --profile headless "列出所有书"          # 只读冒烟（原 headless-runner，纯文本最终回复）
-# 事件流模式（NovelEngine 定制，浏览器侧栏走的即是它）：
+# 事件流模式（NovelEngine 定制，浏览器侧栏走的即是它）——单 patch 即可：
+# storage/dsh_runtime.yml 已由 dsh_bridge 生成并内嵌 events-runner，勿再叠加
+# agent-sidecar/events-runner.yml（否则 duplicate loader entry id: events-runner）。
 node vendor/dsh-ne/lib/bin.js --profile headless \
-  --patch agent-sidecar/events-runner.yml --patch storage/dsh_runtime.yml "<任务>"
+  --patch storage/dsh_runtime.yml "<任务>"
 #   → stdout 逐行实时 NDJSON：tool/call → tool/result → … → reply → done
 ```
 
@@ -34,7 +36,7 @@ node vendor/dsh-ne/lib/bin.js --profile headless \
 - **为何**：dsh headless 原 runner 用 `summarize` 丢弃全程中间事件、只打印最终文本；浏览器侧栏曾靠 2.5s/3s 轮询补实时感。
 - **机制**：`vendor/dsh-ne/events-runner.mjs`（照抄 headless-runner 的 run 流程，把 summarize 换成监听 `session/event`）——每个 `tool/call` / `tool/result` 写成一行 NDJSON 推 stdout。经 `--patch` 挂载：先 `disabled: true` 掉 `headless-runner`，再 `insert` 本插件（`name` 用 `file:///` 绝对 URL，须位于 `vendor/dsh-ne/` 内以解析 `@deepseek-ai/*` 依赖）。
 - **消费端**：`libraries/dsh_bridge.py` 用 `Popen` 逐行读 stdout，实时转 SSE（tool_call/tool_result/navigate/ui_command/reply/done）给侧栏；MCP 侧仍照写 `storage/tool_log.jsonl` 供「工具日志」页签轮询聚合（兼作外部 Claude Code 经 MCP 调用的总览）。
-- **手动 vs 事件流**：不加 `events-runner.yml` 的 CLI 仍是原 headless-runner（纯文本最终回复），两侧互不干扰。
+- **手动 vs 事件流**：不加事件流 patch 的 CLI 仍是原 headless-runner（纯文本最终回复）；`agent-sidecar/events-runner.yml` 是 events-runner 挂载的文档化模板，运行时由 `dsh_bridge` 内嵌进 `storage/dsh_runtime.yml`（单 patch），两侧互不干扰。
 
 ## 已知摩擦(见结论文档)
 

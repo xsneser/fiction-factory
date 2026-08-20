@@ -1,5 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
+// 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
+console.log('[agent-panel] v3 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -208,17 +210,15 @@
 
     function handleEvent(evt) {
         var t = evt.type;
-        if (t === 'tool_start') {
-            // 兼容旧桥（现已不再发送）；事件流统一走 tool_call
-            currentToolRun = addToolCardFor(evt.tool, evt.args, evt.callId);
-        } else if (t === 'tool_call') {
+        if (t === 'tool_call') {
             // dsh 核心实时推送：工具开始 → 建卡
             currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId);
         } else if (t === 'tool_result') {
-            // 配对卡（callId 优先，兜底最近一张），标 ✅/❌ + 摘要
-            var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : currentToolRun;
+            // 按 callId 配对卡；配不到就忽略（绝不 fallback 到别的卡，避免污染）。
+            // navigate/drive_ui 的 tool/call 也会建卡，故正常情况都配得到。
+            var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
             if (evt.callId) delete toolCards[evt.callId];
-            finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + (evt.summary || ''));
+            if (run) finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + (evt.summary || ''));
         } else if (t === 'navigate') {
             handleNavigate(evt.url);            // dsh 调用 navigate → 实时切页
         } else if (t === 'ui_command') {
@@ -231,7 +231,17 @@
             addMsg('assistant', '⚠️ ' + (evt.message || '发生错误'));
             if (currentToolRun) finishToolCard(currentToolRun, '❌ 失败');
         } else if (t === 'done') {
+            // C3：收尾所有未 resolve 的工具卡（result 缺失/滞后时兜底），清空映射
+            Object.keys(toolCards).forEach(function(id) {
+                finishToolCard(toolCards[id], '⚠️ 会话结束未收尾');
+            });
+            toolCards = {};
+            toolCardOrder = [];
             if (currentToolRun) { finishToolCard(currentToolRun, '✅ 完成'); currentToolRun = null; }
+            // C1：drain nav-intent 残留——会话期间 busy 守卫跳过轮询消费、而 navigate/drive_ui
+            // 每次都无条件写队列，这些意图已由 SSE 事件流实时执行过；done 后轮询恢复会把
+            // 残留重放（drive_ui(next) 走两步 / submit 二次建书）。取走清空，丢弃安全。
+            fetch('/api/agent/nav-intents').catch(function(){});
             busy = false;
             setSendEnabled(true);
         }

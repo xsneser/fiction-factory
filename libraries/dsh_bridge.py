@@ -197,19 +197,22 @@ def _extract_tool_summary(msg: dict) -> str:
 def _map_dsh_event(evt: dict, pending: dict):
     """一行 NDJSON 事件 → SSE 事件（生成器，可产 0..N 条）。
 
-    pending: {f"{turn}.{step}": {"name","callId"}} —— tool/call 记、tool/result 取，
-    用来给 result 补工具名（result 自身不带 name，只有 message.source.callId）。
-    navigate / drive_ui 的 tool/call 直接转成 navigate / ui_command 推送（浏览器
-    执行跳转/向导命令），不生成 tool_call 卡片。
+    pending: {callId: {"name","callId"}} —— tool/call 按 callId 记、tool/result 按
+    message.source.callId 取，用来给 result 补工具名（result 自身不带 name）。
+    用 callId 作键（而非 {turn}.{step}）：dsh 一个 assistant 消息可带多个 tool_calls
+    （并行），同 turn/step 会碰撞覆盖，callId 天然去重。
+    navigate / drive_ui 的 tool/call 除了转成 navigate / ui_command 推送（浏览器
+    执行跳转/向导命令），**同时**发 tool_call 建卡——否则它们的 tool/result 在前端
+    找不到卡，会 fallback 污染上一张卡（曾把 drive_ui 错误贴到 world_candidates 卡）。
     """
     t = evt.get("type")
     data = evt.get("data") or {}
     if t == "tool/call":
         name = _short_name(data.get("name", ""))
-        key = f"{data.get('turn')}.{data.get('step')}"
         call_id = data.get("callId", "")
         args = _parse_args(data.get("arguments"))
-        pending[key] = {"name": name, "callId": call_id}
+        pending[call_id] = {"name": name, "callId": call_id}
+        yield {"type": "tool_call", "name": name, "args": args, "callId": call_id}
         if name == "navigate":
             url = args.get("url") if isinstance(args, dict) else ""
             if url:
@@ -218,17 +221,15 @@ def _map_dsh_event(evt: dict, pending: dict):
             yield {"type": "ui_command",
                    "cmd": args.get("cmd") if isinstance(args, dict) else "",
                    "args": args if isinstance(args, dict) else {}}
-        else:
-            yield {"type": "tool_call", "name": name, "args": args, "callId": call_id}
     elif t == "tool/result":
         msg = data.get("message") or {}
         source = msg.get("source") or {}
-        key = f"{data.get('turn')}.{data.get('step')}"
-        p = pending.pop(key, {}) or {}
+        call_id = source.get("callId") or ""
+        p = pending.pop(call_id, {}) or {}
         ok = not data.get("error") and not _result_error(msg)
         yield {"type": "tool_result",
                "name": p.get("name") or "",
-               "callId": source.get("callId") or p.get("callId") or "",
+               "callId": call_id or p.get("callId") or "",
                "ok": ok,
                "summary": _extract_tool_summary(msg)}
     elif t == "reply":

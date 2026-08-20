@@ -55,15 +55,14 @@ function summarize(events, firstSeq) {
 	return { text, reason };
 }
 
-/** 报告失败并请求非零退出。 */
+/** 报告失败并请求非零退出（done 行 flush 后再 exit，防丢最后事件）。 */
 function fail(io, error) {
 	emit(io, {
 		type: "error",
 		data: { message: error instanceof Error ? error.message : String(error) }
 	});
-	emit(io, { type: "done", data: { code: 1 } });
 	io.stderr.write(`dsh: ${error instanceof Error ? error.message : String(error)}\n`);
-	io.exit(1);
+	io.stdout.write(JSON.stringify({ type: "done", data: { code: 1 } }) + "\n", () => io.exit(1));
 }
 
 /**
@@ -115,8 +114,11 @@ async function run(ctx, task, io) {
 		});
 	}
 	if (outcome.text) emit(io, { type: "reply", data: { text: outcome.text } });
-	emit(io, { type: "done", data: { code: outcome.reason?.kind === "completed" ? 0 : 1 } });
-	io.exit(outcome.reason?.kind === "completed" ? 0 : 1);
+	// stdout.write 到 pipe 是异步串行的：done 行带 callback，触发时此前 reply/done
+	// 均已 flush，再 exit——避免立即 exit 丢最后事件（C4）。
+	const donePayload = { type: "done", data: { code: outcome.reason?.kind === "completed" ? 0 : 1 } };
+	io.stdout.write(JSON.stringify(donePayload) + "\n",
+		() => io.exit(outcome.reason?.kind === "completed" ? 0 : 1));
 }
 
 /**
