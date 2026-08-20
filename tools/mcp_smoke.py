@@ -2,7 +2,7 @@
 """MCP 协议验收 — 脚本化 MCP 客户端驱动 NovelEngine 最小闭环（零/低成本，不调 LLM 写作）。
 
 用 mcp.client.stdio 连接 `python mcp_server.py`，走完整协议：
-  initialize 握手 → tools/list（断言 35 个 mcp 面工具 + web-only 护栏）→ tools/call 真实往返。
+  initialize 握手 → tools/list（断言 MCP 面工具数 + web-only 护栏）→ tools/call 真实往返。
 
 护栏（2026-08-19 架构决策）：create_book / delete_book 已从 MCP 面移除（web-only），
 建书走系统向导 UI（drive_ui 驱动），删书走书库页手动。因此：
@@ -12,7 +12,7 @@
   - 新增 drive_ui 命令桥意图断言
 
 断言：
-  1) MCP 面工具数 = 35；navigate/drive_ui/query_plots/diagnose_retention/query_profiles 在列；
+  1) MCP 面工具数 = EXPECT_MCP_TOOLS；navigate/drive_ui/query_plots/diagnose_retention/query_profiles 在列；
      create_book/delete_book/canvas_command 不在列（web-only 护栏）；Web 面保留 create/delete（双面互证）
   2) 对临时书 save_basic_info → rule 大纲 → confirm → fill_gags → get_book_detail 全往返成功
   3) navigate 与 drive_ui 分别写入 storage/nav_intent.json（kind=navigate / kind=ui_command）
@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 37
+EXPECT_MCP_TOOLS = 40
 # web-only 护栏：这三个工具不得出现在 MCP 面（建书/删书必须走系统界面）
 WEB_ONLY_ABSENT = ["create_book", "delete_book", "canvas_command"]
 PASS, FAIL = [], []

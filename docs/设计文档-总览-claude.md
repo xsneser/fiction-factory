@@ -231,7 +231,9 @@ D:\NovelEngine/
 2. **②挑选世界观**：受题材标签硬约束（`generate_candidates` 注入【题材标签（硬约束）】，genre 空时 `derive_genre(tags)` 推导），从一句话设定生成 **5 个**世界观方向（无书 `POST /api/world-builder/candidates`，count=5），挑一个（`one_liner` 并入一句话设定）；「从已有书借鉴」备选（`borrow-preview` 无书别名预览，`extract_seed`）；可「跳过，手动设定」（跳过按钮在步 2 导航区，与「已挑选完毕」并排）。
 3. **③世界观补全**：进入步 3 时**自动**调无书端点 `POST /api/world-builder/world-complete`（复用 `WorldBuildingGenerator.generate`，seed=候选 world_brief||一句话，标签硬约束 + 笔名风格档案），补全 **world_building 12 维 + 基调（tone/target_audience/pov/era_language）** 为可编辑表单；📖 书名（由②选中候选带入，可改）+ 每章字数；🎭 角色候选（外部 Agent 经 `generate_characters`/`set_characters` 填入，可手动编辑）。补全中 `submit` 被拦截；`drive_ui(fill_world)` 可重触发。
 4. **提交建书（③结束即入库）**：步 3 `submit` JSON 建书（POST /books/start 双轨：JSON→book_id、form→302；**流派由 tags 经 `derive_genre` 推导**、平台默认 fanqie，留发布页调整；**收客户端 `world_building` dict + tone/pov，`DEFAULT_WORLD_BUILDING` backfill 12 维，`basic_info_is_rich` 时打 `_world_generated`**），建书 phase=config，成功后**直接跳书详情页**（入库成书目）。
-5. **建书后**：**完整大纲由外部 Agent 经 MCP `generate_full_outline` 生成**（世界观已随提交落库，`generate_world` 仅兜底；世界观充实自动跳过 Phase 1 分析），`phase=ready` 后进入写作台（`/books/<id>/continue`）写前三章。
+5. **建书后**：**完整大纲由外部 Agent 经 MCP `generate_full_outline` 生成**（世界观已随提交落库，`generate_world` 仅兜底；世界观充实自动跳过 Phase 1 分析；**自动消费 `_outline_picks`**），`phase=ready` 后进入写作台（`/books/<id>/continue`）写前三章。
+
+- **分阶段内容构建（步 3 工作台，内部 agent / skill 自主编排）**：步 3 顶部状态区 5 徽标（①核心矛盾/②开篇大纲+桥段/③势力/④主要人物/⑤其余世界观）按内容实时显示 ✅/未填。工具（无书端点 + MCP）：`generate_core_conflict`（①）→ `query_structures`/`query_plots` + `drive_ui(set_picks)`（②，落 `_outline_picks` 随 submit 存库）→ `generate_factions`（③）→ `generate_characters(..., core_conflict, factions, outline_preview)`（④，基于势力和大纲）→ `generate_rest_world`（⑤，大纲确定后补，保留 core_conflict/factions）。任一段失败重试/跳过，部分构建可提交；⑤ 未做则 `generate_full_outline` Phase 1 自动补齐。`drive_ui(set_world)` 将部分世界观 dict 合并进表单。
 
 - 产出「设定圣经」维度：tags / description / era / power_system / factions / rules（数值语义写死，全书唯一口径）/ geography / culture / history / social_structure / core_conflict / world_summary（`DEFAULT_WORLD_BUILDING`）+ 基调（tone / target_audience / pov / era_language）。
 - 已从向导删除：流派与平台（流派=题材标签，`TAG_GENRE_MAP` 推导 book.genre；平台留发布页）、模板选择、故事线描述、子类型。

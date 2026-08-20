@@ -24,7 +24,7 @@
 | **角色原型库** (`libraries/character.py`) | 人物性格原型 + 代表人物（10 原型，设定表单「从原型库选」） | ✅ 新 |
 | **内涵系统** | 母题跟随大纲阶段，阶段级 `themes` 带插入位置，写作 prompt 注入 | ✅ 新 |
 | **笔名档案** (`libraries/profiles.py`) | 风格指纹 + prompt 注入 | ✅ |
-| **右侧 Agent 助手** (`plugins/agent_loop.py` + `agent_tools.py`) | 侧栏对话，40 个工具全链路操作 + **工具调用日志页签** | ✅ 新 |
+| **右侧 Agent 助手** (`plugins/agent_loop.py` + `agent_tools.py`) | 侧栏对话，43 个工具全链路操作 + **工具调用日志页签** | ✅ 新 |
 | **番茄侦察兵** (`plugins/fanqie_scout.py`) | 番茄小说搜索/下载/分析（桥段/大纲/笑点）入库 | ✅ |
 | **AI 降重** (`libraries/de_ai.py`) | 续写流程中的 AI 痕迹消除 | ✅ |
 | **审阅** (`libraries/reviewer.py`) | 自动审阅质量打分 | ✅ |
@@ -66,7 +66,7 @@ python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
 
 面板顶部有 **「💬 对话 / 🔧 工具日志」两个页签**：切到工具日志可实时看到 Agent 调用了哪些工具（工具名/时间/成败/耗时/参数/结果摘要，3 秒自动刷新），一目了然每个步骤在干什么。
 
-**MCP 接口**：同一套 40 个工具也暴露为 MCP（`canvas_command` 仅 Web 可见，MCP 面 37），供 Claude Code 等外部 Agent 驱动：
+**MCP 接口**：同一套 43 个工具也暴露为 MCP（`canvas_command` 仅 Web 可见，MCP 面 40），供 Claude Code 等外部 Agent 驱动：
 
 ```bash
 claude mcp add --scope project novel-engine -- python mcp_server.py
@@ -90,7 +90,7 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 ```
 
 - 题材标签在步 1 选择，存入 `world_building.tags`（预置 **50 标签 5 组** `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束，并约束步 2 候选生成。
-- 步 3「世界观补全」：进入时自动调无书端点 `POST /api/world-builder/world-complete` 补全 `world_building` 12 维 + 基调（tone/target_audience/pov/era_language），可手动编辑后随 `/books/start` 落库；`generate_world` 仅在世界观单薄时兜底。
+- 步 3「世界观补全」：进入时自动调无书端点 `POST /api/world-builder/world-complete` 补全 `world_building` 12 维 + 基调（tone/target_audience/pov/era_language），可手动编辑后随 `/books/start` 落库；`generate_world` 仅在世界观单薄时兜底。另提供**分阶段内容构建工具**（内部 agent / skill 自主编排，步 3 顶部状态区 5 徽标实时显示 ✅/未填）：`generate_core_conflict`（①核心矛盾）→ `query_structures`/`query_plots` + `set_picks`（②开篇大纲+桥段，落 `_outline_picks`）→ `generate_factions`（③势力）→ `generate_characters`（④主要人物，带核心矛盾/势力/大纲上下文）→ `generate_rest_world`（⑤其余维度，大纲确定后补）；`generate_full_outline` 自动消费 `_outline_picks`。
 - 流派由标签推导（`TAG_GENRE_MAP`）；平台留到发布页。
 - 角色由外部 Agent 从原型库生成（`generate_characters`）经 `drive_ui(set_characters)` 填入步 3，可手动编辑；书名由步 2 选中候选带入步 3 可改。
 
@@ -263,7 +263,7 @@ D:\NovelEngine/
 │   └── archive/            # 全部历史文档归档（设计稿/交接/优化/调研/审查报告等 19 份）
 │
 ├── requirements.txt
-├── agent_tools.py            # 共享 Agent 工具注册表（40 工具，MCP 面 37，全链路）
+├── agent_tools.py            # 共享 Agent 工具注册表（43 工具，MCP 面 40，全链路）
 ├── mcp_server.py             # MCP 适配层（从 agent_tools 注册，claude mcp add 接入）
 └── LICENSE
 ```

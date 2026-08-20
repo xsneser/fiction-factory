@@ -1,6 +1,6 @@
 # NovelEngine — Claude Code 工作台
 
-NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 40 个工具（MCP 面 37，`canvas_command` 仅 Web），Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
+NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 43 个工具（MCP 面 40，`canvas_command` 仅 Web），Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
 
 | 阶段 | 分 skill | 前置 phase | 出口 | 主要工具 |
 |---|---|---|---|---|
