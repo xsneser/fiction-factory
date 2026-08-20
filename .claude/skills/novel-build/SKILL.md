@@ -64,15 +64,15 @@ description: >-
 7. **submit 前须等世界观补全完成**：`drive_ui(submit)` 在补全进行中会被拦截（toast「世界观补全中」），agent 无法读 toast → **进入步 3 后等待约 45-60s 再 `submit`**；若 `list_books` 未出现新书，稍候重试 `submit` 一次。
 8. `drive_ui(submit)` → **系统** `POST /books/start` 建书（phase=config）——**世界观 12 维 + 基调已随 submit 落库**；完整大纲由 agent 生成（见下）。
 
-## submit 后：agent 经 MCP 生成完整大纲（世界观已在步 3 补全）
-- `drive_ui(submit)` 建书后，向导第 4 步显示故事线 Gantt 空态并轮询填充。
+## submit 后：向导已入库跳书详情，agent 经 MCP 生成完整大纲（世界观已在步 3 补全）
+- `drive_ui(submit)` 建书成功后，**向导直接跳转书详情页（/books/&lt;id&gt;）**——3 步建书结束，世界观 12 维 + 基调已随 submit 落库。
 - 用只读工具轮询定位新书：
   1. `list_books` → 找到新书 `book_id`。
   2. `get_book_detail(book_id)` 检查世界观是否已充实（`basic_info.world_building` 各维非空）。**通常已是——步 3 补全已随 submit 落库**；仅当单薄（如 LLM 补全失败用户仍提交）才兜底 `generate_world(book_id, mode="one", idea=...)`。
-  3. **生成完整大纲（必须调）**：`generate_full_outline(book_id)`（阻塞数分钟，逐步落盘——向导第 4 步 Gantt 实时填充；世界观充实会自动跳过 Phase 1 故事分析）。
+  3. **生成完整大纲（必须调）**：`generate_full_outline(book_id)`（阻塞数分钟，逐步落盘；世界观充实会自动跳过 Phase 1 故事分析）。
   4. `get_book_detail(book_id)` 确认 `phase == "ready"`。
   5. `navigate(url="/books/<book_id>/continue")` 交棒写作台写前三章。
-- **禁止**在向导步 3 上再 `drive_ui(next)`（会进空步 4，向导卡死）。
+- 建书后**不要在向导页再 `drive_ui(next)`**（向导已跳书详情，命令桥守卫 bookId 已拦）。
 
 ## 删书（护栏：外部 agent 无 delete_book）
 - 用户要求删书 → `navigate(url="/books")` + 告知「请在书库页点该书旁的删除按钮（有确认弹窗）」。agent 不做删除动作。
@@ -91,6 +91,6 @@ description: >-
 ## 失败处置
 - 「LLM 未配置」→ 提示到设置页或 `api.json` 配 key 后重试。
 - `drive_ui` 后浏览器没反应 → 检查浏览器是否停在 `/books/start`（`navigate` 一次再试）；命令桥就绪轮询 ≤10s。
-- 向导卡在步 4/5（submit 后 SSE 跑完没跳转）→ `list_books`/`get_book_detail` 确认书已建、`phase` 到哪一步，若已 ready 直接 navigate 写作台。
+- 建书后浏览器未跳书详情 → `list_books`/`get_book_detail` 确认书已建，若已建可直接 `navigate` 书详情/写作台。
 - `world_candidates`（路线 B）空 → 重试一次；仍空改 `drive_ui(skip_candidates)` + 手动 `set_field world_desc`。
 - `BookBusyError` → 另一进程在操作此书，稍后重试。
