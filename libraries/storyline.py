@@ -40,7 +40,7 @@ DEFAULT_WORLD_BUILDING = {
 
 # 单条角色条目键（顺序即 to_dict 展示顺序）
 _CHAR_FIELDS = ("name", "role", "importance", "identity", "gender", "personality",
-                "catchphrase", "brief", "title", "golden_finger",
+                "catchphrase", "brief", "title", "golden_finger", "faction",
                 "age", "death_year", "archetype_id", "relations")
 
 _CHAR_DEFAULT_ROLE = "配角"
@@ -90,6 +90,7 @@ def _char_from_protagonist(p) -> dict:
         "brief": str(p.get("background", "") or ""),
         "title": "",
         "golden_finger": str(p.get("golden_finger", "") or ""),
+        "faction": "",
         "age": int(p.get("age") or 0),
         "death_year": int(p.get("death_year") or 0),
         "archetype_id": "",
@@ -115,6 +116,7 @@ def _char_from_support(c, mc_name) -> dict:
         "brief": str(c.get("brief", "") or ""),
         "title": str(c.get("title", "") or ""),
         "golden_finger": "",
+        "faction": "",
         "age": int(c.get("age") or 0),
         "death_year": int(c.get("death_year") or 0),
         "archetype_id": str(c.get("archetype_id", "") or ""),

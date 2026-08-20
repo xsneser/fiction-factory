@@ -10,10 +10,6 @@
                 <textarea id="world-idea" rows="2" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…"></textarea>
             </div>
             <div id="wb-tags-display" class="form-row hint" style="display:none"></div>
-            <div class="btn-row">
-                <button class="btn-primary" id="btn-generate" onclick="startGenerate('one')">🚀 生成世界观</button>
-                <button class="btn-secondary" id="btn-candidates" onclick="loadCandidates()">🎲 示例候选</button>
-            </div>
             <div id="candidate-box"></div>
             <div class="form-row">
                 <label>设定概述 world_summary（一段话整体设定）</label>
@@ -35,15 +31,16 @@
                 <label>核心矛盾 core_conflict（驱动全书的冲突）</label>
                 <input id="wb-core_conflict">
             </div>
-            <div class="form-row half">
-                <div>
-                    <label>势力 factions（用「名:立场」多条，或逗号分隔）</label>
-                    <textarea id="wb-factions" rows="3"></textarea>
+            <div class="form-row">
+                <label>势力 factions（每个势力：名称 / 立场 / 描述；下方人物卡可归入势力）</label>
+                <div id="wb-factions"></div>
+                <div class="btn-row">
+                    <button type="button" class="btn-secondary" onclick="addFactionRow()">➕ 添加势力</button>
                 </div>
-                <div>
-                    <label>世界规则 rules（每行一条，金手指数值写死）</label>
-                    <textarea id="wb-rules" rows="3"></textarea>
-                </div>
+            </div>
+            <div class="form-row">
+                <label>世界规则 rules（每行一条，金手指数值写死）</label>
+                <textarea id="wb-rules" rows="3"></textarea>
             </div>
             <div class="form-row hint">一句话种子保存在 description 字段，改上面字段即可；重生成时保留你已填的值。</div>
         </fieldset>
@@ -109,7 +106,7 @@ function esc(s) {
 }
 function emptyChar() {
     return {name:'', role:'配角', importance:2, identity:'', title:'', gender:'', personality:'',
-            catchphrase:'', brief:'', golden_finger:'', age:0, death_year:0,
+            catchphrase:'', brief:'', golden_finger:'', faction:'', age:0, death_year:0,
             archetype_id:'', relations:[]};
 }
 function legacyChars(bi) {
@@ -137,8 +134,60 @@ function legacyChars(bi) {
     return out;
 }
 
+/* —— 势力编辑器（结构化行列表：名称/立场/描述） —— */
+function appendFactionRow(f) {
+    f = f || {};
+    var row = document.createElement('div');
+    row.className = 'faction-row';
+    row.style.cssText = 'display:flex;gap:6px;margin:4px 0;align-items:center;flex-wrap:wrap';
+    row.innerHTML = '<input class="f-name" placeholder="势力名" value="' + esc(f.name || '') + '" style="flex:1;min-width:120px">'
+        + '<input class="f-stance" placeholder="立场（如：主角阵营/反派/中立）" value="' + esc(f.stance || '') + '" style="flex:1;min-width:130px">'
+        + '<input class="f-desc" placeholder="描述（可选）" value="' + esc(f.desc || '') + '" style="flex:2;min-width:160px">'
+        + '<button type="button" class="small" onclick="removeFactionRow(this)">✕</button>';
+    var wrap = $('wb-factions');
+    if (wrap) wrap.appendChild(row);
+    return row;
+}
+function addFactionRow() { appendFactionRow({}); }
+function removeFactionRow(btn) { btn.closest('.faction-row').remove(); }
+function renderFactions(fs) {
+    var wrap = $('wb-factions');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    var list = (fs && fs.length) ? fs : [null];
+    list.forEach(function(f) {
+        if (typeof f === 'string') f = {name: f};
+        appendFactionRow(f || {});
+    });
+}
+function collectFactions() {
+    var out = [];
+    document.querySelectorAll('#wb-factions .faction-row').forEach(function(row) {
+        var name = row.querySelector('.f-name').value.trim();
+        var stance = row.querySelector('.f-stance').value.trim();
+        var desc = row.querySelector('.f-desc').value.trim();
+        if (name) out.push({name: name, stance: stance, desc: desc});
+    });
+    return out;
+}
+function factionNames() {
+    var names = [];
+    document.querySelectorAll('#wb-factions .faction-row .f-name').forEach(function(i) {
+        var v = i.value.trim(); if (v) names.push(v);
+    });
+    return names;
+}
+/* 人物卡「所属势力」下拉选项：当前势力名 + 空「未归属」 */
+function factionOptions(selected) {
+    var opts = '<option value="">（未归属）</option>';
+    factionNames().forEach(function(n) {
+        opts += '<option value="' + esc(n) + '"' + (n === selected ? ' selected' : '') + '>' + esc(n) + '</option>';
+    });
+    return opts;
+}
+
 /* —— 人物条目卡片渲染 —— */
-function appendCharCard(c) {
+function appendCharCard(c, container) {
     c = c || emptyChar();
     var card = document.createElement('div');
     card.className = 'char-card';
@@ -158,13 +207,16 @@ function appendCharCard(c) {
         + '<div><label>身份/职业</label><input class="cc" data-f="identity" value="' + esc(c.identity) + '"></div>'
         + '<div><label>称呼</label><input class="cc" data-f="title" value="' + esc(c.title) + '"></div></div>'
         + '<div class="form-row half">'
+        + '<div><label>所属势力</label><select class="cc" data-f="faction">' + factionOptions(c.faction) + '</select></div>'
+        + '<div></div></div>'
+        + '<div class="form-row half">'
         + '<div><label>性别</label><input class="cc" data-f="gender" placeholder="男/女" value="' + esc(c.gender) + '"></div>'
         + '<div><label>性格</label><input class="cc" data-f="personality" value="' + esc(c.personality) + '"></div></div>'
         + '<div class="form-row half">'
         + '<div><label>口癖</label><input class="cc" data-f="catchphrase" value="' + esc(c.catchphrase) + '"></div>'
         + '<div><label>简介</label><input class="cc" data-f="brief" value="' + esc(c.brief) + '"></div></div>'
         + '<div class="form-row half">'
-        + '<div><label>金手指</label><input class="cc" data-f="golden_finger" value="' + esc(c.golden_finger) + '"></div>'
+        + '<div><label>金手指</label><input class="cc" data-f="golden_finger" placeholder="仅主角/有金手指角色填写，配角可留空" value="' + esc(c.golden_finger) + '"></div>'
         + '<div style="display:flex;gap:8px"><div style="flex:1"><label>年龄</label><input class="cc" data-f="age" type="number" min="0" value="' + (c.age||0) + '"></div>'
         + '<div style="flex:1"><label>死亡年份</label><input class="cc" data-f="death_year" type="number" min="0" value="' + (c.death_year||0) + '"></div></div></div>'
         + '<div class="form-row" style="align-items:center;gap:8px">'
@@ -175,7 +227,7 @@ function appendCharCard(c) {
         + '<div style="font-size:12px;color:#8b949e;margin:6px 0 4px">人物关系（对方姓名 / 关系）</div>'
         + '<div class="rel-rows"></div>'
         + '<button type="button" class="small" onclick="addRelRow(this)">➕ 加关系</button></div>';
-    $('char-cards').appendChild(card);
+    (container || $('char-cards')).appendChild(card);
     var sel = card.querySelector('.char-archetype');
     var opts = '<option value="">（无原型）</option>';
     __ARCHETYPES__.forEach(function(a) {
@@ -188,12 +240,60 @@ function appendCharCard(c) {
 function renderCharCards(chars) {
     var wrap = $('char-cards');
     wrap.innerHTML = '';
-    (chars && chars.length ? chars : [emptyChar()]).forEach(function(c) { appendCharCard(c); });
+    chars = (chars && chars.length) ? chars : [emptyChar()];
+    // 按所属势力分组：势力名 → 人物列表；未归属 → '（未归属）'，空组跳过
+    var groups = {}, order = [];
+    chars.forEach(function(c) {
+        var f = String(c.faction || '').trim() || '（未归属）';
+        if (!groups[f]) { groups[f] = []; order.push(f); }
+        groups[f].push(c);
+    });
+    order.forEach(function(f) {
+        var grp = groups[f];
+        var card = document.createElement('div');
+        card.className = 'accordion';
+        card.style.cssText = 'margin-bottom:8px';
+        card.innerHTML = '<div class="accordion-header"><span>🏛 ' + esc(f) + '</span>'
+            + '<span style="color:#8b949e;font-size:12px">' + grp.length + ' 人</span></div>'
+            + '<div class="accordion-body"></div>';
+        var body = card.querySelector('.accordion-body');
+        grp.forEach(function(c) { appendCharCard(c, body); });
+        wrap.appendChild(card);
+    });
 }
-function addCharCard() { appendCharCard(emptyChar()); }
+/* 人物按势力分组后，「➕ 添加人物」加到「未归属」组（保存后按所属势力重新分组） */
+function refreshGroupCounts() {
+    document.querySelectorAll('#char-cards .accordion').forEach(function(ac) {
+        var body = ac.querySelector('.accordion-body');
+        var n = body ? body.querySelectorAll('.char-card').length : 0;
+        var num = ac.querySelector('.accordion-header span:last-child');
+        if (num) num.textContent = n + ' 人';
+    });
+}
+function addCharCard() {
+    var wrap = $('char-cards');
+    var target = null;
+    wrap.querySelectorAll('.accordion').forEach(function(ac) {
+        var h = ac.querySelector('.accordion-header span');
+        if (h && h.textContent.indexOf('未归属') >= 0) target = ac.querySelector('.accordion-body');
+    });
+    if (!target) {
+        var card = document.createElement('div');
+        card.className = 'accordion';
+        card.style.cssText = 'margin-bottom:8px';
+        card.innerHTML = '<div class="accordion-header"><span>🏛 （未归属）</span>'
+            + '<span style="color:#8b949e;font-size:12px">0 人</span></div>'
+            + '<div class="accordion-body"></div>';
+        wrap.appendChild(card);
+        target = card.querySelector('.accordion-body');
+    }
+    appendCharCard(emptyChar(), target);
+    refreshGroupCounts();
+}
 function removeCharCard(btn) {
     if (!confirm('删除这条人物？')) return;
     btn.closest('.char-card').remove();
+    refreshGroupCounts();
 }
 function applyArchetype(btn) {
     var card = btn.closest('.char-card');
@@ -255,7 +355,7 @@ function biToForm(bi) {
     $('wb-geography').value = wb.geography || ''; $('wb-culture').value = wb.culture || '';
     $('wb-history').value = wb.history || ''; $('wb-social_structure').value = wb.social_structure || '';
     $('wb-core_conflict').value = wb.core_conflict || ''; $('wb-world_summary').value = wb.world_summary || '';
-    $('wb-factions').value = factionLinesText(wb.factions);
+    renderFactions(wb.factions);
     $('wb-rules').value = (wb.rules || []).join('\n');
     renderCharCards(Array.isArray(bi.characters) ? bi.characters : legacyChars(bi));
     $('bi-tone').value = bi.tone || ''; $('bi-target_audience').value = bi.target_audience || '';
@@ -272,7 +372,7 @@ function formToBi() {
         geography: $('wb-geography').value.trim(), culture: $('wb-culture').value.trim(),
         history: $('wb-history').value.trim(), social_structure: $('wb-social_structure').value.trim(),
         core_conflict: $('wb-core_conflict').value.trim(), world_summary: $('wb-world_summary').value.trim(),
-        factions: parseFactionLines($('wb-factions').value), rules: parseRuleLines($('wb-rules').value),
+        factions: collectFactions(), rules: parseRuleLines($('wb-rules').value),
     };
     return {
         book_title: BOOK_TITLE,
