@@ -1,13 +1,13 @@
 # NovelEngine — Claude Code 工作台
 
-NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 43 个工具（MCP 面 40，web-only 3 个：`canvas_command`/`create_book`/`delete_book`），Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
+NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 42 个工具（MCP 面 40，web-only 2 个：`create_book`/`delete_book`），Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
 
-> **当前驱动形态**：侧栏聊天大脑由根 `config.json` 的 `agent.driver` 切换——**当前默认 `dsh`**（`libraries/dsh_bridge.py` 转发 dsh headless 一次性子进程，经 MCP 驱动平台；护栏：phase 门控 `tool_policy.py` / MCP 循环熔断 `loop_guard.py` / 建书 reset）。`builtin` 为内置 agent（`plugins/agent_loop.py`）兜底，可在 config.json 切回。dsh 替换决策见交接文档。
+> **当前驱动形态**：侧栏聊天大脑 = **dsh**（内置 agent `plugins/agent_loop.py` 已删除，无 builtin 可切回）。`libraries/dsh_bridge.py` 转发 vendored `vendor/dsh-ne/`（精简核心，改名防冲突）headless 一次性子进程，经 MCP 驱动平台；护栏：phase 门控 `tool_policy.py` / MCP 循环熔断 `loop_guard.py` / 建书 reset。dsh 替换决策见交接文档。
 > **架构速览**（系统分层/工具注册表/双通道驱动/各阶段入口/常见坑）：`docs/架构总览.md`——交接/上手先读它，不必重新探索。设计权威仍为 `docs/设计文档-总览-claude.md`。
 
 | 阶段 | 分 skill | 前置 phase | 出口 | 主要工具 |
 |---|---|---|---|---|
-| 建书 | `novel-build` | 无书 / phase=config | `ready`（3 步向导：世界观在步 3「世界观补全」自动生成并随提交落库，提交后入库跳书详情；完整大纲由 agent 经 MCP `generate_full_outline` 生成后进入写作台） | drive_ui（驱动建书向导）/ world_candidates / generate_full_outline / generate_world（仅世界观单薄时兜底）/ save_basic_info / confirm_world / generate_title |
+| 建书 | `novel-build` | 无书 / phase=config | `ready`（3 步向导：步 3「内容构建工作台」分阶段构建世界观并随提交落库，提交后入库跳书详情；完整大纲由 agent 经 MCP `generate_full_outline` 生成后进入写作台） | drive_ui（驱动建书向导）/ world_candidates / generate_core_conflict / generate_factions / generate_characters / generate_rest_world / generate_full_outline / generate_world（仅世界观单薄时兜底）/ save_basic_info / confirm_world |
 | 大纲 | `novel-outline` | `config` 且 basic_info 充实 | `ready` | outline_material_candidates / generate_full_outline / generate_outlines / confirm_outlines / fill_plots / fill_gags / extend_outline |
 | 写作 | `novel-write` | `ready` | 章节/桥段写完 | write_next_bridge / write_chapter / generate_book_meta / review_text / deai_text / diagnose_retention / tag_punch_points |
 | 上架 | `novel-publish` | 已有第 1 章正文 | `published` / `finished` | publish_check / publish_book / mark_finished / export_book |

@@ -24,7 +24,7 @@
 | **角色原型库** (`libraries/character.py`) | 人物性格原型 + 代表人物（10 原型，设定表单「从原型库选」） | ✅ 新 |
 | **内涵系统** | 母题跟随大纲阶段，阶段级 `themes` 带插入位置，写作 prompt 注入 | ✅ 新 |
 | **笔名档案** (`libraries/profiles.py`) | 风格指纹 + prompt 注入 | ✅ |
-| **右侧 Agent 助手** (`plugins/agent_loop.py` + `agent_tools.py`) | 侧栏对话，43 个工具全链路操作 + **工具调用日志页签** | ✅ 新 |
+| **右侧 Agent 助手** (`libraries/dsh_bridge.py` + `vendor/dsh-ne/`) | 侧栏对话（dsh-ne headless 驱动），42 个工具全链路操作 + **工具调用日志页签** | ✅ 新 |
 | **番茄侦察兵** (`plugins/fanqie_scout.py`) | 番茄小说搜索/下载/分析（桥段/大纲/笑点）入库 | ✅ |
 | **AI 降重** (`libraries/de_ai.py`) | 续写流程中的 AI 痕迹消除 | ✅ |
 | **审阅** (`libraries/reviewer.py`) | 自动审阅质量打分 | ✅ |
@@ -66,7 +66,7 @@ python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
 
 面板顶部有 **「💬 对话 / 🔧 工具日志」两个页签**：切到工具日志可实时看到 Agent 调用了哪些工具（工具名/时间/成败/耗时/参数/结果摘要，3 秒自动刷新），一目了然每个步骤在干什么。
 
-**MCP 接口**：同一套 43 个工具也暴露为 MCP（`canvas_command` 仅 Web 可见，MCP 面 40），供 Claude Code 等外部 Agent 驱动：
+**MCP 接口**：同一套 42 个工具暴露为 MCP（web-only 2 个：`create_book`/`delete_book`，MCP 面 40），供 Claude Code 等外部 Agent 驱动：
 
 ```bash
 claude mcp add --scope project novel-engine -- python mcp_server.py
@@ -213,7 +213,6 @@ D:\NovelEngine/
 │   ├── font_decoder.py     # PUA 字体解码器
 │   ├── novel_storage.py    # 已下载小说管理
 │   ├── style_analyzer.py   # 写作风格分析
-│   ├── agent_loop.py       # Agent 工具调用循环（function calling）
 │   └── task_manager.py     # 全局任务管理器
 │
 ├── ui/                     # Web 用户界面
@@ -263,7 +262,8 @@ D:\NovelEngine/
 │   └── archive/            # 全部历史文档归档（设计稿/交接/优化/调研/审查报告等 19 份）
 │
 ├── requirements.txt
-├── agent_tools.py            # 共享 Agent 工具注册表（43 工具，MCP 面 40，全链路）
+├── agent_tools.py            # 共享 Agent 工具注册表（42 工具，MCP 面 40，全链路）
+├── vendor/dsh-ne/            # vendored dsh 精简核心（改名 dsh-ne；node_modules 不入库，npm install 重建）
 ├── mcp_server.py             # MCP 适配层（从 agent_tools 注册，claude mcp add 接入）
 └── LICENSE
 ```
