@@ -22,25 +22,28 @@ description: 建书阶段。开新书/写设定/构思世界观。建书必须�
 ## 批处理（驱动向导 UI，由系统建书）
 
 > **触发**：两种入口都可——① 浏览器「启动新书」页点「🚀 让 Agent 构建」按钮（idea/tags/笔名 已在表单，任务文本携带）；② 侧栏聊天说「开一本新书：…」。**前端固定候选管线已移除**（不再有「🎲 生成候选」fetch），候选生成完全由本 skill 走路线 B；`drive_ui(load_candidates)` 是前端 stub（提示用），不调。
+> **无需平台启动**：dsh 是 Web 进程内子进程（平台已在 58080 跑，由 `libraries/dsh_bridge.py` 拉起），本 skill **不做平台启动/打开浏览器**；`navigate` 只切站内页。
 
 1. `navigate(url="/books/start")`（若已在向导页则无害）。
 2. **`drive_ui(reset)`**：每次建书前先重置向导 state（除笔名），清除上一本残留草稿对 set_field/set_tags 的干扰（建书保真度护栏，spike 实测 issue）。
 3. `drive_ui(set_field, {field:"idea", value:种子})` + `drive_ui(set_field, {field:"pen", value:笔名})` + `drive_ui(set_tags, {tags:[题材标签]})`（同批推送，浏览器按序应用；表单已填时幂等）。
-4. **世界观候选（路线 B）**：`world_candidates(book_id="", idea, genre, tags)` → `drive_ui(pick_candidate, {idx, candidate:{title, world_brief, one_liner}})`（注入，浏览器渲染卡片实时显示）→ `drive_ui(next)`（步 2「已挑选完毕」进步 3）。
-5. **步 3 = 内容构建工作台（分阶段，agent 自主驱动）**：浏览器不再自动一键补全（旧 `world-complete` 保留为「✨ 重新补全」兜底按钮）。按顺序逐段构建，每段经 `drive_ui` 落进表单，步 3 顶部状态区 5 个徽标实时显示 ✅/未填：
+4. **`drive_ui(next)`（步 1 → 步 2）**：填完步 1 必须 `next` 进步 2（浏览器 `validate(1)` 校验 idea+pen 非空）。**勿漏此步**——否则下一步 `next` 只会把向导从步 1 推到步 2，而不是进步 3。
+5. **世界观候选（路线 B，步 2 → 步 3）**：`world_candidates(book_id="", idea, genre, tags)` → `drive_ui(pick_candidate, {idx, candidate:{title, world_brief, one_liner}})`（注入，浏览器渲染卡片实时显示）→ **`drive_ui(next)`（步 2「已挑选完毕」→ 步 3）**；候选质量差 / 用户要求手定 → `drive_ui(skip_candidates)`（跳过挑选直接进步 3）。
+6. **步 3 = 内容构建工作台（分阶段，agent 自主驱动）**：浏览器不再自动一键补全（旧 `world-complete` 保留为「✨ 重新补全」兜底按钮）。按顺序逐段构建，每段经 `drive_ui` 落进表单，步 3 顶部状态区 5 个徽标实时显示 ✅/未填：
    - ① **核心矛盾**：`generate_core_conflict(idea=世界观简述, world_brief=候选简述, tags, pen_name)` → `drive_ui(set_world, {world_building:{core_conflict:"..."}})`（返回 genre 供②查库）。
-   - ② **开篇大纲+桥段**（agent 自主决策，不询问）：`query_structures(genre=①)` 看模板 + `query_plots(category="开篇")` 看开篇桥段 → 选定 → `drive_ui(set_picks, {templates:[{id,name}], plots:[{id,name}]})` → `_outline_picks` 随 submit 落库，submit 后 `generate_full_outline` 自动消费。
+   - ② **开篇大纲+桥段**（agent 自主决策，不询问）：`query_structures(genre=①)` **一次拉全**模板清单，直接从返回挑 1-2 个最匹配，**不要换 keyword/sub_genre 重查**；`query_plots(category="开篇")` 同理一次拉全。选定立即 `drive_ui(set_picks, {templates:[{id,name}], plots:[{id,name}]})` → `_outline_picks` 随 submit 落库，submit 后 `generate_full_outline` 自动消费。
    - ③ **势力**：`generate_factions(idea, world_brief, core_conflict=①, tags, genre)` → `drive_ui(set_world, {world_building:{factions:[...]}})`。
-   - ④ **主要人物**（基于势力和大纲）：`query_characters` 看原型 → `generate_characters(idea, title, tags, genre, archetype_ids=选中的原型, core_conflict=①, factions=③, outline_preview=②)` → `drive_ui(set_characters, {characters:[全 14 字段列表]})`——`name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id/gender/brief/title/age/death_year/role`（主角 importance=1、配角补 relation；gender/brief/title/age/death_year 原样透传，详情页可编辑）。
+   - ④ **主要人物**（基于势力和大纲）：`query_characters(genre=方向)` **一次查够**原型池（tag=主角/配角 最多各一次），选 archetype_ids 直接喂 `generate_characters(idea, title, tags, genre, archetype_ids=选中的原型, core_conflict=①, factions=③, outline_preview=②)`，**选定即停，不要逐角色重复 query_characters** → `drive_ui(set_characters, {characters:[全 14 字段列表]})`——`name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id/gender/brief/title/age/death_year/role`（主角 importance=1、配角补 relation；gender/brief/title/age/death_year 原样透传，详情页可编辑）。
    - ⑤ **其余世界观维度**（大纲确定后补）：`generate_rest_world(idea, world_brief, core_conflict=①, factions=③, outline_preview=②, tags, genre, pen_name)` → `drive_ui(set_world, {world_building:{era,power_system,geography,culture,history,social_structure,rules,world_summary}, tone, target_audience, pov, era_language})`。
    - 失败/跳过：任一段失败重试一次，仍失败跳过该段继续（已填内容保留、部分构建可提交）；⑤ 未做则 `_world_generated` 不置位，submit 后 `generate_full_outline` Phase 1 自动补齐剩余维度。
-6. **submit**：无需等一键补全，随时 `drive_ui(submit)` → **系统** `POST /books/start` 建书（phase=config）——分阶段构建各段 + `_outline_picks` 已随 submit 落库。
+7. **submit**：无需等一键补全，随时 `drive_ui(submit)` → **系统** `POST /books/start` 建书（phase=config）——分阶段构建各段 + `_outline_picks` 已随 submit 落库。
 
 ## submit 后：校验 + 生成完整大纲
-1. `list_books` 定位新书 `book_id` → `get_book_detail(book_id)` 看世界观充实度（步 3 已落库，通常充实；单薄才 `generate_world(book_id, mode="one", idea=...)` 兜底）。
-2. **保真度校验（必做）**：核对 `genre` / `sub_genre` / `tags` 与任务设定一致；漂移 → `navigate(url="/books/start")` + `drive_ui(reset)` + 重填 set_field/set_tags 后重新走批处理（最多重试 1 次，仍漂移则如实汇报停止）。
-3. **必须调** `mcp__novelengine__generate_full_outline(book_id)`（阻塞数分钟，逐步落盘，**自动消费 `_outline_picks`（②选定的模板/桥段）**；世界观充实自动跳过 Phase 1 故事分析）。
-4. `get_book_detail` 确认 `phase=="ready"` → `navigate(url="/books/<book_id>/continue")` 交棒写作台写前三章。
+1. **`mcp__novelengine__get_build_status()`** 拿 `book_id`（浏览器建书成功会把 `bookId` 回写到 `storage/build_status.json`；`created=true` 才算建成，未建成先等片刻再查，仍无 → 重试 `drive_ui(submit)` 或如实汇报）。
+2. `get_book_detail(book_id)` 看世界观充实度（步 3 已落库，通常充实；单薄才 `generate_world(book_id, mode="one", idea=...)` 兜底）。
+3. **保真度校验（必做）**：核对 `genre` / `sub_genre` / `tags` 与任务设定一致；漂移 → `navigate(url="/books/start")` + `drive_ui(reset)` + 重填 set_field/set_tags 后重新走批处理（最多重试 1 次，仍漂移则如实汇报停止）。
+4. **必须调** `mcp__novelengine__generate_full_outline(book_id)`（阻塞数分钟，逐步落盘，**自动消费 `_outline_picks`（②选定的模板/桥段）**；世界观充实自动跳过 Phase 1 故事分析）。
+5. `get_book_detail` 确认 `phase=="ready"` → `navigate(url="/books/<book_id>/continue")` 交棒写作台写前三章。
 
 ## 删书（护栏：外部 agent 无 delete_book）
 - 用户要求删书 → `navigate(url="/books")` + 告知「请在书库页点该书旁的删除按钮（有确认弹窗）」。agent 不做删除动作。
