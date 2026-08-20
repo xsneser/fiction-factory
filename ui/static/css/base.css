@@ -186,9 +186,6 @@
         .next-strip:hover { border-color:#58a6ff; }
         .next-strip .ns-title { font-size:15px; font-weight:600; color:#58a6ff; }
         .next-strip .ns-meta { font-size:12px; color:#8b949e; margin-top:2px; }
-        .next-strip .ns-action { padding:6px 14px; border-radius:6px; background:rgba(31,111,235,.16);
-            border:1px solid #1f6feb; color:#58a6ff; font-size:13px; font-weight:600; white-space:nowrap; }
-        a.next-strip:hover .ns-action { background:rgba(31,111,235,.28); }
         /* Tables */
         table { width:100%; border-collapse:collapse; margin:12px 0; }
         th, td { padding:10px 14px; text-align:left; border-bottom:1px solid #30363d; font-size:13px; }

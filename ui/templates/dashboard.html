@@ -59,7 +59,6 @@
             <div class="ns-title">{{ b.title or '(待定)' }}</div>
             <div class="ns-meta">{{ b.pen_name }} · {{ b.genre }}{% if b.sub_genre %}/{{ b.sub_genre }}{% endif %} · 已写 {{ b.current_chapter }} 章{% if r.word_count %} · {{ r.word_count }} 字{% endif %}{% if r.cost_spent %} · 花费 ¥{{ '%.2f'|format(r.cost_spent) }}{% endif %}</div>
         </div>
-        <div class="ns-action">{{ r.next.label if r.next else '查看详情' }} →</div>
     </a>
     {% endfor %}
 </div>
