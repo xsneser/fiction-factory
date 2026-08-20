@@ -333,7 +333,8 @@ console.log('[agent-panel] v3 events-stream');
     function agentSendTask(text, opts) {
         var taskText = String(text || '').trim();
         if (!taskText) return;
-        history.push({ role: 'user', content: taskText });
+        // card 标记：刷新后 restore 时渲染为卡片而非「你」气泡（SSE 后端只看 role/content，card 无副作用）
+        history.push({ role: 'user', content: taskText, card: !!(opts && opts.card) });
         saveHistory(history);
         input.value = '';
         if (opts && opts.card) {
@@ -369,12 +370,13 @@ console.log('[agent-panel] v3 events-stream');
         addMsg('assistant', '对话已清空。有什么可以帮你？');
     });
 
-    // 初始欢迎语 + 恢复会话历史
+    // 初始欢迎语 + 恢复会话历史（card 标记 → 渲染建书任务卡片，而非「你」气泡）
     if (!history.length) {
         addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个桥段」\n· 「打开书库看看」');
     } else {
         for (var i = 0; i < history.length; i++) {
-            addMsg(history[i].role, history[i].content);
+            if (history[i].card) addBuildCard(history[i].content);
+            else addMsg(history[i].role, history[i].content);
         }
     }
 })();
