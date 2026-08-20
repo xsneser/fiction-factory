@@ -224,9 +224,12 @@ class WorldBuildingGenerator:
         return []
 
     def generate_characters(self, idea: str, genre: str = "", sub_genre: str = "",
-                            tags=None, title: str = "", archetypes=None) -> dict:
+                            tags=None, title: str = "", archetypes=None,
+                            core_conflict: str = "", factions=None,
+                            outline_preview: str = "") -> dict:
         """根据世界观（一句话+标签+书名+原型库）生成角色候选（非流式，失败重试≤3）。
 
+        分阶段构建④可带已定核心矛盾/势力/开篇大纲桥段上下文，让角色与之自洽。
         角色从原型库挑选 archetype_id 并适配到本书；统一字段含 importance。
         返回 {"protagonists": [...], "supporting_cast": [...]}。
         """
@@ -234,7 +237,9 @@ class WorldBuildingGenerator:
             return None
         prompt = self.harness.render_characters_prompt(
             idea=idea, genre=genre or "", sub_genre=sub_genre or "",
-            tags=tags, title=title, archetypes=archetypes)
+            tags=tags, title=title, archetypes=archetypes,
+            core_conflict=core_conflict or "", factions=factions or [],
+            outline_preview=outline_preview or "")
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
@@ -250,6 +255,106 @@ class WorldBuildingGenerator:
             except Exception:
                 pass
         return None
+
+    def generate_core_conflict(self, genre: str = "", sub_genre: str = "",
+                               idea: str = "", tags=None, pen_name: str = "") -> str:
+        """分阶段构建①：从一句话设定+题材标签推导主线核心矛盾（纯文本 1-2 句）。失败重试≤3。"""
+        if not self.llm:
+            return ""
+        prompt = self.harness.render_core_conflict_prompt(
+            idea=idea, genre=genre or "", sub_genre=sub_genre or "",
+            tags=tags, profile=self.profile)
+        for attempt in range(3):
+            try:
+                raw = (self.llm.call("你只返回核心矛盾一句话。", prompt,
+                                     temperature=0.7, max_tokens=1024) or "").strip()
+                text = raw.strip('" \n')
+                if text.startswith("```"):
+                    text = text.strip("`").strip(" \n").strip('"')
+                if text and len(text) > 4:
+                    return text
+            except Exception:
+                pass
+        return ""
+
+    def generate_factions(self, genre: str = "", sub_genre: str = "",
+                          idea: str = "", core_conflict: str = "",
+                          tags=None) -> list:
+        """分阶段构建③：从一句话+核心矛盾发散 2-4 个势力派系（name/stance/desc）。失败重试≤3。"""
+        if not self.llm:
+            return []
+        prompt = self.harness.render_factions_prompt(
+            idea=idea, core_conflict=core_conflict or "",
+            genre=genre or "", sub_genre=sub_genre or "", tags=tags)
+        from core.llm_client import extract_json
+        for attempt in range(3):
+            try:
+                raw = self.llm.call("你只返回 JSON。", prompt,
+                                    temperature=0.7, max_tokens=2048)
+                data = json.loads(extract_json(raw))
+                factions = [f for f in (data.get("factions") or [])
+                            if isinstance(f, dict) and str(f.get("name", "") or "").strip()][:4]
+                if factions:
+                    return factions
+            except Exception:
+                pass
+        return []
+
+    def generate_rest_world(self, genre: str = "", sub_genre: str = "",
+                            idea: str = "", world_brief: str = "",
+                            core_conflict: str = "", factions=None,
+                            outline_preview: str = "", tags=None,
+                            pen_name: str = "") -> dict:
+        """分阶段构建⑤：大纲确定后补全其余世界观维度 + 基调，保留已定的 core_conflict/factions。
+
+        复用 self.generate() 2 链：seed 一个含 core_conflict/factions/description/tags 的
+        BookStoryline，merge_basic_info 保留种子填其余；outline 拼接进 seed 文本流经 prompt。
+        返回 {world_building:{era,power_system,geography,culture,history,social_structure,
+        rules,world_summary}, tone, target_audience, pov, era_language}——
+        **不含 core_conflict/factions/characters**（防覆盖 ①③④）。
+        """
+        if not self.llm:
+            return {}
+        from libraries.storyline import BookStoryline
+        seed = world_brief or idea
+        desc = str(seed or "").strip()
+        outline_txt = str(outline_preview or "").strip()
+        if desc and outline_txt:
+            desc = desc + "\n【已选开篇大纲与桥段】" + outline_txt
+        elif outline_txt:
+            desc = outline_txt
+        tl = BookStoryline(genre=genre or "", sub_genre=sub_genre or "",
+                           pen_name=pen_name or "", platform="fanqie",
+                           basic_info={"characters": [],
+                                       "world_building": {
+                                           "description": desc,
+                                           "tags": list(tags or []),
+                                           "core_conflict": core_conflict or "",
+                                           "factions": list(factions or []),
+                                       },
+                                       "tone": "", "target_audience": "",
+                                       "pov": "第三人称", "era_language": ""})
+        done_basic_info = None
+        try:
+            for event_type, message, data_dict in self.generate(
+                    genre=genre or "", sub_genre=sub_genre or "", idea=desc,
+                    pen_name=pen_name or "", platform="fanqie", storyline=tl):
+                if event_type == "done":
+                    done_basic_info = data_dict.get("basic_info") or tl.basic_info
+                elif event_type == "error":
+                    break
+        except Exception:
+            done_basic_info = None
+        if not done_basic_info:
+            return {}
+        wb = done_basic_info.get("world_building") or {}
+        keep = ["era", "power_system", "geography", "culture", "history",
+                "social_structure", "rules", "world_summary"]
+        return {"world_building": {k: wb.get(k) for k in keep if k in wb},
+                "tone": done_basic_info.get("tone", ""),
+                "target_audience": done_basic_info.get("target_audience", ""),
+                "pov": done_basic_info.get("pov", ""),
+                "era_language": done_basic_info.get("era_language", "")}
 
     # ═══════════════════════════════════════════
     # 内部：2 次链式 LLM 调用

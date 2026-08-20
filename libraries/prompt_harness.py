@@ -919,11 +919,13 @@ class PromptHarness:
 
     def render_characters_prompt(self, idea: str, genre: str = "",
                                  sub_genre: str = "", tags=None, title: str = "",
-                                 archetypes=None) -> str:
+                                 archetypes=None, core_conflict: str = "",
+                                 factions=None, outline_preview: str = "") -> str:
         """根据世界观（一句话 + 题材标签 + 书名 + 角色原型库）生成角色候选（向导③，Agent 经 set_characters 填入）。
 
         题材标签在向导步 1 选择、书名由步 2 选中候选带入步 3；角色从原型库挑选
         archetype_id 并适配到本书，输出统一字段（姓名/身份/性格/口癖/重要度/金手指(主角)/关系(其他)）。
+        可带已定核心矛盾/势力/开篇大纲桥段上下文（分阶段构建的 ①③② 阶段产出），让角色与之自洽。
         """
         tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
         parts = [
@@ -933,6 +935,19 @@ class PromptHarness:
         ]
         if tags:
             parts.append(f"【题材标签】{'、'.join(tags)}（硬约束，必须契合）")
+        if core_conflict:
+            parts.append(f"【已定核心矛盾】{core_conflict}")
+        if factions:
+            _fl = []
+            for f in factions:
+                if isinstance(f, dict):
+                    _fl.append((f.get("name") or "") + ("：" + f.get("stance") if f.get("stance") else ""))
+                else:
+                    _fl.append(str(f))
+            if _fl:
+                parts.append("【已定势力】" + "、".join(_fl))
+        if outline_preview:
+            parts.append(f"【已选开篇大纲与桥段】{outline_preview}")
         if archetypes:
             lines = []
             for a in archetypes[:10]:
@@ -963,3 +978,45 @@ class PromptHarness:
             '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":4,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0}]}'
         )
         return "\n".join(parts)
+
+    def render_core_conflict_prompt(self, idea: str, genre: str = "",
+                                    sub_genre: str = "", tags=None,
+                                    profile=None) -> str:
+        """分阶段构建①：从一句话设定+题材标签推导故事主线的核心矛盾（驱动全书的根本冲突，1-2 句）。
+
+        返回纯文本，供 generate_core_conflict 使用。
+        """
+        tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
+        style = ""
+        if profile and getattr(profile, "summary", ""):
+            style = f"\n【笔名风格】{profile.summary}"
+        return "\n".join([
+            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else "（未指定，由你推导）"),
+            f"【一句话设定】{idea or '（无）'}",
+            f"【题材标签】{'、'.join(tags) if tags else '（未选）'}（硬约束，必须契合）",
+            style,
+            "【任务】你是网文故事架构师。思考这本书的主线应该由什么样的核心矛盾驱动——"
+            "这是贯穿全书的根本冲突（人物目标 × 世界阻力 × 无法两全），1-2 句说清，"
+            "要具体可驱动后续势力/人物/桥段，不要空泛（例：'主角的复制异能每升级一次就吞噬一段记忆，"
+            "他必须在变强与找回自己之间抉择，而幕后组织正等着他失去自我'）。",
+            "只返回核心矛盾一句话，不要解释、不要多余内容。",
+        ])
+
+    def render_factions_prompt(self, idea: str, core_conflict: str = "",
+                               genre: str = "", sub_genre: str = "",
+                               tags=None) -> str:
+        """分阶段构建③：基于一句话设定 + 核心矛盾 + 题材标签，发散世界里的主要势力派系。
+
+        返回 JSON list，供 generate_factions 使用。
+        """
+        tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
+        return "\n".join([
+            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
+            f"【一句话设定】{idea or '（无）'}",
+            f"【核心矛盾】{core_conflict or '（未定）'}",
+            f"【题材标签】{'、'.join(tags) if tags else '（未选）'}（硬约束，必须契合）",
+            "【任务】你是网文世界观架构师。思考这个世界应该存在哪些势力/派系（2-4 个），"
+            "它们围绕【核心矛盾】各自持什么立场、追求什么，彼此冲突或结盟。每个势力给出："
+            "name 名称、stance 立场（一句）、desc 背景与目标（一句）。势力要呼应核心矛盾，不要泛泛的'官方''反派'。",
+            '只返回 JSON：{"factions":[{"name":"","stance":"","desc":""}]}',
+        ])
