@@ -13,6 +13,7 @@ console.log('[agent-panel] v3 events-stream');
     var HISTORY_KEY = 'ne_agent_history';
     var HISTORY_LIMIT = 40;
     var busy = false;
+    var pendingTask = null;                     // busy 时排队待发任务（done 后接力）
     var currentToolRun = null;                  // 当前工具卡引用
     var toolPollTimer = null;                   // 工具日志轮询定时器
     var toolCards = {};                         // callId → 工具卡（事件流配对）
@@ -242,8 +243,13 @@ console.log('[agent-panel] v3 events-stream');
             // 每次都无条件写队列，这些意图已由 SSE 事件流实时执行过；done 后轮询恢复会把
             // 残留重放（drive_ui(next) 走两步 / submit 二次建书）。取走清空，丢弃安全。
             fetch('/api/agent/nav-intents').catch(function(){});
-            busy = false;
-            setSendEnabled(true);
+            if (pendingTask) {
+                var pt = pendingTask; pendingTask = null;
+                startTask(pt);   // 接力排队任务（busy 保持 true，不清）
+            } else {
+                busy = false;
+                setSendEnabled(true);
+            }
         }
     }
 
@@ -292,26 +298,49 @@ console.log('[agent-panel] v3 events-stream');
         })();
     }
 
-    // ─── 发送 ───
+    // ─── 发送（全服务单任务：busy 时先打断旧的再排队）───
     function setSendEnabled(on) {
         sendBtn.disabled = !on;
         sendBtn.textContent = on ? '发送' : '…';
     }
-    function send() {
-        if (busy) return;
-        var text = (input.value || '').trim();
-        if (!text) return;
-        history.push({ role: 'user', content: text });
-        saveHistory(history);
-        input.value = '';
-        addMsg('user', text);
+    function startTask(text) {
         busy = true;
         setSendEnabled(false);
         consumeSSE({ messages: history }).catch(function(err) {
             addMsg('assistant', '⚠️ 请求失败：' + err.message);
-            busy = false;
-            setSendEnabled(true);
+            if (pendingTask) {
+                var t = pendingTask; pendingTask = null;
+                history.push({ role: 'user', content: t });
+                saveHistory(history);
+                startTask(t);
+            } else {
+                busy = false;
+                setSendEnabled(true);
+            }
         });
+    }
+    function agentSendTask(text) {
+        var taskText = String(text || '').trim();
+        if (!taskText) return;
+        history.push({ role: 'user', content: taskText });
+        saveHistory(history);
+        input.value = '';
+        addMsg('user', taskText);
+        if (busy) {
+            // 打断当前任务，排队新任务；当前流的 done 处理器接力 pendingTask
+            pendingTask = taskText;
+            fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
+        } else {
+            startTask(taskText);
+        }
+    }
+    // 供向导「让 Agent 构建」按钮 / 侧栏统一调用
+    window.agentSendTask = agentSendTask;
+
+    function send() {
+        var text = (input.value || '').trim();
+        if (!text) return;
+        agentSendTask(text);
     }
 
     sendBtn.addEventListener('click', send);
