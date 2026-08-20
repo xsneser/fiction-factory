@@ -21,33 +21,6 @@ def books():
 _book_rows_cache: dict = {}  # book_id -> (mtimes, row)
 
 
-def next_step_for(book, has_storyline: bool = False,
-                  world_done: bool = False, outlines_count: int = 0) -> dict:
-    """根据图书状态给出「下一步」动作（供书库/仪表盘列表渲染）。
-
-    设定先行规划书（无章节）：无世界观 → 🌍 生成世界观；有世界无大纲 → 📋 生成大纲；
-    有大纲 → ✍️ 开始写作。每个状态只给一个明确的下一步。
-    """
-    bid = book.book_id
-    if book.status in ("ready", "planning"):
-        if (book.current_chapter or 0) == 0:
-            if not has_storyline:
-                return {"label": "查看详情", "href": f"/books/{bid}", "step": 2}
-            if not world_done:
-                return {"label": "🌍 生成世界观", "href": f"/books/{bid}/world", "step": 2}
-            if outlines_count == 0:
-                return {"label": "📋 生成大纲", "href": f"/books/{bid}/continue", "step": 3}
-            return {"label": "✍️ 开始写作", "href": f"/books/{bid}/continue", "step": 4}
-        return {"label": "继续写作", "href": f"/books/{bid}/continue", "step": 4}
-    if book.status in ("writing", "reviewing"):
-        return {"label": "继续写作", "href": f"/books/{bid}/continue", "step": 4}
-    if book.status == "finished":
-        return {"label": "上架出版", "href": f"/books/{bid}/publish", "step": 6}
-    if book.status == "published":
-        return {"label": "查看上架", "href": f"/books/{bid}/publish", "step": 6}
-    return {"label": "查看详情", "href": f"/books/{bid}", "step": 2}
-
-
 def _book_sig(bid: str):
     """books/{id} 关键文件 + cost.json + 章节文件 mtime，用于判断行级缓存是否仍有效。
 
@@ -115,17 +88,12 @@ def _book_rows():
             continue
         sl = book_mgr.load_storyline(b.book_id)
         outline = book_mgr.get_outline(b.book_id)
-        from libraries.storyline import basic_info_world_done
-        world_done = basic_info_world_done(sl.basic_info if sl else None)
         row = {
             "book": b,
             "has_storyline": sl is not None,
             "storyline_outlines": len(sl.outlines) if sl else 0,
             "storyline_plots": len(sl.plots) if sl else 0,
             "outline_count": len((outline or {}).get("stages", [])) if outline else 0,
-            "next": next_step_for(b, has_storyline=sl is not None,
-                                  world_done=world_done,
-                                  outlines_count=len(sl.outlines) if sl else 0),
             "word_count": _book_word_count(b.book_id),
             "cost_spent": _book_cost_spent(b.book_id),
         }
