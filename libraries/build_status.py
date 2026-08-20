@@ -27,10 +27,19 @@ _DEFAULTS = {
 
 
 def set_build_status(state: dict) -> None:
-    """写建书状态快照（浏览器上报；空 state 视为清空）。"""
+    """写建书状态快照（浏览器上报；空 state 视为清空）。
+
+    浏览器 WZ 用驼峰字段（bookId/creating/_picked），这里映射到 `_DEFAULTS` 的下划线键。
+    """
     data = dict(_DEFAULTS)
     if state:
-        data.update({k: v for k, v in state.items() if k in _DEFAULTS})
+        mapped = {}
+        for k, v in state.items():
+            if k == "bookId":
+                mapped["book_id"] = v
+            elif k in _DEFAULTS:
+                mapped[k] = v
+        data.update(mapped)
     data["created"] = bool(data.get("book_id"))
     write_json_atomic(_STATUS_PATH, data)
 
