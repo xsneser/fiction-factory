@@ -31,3 +31,69 @@
       navigate(/books) and tell the user to click delete manually. If unsure which stage, run
       list_books + get_book_detail to read the target book's phase, then pick the matching skill.
       Read CLAUDE.md and the novel-* skills in your instructions for the full rules.
+# ── 禁用 dsh 系统工具（护栏：只留 MCP + skills + 联网）──
+# 用户拍板完全禁用系统工具（dsh 只能经 MCP 驱动平台，不能直操文件/shell/子代理/任务）；
+# 保留联网（tool-web/web/web-search-deepseek）+ skills + mcp__novelengine__*。语法：
+# patch 层 id-targeted override `disabled: true`（dsh-headless 自身以此禁 hmr）。
+# 文件
+- id: tool-fs
+  disabled: true
+- id: tool-fs-search
+  disabled: true
+- id: tool-str-replace-editor
+  disabled: true
+# shell
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: bash-sandbox
+  disabled: true
+- id: pwsh-sandbox
+  disabled: true
+# 子代理 / 工作流
+- id: subagent
+  disabled: true
+- id: subagent-spawn-in-process
+  disabled: true
+- id: subagent-fork-in-process
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-subagent-report
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: workflow-worker-thread
+  disabled: true
+# 后台任务
+- id: tool-jobs
+  disabled: true
+- id: jobs
+  disabled: true
+# 目标 / 其它
+- id: tool-goal
+  disabled: true
+- id: goal
+  disabled: true
+- id: goal-round-driver
+  disabled: true
+- id: tool-todo
+  disabled: true
+- id: tool-ralph
+  disabled: true
+- id: tool-ask-user
+  disabled: true
+- id: user-questions
+  disabled: true
+# 依赖被禁服务（shell/goals）的 C 级插件
+- id: permission
+  disabled: true
+- id: command-goal
+  disabled: true

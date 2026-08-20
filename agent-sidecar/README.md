@@ -31,7 +31,8 @@ dsh --profile headless "用 novel-build 流程建一本..."   # 全流程(建书
 - **长工具超时**:`generate_full_outline` 阻塞数分钟,`toolCallTimeoutMs` 必须 ≥600000。
 - **循环失控**:phase 未达 ready 时 agent 会反复轮询 `get_book_detail`,需护栏层熔断。
 - **建书保真度**:set_field/set_tags/pick_candidate 未忠实传达任务设定,需向导状态保护。
-- **护栏**:create_book/delete_book 不在 MCP 面(40 工具),建书必须经浏览器向导 drive_ui。
+- **护栏**:create_book/delete_book 工具不存在(40 工具),建书必须经浏览器向导 drive_ui。
+- **系统工具已禁(2026-08-20)**:dsh 自带 tool-fs/tool-bash/subagent 等系统工具默认会暴露(cwd=D:/NovelEngine 无沙箱,可绕过 MCP 直操文件)。`cordis.patch.yml` 已用 `disabled: true` 批量禁掉,只留 MCP + skills + 联网(web 三件)。改此模板须同步 `~/.dsh/profiles/headless/cordis.patch.yml`。
 
 ## 结论
 
