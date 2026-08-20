@@ -44,17 +44,17 @@ description: >-
 > **硬规则：候选挑选必须完成并经用户确认，否则不得 `drive_ui(submit)`。** 这是用户明确要求的决策点，不可跳过。
 
 **默认路线 A（唯一推荐）——让用户直接在平台向导里点选**：
-1. `drive_ui(load_candidates)` → 向导步 2 点「🎲 生成候选」，平台渲染候选卡片。
+1. `drive_ui(load_candidates)` → 向导步 1 底部的「🎲 生成候选」按钮（步 1 已无「下一步」，此按钮替代），生成中即自动进步 2 渲染候选卡片。
 2. **告诉用户在平台上直接点击喜欢的候选方向**（agent 不要把候选搬到聊天里——平台的卡片点选会自然带入书名/世界观简述到步 3）。
-3. 用户确认已点选后 → `drive_ui(next)` 进步 3。
+3. 用户确认已点选后 → `drive_ui(next)`（步 2 按钮「已挑选完毕」）进步 3；不想要候选 → `drive_ui(skip_candidates)`（「跳过，手动设定」在步 2 导航区）。
 
 **路线 B（仅兜底）**：只在 `load_candidates` 失败/浏览器候选不可用时才用——`world_candidates(book_id="", idea=种子, genre=方向genre, tags=题材标签)` 聊天给候选 → `drive_ui(pick_candidate, {idx, candidate:{title, world_brief, one_liner}})`（候选内嵌）；或 `drive_ui(skip_candidates)` + `drive_ui(set_field world_desc=手动拼好的世界观简述)`——**skip 也要向用户说明**，不能无声跳过。
 
 ## 批处理（驱动向导 UI；agent 只填表单/点按钮，由系统建书）
 1. `navigate(url="/books/start")`。
 2. 在聊天里定：方向、笔名、一句话种子、题材标签（上面的决策点）。
-3. `drive_ui(set_field {field:"idea", value:种子})` + `drive_ui(set_field {field:"pen", value:笔名})` + `drive_ui(set_tags {tags:[题材标签]})` + `drive_ui(next)`——**同批推送，浏览器按序应用**（向导步 1 校验 idea+pen 非空后进步 2；题材标签在步 1 多选，流派随之推导，并作步 2 候选生成的硬约束）。
-4. **世界观候选（必须完成，见上）**：默认路线 A——`drive_ui(load_candidates)`（携带步 1 已选标签作约束）→ 用户在平台点选候选卡 → 确认后 `drive_ui(next)`。
+3. `drive_ui(set_field {field:"idea", value:种子})` + `drive_ui(set_field {field:"pen", value:笔名})` + `drive_ui(set_tags {tags:[题材标签]})`——**同批推送，浏览器按序应用**（步 1 校验 idea+pen 非空；题材标签在步 1 多选，流派随之推导，并作候选生成硬约束）。**步 1 已无「下一步」**——由步 1 底部「🎲 生成候选」替代（见下条）。
+4. **世界观候选（必须完成，见上）**：默认路线 A——`drive_ui(load_candidates)`（携带步 1 已选标签作约束；生成中自动进步 2 展示候选卡）→ 用户在平台点选候选卡 → 确认后 `drive_ui(next)`（步 2 按钮「已挑选完毕」进步 3）。
 5. **书名已由候选选中带入步 3**，用户想改才 `drive_ui(set_field title=...)`。
 6. **角色（agent 自动生成，不询问、不让用户点浏览器按钮）**：
    - `query_characters` 看角色原型库 → 分析哪些原型契合当前题材/标签/流派。
