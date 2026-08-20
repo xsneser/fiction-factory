@@ -5,7 +5,7 @@
 {% endblock %}
 {% block content %}
 <h1>🔰 启动新书</h1>
-<p class="subtitle">5 步开书：一句话设定 → 挑选世界观（标签）→ 挑选流派 → 生成大纲 → 前三章撰写。</p>
+<p class="subtitle">5 步开书：一句话设定（含题材标签）→ AI 候选挑世界观 → 微调设定 → 生成大纲 → 前三章撰写。</p>
 
 <ol class="wz-steps" id="wz-steps">
     <li class="wz-step active" data-step="1"><span class="wz-num">1</span>一句话设定</li>
@@ -16,7 +16,7 @@
 </ol>
 
 <div class="wz-panels">
-    {# ─── ① 一句话设定 ─── #}
+    {# ─── ① 一句话设定（含题材标签，流派由标签推导） ─── #}
     <section class="wz-panel" id="panel-1">
         <fieldset>
             <legend>✍️ 一句话设定（必填）</legend>
@@ -35,6 +35,19 @@
                     {% endfor %}
                 </select>
             </div>
+        </fieldset>
+        <fieldset>
+            <legend>🏷️ 题材标签</legend>
+            {% for g in world_tags %}
+            <div class="tag-group">
+                <div class="tag-group-name">{{ g.group }}</div>
+                <div class="tag-chips">
+                    {% for t in g.tags %}
+                    <button type="button" class="chip" data-tag="{{ t }}" onclick="WZ.toggleTag(this)">{{ t }}</button>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
         </fieldset>
     </section>
 
@@ -69,7 +82,7 @@
         </fieldset>
     </section>
 
-    {# ─── ③ 微调设定：世界观（来自②，可编辑）+ 题材标签 + 主角候选（AI 新内容） ─── #}
+    {# ─── ③ 微调设定：世界观（来自②，可编辑）+ 主角候选（AI 新内容） ─── #}
     <section class="wz-panel" id="panel-3" style="display:none">
         <fieldset>
             <legend>🌍 世界观（来自第②步，可编辑）</legend>
@@ -81,19 +94,6 @@
                 <label>世界观简述（第②步选中方向，可编辑）</label>
                 <textarea id="wz-world-desc3" rows="3"></textarea>
             </div>
-        </fieldset>
-        <fieldset>
-            <legend>🏷️ 题材标签</legend>
-            {% for g in world_tags %}
-            <div class="tag-group">
-                <div class="tag-group-name">{{ g.group }}</div>
-                <div class="tag-chips">
-                    {% for t in g.tags %}
-                    <button type="button" class="chip" data-tag="{{ t }}" onclick="WZ.toggleTag(this)">{{ t }}</button>
-                    {% endfor %}
-                </div>
-            </div>
-            {% endfor %}
         </fieldset>
         <fieldset>
             <legend>🎭 角色设定（由 Agent 从原型库生成并填入，可手动编辑）</legend>
@@ -245,7 +245,7 @@ var WZ = {
 
     validate: function(n) {
         if (n === 1) return this.el('wz-idea').value.trim() && this.el('wz-pen').value;
-        return true;   // ② 候选可空；③ 标签可选，流派后端从标签推导
+        return true;   // ② 候选可空；① 标签可选，流派后端从标签推导
     },
 
     next: function() {
@@ -289,11 +289,13 @@ var WZ = {
         var idea = this.el('wz-idea').value.trim();
         var box = this.el('wz-candidate-box');
         box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成候选…</div>';
-        var genre = '';   // 流派由题材标签推导，候选生成无需流派
+        var genre = '';   // 流派由题材标签推导（后端 derive_genre）；tags 一并传给候选端点作硬约束
+        var tags = Array.prototype.slice.call(document.querySelectorAll('.chip.on'))
+            .map(function(b) { return b.dataset.tag; });
         var self = this;
         fetch('/api/world-builder/candidates', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ idea: idea, genre: genre })
+            body: JSON.stringify({ idea: idea, genre: genre, tags: tags })
         }).then(function(r) { return r.json(); }).then(function(d) {
             if (!d.ok) { box.innerHTML = '❌ ' + d.error; return; }
             window.__CANDIDATES__ = d.candidates || [];
