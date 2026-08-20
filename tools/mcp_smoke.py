@@ -2,18 +2,18 @@
 """MCP 协议验收 — 脚本化 MCP 客户端驱动 NovelEngine 最小闭环（零/低成本，不调 LLM 写作）。
 
 用 mcp.client.stdio 连接 `python mcp_server.py`，走完整协议：
-  initialize 握手 → tools/list（断言 MCP 面工具数 + web-only 护栏）→ tools/call 真实往返。
+  initialize 握手 → tools/list（断言工具数 + 护栏）→ tools/call 真实往返。
 
-护栏（2026-08-19 架构决策）：create_book / delete_book 已从 MCP 面移除（web-only），
+护栏（2026-08-20 内置 agent 删除后）：create_book/delete_book 工具不存在于注册表，
 建书走系统向导 UI（drive_ui 驱动），删书走书库页手动。因此：
   - setup/teardown 用 BookManager 直建直删临时书（文件级，不走 MCP）
-  - MCP 面断言 create_book/delete_book **不在列**（护栏验收）
-  - 往返改测 save_basic_info → generate_outlines(rule) → confirm_outlines → fill_gags → get_book_detail
-  - 新增 drive_ui 命令桥意图断言
+  - MCP 面断言 create_book/delete_book **不存在**（护栏验收）
+  - 往返测 save_basic_info → generate_outlines(rule) → confirm_outlines → fill_gags → get_book_detail
+  - drive_ui 命令桥意图断言
 
 断言：
-  1) MCP 面工具数 = EXPECT_MCP_TOOLS；navigate/drive_ui/query_plots/diagnose_retention/query_profiles 在列；
-     create_book/delete_book 不在列（web-only 护栏）；Web 面保留 create/delete（双面互证）
+  1) MCP 工具数 = EXPECT_MCP_TOOLS；navigate/drive_ui/query_plots/diagnose_retention/query_profiles 在列；
+     create_book/delete_book 不存在（护栏）
   2) 对临时书 save_basic_info → rule 大纲 → confirm → fill_gags → get_book_detail 全往返成功
   3) navigate 与 drive_ui 分别写入 storage/nav_intent.json（kind=navigate / kind=ui_command）
   4) storage/tool_log.jsonl 出现 source="mcp" 调用条目（含 drive_ui）
@@ -38,8 +38,6 @@ from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
 EXPECT_MCP_TOOLS = 40
-# web-only 护栏：这两个工具不得出现在 MCP 面（建书/删书必须走系统界面）
-WEB_ONLY_ABSENT = ["create_book", "delete_book"]
 PASS, FAIL = [], []
 
 
@@ -85,7 +83,7 @@ def _make_test_book():
 async def main():
     # ── 0. setup：先建临时书，再拉起 MCP 子进程（子进程经磁盘协调可见）──
     bm, bid = _make_test_book()
-    print(f"[setup] 临时书 {bid}（BookManager 直建，护栏：MCP 面无 create_book）")
+    print(f"[setup] 临时书 {bid}（BookManager 直建，护栏：create_book 工具不存在）")
 
     params = StdioServerParameters(
         command=sys.executable, args=["mcp_server.py"], cwd=_ROOT)
@@ -100,21 +98,13 @@ async def main():
                 names = [t.name for t in tools]
                 check("MCP 工具数 = %d" % EXPECT_MCP_TOOLS,
                       len(names) == EXPECT_MCP_TOOLS, f"(实际 {len(names)})")
-                for t in WEB_ONLY_ABSENT:
-                    check(f"{t} 不在 MCP 面（web-only 护栏）", t not in names)
+                check("create_book 工具不存在（护栏：建书走系统向导）", "create_book" not in names)
+                check("delete_book 工具不存在（护栏：删书走书库页手动）", "delete_book" not in names)
                 check("drive_ui 在列（建书向导命令桥）", "drive_ui" in names)
                 check("navigate 在列（外部经意图桥驱动浏览器）", "navigate" in names)
                 for t in ("query_plots", "diagnose_retention", "generate_full_outline", "query_profiles",
                           "query_characters", "generate_characters"):
                     check(f"工具 {t} 在列", t in names)
-
-                # Web 面保留 create/delete（护栏双面互证）
-                from agent_tools import tools_for_surface  # noqa: E402
-                web_names = [t["name"] for t in tools_for_surface("web")]
-                check("Web 面保留 create_book/delete_book",
-                      {"create_book", "delete_book"} <= set(web_names))
-                check("MCP 面无 create_book/delete_book",
-                      {"create_book", "delete_book"} & set(names) == set())
 
                 # ── 2. 对临时书做 MCP 往返 ──
                 ok_save = (await call_json(session, "save_basic_info", {

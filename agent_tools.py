@@ -9,7 +9,6 @@
 
 工具返回约定：
   - navigate 返回特殊标记 {"__navigate__": url}，MCP 适配层据此落意图队列驱动浏览器。
-  - 破坏性工具（delete_book）默认拒绝，需显式 confirm=True。
 """
 import os
 import sys
@@ -58,7 +57,7 @@ def _require_tl(book_id: str):
     tl = load_tl(book_id)
     if tl is None:
         raise RuntimeError(f"「{book_id}」无故事线（storyline.json）。"
-                           "请先 create_book + save_basic_info / generate_world 生成设定，"
+                           "请先经「启动新书」向导建书 + save_basic_info / generate_world 生成设定，"
                            "再 generate_full_outline 生成大纲。")
     return tl
 
@@ -257,23 +256,6 @@ def get_storyline(book_id: str) -> dict:
     return tl.to_dict()
 
 
-def create_book(title: str, pen_name: str, genre: str = "", sub_genre: str = "",
-                platform: str = "fanqie", basic_info: dict = None) -> dict:
-    """创建一本新书（建目录 + book.json + 初始 storyline.json，phase=config），返回 book 配置。"""
-    cfg = book_mgr.create(title=title, pen_name=pen_name, genre=genre or "",
-                          sub_genre=sub_genre or "", platform=platform or "fanqie")
-    tl = BookStoryline(
-        book_title=title, genre=genre or "", sub_genre=sub_genre or "",
-        pen_name=pen_name, platform=platform or "fanqie",
-        basic_info=dict(basic_info or {}), phase="config",
-    )
-    save_tl(cfg.book_id, tl)
-    return {
-        "book_id": cfg.book_id, "title": cfg.title, "pen_name": cfg.pen_name,
-        "genre": cfg.genre, "sub_genre": cfg.sub_genre, "platform": cfg.platform,
-        "status": cfg.status, "chapter_count": cfg.chapter_count,
-        "current_chapter": cfg.current_chapter,
-    }
 
 
 def borrow_preview(source_book_id: str) -> dict:
@@ -1011,20 +993,8 @@ def tag_punch_points(book_id: str, chapter_num: int = 0) -> dict:
             "tags_saved": tags_saved, "tags_save_error": tags_save_error}
 
 
-def delete_book(book_id: str, confirm: bool = False) -> dict:
-    """删除一本书（不可恢复）。confirm 必须显式为 True 才执行。"""
-    if not confirm:
-        return {"ok": False,
-                "error": "删除是不可恢复操作，需用户明确同意；确认后传 confirm=True 重试"}
-    if not book_mgr.get(book_id):
-        return {"ok": False, "error": f"书 {book_id} 不存在"}
-    book_mgr.delete(book_id)
-    _drop_engine(book_id)
-    return {"ok": True, "deleted": book_id}
-
-
 # ═══════════════════════════════════════════════════
-# 导航 / 画布控制（返回特殊标记，由 Agent 循环转成 SSE 事件）
+# 导航 / 建书向导驱动（navigate 返回 {"__navigate__": url}，MCP 适配层据此落意图队列）
 # ═══════════════════════════════════════════════════
 
 def navigate(url: str, tab: str = "") -> dict:
@@ -1067,7 +1037,7 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
     非阻塞：把命令写入意图队列，浏览器每 ~2.5s 轮询消费（start_book.html 的
     window.onnecommand 执行）。不入书锁（不写书）。
     建书仍走系统向导（/books/start POST）：agent 只驱动表单、点下一步/提交，
-    **不能绕过向导直建**（create_book 已从 MCP 面移除，护栏）。
+    **不能绕过向导直建**（create_book 工具不存在，护栏）。
     """
     cmd = (cmd or "").strip()
     if cmd not in _WIZARD_CMDS:
@@ -1119,11 +1089,8 @@ def _func_to_schema(fn):
     return {"type": "object", "properties": properties, "required": required}
 
 
-# 只暴露给 Web 侧栏 Agent 面。护栏：建书/删书必须走系统界面（create_book/delete_book 由
-# 向导 UI 与书库页承载），外部 MCP 拿不到。
-# navigate 为 both——内部走 SSE 直达，外部（MCP）经 §1.3 意图桥驱动浏览器（同样写 nav_intent.json）；
-# drive_ui 为 both——外部经意图桥驱动建书向导 UI（仅填表单/点下一步，不直建书）。
-_WEB_ONLY_TOOLS = {"create_book", "delete_book"}
+# 护栏：create_book/delete_book 工具不存在于注册表——建书走「启动新书」向导 UI、
+# 删书走书库页手动，任何 agent（含 MCP 面）都拿不到建/删能力。
 
 # 写类工具：进入前须拿书锁（防 Web / MCP 双进程同书撞写），退出释放。
 _LOCKED_TOOLS = {
@@ -1153,14 +1120,8 @@ def _wrap_book_lock(fn):
     return wrapper
 
 
-def tools_for_surface(surface: str) -> list:
-    """按 surface 过滤工具条目（surface ∈ web|mcp，返回该面可见项）。"""
-    s = (surface or "").lower()
-    return [t for t in TOOL_REGISTRY if t.get("surface", "both") in (s, "both")]
-
-
 def _build_registry():
-    # 顺序有讲究：导航/画布排最前（flash 对列表前部工具更敏感，能保证
+    # 顺序有讲究：导航/建书向导驱动排最前（flash 对列表前部工具更敏感，能保证
     # "打开页面"请求正确触发 navigate），其次只读摸底，再创作链/上架/工具。
     fns = [
         # 导航 / 建书向导驱动（用户高频意图，必须前置）
@@ -1168,8 +1129,8 @@ def _build_registry():
         # 只读摸底
         list_books, get_book_state, get_storyline, borrow_preview,
         get_book_detail, query_structures, query_plots, query_gags, query_profiles, query_characters,
-        # 建书 / 规划
-        create_book, save_basic_info,
+        # 规划
+        save_basic_info,
         generate_title, generate_outlines, generate_full_outline,
         extend_outline, confirm_outlines, fill_plots, fill_gags, outline_agent,
         outline_material_candidates,
@@ -1177,22 +1138,18 @@ def _build_registry():
         generate_core_conflict, generate_factions, generate_rest_world,
         # 写作 / 元数据
         write_next_bridge, write_chapter, generate_book_meta,
-        # 上架 / 审查 / 去AI / 书管理 / 质量分析
+        # 上架 / 审查 / 去AI / 质量分析
         publish_check, mark_finished, publish_book, export_book,
         review_text, deai_text,
         diagnose_retention, tag_punch_points,
-        delete_book,
     ]
     seen = set()
     entries = []
     for fn in fns:
         name = fn.__name__
-        surface = "web" if name in _WEB_ONLY_TOOLS else "both"
-        key = (name, surface)
-        if key in seen:
-            raise RuntimeError(
-                f"工具注册表去重失败：同名同 surface 出现两次（{name} / {surface}）")
-        seen.add(key)
+        if name in seen:
+            raise RuntimeError(f"工具注册表去重失败：{name} 出现两次")
+        seen.add(name)
         # 包装顺序：phase 门控最外层（phase 不对就不等锁）→ 书锁 → 原函数。
         # 门控对未收录工具原样返回；锁只对 _LOCKED_TOOLS 生效。functools.wraps
         # 逐层保留 __name__/__wrapped__，MCP 端 schema 不受影响。
@@ -1203,7 +1160,6 @@ def _build_registry():
             "description": (inspect.getdoc(fn) or "").strip(),
             "input_schema": _func_to_schema(fn),
             "func": wrapped,
-            "surface": surface,
         })
     return entries
 

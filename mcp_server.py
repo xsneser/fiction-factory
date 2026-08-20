@@ -115,13 +115,9 @@ def _wrap_logged(fn):
 
 
 # 逐个注册（工具名/描述/schema 由函数签名+docstring 自动生成）。
-# 只注册 mcp/both 面工具。web-only 护栏：create_book / delete_book
-# （建书/删书必须走系统界面——agent 经 drive_ui 驱动建书向导、删书走书库页手动）。
-# navigate 为 both——外部（MCP）经意图桥驱动浏览器（写 nav_intent.json）；
-# drive_ui 为 both——外部经意图桥驱动建书向导 UI（仅填表单/点下一步，不直建书）。
+# 护栏：create_book/delete_book 工具不存在于注册表——建书走「启动新书」向导 UI
+# （drive_ui 驱动）、删书走书库页手动；navigate/drive_ui 经意图桥驱动浏览器/向导。
 for _entry in TOOL_REGISTRY:
-    if _entry.get("surface", "both") not in ("mcp", "both"):
-        continue
     mcp.tool()(_wrap_logged(_entry["func"]))
 
 if __name__ == "__main__":
