@@ -31,7 +31,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _ROOT)   # 供 BookManager setup/teardown 与 tools_for_surface 导入项目包
+sys.path.insert(0, _ROOT)   # 供 BookManager setup/teardown 导入项目包
 os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径解析正确
 
 from mcp import ClientSession, StdioServerParameters  # noqa: E402

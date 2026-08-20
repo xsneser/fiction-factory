@@ -522,9 +522,9 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 把引擎全部操作暴露为**共享工具注册表**，供 **MCP 服务器**（Claude Code 外部客户端 + dsh-ne 侧栏大脑）消费。内置 Agent 循环（`plugins/agent_loop.py`）已删除——侧栏聊天经 `libraries/dsh_bridge.py` 转发 vendored `vendor/dsh-ne/` headless 子进程，经 MCP 驱动同一工具面。
 
-**共享工具注册表 `agent_tools.py`（42 个，MCP 面 40）**：
+**共享工具注册表 `agent_tools.py`（40 个）**：
 - 单一工具来源 `TOOL_REGISTRY = [{name, description, input_schema, func}]`，schema 用 `inspect.signature` 自动生成。复用 `ctx` 单例——Web 进程内与 UI 共享同一状态；MCP 独立进程各自一份，经 `books/` 文件协调。
-- 覆盖「创建→上架」全链路：只读/建书（`list_books`/`get_book_state`/`get_storyline`/`borrow_preview`/`query_*`）→ 规划（`save_basic_info`/`generate_core_conflict`/`generate_factions`/`generate_characters`/`generate_rest_world`/`generate_world`/`world_candidates`/`confirm_world`）→ 大纲（`generate_outlines`/`generate_full_outline`/`confirm_outlines`/`fill_plots`/`fill_gags`/`outline_agent`/`extend_outline`/`outline_material_candidates`）→ 写作（`write_next_bridge`/`write_chapter`/`generate_book_meta`/`tag_punch_points`/`diagnose_retention`）→ 上架（`publish_check`/`publish_book`/`mark_finished`/`export_book`）→ 审查/去AI（`review_text`/`deai_text`）→ 书管理（`delete_book`，web-only 默认拒绝）→ 导航/向导（`navigate`/`drive_ui`，both 面写意图队列）。
+- 覆盖「创建→上架」全链路：只读/建书（`list_books`/`get_book_state`/`get_storyline`/`borrow_preview`/`query_*`）→ 规划（`save_basic_info`/`generate_core_conflict`/`generate_factions`/`generate_characters`/`generate_rest_world`/`generate_world`/`world_candidates`/`confirm_world`）→ 大纲（`generate_outlines`/`generate_full_outline`/`confirm_outlines`/`fill_plots`/`fill_gags`/`outline_agent`/`extend_outline`/`outline_material_candidates`）→ 写作（`write_next_bridge`/`write_chapter`/`generate_book_meta`/`tag_punch_points`/`diagnose_retention`）→ 上架（`publish_check`/`publish_book`/`mark_finished`/`export_book`）→ 审查/去AI（`review_text`/`deai_text`）→ 导航/向导（`navigate`/`drive_ui` 写意图队列）。护栏：`create_book`/`delete_book` 工具不存在（建书走系统向导、删书走书库页手动）。
 - 工具排序把 `navigate`/`drive_ui` 前置（flash 对列表前部工具更敏感，保证"打开X页"正确触发导航）。
 
 **右侧栏 Agent 聊天面板**：
@@ -622,7 +622,7 @@ python test_chapters.py / test_reader.py
 ### 13.2 远期（项目规划 Phase 4/5）
 
 - **Phase 4 质量体系**：全书优化诊断管线（reconcile.py 已删，需重建或放弃）、段落级修订 + diff 追踪、设定协调（改设定后自动调和章节）、审查规则库扩充（当前 reviewer 5 项）。
-- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（已落地 §8.5：右侧栏聊天面板 + 共享 42 工具（MCP 面 40）+ dsh-ne 驱动 + navigate 意图桥；服务端持久记忆/自动多步编排仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
+- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（已落地 §8.5：右侧栏聊天面板 + 共享 40 工具 + dsh-ne 驱动 + navigate 意图桥；服务端持久记忆/自动多步编排仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
 
 ### 13.3 文档回写清单
 
