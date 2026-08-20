@@ -314,6 +314,7 @@ def get_book_detail(book_id: str) -> dict:
         "world_building": (bi or {}).get("world_building"),
         "tone": (bi or {}).get("tone"),
         "pov": (bi or {}).get("pov"),
+        "outline_picks": (bi or {}).get("_outline_picks"),
         "phase": tl.phase if tl else "",
         "outlines": [{"id": o.id, "name": o.name}
                      for o in (tl.outlines or [])][:10] if tl else [],
@@ -515,6 +516,12 @@ def generate_full_outline(book_id: str, picks: dict = None) -> dict:
     tl = _require_tl(book_id)
     llm = _require_llm()
     profile = _profile_for(tl)
+
+    # 向导步 3 分阶段构建②选定的开篇大纲/桥段（_outline_picks）→ picks 未传时自动消费
+    if picks is None:
+        saved = (tl.basic_info or {}).get("_outline_picks")
+        if isinstance(saved, dict) and (saved.get("templates") or saved.get("plots")):
+            picks = saved
 
     from libraries.outline_generator import OutlineGenerator
     from libraries.prompt_harness import PromptHarness
@@ -723,11 +730,14 @@ def world_candidates(book_id: str = "", idea: str = "", genre: str = "",
 
 def generate_characters(idea: str, genre: str = "", sub_genre: str = "",
                         tags: list = None, title: str = "",
-                        archetype_ids: list = None) -> dict:
+                        archetype_ids: list = None,
+                        core_conflict: str = "", factions: list = None,
+                        outline_preview: str = "") -> dict:
     """生成角色候选（无书，建书向导步 3 用）：主角 + 配角，供 drive_ui(set_characters) 推给页面。
 
-    原型选择：archetype_ids 非空则按 id 取；否则按 tags[0]→genre→启用原型回退（照旧
-    /api/world-builder/characters 端点逻辑）。返回 {"protagonists": [...], "supporting_cast": [...]}。
+    分阶段构建④可带已定核心矛盾/势力/开篇大纲桥段上下文（core_conflict/factions/outline_preview），
+    让角色与之自洽。原型选择：archetype_ids 非空则按 id 取；否则按 tags[0]→genre→启用原型回退
+    （照旧 /api/world-builder/characters 端点逻辑）。返回 {"protagonists": [...], "supporting_cast": [...]}。
     """
     llm = _require_llm()
     from libraries.world_builder import WorldBuildingGenerator
@@ -745,10 +755,92 @@ def generate_characters(idea: str, genre: str = "", sub_genre: str = "",
         archetypes = [a.to_dict() for a in char_lib.archetypes if getattr(a, "enabled", True)][:10]
     result = gen.generate_characters(
         idea=idea or "", genre=genre, sub_genre=sub_genre,
-        tags=list(tags or []), title=title or "", archetypes=archetypes)
+        tags=list(tags or []), title=title or "", archetypes=archetypes,
+        core_conflict=core_conflict or "", factions=list(factions or []),
+        outline_preview=outline_preview or "")
     if not result:
         raise RuntimeError("角色候选生成失败，请重试")
     return result
+
+def generate_core_conflict(idea: str, world_brief: str = "", tags: list = None,
+                           genre: str = "", sub_genre: str = "",
+                           pen_name: str = "") -> dict:
+    """分阶段构建①（无书）：从一句话设定+题材标签推导故事主线核心矛盾。
+
+    返回 {"core_conflict", "genre"}（genre 供②按大纲库查模板/桥段）。
+    """
+    llm = _require_llm()
+    from libraries.world_builder import WorldBuildingGenerator
+    from libraries.prompt_harness import PromptHarness
+    from libraries.storyline import BookStoryline
+    profile = None
+    if pen_name:
+        profile = _profile_for(BookStoryline(pen_name=pen_name))
+    harness = PromptHarness(profile=profile)
+    gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(list(tags or []))
+    conflict = gen.generate_core_conflict(
+        genre=genre, sub_genre=sub_genre, idea=world_brief or idea or "",
+        tags=list(tags or []), pen_name=pen_name or "")
+    if not conflict:
+        raise RuntimeError("核心矛盾生成失败，请重试")
+    return {"core_conflict": conflict, "genre": genre}
+
+
+def generate_factions(idea: str, world_brief: str = "", core_conflict: str = "",
+                      tags: list = None, genre: str = "", sub_genre: str = "") -> dict:
+    """分阶段构建③（无书）：从一句话设定+核心矛盾发散世界里的势力派系。
+
+    返回 {"factions": [{"name", "stance", "desc"}]}。
+    """
+    llm = _require_llm()
+    from libraries.world_builder import WorldBuildingGenerator
+    from libraries.prompt_harness import PromptHarness
+    harness = PromptHarness()
+    gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(list(tags or []))
+    factions = gen.generate_factions(
+        genre=genre, sub_genre=sub_genre, idea=world_brief or idea or "",
+        core_conflict=core_conflict or "", tags=list(tags or []))
+    if not factions:
+        raise RuntimeError("势力生成失败，请重试")
+    return {"factions": factions}
+
+
+def generate_rest_world(idea: str, world_brief: str = "", core_conflict: str = "",
+                        factions: list = None, outline_preview: str = "",
+                        tags: list = None, genre: str = "", sub_genre: str = "",
+                        pen_name: str = "") -> dict:
+    """分阶段构建⑤（无书）：大纲确定后补全其余世界观维度 + 基调，保留 core_conflict/factions。
+
+    返回 {"world_building": {era, power_system, geography, culture, history,
+    social_structure, rules, world_summary}, "tone", "target_audience", "pov", "era_language"}。
+    """
+    llm = _require_llm()
+    from libraries.world_builder import WorldBuildingGenerator
+    from libraries.prompt_harness import PromptHarness
+    from libraries.storyline import BookStoryline
+    profile = None
+    if pen_name:
+        profile = _profile_for(BookStoryline(pen_name=pen_name))
+    harness = PromptHarness(profile=profile)
+    gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(list(tags or []))
+    result = gen.generate_rest_world(
+        genre=genre, sub_genre=sub_genre, idea=idea or "",
+        world_brief=world_brief or "", core_conflict=core_conflict or "",
+        factions=[f for f in (factions or []) if isinstance(f, dict)],
+        outline_preview=outline_preview or "", tags=list(tags or []), pen_name=pen_name or "")
+    if not result.get("world_building"):
+        raise RuntimeError("世界观维度补全失败，请重试")
+    return result
+
 
 def confirm_world(book_id: str) -> dict:
     """确认世界观设定：basic_info 够充实则打标 _world_generated（后续大纲跳过 Phase 1 分析）。"""
@@ -968,6 +1060,8 @@ _WIZARD_CMDS = {
     "set_tags": ("tags",),
     "set_characters": ("characters",),   # 角色列表整体替换（agent 生成后推送）
     "pick_candidate": ("idx",),   # 可带 candidate={title, world_brief, one_liner}
+    "set_world": ("world_building",),   # 分阶段内容构建：部分世界观 dict 合并进步 3 表单
+    "set_picks": ("templates",),   # 开篇大纲/桥段选择（templates 或 plots 任一非空，drive_ui 特判）
     "next": (), "prev": (),
     "load_candidates": (), "skip_candidates": (),
     "fill_world": (),   # 步骤③世界观重新补全（Agent 兜底/重试）
@@ -988,9 +1082,13 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
     if cmd not in _WIZARD_CMDS:
         raise RuntimeError(f"未知向导命令：{cmd}，可选 {sorted(_WIZARD_CMDS)}")
     args = dict(args or {})
-    for k in _WIZARD_CMDS[cmd]:
-        if not args.get(k):
-            raise RuntimeError(f"命令 {cmd} 缺少必填参数：{k}")
+    if cmd == "set_picks":   # templates 或 plots 任一非空即可（[] 会被通用校验误判为缺参）
+        if not (args.get("templates") or args.get("plots")):
+            raise RuntimeError(f"命令 {cmd} 缺少必填参数：templates 或 plots")
+    else:
+        for k in _WIZARD_CMDS[cmd]:
+            if not args.get(k):
+                raise RuntimeError(f"命令 {cmd} 缺少必填参数：{k}")
     from libraries.nav_intent import push_ui_command
     push_ui_command(cmd, args)
     return {"__ui_command__": cmd, "cmd": cmd}
@@ -1085,6 +1183,7 @@ def _build_registry():
         extend_outline, confirm_outlines, fill_plots, fill_gags, outline_agent,
         outline_material_candidates,
         generate_world, world_candidates, generate_characters, confirm_world,
+        generate_core_conflict, generate_factions, generate_rest_world,
         # 写作 / 元数据
         write_next_bridge, write_chapter, generate_book_meta,
         # 上架 / 审查 / 去AI / 书管理 / 质量分析
