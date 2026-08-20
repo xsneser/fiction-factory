@@ -87,10 +87,7 @@
             </div>
         </fieldset>
 
-        <div class="btn-row">
-            <button type="button" class="btn-secondary" onclick="saveWorld()">💾 保存设定</button>
-            <button type="button" class="btn-primary" onclick="confirmWorld()">✅ 确认并进入大纲生成</button>
-        </div>
+        <div class="form-row hint">✍️ 修改自动保存（编辑后约 1 秒落盘）。「确认并进入大纲生成」已移除——可让侧栏 Agent 继续生成大纲。</div>
     </form>
 </div>
 
@@ -154,8 +151,8 @@ function appendFactionRow(f) {
     if (wrap) wrap.appendChild(row);
     return row;
 }
-function addFactionRow() { appendFactionRow({}); }
-function removeFactionRow(btn) { btn.closest('.faction-row').remove(); }
+function addFactionRow() { appendFactionRow({}); scheduleAutoSave(); }
+function removeFactionRow(btn) { btn.closest('.faction-row').remove(); scheduleAutoSave(); }
 function renderFactions(fs) {
     var wrap = $('wb-factions');
     if (!wrap) return;
@@ -295,11 +292,13 @@ function addCharCard() {
     }
     appendCharCard(emptyChar(), target);
     refreshGroupCounts();
+    scheduleAutoSave();
 }
 function removeCharCard(btn) {
     if (!confirm('删除这条人物？')) return;
     btn.closest('.char-card').remove();
     refreshGroupCounts();
+    scheduleAutoSave();
 }
 function applyArchetype(btn) {
     var card = btn.closest('.char-card');
@@ -311,6 +310,7 @@ function applyArchetype(btn) {
     card.querySelector('[data-f="catchphrase"]').value = (a.catchphrases && a.catchphrases[0]) || '';
     card.querySelector('[data-f="brief"]').value = a.description || '';
     showToast('已套用原型「' + a.name + '」', 'info');
+    scheduleAutoSave();
 }
 function appendRelRow(wrap, name, relation) {
     var row = document.createElement('div');
@@ -322,7 +322,7 @@ function appendRelRow(wrap, name, relation) {
     wrap.appendChild(row);
 }
 function addRelRow(btn) { appendRelRow(btn.closest('.char-card').querySelector('.rel-rows')); }
-function removeRelRow(btn) { btn.closest('.rel-row').remove(); }
+function removeRelRow(btn) { btn.closest('.rel-row').remove(); scheduleAutoSave(); }
 
 function collectCharCards() {
     var out = [];
@@ -471,47 +471,34 @@ function pickCandidate(idx) {
     statusShow('已选中候选：' + c.one_liner + '。点「🚀 生成世界观」展开。');
 }
 
-/* —— 保存 / 确认 —— */
-function saveWorld() {
+/* —— 自动保存（修改后防抖落盘，替代原「保存设定 / 确认并进入大纲生成」按钮） —— */
+var _saveTimer = null;
+function scheduleAutoSave() {
+    if (_saveTimer) clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(doAutoSave, 800);
+}
+function doAutoSave() {
     var payload = formToBi();
     if (!payload) return;
+    statusShow('⏳ 自动保存中…', '');
     fetch('/api/storyline/' + BOOK_ID + '/save-basic-info', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
     }).then(function(r){ return r.json(); }).then(function(data) {
-        statusShow(data.ok ? '✅ 设定已保存' : '❌ 保存失败: ' + (data.error || ''), data.ok ? '' : 'err');
-    }).catch(function(err){ statusShow('❌ 保存失败: ' + err.message, 'err'); });
-}
-function confirmWorld() {
-    var payload = formToBi();
-    if (!payload) return;
-    // 书名为空或 (待定) 时先自动生成（LLM 失败不阻塞），再保存设定并确认进入大纲生成
-    function ensureTitle() {
-        var t = (BOOK_TITLE || '').trim();
-        if (t && t !== '(待定)') return Promise.resolve(true);
-        return fetch('/api/storyline/' + BOOK_ID + '/generate-title', {method: 'POST'})
-            .then(function(r){ return r.json(); })
-            .then(function(d){
-                if (d.ok) { BOOK_TITLE = d.chosen || ''; payload.book_title = d.chosen || ''; }
-                return true;
-            })
-            .catch(function(){ return false; });
-    }
-    ensureTitle()
-        .then(function(){ return fetch('/api/storyline/' + BOOK_ID + '/save-basic-info', {
-            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
-        }); })
-        .then(function(r){ return r.json(); })
-        .then(function(){ return fetch('/api/world-builder/' + BOOK_ID + '/confirm', {method: 'POST'}); })
-        .then(function(r){ return r.json(); })
-        .then(function(data) {
-            if (data.ok && data.redirect) { window.location.href = data.redirect; }
-            else { statusShow('❌ ' + (data.error || '确认失败'), 'err'); }
-        })
-        .catch(function(err){ statusShow('❌ 确认失败: ' + err.message, 'err'); });
+        if (data.ok) statusShow('✅ 已自动保存 ' + new Date().toLocaleTimeString(), '');
+        else statusShow('❌ 自动保存失败: ' + (data.error || ''), 'err');
+    }).catch(function(err){ statusShow('❌ 自动保存失败: ' + err.message, 'err'); });
 }
 
 /* 初始化：先取角色原型库，再渲染已有设定到表单（依赖包含页定义 __BI__ / __BOOK_TITLE__） */
 var BOOK_TITLE = __BOOK_TITLE__ || '';
+// 自动保存：委托监听 #world-form 内所有 input/select/textarea 修改（含动态人物卡/势力行/关系行）；
+// 程序化赋值（biToForm）不触发 input，故初始渲染不会误触发保存
+document.addEventListener('input', function(e) {
+    if (e.target && e.target.closest && e.target.closest('#world-form')) scheduleAutoSave();
+});
+document.addEventListener('change', function(e) {
+    if (e.target && e.target.closest && e.target.closest('#world-form')) scheduleAutoSave();
+});
 fetch('/api/characters')
     .then(function(r){ return r.json(); })
     .then(function(list){ __ARCHETYPES__ = list || []; biToForm(__BI__ || {}); })
