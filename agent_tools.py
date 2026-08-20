@@ -970,6 +970,7 @@ _WIZARD_CMDS = {
     "pick_candidate": ("idx",),   # 可带 candidate={title, world_brief, one_liner}
     "next": (), "prev": (),
     "load_candidates": (), "skip_candidates": (),
+    "fill_world": (),   # 步骤③世界观重新补全（Agent 兜底/重试）
     "submit": (),
 }
 
