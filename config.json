@@ -1,6 +1,6 @@
 {
   "agent": {
-    "driver": "builtin",
+    "driver": "dsh",
     "dsh": {
       "profile": "headless",
       "binary": "dsh",
