@@ -1,7 +1,7 @@
 # NovelEngine × dsh Headless 侧车
 
 用 **DeepSeek Harness(`@deepseek-ai/dsh`,Node 侧车)** 作为现成开源 agent,经 MCP 客户端驱动 NovelEngine。
-Spike 结论见 `docs/agent-sidecar-spike-2026-08-20.md`。
+Spike 结论与 dsh 现状见 `docs/架构总览.md` §七(3 摩擦点;spike 文档已删)。
 
 > ⚠️ **状态**:spike 已验证「桥接 + 建书向导」可行,但暴露长工具超时 / 建书保真度差 / 自主循环失控三个摩擦点。**本目录为复现模板与交付物,非生产启用。**
 
