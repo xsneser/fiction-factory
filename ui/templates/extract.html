@@ -84,7 +84,7 @@ function loadNovelsForExtract(mode) {
                 html += '<div class="card" style="margin-bottom:12px">';
                 html += '<div style="display:flex;justify-content:space-between;align-items:center">';
                 html += '<div><strong>' + n.title + '</strong> <span class="tag">' + (n.author||'') + '</span></div>';
-                html += '<span style="font-size:12px;color:#8b949e">' + (n.saved_chapters||0) + '/' + (n.chapter_count||'?') + '章</span>';
+                html += '<span style="font-size:12px;color:#8b949e">已写 ' + (n.saved_chapters||0) + ' 章</span>';
                 html += '</div>';
                 html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + (n.platform||'') + ' · 收录: ' + (n.downloaded_at||'') + '</p>';
                 html += '<div style="margin-top:8px;display:flex;gap:8px">';

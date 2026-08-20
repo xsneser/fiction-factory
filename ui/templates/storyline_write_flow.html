@@ -19,7 +19,7 @@
     genre=state.genre,
     sub_genre=state.sub_genre or '',
     platform=state.platform,
-    progress='<span id="prog-ch">' ~ state.current_chapter ~ '</span> / <span id="prog-total">' ~ state.total_chapters ~ '</span> 章',
+    progress='第 <span id="prog-ch">' ~ state.current_chapter ~ '</span> 章',
     status_html=status_badge(book.status) if book else status_badge('writing'),
     extra='<span>每章：<strong>' ~ storyline.words_per_chapter ~ '字</strong></span>'
         ~ '<span>本章：<strong id="chp-words">0</strong>/<span id="chp-target">' ~ storyline.words_per_chapter ~ '</span>字</span>'

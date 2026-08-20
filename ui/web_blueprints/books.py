@@ -49,10 +49,55 @@ def next_step_for(book, has_storyline: bool = False,
 
 
 def _book_sig(bid: str):
-    """books/{id} 三份关键文件的 mtime，用于判断行级缓存是否仍有效。"""
+    """books/{id} 关键文件 + cost.json + 章节文件 mtime，用于判断行级缓存是否仍有效。
+
+    chapters 目录取全部章节文件的最大 mtime（新增/修改章节都会使字数/花费变化）。
+    """
     paths = (f"books/{bid}/book.json", f"books/{bid}/storyline.json",
-             f"books/{bid}/outline/outline.json")
-    return tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in paths)
+             f"books/{bid}/outline/outline.json", f"books/{bid}/cost.json")
+    base = tuple(os.path.getmtime(p) if os.path.exists(p) else 0 for p in paths)
+    cdir = f"books/{bid}/chapters"
+    ctime = 0
+    if os.path.isdir(cdir):
+        times = [os.path.getmtime(os.path.join(cdir, f))
+                 for f in os.listdir(cdir) if f.endswith(".json")]
+        if times:
+            ctime = max(times)
+    return base + (ctime,)
+
+
+def _book_word_count(bid: str) -> int:
+    """该书已写章节总字数：遍历 chapters/*.json 累加 word_count，缺字段时按正文算。"""
+    cdir = os.path.join("books", bid, "chapters")
+    if not os.path.isdir(cdir):
+        return 0
+    from core.text_utils import count_prose_units
+    total = 0
+    for f in os.listdir(cdir):
+        if not f.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(cdir, f), encoding="utf-8") as fp:
+                ch = json.load(fp)
+            wc = int(ch.get("word_count") or 0)
+            if not wc:
+                wc = count_prose_units(ch.get("content") or "")
+            total += wc
+        except Exception:
+            continue
+    return total
+
+
+def _book_cost_spent(bid: str):
+    """该书已花费（元，CostTracker 持久化 books/<id>/cost.json）；无记录返回 None。"""
+    cost_path = os.path.join("books", bid, "cost.json")
+    if not os.path.exists(cost_path):
+        return None
+    try:
+        from libraries.cost_tracker import CostTracker
+        return CostTracker.load(cost_path).spent or 0.0
+    except Exception:
+        return None
 
 
 def _book_rows():
@@ -81,6 +126,8 @@ def _book_rows():
             "next": next_step_for(b, has_storyline=sl is not None,
                                   world_done=world_done,
                                   outlines_count=len(sl.outlines) if sl else 0),
+            "word_count": _book_word_count(b.book_id),
+            "cost_spent": _book_cost_spent(b.book_id),
         }
         _book_rows_cache[b.book_id] = (sig, row)
         rows.append(row)
