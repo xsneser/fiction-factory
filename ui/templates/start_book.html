@@ -200,7 +200,7 @@
 <script src="/static/js/story_line.js"></script>
 <script>
 var WZ = {
-    cur: 1, bookId: '', creating: false,
+    cur: 1, bookId: '', creating: false, _picked: false,
     state: { idea: '', pen_name: '', tags: [], borrow: { source_book_id: '', tweak: '' },
              genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
              storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
@@ -245,12 +245,18 @@ var WZ = {
 
     validate: function(n) {
         if (n === 1) return this.el('wz-idea').value.trim() && this.el('wz-pen').value;
-        return true;   // ② 候选可空；① 标签可选，流派后端从标签推导
+        if (n === 2) return !!this._picked;   // 「已挑选完毕」需已选中候选方向；未选请走「跳过，手动设定」
+        return true;   // ① 标签可选，流派后端从标签推导
     },
 
     next: function() {
         if (!this.validate(this.cur)) {
-            if (typeof showToast === 'function') showToast('请完成本步必填项（一句话设定 + 笔名）', 'error');
+            if (typeof showToast === 'function') {
+                var msg = this.cur === 2
+                    ? '请先挑一个候选方向，再点「已挑选完毕」；不想选就点「跳过，手动设定」'
+                    : '请完成本步必填项（一句话设定 + 笔名）';
+                showToast(msg, 'error');
+            }
             return;
         }
         this.show(this.cur + 1);
@@ -290,6 +296,7 @@ var WZ = {
             if (typeof showToast === 'function') showToast('请先完成本步必填项（一句话设定 + 笔名）', 'error');
             return;
         }
+        this._picked = false;   // 新一批候选未选，需重新点选后才可「已挑选完毕」
         var idea = this.el('wz-idea').value.trim();
         var box = this.el('wz-candidate-box');
         box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成候选…</div>';
@@ -330,10 +337,12 @@ var WZ = {
         }
         var cards = document.querySelectorAll('#wz-candidate-box .wz-candidate-card');
         for (var i = 0; i < cards.length; i++) cards[i].classList.toggle('picked', i === idx);
+        this._picked = true;   // 已选中方向，「已挑选完毕」校验放行
         if (typeof showToast === 'function') showToast('已选中：' + c.title + '，下一步可微调', 'success');
     },
     skipCandidates: function() {
         this.el('wz-candidate-box').innerHTML = '';
+        this._picked = false;   // 跳过=未选方向，回步 2 时「已挑选完毕」不放行
         if (typeof showToast === 'function') showToast('已跳过候选，直接进入微调设定', 'success');
         this.show(3);
     },
@@ -567,6 +576,7 @@ window.onnecommand = function(e) {
         var cards = document.querySelectorAll('#wz-candidate-box .wz-candidate-card');
         for (var i = 0; i < cards.length; i++) cards[i].classList.remove('picked');
         if (typeof args.idx === 'number' && cards[args.idx]) cards[args.idx].classList.add('picked');
+        WZ._picked = true;   // MCP 内嵌候选也算已选，「已挑选完毕」放行
         if (typeof showToast === 'function') showToast('已选中：' + (cand.title || ''), 'success');
     } else if (cmd === 'set_characters') {
         // 角色列表整体替换（agent 生成后推送）；复用 addCharRow 建行 + collect 收进 state
