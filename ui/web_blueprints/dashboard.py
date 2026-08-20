@@ -92,10 +92,30 @@ def start_new_book():
                 "age": 0, "death_year": 0, "archetype_id": "", "relations": [],
             }]
 
+        # 世界观补全（向导③ JSON）：客户端 world_building 为 12 维 dict；form/旧入口回退 description+tags
+        wb = data.get("world_building") if is_json else None
+        if not isinstance(wb, dict):
+            wb = {}
+        wb.setdefault("description", description)
+        wb.setdefault("tags", tags)
+        from libraries.storyline import DEFAULT_WORLD_BUILDING
+        for k, v in DEFAULT_WORLD_BUILDING.items():
+            if k not in wb:
+                wb[k] = list(v) if isinstance(v, list) else v
+
         basic_info = {
             "characters": characters,
-            "world_building": {"description": description, "tags": tags},
+            "world_building": wb,
+            "tone": (data.get("tone") if is_json else "") or "",
+            "target_audience": (data.get("target_audience") if is_json else "") or "",
+            "pov": (data.get("pov") if is_json else "") or "第三人称",
+            "era_language": (data.get("era_language") if is_json else "") or "",
         }
+        # 世界观已在向导③补全且充实 → 打 _world_generated，让 generate_full_outline 跳过 Phase 1 故事分析
+        if is_json:
+            from libraries.outline_generator import basic_info_is_rich
+            if basic_info_is_rich(basic_info):
+                basic_info["_world_generated"] = True
         # 故事线想法：不再立即生成大纲，存入 basic_info 供「一键生成完整大纲」使用
         storyline_hint = (src.get("storyline_hint", "") or "").strip()
         if storyline_hint:

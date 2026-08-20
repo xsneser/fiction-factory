@@ -1,7 +1,10 @@
 """世界观设定卡（启动新书前置 v3）— 蓝图（自 ui/web_ui.py 按域拆分）。
 
-启动新书改为「设定先行」：一句话设定 → 世界观设定卡（生成/示例候选/从书借鉴/逐项编辑）
-→ 确认 → 进现有大纲生成（OutlineGenerator 此时 skip Phase 1 LLM 分析）。
+启动新书「设定先行」三条无书路径（建书向导内触发）：
+- 候选：`POST /api/world-builder/candidates`（步 2 挑世界观方向，tags 硬约束）
+- 世界观补全：`POST /api/world-builder/world-complete`（步 3 自动补全 12 维 + 基调）
+- 从书借鉴：`POST /api/world-builder/borrow-preview`（无书别名预览 seed）
+另有带书路径：生成（SSE）/ 确认 / 逐项编辑（书详情页设定卡）。
 """
 import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -190,6 +193,65 @@ def api_world_candidates_nobook():
     if not candidates:
         return jsonify({"ok": False, "error": "示例候选生成失败，请重试"}), 500
     return jsonify({"ok": True, "candidates": candidates})
+
+
+# 无 book_id 别名：新书启动向导③世界观补全（进入步 3 自动触发；generate() 本就不读目标书）
+@bp.route("/api/world-builder/world-complete", methods=["POST"])
+def api_world_complete_nobook():
+    """世界观补全（无目标书版本，供启动向导③）：AI 从 idea+题材标签+候选方向
+    补全 world_building 12 维 + 基调（tone/target_audience/pov/era_language）。
+
+    body {idea, world_brief?, tags?, title?, genre?, sub_genre?, pen_name?}；
+    种子优先 world_brief（候选 120-200 字简述），空则用 idea；genre 空时由 derive_genre(tags) 推导。
+    返回 basic_info（world_building 12 键 + 基调；characters 由 LLM 推导，向导忽略——角色仍由 Agent set_characters 推送）。
+    """
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    world_brief = (body.get("world_brief") or "").strip()
+    title = (body.get("title") or "").strip()
+    pen_name = (body.get("pen_name") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    sub_genre = (body.get("sub_genre") or "").strip()
+    raw_tags = body.get("tags") or []
+    tags = [str(t).strip() for t in raw_tags if isinstance(t, str) and t.strip()]
+    seed = world_brief or idea
+    if not seed:
+        return jsonify({"ok": False, "error": "缺少一句话设定或世界观简述"}), 400
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置，请先在设置页配置 API"}), 500
+
+    from libraries.world_builder import WorldBuildingGenerator
+    from libraries.prompt_harness import PromptHarness
+    from libraries.storyline import BookStoryline
+    tl = BookStoryline(genre=genre, sub_genre=sub_genre, pen_name=pen_name,
+                       platform="fanqie",
+                       basic_info={"characters": [],
+                                   "world_building": {"description": seed, "tags": tags},
+                                   "tone": "", "target_audience": "",
+                                   "pov": "第三人称", "era_language": ""})
+    profile = _profile_for(tl)   # 笔名风格档案（无则 None，生成降级为无风格约束）
+    harness = PromptHarness(storyline=tl, profile=profile)   # 无书：storyline=新鲜种子 tl，_tags_block 注入标签硬约束
+    gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
+    done_basic_info = None
+    try:
+        for event_type, message, data_dict in gen.generate(
+                genre=genre, sub_genre=sub_genre, idea=seed,
+                pen_name=pen_name, platform="fanqie", storyline=tl):
+            if event_type == "done":
+                done_basic_info = data_dict.get("basic_info") or tl.basic_info
+            elif event_type == "error":
+                return jsonify({"ok": False, "error": message or "世界观生成失败"}), 500
+    except Exception as e:
+        import traceback
+        return jsonify({"ok": False, "error": f"世界观生成失败：{e}",
+                        "traceback": traceback.format_exc()}), 500
+    if not done_basic_info:
+        return jsonify({"ok": False, "error": "世界观生成失败"}), 500
+    return jsonify({"ok": True, "basic_info": done_basic_info})
 
 
 # ═══════════════════════════════════════════
