@@ -5,12 +5,12 @@
 {% endblock %}
 {% block content %}
 <h1>🔰 启动新书</h1>
-<p class="subtitle">5 步开书：一句话设定（含题材标签）→ AI 候选挑世界观 → 微调设定 → 生成大纲 → 前三章撰写。</p>
+<p class="subtitle">5 步开书：一句话设定（含题材标签）→ 挑选世界观 → 世界观补全 → 生成大纲 → 前三章撰写。</p>
 
 <ol class="wz-steps" id="wz-steps">
     <li class="wz-step active" data-step="1"><span class="wz-num">1</span>一句话设定</li>
-    <li class="wz-step" data-step="2"><span class="wz-num">2</span>AI候选挑世界观</li>
-    <li class="wz-step" data-step="3"><span class="wz-num">3</span>微调设定</li>
+    <li class="wz-step" data-step="2"><span class="wz-num">2</span>挑选世界观</li>
+    <li class="wz-step" data-step="3"><span class="wz-num">3</span>世界观补全</li>
     <li class="wz-step" data-step="4"><span class="wz-num">4</span>生成大纲</li>
     <li class="wz-step" data-step="5"><span class="wz-num">5</span>前三章撰写</li>
 </ol>
@@ -78,17 +78,84 @@
         </fieldset>
     </section>
 
-    {# ─── ③ 微调设定：世界观（来自②，可编辑）+ 主角候选（AI 新内容） ─── #}
+    {# ─── ③ 世界观补全：AI 自动补全 12 维 + 基调（可编辑）+ 角色候选 ─── #}
     <section class="wz-panel" id="panel-3" style="display:none">
         <fieldset>
-            <legend>🌍 世界观（来自第②步，可编辑）</legend>
+            <legend>🌍 世界观（AI 自动补全，可编辑）</legend>
             <div class="form-row half">
                 <div><label>书名</label><input id="wz-title" placeholder="书名（第②步选择，可改）"></div>
                 <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
             </div>
+            <div class="form-row hint" id="wz-world-status">进入本步时已由 AI 自动补全，可手动微调。</div>
             <div class="form-row">
-                <label>世界观简述（第②步选中方向，可编辑）</label>
-                <textarea id="wz-world-desc3" rows="3"></textarea>
+                <label>一句话设定 description（世界种子，可改）</label>
+                <textarea id="wz-wb-description" rows="2"></textarea>
+            </div>
+            <div class="form-row">
+                <label>设定概述 world_summary（一段话整体设定）</label>
+                <textarea id="wz-wb-world_summary" rows="3"></textarea>
+            </div>
+            <div class="form-row half">
+                <div><label>时代 era（含年份/纪元）</label><input id="wz-wb-era"></div>
+                <div><label>力量体系 power_system（数值写死）</label><input id="wz-wb-power_system"></div>
+            </div>
+            <div class="form-row half">
+                <div><label>地理 geography</label><input id="wz-wb-geography"></div>
+                <div><label>文化 culture</label><input id="wz-wb-culture"></div>
+            </div>
+            <div class="form-row half">
+                <div><label>历史 history</label><input id="wz-wb-history"></div>
+                <div><label>社会结构 social_structure</label><input id="wz-wb-social_structure"></div>
+            </div>
+            <div class="form-row">
+                <label>核心矛盾 core_conflict（驱动全书的冲突）</label>
+                <input id="wz-wb-core_conflict">
+            </div>
+            <div class="form-row half">
+                <div>
+                    <label>势力 factions（用「名:立场」多条，或逗号分隔）</label>
+                    <textarea id="wz-wb-factions" rows="3"></textarea>
+                </div>
+                <div>
+                    <label>世界规则 rules（每行一条，金手指数值写死）</label>
+                    <textarea id="wz-wb-rules" rows="3"></textarea>
+                </div>
+            </div>
+            <div class="form-row hint">
+                <button type="button" class="btn-secondary" id="wz-refill" onclick="WZ.refillWorld()">✨ 重新补全</button>
+                <span style="margin-left:8px">可直接编辑；点「重新补全」重生成。</span>
+            </div>
+        </fieldset>
+        <fieldset>
+            <legend>🎭 基调</legend>
+            <div class="form-row half">
+                <div>
+                    <label>基调 tone</label>
+                    <select id="wz-tone">
+                        <option value="">（留空由 AI）</option>
+                        <option>轻松</option><option>沉重</option><option>热血</option><option>幽默</option>
+                    </select>
+                </div>
+                <div>
+                    <label>目标读者</label>
+                    <select id="wz-target_audience">
+                        <option value="">（留空由 AI）</option>
+                        <option>男频</option><option>女频</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row half">
+                <div>
+                    <label>视角 pov</label>
+                    <select id="wz-pov">
+                        <option value="">（留空由 AI）</option>
+                        <option>第一人称</option><option>第三人称</option>
+                    </select>
+                </div>
+                <div>
+                    <label>时代语言 era_language</label>
+                    <input id="wz-era_language" placeholder="如：禁晚于2030年的网络新词">
+                </div>
             </div>
         </fieldset>
         <fieldset>
@@ -201,11 +268,13 @@
 <script>
 var WZ = {
     cur: 1, bookId: '', creating: false, _picked: false,
+    _worldFilled: false, _worldFilling: false,
     state: { idea: '', pen_name: '', tags: [], borrow: { source_book_id: '', tweak: '' },
              genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
              storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
              protag_personality: '', protag_golden_finger: '',
-             opening_template_id: '', golden_finger_template_id: '', structure_template_id: '' },
+             opening_template_id: '', golden_finger_template_id: '', structure_template_id: '',
+             world_building: null, tone: '', target_audience: '', pov: '第三人称', era_language: '' },
 
     el: function(id) { return document.getElementById(id); },
 
@@ -230,15 +299,13 @@ var WZ = {
         this.el('wz-skip').style.display = (n === 2) ? 'inline-block' : 'none';   // 「跳过，手动设定」在步 2→3 之间
         this.el('wz-submit').style.display = (n === 3) ? 'inline-block' : 'none';
         if (this.bookId && n === 4) this.el('wz-prev').style.display = 'none';
-        // 步骤③ 世界观可编辑：预填书名（来自②选中候选）+ 世界观简述（只填②选中方向——
-        // 一句话设定已在步 1 的 #wz-idea，世界观简述本来就是由它发散来的，不重复拼）
-        if (n === 3) {
+        // 步骤③ 世界观补全：预填书名（来自②选中候选）；未补全时自动触发 AI 补全 12 维+基调
+        if (n === 3 && !this.bookId) {
             var titleEl = this.el('wz-title');
             if (titleEl && this.state.title) titleEl.value = this.state.title;
-            var desc3 = this.el('wz-world-desc3');
-            if (desc3 && !desc3.value) {
-                desc3.value = this.state.world_brief || '';
-            }
+            var ideaEl = this.el('wz-idea');
+            var hasSeed = this.state.world_brief || (ideaEl && ideaEl.value.trim());
+            if (!this._worldFilled && !this._worldFilling && hasSeed) this.fillWorld();
         }
         this.persist();   // 步骤切换即存草稿
     },
@@ -297,6 +364,7 @@ var WZ = {
             return;
         }
         this._picked = false;   // 新一批候选未选，需重新点选后才可「已挑选完毕」
+        this._worldFilled = false;   // 重生成候选 → 步 3 按新种子重新补全
         var idea = this.el('wz-idea').value.trim();
         var box = this.el('wz-candidate-box');
         box.innerHTML = '<div class="wz-borrow-preview">⏳ 生成候选…</div>';
@@ -338,11 +406,13 @@ var WZ = {
         var cards = document.querySelectorAll('#wz-candidate-box .wz-candidate-card');
         for (var i = 0; i < cards.length; i++) cards[i].classList.toggle('picked', i === idx);
         this._picked = true;   // 已选中方向，「已挑选完毕」校验放行
+        this._worldFilled = false;   // 新候选方向 → 步 3 按新种子重新补全
         if (typeof showToast === 'function') showToast('已选中：' + c.title + '，下一步可微调', 'success');
     },
     skipCandidates: function() {
         this.el('wz-candidate-box').innerHTML = '';
         this._picked = false;   // 跳过=未选方向，回步 2 时「已挑选完毕」不放行
+        this._worldFilled = false;   // 跳过 → 步 3 按一句话设定重新补全
         if (typeof showToast === 'function') showToast('已跳过候选，直接进入微调设定', 'success');
         this.show(3);
     },
@@ -375,9 +445,106 @@ var WZ = {
         list.appendChild(row);
     },
 
+    /* —— 世界观补全（步 3）：AI 自动填充 12 维 + 基调 —— */
+    worldIsFilled: function(wb) {
+        wb = wb || {};
+        var dims = ['era', 'power_system', 'factions', 'rules', 'geography', 'culture',
+                    'history', 'social_structure', 'core_conflict', 'world_summary'];
+        for (var i = 0; i < dims.length; i++) {
+            var v = wb[dims[i]];
+            if ((Array.isArray(v) && v.length) || (typeof v === 'string' && v.trim())) return true;
+        }
+        return false;
+    },
+    worldToForm: function(bi) {
+        bi = bi || {};
+        var wb = bi.world_building || {};
+        this.el('wz-wb-description').value = wb.description || '';
+        this.el('wz-wb-era').value = wb.era || '';
+        this.el('wz-wb-power_system').value = wb.power_system || '';
+        this.el('wz-wb-geography').value = wb.geography || '';
+        this.el('wz-wb-culture').value = wb.culture || '';
+        this.el('wz-wb-history').value = wb.history || '';
+        this.el('wz-wb-social_structure').value = wb.social_structure || '';
+        this.el('wz-wb-core_conflict').value = wb.core_conflict || '';
+        this.el('wz-wb-world_summary').value = wb.world_summary || '';
+        this.el('wz-wb-factions').value = (typeof factionLinesText === 'function')
+            ? factionLinesText(wb.factions)
+            : ((wb.factions || []).map(function(f) {
+                return (f && typeof f === 'object') ? (f.name + (f.stance ? ':' + f.stance : '')) : f;
+              }).join('\n'));
+        this.el('wz-wb-rules').value = (wb.rules || []).join('\n');
+        this.el('wz-tone').value = bi.tone || '';
+        this.el('wz-target_audience').value = bi.target_audience || '';
+        this.el('wz-pov').value = bi.pov || '';
+        this.el('wz-era_language').value = bi.era_language || '';
+    },
+    worldToBi: function() {
+        return {
+            description: this.el('wz-wb-description').value.trim(),
+            tags: Array.isArray(this.state.tags) ? this.state.tags : [],
+            era: this.el('wz-wb-era').value.trim(),
+            power_system: this.el('wz-wb-power_system').value.trim(),
+            geography: this.el('wz-wb-geography').value.trim(),
+            culture: this.el('wz-wb-culture').value.trim(),
+            history: this.el('wz-wb-history').value.trim(),
+            social_structure: this.el('wz-wb-social_structure').value.trim(),
+            core_conflict: this.el('wz-wb-core_conflict').value.trim(),
+            world_summary: this.el('wz-wb-world_summary').value.trim(),
+            factions: (typeof parseFactionLines === 'function') ? parseFactionLines(this.el('wz-wb-factions').value) : [],
+            rules: (typeof parseRuleLines === 'function') ? parseRuleLines(this.el('wz-wb-rules').value) : [],
+        };
+    },
+    fillWorld: function() {
+        if (this.bookId) return;
+        if (this._worldFilling) return;   // 防重入
+        var ideaEl = this.el('wz-idea');
+        if (!this._worldFilled && !(ideaEl && ideaEl.value.trim()) && !this.state.world_brief) return;   // 无种子不补
+        this._worldFilling = true;
+        this.collect();   // 同步 state.idea/tags/title/pen_name
+        var status = this.el('wz-world-status');
+        var sub = this.el('wz-submit'), rf = this.el('wz-refill');
+        if (status) { status.textContent = '⏳ AI 补全世界观中（约 30-60s）…'; }
+        if (sub) sub.disabled = true;
+        if (rf) rf.disabled = true;
+        var self = this;
+        fetch('/api/world-builder/world-complete', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                idea: this.state.idea || '',
+                world_brief: this.state.world_brief || '',
+                tags: this.state.tags || [],
+                title: this.state.title || '',
+                pen_name: this.state.pen_name || '',
+            })
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            if (!d.ok) throw new Error(d.error || '世界观补全失败');
+            self.worldToForm(d.basic_info || {});
+            self._worldFilled = true;
+            self._worldFilling = false;
+            self.state.world_building = self.worldToBi();   // 回写 state（persist 用）
+            if (status) { status.textContent = '✅ 已补全，可编辑'; }
+            if (sub) sub.disabled = false;
+            if (rf) rf.disabled = false;
+            if (typeof showToast === 'function') showToast('世界观已自动补全，可手动微调', 'success');
+            self.persist();
+        }).catch(function(e) {
+            self._worldFilled = false;
+            self._worldFilling = false;
+            if (status) { status.textContent = '❌ 补全失败：' + e.message + '（可重试）'; }
+            if (sub) sub.disabled = false;
+            if (rf) rf.disabled = false;
+            if (typeof showToast === 'function') showToast('世界观补全失败：' + e.message, 'error');
+        });
+    },
+    refillWorld: function() {
+        this._worldFilled = false;
+        this.fillWorld();
+    },
+
     collect: function() {
-        // 世界观简述（步骤③可编辑）作为世界种子；步骤①一句话作兜底
-        this.state.idea = (this.el('wz-world-desc3') && this.el('wz-world-desc3').value.trim())
+        // 世界观补全（步骤③ description 字段可编辑）作为世界种子；步骤①一句话作兜底
+        this.state.idea = (this.el('wz-wb-description') && this.el('wz-wb-description').value.trim())
             || this.el('wz-idea').value.trim();
         this.state.pen_name = this.el('wz-pen').value;
         this.state.borrow = { source_book_id: this.el('wz-borrow-source').value,
@@ -387,6 +554,12 @@ var WZ = {
         this.state.platform = 'fanqie';
         this.state.title = (this.el('wz-title') && this.el('wz-title').value.trim()) || '';
         this.state.words_per_chapter = parseInt(this.el('wz-words').value, 10) || 3000;
+        // 世界观补全（步骤③ 12 维 + 基调）
+        this.state.world_building = this.worldToBi();
+        this.state.tone = this.el('wz-tone').value;
+        this.state.target_audience = this.el('wz-target_audience').value;
+        this.state.pov = this.el('wz-pov').value;
+        this.state.era_language = this.el('wz-era_language').value;
         // 构建统一 characters 数组：从 #wz-char-list 每行读（姓名/身份/性格/口癖/重要度/金手指/关系/原型）
         var charRows = Array.prototype.slice.call(document.querySelectorAll('#wz-char-list .char-row'));
         var mcName = '';
@@ -423,6 +596,10 @@ var WZ = {
     },
 
     createBook: function() {
+        if (this._worldFilling) {
+            if (typeof showToast === 'function') showToast('世界观补全中，请稍候再提交', 'error');
+            return;
+        }
         if (this.creating) return;
         this.creating = true;
         this.collect();
@@ -506,8 +683,13 @@ var WZ = {
         var s = this.state;
         if (s.idea) this.el('wz-idea').value = s.idea;
         if (s.pen_name) this.el('wz-pen').value = s.pen_name;
-        var desc3 = this.el('wz-world-desc3');
-        if (desc3 && s.idea) desc3.value = s.idea;
+        // 世界观补全（恢复草稿时回填 12 维 + 基调）
+        if (s.world_building && typeof this.worldToForm === 'function') {
+            this.worldToForm({ world_building: s.world_building, tone: s.tone,
+                               target_audience: s.target_audience, pov: s.pov,
+                               era_language: s.era_language });
+            this._worldFilled = this.worldIsFilled(s.world_building);   // 结构维已填才不再自动补
+        }
         if (s.title) this.el('wz-title').value = s.title;
         if (s.words_per_chapter) this.el('wz-words').value = s.words_per_chapter;
         // 题材标签 chips
@@ -536,7 +718,7 @@ window.onnecommand = function(e) {
     var cmd = d.cmd, args = d.args || {};
     var FIELDS = {
         idea: 'wz-idea', pen: 'wz-pen', title: 'wz-title', words: 'wz-words',
-        world_desc: 'wz-world-desc3', world_desc3: 'wz-world-desc3',
+        world_desc: 'wz-wb-description', world_desc3: 'wz-wb-description',
         borrow_source: 'wz-borrow-source', borrow_tweak: 'wz-borrow-tweak',
     };
     if (cmd === 'set_field') {
@@ -554,7 +736,10 @@ window.onnecommand = function(e) {
         else if (f === 'pen') WZ.state.pen_name = v;
         else if (f === 'title') WZ.state.title = v;
         else if (f === 'words') WZ.state.words_per_chapter = parseInt(v, 10) || 3000;
-        else if (f === 'world_desc' || f === 'world_desc3') WZ.state.idea = v;
+        else if (f === 'world_desc' || f === 'world_desc3') {
+            WZ.state.idea = v;
+            if (WZ.state.world_building) WZ.state.world_building.description = v;
+        }
     } else if (cmd === 'set_tags') {
         var targets = (args.tags || []).map(String);
         document.querySelectorAll('.chip.on').forEach(function(c) { WZ.toggleTag(c); });
@@ -577,6 +762,7 @@ window.onnecommand = function(e) {
         for (var i = 0; i < cards.length; i++) cards[i].classList.remove('picked');
         if (typeof args.idx === 'number' && cards[args.idx]) cards[args.idx].classList.add('picked');
         WZ._picked = true;   // MCP 内嵌候选也算已选，「已挑选完毕」放行
+        WZ._worldFilled = false;   // 新候选方向 → 步 3 重新补全
         if (typeof showToast === 'function') showToast('已选中：' + (cand.title || ''), 'success');
     } else if (cmd === 'set_characters') {
         // 角色列表整体替换（agent 生成后推送）；复用 addCharRow 建行 + collect 收进 state
@@ -589,6 +775,7 @@ window.onnecommand = function(e) {
     else if (cmd === 'prev') { WZ.prev(); }
     else if (cmd === 'load_candidates') { WZ.loadCandidates(); }
     else if (cmd === 'skip_candidates') { WZ.skipCandidates(); }
+    else if (cmd === 'fill_world') { WZ.refillWorld(); }   // 世界观重新补全（Agent 兜底/重试）
     else if (cmd === 'submit') { WZ.createBook(); }
 };
 // 输入防抖持久化 + 切页前保存（SPA 导航由输入监听兜底）
