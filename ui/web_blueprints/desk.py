@@ -100,12 +100,9 @@ def storyline_engine_step(engine_id):
         task_manager.ensure_single(task_name)
         task_manager.start(task_id, name=task_name,
                           title=engine.state.pen_name or "",
-                          agent="writing", book_id=book_id, book_title=book_title,
-                          step=f"写第{next_ch}章", total=max(total_ch, 1),
                           phase=f"第{next_ch}章...", url=flow_url)
     else:
         task_manager.progress(task_id, current=min(next_ch, total_ch), phase=f"第{next_ch}章...")
-        task_manager.set_step(task_id, step=f"写第{next_ch}章")
     task_manager.log(task_id, f"蓝图写作：第{next_ch}章", "info")
 
     # 全书完成（章节数到顶）
@@ -118,7 +115,6 @@ def storyline_engine_step(engine_id):
     if result.get("error"):
         task_manager.fail(task_id, str(result["error"]))
         return jsonify({"error": result["error"]}), 500
-    task_manager.llm_call(task_id)
     task_manager.log(task_id, f"第{next_ch}章完成 {result.get('word_count', 0)}字", "success")
 
     return jsonify({
@@ -155,15 +151,13 @@ def storyline_engine_write_chapter_sse(engine_id):
         task_id = f"writechap_{engine_id}_{int(time.time())}"
         task_manager.start(task_id, name="整章写作",
                            title=_book_title or "",
-                           agent="writing", book_id=_book_id, book_title=_book_title,
-                           step=f"写第{chapter_num}章", total=1, phase="写作中...",
                            url=flow_url)
         try:
             for evt in engine._write_storyline_chapter_stream(chapter_num):
                 if isinstance(evt, dict):
                     t = evt.get("type", "")
                     if t == "plot_chunk":
-                        task_manager.llm_call(task_id)
+                        pass
                     elif t == "chapter_done":
                         task_manager.done(task_id,
                                           message=f"第{evt.get('chapter', chapter_num)}章完成")
@@ -202,17 +196,15 @@ def storyline_engine_write_bridge_sse(engine_id):
         task_id = f"writebrg_{engine_id}_{int(time.time())}"
         task_manager.start(task_id, name="桥段写作",
                            title=_book_title or "",
-                           agent="writing", book_id=_book_id, book_title=_book_title,
-                           step="写下一个桥段", total=1, phase="写作中...",
                            url=flow_url)
         try:
             for evt in engine._write_next_bridge_stream():
                 if isinstance(evt, dict):
                     t = evt.get("type", "")
                     if t == "group_chunk":
-                        task_manager.llm_call(task_id)
+                        pass
                     elif t == "bridge_done":
-                        task_manager.set_step(task_id, step="桥段完成")
+                        pass
                     elif t in ("chapter_done", "complete"):
                         task_manager.done(task_id,
                                           message=f"第{evt.get('chapter', '')}章完成" if t == "chapter_done"

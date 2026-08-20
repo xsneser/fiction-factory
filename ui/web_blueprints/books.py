@@ -190,16 +190,12 @@ def api_book_generate_meta(book_id):
     _book_meta = book_mgr.get(book_id)
     task_manager.start(tid, name="生成书名/简介",
                        title=getattr(_book_meta, "title", "") or "",
-                       agent="title", book_id=book_id,
-                       book_title=getattr(_book_meta, "title", "") or "",
-                       step="基于第1章生成书名+简介", total=1, phase="调用 LLM...",
                        url=f"/books/{book_id}")
     try:
         from libraries.engine import NovelEngine
         engine = NovelEngine(llm_client=llm)
         engine.continue_book(book_id)   # 恢复 book/storyline（无 storyline 会报错）
         result = engine._generate_book_meta(ch1["content"])
-        task_manager.llm_call(tid)
         task_manager.log(tid, f"生成书名「{result.get('title', '')}」", "success")
         task_manager.done(tid, message="书名/简介生成完成")
         # 使 web_ui 的 book 缓存失效，下次详情页加载读到磁盘新值

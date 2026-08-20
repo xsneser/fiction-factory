@@ -142,7 +142,7 @@ function startScout() {
 }
 
 function handleEvent(d) {
-    // 日志统一由后端 task_manager 驱动（pollStatus 渲染到右侧边栏），
+    // 日志统一由后端 task_manager 驱动（任务卡片渲染已随内置 agent 删除），
     // 前端 SSE 只负责更新按钮状态和结果卡片，不再写日志，避免双通道重复
     if (d.event === 'log') { return; }
     if (d.event === 'progress') {

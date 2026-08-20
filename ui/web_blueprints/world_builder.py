@@ -82,9 +82,6 @@ def api_world_generate(book_id):
         task_id = f"world_{book_id}_{int(time.time())}"
         task_manager.start(task_id, name="世界观生成",
                            title=tl.book_title or tl.pen_name or "",
-                           agent="world", book_id=book_id,
-                           book_title=tl.book_title or "",
-                           step=("借鉴生成世界观" if mode == "borrow" else "生成世界观"),
                            total=2, phase="构思设定...",
                            url=f"/books/{book_id}")
         try:
@@ -103,7 +100,6 @@ def api_world_generate(book_id):
                     task_manager.progress(task_id,
                                           current=data_dict.get("phase", 0),
                                           phase=message or "")
-                    task_manager.llm_call(task_id)
                 elif event_type == "done":
                     task_manager.done(task_id, message="世界观生成完成")
                 elif event_type == "error":
@@ -148,13 +144,9 @@ def api_world_candidates(book_id):
     tid = f"worldcand_{book_id}_{int(time.time())}"
     task_manager.start(tid, name="世界观候选",
                        title=tl.book_title or tl.pen_name or "",
-                       agent="world", book_id=book_id,
-                       book_title=tl.book_title or "",
-                       step="产出差异化候选", total=1, phase="生成中...",
                        url=f"/books/{book_id}")
     try:
         candidates = gen.generate_candidates(genre=tl.genre, sub_genre=tl.sub_genre, idea=idea)
-        task_manager.llm_call(tid)
     except Exception as e:
         task_manager.fail(tid, str(e))
         raise
