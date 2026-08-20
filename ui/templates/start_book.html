@@ -357,7 +357,7 @@ var WZ = {
         }).catch(function() { WZ.el('wz-borrow-preview-box').textContent = '❌ 预览失败'; });
     },
 
-    /* —— 让 Agent 构建（步 1 主按钮）：收集输入 → 侧栏 agentSendTask 跑 novel-build —— */
+    /* —— 让 Agent 构建（步 1 主按钮）：前端自动进步 2，等 agent 发候选列表 —— */
     agentBuild: function() {
         if (!this.el('wz-idea').value.trim()) {
             if (typeof showToast === 'function') showToast('请先填一句话设定', 'error');
@@ -367,9 +367,39 @@ var WZ = {
         var pen = this.el('wz-pen').value || '';
         var tags = Array.prototype.slice.call(document.querySelectorAll('.chip.on'))
             .map(function(b) { return b.dataset.tag; });
-        var task = '用 novel-build 流程建一本新书：一句话设定「' + idea + '」'
+        // 前端自动 reset（清 state 除笔名 + 清表单 + 清 draft）→ 重新填 idea/pen/tags → 自动进步 2
+        var keepPen = this.state.pen_name || '';
+        this.state = { idea: '', pen_name: keepPen, tags: [], borrow: { source_book_id: '', tweak: '' },
+                       genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
+                       storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
+                       protag_personality: '', protag_golden_finger: '',
+                       opening_template_id: '', golden_finger_template_id: '', structure_template_id: '',
+                       world_building: null, tone: '', target_audience: '', pov: '第三人称', era_language: '',
+                       _outline_picks: null, _outline_picks_names: null };
+        this._picked = false; this._worldFilled = false; this._worldFilling = false; this.bookId = ''; this.creating = false;
+        ['wz-idea', 'wz-title', 'wz-wb-description', 'wz-borrow-source', 'wz-borrow-tweak'].forEach(function(id) {
+            var el = WZ.el(id); if (el) el.value = '';
+        });
+        if (this.el('wz-pen')) this.el('wz-pen').value = keepPen;
+        // 重新填 idea / pen / tags（agent 只需补笔名或直接候选）
+        this.el('wz-idea').value = idea;
+        this.state.idea = idea;
+        this.state.pen_name = pen;
+        if (this.el('wz-pen')) this.el('wz-pen').value = pen;
+        document.querySelectorAll('.chip.on').forEach(function(c) { WZ.toggleTag(c); });
+        document.querySelectorAll('.chip').forEach(function(c) {
+            if (tags.indexOf(c.dataset.tag) >= 0 && !c.classList.contains('on')) WZ.toggleTag(c);
+        });
+        try { sessionStorage.removeItem(WZ.PERSIST_KEY); } catch (e) {}
+        // 自动进步 2，等 agent 候选列表
+        this.show(2);
+        var box = this.el('wz-candidate-box');
+        if (box) box.innerHTML = '<div class="wz-borrow-preview">⏳ 等待 Agent 生成候选…</div>';
+        var task = '用 novel-build 流程建这本新书（已完成步 1 填表、已自动进步 2）：一句话设定「' + idea + '」'
             + '题材标签「' + (tags.join('、') || '（未选）') + '」'
-            + '笔名「' + (pen || '（未选，请帮我选）') + '」。驱动 /books/start 向导完成建书。';
+            + '笔名「' + (pen || '（未选，请帮我选）') + '」。'
+            + '直接生成世界观候选并选一个（world_candidates → drive_ui(pick_candidate)）→ 进步 3 补全世界观。'
+            + '笔名若未选可 drive_ui(set_field pen) 补。不要再 reset / 重填 idea·tags / 发步 1→2 的 next。';
         if (typeof window.agentSendTask === 'function') {
             window.agentSendTask(task, { card: true });   // 右侧显示「🚀 建书任务」卡片，而非用户气泡
         } else {
