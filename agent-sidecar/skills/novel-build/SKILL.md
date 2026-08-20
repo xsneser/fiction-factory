@@ -20,10 +20,13 @@ description: 建书阶段。开新书/写设定/构思世界观。建书必须�
 - **世界观候选（submit 硬前置）**：headless 用**路线 B**——`mcp__novelengine__world_candidates(book_id="", idea=种子, genre=方向, tags=标签)` 取候选 → `drive_ui(pick_candidate, {idx, candidate:{title, world_brief, one_liner}})` 注入（候选内嵌，不依赖浏览器点选）。
 
 ## 批处理（驱动向导 UI，由系统建书）
-1. `navigate(url="/books/start")`。
+
+> **触发**：两种入口都可——① 浏览器「启动新书」页点「🚀 让 Agent 构建」按钮（idea/tags/笔名 已在表单，任务文本携带）；② 侧栏聊天说「开一本新书：…」。**前端固定候选管线已移除**（不再有「🎲 生成候选」fetch），候选生成完全由本 skill 走路线 B；`drive_ui(load_candidates)` 是前端 stub（提示用），不调。
+
+1. `navigate(url="/books/start")`（若已在向导页则无害）。
 2. **`drive_ui(reset)`**：每次建书前先重置向导 state（除笔名），清除上一本残留草稿对 set_field/set_tags 的干扰（建书保真度护栏，spike 实测 issue）。
-3. `drive_ui(set_field, {field:"idea", value:种子})` + `drive_ui(set_field, {field:"pen", value:笔名})` + `drive_ui(set_tags, {tags:[题材标签]})`（同批推送，浏览器按序应用）。
-4. **世界观候选**：`world_candidates` → `drive_ui(pick_candidate, {...})` → `drive_ui(next)`（步 2「已挑选完毕」进步 3）。
+3. `drive_ui(set_field, {field:"idea", value:种子})` + `drive_ui(set_field, {field:"pen", value:笔名})` + `drive_ui(set_tags, {tags:[题材标签]})`（同批推送，浏览器按序应用；表单已填时幂等）。
+4. **世界观候选（路线 B）**：`world_candidates(book_id="", idea, genre, tags)` → `drive_ui(pick_candidate, {idx, candidate:{title, world_brief, one_liner}})`（注入，浏览器渲染卡片实时显示）→ `drive_ui(next)`（步 2「已挑选完毕」进步 3）。
 5. **步 3 = 内容构建工作台（分阶段，agent 自主驱动）**：浏览器不再自动一键补全（旧 `world-complete` 保留为「✨ 重新补全」兜底按钮）。按顺序逐段构建，每段经 `drive_ui` 落进表单，步 3 顶部状态区 5 个徽标实时显示 ✅/未填：
    - ① **核心矛盾**：`generate_core_conflict(idea=世界观简述, world_brief=候选简述, tags, pen_name)` → `drive_ui(set_world, {world_building:{core_conflict:"..."}})`（返回 genre 供②查库）。
    - ② **开篇大纲+桥段**（agent 自主决策，不询问）：`query_structures(genre=①)` 看模板 + `query_plots(category="开篇")` 看开篇桥段 → 选定 → `drive_ui(set_picks, {templates:[{id,name}], plots:[{id,name}]})` → `_outline_picks` 随 submit 落库，submit 后 `generate_full_outline` 自动消费。
