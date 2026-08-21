@@ -328,7 +328,7 @@ var WZ = {
             this._task2Fired = true;
             this._agentDriving = true;
             var task = '用 novel-build 流程继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」）：'
-                + '步 3 分阶段补全世界观（generate_core_conflict→set_picks→generate_factions→generate_characters→generate_rest_world，'
+                + '步 3 分阶段补全世界观（generate_core_conflict→generate_factions→generate_characters→generate_rest_world，'
                 + '每段 drive_ui 落表单）→ drive_ui(submit) 建书 → get_build_status 拿 book_id 校验 → '
                 + 'generate_full_outline → navigate 写作台。不要再 world_candidates / pick_candidate / 发步 1→2 的 next。';
             if (typeof window.agentSendTask === 'function') {

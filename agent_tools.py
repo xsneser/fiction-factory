@@ -1030,7 +1030,8 @@ _WIZARD_CMDS = {
     "set_field": ("field", "value"),
     "set_tags": ("tags",),
     "set_characters": ("characters",),   # 角色列表整体替换（agent 生成后推送）
-    "pick_candidate": (),   # candidate={title, world_brief, one_liner} 内嵌传入（idx 仅卡片高亮，可选）
+    "set_candidates": ("candidates",),   # 呈现候选卡（不选中，等用户在步 2 点选）；candidates=[{title, one_liner, world_brief}]
+    "pick_candidate": (),   # 兼容保留：candidate={title, world_brief, one_liner} 内嵌传入（idx 仅卡片高亮，可选）；新 skill 不用
     "set_world": ("world_building",),   # 分阶段内容构建：部分世界观 dict 合并进步 3 表单
     "set_picks": ("templates",),   # 开篇大纲/桥段选择（templates 或 plots 任一非空，drive_ui 特判）
     "next": (), "prev": (),
@@ -1042,8 +1043,8 @@ _WIZARD_CMDS = {
 
 
 def drive_ui(cmd: str, args: dict = None) -> dict:
-    """驱动「启动新书」向导 UI（命令桥）：set_field/set_tags/set_characters/next/prev/
-    load_candidates/skip_candidates/pick_candidate/reset/submit。
+    """驱动「启动新书」向导 UI（命令桥）：set_field/set_tags/set_characters/set_candidates/
+    pick_candidate/next/prev/load_candidates/skip_candidates/reset/submit。
 
     非阻塞：把命令写入意图队列，浏览器每 ~2.5s 轮询消费（start_book.html 的
     window.onnecommand 执行）。不入书锁（不写书）。
@@ -1057,6 +1058,11 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
     if cmd == "set_picks":   # templates 或 plots 任一非空即可（[] 会被通用校验误判为缺参）
         if not (args.get("templates") or args.get("plots")):
             raise RuntimeError(f"命令 {cmd} 缺少必填参数：templates 或 plots")
+    elif cmd == "set_candidates":   # 呈现候选：非空 list、每项 dict 且含 title
+        cands = args.get("candidates")
+        if not (isinstance(cands, list) and cands
+                and all(isinstance(c, dict) and c.get("title") for c in cands)):
+            raise RuntimeError(f"命令 {cmd} 需 candidates 非空列表（每项 {{title, one_liner?, world_brief?}}）")
     elif cmd == "pick_candidate":   # candidate 内嵌传入为主；idx 仅卡片高亮，可选但至少给其一
         has_candidate = isinstance(args.get("candidate"), dict) and bool(args["candidate"])
         has_idx = isinstance(args.get("idx"), int)

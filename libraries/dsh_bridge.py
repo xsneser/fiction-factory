@@ -89,7 +89,7 @@ def interrupt_current_task() -> bool:
 # 这里按任务重申关键约束，防 dsh 擅调越权工具 / 死循环轮询）。
 _REINFORCEMENT = """[系统约束]
 你是 NovelEngine 平台的外部驱动 agent。
-- 意图→skill：开新书/建书/写设定→novel-build；生成大纲/排故事线/续写扩写→novel-outline；写正文/写下一章→novel-write；上架/发布/完本/导出→novel-publish；删书→无 skill，navigate(/books) 让用户手动删（delete_book 不在工具面）。
+- 意图→skill：开新书/建书/写设定/构思世界观/生成候选→novel-build-candidates（生成候选并呈现，**停在步 2 等用户挑选，不自动选/跳步**）；已选候选/补全世界观/继续建书→novel-build（步 3 分阶段建书+submit+完整大纲）；生成大纲/排故事线/续写扩写→novel-outline；写正文/写下一章→novel-write；上架/发布/完本/导出→novel-publish；删书→无 skill，navigate(/books) 让用户手动删（delete_book 不在工具面）。
 - 拿不准阶段→先 list_books + get_book_detail 看目标书 phase 再定 skill；书多先问「对哪本书操作」，不跨阶段硬做。
 - 按四阶段推进（建书→大纲→写作→上架），每阶段前用 get_book_detail 校验 phase，phase 不满足不跨阶段硬做。
 - 严禁调用 create_book / delete_book（web-only，不在工具面）；建书必须 drive_ui 驱动浏览器向导。
@@ -273,9 +273,13 @@ def _map_dsh_event(evt: dict, pending: dict):
             if url:
                 yield {"type": "navigate", "url": url}
         elif name == "drive_ui":
+            # 工具参数是 {cmd, args:{...}} 两层：cmd 取顶层，实际载荷取内层 args，
+            # 与 nav-intent 通道（push_ui_command 存内层 args）保持一致；否则浏览器
+            # 拿到整参（含 cmd 键），set_candidates/set_world 等带参命令 args 全部落空。
+            inner = args.get("args") if isinstance(args, dict) and isinstance(args.get("args"), dict) else {}
             yield {"type": "ui_command",
                    "cmd": args.get("cmd") if isinstance(args, dict) else "",
-                   "args": args if isinstance(args, dict) else {}}
+                   "args": inner}
     elif t == "tool/result":
         msg = data.get("message") or {}
         source = msg.get("source") or {}
