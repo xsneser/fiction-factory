@@ -55,6 +55,12 @@ def _mcp_summary(result) -> str:
     if isinstance(result, dict):
         if result.get("error"):
             return f"失败：{result['error']}"
+        # world_candidates 增量候选：摘要含 total+标题，同参连调时每次不同
+        # （否则全部落「已执行」常量，LoopGuard 会把正常增量连调误判为无进展循环）
+        cand = result.get("candidate")
+        total = result.get("total")
+        if isinstance(cand, dict) and cand.get("title") and total:
+            return f"候选{total}：{cand['title']}"
         for k in ("ok", "status", "count", "plots_added", "total_plots",
                   "total_chapters", "chapter", "word_count", "phase",
                   "passed", "score", "chosen", "book_id", "deleted", "cmd"):
