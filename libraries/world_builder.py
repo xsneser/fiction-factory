@@ -211,9 +211,11 @@ class WorldBuildingGenerator:
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
-                # 推理型模型：max_tokens 留足推理+内容余量（同 outline_generator 用 8192）
+                # 推理型模型：max_tokens 留足推理+内容余量——flash 先推理再输出，
+                # 复杂结构化 prompt 推理可达上万 token（实测 8192 会被吃满致 content 空，
+                # 同 outline_generator 大输出用 16384 实测稳定）
                 raw = self.llm.call(WORLD_CANDIDATES_SYSTEM, prompt,
-                                    temperature=0.9, max_tokens=8192)
+                                    temperature=0.9, max_tokens=16384)
                 data = json.loads(extract_json(raw))
                 cands = [c for c in (data.get("candidates") or [])
                          if isinstance(c, dict) and c.get("one_liner")][:count]
@@ -243,8 +245,10 @@ class WorldBuildingGenerator:
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
+                # 角色输出 8 人×14 字段，flash 推理链实测吃满 8192 致 content 空（JSONDecodeError）；
+                # 16384 实测稳定（推理 ~12k + 正文 ~4k，finish_reason=stop）
                 raw = self.llm.call("你只返回 JSON。", prompt,
-                                    temperature=0.8, max_tokens=8192)
+                                    temperature=0.8, max_tokens=16384)
                 data = json.loads(extract_json(raw))
                 protags = [p for p in (data.get("protagonists") or [])
                            if isinstance(p, dict) and str(p.get("name", "") or "").strip()][:3]
