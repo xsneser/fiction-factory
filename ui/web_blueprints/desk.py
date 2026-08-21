@@ -53,6 +53,7 @@ def storyline_write_flow(engine_id):
                         "num": n,
                         "title": ch.get("title") or f"第{n}章",
                         "content": ch.get("content") or "",
+                        "bridges": ch.get("bridges") or [],
                     })
         except Exception as e:
             logger.warning("加载已写章节失败: %s", e)
@@ -73,6 +74,27 @@ def storyline_write_flow(engine_id):
         chapters=chapters,
         total_ch=total_ch,
         world_done=world_done,
+    )
+
+
+@bp.route("/books/<book_id>/plan")
+def book_plan(book_id):
+    """规划/生成页：写作台的规划面板已抽离到这里（独立文件 plan_gen.js + _plan_gen_panel.html）。
+    后续可与 agent skill 结合（novel-outline 经 MCP 驱动同一套生成端点）。"""
+    book = book_mgr.get(book_id)
+    if not book:
+        return "图书不存在", 404
+    from libraries.storyline import BookStoryline
+    storyline = book_mgr.load_storyline(book_id) or BookStoryline()
+    total_ch = 0
+    try:
+        total_ch = max((o.end_chapter for o in storyline.outlines), default=0)
+    except Exception:
+        total_ch = 0
+    return render_template("book_plan.html",
+        book=book,
+        storyline=storyline,
+        total_ch=total_ch,
     )
 
 

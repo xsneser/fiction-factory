@@ -254,6 +254,11 @@
       bar.addEventListener('mouseenter', showTooltip);
       bar.addEventListener('mousemove', moveTooltip);
       bar.addEventListener('mouseleave', hideTooltip);
+      bar.addEventListener('click', function (e) {
+        e.stopPropagation();
+        bar.dispatchEvent(new CustomEvent('sl:outline-click',
+          {detail: {outline_id: o.id}, bubbles: true}));
+      });
       outlineBody.appendChild(bar);
     });
   }
@@ -372,6 +377,11 @@
       bar.addEventListener('mouseenter', showTooltip);
       bar.addEventListener('mousemove', moveTooltip);
       bar.addEventListener('mouseleave', hideTooltip);
+      bar.addEventListener('click', function (e) {
+        e.stopPropagation();
+        bar.dispatchEvent(new CustomEvent('sl:plot-click',
+          {detail: {plot_id: p.id, outline_id: p.oid}, bubbles: true}));
+      });
       plotBody.appendChild(bar);
     });
 

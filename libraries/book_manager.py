@@ -157,8 +157,11 @@ class BookManager:
 
     def save_chapter(self, book_id: str, chapter_num: int,
                      title: str, content: str, summary: str = "",
-                     review: dict | None = None):
-        """保存章节（review：规则审查结果 dict，随章节落盘供详情页展示）"""
+                     review: dict | None = None,
+                     bridges: list | None = None):
+        """保存章节（review：规则审查结果 dict，随章节落盘供详情页展示；
+        bridges：本桥段逐段去AI味后的 [{plot_id, plot_name, text}]，供写作台
+        点击桥段→高亮对应正文；旧文件无此键，向前兼容）"""
         book_dir = self.dir / book_id / "chapters"
         book_dir.mkdir(parents=True, exist_ok=True)
         chapter_file = book_dir / f"{chapter_num:04d}.json"
@@ -166,6 +169,7 @@ class BookManager:
             "num": chapter_num, "title": title,
             "content": content, "summary": summary,
             "review": review,
+            "bridges": bridges,
             "created_at": datetime.now().isoformat(),
         })
 

@@ -535,12 +535,15 @@ class StorylineChapterWriter:
                                previous_chapter_ending: str = "",
                                character_states: str = "",
                                chapter_buffer: str = "", chapter_words: int = 0,
-                               summaries_context: str = ""):
+                               summaries_context: str = "",
+                               bridge_meta: list | None = None):
         """写一章（生成器版）：沿故事顺序逐桥段生成，直到本章字数达标。
 
         兼容旧接口：yield bridge_start/group_chunk/bridge_done 事件，
         所有桥段完成后 return 章节结果 dict（通过 StopIteration.value 取回）。
         chapter_buffer/chapter_words：进行中章节草稿（按桥段撰写中断后续写）。
+        bridge_meta：草稿里已写的桥段元数据 [{plot_id, plot_name, text}]，
+        与本次新写桥段合并进返回的 "bridges"，供引擎落盘 per-bridge segments。
         """
         if not self.storyline or not self.storyline.plots:
             return {"text": f"[第{chapter_num}章无桥段可写]",
@@ -551,6 +554,8 @@ class StorylineChapterWriter:
         buffer = [s for s in (chapter_buffer or "").split("\n\n") if s]
         words = chapter_words or 0
         consumed = []
+        written = [dict(x) for x in (bridge_meta or [])
+                   if isinstance(x, dict) and x.get("text")]
         while True:
             sub = yield from self.write_bridge_stepwise(
                 chapter_num, previous_chapter_ending, character_states,
@@ -561,6 +566,9 @@ class StorylineChapterWriter:
             buffer.append(sub["text"])
             words = sub["chapter_words"]
             consumed.append(sub)
+            written.append({"plot_id": sub.get("plot_id"),
+                            "plot_name": sub.get("plot_name"),
+                            "text": sub["text"]})
             if sub.get("cut_chapter") or words >= target:
                 break
 
@@ -570,6 +578,7 @@ class StorylineChapterWriter:
             "text": text,
             "word_count": wc,
             "input_text": "\n".join(c.get("input_text", "") for c in consumed if c.get("input_text")),
+            "bridges": written,
             "beats": 0,
             "beat_details": [],
             "blueprint": {
@@ -589,13 +598,13 @@ class StorylineChapterWriter:
                       character_states: str = "",
                       chapter_buffer: str = "", chapter_words: int = 0,
                       summaries_context: str = "",
-                      on_step=None) -> dict:
+                      on_step=None, bridge_meta: list | None = None) -> dict:
         """写一章（同步版）：内部用 write_chapter_stepwise 逐桥段推进，
         若传了 on_step 则每个桥段写前/写后回调一次（供 UI 展示与高亮）。"""
         gen = self.write_chapter_stepwise(
             chapter_num, previous_chapter_ending, character_states,
             chapter_buffer=chapter_buffer, chapter_words=chapter_words,
-            summaries_context=summaries_context)
+            summaries_context=summaries_context, bridge_meta=bridge_meta)
         result = None
         try:
             while True:

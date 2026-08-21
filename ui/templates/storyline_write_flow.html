@@ -10,7 +10,6 @@
 {% from "_info_bar.html" import info_bar %}
 <script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
 <script>window.__STORYLINE_ID__ = "{{ state.book_id }}";</script>
-<script>window.__PLANNING__ = {{ 'true' if not (book.current_chapter or 0) else 'false' }};</script>
 <div class="tle-layout">
 <h1>✍️ 写作台</h1>
 {{ info_bar(
@@ -25,15 +24,17 @@
         ~ '<span>本章：<strong id="chp-words">0</strong>/<span id="chp-target">' ~ storyline.words_per_chapter ~ '</span>字</span>'
 ) }}
 
-{# ─── 两栏：左=故事线 | 中=控制条+规划/正文/写作动态 ─── #}
+{# ─── 两栏：左=故事线 | 中=控制条+正文（规划/生成已移到独立「规划」页 /books/<id>/plan） ─── #}
 <div class="editor-split">
     <div class="editor-left">
         <div class="gen-split-title">📋 故事线 · 写作中实时高亮（⏳设局 / ✅收局 = 读者承诺）</div>
         <div class="editor-scroll"><div id="editor-storyline" class="editor-storyline"></div></div>
     </div>
 
+    <div class="editor-divider" id="editor-divider" title="拖动调整故事线宽度"></div>
+
     <div class="editor-mid">
-        {# ─── 写作控制条：开始/停止 + 设定入口（基础设定已收敛到世界观设定卡） ─── #}
+        {# ─── 写作控制条：开始/停止 + 设定/规划入口 ─── #}
         <div class="wf-toolbar">
             <span class="wf-toolbar-title">📖 章节正文</span>
             {% if storyline and storyline.outlines %}
@@ -41,176 +42,34 @@
             <button id="btn-stop" class="btn-danger" style="display:none;background:#da3633;color:white;border:none;padding:6px 16px;border-radius:8px;font-size:13px;cursor:pointer" onclick="stopFlow()">⏹ 停止</button>
             {% endif %}
             <a href="/books/{{ state.book_id }}/world" class="btn btn-sm" style="background:#30363d;color:#c9d1d9;text-decoration:none">🌍 设定</a>
+            <a href="/books/{{ state.book_id }}/plan" class="btn btn-sm" style="background:#6f42c1;color:#fff;text-decoration:none">📋 规划</a>
         </div>
 
-        {# ─── 规划/生成面板：写作前在此完成 大纲/桥段/内涵 编排（写作开始后可折叠） ─── #}
-        <details id="view-plan" class="right-plan" {% if not (book.current_chapter or 0) %}open{% endif %}>
-        <summary>📋 规划与生成（大纲 / 桥段 / 内涵）</summary>
-        <div class="right-plan-section">
-            <div id="gen-panel" style="display:none">
-                <div id="gen-full-box" style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px;margin-bottom:16px">
-                    <div style="display:flex;gap:8px;margin-bottom:8px">
-                        <div class="gen-full-phase" id="gf-1"><span>1 故事分析</span><span class="gfp-status"></span></div>
-                        <div class="gen-full-phase" id="gf-2"><span>2 故事线</span><span class="gfp-status"></span></div>
-                        <div class="gen-full-phase" id="gf-3"><span>3 桥段编排</span><span class="gfp-status"></span></div>
-                        <div class="gen-full-phase" id="gf-4"><span>4 线程与呼应</span><span class="gfp-status"></span></div>
-                        <div class="gen-full-phase" id="gf-5"><span>5 内涵挂载</span><span class="gfp-status"></span></div>
-                        <div class="gen-full-phase" id="gf-6"><span>6 一致性验证</span><span class="gfp-status"></span></div>
-                    </div>
-                    <div class="gen-split-title" style="margin-top:10px">🤖 生成动态</div>
-                    <div id="gen-feed" class="gen-feed"></div>
-                </div>
-            </div>
-
-            <div id="phase-outlines" class="phase-panel" {% if storyline.phase not in ('config','outlines') %}style="display:none"{% endif %}>
-                <div class="phase-header">
-                    <h2>📋 故事线</h2>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap">
-                        <button class="btn-primary btn-sm" id="btn-gen-full" style="background:#6f42c1" onclick="genFullStart()">✨ 一键生成完整大纲</button>
-                        <button class="btn-primary btn-sm" onclick="generateOutlines()">🤖 AI 生成大纲序列</button>
-                        <button class="btn btn-sm" style="background:#30363d;color:#c9d1d9" onclick="addOutline()">+ 手动添加</button>
-                        {% if storyline.outlines %}
-                        <button class="btn btn-sm" style="background:#1a2b1a;color:#3fb950" onclick="extendOutline()">➕ 扩展故事线（续写大纲）</button>
-                        {% endif %}
-                        <button class="btn-primary btn-sm" onclick="confirmOutlines()" id="btn-confirm-outlines" style="background:#1f6feb">✅ 确认大纲 → 编排桥段</button>
-                    </div>
-                </div>
-                <div id="outline-list" class="outline-list">
-                    {% for o in storyline.outlines %}
-                    {% include "storyline_outline_card.html" %}
-                    {% endfor %}
-                </div>
-                <div id="outline-empty" class="empty" {% if storyline.outlines %}style="display:none"{% endif %}>
-                    <div class="icon" style="font-size:36px">📋</div>
-                    <p style="color:#8b949e;margin-top:12px">还没有大纲配置</p>
-                    <p style="color:#484f58;font-size:12px;margin-top:6px">点击"AI 生成大纲序列"让引擎自动规划，或手动添加大纲</p>
-                </div>
-            </div>
-
-            <div id="phase-plots" class="phase-panel" {% if storyline.phase != 'plots' %}style="display:none"{% endif %}>
-                <div class="phase-header">
-                    <h2>🧩 桥段编排</h2>
-                    <div style="display:flex;gap:8px">
-                        <button class="btn-primary btn-sm" onclick="fillPlots()">🤖 AI 填充桥段</button>
-                        <button class="btn-primary btn-sm" onclick="confirmPlots()" id="btn-confirm-plots" style="background:#1f6feb">✅ 确认桥段 → 加料注入</button>
-                    </div>
-                </div>
-                <div id="plot-list">
-                    {% for o in storyline.outlines %}
-                    <div class="outline-plot-group" data-outline-id="{{ o.id }}">
-                        <h3 style="margin:16px 0 8px;color:#58a6ff">{{ o.name }} <span style="font-size:12px;color:#8b949e">第{{ o.start_chapter }}-{{ o.end_chapter }}章</span></h3>
-                        {% for p in storyline.plots if p.outline_id == o.id %}
-                        <div class="plot-card card">
-                            <div style="display:flex;justify-content:space-between;align-items:start">
-                                <div>
-                                    <code>{{ p.category }}</code>
-                                    <strong>{{ p.name }}</strong>
-                                    {% if p.thread_id %}<span class="tag" style="margin-left:6px">线程:{{ p.thread_id }}</span>{% endif %}
-                                    {% if p.resolves_plot_id %}<span class="tag" style="color:#f85149;margin-left:6px">↪ 收局·{{ p.resolves_name or '' }}</span>{% endif %}
-                                    <span class="tag">{{ p.cover_beats }}节拍</span>
-                                    {% if p.parent_plot_id %}<span class="tag blue">嵌套</span>{% endif %}
-                                </div>
-                                <div style="display:flex;gap:8px;align-items:center">
-                                    <label style="font-size:12px;color:#8b949e;cursor:pointer">
-                                        <input type="checkbox" {% if p.confirmed %}checked{% endif %} onchange="togglePlotConfirm('{{ p.id }}', this.checked)"> 确认
-                                    </label>
-                                </div>
-                            </div>
-                            {% if p.template_structure %}
-                            <div style="font-size:12px;color:#484f58;margin-top:4px">{{ p.template_structure[:120] }}</div>
-                            {% endif %}
-                            {% if p.roles %}
-                            <div style="font-size:11px;color:#58a6ff;margin-top:2px">👤 出场: {{ p.roles|join('、') }}</div>
-                            {% endif %}
-                            <div style="font-size:11px;color:#3fb950;margin-top:4px">🎭 笑点: 写作时灵机一动（不预设）</div>
-                            {% if p.theme_hints %}
-                            <div style="font-size:11px;color:#c084fc;margin-top:2px">💡 内涵: {{ p.theme_hints|join(', ') }}</div>
-                            {% endif %}
-                            {% if p.hook_points %}
-                            <div style="font-size:11px;color:#d29922;margin-top:2px">⚡ 吸睛: {{ p.hook_points|join(', ') }}</div>
-                            {% endif %}
-                        </div>
-                        {% else %}
-                        <div class="empty" style="padding:20px"><p style="color:#484f58;font-size:12px">该大纲尚未填充桥段</p></div>
-                        {% endfor %}
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-
-            <div id="phase-gags" class="phase-panel" {% if storyline.phase != 'gags' %}style="display:none"{% endif %}>
-                <div class="phase-header">
-                    <h2>🎭 内涵挂载</h2>
-                    <button class="btn-primary" onclick="injectGags()">🤖 AI 挂载内涵+吸睛点</button>
-                </div>
-                <div id="gag-result">
-                    {% for o in storyline.outlines %}
-                    <h3 style="margin:12px 0 6px;color:#58a6ff;font-size:14px">{{ o.name }}</h3>
-                    {% for p in storyline.plots if p.outline_id == o.id %}
-                    <div class="plot-card card" style="font-size:12px">
-                        <strong>{{ p.name }}</strong>
-                        <div style="color:#3fb950;margin-top:4px">🎭 笑点: 写作时灵机一动（不预设）</div>
-                        <div style="color:#c084fc;margin-top:2px">💡 内涵: {{ (p.theme_hints or [])|join('、') or '—' }}</div>
-                        <div style="color:#d29922;margin-top:2px">⚡ 吸睛: {{ (p.hook_points or [])|join('、') or '—' }}</div>
-                    </div>
-                    {% endfor %}
-                    {% else %}
-                    <p style="color:#484f58">暂无桥段</p>
-                    {% endfor %}
-                </div>
-                <div style="margin-top:20px">
-                    <button class="btn-primary" onclick="startWriting()" style="background:#1f6feb;font-size:16px;padding:12px 32px">🚀 确认全部 → 开始写作</button>
-                </div>
-            </div>
-
-            <div id="phase-ready" class="phase-panel" {% if storyline.phase != 'ready' %}style="display:none"{% endif %}>
-                <div class="phase-header">
-                    <h2>🚀 准备就绪</h2>
-                </div>
-                <p style="color:#8b949e;margin-bottom:12px">
-                    已生成 <strong>{{ storyline.outlines|length }}</strong> 条大纲 · <strong>{{ storyline.plots|length }}</strong> 个桥段 · 共 <strong>{{ total_ch }}</strong> 章。
-                    可随时进入正文写作，也可先扩展故事线或继续规划。
-                </p>
-                <div style="display:flex;gap:10px;flex-wrap:wrap">
-                    <button class="btn-primary" style="background:#1f6feb;font-size:16px;padding:12px 32px" onclick="scrollManuscript()">🚀 开始写作（正文）</button>
-                    <button class="btn btn-sm" style="background:#30363d;color:#c9d1d9" onclick="extendOutline()">➕ 扩展故事线（续写大纲）</button>
-                    <a href="/books/{{ state.book_id }}" class="btn" style="background:#238636;color:#fff;text-decoration:none">📖 查看书详情</a>
-                </div>
-            </div>
-
-        </div>
-        </details>
-
-        {# ─── 正文视图：连续章节文本（中栏永远只显示正文） ───#}
+        {# ─── 正文视图：连续章节文本（中栏永远只显示正文；桥段包 span.m-bridge 供点击高亮） ───#}
         <div id="view-write" class="view-pane" style="display:block">
             <div id="wf-manuscript" class="manuscript">
                 {% for c in chapters %}
                 {% if not loop.first %}<div class="m-chapter-divider">────────</div>{% endif %}
-                <div class="m-chapter-title">第{{ c.num }}章 {{ c.title }}</div>{{ c.content }}
+                <div class="m-chapter-title">第{{ c.num }}章 {{ c.title }}</div>
+                {% if c.bridges %}
+                {%- for b in c.bridges -%}
+                {%- if not loop.first %}{{ '\n\n' }}{% endif -%}
+                <span class="m-bridge" data-bridge="{{ b.plot_id }}" data-bridge-name="{{ b.plot_name }}">{{ b.text }}</span>
+                {%- endfor -%}
+                {% else %}{{ c.content }}{% endif %}
                 {% endfor %}
             </div>
         </div>
-
-        {# ─── 写作动态：实时进度（并入中栏折叠区；未来由全局右栏 Harness 接管） ─── #}
-        <details id="write-log" class="right-plan write-log">
-            <summary>🖋 写作动态</summary>
-            <div id="wf-feed" class="gen-feed"></div>
-        </details>
     </div>
 </div>
 </div>
 
 <style>
-.wf-link { color:#3fb950; text-decoration:none; font-size:13px; }
-.wf-link:hover { text-decoration:underline; }
 .view-pane { flex:1; min-height:0; overflow-y:auto; padding-right:4px; }
 /* 中栏写作控制条 */
 .wf-toolbar { display:flex; align-items:center; gap:10px; padding:10px 14px; background:var(--bg-elev); border:1px solid var(--border); border-radius:var(--radius); margin-bottom:12px; flex-wrap:wrap; }
 .wf-toolbar-title { font-size:13px; font-weight:600; color:var(--fg-strong); margin-right:auto; }
 .wf-toolbar .btn { padding:6px 14px; font-size:13px; }
-/* 中栏规划折叠区 + 写作动态折叠区 */
-.write-log { margin-top:12px; }
-.write-log .gen-feed { max-height:240px; overflow-y:auto; }
 </style>
 
 <script src="/static/js/story_line.js"></script>
@@ -233,26 +92,24 @@ function refreshStoryline(sl) {
     refreshStoryline(window.__BOOK_STORYLINE__);
 })();
 
-/* ─── 规划面板已内置于中栏折叠区（规划态展开，写作态折叠） ─── */
-(function() {
-    var plan = document.getElementById('view-plan');
-    if (plan) plan.open = !!window.__PLANNING__;
-})();
-
-/* ─── 中栏视图切换：彻底重构后中栏只有正文，规划面板在右栏；保留此函数兼容旧调用 ─── */
-function switchView(v) {
-    scrollManuscript();
-}
-
-/* ─── 中栏：章节正文（连续文本） ─── */
+/* ─── 正文：滚动 / 追加（带桥段标记，供点击高亮）/ 分隔 / 字数进度 ─── */
 function scrollManuscript() {
     const write = document.getElementById('view-write');
     if (write) write.scrollTop = write.scrollHeight;
 }
-function manuscriptAppend(text) {
+function manuscriptAppend(text, plotId) {
     const m = document.getElementById('wf-manuscript');
     if (!m || !text) return;
-    m.appendChild(document.createTextNode(text));
+    let node;
+    if (plotId) {
+        node = document.createElement('span');
+        node.className = 'm-bridge';
+        node.dataset.bridge = plotId;
+        node.textContent = text;
+    } else {
+        node = document.createTextNode(text);
+    }
+    m.appendChild(node);
     scrollManuscript();
 }
 function manuscriptEnsureBreak() {
@@ -270,47 +127,6 @@ function manuscriptDivider(text) {
     m.appendChild(d);
     scrollManuscript();
 }
-
-/* ─── 右栏：写作动态 ─── */
-function feedRight() {
-    const log = document.getElementById('write-log');
-    if (log && !log.open) log.open = true;   // 有动态时自动展开写作动态区
-    const feed = document.getElementById('wf-feed');
-    if (feed) feed.scrollTop = feed.scrollHeight;
-}
-function feedItem(cls, text) {
-    const feed = document.getElementById('wf-feed');
-    if (!feed) return;
-    const d = document.createElement('div');
-    d.className = 'gf-item' + (cls ? ' ' + cls : '');
-    d.textContent = text;
-    feed.appendChild(d);
-    feedRight();
-}
-function feedBridgeStart(evt) {
-    feedItem('action plot', '▶ 写桥段『' + (evt.plot_name || '') + '』' +
-        (evt.outline_name ? '（大纲「' + evt.outline_name + '」）' : '') +
-        (evt.stage_name ? ' · ' + evt.stage_name : '') +
-        '　预计' + (evt.planned_words || '?') + '字');
-    if (evt.diagnosis) {
-        const diag = document.createElement('div');
-        diag.className = 'gf-item info';
-        diag.style.fontSize = '11px';
-        diag.textContent = evt.diagnosis.trim();
-        document.getElementById('wf-feed').appendChild(diag);
-        feedRight();
-    }
-    if (window.StoryLine) window.StoryLine.highlight({outline_id: evt.outline_id, plot_id: evt.plot_id});
-}
-function feedBridgeChunk(evt) {
-    manuscriptAppend(evt.text || '');
-}
-function feedBridgeDone(evt) {
-    manuscriptEnsureBreak();
-    feedItem('success', '✅ 桥段完成');
-    if (evt.chapter_words !== undefined) updateChWords(evt.chapter_words, evt.chapter_target);
-    feedRight();
-}
 function updateChWords(words, target) {
     const w = document.getElementById('chp-words');
     const t = document.getElementById('chp-target');
@@ -321,195 +137,79 @@ function updateProg() {
     document.getElementById('prog-ch').textContent = currentChapter;
 }
 
-/* ─── 规划功能（从原规划页并入） ─── */
-var gFullRunning = false;
-function genFullStart() {
-    if (gFullRunning) return;
-    gFullRunning = true;
-    var det = document.querySelector('.right-plan');
-    if (det) det.open = true;   // 生成时展开规划面板，让用户看到进度
-    var btn = document.getElementById('btn-gen-full');
-    btn.disabled = true; btn.textContent = '⏳ 生成中...';
-    var box = document.getElementById('gen-full-box');
-    box.style.display = 'block';
-    for (var i = 1; i <= 6; i++) {
-        var el = document.getElementById('gf-' + i);
-        if (el) { el.className = 'gen-full-phase'; el.querySelector('.gfp-status').textContent = ''; }
-    }
-    var feed = document.getElementById('gen-feed');
-    if (feed) feed.innerHTML = '';
-    var panel = document.getElementById('gen-panel');
-    if (panel) panel.style.display = 'block';
-    ['phase-outlines', 'phase-plots', 'phase-gags', 'phase-ready'].forEach(function(id) {
-        var el = document.getElementById(id);
-        if (el) el.style.display = 'none';
+/* ─── 桥段点击 → 高亮右侧对应正文（事件来自 story_line.js 的 sl:plot-click / sl:outline-click） ─── */
+(function bindBridgeHighlight() {
+    const mount = document.getElementById('editor-storyline');
+    if (!mount) return;
+    mount.addEventListener('sl:plot-click', function (e) { highlightBridgeContent(e.detail && e.detail.plot_id); });
+    mount.addEventListener('sl:outline-click', function (e) { highlightOutlineContent(e.detail && e.detail.outline_id); });
+})();
+function highlightBridgeContent(pid) {
+    if (!pid) return;
+    _clearBridgeActive();
+    const els = document.querySelectorAll('.m-bridge[data-bridge="' + pid + '"]');
+    els.forEach(function (el) { el.classList.add('m-bridge-active'); });
+    _centerManuscript(els[0]);
+    if (window.StoryLine) window.StoryLine.highlight({plot_id: pid});
+}
+function highlightOutlineContent(oid) {
+    if (!oid) return;
+    const sl = window.__BOOK_STORYLINE__ || {};
+    const pids = (sl.plots || []).filter(function (p) { return p.outline_id === oid; }).map(function (p) { return p.id; });
+    _clearBridgeActive();
+    let first = null;
+    document.querySelectorAll('.m-bridge[data-bridge]').forEach(function (el) {
+        if (pids.indexOf(el.getAttribute('data-bridge')) >= 0) {
+            el.classList.add('m-bridge-active');
+            if (!first) first = el;
+        }
     });
-    refreshStoryline(window.__BOOK_STORYLINE__);
-    fetch('/api/storyline/' + storylineId + '/generate-full', { method: 'POST' })
-        .then(function(resp) {
-            var reader = resp.body.getReader();
-            var decoder = new TextDecoder();
-            var buf = '';
-            function read() {
-                return reader.read().then(function(r) {
-                    if (r.done) { genFullFinish(); return; }
-                    buf += decoder.decode(r.value, {stream: true});
-                    var lines = buf.split('\n');
-                    buf = lines.pop() || '';
-                    for (var li = 0; li < lines.length; li++) {
-                        var line = lines[li];
-                        if (line.indexOf('data: ') !== 0) continue;
-                        try { genFullHandle(JSON.parse(line.slice(6))); } catch(e) {}
-                    }
-                    return read();
-                });
-            }
-            return read();
-        }).catch(function(err) {
-            genFullLog('❌ 连接失败: ' + err.message, 'error');
-            genFullFinish();
-        });
+    _centerManuscript(first);
+    if (window.StoryLine) window.StoryLine.highlight({outline_id: oid});
 }
-function genFullLog(msg, cls) {
-    var feed = document.getElementById('gen-feed');
-    if (!feed) return;
-    var d = document.createElement('div');
-    d.className = 'gf-item' + (cls ? ' ' + cls : '');
-    d.textContent = msg;
-    feed.appendChild(d);
-    feed.scrollTop = feed.scrollHeight;
+function _clearBridgeActive() {
+    document.querySelectorAll('.m-bridge-active').forEach(function (el) { el.classList.remove('m-bridge-active'); });
 }
-function genFeedAction(kind, text) { genFullLog(text, 'action action-' + kind); }
-function genFeedDecision(evt) {
-    var chosen = evt.chosen || {};
-    var text = '';
-    if (evt.kind === 'outline_choice') text = (chosen && chosen.name) || '';
-    else if (evt.kind === 'plot_choice') text = (Array.isArray(chosen) ? chosen.map(function(x){ return x.name || x; }).join('、') : (chosen && chosen.name)) || '';
-    else if (evt.kind === 'theme_review') text = '内涵 ' + ((chosen.themes||[]).join('、') || '—');
-    else if (evt.kind === 'thread_split') text = '线程 ' + ((chosen.threads||[]).join('、') || '—') + ' · 拆分 ' + (chosen.splits||0) + ' 处';
-    else if (evt.kind === 'validate') text = ((chosen.issues||[]).length) + ' 条建议';
-    if (!text && evt.candidates && evt.candidates.length) {
-        text = '候选 ' + evt.candidates.slice(0, 6).map(function(x){ return x.name || x; }).join('、');
-    }
-    genFullLog('✅ ' + (evt.step || '决策') + (text ? ' → ' + text : ''), 'decision');
+function _centerManuscript(el) {
+    const pane = document.getElementById('view-write');
+    if (!pane || !el) return;
+    pane.scrollTop = Math.max(0, el.getBoundingClientRect().top - pane.getBoundingClientRect().top
+        + pane.scrollTop - pane.clientHeight * 0.5);
 }
-function genFullHandle(evt) {
-    var type = evt.event;
-    if (type === 'phase') {
-        var el = document.getElementById('gf-' + (evt.phase || 0));
-        if (el) { el.className = 'gen-full-phase active'; el.querySelector('.gfp-status').textContent = evt.desc || ''; }
-        genFullLog(evt.message, 'info');
-    } else if (type === 'phase_done') {
-        var el2 = document.getElementById('gf-' + (evt.phase || 0));
-        if (el2) { el2.className = 'gen-full-phase done'; el2.querySelector('.gfp-status').textContent = '✅'; }
-        genFullLog(evt.message, 'success');
-    } else if (type === 'progress') {
-        genFullLog(evt.message, 'info');
-    } else if (type === 'outline_added') {
-        var range = (evt.start_chapter && evt.end_chapter) ? '（第' + evt.start_chapter + '-' + evt.end_chapter + '章）' : '';
-        genFeedAction('outline', '📋 添加大纲：『' + (evt.name || evt.message) + '』' + range);
-    } else if (type === 'plot_added') {
-        genFeedAction('plot', '🧩 添加桥段：『' + (evt.message || '') + '』' + (evt.outline_name ? '（大纲「' + evt.outline_name + '」）' : ''));
-    } else if (type === 'outline_plots') {
-        genFullLog('🧩 ' + (evt.message || '') + ' → ' + (evt.plot_count || 0) + ' 个桥段', 'info');
-    } else if (type === 'theme_injected') {
-        genFeedAction('gag', '💡 为『' + (evt.message || '') + '』挂载内涵 ×' + ((evt.theme_hints || []).length));
-    } else if (type === 'decision') {
-        genFeedDecision(evt);
-    } else if (type === 'warnings') {
-        genFullLog('⚠️ ' + (evt.message || ''), 'info');
-    } else if (type === 'done') {
-        genFullLog('🎉 ' + (evt.message || '大纲生成完成') + '，已合并到当前故事线！', 'success');
-        setTimeout(function(){ location.reload(); }, 600);
-        return;
-    } else if (type === 'error') {
-        genFullLog('❌ ' + (evt.message || '未知错误'), 'error');
-        genFullFinish();
-        return;
-    }
-    if (['outline_added','outline_plots','plot_added','theme_injected','phase_done','done'].indexOf(type) >= 0 && evt.storyline) {
-        window.__BOOK_STORYLINE__ = evt.storyline;
-        refreshStoryline(evt.storyline);
-    }
-}
-function applyPhaseVisibility() {
-    var tl = window.__BOOK_STORYLINE__ || {};
-    var ph = tl.phase || 'config';
-    function show(id, cond) { var el = document.getElementById(id); if (el) el.style.display = cond ? '' : 'none'; }
-    show('phase-outlines', ['config', 'outlines'].indexOf(ph) >= 0);
-    show('phase-plots', ph === 'plots');
-    show('phase-gags', ph === 'gags');
-    show('phase-ready', ph === 'ready');
-}
-function genFullFinish() {
-    gFullRunning = false;
-    var btn = document.getElementById('btn-gen-full');
-    if (btn) { btn.disabled = false; btn.textContent = '✨ 一键生成完整大纲'; }
-    var panel = document.getElementById('gen-panel');
-    if (panel) panel.style.display = 'none';
-    applyPhaseVisibility();
-    refreshStoryline(window.__BOOK_STORYLINE__);
-}
-function generateOutlines() {
-    var btn = event.target;
-    btn.disabled = true; btn.textContent = '生成中...';
-    fetch('/api/storyline/' + storylineId + '/generate-outlines', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 大纲序列已生成', 'success'); location.reload(); } else showToast(d.error, 'error'); })
-        .catch(e => showToast('失败: ' + e.message, 'error'))
-        .finally(() => { btn.disabled = false; btn.textContent = '🤖 AI 生成大纲序列'; });
-}
-function addOutline() {
-    fetch('/api/storyline/' + storylineId + '/generate-outlines?mode=rule', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 已添加大纲', 'success'); location.reload(); } else showToast(d.error, 'error'); })
-        .catch(e => showToast('失败: ' + e.message, 'error'));
-}
-function extendOutline() {
-    var btn = event.target;
-    if (!confirm('在故事线末尾追加一段新大纲弧（含桥段），用于续写扩展。确定？')) return;
-    btn.disabled = true; btn.textContent = '扩展中...';
-    fetch('/api/storyline/' + storylineId + '/extend-outline', { method: 'POST' })
-        .then(r => r.json()).then(d => {
-            if (d.ok) { flashToast('✅ 故事线已扩展', 'success'); location.reload(); }
-            else showToast(d.error || '扩展失败', 'error');
-        })
-        .catch(e => showToast('失败: ' + e.message, 'error'));
-}
-function confirmOutlines() {
-    if (!confirm('确认故事线？确认后进入桥段编排阶段。')) return;
-    var btn = document.getElementById('btn-confirm-outlines');
-    btn.disabled = true; btn.textContent = '处理中...';
-    fetch('/api/storyline/' + storylineId + '/confirm-outlines', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 已确认故事线', 'success'); location.reload(); } else showToast(d.error, 'error'); })
-        .catch(e => showToast('失败: ' + e.message, 'error'));
-}
-function fillPlots() {
-    var btn = event.target;
-    btn.disabled = true; btn.textContent = '填充中...';
-    fetch('/api/storyline/' + storylineId + '/fill-plots', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 桥段已填充', 'success'); location.reload(); } else showToast(d.error, 'error'); })
-        .catch(e => showToast('失败: ' + e.message, 'error'))
-        .finally(() => { btn.disabled = false; btn.textContent = '🤖 AI 填充桥段'; });
-}
-function confirmPlots() {
-    if (!confirm('确认桥段编排？确认后进入加料注入阶段。')) return;
-    fetch('/api/storyline/' + storylineId + '/fill-gags', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 已进入加料注入', 'success'); location.reload(); } else showToast(d.error, 'error'); });
-}
-function togglePlotConfirm(plotId, checked) {
-    fetch('/api/storyline/' + storylineId + '/plot-confirm', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({plot_id: plotId, confirmed: checked})
+
+/* ─── 可拖拽分栏：故事线宽度 20%–60%，持久化 localStorage ─── */
+(function initResize() {
+    const left = document.querySelector('.editor-left');
+    const div = document.getElementById('editor-divider');
+    const split = document.querySelector('.editor-split');
+    if (!left || !div || !split) return;
+    try {
+        const w = parseFloat(localStorage.getItem('ne_storyline_w') || '');
+        if (w >= 20 && w <= 60) left.style.width = w + '%';
+    } catch (e) {}
+    div.addEventListener('mousedown', function (e) {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startW = left.getBoundingClientRect().width;
+        const splitW = split.getBoundingClientRect().width;
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'col-resize';
+        function onMove(ev) {
+            const pct = Math.max(20, Math.min(60, (startW + (ev.clientX - startX)) / splitW * 100));
+            left.style.width = pct + '%';
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+            try { localStorage.setItem('ne_storyline_w', left.style.width.replace('%', '')); } catch (e) {}
+            refreshStoryline(window.__BOOK_STORYLINE__);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
     });
-}
-function injectGags() {
-    var btn = event.target;
-    btn.disabled = true; btn.textContent = '注入中...';
-    fetch('/api/storyline/' + storylineId + '/fill-gags', { method: 'POST' })
-        .then(r => r.json()).then(d => { if (d.ok) { flashToast('✅ 内涵已挂载', 'success'); location.reload(); } else showToast(d.error, 'error'); });
-}
-function startWriting() {
-    location.href = '/books/' + storylineId + '/continue';
-}
+})();
 
 /* ─── 写作 SSE ─── */
 async function writeBridge() {
@@ -539,11 +239,12 @@ async function writeBridge() {
                 if (line.indexOf('data: ') !== 0) continue;
                 let evt; try { evt = JSON.parse(line.slice(6)); } catch (e) { continue; }
                 if (evt.type === 'bridge_start' || evt.type === 'plot_start') {
-                    feedBridgeStart(evt);
+                    if (window.StoryLine) window.StoryLine.highlight({outline_id: evt.outline_id, plot_id: evt.plot_id});
                 } else if (evt.type === 'group_chunk' || evt.type === 'plot_chunk') {
-                    feedBridgeChunk(evt);
+                    manuscriptAppend(evt.text || '', evt.plot_id);
                 } else if (evt.type === 'bridge_done' || evt.type === 'plot_done') {
-                    feedBridgeDone(evt);
+                    manuscriptEnsureBreak();
+                    if (evt.chapter_words !== undefined) updateChWords(evt.chapter_words, evt.chapter_target);
                 } else if (evt.type === 'chapter_progress') {
                     updateChWords(evt.words, evt.target);
                 } else if (evt.type === 'chapter_done') {
@@ -551,14 +252,7 @@ async function writeBridge() {
                     updateProg();
                     updateChWords(0, document.getElementById('chp-target').textContent);
                     manuscriptDivider('──────── 第' + evt.chapter + '章 完（' + evt.word_count + '字）────────');
-                    feedItem('success', '✅ 第' + evt.chapter + '章完成 · ' + evt.word_count + '字 · 花费 ¥' + (evt.cost || 0));
-                    if (bookId) {
-                        const links = document.createElement('div');
-                        links.style.margin = '4px 0 8px';
-                        links.innerHTML = '<a class="wf-link" href="/books/' + bookId + '#ch-' + evt.chapter + '">📖 查看本章</a>' +
-                            ' · <a class="wf-link" href="/books/' + bookId + '">📄 去书详情</a>';
-                        document.getElementById('wf-feed').appendChild(links);
-                    }
+                    showToast('✅ 第' + evt.chapter + '章完成 · ' + evt.word_count + '字', 'success');
                     if (evt.review) {
                         const r = evt.review;
                         const verdict = r.passed ? '✅ 通过' : '❌ 未过';
@@ -566,29 +260,22 @@ async function writeBridge() {
                         if (r.issues && r.issues.length) {
                             txt += '：' + r.issues.slice(0, 3).map(i => i.description).join('；');
                         }
-                        feedItem(r.passed ? 'info' : 'warn', txt);
+                        showToast(txt, r.passed ? 'info' : 'warn');
                     }
                 } else if (evt.type === 'budget_paused') {
-                    feedItem('warn', '⛔ ' + (evt.message || '预算耗尽，暂停写作') + '——请到「设置」调高单书预算后继续写');
+                    showToast('⛔ ' + (evt.message || '预算耗尽，暂停写作') + '——请到「设置」调高单书预算后继续写', 'warn');
                 } else if (evt.type === 'bridge_skip') {
-                    feedItem('info', '⏭️ ' + (evt.reason || '桥段跳过'));
+                    showToast('⏭️ ' + (evt.reason || '桥段跳过'), 'info');
                 } else if (evt.type === 'complete') {
-                    feedItem('success', '🎉 ' + (evt.message || '全书完成'));
-                    if (evt.book_id) {
-                        const d = document.createElement('div');
-                        d.style.margin = '4px 0 8px';
-                        d.innerHTML = '<a class="wf-link" href="/books/' + evt.book_id + '/publish">🚀 去上架 / 导出</a>' +
-                            ' · <a class="wf-link" href="/books/' + evt.book_id + '">📄 书详情</a>';
-                        document.getElementById('wf-feed').appendChild(d);
-                    }
+                    showToast('🎉 ' + (evt.message || '全书完成'), 'success');
                 } else if (evt.type === 'error') {
-                    feedItem('error', '❌ ' + (evt.message || '写作失败'));
+                    showToast('❌ ' + (evt.message || '写作失败'), 'error');
                 }
             }
         }
     } catch (e) {
-        if (e.name === 'AbortError') feedItem('info', '⏹️ 已停止');
-        else feedItem('error', '❌ 连接失败: ' + e.message);
+        if (e.name === 'AbortError') showToast('⏹️ 已停止', 'info');
+        else showToast('❌ 连接失败: ' + e.message, 'error');
     }
     running = false;
     document.getElementById('btn-stop').style.display = 'none';

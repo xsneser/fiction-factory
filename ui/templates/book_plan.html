@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}规划 — {{ book.title or book.pen_name }}{% endblock %}
+{% block crumbs %}
+<div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <a href="/books/{{ book.book_id }}">{{ book.title or '(待定)' }}</a> <span class="sep">›</span> <span class="cur">规划</span></div>
+{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/css/story_line.css">
+<link rel="stylesheet" href="/static/css/workspace.css">
+<script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson }};</script>
+<script>window.__STORYLINE_ID__ = "{{ book.book_id }}";</script>
+<script>window.storylineId = "{{ book.book_id }}";</script>
+<div class="tle-layout">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <h1 style="margin:0">📋 规划与生成</h1>
+        <a class="btn" style="background:#30363d;color:#c9d1d9;text-decoration:none" href="/books/{{ book.book_id }}/continue">✍️ 返回写作台</a>
+        <a class="btn" style="background:#238636;color:#fff;text-decoration:none" href="/books/{{ book.book_id }}">📖 书详情</a>
+    </div>
+    <div class="editor-split">
+        <div class="editor-left">
+            <div class="gen-split-title">📋 故事线（点击桥段可在写作台定位正文）</div>
+            <div class="editor-scroll"><div id="editor-storyline" class="editor-storyline"></div></div>
+        </div>
+        <div class="editor-mid" style="overflow-y:auto">
+            {% include "_plan_gen_panel.html" %}
+        </div>
+    </div>
+</div>
+<script src="/static/js/story_line.js"></script>
+<script src="/static/js/plan_gen.js"></script>
+{% endblock %}
