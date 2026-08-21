@@ -9,8 +9,7 @@ description: >-
 ---
 # 建书阶段（novel-build）
 
-> **护栏（必须遵守）**：`create_book` / `delete_book` 已从 MCP 面移除（web-only，内部侧栏 agent 才有）。
-> 建书只能驱动系统向导 UI；删书只能 navigate 到书库让用户手动删。**本 skill 绝不调用 create_book / delete_book**。
+> **护栏**：`create_book` / `delete_book` 已从 MCP 面移除——建书只能驱动系统向导 UI，删书只能 navigate 书库让用户手动删；本 skill 绝不调用它们。
 
 ## 前置检查（必做，只读工具）
 1. `mcp__novel-engine__list_books` 看目标书是否已存在。

@@ -5,9 +5,8 @@ description: 建书步 2（挑完候选后的建书）：用户在步 2 已选�
 
 # 建书步 2：补全世界观并建书（novel-build）— dsh 侧车版
 
-> **护栏（必须遵守）**：`create_book` / `delete_book` 是 web-only，不在 MCP 面——本 skill 绝不调用它们。
-> 建书只能驱动系统向导（`drive_ui` 写意图队列，浏览器 `/books/start` 轮询消费后由系统 `POST /books/start` 创建）。
-> headless 是一次性任务：写作方向/笔名/一句话种子/题材标签/候选等决策点由**任务指令给全**（候选已在步 2 由用户选定），不做交互问答。
+> **护栏**：`create_book` / `delete_book` 是 web-only，绝不用——本 skill 只能 `drive_ui` 驱动浏览器向导建书（机制见 CLAUDE.md）。
+> **headless 是一次性任务**：写作方向/笔名/种子/标签/候选等决策由任务指令给全（候选已在步 2 选定），不做交互问答。
 > **触发**：用户在步 2 点「已挑选完毕」后，页面自动把本任务发给 agent（也可在侧栏继续说「继续建书」）。
 > **硬规则**：本 skill **不再生成候选**——绝不 `world_candidates` / `set_candidates` / `pick_candidate` / 步 1→2 的 `next`；候选已由用户在步 2 选定，直接从步 3 开始。
 > **drive_ui 是两参工具**：必须同时传 `cmd` 与 `args`（如 `drive_ui(cmd="set_world", args={world_building:{core_conflict:"…"}})`），`cmd` 必填不可省——漏传会报 `cmd Field required`。
