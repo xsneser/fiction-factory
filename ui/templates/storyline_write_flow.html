@@ -15,9 +15,6 @@
 {{ info_bar(
     title=state.title or '(待定)',
     pen_name=state.pen_name,
-    genre=state.genre,
-    sub_genre=state.sub_genre or '',
-    platform=state.platform,
     progress='第 ' ~ (book.current_chapter or 0) ~ ' 章 · 共 ' ~ (book.total_words or 0) ~ ' 字',
     status_html=status_badge(book.status) if book else status_badge('writing'),
     extra='<span>每章：<strong>' ~ storyline.words_per_chapter ~ '字</strong></span>'

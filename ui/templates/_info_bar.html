@@ -5,7 +5,7 @@
 <div class="info-bar">
     <span>书名：<strong>{{ title }}</strong></span>
     <span>笔名：<strong>{{ pen_name }}</strong></span>
-    <span>流派：<strong>{{ genre }}{% if sub_genre %}/{{ sub_genre }}{% endif %}</strong></span>
+    {% if genre %}<span>流派：<strong>{{ genre }}{% if sub_genre %}/{{ sub_genre }}{% endif %}</strong></span>{% endif %}
     {% if platform %}<span>平台：<strong>{{ platform }}</strong></span>{% endif %}
     {% if progress %}<span>进度：<strong>{{ progress }}</strong></span>{% endif %}
     {% if status_html %}<span>状态：{{ status_html|safe }}</span>{% endif %}

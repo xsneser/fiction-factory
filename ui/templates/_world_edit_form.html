@@ -5,10 +5,9 @@
     <form id="world-form" class="form-grid">
         <fieldset>
             <legend>🗺️ 世界观</legend>
-            <div class="form-row">
-                <label>一句话设定 description</label>
-                <textarea id="world-idea" rows="2" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…"></textarea>
-            </div>
+            {# 一句话设定 description 已从书详情页移除（用户要求）：数据仍存
+               basic_info.world_building.description，保留隐藏值供保存/重生成逻辑读取，不展示可编辑字段 #}
+            <input type="hidden" id="world-idea">
             <div id="wb-tags-display" class="form-row hint" style="display:none"></div>
             <div id="candidate-box"></div>
             <div class="form-row">
@@ -42,7 +41,6 @@
                 <label>世界规则 rules</label>
                 <textarea id="wb-rules" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea>
             </div>
-            <div class="form-row hint">一句话种子保存在 description 字段，改上面字段即可；重生成时保留你已填的值。</div>
         </fieldset>
 
         <fieldset>
