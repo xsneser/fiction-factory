@@ -17,7 +17,7 @@ Claude Code 经 MCP 调用的总览）。
     write_next_bridge 阻塞数分钟，否则被 MCP 掐断，spike 已验证），并同时挂
     events-runner（禁 headless-runner 的 summarize、换事件流输出）。
   - 强化指令拼进任务文本前缀（persona 已在 headless profile 注入，这里按任务重申
-    护栏：禁 create_book/delete_book、phase 门控、防死循环轮询）。
+    护栏：禁直建/直删（工具不在面）、phase 门控、防死循环轮询）。
 
 本模块零新增 Python 依赖（subprocess + 标准库 + core.json_store.read_json）。
 """
@@ -89,10 +89,10 @@ def interrupt_current_task() -> bool:
 # 这里按任务重申关键约束，防 dsh 擅调越权工具 / 死循环轮询）。
 _REINFORCEMENT = """[系统约束]
 你是 NovelEngine 平台的外部驱动 agent。
-- 意图→skill：开新书/建书/写设定/构思世界观/生成候选→novel-build-candidates（生成候选并呈现，**停在步 2 等用户挑选，不自动选/跳步**）；已选候选/补全世界观/继续建书→novel-build（步 3 分阶段建书+submit+完整大纲）；生成大纲/排故事线/续写扩写→novel-outline；写正文/写下一章→novel-write；上架/发布/完本/导出→novel-publish；删书→无 skill，navigate(/books) 让用户手动删（delete_book 不在工具面）。
+- 意图→skill：开新书/建书/写设定/构思世界观/生成候选→novel-build-candidates（生成候选并呈现，**停在步 2 等用户挑选，不自动选/跳步**）；**侧栏要求建书→先 navigate('/books/start') 翻到步 1 表单（用户已给全 idea/tags 就预填，笔名留用户选），交用户填写后点「🚀 让 Agent 构建」再走按钮路径，不聊天索要设定/不代跳步/不代生成候选**；已选候选/补全世界观/继续建书→novel-build（步 3 分阶段建书+submit+完整大纲）；生成大纲/排故事线/续写扩写→novel-outline；写正文/写下一章→novel-write；上架/发布/完本/导出→novel-publish；删书→无 skill，navigate(/books) 让用户手动删（直删工具不在工具面）。
 - 拿不准阶段→先 list_books + get_book_detail 看目标书 phase 再定 skill；书多先问「对哪本书操作」，不跨阶段硬做。
 - 按四阶段推进（建书→大纲→写作→上架），每阶段前用 get_book_detail 校验 phase，phase 不满足不跨阶段硬做。
-- 严禁调用 create_book / delete_book（web-only，不在工具面）；建书必须 drive_ui 驱动浏览器向导。
+- 建书必须 drive_ui 驱动浏览器向导，删书必须 navigate /books 让用户手动删——直建/直删工具不在工具面。
 - 工具被 phase 门控拒绝或抛 BookBusyError 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即为循环，应停止并如实汇报。
 - 长工具（generate_full_outline / write_next_bridge）会阻塞数分钟属正常，等待结果，不要反复用同参重查。"""
 
@@ -231,22 +231,104 @@ def _result_error(msg: dict) -> bool:
     return False
 
 
-def _extract_tool_summary(msg: dict) -> str:
-    """从 tool/result 的 message 抽一行摘要（content 可能是 string 或 text blocks）。"""
+# ─── 工具结果中文转义（前端工具卡直接展示，去英文 key）───
+_CMD_ZH = {
+    "set_world": "写入世界观", "set_characters": "写入角色", "set_candidates": "填入候选",
+    "pick_candidate": "选中候选", "set_field": "填写字段", "set_tags": "设置标签",
+    "next": "下一步", "prev": "上一步", "reset": "重置向导", "submit": "提交建书",
+    "skip_candidates": "跳过候选", "load_candidates": "加载候选", "fill_world": "重新补全",
+    "set_picks": "记录选材",
+}
+_KEY_ZH = {
+    "core_conflict": "核心矛盾", "genre": "流派", "sub_genre": "子流派", "factions": "势力",
+    "faction": "势力", "name": "名称", "stance": "立场", "desc": "描述", "characters": "人物",
+    "protagonist": "主角", "supporting_cast": "配角", "identity": "身份", "personality": "性格",
+    "golden_finger": "金手指", "catchphrase": "口癖", "role": "角色", "importance": "重要度",
+    "relation": "关系", "brief": "简介", "title": "标题", "idea": "一句话设定", "tags": "标签",
+    "pen_name": "笔名", "candidates": "候选", "one_liner": "一句话梗概", "world_brief": "世界观简述",
+    "templates": "模板", "era": "时代", "power_system": "力量体系", "geography": "地理",
+    "culture": "文化", "history": "历史", "social_structure": "社会结构", "rules": "规则",
+    "world_summary": "设定概述", "tone": "基调", "target_audience": "目标读者", "pov": "视角",
+    "era_language": "时代语言", "description": "描述", "status": "状态", "ok": "成功",
+    "error": "错误", "book_id": "书 ID", "phase": "阶段", "world_building": "世界观",
+    "cmd": "命令", "__ui_command__": "命令", "book": "书", "chapter": "章节", "age": "年龄",
+    "death_year": "去世年份", "gender": "性别", "mode": "模式", "category": "分类",
+    "keyword": "关键词", "plot": "桥段", "plots": "桥段", "structure": "结构", "structures": "模板",
+    "gag": "梗", "gags": "梗", "count": "数量", "total": "总计", "storyline": "时间线",
+    "outlines": "大纲", "timeline": "时间线", "archetype_id": "原型", "source": "来源",
+    "id": "ID", "tweak": "微调", "pen": "笔名", "outline": "大纲",
+    "url": "地址", "words": "字数", "word_count": "字数", "target_words": "目标字数",
+    "passed": "通过", "score": "评分", "message": "消息", "recent_n": "最近章数",
+    "chapter_num": "章节号", "max_outlines": "大纲数", "struct": "结构",
+}
+
+
+def _zh_keys(v):
+    """把 JSON 的键递归译成中文（值保留）。"""
+    if isinstance(v, list):
+        return [_zh_keys(x) for x in v]
+    if isinstance(v, dict):
+        return {_KEY_ZH.get(k, k): _zh_keys(val) for k, val in v.items()}
+    return v
+
+
+def _extract_result_text(msg) -> str:
+    """从 tool/result 的 message 抽完整文本（content 可能是 string 或 text blocks）。"""
+    text = ""
     try:
-        parts = []
         for block in (msg.get("content") or []):
             if isinstance(block, dict):
                 inner = block.get("content")
                 if isinstance(inner, str):
-                    parts.append(inner)
+                    text += inner
                 elif isinstance(inner, list):
                     for b in inner:
                         if isinstance(b, dict) and b.get("type") == "text":
-                            parts.append(b.get("text") or "")
-        return (" ".join(p for p in parts if p)).strip()[:200]
+                            text += b.get("text") or ""
     except Exception:
-        return ""
+        text = ""
+    return text
+
+
+def _zh_tool_summary(name, args, msg):
+    """把 tool/result 的消息转成中文一行摘要（前端直接展示，不带英文 key）。"""
+    text = _extract_result_text(msg)
+    if name == "drive_ui":
+        cmd = (args or {}).get("cmd", "") if isinstance(args, dict) else ""
+        zh = _CMD_ZH.get(cmd, cmd or "")
+        return "已" + zh if zh else "已执行向导命令"
+    if name == "world_candidates":
+        try:
+            obj = json.loads(text)
+            cand = (obj or {}).get("candidate") or {}
+            total = (obj or {}).get("total")
+            head = f"已生成第 {total or '?'} 个候选"
+            t = (cand.get("title") or "").strip()
+            if t:
+                head += f"：「{t}」"
+            ol = (cand.get("one_liner") or "").strip()
+            return head + (("　" + ol) if ol else "")
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return json.dumps(_zh_keys(obj), ensure_ascii=False, separators=(",", ":")).strip()
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return text[:200].strip()
+
+
+def _result_candidate(msg):
+    """从 world_candidates 的 tool/result 全文抽新增候选 dict（供 dsh 会话实时 add_candidate）。"""
+    try:
+        obj = json.loads(_extract_result_text(msg))
+        cand = (obj or {}).get("candidate")
+        if isinstance(cand, dict) and cand.get("title"):
+            return cand
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return None
 
 
 def _map_dsh_event(evt: dict, pending: dict):
@@ -266,7 +348,7 @@ def _map_dsh_event(evt: dict, pending: dict):
         name = _short_name(data.get("name", ""))
         call_id = data.get("callId", "")
         args = _parse_args(data.get("arguments"))
-        pending[call_id] = {"name": name, "callId": call_id}
+        pending[call_id] = {"name": name, "callId": call_id, "args": args}
         yield {"type": "tool_call", "name": name, "args": args, "callId": call_id}
         if name == "navigate":
             url = args.get("url") if isinstance(args, dict) else ""
@@ -285,12 +367,21 @@ def _map_dsh_event(evt: dict, pending: dict):
         source = msg.get("source") or {}
         call_id = source.get("callId") or ""
         p = pending.pop(call_id, {}) or {}
+        name = p.get("name") or ""
         ok = not data.get("error") and not _result_error(msg)
         yield {"type": "tool_result",
-               "name": p.get("name") or "",
+               "name": name,
                "callId": call_id or p.get("callId") or "",
                "ok": ok,
-               "summary": _extract_tool_summary(msg)}
+               "summary": _zh_tool_summary(name, p.get("args"), msg)}
+        # 合并工具 world_candidates 已内部「生成 1 个候选 + 自动填入」：dsh 会话 busy 期间
+        # 浏览器跳过 nav-intent 轮询，这里从结果里实时合成 add_candidate SSE 渲染
+        # （外部 MCP 路径由工具自身 push 的 add_candidate 意图轮询兜底，done 后清空不重放）。
+        if ok and name == "world_candidates":
+            cand = _result_candidate(msg)
+            if cand:
+                yield {"type": "ui_command", "cmd": "add_candidate",
+                       "args": {"candidate": cand}}
     elif t == "reply":
         yield {"type": "reply", "content": data.get("text") or ""}
     elif t == "error":

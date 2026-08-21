@@ -4,7 +4,7 @@
 
     <form id="world-form" class="form-grid">
         <fieldset>
-            <legend>🗺️ 世界观（设定圣经）</legend>
+            <legend>🗺️ 世界观</legend>
             <div class="form-row">
                 <label>一句话设定 description</label>
                 <textarea id="world-idea" rows="2" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…"></textarea>
@@ -12,12 +12,12 @@
             <div id="wb-tags-display" class="form-row hint" style="display:none"></div>
             <div id="candidate-box"></div>
             <div class="form-row">
-                <label>设定概述 world_summary（一段话整体设定，自动展开不滚动）</label>
+                <label>设定概述 world_summary</label>
                 <textarea id="wb-world_summary" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea>
             </div>
             <div class="form-row half">
-                <div><label>时代 era（含年份/纪元）</label><input id="wb-era"></div>
-                <div><label>力量体系 power_system（数值写死）</label><input id="wb-power_system"></div>
+                <div><label>时代 era</label><input id="wb-era"></div>
+                <div><label>力量体系 power_system</label><input id="wb-power_system"></div>
             </div>
             <div class="form-row half">
                 <div><label>地理 geography</label><input id="wb-geography"></div>
@@ -28,18 +28,18 @@
                 <div><label>社会结构 social_structure</label><input id="wb-social_structure"></div>
             </div>
             <div class="form-row">
-                <label>核心矛盾 core_conflict（驱动全书的冲突）</label>
+                <label>核心矛盾 core_conflict</label>
                 <input id="wb-core_conflict">
             </div>
             <div class="form-row">
-                <label>势力 factions（每个势力：名称 / 立场 / 描述；下方人物卡可归入势力）</label>
+                <label>势力 factions</label>
                 <div id="wb-factions"></div>
                 <div class="btn-row">
                     <button type="button" class="btn-secondary" onclick="addFactionRow()">➕ 添加势力</button>
                 </div>
             </div>
             <div class="form-row">
-                <label>世界规则 rules（每行一条，金手指数值写死）</label>
+                <label>世界规则 rules</label>
                 <textarea id="wb-rules" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea>
             </div>
             <div class="form-row hint">一句话种子保存在 description 字段，改上面字段即可；重生成时保留你已填的值。</div>

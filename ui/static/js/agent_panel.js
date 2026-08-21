@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v3 events-stream');
+console.log('[agent-panel] v4 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -29,6 +29,81 @@ console.log('[agent-panel] v3 events-stream');
     }
     var history = loadHistory();
 
+    // ─── 工具卡中文化：工具名 → 中文动作；drive_ui cmd → 中文效果；JSON 键 → 中文 ───
+    var TOOL_ZH = {
+        borrow_preview: '预览借鉴设定', confirm_outlines: '确认大纲', confirm_world: '确认世界观',
+        deai_text: '去 AI 味', diagnose_retention: '追读诊断', drive_ui: '驱动建书向导',
+        export_book: '导出投稿包', extend_outline: '续写故事线', fill_gags: '挂载笑点',
+        fill_plots: '填充桥段', generate_book_meta: '生成书名+简介', generate_characters: '生成角色',
+        generate_core_conflict: '生成核心矛盾', generate_factions: '生成势力', generate_full_outline: '生成完整大纲',
+        generate_outlines: '生成大纲序列', generate_rest_world: '补全其余世界观', generate_title: '生成书名',
+        generate_world: '生成世界观', get_book_detail: '读取书详情', get_book_state: '读取书状态',
+        get_build_status: '读取建书状态', get_storyline: '读取故事线', list_books: '列出书库',
+        mark_finished: '标记完本', navigate: '页面跳转', outline_agent: '大纲助手',
+        outline_material_candidates: '取选材候选', publish_book: '上架', publish_check: '上架检查',
+        query_characters: '查角色原型', query_gags: '查笑点库', query_plots: '查桥段库',
+        query_profiles: '查笔名档案', query_structures: '查大纲库', review_text: '审查文本',
+        save_basic_info: '保存基础设定', tag_punch_points: '标注爽点', world_candidates: '生成世界观候选',
+        write_chapter: '写章节', write_next_bridge: '写下一桥段'
+    };
+    var CMD_ZH = {
+        set_world: '写入世界观', set_characters: '写入角色', set_candidates: '填入候选',
+        pick_candidate: '选中候选', set_field: '填写字段', set_tags: '设置标签',
+        next: '下一步', prev: '上一步', reset: '重置向导', submit: '提交建书',
+        skip_candidates: '跳过候选', load_candidates: '加载候选', fill_world: '重新补全',
+        set_picks: '记录选材'
+    };
+    var KEY_ZH = {
+        core_conflict: '核心矛盾', genre: '流派', sub_genre: '子流派', factions: '势力', faction: '势力',
+        name: '名称', stance: '立场', desc: '描述', characters: '人物', protagonist: '主角',
+        supporting_cast: '配角', identity: '身份', personality: '性格', golden_finger: '金手指',
+        catchphrase: '口癖', role: '角色', importance: '重要度', relation: '关系', brief: '简介',
+        title: '标题', idea: '一句话设定', tags: '题材标签', pen_name: '笔名', candidates: '候选',
+        one_liner: '一句话梗概', world_brief: '世界观简述', outline: '大纲', templates: '模板',
+        era: '时代', power_system: '力量体系', geography: '地理', culture: '文化', history: '历史',
+        social_structure: '社会结构', rules: '规则', world_summary: '设定概述', tone: '基调',
+        target_audience: '目标读者', pov: '视角', era_language: '时代语言', description: '描述',
+        status: '状态', ok: '成功', error: '错误', book_id: '书 ID', phase: '阶段',
+        world_building: '世界观', cmd: '命令', __ui_command__: '命令', book: '书', chapter: '章节',
+        words_per_chapter: '每章字数', archetype_id: '原型', age: '年龄', death_year: '去世年份',
+        gender: '性别', borrow: '借鉴', tweak: '微调', category: '分类', keyword: '关键词',
+        mode: '模式', plot: '桥段', plots: '桥段', structure: '结构', structures: '模板',
+        gag: '梗', gags: '梗', count: '数量', total: '总计', storyline: '时间线',
+        outlines: '大纲', timeline: '时间线', source: '来源', id: 'ID', pen: '笔名',
+        url: '地址', words: '字数', word_count: '字数', target_words: '目标字数',
+        passed: '通过', score: '评分', message: '消息', recent_n: '最近章数',
+        chapter_num: '章节号', max_outlines: '大纲数', struct: '结构'
+    };
+    function toolLabel(tool, args) {
+        if (tool === 'drive_ui') {
+            var cmd = (args && args.cmd) || '';
+            var c = CMD_ZH[cmd] || cmd || '';
+            return '驱动向导' + (c ? ' · ' + c : '');
+        }
+        return TOOL_ZH[tool] || tool;
+    }
+    function zhKeys(v) {
+        if (Array.isArray(v)) return v.map(zhKeys);
+        if (v && typeof v === 'object') {
+            var out = {};
+            for (var k in v) if (Object.prototype.hasOwnProperty.call(v, k)) out[KEY_ZH[k] || k] = zhKeys(v[k]);
+            return out;
+        }
+        return v;
+    }
+    function zhSummary(tool, args, summary) {
+        if (tool === 'drive_ui') {
+            var cmd = (args && args.cmd) || '';
+            return '已' + (CMD_ZH[cmd] || cmd || '执行向导命令');
+        }
+        if (!summary) return '';
+        try {
+            var obj = JSON.parse(summary);
+            if (obj && typeof obj === 'object') return JSON.stringify(zhKeys(obj), null, 1).slice(0, 600);
+        } catch (e) {}
+        return summary;
+    }
+
     // ─── 渲染 ───
     function el(tag, cls, text) {
         var d = document.createElement(tag);
@@ -50,7 +125,7 @@ console.log('[agent-panel] v3 events-stream');
 
     function addToolCard(tool, args) {
         var card = el('div', 'agent-tool-card');
-        var head = el('div', 'agent-tool-head', '🔧 ' + escapeHtml(tool));
+        var head = el('div', 'agent-tool-head', '🔧 ' + escapeHtml(toolLabel(tool, args)));
         head.title = '点击展开/收起参数';
         var detail = el('div', 'agent-tool-detail', '');
         detail.style.display = 'none';
@@ -58,7 +133,7 @@ console.log('[agent-panel] v3 events-stream');
             head.onclick = function() {
                 var show = detail.style.display === 'none';
                 detail.style.display = show ? 'block' : 'none';
-                if (show) detail.textContent = JSON.stringify(args, null, 2);
+                if (show) detail.textContent = JSON.stringify(zhKeys(args), null, 2);
             };
         }
         var status = el('div', 'agent-tool-status', '运行中…');
@@ -67,7 +142,7 @@ console.log('[agent-panel] v3 events-stream');
         card.appendChild(status);
         chat.appendChild(card);
         scrollBottom();
-        return { card: card, status: status, t0: performance.now() };
+        return { card: card, status: status, t0: performance.now(), tool: tool, args: args };
     }
 
     // 事件流工具卡：按 callId 建档，超上限裁剪最旧（防 DOM 无限膨胀）
@@ -149,12 +224,12 @@ console.log('[agent-panel] v3 events-stream');
                 }
                 show.forEach(function(x) {
                     html += '<div class="agent-tool-card ' + (x.ok ? 'ok' : 'err') + '">'
-                        + '<div class="agent-tool-head">' + escapeHtml((x.time || '') + ' ' + (x.ok ? '✅' : '❌') + ' ' + x.tool)
+                        + '<div class="agent-tool-head">' + escapeHtml((x.time || '') + ' ' + (x.ok ? '✅' : '❌') + ' ' + toolLabel(x.tool, x.args))
                         + ' <span style="color:#8b949e;font-weight:normal">' + (x.duration_ms || 0) + 'ms</span></div>';
                     if (x.args && typeof x.args === 'object' && Object.keys(x.args).length) {
-                        html += '<div class="agent-tool-detail" style="display:none">' + escArg(x.args) + '</div>';
+                        html += '<div class="agent-tool-detail" style="display:none">' + escArg(zhKeys(x.args)) + '</div>';
                     }
-                    html += '<div class="agent-tool-status">' + (x.ok ? '' : '❌ ') + escapeHtml(x.summary || '') + '</div></div>';
+                    html += '<div class="agent-tool-status">' + (x.ok ? '' : '❌ ') + escapeHtml(zhSummary(x.tool, x.args, x.summary) || '') + '</div></div>';
                 });
                 toolsLog.innerHTML = html;
                 // 渲染后滚动：跟随中→贴底（新工具自动可见）；翻旧记录→按比例还原位置
@@ -224,7 +299,7 @@ console.log('[agent-panel] v3 events-stream');
             // navigate/drive_ui 的 tool/call 也会建卡，故正常情况都配得到。
             var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
             if (evt.callId) delete toolCards[evt.callId];
-            if (run) finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + (evt.summary || ''));
+            if (run) finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary));
         } else if (t === 'navigate') {
             handleNavigate(evt.url);            // dsh 调用 navigate → 实时切页
         } else if (t === 'ui_command') {
