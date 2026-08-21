@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v4 events-stream');
+console.log('[agent-panel] v5 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -386,6 +386,7 @@ console.log('[agent-panel] v4 events-stream');
     function startTask(text) {
         busy = true;
         setSendEnabled(false);
+        removeRunningBanner();   // 新任务接管：清掉恢复期的「后台运行中」卡（SSE 实时流展示）
         consumeSSE({ messages: history }).catch(function(err) {
             addMsg('assistant', '⚠️ 请求失败：' + err.message);
             if (pendingTask) {
@@ -451,12 +452,90 @@ console.log('[agent-panel] v4 events-stream');
     });
 
     // 初始欢迎语 + 恢复会话历史（card 标记 → 渲染建书任务卡片，而非「你」气泡）
-    if (!history.length) {
-        addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个桥段」\n· 「打开书库看看」');
-    } else {
-        for (var i = 0; i < history.length; i++) {
-            if (history[i].card) addBuildCard(history[i].content);
-            else addMsg(history[i].role, history[i].content);
+    function renderHistory() {
+        chat.innerHTML = '';
+        if (!history.length) {
+            addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个桥段」\n· 「打开书库看看」');
+        } else {
+            for (var i = 0; i < history.length; i++) {
+                if (history[i].card) addBuildCard(history[i].content);
+                else addMsg(history[i].role, history[i].content);
+            }
         }
     }
+    renderHistory();
+    checkRunningTask();   // 页面可能在切页/刷新时丢了进行中任务 → 启动即感知
+
+    // ─── 切页恢复：bfcache 恢复清陈旧状态 + 轮询后台运行中任务 ───
+    var runningPollTimer = null;
+    var runningBannerEl = null;
+
+    function showRunningBanner(d) {
+        if (runningBannerEl && runningBannerEl.parentNode) return;   // 已有卡，幂等
+        var card = el('div', 'agent-tool-card running');
+        var head = el('div', 'agent-tool-head', '⏳ 任务在后台运行中');
+        var body = el('div', 'agent-tool-detail', '');
+        body.style.display = 'block';
+        var lines = [];
+        if (d.task) lines.push('任务：' + d.task);
+        if (d.started_at) lines.push('开始于：' + new Date(d.started_at * 1000).toLocaleTimeString());
+        lines.push('（页面已刷新，实时工具流不可回放；任务会在后台继续跑完）');
+        var cancelBtn = el('button', 'small', '🛑 取消任务');
+        cancelBtn.onclick = function() {
+            fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
+        };
+        body.appendChild(el('div', '', lines.join('\n')));
+        body.appendChild(cancelBtn);
+        card.appendChild(head);
+        card.appendChild(body);
+        chat.appendChild(card);
+        scrollBottom();
+        runningBannerEl = card;
+        if (!runningPollTimer) runningPollTimer = setInterval(checkRunningTask, 3000);
+    }
+
+    function finishRunningBanner(text) {
+        if (runningPollTimer) { clearInterval(runningPollTimer); runningPollTimer = null; }
+        if (runningBannerEl && runningBannerEl.parentNode) {
+            var body = runningBannerEl.querySelector('.agent-tool-detail');
+            if (body) body.firstChild.textContent = text || '✅ 任务已结束';
+            runningBannerEl = null;
+        }
+    }
+
+    function removeRunningBanner() {
+        if (runningPollTimer) { clearInterval(runningPollTimer); runningPollTimer = null; }
+        if (runningBannerEl && runningBannerEl.parentNode) runningBannerEl.parentNode.removeChild(runningBannerEl);
+        runningBannerEl = null;
+    }
+
+    function checkRunningTask() {
+        fetch('/api/agent/chat/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d || !d.ok) return;
+                if (d.running) {
+                    showRunningBanner(d);
+                } else {
+                    finishRunningBanner('✅ 任务已结束');
+                    if (busy) { busy = false; setSendEnabled(true); }   // 防陈旧 busy 卡输入
+                }
+            })
+            .catch(function() {});
+    }
+
+    // bfcache（前进/后退）恢复：清切页前的陈旧状态（死 SSE、卡住的 busy/工具卡），
+    // 重渲染历史并感知后台任务。整页重载不触发本监听，靠启动时 checkRunningTask 兜底。
+    window.addEventListener('pageshow', function(e) {
+        if (!e.persisted) return;
+        busy = false;
+        pendingTask = null;
+        currentToolRun = null;
+        toolCards = {};
+        toolCardOrder = [];
+        removeRunningBanner();
+        renderHistory();
+        addMsg('assistant', '↩️ 页面已从浏览器缓存恢复，检查后台任务…');
+        checkRunningTask();
+    });
 })();

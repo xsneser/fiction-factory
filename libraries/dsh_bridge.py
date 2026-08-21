@@ -34,21 +34,49 @@ _OVERLAY_PATH = os.path.join(_ROOT, "storage", "dsh_runtime.yml")
 
 # ─── 全服务单任务：当前 dsh 子进程 + 打断（kill 整树）───
 _current_proc = None
+_current_task_meta = None   # {"started_at": float, "task": str}：当前运行任务元数据（前端切页恢复感知用）
 _current_proc_lock = threading.Lock()
 _last_interrupted_pid = None
 
 
-def _set_current_proc(proc):
-    global _current_proc
+def _set_current_proc(proc, task: str = ""):
+    global _current_proc, _current_task_meta
     with _current_proc_lock:
         _current_proc = proc
+        _current_task_meta = {"started_at": time.time(),
+                              "task": (task or "").strip()[:80]}
 
 
 def _clear_current_proc(proc):
-    global _current_proc
+    global _current_proc, _current_task_meta
     with _current_proc_lock:
         if _current_proc is proc:
             _current_proc = None
+            _current_task_meta = None
+
+
+def get_current_task_status() -> dict:
+    """当前是否有 dsh 任务在跑（前端切页/刷新后恢复感知用）。
+
+    断连后任务自行跑完但没人收尸（proc 已退出、槽位未清）→ 惰性清槽返回
+    running=False；运行中返回 running=True（含 pid/started_at/task 供展示）。
+    """
+    global _current_proc, _current_task_meta
+    with _current_proc_lock:
+        proc = _current_proc
+        if proc is None:
+            return {"running": False}
+        if proc.poll() is None:
+            meta = _current_task_meta or {}
+            return {
+                "running": True,
+                "pid": proc.pid,
+                "started_at": meta.get("started_at"),
+                "task": meta.get("task", ""),
+            }
+        _current_proc = None
+        _current_task_meta = None
+        return {"running": False}
 
 
 def interrupt_current_task() -> bool:
@@ -59,10 +87,11 @@ def interrupt_current_task() -> bool:
     返回是否真打断了（无任务/已退出返回 False，幂等）。被打断的任务会在其
     run_dsh_task 里以 error+done 收尾，前端 busy 复位。
     """
-    global _current_proc, _last_interrupted_pid
+    global _current_proc, _current_task_meta, _last_interrupted_pid
     with _current_proc_lock:
         proc = _current_proc
         _current_proc = None
+        _current_task_meta = None
         if proc is None or proc.poll() is not None:
             return False
         _last_interrupted_pid = proc.pid
@@ -426,7 +455,7 @@ def run_dsh_task(task: str, history: list | None = None,
                               "（源码入库，依赖重建），且 Node 在 PATH"}
             yield {"type": "done"}
             return
-        _set_current_proc(proc)
+        _set_current_proc(proc, task)
 
         q = queue.Queue()
         stderr_buf = []
@@ -493,14 +522,9 @@ def run_dsh_task(task: str, history: list | None = None,
                 yield {"type": "error", "message": f"dsh 任务异常退出（exit {exit_code}）"}
             yield {"type": "done"}
     finally:
-        _clear_current_proc(proc)
-        if proc is not None and proc.poll() is None:
-            # 生成器被提前关闭（客户端断连）时收尸：杀残留 proc 并 wait
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                pass
+        # 客户端断连（GeneratorExit）时**不杀子进程**——任务继续在后台跑完
+        # （dsh headless 一次性任务会自终止），前端切页后经 get_current_task_status
+        # 感知/取消；仅当 proc 确已退出才清槽位（正常结束 / 被 interrupt 杀掉）。
+        # 断连后跑完的任务由 get_current_task_status 惰性清槽，不会残留。
+        if proc is not None and proc.poll() is not None:
+            _clear_current_proc(proc)
