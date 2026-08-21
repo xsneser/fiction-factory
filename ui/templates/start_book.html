@@ -77,8 +77,9 @@
 
     {# ─── ③ 世界观补全：AI 自动补全 12 维 + 基调（可编辑）+ 角色候选 ─── #}
     <section class="wz-panel" id="panel-3" style="display:none">
+        <div class="world-edit">
         <fieldset>
-            <legend>🌍 世界观（AI 自动补全，可编辑）</legend>
+            <legend>🗺️ 世界观（设定圣经）</legend>
             <div class="form-row half">
                 <div><label>书名</label><input id="wz-title" placeholder="书名（第②步选择，可改）"></div>
                 <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
@@ -108,19 +109,28 @@
                 <label>核心矛盾 core_conflict（驱动全书的冲突）</label>
                 <input id="wz-wb-core_conflict">
             </div>
-            <div class="form-row half">
-                <div>
-                    <label>势力 factions（用「名:立场」多条，或逗号分隔）</label>
-                    <textarea id="wz-wb-factions" rows="3"></textarea>
+            <div class="form-row">
+                <label>势力 factions（每个势力：名称 / 立场 / 描述；下方人物卡可归入势力）</label>
+                <div id="wz-wb-factions"></div>
+                <div class="btn-row">
+                    <button type="button" class="btn-secondary" onclick="WZ.addFactionRow()">➕ 添加势力</button>
                 </div>
-                <div>
-                    <label>世界规则 rules（每行一条，金手指数值写死）</label>
-                    <textarea id="wz-wb-rules" rows="3"></textarea>
-                </div>
+            </div>
+            <div class="form-row">
+                <label>世界规则 rules（每行一条，金手指数值写死）</label>
+                <textarea id="wz-wb-rules" rows="3"></textarea>
             </div>
             <div class="form-row hint">
                 <button type="button" class="btn-secondary" id="wz-refill" onclick="WZ.refillWorld()">✨ 重新补全</button>
                 <span style="margin-left:8px">可直接编辑；点「重新补全」重生成。</span>
+            </div>
+        </fieldset>
+        <fieldset>
+            <legend>👥 人物（主角/配角统一）</legend>
+            <div class="form-row hint">每条人物一张卡片：填姓名/身份/性别/性格/口癖/所属势力等；角色选「主角」即为主角。</div>
+            <div id="wz-char-cards"></div>
+            <div class="btn-row">
+                <button type="button" class="btn-secondary" onclick="WZ.addCharCard()">➕ 添加人物</button>
             </div>
         </fieldset>
         <fieldset>
@@ -155,16 +165,7 @@
                 </div>
             </div>
         </fieldset>
-        <fieldset>
-            <legend>🎭 角色设定（由 Agent 从原型库生成并填入，可手动编辑）</legend>
-            <fieldset>
-                <legend>👥 角色列表（重要度：1=主角/核心，数字越小越重要）</legend>
-                <div id="wz-char-list"></div>
-                <div class="btn-row">
-                    <button type="button" class="btn-secondary" onclick="WZ.addCharRow()">➕ 手动添加角色</button>
-                </div>
-            </fieldset>
-        </fieldset>
+        </div>
     </section>
 
 </div>
@@ -200,6 +201,9 @@
 .wz-panels { max-width:800px; }
 .wz-panel fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
 .wz-panel legend { color:#58a6ff; font-weight:600; padding:0 8px; }
+/* 步3 复用书详情页 .world-edit 视觉：fieldset 间距与书详情页一致 */
+.wz-panel .world-edit fieldset { padding:16px; margin-bottom:16px; }
+.wz-panel .world-edit .form-row { margin-bottom:12px; }
 .form-row { margin-bottom:14px; }
 .form-row label { display:block; color:#c9d1d9; font-size:13px; margin-bottom:4px; }
 .form-row input, .form-row select, .form-row textarea {
@@ -451,32 +455,168 @@ var WZ = {
         this.show(3);
     },
 
-    /* —— 统一角色列表：手动添加 / Agent 推送 / 删除 —— */
-    addCharRow: function(data) {
-        data = data || {};
-        var list = this.el('wz-char-list');
+    /* —— 势力编辑器（结构化行：名称/立场/描述，仿书详情页） —— */
+    addFactionRow: function(f) {
+        var wrap = this.el('wz-wb-factions');
+        if (!wrap) return;
+        f = f || {};
         var row = document.createElement('div');
-        row.className = 'char-row';
-        if (data.archetype_id) row.setAttribute('data-arch', data.archetype_id);
-        // 透传 5 个丰富字段（性别/简介/称呼/年龄/死亡年份）：向导不展示，collect 读回保到建书，详情页可编辑
-        ['gender', 'brief', 'title', 'age', 'death_year'].forEach(function(k) {
-            if (data[k] !== undefined && data[k] !== null && String(data[k]) !== '')
-                row.setAttribute('data-' + k, data[k]);
+        row.className = 'faction-row';
+        row.style.cssText = 'display:flex;gap:6px;margin:4px 0;align-items:center;flex-wrap:wrap';
+        row.innerHTML = '<input class="f-name" placeholder="势力名" value="' + WZ.esc(f.name || '') + '" style="flex:1;min-width:120px">'
+            + '<input class="f-stance" placeholder="立场（如：主角阵营/反派/中立）" value="' + WZ.esc(f.stance || '') + '" style="flex:1;min-width:130px">'
+            + '<input class="f-desc" placeholder="描述（可选）" value="' + WZ.esc(f.desc || '') + '" style="flex:2;min-width:160px">'
+            + '<button type="button" class="small" onclick="WZ.removeFactionRow(this)">✕</button>';
+        wrap.appendChild(row);
+        return row;
+    },
+    removeFactionRow: function(btn) { btn.closest('.faction-row').remove(); },
+    renderFactions: function(fs) {
+        var wrap = this.el('wz-wb-factions');
+        if (!wrap) return;
+        wrap.innerHTML = '';
+        var list = (fs && fs.length) ? fs : [null];
+        list.forEach(function(f) {
+            if (typeof f === 'string') f = { name: f };
+            WZ.addFactionRow(f || {});
         });
-        row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin:6px 0;padding:8px;background:#0d1117;border:1px solid #21262d;border-radius:6px;align-items:center';
-        row.innerHTML =
-            '<input class="ch-name" placeholder="姓名" value="' + (data.name || '') + '" style="flex:1;min-width:70px">'
-            + '<input class="ch-identity" placeholder="身份" value="' + (data.identity || '') + '" style="flex:1.2;min-width:80px">'
-            + '<input class="ch-personality" placeholder="性格" value="' + (data.personality || '') + '" style="flex:1.2;min-width:80px">'
-            + '<input class="ch-catchphrase" placeholder="口癖" value="' + (data.catchphrase || '') + '" style="flex:1;min-width:70px">'
-            + '<select class="ch-importance" title="重要度（1最高）">'
-            + [1, 2, 3, 4, 5].map(function(n) { return '<option value="' + n + '"' + (String(data.importance || 1) === String(n) ? ' selected' : '') + '>' + n + '</option>'; }).join('')
-            + '</select>'
-            + '<input class="ch-golden" placeholder="金手指" value="' + (data.golden_finger || '') + '" style="flex:1;min-width:70px">'
-            + '<input class="ch-relation" placeholder="与主角关系" value="' + (data.relation || '') + '" style="flex:1;min-width:70px">'
-            + '<span class="ch-arch" style="font-size:11px;color:#6e7681">' + (data.archetype_id ? '🎭' + data.archetype_id : '') + '</span>'
-            + '<button type="button" class="small" onclick="this.closest(\'.char-row\').remove()">✕</button>';
-        list.appendChild(row);
+    },
+    collectFactions: function() {
+        var out = [];
+        document.querySelectorAll('#wz-wb-factions .faction-row').forEach(function(row) {
+            var name = row.querySelector('.f-name').value.trim();
+            var stance = row.querySelector('.f-stance').value.trim();
+            var desc = row.querySelector('.f-desc').value.trim();
+            if (name) out.push({ name: name, stance: stance, desc: desc });
+        });
+        return out;
+    },
+    factionNames: function() {
+        var names = [];
+        document.querySelectorAll('#wz-wb-factions .faction-row .f-name').forEach(function(i) {
+            var v = i.value.trim(); if (v) names.push(v);
+        });
+        return names;
+    },
+    factionOptions: function(selected) {
+        var opts = '<option value="">（未归属）</option>';
+        WZ.factionNames().forEach(function(n) {
+            opts += '<option value="' + n + '"' + (n === selected ? ' selected' : '') + '>' + n + '</option>';
+        });
+        return opts;
+    },
+
+    /* —— 人物卡（仿书详情页 .char-card：14 字段 + 所属势力下拉；砍关系编辑器与套用原型） —— */
+    emptyChar: function() {
+        return { name: '', role: '配角', importance: 2, identity: '', title: '', gender: '',
+                 personality: '', catchphrase: '', brief: '', golden_finger: '', faction: '',
+                 age: 0, death_year: 0, relation: '' };
+    },
+    esc: function(s) {
+        return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    },
+    appendCharCard: function(c, container) {
+        c = c || WZ.emptyChar();
+        var card = document.createElement('div');
+        card.className = 'char-card';
+        card.style.cssText = 'border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px;background:#0d1117';
+        // 不渲染但需保留的字段（agent 可能传入）：archetype_id / relations 存 data-*，collect 读回
+        if (c.archetype_id) card.setAttribute('data-archetype', c.archetype_id);
+        if (c.relations && c.relations.length) card.setAttribute('data-relations', JSON.stringify(c.relations));
+        card.innerHTML =
+            '<div class="form-row half">'
+            + '<div><label>姓名</label><input class="cc" data-f="name" value="' + WZ.esc(c.name) + '"></div>'
+            + '<div><label>角色</label><select class="cc" data-f="role">'
+            + ['主角', '配角', '反派', '其他'].map(function(r) { return '<option' + (c.role === r ? ' selected' : '') + '>' + r + '</option>'; }).join('')
+            + '</select></div></div>'
+            + '<div class="form-row half">'
+            + '<div><label>重要度（1最高）</label><select class="cc" data-f="importance">'
+            + [1, 2, 3, 4, 5].map(function(n) { return '<option value="' + n + '"' + (String(c.importance || 2) === String(n) ? ' selected' : '') + '>' + n + '</option>'; }).join('')
+            + '</select></div>'
+            + '<div></div></div>'
+            + '<div class="form-row half">'
+            + '<div><label>身份/职业</label><input class="cc" data-f="identity" value="' + WZ.esc(c.identity) + '"></div>'
+            + '<div><label>称呼</label><input class="cc" data-f="title" value="' + WZ.esc(c.title) + '"></div></div>'
+            + '<div class="form-row half">'
+            + '<div><label>所属势力</label><select class="cc" data-f="faction">' + WZ.factionOptions(c.faction) + '</select></div>'
+            + '<div></div></div>'
+            + '<div class="form-row half">'
+            + '<div><label>性别</label><input class="cc" data-f="gender" placeholder="男/女" value="' + WZ.esc(c.gender) + '"></div>'
+            + '<div><label>性格</label><input class="cc" data-f="personality" value="' + WZ.esc(c.personality) + '"></div></div>'
+            + '<div class="form-row half">'
+            + '<div><label>口癖</label><input class="cc" data-f="catchphrase" value="' + WZ.esc(c.catchphrase) + '"></div>'
+            + '<div><label>简介</label><input class="cc" data-f="brief" value="' + WZ.esc(c.brief) + '"></div></div>'
+            + '<div class="form-row half">'
+            + '<div><label>金手指</label><input class="cc" data-f="golden_finger" placeholder="仅主角/有金手指角色填写，配角可留空" value="' + WZ.esc(c.golden_finger) + '"></div>'
+            + '<div style="display:flex;gap:8px"><div style="flex:1"><label>年龄</label><input class="cc" data-f="age" type="number" min="0" value="' + (c.age || 0) + '"></div>'
+            + '<div style="flex:1"><label>死亡年份</label><input class="cc" data-f="death_year" type="number" min="0" value="' + (c.death_year || 0) + '"></div></div></div>'
+            + '<div class="form-row half">'
+            + '<div><label>与主角关系</label><input class="cc" data-f="relation" value="' + WZ.esc(c.relation || '') + '"></div>'
+            + '<div style="display:flex;align-items:flex-end;justify-content:flex-end">'
+            + '<button type="button" class="small danger" onclick="WZ.removeCharCard(this)">🗑 删除此人</button></div></div>';
+        (container || this.el('wz-char-cards')).appendChild(card);
+        return card;
+    },
+    addCharCard: function() {
+        // 「➕ 添加人物」→ 加到「（未归属）」组
+        var wrap = this.el('wz-char-cards');
+        if (!wrap) return;
+        var target = null;
+        wrap.querySelectorAll('.accordion').forEach(function(ac) {
+            var h = ac.querySelector('.accordion-header span');
+            if (h && h.textContent.indexOf('未归属') >= 0) target = ac.querySelector('.accordion-body');
+        });
+        if (!target) {
+            var card = document.createElement('div');
+            card.className = 'accordion';
+            card.style.cssText = 'margin-bottom:8px';
+            card.innerHTML = '<div class="accordion-header"><span>🏛 （未归属）</span>'
+                + '<span style="color:#8b949e;font-size:12px">0 人</span></div>'
+                + '<div class="accordion-body"></div>';
+            wrap.appendChild(card);
+            target = card.querySelector('.accordion-body');
+        }
+        WZ.appendCharCard(WZ.emptyChar(), target);
+        WZ.refreshGroupCounts();
+    },
+    removeCharCard: function(btn) {
+        if (!confirm('删除这条人物？')) return;
+        btn.closest('.char-card').remove();
+        this.refreshGroupCounts();
+    },
+    refreshGroupCounts: function() {
+        document.querySelectorAll('#wz-char-cards .accordion').forEach(function(ac) {
+            var body = ac.querySelector('.accordion-body');
+            var n = body ? body.querySelectorAll('.char-card').length : 0;
+            var num = ac.querySelector('.accordion-header span:last-child');
+            if (num) num.textContent = n + ' 人';
+        });
+    },
+    renderCharCards: function(chars) {
+        var wrap = this.el('wz-char-cards');
+        if (!wrap) return;
+        wrap.innerHTML = '';
+        chars = (chars && chars.length) ? chars : [WZ.emptyChar()];
+        // 按所属势力分组：势力名 → 人物列表；未归属 → '（未归属）'，空组跳过
+        var groups = {}, order = [];
+        chars.forEach(function(c) {
+            var f = String(c.faction || '').trim() || '（未归属）';
+            if (!groups[f]) { groups[f] = []; order.push(f); }
+            groups[f].push(c);
+        });
+        order.forEach(function(f) {
+            var grp = groups[f];
+            var card = document.createElement('div');
+            card.className = 'accordion';
+            card.style.cssText = 'margin-bottom:8px';
+            card.innerHTML = '<div class="accordion-header"><span>🏛 ' + WZ.esc(f) + '</span>'
+                + '<span style="color:#8b949e;font-size:12px">' + grp.length + ' 人</span></div>'
+                + '<div class="accordion-body show"></div>';
+            var body = card.querySelector('.accordion-body');
+            grp.forEach(function(c) { WZ.appendCharCard(c, body); });
+            wrap.appendChild(card);
+        });
     },
 
     /* —— 世界观补全（步 3）：AI 自动填充 12 维 + 基调 —— */
@@ -502,11 +642,7 @@ var WZ = {
         this.el('wz-wb-social_structure').value = wb.social_structure || '';
         this.el('wz-wb-core_conflict').value = wb.core_conflict || '';
         this.el('wz-wb-world_summary').value = wb.world_summary || '';
-        this.el('wz-wb-factions').value = (typeof factionLinesText === 'function')
-            ? factionLinesText(wb.factions)
-            : ((wb.factions || []).map(function(f) {
-                return (f && typeof f === 'object') ? (f.name + (f.stance ? ':' + f.stance : '')) : f;
-              }).join('\n'));
+        this.renderFactions(wb.factions || []);
         this.el('wz-wb-rules').value = (wb.rules || []).join('\n');
         this.el('wz-tone').value = bi.tone || '';
         this.el('wz-target_audience').value = bi.target_audience || '';
@@ -525,7 +661,7 @@ var WZ = {
             social_structure: this.el('wz-wb-social_structure').value.trim(),
             core_conflict: this.el('wz-wb-core_conflict').value.trim(),
             world_summary: this.el('wz-wb-world_summary').value.trim(),
-            factions: (typeof parseFactionLines === 'function') ? parseFactionLines(this.el('wz-wb-factions').value) : [],
+            factions: this.collectFactions(),
             rules: (typeof parseRuleLines === 'function') ? parseRuleLines(this.el('wz-wb-rules').value) : [],
         };
     },
@@ -594,37 +730,34 @@ var WZ = {
         this.state.target_audience = this.el('wz-target_audience').value;
         this.state.pov = this.el('wz-pov').value;
         this.state.era_language = this.el('wz-era_language').value;
-        // 构建统一 characters 数组：从 #wz-char-list 每行读（姓名/身份/性格/口癖/重要度/金手指/关系/原型）
-        var charRows = Array.prototype.slice.call(document.querySelectorAll('#wz-char-list .char-row'));
+        // 构建统一 characters 数组：从 #wz-char-cards .char-card 读（仿书详情页 collectCharCards，含所属势力）
+        var cards = Array.prototype.slice.call(document.querySelectorAll('#wz-char-cards .char-card'));
         var mcName = '';
-        for (var ri = 0; ri < charRows.length; ri++) {
-            if (parseInt(charRows[ri].querySelector('.ch-importance').value, 10) === 1) {
-                mcName = charRows[ri].querySelector('.ch-name').value.trim();
+        for (var ci = 0; ci < cards.length; ci++) {
+            var impEl = cards[ci].querySelector('.cc[data-f="importance"]');
+            var nameEl = cards[ci].querySelector('.cc[data-f="name"]');
+            if (impEl && parseInt(impEl.value, 10) === 1 && nameEl) {
+                mcName = nameEl.value.trim();
                 break;
             }
         }
         var chars = [];
-        charRows.forEach(function(row) {
-            var n = row.querySelector('.ch-name').value.trim();
-            if (!n) return;
-            var imp = parseInt(row.querySelector('.ch-importance').value, 10) || 2;
-            var rel = row.querySelector('.ch-relation').value.trim();
-            chars.push({
-                name: n,
-                role: imp === 1 ? '主角' : '配角',
-                importance: imp,
-                identity: row.querySelector('.ch-identity').value.trim(),
-                personality: row.querySelector('.ch-personality').value.trim(),
-                catchphrase: row.querySelector('.ch-catchphrase').value.trim(),
-                golden_finger: row.querySelector('.ch-golden').value.trim(),
-                archetype_id: row.getAttribute('data-arch') || '',
-                relations: (rel && mcName) ? [{ name: mcName, relation: rel }] : [],
-                gender: row.getAttribute('data-gender') || '',
-                brief: row.getAttribute('data-brief') || '',
-                title: row.getAttribute('data-title') || '',
-                age: parseInt(row.getAttribute('data-age'), 10) || 0,
-                death_year: parseInt(row.getAttribute('data-death_year'), 10) || 0,
+        cards.forEach(function(card) {
+            var c = {};
+            card.querySelectorAll('.cc').forEach(function(inp) {
+                var k = inp.getAttribute('data-f');
+                c[k] = (k === 'age' || k === 'death_year' || k === 'importance')
+                    ? (parseInt(inp.value, 10) || 0) : inp.value.trim();
             });
+            if (!c.name) return;
+            var rel = c.relation || '';
+            delete c.relation;
+            var storedRels = [];
+            try { storedRels = JSON.parse(card.getAttribute('data-relations') || 'null') || []; } catch (e) { storedRels = []; }
+            c.relations = (rel && mcName) ? [{ name: mcName, relation: rel }] : storedRels;
+            c.archetype_id = card.getAttribute('data-archetype') || '';
+            c.role = c.role || (c.importance === 1 ? '主角' : '配角');
+            chars.push(c);
         });
         this.state.characters = chars;
     },
@@ -735,9 +868,8 @@ var WZ = {
         // 借鉴
         if (s.borrow && s.borrow.source_book_id) this.el('wz-borrow-source').value = s.borrow.source_book_id;
         if (s.borrow && s.borrow.tweak) this.el('wz-borrow-tweak').value = s.borrow.tweak;
-        // 统一角色列表
-        var chars = s.characters || [];
-        chars.forEach(function(c) { WZ.addCharRow(c); });
+        // 人物卡（按所属势力分组还原）
+        this.renderCharCards(s.characters || []);
     }
 };
 // 初始化：恢复草稿（若有）→ 显示对应步骤；否则从第 1 步开始
@@ -831,7 +963,6 @@ window.onnecommand = function(e) {
                     + '<div class="wz-cand-title">#' + (i + 1) + ' ' + (c.title || '') + '</div>'
                     + (c.one_liner ? '<div class="wz-cand-one">' + c.one_liner + '</div>' : '')
                     + (c.world_brief ? '<div class="wz-cand-brief">' + c.world_brief + '</div>' : '')
-                    + '<div class="wz-cand-hint">点击选中此方向</div>'
                     + '</div>';
             }).join('') || '<div class="wz-borrow-preview">（候选为空，请让 Agent 重试）</div>';
         }
@@ -839,11 +970,8 @@ window.onnecommand = function(e) {
         if (hint) hint.style.display = cands.length ? 'block' : 'none';
         if (typeof showToast === 'function') showToast('候选已生成，请在步 2 挑选一个方向', 'success');
     } else if (cmd === 'set_characters') {
-        // 角色列表整体替换（agent 生成后推送）；复用 addCharRow 建行 + collect 收进 state
-        var cl = WZ.el('wz-char-list');
-        if (!cl) return;
-        cl.innerHTML = '';
-        (args.characters || []).forEach(function(c) { WZ.addCharRow(c); });
+        // 角色整体替换（agent 生成后推送）；按势力分组渲染人物卡 + collect 收进 state
+        WZ.renderCharCards(args.characters || []);
         WZ.collect();
     } else if (cmd === 'set_world') {
         // 分阶段内容构建：部分世界观 dict 合并进步 3 表单（不覆盖已填的其余字段）
@@ -900,7 +1028,8 @@ window.onnecommand = function(e) {
         });
         if (WZ.el('wz-pen')) WZ.el('wz-pen').value = keepPen;
         document.querySelectorAll('.chip.on').forEach(function(c) { WZ.toggleTag(c); });
-        var cl = WZ.el('wz-char-list'); if (cl) cl.innerHTML = '';
+        var cc = WZ.el('wz-char-cards'); if (cc) cc.innerHTML = '';
+        var fc = WZ.el('wz-wb-factions'); if (fc) fc.innerHTML = '';
         try { sessionStorage.removeItem(WZ.PERSIST_KEY); } catch (e) {}
         WZ.show(1);
         if (typeof showToast === 'function') showToast('向导已重置（保留笔名）', 'success');
