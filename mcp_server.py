@@ -121,7 +121,7 @@ def _wrap_logged(fn):
 
 
 # 逐个注册（工具名/描述/schema 由函数签名+docstring 自动生成）。
-# 护栏：create_book/delete_book 工具不存在于注册表——建书走「启动新书」向导 UI
+# 护栏：直建/直删工具不存在于注册表——建书走「启动新书」向导 UI
 # （drive_ui 驱动）、删书走书库页手动；navigate/drive_ui 经意图桥驱动浏览器/向导。
 for _entry in TOOL_REGISTRY:
     mcp.tool()(_wrap_logged(_entry["func"]))

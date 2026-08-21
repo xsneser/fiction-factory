@@ -28,7 +28,7 @@ description: >-
 | 生成大纲 / 排故事线 / 选桥段 / 一键完整大纲 / 续写 / 扩写 | `novel-outline` | `.claude/skills/novel-outline/SKILL.md` |
 | 写正文 / 写下一章 / 继续写 / 写桥段 | `novel-write` | `.claude/skills/novel-write/SKILL.md` |
 | 上架 / 发布 / 完本 / 导出 / 生成书名简介 / 检查能否发书 | `novel-publish` | `.claude/skills/novel-publish/SKILL.md` |
-| 删书 / 删除一本书 | 无 skill——`navigate("/books")` 让用户**手动点删除按钮**（护栏：delete_book 已从 MCP 面移除，外部 agent 不能删） | — |
+| 删书 / 删除一本书 | 无 skill——`navigate("/books")` 让用户**手动点删除按钮**（护栏：直删工具不在工具面，外部 agent 不能删） | — |
 
 分发方式：用 Read 工具读对应 `SKILL.md` 全文，按其「前置检查 → 决策点 → 批处理」逐步执行。
 

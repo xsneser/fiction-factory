@@ -1049,7 +1049,7 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
     非阻塞：把命令写入意图队列，浏览器每 ~2.5s 轮询消费（start_book.html 的
     window.onnecommand 执行）。不入书锁（不写书）。
     建书仍走系统向导（/books/start POST）：agent 只驱动表单、点下一步/提交，
-    **不能绕过向导直建**（create_book 工具不存在，护栏）。
+    **不能绕过向导直建**（护栏：无直建工具）。
     """
     cmd = (cmd or "").strip()
     if cmd not in _WIZARD_CMDS:
@@ -1111,7 +1111,7 @@ def _func_to_schema(fn):
     return {"type": "object", "properties": properties, "required": required}
 
 
-# 护栏：create_book/delete_book 工具不存在于注册表——建书走「启动新书」向导 UI、
+# 护栏：直建/直删工具不存在于注册表——建书走「启动新书」向导 UI、
 # 删书走书库页手动，任何 agent（含 MCP 面）都拿不到建/删能力。
 
 # 写类工具：进入前须拿书锁（防 Web / MCP 双进程同书撞写），退出释放。

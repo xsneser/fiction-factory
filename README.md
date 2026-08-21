@@ -66,7 +66,7 @@ python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
 
 面板顶部有 **「💬 对话 / 🔧 工具日志」两个页签**：切到工具日志可实时看到 Agent 调用了哪些工具（工具名/时间/成败/耗时/参数/结果摘要，3 秒自动刷新），一目了然每个步骤在干什么。
 
-**MCP 接口**：全部 41 个工具暴露为 MCP（护栏：`create_book`/`delete_book` 工具不存在，建书走系统向导、删书走书库页手动），供 Claude Code 等外部 Agent 驱动：
+**MCP 接口**：全部 41 个工具暴露为 MCP（护栏：直建/直删工具不存在，建书走系统向导、删书走书库页手动），供 Claude Code 等外部 Agent 驱动：
 
 ```bash
 claude mcp add --scope project novel-engine -- python mcp_server.py

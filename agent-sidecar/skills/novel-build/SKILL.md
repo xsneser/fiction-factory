@@ -1,11 +1,11 @@
 ---
 name: novel-build
-description: 建书步 2（挑完候选后的建书）：用户在步 2 已选定世界观候选并点了「已挑选完毕」，本 skill 从步 3 开始**分阶段**构建世界观（core_conflict→factions→characters→rest_world，每段带前面上下文）→ submit 建书 → 校验 → 生成完整大纲。护栏：create_book/delete_book 不在 MCP 面。不做候选生成（那是 novel-build-candidates）。
+description: 建书步 2（挑完候选后的建书）：用户在步 2 已选定世界观候选并点了「已挑选完毕」，本 skill 从步 3 开始**分阶段**构建世界观（core_conflict→factions→characters→rest_world，每段带前面上下文）→ submit 建书 → 校验 → 生成完整大纲。护栏：建书只能 drive_ui 驱动向导、删书只能书库页手动。不做候选生成（那是 novel-build-candidates）。
 ---
 
 # 建书步 2：补全世界观并建书（novel-build）— 侧栏版
 
-> **护栏**：`create_book` / `delete_book` 是 web-only，绝不用——本 skill 只能 `drive_ui` 驱动浏览器向导建书（机制见 CLAUDE.md）。
+> **护栏**：建书只能 `drive_ui` 驱动浏览器向导，删书只能 navigate 书库页手动——直建/直删工具不在工具面（见 CLAUDE.md）。
 > **headless 是一次性任务**：写作方向/笔名/种子/标签/候选等决策由任务指令给全（候选已在步 2 选定），不做交互问答。
 > **触发**：用户在步 2 点「已挑选完毕」后，页面自动把本任务发给 agent（也可在侧栏继续说「继续建书」）。
 > **硬规则**：本 skill **不再生成候选**——绝不 `world_candidates` / `set_candidates` / `pick_candidate` / 步 1→2 的 `next`；候选已由用户在步 2 选定，直接从步 3 开始。
@@ -31,7 +31,7 @@ description: 建书步 2（挑完候选后的建书）：用户在步 2 已选�
 4. **必须调** `mcp__novelengine__generate_full_outline(book_id)`（阻塞数分钟，逐步落盘，**内部自动选材**——本 skill 未设 `_outline_picks`；世界观充实自动跳过 Phase 1 故事分析）。
 5. `get_book_detail` 确认 `phase=="ready"` → `navigate(url="/books/<book_id>/continue")` 交棒写作台写前三章。
 
-## 删书（护栏：外部 agent 无 delete_book）
+## 删书（护栏：外部 agent 不能直删）
 - 用户要求删书 → `navigate(url="/books")` + 告知「请在书库页点该书旁的删除按钮（有确认弹窗）」。agent 不做删除动作。
 
 ## 前三章开篇钩子（指令层，本 skill 内置）

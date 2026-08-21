@@ -4,12 +4,12 @@ description: >-
   建书阶段向导。Use when the user wants to 开新书/创建小说/新建一本/构思世界观/写人物设定/借鉴已有书/选题材标签/写开头几章
   (start a new novel, build world and characters, borrow from an existing book, pick a title)。
   建书必须走「启动新书」界面：navigate /books/start → drive_ui 填表单 → 点下一步 → 由系统创建（护栏：
-  create_book 已从 MCP 面移除，agent 不直建书）。内含前三章开篇钩子规则（指令层）。
+  agent 不直建书，只能驱动向导）。内含前三章开篇钩子规则（指令层）。
   前置：书不存在或 phase=config。不做大纲（那是 novel-outline）。
 ---
 # 建书阶段（novel-build）
 
-> **护栏**：`create_book` / `delete_book` 已从 MCP 面移除——建书只能驱动系统向导 UI，删书只能 navigate 书库让用户手动删；本 skill 绝不调用它们。
+> **护栏**：建书只能驱动系统向导 UI，删书只能 navigate 书库让用户手动删——直建/直删工具不在工具面，本 skill 绝不绕向导。
 
 ## 前置检查（必做，只读工具）
 1. `mcp__novel-engine__list_books` 看目标书是否已存在。
@@ -78,7 +78,7 @@ description: >-
   5. `navigate(url="/books/<book_id>/continue")` 交棒写作台写前三章。
 - 建书后**不要在向导页再 `drive_ui(next)`**（向导已跳书详情，命令桥守卫 bookId 已拦）。
 
-## 删书（护栏：外部 agent 无 delete_book）
+## 删书（护栏：外部 agent 不能直删）
 - 用户要求删书 → `navigate(url="/books")` + 告知「请在书库页点该书旁的删除按钮（有确认弹窗）」。agent 不做删除动作。
 
 ## 前三章开篇钩子（指令层，本 skill 内置）

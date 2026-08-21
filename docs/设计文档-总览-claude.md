@@ -524,7 +524,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 **共享工具注册表 `agent_tools.py`（40 个）**：
 - 单一工具来源 `TOOL_REGISTRY = [{name, description, input_schema, func}]`，schema 用 `inspect.signature` 自动生成。复用 `ctx` 单例——Web 进程内与 UI 共享同一状态；MCP 独立进程各自一份，经 `books/` 文件协调。
-- 覆盖「创建→上架」全链路：只读/建书（`list_books`/`get_book_state`/`get_storyline`/`borrow_preview`/`query_*`）→ 规划（`save_basic_info`/`generate_core_conflict`/`generate_factions`/`generate_characters`/`generate_rest_world`/`generate_world`/`world_candidates`/`confirm_world`）→ 大纲（`generate_outlines`/`generate_full_outline`/`confirm_outlines`/`fill_plots`/`fill_gags`/`outline_agent`/`extend_outline`/`outline_material_candidates`）→ 写作（`write_next_bridge`/`write_chapter`/`generate_book_meta`/`tag_punch_points`/`diagnose_retention`）→ 上架（`publish_check`/`publish_book`/`mark_finished`/`export_book`）→ 审查/去AI（`review_text`/`deai_text`）→ 导航/向导（`navigate`/`drive_ui` 写意图队列）。护栏：`create_book`/`delete_book` 工具不存在（建书走系统向导、删书走书库页手动）。
+- 覆盖「创建→上架」全链路：只读/建书（`list_books`/`get_book_state`/`get_storyline`/`borrow_preview`/`query_*`）→ 规划（`save_basic_info`/`generate_core_conflict`/`generate_factions`/`generate_characters`/`generate_rest_world`/`generate_world`/`world_candidates`/`confirm_world`）→ 大纲（`generate_outlines`/`generate_full_outline`/`confirm_outlines`/`fill_plots`/`fill_gags`/`outline_agent`/`extend_outline`/`outline_material_candidates`）→ 写作（`write_next_bridge`/`write_chapter`/`generate_book_meta`/`tag_punch_points`/`diagnose_retention`）→ 上架（`publish_check`/`publish_book`/`mark_finished`/`export_book`）→ 审查/去AI（`review_text`/`deai_text`）→ 导航/向导（`navigate`/`drive_ui` 写意图队列）。护栏：直建/直删工具不存在（建书走系统向导、删书走书库页手动）。
 - 工具排序把 `navigate`/`drive_ui` 前置（flash 对列表前部工具更敏感，保证"打开X页"正确触发导航）。
 
 **右侧栏 Agent 聊天面板**：
@@ -582,7 +582,7 @@ python test_chapters.py / test_reader.py
 - **Windows 控制台 GBK**：脚本打印中文加 `sys.stdout.reconfigure(encoding="utf-8")`。
 - **flash max_tokens 余量**：任何新 LLM 调用，max_tokens 必须大于"纯正文+推理"之和（写作 1600 / 摘要·书名 1024 / 探测器 400）。
 - **测试会动数据**：`test_full_flow.py` 自建自删测试书；`books/`、`profiles/` 是真实数据，别删。
-- **删除类操作无回收站**：delete_book / storyline_delete 前先确认。
+- **删除类操作无回收站**：删除前先确认（直删工具不在工具面，删书走书库页手动）。
 - **合规**：番茄侦察兵仅限个人学习研究（SSR 采集 + PUA 解码），禁商业用途/大量下载传播正文；README 有完整声明。
 
 ---
