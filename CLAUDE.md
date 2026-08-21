@@ -32,7 +32,6 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 | 书详情 | `/books/<book_id>` | 是 | — |
 | 世界观设定 | `/books/<book_id>/world` | 是 | — |
 | 写作台 | `/books/<book_id>/continue` | 是 | — |
-| 规划/生成 | `/books/<book_id>/plan` | 是 | — |
 | 单本上架 | `/books/<book_id>/publish` | 是 | — |
 | 上架总览 | `/publish` | 否 | — |
 | 桥段库 | `/plots` | 否 | — |

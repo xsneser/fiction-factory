@@ -18,34 +18,22 @@
     genre=state.genre,
     sub_genre=state.sub_genre or '',
     platform=state.platform,
-    progress='第 <span id="prog-ch">' ~ state.current_chapter ~ '</span> 章',
+    progress='第 ' ~ (book.current_chapter or 0) ~ ' 章 · 共 ' ~ (book.total_words or 0) ~ ' 字',
     status_html=status_badge(book.status) if book else status_badge('writing'),
     extra='<span>每章：<strong>' ~ storyline.words_per_chapter ~ '字</strong></span>'
-        ~ '<span>本章：<strong id="chp-words">0</strong>/<span id="chp-target">' ~ storyline.words_per_chapter ~ '</span>字</span>'
 ) }}
 
-{# ─── 两栏：左=故事线 | 中=控制条+正文（规划/生成已移到独立「规划」页 /books/<id>/plan） ─── #}
+{# ─── 两栏：左=故事线（可拖拽） | 右=章节正文（规划/生成/写作均由 agent 驱动） ─── #}
 <div class="editor-split">
     <div class="editor-left">
-        <div class="gen-split-title">📋 故事线 · 写作中实时高亮（⏳设局 / ✅收局 = 读者承诺）</div>
+        <div class="gen-split-title">📋 故事线（点击桥段高亮对应正文）</div>
         <div class="editor-scroll"><div id="editor-storyline" class="editor-storyline"></div></div>
     </div>
 
     <div class="editor-divider" id="editor-divider" title="拖动调整故事线宽度"></div>
 
     <div class="editor-mid">
-        {# ─── 写作控制条：开始/停止 + 设定/规划入口 ─── #}
-        <div class="wf-toolbar">
-            <span class="wf-toolbar-title">📖 章节正文</span>
-            {% if storyline and storyline.outlines %}
-            <button id="btn-start" class="btn-primary" onclick="startFlow()">▶ 写下一个桥段</button>
-            <button id="btn-stop" class="btn-danger" style="display:none;background:#da3633;color:white;border:none;padding:6px 16px;border-radius:8px;font-size:13px;cursor:pointer" onclick="stopFlow()">⏹ 停止</button>
-            {% endif %}
-            <a href="/books/{{ state.book_id }}/world" class="btn btn-sm" style="background:#30363d;color:#c9d1d9;text-decoration:none">🌍 设定</a>
-            <a href="/books/{{ state.book_id }}/plan" class="btn btn-sm" style="background:#6f42c1;color:#fff;text-decoration:none">📋 规划</a>
-        </div>
-
-        {# ─── 正文视图：连续章节文本（中栏永远只显示正文；桥段包 span.m-bridge 供点击高亮） ───#}
+        {# ─── 正文视图：连续章节文本（桥段包 span.m-bridge 供点击高亮） ───#}
         <div id="view-write" class="view-pane" style="display:block">
             <div id="wf-manuscript" class="manuscript">
                 {% for c in chapters %}
@@ -66,22 +54,10 @@
 
 <style>
 .view-pane { flex:1; min-height:0; overflow-y:auto; padding-right:4px; }
-/* 中栏写作控制条 */
-.wf-toolbar { display:flex; align-items:center; gap:10px; padding:10px 14px; background:var(--bg-elev); border:1px solid var(--border); border-radius:var(--radius); margin-bottom:12px; flex-wrap:wrap; }
-.wf-toolbar-title { font-size:13px; font-weight:600; color:var(--fg-strong); margin-right:auto; }
-.wf-toolbar .btn { padding:6px 14px; font-size:13px; }
 </style>
 
 <script src="/static/js/story_line.js"></script>
 <script>
-const engineId = "{{ engine_id }}";
-const bookId = "{{ state.book_id }}";
-const storylineId = bookId;
-let currentChapter = {{ state.current_chapter }};
-let running = false;
-let stopped = false;
-let controller = null;
-
 /* ─── 初始化故事线 ─── */
 function refreshStoryline(sl) {
     if (window.StoryLine) {
@@ -91,51 +67,6 @@ function refreshStoryline(sl) {
 (function initStoryline() {
     refreshStoryline(window.__BOOK_STORYLINE__);
 })();
-
-/* ─── 正文：滚动 / 追加（带桥段标记，供点击高亮）/ 分隔 / 字数进度 ─── */
-function scrollManuscript() {
-    const write = document.getElementById('view-write');
-    if (write) write.scrollTop = write.scrollHeight;
-}
-function manuscriptAppend(text, plotId) {
-    const m = document.getElementById('wf-manuscript');
-    if (!m || !text) return;
-    let node;
-    if (plotId) {
-        node = document.createElement('span');
-        node.className = 'm-bridge';
-        node.dataset.bridge = plotId;
-        node.textContent = text;
-    } else {
-        node = document.createTextNode(text);
-    }
-    m.appendChild(node);
-    scrollManuscript();
-}
-function manuscriptEnsureBreak() {
-    const m = document.getElementById('wf-manuscript');
-    if (!m || !m.lastChild) return;
-    const last = m.lastChild.textContent || '';
-    if (last && !/\n$/.test(last)) manuscriptAppend('\n\n');
-}
-function manuscriptDivider(text) {
-    const m = document.getElementById('wf-manuscript');
-    if (!m) return;
-    const d = document.createElement('div');
-    d.className = 'm-chapter-divider';
-    d.textContent = text;
-    m.appendChild(d);
-    scrollManuscript();
-}
-function updateChWords(words, target) {
-    const w = document.getElementById('chp-words');
-    const t = document.getElementById('chp-target');
-    if (w) w.textContent = words || 0;
-    if (t && target) t.textContent = target;
-}
-function updateProg() {
-    document.getElementById('prog-ch').textContent = currentChapter;
-}
 
 /* ─── 桥段点击 → 高亮右侧对应正文（事件来自 story_line.js 的 sl:plot-click / sl:outline-click） ─── */
 (function bindBridgeHighlight() {
@@ -177,7 +108,7 @@ function _centerManuscript(el) {
         + pane.scrollTop - pane.clientHeight * 0.5);
 }
 
-/* ─── 可拖拽分栏：故事线宽度 20%–60%，持久化 localStorage ─── */
+/* ─── 可拖拽分栏：故事线宽度 20%–70%，持久化 localStorage ─── */
 (function initResize() {
     const left = document.querySelector('.editor-left');
     const div = document.getElementById('editor-divider');
@@ -185,7 +116,7 @@ function _centerManuscript(el) {
     if (!left || !div || !split) return;
     try {
         const w = parseFloat(localStorage.getItem('ne_storyline_w') || '');
-        if (w >= 20 && w <= 60) left.style.width = w + '%';
+        if (w >= 20 && w <= 70) left.style.width = w + '%';
     } catch (e) {}
     div.addEventListener('mousedown', function (e) {
         e.preventDefault();
@@ -195,7 +126,7 @@ function _centerManuscript(el) {
         document.body.style.userSelect = 'none';
         document.body.style.cursor = 'col-resize';
         function onMove(ev) {
-            const pct = Math.max(20, Math.min(60, (startW + (ev.clientX - startX)) / splitW * 100));
+            const pct = Math.max(20, Math.min(70, (startW + (ev.clientX - startX)) / splitW * 100));
             left.style.width = pct + '%';
         }
         function onUp() {
@@ -210,82 +141,5 @@ function _centerManuscript(el) {
         document.addEventListener('mouseup', onUp);
     });
 })();
-
-/* ─── 写作 SSE ─── */
-async function writeBridge() {
-    if (running) return;
-    running = true;
-    stopped = false;
-    document.getElementById('btn-stop').style.display = 'inline-block';
-    controller = new AbortController();
-    try {
-        const resp = await fetch('/api/storyline-engine/' + engineId + '/write-bridge',
-            {method: 'POST', signal: controller.signal});
-        if (!resp.ok || !resp.body) {
-            const txt = await resp.text();
-            throw new Error(txt || ('HTTP ' + resp.status));
-        }
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-        while (true) {
-            const r = await reader.read();
-            if (r.done) break;
-            buf += decoder.decode(r.value, {stream: true});
-            const lines = buf.split('\n');
-            buf = lines.pop() || '';
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                if (line.indexOf('data: ') !== 0) continue;
-                let evt; try { evt = JSON.parse(line.slice(6)); } catch (e) { continue; }
-                if (evt.type === 'bridge_start' || evt.type === 'plot_start') {
-                    if (window.StoryLine) window.StoryLine.highlight({outline_id: evt.outline_id, plot_id: evt.plot_id});
-                } else if (evt.type === 'group_chunk' || evt.type === 'plot_chunk') {
-                    manuscriptAppend(evt.text || '', evt.plot_id);
-                } else if (evt.type === 'bridge_done' || evt.type === 'plot_done') {
-                    manuscriptEnsureBreak();
-                    if (evt.chapter_words !== undefined) updateChWords(evt.chapter_words, evt.chapter_target);
-                } else if (evt.type === 'chapter_progress') {
-                    updateChWords(evt.words, evt.target);
-                } else if (evt.type === 'chapter_done') {
-                    currentChapter = evt.chapter || currentChapter;
-                    updateProg();
-                    updateChWords(0, document.getElementById('chp-target').textContent);
-                    manuscriptDivider('──────── 第' + evt.chapter + '章 完（' + evt.word_count + '字）────────');
-                    showToast('✅ 第' + evt.chapter + '章完成 · ' + evt.word_count + '字', 'success');
-                    if (evt.review) {
-                        const r = evt.review;
-                        const verdict = r.passed ? '✅ 通过' : '❌ 未过';
-                        let txt = '🔍 章节审查 ' + (r.score != null ? r.score + '分 ' : '') + verdict;
-                        if (r.issues && r.issues.length) {
-                            txt += '：' + r.issues.slice(0, 3).map(i => i.description).join('；');
-                        }
-                        showToast(txt, r.passed ? 'info' : 'warn');
-                    }
-                } else if (evt.type === 'budget_paused') {
-                    showToast('⛔ ' + (evt.message || '预算耗尽，暂停写作') + '——请到「设置」调高单书预算后继续写', 'warn');
-                } else if (evt.type === 'bridge_skip') {
-                    showToast('⏭️ ' + (evt.reason || '桥段跳过'), 'info');
-                } else if (evt.type === 'complete') {
-                    showToast('🎉 ' + (evt.message || '全书完成'), 'success');
-                } else if (evt.type === 'error') {
-                    showToast('❌ ' + (evt.message || '写作失败'), 'error');
-                }
-            }
-        }
-    } catch (e) {
-        if (e.name === 'AbortError') showToast('⏹️ 已停止', 'info');
-        else showToast('❌ 连接失败: ' + e.message, 'error');
-    }
-    running = false;
-    document.getElementById('btn-stop').style.display = 'none';
-    controller = null;
-}
-
-function startFlow() { stopped = false; writeBridge(); }
-function stopFlow() {
-    stopped = true;
-    if (controller) controller.abort();
-}
 </script>
 {% endblock %}
