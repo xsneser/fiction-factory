@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>✏️ 编辑笔名 — {{ profile.pen_name }}</h1>
+{% with form_action='/profiles/' ~ profile.id ~ '/edit', form_submit='保存修改' %}
+{% include "_profile_form.html" %}
+{% endwith %}
+{% endblock %}

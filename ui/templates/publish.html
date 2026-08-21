@@ -45,6 +45,15 @@
         </div>
     </div>
     {% endfor %}
+    {% for w in report.warnings %}
+    <div class="publish-item warn">
+        <span class="pi-status">⚠️</span>
+        <div>
+            <div class="pi-label">{{ w.label }}</div>
+            <div class="pi-detail">{{ w.detail }}</div>
+        </div>
+    </div>
+    {% endfor %}
     <p style="font-size:12px;color:{{ '#3fb950' if report.can_publish else '#f85149' }};margin-top:8px">
         {{ report.summary }} · 共 {{ report.chapters }} 章 / {{ report.total_words }} 字
         {% if report.thresholds %} · 上架线：{{ report.thresholds.get('min_total_words', 0) }}字 / {{ report.thresholds.get('min_chapters', 0) }}章{% endif %}

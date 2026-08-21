@@ -43,6 +43,7 @@ class PublishReport:
     can_publish: bool
     summary: str
     thresholds: dict = field(default_factory=dict)
+    warnings: list = field(default_factory=list)   # 软提醒（severity=warning，不拦截）
 
     def to_dict(self) -> dict:
         return {
@@ -59,6 +60,7 @@ class PublishReport:
                  "detail": i.detail, "severity": i.severity}
                 for i in self.items
             ],
+            "warnings": self.warnings,
         }
 
 
@@ -105,10 +107,13 @@ class Publisher:
             self._check_review(chapters),
             self._check_finished(book, total_words, min_words, min_ch),
         ]
+        warnings = self._check_pen_registered(book)
         can_publish = all(i.passed for i in items)
         passed = can_publish
         summary = ("✅ 通过上架检查，可以上架" if can_publish
                    else f"❌ {sum(1 for i in items if not i.passed)}/{len(items)} 项未通过，暂不能上架")
+        if warnings:
+            summary += f"（另有 {len(warnings)} 条软提醒）"
         return PublishReport(
             book_id=book.book_id,
             platform=book.platform or "",
@@ -119,7 +124,34 @@ class Publisher:
             can_publish=can_publish,
             summary=summary,
             thresholds=thresholds,
+            warnings=warnings,
         )
+
+    def _check_pen_registered(self, book) -> list:
+        """笔名平台注册软提醒（severity=warning，不拦截 can_publish）。
+
+        笔名档案不存在或该笔名未在目标平台登记注册账号 → 提醒用户正式上架前需在
+        平台注册同名账号（本平台不实际代登录）。注册信息由用户在 UI 人工登记。
+        """
+        pen = (book.pen_name or "").strip()
+        platform = (book.platform or "").strip()
+        if not pen or not platform:
+            return []
+        try:
+            from libraries.profiles import ProfileManager, PLATFORM_LABELS
+            profile = ProfileManager("profiles").get_by_name(pen)
+            if profile is not None and profile.is_registered_on(platform):
+                return []
+            label = PLATFORM_LABELS.get(platform, platform)
+            return [{
+                "key": "pen_registered",
+                "label": "笔名平台注册",
+                "detail": (f"笔名「{pen}」未登记{label}账号"
+                           f"（或档案未记录）——正式上架前需在平台注册同名账号（软提醒，不拦截）"),
+                "severity": "warning",
+            }]
+        except Exception:
+            return []
 
     def _check_title(self, book) -> PublishCheckItem:
         title = (book.title or "").strip()

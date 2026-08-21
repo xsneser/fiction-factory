@@ -6,8 +6,9 @@ description: 上架阶段。上架/发布/完本/导出投稿包/生成书名+�
 # 上架阶段（novel-publish）— 侧栏版
 
 ## 前置检查（必做）
-1. `mcp__novelengine__get_book_detail(book_id)`：看 `status`、`current_chapter`、`synopsis`。
+1. `mcp__novelengine__get_book_detail(book_id)`：看 `status`、`current_chapter`、`synopsis`、`pen_name`、`platform`（目标平台）。
 2. 无第 1 章 → 先 novel-write。有第 1 章但无 synopsis/书名不佳 → 先 `generate_book_meta`。
+3. **笔名平台注册软提醒**：`query_profiles(keyword=书名笔名)` 看 `platform_accounts`/`registered_platforms`——未在目标平台登记账号 → 如实告知「正式上架前需在平台注册同名账号」（软提醒不拦截，平台不实际代登录）。
 
 ## 决策点
 - `publish_check` 报告：全部通过 → 直接 `publish_book`；有不过项 → **报告问题让用户决策**（force 强发 or 先修），headless 不擅自 force。

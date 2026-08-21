@@ -6,6 +6,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import json
 
+# 平台中文标签（UI 表单 / publisher 软提醒 / skill 展示共用）
+PLATFORM_LABELS = {
+    "fanqie": "番茄小说",
+    "qidian": "起点中文网",
+    "jinjiang": "晋江文学城",
+    "web": "网页/其他",
+}
+# 已知平台顺序（编辑表单按此渲染）
+KNOWN_PLATFORMS = ["fanqie", "qidian", "jinjiang", "web"]
+
 
 @dataclass
 class PenNameProfile:
@@ -51,10 +61,28 @@ class PenNameProfile:
     """
     # 书目
     assigned_books: list[str] = field(default_factory=list)
+    # 平台账号注册信息（仅 UI 人工登记；agent 只读）—— 运营元数据，不进风格 prompt
+    platform_accounts: dict = field(default_factory=dict)
+    """
+    {
+        "fanqie": {"registered": True, "site_id": "作者号/站点ID", "author_url": "作者主页URL",
+                    "notes": "备注", "last_published_at": "最近发布时间"},
+        ...
+    }
+    """
     # 元信息
     description: str = ""
     created_at: str = ""
     updated_at: str = ""
+
+    def is_registered_on(self, platform: str) -> bool:
+        """该笔名是否已在某平台登记注册账号。"""
+        return bool((self.platform_accounts or {}).get(platform or "", {}).get("registered"))
+
+    def registered_platforms(self) -> list:
+        """已登记注册账号的平台列表。"""
+        return [k for k, v in (self.platform_accounts or {}).items()
+                if isinstance(v, dict) and v.get("registered")]
 
     def to_dict(self) -> dict:
         return {
@@ -62,6 +90,7 @@ class PenNameProfile:
             "style_fingerprint": self.style_fingerprint,
             "word_print": self.word_print, "tropes": self.tropes,
             "assigned_books": self.assigned_books,
+            "platform_accounts": self.platform_accounts,
             "description": self.description,
             "created_at": self.created_at, "updated_at": self.updated_at,
         }
@@ -74,6 +103,7 @@ class PenNameProfile:
             word_print=d.get("word_print", {}),
             tropes=d.get("tropes", {}),
             assigned_books=d.get("assigned_books", []),
+            platform_accounts=d.get("platform_accounts", {}),
             description=d.get("description", ""),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
@@ -148,7 +178,7 @@ class ProfileManager:
 
     def create(self, pen_name: str, description: str = "",
                style_fingerprint: dict = None, word_print: dict = None,
-               tropes: dict = None) -> PenNameProfile:
+               tropes: dict = None, platform_accounts: dict = None) -> PenNameProfile:
         from datetime import datetime
         profile_id = f"profile_{len(self._cache) + 1:03d}"
         profile = PenNameProfile(
@@ -157,6 +187,7 @@ class ProfileManager:
             style_fingerprint=style_fingerprint or {},
             word_print=word_print or {},
             tropes=tropes or {},
+            platform_accounts=platform_accounts or {},
             created_at=datetime.now().isoformat(),
         )
         self._cache[profile_id] = profile

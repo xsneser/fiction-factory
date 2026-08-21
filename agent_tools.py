@@ -357,7 +357,11 @@ def query_gags(category: str = "", scene: str = "", keyword: str = "") -> dict:
 
 
 def query_profiles(keyword: str = "") -> dict:
-    """查笔名档案：返回现有笔名（预设 + 用户自建，含风格指纹摘要），供外部 agent 选笔名/写作风格参考。"""
+    """查笔名档案：返回现有笔名（预设 + 用户自建，含风格指纹摘要 + 平台注册状态），供外部 agent 选笔名/写作风格参考。
+
+    platform_accounts 为每平台注册信息（registered/site_id/author_url/notes/last_published_at），
+    由用户在 UI 登记（agent 只读）；registered_platforms 为已注册平台列表。
+    """
     kw = (keyword or "").strip()
     rows = profiles.list_all()
     if kw:
@@ -365,6 +369,8 @@ def query_profiles(keyword: str = "") -> dict:
     return {"profiles": [{
         "id": p.id, "pen_name": p.pen_name, "description": p.description,
         "assigned_books": list(p.assigned_books or [])[:10],
+        "platform_accounts": p.platform_accounts or {},
+        "registered_platforms": p.registered_platforms(),
         "style": {
             "sentence_length": (p.style_fingerprint or {}).get("sentence_length", ""),
             "dialogue_ratio": (p.style_fingerprint or {}).get("dialogue_ratio", 0),

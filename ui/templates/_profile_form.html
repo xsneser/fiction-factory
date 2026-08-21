@@ -1,0 +1,62 @@
+{# 笔名档案表单（新建/编辑共用）：风格字段 + 平台账号注册（仅 UI 人工登记）。
+   需要上下文：profile（PenNameProfile 或 None）、platform_labels（dict）、
+   form_action（提交 URL）、form_submit（按钮文案）。 #}
+<form method="POST" action="{{ form_action }}">
+    <div class="form-row">
+        <div class="form-group">
+            <label>笔名 *</label>
+            {% if profile and profile.pen_name %}
+            <input name="pen_name" value="{{ profile.pen_name }}" readonly style="opacity:.6">
+            {% else %}
+            <input name="pen_name" required>
+            {% endif %}
+        </div>
+        <div class="form-group"><label>描述</label><input name="description" value="{{ profile.description if profile else '' }}" placeholder="如：都市爽文专业户"></div>
+    </div>
+    <div class="form-row-3">
+        <div class="form-group"><label>幽默风格</label>
+            <select name="humor_style">
+                {% set hs = profile.style_fingerprint.get('humor_style','') if profile else '' %}
+                <option value="">无</option>
+                {% for v in ['吐槽型','冷幽默','无厘头'] %}<option {{ 'selected' if hs==v }}>{{ v }}</option>{% endfor %}
+            </select></div>
+        <div class="form-group"><label>动作风格</label>
+            <select name="action_style">
+                {% set as_ = profile.style_fingerprint.get('action_style','') if profile else '' %}
+                <option value="">默认</option>
+                {% for v in ['简洁利落','画面感强','华丽铺陈'] %}<option {{ 'selected' if as_==v }}>{{ v }}</option>{% endfor %}
+            </select></div>
+        <div class="form-group"><label>句子长度</label>
+            <select name="sentence_length">
+                {% set sl = profile.style_fingerprint.get('sentence_length','medium') if profile else 'medium' %}
+                <option value="short" {{ 'selected' if sl=='short' }}>短句(8-15字)</option>
+                <option value="medium" {{ 'selected' if sl=='medium' }}>中句(15-25字)</option>
+                <option value="long" {{ 'selected' if sl=='long' }}>长句(25+字)</option>
+            </select></div>
+    </div>
+    <div class="form-group"><label>常用词汇（逗号分隔）</label><input name="common_words" value="{{ (profile.word_print.get('common_words') or [])|join(', ') if profile else '' }}" placeholder="如：卧槽, 淦, 牛逼"></div>
+    <div class="form-group"><label>禁用词汇（逗号分隔）</label><input name="avoid_words" value="{{ (profile.word_print.get('avoid_words') or [])|join(', ') if profile else '' }}" placeholder="如：仿佛, 似乎, 不禁"></div>
+
+    <fieldset style="margin-top:16px">
+        <legend>🌐 平台账号注册（人工登记；正式上架前需在对应平台注册同名账号）</legend>
+        {% set pa = profile.platform_accounts if profile else {} %}
+        {% for pl, label in platform_labels.items() %}
+        {% set acc = pa.get(pl, {}) %}
+        <div style="border:1px solid #30363d;border-radius:8px;padding:10px;margin-bottom:10px">
+            <label style="display:inline-flex;align-items:center;gap:6px;font-weight:bold">
+                <input type="checkbox" name="{{ pl }}_registered" {{ 'checked' if acc.get('registered') }}>
+                {{ label }} — 已注册账号
+            </label>
+            <div class="form-row">
+                <div class="form-group"><label>站点ID / 作者号</label><input name="{{ pl }}_site_id" value="{{ acc.get('site_id','') }}"></div>
+                <div class="form-group"><label>作者主页 URL</label><input name="{{ pl }}_author_url" value="{{ acc.get('author_url','') }}" placeholder="https://…"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>最近发布</label><input name="{{ pl }}_last_published_at" value="{{ acc.get('last_published_at','') }}" placeholder="如 2026-08-01《书名》"></div>
+                <div class="form-group"><label>备注</label><input name="{{ pl }}_notes" value="{{ acc.get('notes','') }}"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </fieldset>
+    <button type="submit" style="margin-top:12px">{{ form_submit }}</button>
+</form>

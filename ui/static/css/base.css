@@ -266,6 +266,7 @@
         .publish-item { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; margin-bottom:8px; background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); }
         .publish-item.ok { border-left:3px solid var(--success); }
         .publish-item.fail { border-left:3px solid var(--danger); }
+        .publish-item.warn { border-left:3px solid #d29922; }
         .publish-item .pi-status { font-size:16px; line-height:1.2; }
         .publish-item .pi-label { font-weight:600; color:var(--fg-strong); font-size:13px; }
         .publish-item .pi-detail { color:var(--fg-muted); font-size:12px; margin-top:2px; }

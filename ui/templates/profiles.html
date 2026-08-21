@@ -15,6 +15,15 @@
     <p style="font-size:11px;margin-top:8px;color:#484f58">常用词: {{ p.word_print.common_words|join(', ') }}</p>
     {% endif %}
     <p style="font-size:11px;color:#484f58">关联: {{ p.assigned_books|length }} 本书</p>
+    <div style="margin-top:8px;font-size:12px">
+        {% set regs = p.registered_platforms() %}
+        {% if regs %}
+        <span style="color:#3fb950">✓ 已注册：{% for r in regs %}{{ platform_labels.get(r, r) }}{% if not loop.last %}、{% endif %}{% endfor %}</span>
+        {% else %}
+        <span style="color:#484f58">未登记平台账号</span>
+        {% endif %}
+    </div>
+    <p style="margin-top:8px"><a href="/profiles/{{ p.id }}/edit" class="btn btn-secondary" style="text-decoration:none">✏️ 编辑档案</a></p>
 </div>
 {% endfor %}
 </div>

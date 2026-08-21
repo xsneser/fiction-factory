@@ -9,9 +9,10 @@ description: >-
 # 上架阶段（novel-publish）
 
 ## 前置检查（必做）
-1. `mcp__novel-engine__get_book_detail(book_id)`：看 `status`、`current_chapter`、`synopsis`（简介）。
+1. `mcp__novel-engine__get_book_detail(book_id)`：看 `status`、`current_chapter`、`synopsis`（简介）、`pen_name`、`platform`（目标平台）。
 2. 无第 1 章正文 → 提示先跑 `novel-write`。
 3. 有第 1 章但无 synopsis / 书名不佳 → 先 `generate_book_meta`。
+4. **笔名平台注册软提醒**：`mcp__novel-engine__query_profiles(keyword=书名笔名)` 看 `platform_accounts`/`registered_platforms`——笔名未在目标平台（`book.platform`）登记账号 → **如实告知用户**「正式上架前需在平台注册同名账号」（软提醒，不拦截；平台不实际代登录）。`publish_check` 报告也会含该 warning。
 
 ## 决策点
 - `publish_check` 报告出来后：全部通过 → 直接 `publish_book`；有不过项 → **问用户**「force 强发 or 先修问题」——**不擅自 force**（force 需用户显式确认）。

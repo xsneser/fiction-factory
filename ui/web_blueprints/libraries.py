@@ -2,10 +2,30 @@
 import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
+from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context, abort
 from .ctx import *
+from libraries.profiles import KNOWN_PLATFORMS, PLATFORM_LABELS  # noqa: E402
 
 bp = Blueprint("libraries", __name__)
+
+
+def _parse_platform_accounts(form):
+    """从表单解析 platform_accounts：每个已知平台 {registered, site_id, author_url, notes, last_published_at}。
+
+    未登记且其余字段全空 → 该平台条目不写入（保持档案干净）。
+    """
+    accounts = {}
+    for pl in KNOWN_PLATFORMS:
+        entry = {
+            "registered": form.get(f"{pl}_registered") == "on",
+            "site_id": form.get(f"{pl}_site_id", "").strip(),
+            "author_url": form.get(f"{pl}_author_url", "").strip(),
+            "notes": form.get(f"{pl}_notes", "").strip(),
+            "last_published_at": form.get(f"{pl}_last_published_at", "").strip(),
+        }
+        if entry["registered"] or any(entry[k] for k in ("site_id", "author_url", "notes", "last_published_at")):
+            accounts[pl] = entry
+    return accounts
 
 @bp.route("/plots")
 def plots():
@@ -138,7 +158,8 @@ def gags():
 
 @bp.route("/profiles")
 def profile_list():
-    return render_template("profiles.html", profiles=profiles.list_all())
+    return render_template("profiles.html", profiles=profiles.list_all(),
+                           platform_labels=PLATFORM_LABELS)
 
 
 @bp.route("/profiles/new", methods=["GET","POST"])
@@ -149,15 +170,39 @@ def new_profile():
         if request.form.get("avoid_words"): wp["avoid_words"] = [w.strip() for w in request.form["avoid_words"].split(",")]
         profiles.create(
             pen_name=request.form["pen_name"],
-            description=request.form["description"],
+            description=request.form.get("description",""),
             style_fingerprint={
                 "humor_style": request.form.get("humor_style",""),
                 "action_style": request.form.get("action_style",""),
                 "sentence_length": request.form.get("sentence_length","medium"),
             },
             word_print=wp,
+            platform_accounts=_parse_platform_accounts(request.form),
         )
         return redirect(url_for("libraries.profile_list"))
-    return render_template("new_profile.html")
+    return render_template("new_profile.html", profile=None, platform_labels=PLATFORM_LABELS)
+
+
+@bp.route("/profiles/<profile_id>/edit", methods=["GET","POST"])
+def edit_profile(profile_id):
+    """编辑笔名档案：风格字段 + 平台账号注册（仅 UI 人工登记）。"""
+    p = profiles.get(profile_id)
+    if not p:
+        abort(404)
+    if request.method == "POST":
+        wp = {}
+        if request.form.get("common_words"): wp["common_words"] = [w.strip() for w in request.form["common_words"].split(",")]
+        if request.form.get("avoid_words"): wp["avoid_words"] = [w.strip() for w in request.form["avoid_words"].split(",")]
+        p.description = request.form.get("description","")
+        p.style_fingerprint = {
+            "humor_style": request.form.get("humor_style",""),
+            "action_style": request.form.get("action_style",""),
+            "sentence_length": request.form.get("sentence_length","medium"),
+        }
+        p.word_print = wp
+        p.platform_accounts = _parse_platform_accounts(request.form)
+        profiles.update(p)
+        return redirect(url_for("libraries.profile_list"))
+    return render_template("edit_profile.html", profile=p, platform_labels=PLATFORM_LABELS)
 
 
