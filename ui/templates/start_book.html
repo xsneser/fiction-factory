@@ -3,7 +3,6 @@
 {% block head %}{% endblock %}
 {% block content %}
 <h1>🔰 启动新书</h1>
-<p class="subtitle">3 步建书：一句话设定（含题材标签）→ 挑选世界观 → 世界观补全。创建后自动入库，从写作台开始创作。</p>
 
 <ol class="wz-steps" id="wz-steps">
     <li class="wz-step active" data-step="1"><span class="wz-num">1</span>一句话设定</li>
@@ -19,7 +18,6 @@
             <div class="form-row">
                 <textarea id="wz-idea" rows="3" placeholder="如：灵气复苏后我觉醒了复制异能，却绑定了一个专坑宿主的菜鸡系统…"></textarea>
             </div>
-            <div class="form-row hint">系统将结合你挑选的题材标签，从这句话扩展出完整世界观与大纲。填好后点下方「🚀 让 Agent 构建」，Agent 会驱动建书向导（挑世界观方向、补全世界观、生成大纲），右侧面板实时显示每一步。</div>
         </fieldset>
         <fieldset>
             <legend>👤 笔名</legend>
@@ -47,7 +45,7 @@
         </fieldset>
         {# ─── 从已有书借鉴（暂时弃用：外部 agent 经 borrow_preview MCP 驱动；保留 UI 供手动参考）─── #}
         <fieldset style="opacity:.6;filter:grayscale(.3)">
-            <legend>📚 从已有书借鉴 <span style="color:#8b949e;font-size:12px">（暂时弃用）</span></legend>
+            <legend>📚 从已有书借鉴</legend>
             <div class="form-row">
                 <select id="wz-borrow-source">
                     <option value="">不借鉴…</option>
@@ -71,7 +69,7 @@
         <fieldset>
             <legend>🎲 候选世界观方向</legend>
             <div id="wz-candidate-box" class="wz-candidate-box"></div>
-            <div class="form-row hint" id="wz-candidate-hint" style="display:none">挑一个方向，其设定会带入下一步微调；直接点下方「已挑选完毕」可跳过。</div>
+            <div class="form-row hint" id="wz-candidate-hint" style="display:none">候选会逐张生成，挑一个方向（其设定带入下一步微调）；不想要候选就点「跳过，手动设定」。</div>
         </fieldset>
     </section>
 
@@ -79,23 +77,23 @@
     <section class="wz-panel" id="panel-3" style="display:none">
         <div class="world-edit">
         <fieldset>
-            <legend>🗺️ 世界观（设定圣经）</legend>
+            <legend>🗺️ 世界观</legend>
             <div class="form-row half">
                 <div><label>书名</label><input id="wz-title" placeholder="书名（第②步选择，可改）"></div>
                 <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
             </div>
             <div class="form-row hint" id="wz-world-status">进入本步时已由 AI 自动补全，可手动微调。</div>
             <div class="form-row">
-                <label>一句话设定 description（世界种子，可改）</label>
+                <label>一句话设定 description</label>
                 <textarea id="wz-wb-description" rows="2"></textarea>
             </div>
             <div class="form-row">
-                <label>设定概述 world_summary（一段话整体设定）</label>
+                <label>设定概述 world_summary</label>
                 <textarea id="wz-wb-world_summary" rows="3"></textarea>
             </div>
             <div class="form-row half">
-                <div><label>时代 era（含年份/纪元）</label><input id="wz-wb-era"></div>
-                <div><label>力量体系 power_system（数值写死）</label><input id="wz-wb-power_system"></div>
+                <div><label>时代 era</label><input id="wz-wb-era"></div>
+                <div><label>力量体系 power_system</label><input id="wz-wb-power_system"></div>
             </div>
             <div class="form-row half">
                 <div><label>地理 geography</label><input id="wz-wb-geography"></div>
@@ -106,18 +104,18 @@
                 <div><label>社会结构 social_structure</label><input id="wz-wb-social_structure"></div>
             </div>
             <div class="form-row">
-                <label>核心矛盾 core_conflict（驱动全书的冲突）</label>
+                <label>核心矛盾 core_conflict</label>
                 <input id="wz-wb-core_conflict">
             </div>
             <div class="form-row">
-                <label>势力 factions（每个势力：名称 / 立场 / 描述；下方人物卡可归入势力）</label>
+                <label>势力 factions</label>
                 <div id="wz-wb-factions"></div>
                 <div class="btn-row">
                     <button type="button" class="btn-secondary" onclick="WZ.addFactionRow()">➕ 添加势力</button>
                 </div>
             </div>
             <div class="form-row">
-                <label>世界规则 rules（每行一条，金手指数值写死）</label>
+                <label>世界规则 rules</label>
                 <textarea id="wz-wb-rules" rows="3"></textarea>
             </div>
             <div class="form-row hint">
@@ -412,7 +410,7 @@ var WZ = {
         var task = '用 novel-build-candidates 流程建这本新书（已完成步 1 填表、已自动进步 2）：一句话设定「' + idea + '」'
             + '题材标签「' + (tags.join('、') || '（未选）') + '」'
             + '笔名「' + (pen || '（未选，请帮我选）') + '」。'
-            + '直接生成世界观候选并**呈现**（world_candidates → drive_ui(set_candidates, {candidates:[…]})），'
+            + '用 world_candidates(book_id="", idea, tags) 逐张生成 **5 个**世界观候选（每次只生成 1 个并自动填入步 2，工具按 idea/tags 持久化去重，连调 5 次），'
             + '等我在步 2 挑选，**不要自动选候选、不要发 next/submit**。'
             + '笔名若未选可 drive_ui(set_field pen) 补。不要再 reset / 重填 idea·tags / 发步 1→2 的 next。';
         if (typeof window.agentSendTask === 'function') {
@@ -443,6 +441,24 @@ var WZ = {
         this._outline_picks = null;
         this._task2Fired = false;   // 重选候选后允许再次触发第二个建书任务
         if (typeof showToast === 'function') showToast('已选中：' + c.title + '，点「已挑选完毕」交给 Agent 建书', 'success');
+    },
+    // 候选卡渲染（set_candidates 整体替换 / add_candidate 增量追加共用）：只渲染不选中，
+    // 挑选是用户动作——点卡走 pickCandidate 高亮、可换。返回当前候选数。
+    renderCandidates: function() {
+        var cands = window.__CANDIDATES__ || [];
+        var box = this.el('wz-candidate-box');
+        if (box) {
+            box.innerHTML = cands.map(function(c, i) {
+                return '<div class="wz-candidate-card" onclick="WZ.pickCandidate(' + i + ')">'
+                    + '<div class="wz-cand-title">#' + (i + 1) + ' ' + (c.title || '') + '</div>'
+                    + (c.one_liner ? '<div class="wz-cand-one">' + c.one_liner + '</div>' : '')
+                    + (c.world_brief ? '<div class="wz-cand-brief">' + c.world_brief + '</div>' : '')
+                    + '</div>';
+            }).join('') || '<div class="wz-borrow-preview">（候选为空，请让 Agent 重试）</div>';
+        }
+        var hint = this.el('wz-candidate-hint');
+        if (hint) hint.style.display = cands.length ? 'block' : 'none';
+        return cands.length;
     },
     skipCandidates: function() {
         this.el('wz-candidate-box').innerHTML = '';
@@ -949,26 +965,23 @@ window.onnecommand = function(e) {
         WZ._task2Fired = false; WZ._agentDriving = false;   // 重选后允许「已挑选完毕」触发建书
         if (typeof showToast === 'function') showToast('已选中：' + (cand.title || ''), 'success');
     } else if (cmd === 'set_candidates') {
-        // MCP 路线（novel-build-candidates）：agent 生成候选后整体呈现为可点选卡，等用户挑选。
-        // 只渲染不选中——挑选是用户动作，点卡走 WZ.pickCandidate，再点「已挑选完毕」触发建书。
-        var cands = Array.isArray(args.candidates) ? args.candidates : [];
-        window.__CANDIDATES__ = cands;
-        WZ._picked = false;   // 新候选集 → 尚未挑选
-        WZ._task2Fired = false;
-        WZ._agentDriving = false;
-        var box = WZ.el('wz-candidate-box');
-        if (box) {
-            box.innerHTML = cands.map(function(c, i) {
-                return '<div class="wz-candidate-card" onclick="WZ.pickCandidate(' + i + ')">'
-                    + '<div class="wz-cand-title">#' + (i + 1) + ' ' + (c.title || '') + '</div>'
-                    + (c.one_liner ? '<div class="wz-cand-one">' + c.one_liner + '</div>' : '')
-                    + (c.world_brief ? '<div class="wz-cand-brief">' + c.world_brief + '</div>' : '')
-                    + '</div>';
-            }).join('') || '<div class="wz-borrow-preview">（候选为空，请让 Agent 重试）</div>';
-        }
-        var hint = WZ.el('wz-candidate-hint');
-        if (hint) hint.style.display = cands.length ? 'block' : 'none';
+        // 兼容保留（整体替换）：agent 一次给全候选时渲染为可点选卡。新 skill 走下方增量 add_candidate。
+        window.__CANDIDATES__ = Array.isArray(args.candidates) ? args.candidates : [];
+        WZ._picked = false; WZ._task2Fired = false; WZ._agentDriving = false;
+        WZ.renderCandidates();
         if (typeof showToast === 'function') showToast('候选已生成，请在步 2 挑选一个方向', 'success');
+    } else if (cmd === 'add_candidate') {
+        // 增量（合并工具 world_candidates 每次生成 1 个自动填入）：追加一张候选卡、等用户挑选。
+        var cand = (args.candidate && typeof args.candidate === 'object') ? args.candidate : null;
+        if (!cand || !cand.title) {
+            if (typeof showToast === 'function') showToast('候选缺 title，跳过', 'error');
+        } else {
+            (window.__CANDIDATES__ = window.__CANDIDATES__ || []).push(cand);
+            WZ._picked = false;   // 新候选集 → 需重新挑选
+            WZ._task2Fired = false; WZ._agentDriving = false;
+            var n = WZ.renderCandidates();
+            if (typeof showToast === 'function') showToast('已生成第 ' + n + ' 个候选', 'success');
+        }
     } else if (cmd === 'set_characters') {
         // 角色整体替换（agent 生成后推送）；按势力分组渲染人物卡 + collect 收进 state
         WZ.renderCharCards(args.characters || []);

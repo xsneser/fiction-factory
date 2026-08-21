@@ -225,6 +225,33 @@ class WorldBuildingGenerator:
                 pass
         return []
 
+    def generate_candidate(self, genre: str = "", sub_genre: str = "",
+                           idea: str = "", tags=None, existing_candidates=None) -> dict:
+        """增量式候选：一次只产出 **1 个**与已有候选差异明显的新世界观方向（非流式，失败重试≤3）。
+
+        existing_candidates 为已生成的候选（title/one_liner/world_brief...），用于去重与差异化；
+        逐个生成给足 LLM 单候选的思考空间（质量优先于数量）。返回单条候选 dict 或 None。
+        """
+        if not self.llm:
+            return None
+        prompt = self.harness.render_world_candidates_prompt(
+            idea=idea, genre=genre or "", sub_genre=sub_genre or "",
+            count=1, tags=tags, existing_candidates=existing_candidates or [])
+        from core.llm_client import extract_json
+        for attempt in range(3):
+            try:
+                # 单候选但给足推理余量：flash 先推理再输出，推理链长不截断
+                raw = self.llm.call(WORLD_CANDIDATES_SYSTEM, prompt,
+                                    temperature=0.9, max_tokens=16384)
+                data = json.loads(extract_json(raw))
+                cands = [c for c in (data.get("candidates") or [])
+                         if isinstance(c, dict) and c.get("one_liner")]
+                if cands:
+                    return cands[0]
+            except Exception:
+                pass
+        return None
+
     def generate_characters(self, idea: str, genre: str = "", sub_genre: str = "",
                             tags=None, title: str = "", archetypes=None,
                             core_conflict: str = "", factions=None,

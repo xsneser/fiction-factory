@@ -43,11 +43,11 @@ description: >-
 > **硬规则：候选挑选必须完成并经用户确认，否则不得 `drive_ui(submit)`。** 这是用户明确要求的决策点，不可跳过。
 > **交棒**：用户在步 2 点「已挑选完毕」后，**页面会自动给 agent（dsh）发建书任务（`novel-build`）驱动步 3**。Claude Code 只负责生成候选、呈现、等待挑选并确认，**不重复驱动步 3**（双驱动会互相覆盖）。
 
-**推荐路线——agent 生成候选、用户点选**：
-1. `mcp__novel-engine__world_candidates(book_id="", idea=种子, genre=方向genre, tags=题材标签)` 生成候选（LLM 约 2-5s）。
-2. `drive_ui(set_candidates, {candidates:[{title, one_liner, world_brief}]})` → 浏览器把每个候选渲染成**可点选卡**（提示「点击选中此方向」）。
-3. **告诉用户在平台上点选喜欢的候选方向**（agent 不要把候选搬到聊天里——平台的卡片点选会自然带入书名/世界观简述到步 3；点卡仅高亮、可换）。
-4. 用户确认点选后点「已挑选完毕」（步 2 按钮）→ 进步 3，页面自动触发建书任务交给 dsh；不想要候选 → `drive_ui(skip_candidates)`（「跳过，手动设定」在步 2 导航区，手动模式不触发 agent 建书）。
+**推荐路线——agent 逐张生成候选、用户点选**：
+1. **循环 `mcp__novel-engine__world_candidates(book_id="", idea=种子, genre=方向genre, tags=题材标签)` 约 5 次**（每次 LLM 只生成 **1 个**候选并**自动填入**步 2，工具按 idea/tags 持久化去重；卡逐张出现）——不需要 5 张可提前停。
+2. 单次失败/空 → 重试一次；仍空跳过继续。
+3. **告诉用户在平台上点选喜欢的候选方向**（agent 不要把候选搬到聊天里——平台卡片点选会自然带入书名/世界观简述到步 3；点卡仅高亮、可换）。
+4. 用户确认点选后点「已挑选完毕」（步 2 按钮）→ 进步 3，页面自动触发建书任务交给 dsh；不想要候选 → `drive_ui(skip_candidates)`（「跳过，手动设定」在步 2 导航区，手动点不触发 agent 建书）。
 
 **兜底**：`world_candidates` 失败/空 → 重试一次；仍空 → `drive_ui(skip_candidates)` + `drive_ui(set_field world_desc=手动拼好的世界观简述)`（步 3 自动补全仍会触发）——**skip 也要向用户说明**，不能无声跳过。
 
@@ -56,7 +56,7 @@ description: >-
 1.5. **`drive_ui(reset)`**：每次建书前先重置向导 state（除笔名），清除上一本残留草稿对 set_field/set_tags 的干扰（建书保真度护栏，spike 实测 issue）。
 2. 在聊天里定：方向、笔名、一句话种子、题材标签（上面的决策点）。
 3. `drive_ui(set_field {field:"idea", value:种子})` + `drive_ui(set_field {field:"pen", value:笔名})` + `drive_ui(set_tags {tags:[题材标签]})`——**同批推送，浏览器按序应用**（步 1 校验 idea+pen 非空；题材标签在步 1 多选，流派随之推导，并作候选生成硬约束）。**步 1 已无「下一步」**——由步 1 底部「🎲 生成候选」替代（见下条）。
-4. **世界观候选（必须完成，见上）**：`world_candidates(book_id="", idea=种子, genre, tags)` → `drive_ui(set_candidates, {candidates:[…]})` 呈现候选卡 → 用户在平台点选候选卡（高亮、可换）→ 用户点「已挑选完毕」进步 3（**页面自动把建书任务交给 dsh 驱动步 3**；Claude Code 不重复驱动）。不想选 → `drive_ui(skip_candidates)`。
+4. **世界观候选（必须完成，见上）**：**循环 `world_candidates(book_id="", idea=种子, genre, tags)` 约 5 次**（每次 1 个并自动填入步 2，无需 `set_candidates`）→ 用户在平台点选候选卡（高亮、可换）→ 用户点「已挑选完毕」进步 3（**页面自动把建书任务交给 dsh 驱动步 3**；Claude Code 不重复驱动）。不想选 → `drive_ui(skip_candidates)`。
 5. **进步 3 = 内容构建工作台（默认已交棒 dsh；Claude Code 仅手动驱动时才走）**：用户在步 2 点「已挑选完毕」后步 3 默认由 **dsh（novel-build）分阶段驱动**（页面 `_agentDriving` 已抑制浏览器一键补全）。**Claude Code 不要与页面 task2 同时驱动步 3**——只在用户明确要求「由 Claude 直接驱动步 3」且页面未自动发任务时，才按下列规范逐段驱动（每段结果经 `drive_ui` 落进表单）：
    ① **核心矛盾**：`generate_core_conflict(idea=世界观简述, world_brief=候选简述, tags, pen_name)` → `drive_ui(set_world, {world_building:{core_conflict:"..."}})`（返回 genre 供②查库）。
    ② **开篇大纲+桥段**（按大纲库挑选，agent 自主决策，不询问）：`query_structures(genre=①)` 看模板 + `query_plots(category="开篇")` 看开篇桥段 → 选定 → `drive_ui(set_picks, {templates:[{id,name}], plots:[{id,name}]})` → `_outline_picks` 随 submit 落库，submit 后 `generate_full_outline` 自动消费。

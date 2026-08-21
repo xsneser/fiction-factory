@@ -688,13 +688,48 @@ def generate_world(book_id: str, mode: str = "one", idea: str = "",
             "event_count": len(events), "done_data": last_d}
 
 
+_WIZARD_CAND_FILE = os.path.join(_ROOT, "storage", "wizard_candidates.json")
+
+
+def _wizard_candidate_key(idea: str, tags: list) -> str:
+    """候选持久化会话 key：一句话设定 + 题材标签（排序）唯一化一个建书会话。"""
+    return json.dumps({
+        "idea": (idea or "").strip(),
+        "tags": sorted(str(t).strip() for t in (tags or []) if str(t).strip()),
+    }, ensure_ascii=False)
+
+
+def _wizard_existing_candidates(idea: str, tags: list) -> list:
+    """读当前会话已积累的候选（按 idea+tags key）；key 不匹配视为新会话返回空。"""
+    from core.json_store import read_json
+    try:
+        st = read_json(_WIZARD_CAND_FILE, None)
+        if st and st.get("key") == _wizard_candidate_key(idea, tags) \
+                and isinstance(st.get("candidates"), list):
+            return st["candidates"]
+    except Exception:
+        pass
+    return []
+
+
+def _clear_wizard_candidates() -> None:
+    """清空候选持久化（drive_ui(reset) 建书前调用，防跨会话残留）。"""
+    from core.json_store import write_json_atomic
+    try:
+        write_json_atomic(_WIZARD_CAND_FILE, {"key": "", "candidates": []})
+    except Exception:
+        pass
+
+
 def world_candidates(book_id: str = "", idea: str = "", genre: str = "",
                      sub_genre: str = "", tags: list = None) -> dict:
-    """一次产出 2-3 个差异化世界观方向供选择（LLM）。
+    """增量生成世界观候选并**自动填入**步 2（一次 1 个，给 LLM 充分思考空间）。
 
-    book_id 为空 = 建书前调用（新书向导②）：用传入 genre/sub_genre 生成候选，无需先建书；
-    候选受 tags（题材标签）硬约束，genre 为空时由 tags 经 derive_genre 推导；
-    book_id 非空 = 用该书的 genre/sub_genre（忽略传入 genre）。候选含 one_liner，供 generate_world 复用。
+    book_id 为空 = 建书前调用（新书向导②）：每次调用只产出 1 个**新**候选并
+    push add_candidate 自动填入浏览器步 2；候选按 (idea, tags) 持久化去重——
+    连调 N 次即积累 N 张卡；侧栏「再来几个」复用同 idea/tags 续接（差异化基于
+    已生成的候选）。book_id 非空 = 用该书的 genre/sub_genre（忽略传入 genre）。
+    返回 {"candidate", "candidates"(全部累计), "total"}。
     """
     llm = _require_llm()
     idea = (idea or "").strip()
@@ -708,17 +743,27 @@ def world_candidates(book_id: str = "", idea: str = "", genre: str = "",
         harness = PromptHarness(storyline=tl, profile=profile)
         gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
     else:
-        # 无书（向导②）：generate_candidates 本就不读目标书
-        harness = PromptHarness()   # storyline=None；tags 由 generate_candidates 透传
+        # 无书（向导②）：generate_candidate 本就不读目标书
+        harness = PromptHarness()   # storyline=None；tags 由 generate_candidate 透传
         gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
         if not genre and tags:
             from libraries.world_tags import derive_genre
             genre = derive_genre(list(tags or []))
-    candidates = gen.generate_candidates(genre=genre or "都市", sub_genre=sub_genre or "",
-                                         idea=idea, tags=list(tags or []))
-    if not candidates:
+    existing = _wizard_existing_candidates(idea, tags)
+    cand = gen.generate_candidate(genre=genre or "都市", sub_genre=sub_genre or "",
+                                  idea=idea, tags=list(tags or []),
+                                  existing_candidates=existing)
+    if not cand:
         raise RuntimeError("示例候选生成失败，请重试")
-    return {"candidates": candidates}
+    from core.json_store import write_json_atomic
+    write_json_atomic(_WIZARD_CAND_FILE, {
+        "key": _wizard_candidate_key(idea, tags),
+        "candidates": existing + [cand],
+    })
+    from libraries.nav_intent import push_ui_command
+    push_ui_command("add_candidate", {"candidate": cand})
+    return {"candidate": cand, "candidates": existing + [cand],
+            "total": len(existing) + 1}
 
 
 def generate_characters(idea: str, genre: str = "", sub_genre: str = "",
@@ -1031,6 +1076,7 @@ _WIZARD_CMDS = {
     "set_tags": ("tags",),
     "set_characters": ("characters",),   # 角色列表整体替换（agent 生成后推送）
     "set_candidates": ("candidates",),   # 呈现候选卡（不选中，等用户在步 2 点选）；candidates=[{title, one_liner, world_brief}]
+    "add_candidate": ("candidate",),   # 增量追加 1 张候选卡（world_candidates 合并工具自动 push；候选={title, one_liner, world_brief}）
     "pick_candidate": (),   # 兼容保留：candidate={title, world_brief, one_liner} 内嵌传入（idx 仅卡片高亮，可选）；新 skill 不用
     "set_world": ("world_building",),   # 分阶段内容构建：部分世界观 dict 合并进步 3 表单
     "set_picks": ("templates",),   # 开篇大纲/桥段选择（templates 或 plots 任一非空，drive_ui 特判）
@@ -1072,6 +1118,8 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
         for k in _WIZARD_CMDS[cmd]:
             if not args.get(k):
                 raise RuntimeError(f"命令 {cmd} 缺少必填参数：{k}")
+    if cmd == "reset":
+        _clear_wizard_candidates()   # 新会话清空候选持久化，防跨会话残留
     from libraries.nav_intent import push_ui_command
     push_ui_command(cmd, args)
     return {"__ui_command__": cmd, "cmd": cmd}
