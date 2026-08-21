@@ -67,7 +67,7 @@ console.log('[agent-panel] v3 events-stream');
         card.appendChild(status);
         chat.appendChild(card);
         scrollBottom();
-        return { card: card, status: status };
+        return { card: card, status: status, t0: performance.now() };
     }
 
     // 事件流工具卡：按 callId 建档，超上限裁剪最旧（防 DOM 无限膨胀）
@@ -84,10 +84,15 @@ console.log('[agent-panel] v3 events-stream');
         return run;
     }
 
-    // 工具卡收尾：状态文本 + ok/err 类名
+    // 工具卡收尾：状态文本 + 执行耗时（⏱）+ ok/err 类名
     function finishToolCard(run, text) {
         if (!run || !run.status) return;
-        run.status.textContent = text || '';
+        var dur = '';
+        if (run.t0) {
+            var ms = performance.now() - run.t0;
+            dur = ' ⏱ ' + (ms < 1000 ? Math.round(ms) + 'ms' : (ms / 1000).toFixed(1) + 's');
+        }
+        run.status.textContent = (text || '') + dur;
         run.status.className = (text && text.indexOf('✅') === 0)
             ? 'agent-tool-status ok' : 'agent-tool-status err';
     }
