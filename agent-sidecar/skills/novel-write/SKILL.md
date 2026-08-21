@@ -3,7 +3,7 @@ name: novel-write
 description: 写作阶段。写正文/写下一章/继续写/写桥段。流程:渐进式披露组装上下文 → write_next_bridge 逐桥段推进。前置:phase=ready。
 ---
 
-# 写作阶段（novel-write）— dsh 侧车版
+# 写作阶段（novel-write）— 侧栏版
 
 ## 前置检查（必做）
 1. **确认 LLM 已配置**：`api.json` 有 `api_key`（deepseek-v4-flash）——无配置写作会空内容/报错，先提示配置再继续。

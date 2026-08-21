@@ -3,7 +3,7 @@ name: novel-outline
 description: 大纲阶段。生成大纲/排故事线/选桥段/一键完整大纲/续写扩写。流程:outline_material_candidates 拿候选 → generate_full_outline 落库。前置:phase=config 且 basic_info 充实。退出:phase=ready。
 ---
 
-# 大纲阶段（novel-outline）— dsh 侧车版
+# 大纲阶段（novel-outline）— 侧栏版
 
 ## 前置检查（必做）
 1. `mcp__novelengine__get_book_detail` 看 `phase`：

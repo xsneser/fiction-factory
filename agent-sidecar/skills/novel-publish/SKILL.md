@@ -3,7 +3,7 @@ name: novel-publish
 description: 上架阶段。上架/发布/完本/导出投稿包/生成书名+简介/检查能否发书。流程:generate_book_meta → publish_check → 决策 → publish_book/mark_finished/export_book。前置:已有第 1 章正文。
 ---
 
-# 上架阶段（novel-publish）— dsh 侧车版
+# 上架阶段（novel-publish）— 侧栏版
 
 ## 前置检查（必做）
 1. `mcp__novelengine__get_book_detail(book_id)`：看 `status`、`current_chapter`、`synopsis`。

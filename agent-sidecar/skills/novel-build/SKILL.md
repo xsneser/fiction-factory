@@ -3,7 +3,7 @@ name: novel-build
 description: 建书步 2（挑完候选后的建书）：用户在步 2 已选定世界观候选并点了「已挑选完毕」，本 skill 从步 3 开始**分阶段**构建世界观（core_conflict→factions→characters→rest_world，每段带前面上下文）→ submit 建书 → 校验 → 生成完整大纲。护栏：create_book/delete_book 不在 MCP 面。不做候选生成（那是 novel-build-candidates）。
 ---
 
-# 建书步 2：补全世界观并建书（novel-build）— dsh 侧车版
+# 建书步 2：补全世界观并建书（novel-build）— 侧栏版
 
 > **护栏**：`create_book` / `delete_book` 是 web-only，绝不用——本 skill 只能 `drive_ui` 驱动浏览器向导建书（机制见 CLAUDE.md）。
 > **headless 是一次性任务**：写作方向/笔名/种子/标签/候选等决策由任务指令给全（候选已在步 2 选定），不做交互问答。
