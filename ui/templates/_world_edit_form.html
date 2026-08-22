@@ -31,20 +31,21 @@
                 <input id="wb-core_conflict">
             </div>
             <div class="form-row">
-                <label>势力 factions</label>
-                <div id="wb-factions"></div>
-                <div class="btn-row">
-                    <button type="button" class="btn-secondary" onclick="addFactionRow()">➕ 添加势力</button>
-                </div>
-            </div>
-            <div class="form-row">
                 <label>世界规则 rules</label>
                 <textarea id="wb-rules" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea>
             </div>
         </fieldset>
 
         <fieldset>
-            <legend>👥 人物（主角/配角统一）</legend>
+            <legend>🏛 势力与人物</legend>
+            <div class="form-row hint">先建势力（名称/立场/描述），再在人物卡片里选「所属势力」，人物即按势力分组展示；未归属的人物收进「（未归属）」。</div>
+            <div class="form-row">
+                <label>势力 factions</label>
+                <div id="wb-factions"></div>
+                <div class="btn-row">
+                    <button type="button" class="btn-secondary" onclick="addFactionRow()">➕ 添加势力</button>
+                </div>
+            </div>
             <div class="form-row hint">每条人物一张卡片：填姓名/身份/性别/性格/口癖/关系等；角色选「主角」即为主角。可用「🎭 套用原型」从角色原型库一键填充性格与口癖。</div>
             <div id="char-cards"></div>
             <div class="btn-row">
