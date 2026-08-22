@@ -311,19 +311,3 @@
         .world-edit .f-char-body { padding-top:8px; }
         .world-edit .unassigned-card .f-char-toggle { border-top:0; padding:0; }
 
-        /* ─── 大纲可编辑卡片（详情页内嵌，与写作台共用 storyline_outline_card.html） ─── */
-        .outline-list { display:flex; flex-direction:column; gap:10px; margin:12px 0; }
-        .outline-card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:14px 16px; }
-        .outline-card:hover { border-color:#58a6ff; }
-        .oc-header { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
-        .oc-name { font-size:14px; font-weight:600; color:#c9d1d9; }
-        .oc-actions { display:flex; gap:6px; }
-        .oc-actions button { white-space:nowrap; }
-        .oc-range { display:flex; align-items:center; gap:6px; margin-top:8px; flex-wrap:wrap; font-size:12px; color:#8b949e; }
-        .oc-range label { display:inline; margin:0; }
-        .oc-range input[type=number] { width:70px; padding:3px 6px; font-size:12px; }
-        .oc-range select, .oc-range input[type=text] { padding:3px 6px; font-size:12px; }
-        .oc-stages { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
-        .oc-stage { background:#1f2937; color:#8b949e; border-radius:12px; padding:2px 8px; font-size:11px; }
-        .outline-overlap { border-left:3px solid #d29922; }
-        .btn-sm { padding:4px 10px; font-size:12px; }
