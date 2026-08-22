@@ -80,6 +80,16 @@ def _split_sentences(text: str) -> list:
     return parts
 
 
+# 未自然收束判定（竞品借鉴：deep-novel-system「截断检测续写」）：末字符须为句末标点或自然段尾
+_END_CHARS = set("。！？…!?\"”」』’\n")
+
+
+def _ends_naturally(text: str) -> bool:
+    """文本末尾是否自然收束（末字符在句末标点/右引号/换行内）。"""
+    t = (text or "").rstrip(" \t")  # 只去空格不去换行：段尾换行也是自然收束
+    return bool(t) and t[-1] in _END_CHARS
+
+
 # 连续重复词检测（"底下底下""的的"等 LLM 复读；笑声/拟声叠词白名单放行）
 _LAUGH_CHARS = set("哈嘿呵呵嘻哇哼呜啦耶啊咦吼喵咯呀哦哎哟")
 _REPEAT_UNIT2 = re.compile(r'([一-鿿]{2})\1')
@@ -307,6 +317,31 @@ class StorylineChapterWriter:
 3. 严禁出现：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。
 4. 只输出正文，不写标题、不加解释。本桥段还剩约 {budget_remaining} 字预算，控制篇幅。"""
 
+    def _complete_unnatural_end(self, text: str, item, max_continues: int = 2) -> str:
+        """桥段组末尾未自然收束（被 max_tokens 截断）时，追加续写直到自然收尾。
+
+        竞品借鉴：deep-novel-system「截断检测续写（append≤3次）」；受次数硬上限与
+        预算约束（追加内容会计入 bridge_words），仍不收束则原样返回，不无限循环。
+        """
+        for _ in range(max_continues):
+            if _ends_naturally(text):
+                break
+            cont_prompt = (
+                "上一段末尾句子被截断、尚未收尾。请紧接上一段最后一个字继续写，"
+                "只补到一句完整收尾（含句末标点），不要另起新内容、不要重复已写内容。\n"
+                "上一段结尾：…" + text[-60:])
+            self._input_texts.append(cont_prompt)
+            try:
+                raw = self.llm.call(WRITER_SYSTEM, cont_prompt,
+                                    temperature=0.6, max_tokens=WRITER_MAX_TOKENS)
+            except Exception:
+                break
+            extra = (raw or "").strip().lstrip('"“')
+            if not extra:
+                break
+            text += extra
+        return text
+
     def _write_plot_segment_groups(self, item, chapter_buffer, prev_ending,
                                    budget, character_states="", summaries_context="",
                                    is_opening=False, chapter_num=0):
@@ -368,6 +403,9 @@ class StorylineChapterWriter:
                 break
             if not text:
                 break
+            # 未自然收束续写（deep-novel-system append≤N）：组尾被截断时补到自然收尾
+            if not _ends_naturally(text):
+                text = self._complete_unnatural_end(text, item)
             words = count_prose_units(text)
             if words <= 0:
                 break
