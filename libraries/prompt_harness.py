@@ -16,6 +16,7 @@
 from typing import Optional
 
 from .storyline import BookStoryline, get_characters, get_mc, relation_to_mc
+from .promise_ledger import promise_op
 
 
 # 桥段 category → 适合的笑点 fit_scene 关键词（免费规则，不写进大纲）
@@ -676,19 +677,27 @@ class PromptHarness:
         reserved = {id(q) for q in resolving} | {id(q) for q in must_hit} | {id(q) for q in overdue}
         others = [q for q in active if id(q) not in reserved][:2]
 
+        _OP_TAG = {
+            "seed": "刚埋设·保持存在感",
+            "touch": "维持·轻提即可",
+            "pressure": "施压·临期/逾期",
+            "partial_reveal": "部分揭示·留悬念",
+            "payoff": "兑现",
+        }
         lines = []
         if must_hit:
-            lines.append("本章必达：兑现「" + (must_hit[0].get("desc", "") or "前文钩子")
+            lines.append("【伏笔·兑现】本章必达：兑现「" + (must_hit[0].get("desc", "") or "前文钩子")
                          + "」，本章内必须让读者看到结果/推进。")
         if resolving:
-            lines.append("本桥段收束：兑现读者承诺「" + (resolving[0].get("desc", "") or "前文钩子")
+            lines.append("【伏笔·兑现】本桥段收束：兑现读者承诺「" + (resolving[0].get("desc", "") or "前文钩子")
                          + "」，给出结果/反转、补上闭环。")
         if overdue:
-            lines.append("已逾期读者承诺（本章内请推进或兑现其一）："
+            lines.append("【伏笔·施压】已逾期读者承诺（本章内请推进或兑现其一）："
                          + "；".join((q.get("desc", "") or "钩子") for q in overdue[:2]))
-        if others:
-            lines.append("活跃读者承诺（可择机自然推进）："
-                         + "；".join((q.get("desc", "") or "钩子") for q in others))
+        for q in others:
+            op = promise_op(q, chapter_num)
+            tag = _OP_TAG.get(op, "touch")
+            lines.append(f"【伏笔·{tag}】{q.get('desc', '') or '钩子'}（可择机自然推进）")
         # 必出场角色：承诺 desc 里提到的本桥段角色（兑现承诺的关键人物）
         required_roles = [r for r in (p.roles or [])
                           if any(r in (q.get("desc", "") or "") for q in active)]

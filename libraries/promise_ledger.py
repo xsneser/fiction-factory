@@ -50,6 +50,33 @@ def _seen_in_recent(chapters, keywords, current_chapter, recent_n):
     return False
 
 
+# 读者承诺六操作分级（AI-NWA payoff_directives，规则层，零 LLM）
+# seed=刚埋设保持存在感；touch=活跃维持/轻提；pressure=临期/逾期施压；
+# partial_reveal=部分揭示留悬念；payoff=已兑现/本桥段收束；forbid=明确不兑现（暂不自动标）
+_PARTIAL_REVEAL_HINTS = ("半", "部分", "露出一角", "一角", "线索", "碎屑", "片段")
+
+
+def promise_op(q: dict, chapter_num: int) -> str:
+    """按当前章号给读者承诺定「操作」分级。逾期/临期→pressure；已兑现→payoff；
+    描述含部分揭示暗示→partial_reveal；本章刚设局→seed；其余活跃→touch。"""
+    if not q:
+        return "touch"
+    if q.get("status") == "fulfilled":
+        return "payoff"
+    deadline = int(q.get("deadline_chapter") or 0)
+    if deadline and deadline <= chapter_num:
+        return "pressure"
+    if deadline and 0 < deadline - chapter_num <= 3:
+        return "pressure"
+    desc = q.get("desc", "") or ""
+    if any(h in desc for h in _PARTIAL_REVEAL_HINTS):
+        return "partial_reveal"
+    setup_ch = int(q.get("setup_chapter") or 0)
+    if setup_ch and setup_ch == chapter_num:
+        return "seed"
+    return "touch"
+
+
 def scan_promises(tl, chapters, current_chapter, recent_n: int = 10) -> dict:
     """伏笔台账全量扫描。
 
@@ -75,6 +102,7 @@ def scan_promises(tl, chapters, current_chapter, recent_n: int = 10) -> dict:
             "setup_chapter": setup_ch,
             "deadline_chapter": deadline,
             "payoff_chapter": payoff_ch,
+            "op": promise_op(q, current_chapter),
         }
         if status == "pending" and deadline and deadline < current_chapter:
             item["overdue_by"] = current_chapter - deadline

@@ -21,6 +21,7 @@ from libraries.book_manager import BookManager, BookConfig
 from libraries.cost_tracker import CostTracker
 from libraries.de_ai import DeAIEngine
 from libraries.character_state import CharacterStateMachine
+from libraries.promise_ledger import promise_op
 from libraries.reviewer import ContentReviewer
 from libraries.assembler import BookAssemblerPlan
 from libraries.prompt_harness import PromptHarness
@@ -486,6 +487,7 @@ class NovelEngine:
             "type": self._promise_type(p.category),
             "desc": desc,
             "status": "pending",
+            "op": "seed",  # 读者承诺六操作分级（AI-NWA payoff_directives）
             "setup_chapter": getattr(p, "written_chapter", 0) or 0,
             "deadline_chapter": self._estimate_bridge_chapter(payoff) if payoff else 0,
             "payoff_plot_id": payoff.id if payoff else "",
@@ -509,6 +511,7 @@ class NovelEngine:
             # 收局：兑现对应承诺
             if rpid and rpid in by_setup and by_setup[rpid].get("status") != "fulfilled":
                 by_setup[rpid]["status"] = "fulfilled"
+                by_setup[rpid]["op"] = "payoff"
                 by_setup[rpid]["payoff_plot_id"] = p.id
                 by_setup[rpid]["payoff_chapter"] = chapter_num
                 changed = True
@@ -516,6 +519,11 @@ class NovelEngine:
             if (not rpid and p.id not in by_setup
                     and any(q.resolves_plot_id == p.id for q in self.storyline.plots if q.id != p.id)):
                 promises.append(self._build_promise_from_setup(p))
+                changed = True
+        # 六操作分级随章节推进演化：pending 承诺按 deadline 距离重定 op（seed→touch→pressure→payoff）
+        for q in promises:
+            if q.get("status") == "pending" and q.get("op") != promise_op(q, chapter_num):
+                q["op"] = promise_op(q, chapter_num)
                 changed = True
         if changed:
             self.storyline.promises = promises
