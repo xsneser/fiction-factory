@@ -11,21 +11,6 @@ from dataclasses import dataclass
 from .style_rules import WORD_SEED
 AI_WORD_MAP = dict(WORD_SEED)
 
-# ─── 句式模板（AI 最爱用的）───
-# 注：与 style_ban.STYLE_BAN_LIST 部分重叠（值得一提/更重要的是/可以说/这意味着/不仅如此）。
-# 检测（reviewer 用 STYLE_BAN_LIST）与替换（本表）策略分离，不强行合并——本表做机械替换，
-# STYLE_BAN_LIST 做生成时禁 + 生成后检测，各自演进防漂移。
-SENTENCE_PATTERNS = [
-    # (正则, 替换策略: "shorten"|"split"|"reorder"|"remove")
-    (r"不仅如此，.{0,20}也.{0,30}", "shorten"),
-    (r"更重要的是，.{0,30}", "shorten"),
-    (r"这意味着.{0,30}", "remove"),
-    (r"可以说，.{0,30}", "remove"),
-    (r"从某种(程度|意义)上说", "remove"),
-    (r"值得(一提|注意)的是", "remove"),
-]
-
-
 def apply_word_replacements(text: str) -> tuple[str, int]:
     """规则层：替换 AI 高频词 → (替换后文本, 替换次数)。
 
