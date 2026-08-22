@@ -83,6 +83,37 @@ def _tail_paragraphs(text: str, max_chars: int = 150) -> str:
     return "\n\n".join(reversed(out))
 
 
+# 权威层级（竞品借鉴：OpenNovel 三档权威标签）——高权威覆盖低权威
+AUTHORITY_CANON = (
+    "【权威层级】高权威覆盖低权威："
+    "CANON（书级设定/一致性/视角/前文上下文，不可违反）＞ "
+    "STATE MEMORY（角色当前状态/章节语义摘要，必须尊重）＞ "
+    "OPTIONAL（吸睛点/内涵/灵机一动，仅文风参考）"
+)
+
+# 前文上下文块预算：各块已自带安全帽（本桥段300/本章900/上一章150/角色态500/摘要600），
+# 预算与各块上限之和同量级 → 常规不触发裁剪；收紧此值即启用「超预算丢低优先级块」
+_CONTEXT_BUDGET = 2450
+
+
+def _assemble_blocks(blocks, budget=_CONTEXT_BUDGET):
+    """按 dropOrder 组装上下文块：超预算时优先丢低优先级块（块内不再二次截断）。
+
+    blocks: list[(dropOrder, tier, header, text)]；dropOrder 越小越优先保留，
+    tier 为权威分级元数据（canon/state/optional，实际取舍只看 dropOrder）。
+    返回 (lines, dropped_header_names)。
+    """
+    ordered = sorted(blocks, key=lambda b: b[0])
+    lines, used, dropped = [], 0, []
+    for _order, _tier, header, text in ordered:
+        if used + len(text) > budget:
+            dropped.append(header.strip("【】"))
+            continue
+        lines.append(header + text)
+        used += len(text)
+    return lines, dropped
+
+
 # 炸裂开场（第一章前 N 桥段强制）—— 番茄/飞卢式冷开场铁律
 # 素材来源：beat_writer 危机/悬念开场、build_chapter1_prompt、番茄平台约束、开篇桥段 usage_notes
 OPENING_MODE_RULES = """【开场模式 — 炸裂开场（第一章开篇桥段强制）】
@@ -464,26 +495,25 @@ class PromptHarness:
         hook_block = ""
         hooks = list(getattr(p, "hook_points", None) or [])
         if hooks:
-            hook_block = ("\n【本桥段吸睛点】" + "、".join(hooks[:2])
+            hook_block = ("\n【OPTIONAL｜本桥段吸睛点】" + "、".join(hooks[:2])
                           + "\n（写出实感：用具体画面/结果把这几个吸睛点做成读者想看的爽点/悬念/反转，不直白点破、不加括号注解）")
 
-        # 前文上下文（修复：原 _group_prompt 的 character_states 形参未被渲染）
-        ctx = []
-        if prev_ending:
-            ctx.append("【上一章结尾】" + _tail_paragraphs(prev_ending))
-        if chapter_buffer:
-            ctx.append("【本章已写正文】" + chapter_buffer[-900:])
+        # 前文上下文：按 dropOrder 预算组装（权威分级见 AUTHORITY_CANON；超预算丢低优先级块）
+        context_blocks = []
         if bridge_text:
-            ctx.append("【本桥段已写】" + bridge_text[-300:])
+            context_blocks.append((0, "canon", "【本桥段已写】", bridge_text[-300:]))
+        if chapter_buffer:
+            context_blocks.append((1, "canon", "【本章已写正文】", chapter_buffer[-900:]))
+        if prev_ending:
+            context_blocks.append((2, "canon", "【上一章结尾】", _tail_paragraphs(prev_ending)))
         if character_states:
-            ctx.append("【角色当前状态】\n" + character_states.strip()[:500])
-        context_text = "\n".join(ctx) if ctx else "（本章开头，尚无前文）"
-
-        # 长程记忆：已完成章节语义摘要
-        summaries_block = ""
+            context_blocks.append((3, "state", "【角色当前状态】\n", character_states.strip()[:500]))
         if summaries_context:
-            summaries_block = ("【已完成章节语义摘要】\n"
-                               + summaries_context.strip()[:600] + "\n\n")
+            context_blocks.append((4, "state", "【已完成章节语义摘要】\n", summaries_context.strip()[:600]))
+        context_lines, dropped = _assemble_blocks(context_blocks)
+        context_text = "\n".join(context_lines) if context_lines else "（本章开头，尚无前文）"
+        if dropped:
+            context_text += "\n（上下文超预算，已省略低优先级块：" + "、".join(dropped) + "）"
 
         # 内涵跟随桥段：从情节自然流露，不点破。阶段级 theme_moments 优先（含位置/手法）。
         theme_block = ""
@@ -502,20 +532,20 @@ class PromptHarness:
                     seg += f"：{m['how']}"
                 lines.append(seg)
             if lines:
-                theme_block = ("\n【本桥段要自然体现的内涵（含插入位置）】\n"
+                theme_block = ("\n【OPTIONAL｜本桥段要自然体现的内涵（含插入位置）】\n"
                                + "\n".join(lines)
                                + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
         else:
             themes = list(getattr(p, "theme_hints", None) or [])
             if themes:
-                theme_block = ("\n【本桥段要自然体现的内涵】\n"
+                theme_block = ("\n【OPTIONAL｜本桥段要自然体现的内涵】\n"
                                + "、".join(themes[:3])
                                + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
 
         # 灵机一动（探测器命中后注入下一组）
         inspiration_block = ""
         if inspiration_hint:
-            inspiration_block = "\n【灵机一动】顺势落地\n" + inspiration_hint.strip()
+            inspiration_block = "\n【OPTIONAL｜灵机一动】顺势落地\n" + inspiration_hint.strip()
 
         # 收局槽位：解决/呼应更早埋下的设局钩子（桥段拆分）
         payoff_block = ""
@@ -548,7 +578,7 @@ class PromptHarness:
         roles_status_block = self._roles_status_block(item) if getattr(p, "roles", None) else ""
 
         bible = self.build_book_bible_condensed()
-        bible_block = f"【书级设定（简）】\n{bible}\n\n" if bible else ""
+        bible_block = f"【CANON｜书级设定（简）】\n{bible}\n\n" if bible else ""
 
         opening_block = (OPENING_MODE_RULES + "\n\n") if is_opening else ""
         consistency_block = CONSISTENCY_RULES + "\n\n"
@@ -563,9 +593,10 @@ class PromptHarness:
             except Exception:
                 pass
 
+        authority_block = AUTHORITY_CANON + "\n\n"
         return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个句子。
 
-{bible_block}{opening_block}{consistency_block}{platform_block}{review_block}{pov_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
+{authority_block}{bible_block}{opening_block}{consistency_block}{platform_block}{review_block}{pov_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
 【当前阶段】{stage_name}
 【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按大纲自然推进'}
 【桥段骨架】{structure}
@@ -580,7 +611,7 @@ class PromptHarness:
 {promises_block}
 {inspiration_block}
 
-{summaries_block}【前文上下文】
+【CANON｜前文上下文】
 {context_text}
 
 【写作要求】
@@ -729,7 +760,7 @@ class PromptHarness:
                 lines.append(seg)
         if not lines:
             return ""
-        return ("\n【本桥段出场人物——硬事实不得写反；软倾向只作语气参考，不写成旁白确认的事实】\n"
+        return ("\n【STATE｜本桥段出场人物——硬事实不得写反；软倾向只作语气参考，不写成旁白确认的事实】\n"
                 + "\n".join(lines))
 
     def _roles_status_block(self, item) -> str:
@@ -775,7 +806,7 @@ class PromptHarness:
                     f"口头禅「{str(c.get('catchphrase', ''))[:20] or '无'}」")
         if not lines:
             return ""
-        return ("\n【分角色态势表——每个出场角色要有各自的行动/去向/内心/语气，避免同质化】\n"
+        return ("\n【STATE｜分角色态势表——每个出场角色要有各自的行动/去向/内心/语气，避免同质化】\n"
                 + "\n".join(lines))
 
     # ═══════════════════════════════════════════
