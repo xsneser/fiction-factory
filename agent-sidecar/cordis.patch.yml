@@ -34,7 +34,7 @@
       which triggers the button path — present candidates in step 2 and wait for the user to pick.
       "已选候选/补全世界观/继续建书" → novel-build (step-3
       staged world building → drive_ui submit → verify → generate_full_outline);
-      "生成大纲/排故事线/续写扩写" → novel-outline; "写正文/写下一章" → novel-write;
+      "生成大纲/排故事线/续写扩写" → novel-outline; "开始写/写正文/写下一章" → novel-write;
       "上架/发布/完本/导出" → novel-publish; "删书" → no skill, navigate(/books) and tell the
       user to click delete manually. If unsure which stage, run list_books + get_book_detail to
       read the target book's phase, then pick the matching skill.

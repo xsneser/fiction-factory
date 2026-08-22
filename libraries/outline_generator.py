@@ -314,6 +314,11 @@ class OutlineGenerator:
             # ── 完成 ──
             tl.phase = "ready"
             tl.generated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+            if on_save:
+                # 关键：把 phase=ready 持久化。此前 ready 只在内存置位后直接 yield done，
+                # MCP 路径（agent_tools.generate_full_outline）消费完从磁盘重读仍是 config，
+                # 导致已完成大纲的书永久停在 config → 写作门控拒写、大纲被反复重跑清空。
+                on_save(tl)
 
             yield ("done", "大纲生成完成", {
                 "timeline": tl.to_dict(),

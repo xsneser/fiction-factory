@@ -1,6 +1,6 @@
 ---
 name: novel-write
-description: 写作阶段。写正文/写下一章/继续写/写桥段。流程:渐进式披露组装上下文 → write_next_bridge 逐桥段推进。前置:phase=ready。
+description: 写作阶段。开始写/开写/写正文/写下一章/继续写/写桥段。流程:渐进式披露组装上下文 → write_next_bridge 逐桥段推进。前置:phase=ready。
 ---
 
 # 写作阶段（novel-write）— 侧栏版
