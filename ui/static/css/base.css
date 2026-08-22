@@ -305,6 +305,11 @@
         .world-edit .f-rm { cursor:pointer; color:#8b949e; }
         .world-edit .f-rm:hover { color:#f85149; }
         .world-edit .f-add-member { font-size:12px; padding:2px 6px; max-width:180px; }
+        /* 势力卡底部「👥 人物」可点开区（展开/收起复用全局 .accordion-header/.accordion-body） */
+        .world-edit .f-char-toggle { padding:6px 0; margin-top:8px; border-top:1px dashed #30363d; cursor:pointer; color:#8b949e; font-size:13px; user-select:none; }
+        .world-edit .f-char-toggle:hover { color:#c9d1d9; }
+        .world-edit .f-char-body { padding-top:8px; }
+        .world-edit .unassigned-card .f-char-toggle { border-top:0; padding:0; }
 
         /* ─── 大纲可编辑卡片（详情页内嵌，与写作台共用 storyline_outline_card.html） ─── */
         .outline-list { display:flex; flex-direction:column; gap:10px; margin:12px 0; }

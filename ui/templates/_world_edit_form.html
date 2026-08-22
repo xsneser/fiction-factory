@@ -38,17 +38,10 @@
 
         <fieldset>
             <legend>🏛 势力与人物</legend>
-            <div class="form-row hint">先建势力（名称/立场/描述），再在人物卡片里选「所属势力」，人物即按势力分组展示；未归属的人物收进「（未归属）」。</div>
-            <div class="form-row">
-                <label>势力 factions</label>
-                <div id="wb-factions"></div>
-                <div class="btn-row">
-                    <button type="button" class="btn-secondary" onclick="addFactionRow()">➕ 添加势力</button>
-                </div>
-            </div>
-            <div class="form-row hint">每条人物一张卡片：填姓名/身份/性别/性格/口癖/关系等；角色选「主角」即为主角。可用「🎭 套用原型」从角色原型库一键填充性格与口癖。</div>
-            <div id="char-cards"></div>
+            <div class="form-row hint">先建势力（名称/立场/描述）。点势力卡下方「👥 人物」可展开/收起该势力的成员人物卡（在人物卡的「所属势力」里可改属）；未归属的人物收进底部「🏷（未归属）」卡。</div>
+            <div id="wb-factions"></div>
             <div class="btn-row">
+                <button type="button" class="btn-secondary" onclick="addFactionRow()">➕ 添加势力</button>
                 <button type="button" class="btn-secondary" onclick="addCharCard()">➕ 添加人物</button>
             </div>
         </fieldset>
@@ -140,15 +133,18 @@ function legacyChars(bi) {
 function appendFactionRow(f) {
     f = f || {};
     var row = document.createElement('div');
-    row.className = 'faction-row';
-    row.style.cssText = 'margin:6px 0;padding:8px;border:1px solid #30363d;border-radius:8px;background:#0d1117';
+    row.className = 'faction-row faction-card';
+    row.dataset.faction = f.name || '';
+    row.style.cssText = 'margin:6px 0;padding:10px;border:1px solid #30363d;border-radius:8px;background:#0d1117';
     row.innerHTML = '<div class="f-line" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
         + '<input class="f-name" placeholder="势力名" value="' + esc(f.name || '') + '" style="flex:1;min-width:120px">'
         + '<input class="f-stance" placeholder="立场（如：主角阵营/反派/中立）" value="' + esc(f.stance || '') + '" style="flex:1;min-width:130px">'
         + '<input class="f-desc" placeholder="描述（可选）" value="' + esc(f.desc || '') + '" style="flex:2;min-width:160px">'
         + '<button type="button" class="small" onclick="removeFactionRow(this)">✕</button>'
         + '</div>'
-        + '<div class="f-members"></div>';
+        + '<div class="f-members"></div>'
+        + '<div class="f-char-toggle accordion-header"><span>👥 人物 <span class="f-char-count">0 人</span></span><span class="f-chev">▸</span></div>'
+        + '<div class="f-char-body accordion-body"></div>';
     var wrap = $('wb-factions');
     if (wrap) wrap.appendChild(row);
     return row;
@@ -161,15 +157,13 @@ function addFactionRow() {
 }
 function removeFactionRow(btn) {
     var row = btn.closest('.faction-row');
-    var fname = row.querySelector('.f-name').value.trim();
+    // 先把该势力成员人物卡移回「未归属」，再删势力卡（否则卡内人物会被一起删掉）
+    row.querySelectorAll('.char-card').forEach(function(card) {
+        var sel = card.querySelector('.cc[data-f="faction"]');
+        if (sel) sel.value = '';
+        moveCharCard(card, '');
+    });
     row.remove();
-    if (fname) {
-        // 该势力名下成员全部退回「未归属」
-        document.querySelectorAll('#char-cards .char-card').forEach(function(card) {
-            var sel = card.querySelector('.cc[data-f="faction"]');
-            if (sel && sel.value === fname) { sel.value = ''; moveCharCard(card, ''); }
-        });
-    }
     refreshFactionSelects();
     syncFactionMembers();
     scheduleAutoSave();
@@ -183,6 +177,21 @@ function renderFactions(fs) {
         if (typeof f === 'string') f = {name: f};
         appendFactionRow(f || {});
     });
+}
+/* 「未归属」卡：不收进 collectFactions/factionNames（无 .faction-row / .f-name） */
+function buildUnassignedCard() {
+    var card = document.createElement('div');
+    card.className = 'faction-card unassigned-card';
+    card.dataset.faction = '（未归属）';
+    card.style.cssText = 'margin:6px 0;padding:10px;border:1px dashed #30363d;border-radius:8px;background:#0d1117';
+    card.innerHTML = '<div class="f-char-toggle accordion-header"><span>🏷 （未归属） <span class="f-char-count">0 人</span></span><span class="f-chev">▸</span></div>'
+        + '<div class="f-char-body accordion-body"></div>';
+    return card;
+}
+function ensureUnassigned() {
+    var wrap = $('wb-factions');
+    if (!wrap) return;
+    if (!wrap.querySelector('.unassigned-card')) wrap.appendChild(buildUnassignedCard());
 }
 function collectFactions() {
     var out = [];
@@ -213,7 +222,7 @@ function factionOptions(selected) {
 /* —— 势力↔人物 双向联动：势力行内列成员，与人物卡「所属势力」下拉同步 —— */
 /* 把所有人物卡当前所属势力重灌到各势力行的成员区（姓名 tag + 添加下拉） */
 function syncFactionMembers() {
-    var chars = document.querySelectorAll('#char-cards .char-card');
+    var chars = document.querySelectorAll('#wb-factions .char-card');
     document.querySelectorAll('#wb-factions .faction-row').forEach(function(row) {
         var wrap = row.querySelector('.f-members');
         if (!wrap) return;
@@ -267,42 +276,36 @@ function syncFactionMembers() {
         wrap.appendChild(sel);
     });
 }
-/* 定位（或创建）某势力手风琴，返回其 .accordion-body；label 为空 = 未归属 */
-function findAccordionBody(label) {
-    var wrap = $('char-cards');
+/* 定位某势力卡的成员 body（.f-char-body）；未归属缺失时自动补未分组卡。label 为空 = 未归属 */
+function findFactionBody(label) {
+    var group = String(label || '').trim() || '（未归属）';
     var found = null;
-    wrap.querySelectorAll('.accordion').forEach(function(ac) {
-        if (ac.dataset.faction === label) found = ac.querySelector('.accordion-body');
+    document.querySelectorAll('#wb-factions .faction-card').forEach(function(card) {
+        if (card.dataset.faction === group) found = card.querySelector('.f-char-body');
     });
     if (found) return found;
-    var ac = document.createElement('div');
-    ac.className = 'accordion';
-    ac.dataset.faction = label;
-    ac.style.cssText = 'margin-bottom:8px';
-    ac.innerHTML = '<div class="accordion-header"><span>🏛 ' + esc(label) + '</span>'
-        + '<span style="color:#8b949e;font-size:12px">0 人</span></div>'
-        + '<div class="accordion-body"></div>';
-    wrap.appendChild(ac);
-    return ac.querySelector('.accordion-body');
+    if (group === '（未归属）') {
+        ensureUnassigned();
+        return $('wb-factions').querySelector('.unassigned-card .f-char-body');
+    }
+    var row = appendFactionRow({name: group});
+    return row.querySelector('.f-char-body');
 }
-/* 把人物卡 DOM 移到对应势力分组；旧分组空则移除。label 为空 = 未归属 */
+/* 把人物卡 DOM 移到对应势力卡的成员区；展开目标区让用户看到去向。label 为空 = 未归属 */
 function moveCharCard(card, label) {
     if (!card) return;
-    var group = String(label || '').trim() || '（未归属）';
-    var body = findAccordionBody(group);
-    var current = card.closest('.accordion');
-    var curBody = current ? current.querySelector('.accordion-body') : null;
-    if (curBody && curBody !== body) {
-        curBody.removeChild(card);
-        if (curBody.children.length === 0) current.remove();
-    }
+    var body = findFactionBody(label);
+    var current = card.closest('.faction-card');
+    var curBody = current ? current.querySelector('.f-char-body') : null;
+    if (curBody && curBody !== body) curBody.removeChild(card);
     if (card.parentElement !== body) body.appendChild(card);
+    body.classList.add('show');
     refreshGroupCounts();
 }
 /* 按姓名定位人物卡并改其所属势力（空 = 未归属），同步分组与势力行 */
 function setCharFaction(charName, factionName) {
     var card = null;
-    document.querySelectorAll('#char-cards .char-card').forEach(function(c) {
+    document.querySelectorAll('#wb-factions .char-card').forEach(function(c) {
         var n = c.querySelector('.cc[data-f="name"]');
         if (!card && n && n.value.trim() === charName) card = c;
     });
@@ -334,16 +337,12 @@ function handleFactionRename(input) {
     input.dataset.prev = neu;
     // 记录改名前归属该势力的人卡（旧名选项随后从下拉消失，值会被清空）
     var targets = [];
-    document.querySelectorAll('#char-cards .cc[data-f="faction"]').forEach(function(sel) {
+    document.querySelectorAll('#wb-factions .cc[data-f="faction"]').forEach(function(sel) {
         if (sel.value === old) targets.push(sel);
     });
     if (neu) {
-        document.querySelectorAll('#char-cards .accordion').forEach(function(ac) {
-            if (ac.dataset.faction === old) {
-                ac.dataset.faction = neu;
-                var h = ac.querySelector('.accordion-header span');
-                if (h) h.textContent = '🏛 ' + neu;
-            }
+        document.querySelectorAll('#wb-factions .faction-card').forEach(function(card) {
+            if (card.dataset.faction === old) card.dataset.faction = neu;
         });
     } else {
         // 改名成空 = 该势力成员退回未归属
@@ -358,9 +357,9 @@ function handleFactionRename(input) {
     syncFactionMembers();
     scheduleAutoSave();
 }
-/* 增删/改名势力后，重灌所有人卡「所属势力」下拉选项（保留当前选中） */
+/* 增删/改名势力后，重灌所有人卡「所属势力」下拉设选项（保留当前选中） */
 function refreshFactionSelects() {
-    document.querySelectorAll('#char-cards .cc[data-f="faction"]').forEach(function(sel) {
+    document.querySelectorAll('#wb-factions .cc[data-f="faction"]').forEach(function(sel) {
         var cur = sel.value;
         sel.innerHTML = factionOptions(cur);
     });
@@ -407,7 +406,7 @@ function appendCharCard(c, container) {
         + '<div style="font-size:12px;color:#8b949e;margin:6px 0 4px">人物关系（对方姓名 / 关系）</div>'
         + '<div class="rel-rows"></div>'
         + '<button type="button" class="small" onclick="addRelRow(this)">➕ 加关系</button></div>';
-    (container || $('char-cards')).appendChild(card);
+    (container || $('wb-factions')).appendChild(card);
     var sel = card.querySelector('.char-archetype');
     var opts = '<option value="">（无原型）</option>';
     __ARCHETYPES__.forEach(function(a) {
@@ -418,65 +417,50 @@ function appendCharCard(c, container) {
     (c.relations || []).forEach(function(r) { appendRelRow(relWrap, r.name, r.relation); });
 }
 function renderCharCards(chars) {
-    var wrap = $('char-cards');
-    wrap.innerHTML = '';
     chars = (chars && chars.length) ? chars : [emptyChar()];
-    // 按所属势力分组：势力名 → 人物列表；未归属 → '（未归属）'，空组跳过
-    var groups = {}, order = [];
-    chars.forEach(function(c) {
-        var f = String(c.faction || '').trim() || '（未归属）';
-        if (!groups[f]) { groups[f] = []; order.push(f); }
-        groups[f].push(c);
+    ensureUnassigned();
+    // 把人物按所属势力分发进各势力卡的成员区；未归属 → 未分组卡
+    document.querySelectorAll('#wb-factions .faction-card').forEach(function(card) {
+        var body = card.querySelector('.f-char-body');
+        if (!body) return;
+        body.innerHTML = '';
+        var fname = (card.dataset.faction === '（未归属）')
+            ? '（未归属）'
+            : (card.querySelector('.f-name') ? card.querySelector('.f-name').value.trim() : '');
+        chars.forEach(function(c) {
+            var cf = String(c.faction || '').trim() || '（未归属）';
+            if (cf === fname) appendCharCard(c, body);
+        });
     });
-    order.forEach(function(f) {
-        var grp = groups[f];
-        var card = document.createElement('div');
-        card.className = 'accordion';
-        card.dataset.faction = f;
-        card.style.cssText = 'margin-bottom:8px';
-        card.innerHTML = '<div class="accordion-header"><span>🏛 ' + esc(f) + '</span>'
-            + '<span style="color:#8b949e;font-size:12px">' + grp.length + ' 人</span></div>'
-            + '<div class="accordion-body show"></div>';   // show = 默认展开，直接看到该势力人物
-        var body = card.querySelector('.accordion-body');
-        grp.forEach(function(c) { appendCharCard(c, body); });
-        wrap.appendChild(card);
-    });
+    refreshGroupCounts();
+    syncFactionMembers();
 }
-/* 人物按势力分组后，「➕ 添加人物」加到「未归属」组（保存后按所属势力重新分组） */
+/* 刷新各势力卡/未分组卡的成员计数与展开箭头（点开/收起由全局 .accordion-header 点击负责） */
 function refreshGroupCounts() {
-    document.querySelectorAll('#char-cards .accordion').forEach(function(ac) {
-        var body = ac.querySelector('.accordion-body');
+    document.querySelectorAll('#wb-factions .faction-card').forEach(function(card) {
+        var body = card.querySelector('.f-char-body');
+        var num = card.querySelector('.f-char-count');
         var n = body ? body.querySelectorAll('.char-card').length : 0;
-        var num = ac.querySelector('.accordion-header span:last-child');
         if (num) num.textContent = n + ' 人';
+        var chev = card.querySelector('.f-chev');
+        if (chev) chev.textContent = (body && body.classList.contains('show')) ? '▾' : '▸';
     });
 }
 function addCharCard() {
-    var wrap = $('char-cards');
-    var target = null;
-    wrap.querySelectorAll('.accordion').forEach(function(ac) {
-        var h = ac.querySelector('.accordion-header span');
-        if (h && h.textContent.indexOf('未归属') >= 0) target = ac.querySelector('.accordion-body');
-    });
-    if (!target) {
-        var card = document.createElement('div');
-        card.className = 'accordion';
-        card.dataset.faction = '（未归属）';
-        card.style.cssText = 'margin-bottom:8px';
-        card.innerHTML = '<div class="accordion-header"><span>🏛 （未归属）</span>'
-            + '<span style="color:#8b949e;font-size:12px">0 人</span></div>'
-            + '<div class="accordion-body"></div>';
-        wrap.appendChild(card);
-        target = card.querySelector('.accordion-body');
-    }
-    appendCharCard(emptyChar(), target);
+    ensureUnassigned();
+    var card = $('wb-factions').querySelector('.unassigned-card');
+    var body = card.querySelector('.f-char-body');
+    appendCharCard(emptyChar(), body);
+    body.classList.add('show');
     refreshGroupCounts();
+    syncFactionMembers();
     scheduleAutoSave();
 }
 function removeCharCard(btn) {
     if (!confirm('删除这条人物？')) return;
     btn.closest('.char-card').remove();
     refreshGroupCounts();
+    syncFactionMembers();
     scheduleAutoSave();
 }
 function applyArchetype(btn) {
@@ -505,7 +489,7 @@ function removeRelRow(btn) { btn.closest('.rel-row').remove(); scheduleAutoSave(
 
 function collectCharCards() {
     var out = [];
-    document.querySelectorAll('#char-cards .char-card').forEach(function(card) {
+    document.querySelectorAll('#wb-factions .char-card').forEach(function(card) {
         var c = {};
         card.querySelectorAll('.cc').forEach(function(inp) {
             var k = inp.getAttribute('data-f');
@@ -660,13 +644,13 @@ function scheduleAutoSave() {
 function doAutoSave() {
     var payload = formToBi();
     if (!payload) return;
-    statusShow('⏳ 自动保存中…', '');
+    // 保存结果用右上角 toast 提示（#toast-root），不再占用表单顶部内联状态条
     fetch('/api/storyline/' + BOOK_ID + '/save-basic-info', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
     }).then(function(r){ return r.json(); }).then(function(data) {
-        if (data.ok) statusShow('✅ 已自动保存 ' + new Date().toLocaleTimeString(), '');
-        else statusShow('❌ 自动保存失败: ' + (data.error || ''), 'err');
-    }).catch(function(err){ statusShow('❌ 自动保存失败: ' + err.message, 'err'); });
+        if (data.ok) showToast('✅ 已自动保存 ' + new Date().toLocaleTimeString(), 'success');
+        else showToast('❌ 自动保存失败: ' + (data.error || ''), 'error');
+    }).catch(function(err){ showToast('❌ 自动保存失败: ' + err.message, 'error'); });
 }
 
 /* 初始化：先取角色原型库，再渲染已有设定到表单（依赖包含页定义 __BI__ / __BOOK_TITLE__） */
@@ -699,6 +683,14 @@ document.addEventListener('change', function(e) {
             addFactionMember(t);
         }
     }
+});
+// 「👥 人物」箭头随展开/收起切换（展开/收起本身复用全局 .accordion-header 点击委托）
+document.addEventListener('click', function(e) {
+    var t = e.target && e.target.closest ? e.target.closest('.f-char-toggle') : null;
+    if (!t) return;
+    var body = t.nextElementSibling;
+    var chev = t.querySelector('.f-chev');
+    if (chev) chev.textContent = (body && body.classList.contains('show')) ? '▾' : '▸';
 });
 fetch('/api/characters')
     .then(function(r){ return r.json(); })
