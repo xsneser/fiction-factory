@@ -34,6 +34,7 @@ var __BOOK_TITLE__ = {{ (book.title or '')|tojson }};
 var storylineId = "{{ book.book_id }}";
 </script>
 {% include "_world_edit_form.html" %}
+{% include "_book_runtime_panels.html" %}
 
 {% if basic_info.get('synopsis') %}
 <h3>📝 简介</h3>
@@ -63,7 +64,9 @@ var storylineId = "{{ book.book_id }}";
             {% endif %}
         </p>
         {% endif %}
+        <div id="rp-tags-{{ ch.num }}" class="rp-tags" style="margin:6px 0;min-height:18px"></div>
         <pre style="white-space:pre-wrap;max-height:480px;overflow-y:auto">{{ ch.content }}</pre>
+        <div style="margin-top:6px"><button type="button" class="small" onclick="runPunchPoints({{ ch.num }})">💥 标注爽点</button></div>
     </div>
 </div>
 {% endfor %}

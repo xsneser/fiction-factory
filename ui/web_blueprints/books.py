@@ -219,3 +219,62 @@ def delete_book(book_id):
     return redirect(url_for("books.books"))
 
 
+# ═══════════════════════════════════════════
+# 竞品规则层组件 UI 化：书详情运行时面板（只读/按需算）
+# ═══════════════════════════════════════════
+
+@bp.route("/api/book/<book_id>/character-states")
+def api_character_states(book_id):
+    """书详情：角色状态面板（books/<id>/character_states.json，写作时落盘）。"""
+    from libraries.character_state import CharacterStateMachine
+    path = os.path.join("books", book_id, "character_states.json")
+    if not os.path.exists(path):
+        return jsonify({"characters": [], "warnings": []})
+    try:
+        csm = CharacterStateMachine()
+        csm.load(path)
+        return jsonify({"characters": csm.to_dict().get("characters", []),
+                        "warnings": csm.warnings()})
+    except Exception as e:
+        logger.warning("读取角色状态失败: %s", e)
+        return jsonify({"characters": [], "warnings": [], "error": str(e)})
+
+
+@bp.route("/api/book/<book_id>/promises")
+def api_book_promises(book_id):
+    """书详情：读者承诺台账（scan_promises 规则层扫描 + op 分级）。"""
+    from libraries.promise_ledger import scan_promises
+    tl = book_mgr.load_storyline(book_id)
+    empty = {"counts": {"total": 0}, "overdue": [], "advanced": [],
+             "stalled": [], "fulfilled_recently": [], "suggestions": []}
+    if not tl:
+        return jsonify(empty)
+    book = book_mgr.get(book_id)
+    cur = int((book.current_chapter if book else 0) or 1)
+    chapters = []
+    for n in range(1, (book.current_chapter if book else 0) + 1):
+        ch = book_mgr.load_chapter(book_id, n)
+        if ch:
+            chapters.append({"num": ch.get("num", n), "content": ch.get("content", "")})
+    return jsonify(scan_promises(tl, chapters, cur))
+
+
+@bp.route("/api/book/<book_id>/chapter/<int:chapter_num>/punch-points", methods=["POST"])
+def api_chapter_punch_points(book_id, chapter_num):
+    """书详情：对指定章节跑爽点标注（tag_generator 规则层），落盘 tags.json 并返回。"""
+    from libraries.tag_generator import tag_chapter
+    ch = book_mgr.load_chapter(book_id, chapter_num)
+    if not ch or not ch.get("content"):
+        return jsonify({"ok": False, "error": f"第{chapter_num}章无正文"}), 400
+    res = tag_chapter(ch["content"])
+    tags = res.get("tags", []) if isinstance(res, dict) else res
+    out = {"chapter": chapter_num, "tags": tags, "ok": True}
+    try:
+        with open(os.path.join("books", book_id, "tags.json"), "w", encoding="utf-8") as f:
+            json.dump({"chapter": chapter_num, "tags": tags}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        out["ok"] = False
+        out["error"] = str(e)
+    return jsonify(out)
+
+

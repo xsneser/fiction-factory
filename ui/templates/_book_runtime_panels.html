@@ -1,0 +1,90 @@
+{# ─── 书详情运行时面板（竞品规则层组件 UI 化）：角色状态 / 读者承诺台账 / 爽点标注 ─── #}
+{# 依赖：包含页已定义 window.BOOK_ID（book_detail.html）；手风琴复用全局 .accordion-header 委托 ── #}
+
+<div class="accordion">
+    <div class="accordion-header">🎭 角色状态 <span class="sl-chev">▸</span></div>
+    <div class="accordion-body">
+        <div id="rp-char-states"><div class="empty">加载中…</div></div>
+    </div>
+</div>
+
+<div class="accordion">
+    <div class="accordion-header">⏳ 读者承诺台账 <span class="sl-chev">▸</span></div>
+    <div class="accordion-body">
+        <div id="rp-promises"><div class="empty">加载中…</div></div>
+    </div>
+</div>
+
+<script>
+function _rp_esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* 章节「💥 标注爽点」按钮（book_detail 章节 accordion 内调用） */
+function runPunchPoints(n){
+    var el = document.getElementById('rp-tags-'+n); if(!el) return;
+    el.innerHTML = '<span class="hint">标注中…</span>';
+    fetch('/api/book/'+window.BOOK_ID+'/chapter/'+n+'/punch-points', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if(!d.ok){ el.innerHTML = '<span class="tag red">'+_rp_esc(d.error||'标注失败')+'</span>'; return; }
+            var tags = d.tags || [];
+            el.innerHTML = tags.length
+                ? tags.map(function(t){ return '<span class="tag" style="margin:2px">'+_rp_esc(t.tag)+'</span>'; }).join('')
+                : '<span class="hint">未检出爽点</span>';
+        })
+        .catch(function(){ el.innerHTML = '<span class="tag red">请求失败</span>'; });
+}
+
+(function(){
+    var BOOK = window.BOOK_ID || '';
+    if(!BOOK) return;
+
+    /* 🎭 角色状态 */
+    fetch('/api/book/'+BOOK+'/character-states').then(function(r){ return r.json(); }).then(function(d){
+        var el = document.getElementById('rp-char-states'); if(!el) return;
+        var cs = d.characters || [];
+        if(!cs.length){ el.innerHTML = '<div class="empty">还没有角色状态（开始写作后生成）</div>'; return; }
+        var warns = (d.warnings||[]).map(function(w){ return '<div class="tag red" style="margin:2px">'+_rp_esc(w)+'</div>'; }).join('');
+        var cards = cs.map(function(c){
+            var offline = (c.offline_chapters||0) > 50;
+            var meta = [];
+            if(c.location) meta.push('📍 '+_rp_esc(c.location));
+            if(c.mood) meta.push('情绪：'+_rp_esc(c.mood));
+            if(c.goal) meta.push('目标：'+_rp_esc(c.goal));
+            if(c.last_appeared_chapter) meta.push('最近出场 第'+c.last_appeared_chapter+'章');
+            return '<div style="padding:8px 12px;margin:6px 0;border:1px solid var(--border);border-radius:8px;background:var(--bg-inset)">'
+                + '<b>'+_rp_esc(c.name)+'</b>'
+                + (offline ? ' <span class="tag red">离线 '+c.offline_chapters+' 章</span>' : '')
+                + (meta.length ? '<div style="font-size:12px;color:var(--fg-dim);margin-top:4px">'+meta.join(' · ')+'</div>' : '')
+                + '</div>';
+        }).join('');
+        el.innerHTML = (warns ? '<div class="form-row">'+warns+'</div>' : '') + cards;
+    }).catch(function(){});
+
+    /* ⏳ 读者承诺台账 */
+    fetch('/api/book/'+BOOK+'/promises').then(function(r){ return r.json(); }).then(function(d){
+        var el = document.getElementById('rp-promises'); if(!el) return;
+        if(!d || !(d.counts||{}).total){ el.innerHTML = '<div class="empty">还没有读者承诺（大纲设局/收局桥段会生成）</div>'; return; }
+        var OP = {seed:'刚埋设', touch:'维持', pressure:'施压', partial_reveal:'部分揭示', payoff:'兑现'};
+        function rows(list){
+            return list.map(function(q){
+                var op = OP[q.op] || q.op || '';
+                var dl = q.deadline_chapter ? ' <span style="color:var(--fg-dim);font-size:11px">（约第'+q.deadline_chapter+'章）</span>' : '';
+                return '<div style="padding:4px 0;border-bottom:1px dashed var(--border-soft)">'
+                    + (op ? '<span class="tag" style="margin-right:6px">'+_rp_esc(op)+'</span>' : '')
+                    + _rp_esc(q.desc||'钩子') + dl + '</div>';
+            }).join('');
+        }
+        var groups = [
+            ['🔴 逾期', d.overdue||[]], ['🔵 推进', d.advanced||[]],
+            ['⚪ 停滞', d.stalled||[]], ['✅ 近期兑现', d.fulfilled_recently||[]],
+        ];
+        var sug = (d.suggestions||[]).map(function(s){ return '<div class="hint" style="display:block;color:var(--fg-muted)">'+_rp_esc(s)+'</div>'; }).join('');
+        var html = sug;
+        groups.forEach(function(g){
+            if(!g[1].length) return;
+            html += '<div style="margin-top:8px"><b>'+g[0]+'</b>' + rows(g[1]) + '</div>';
+        });
+        el.innerHTML = html || '<div class="empty">无</div>';
+    }).catch(function(){});
+})();
+</script>
