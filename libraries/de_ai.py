@@ -7,41 +7,9 @@ import random
 from dataclasses import dataclass
 
 
-# ─── AI 高频词替换表 ───
-AI_WORD_MAP = {
-    # 连词/转折词
-    "然而": ["但", "可", "不过"],
-    "此外": ["另外", "还有", "再说"],
-    "因此": ["所以", "于是"],
-    "总之": ["一句话", "说白了"],
-    "尽管如此": ["话虽如此", "即便如此"],
-
-    # 修饰词（过度使用）
-    "仿佛": ["像", "好像", "跟……似的"],
-    "似乎": ["好像", "感觉", "看着像"],
-    "不禁": ["忍不住", "下意识地", "不由自主地"],
-    "不由得": ["忍不住", "下意识"],
-    "只见": ["看到", "眼前", ""],
-    "但见": ["看到", ""],
-
-    # 情感描写
-    "微微一笑": ["笑了笑", "嘴角一扬", "淡笑"],
-    "心中一动": ["心里一跳", "心念一动", "怔了一下"],
-    "眼中闪过一丝": ["眼里闪过", "目光中带着"],
-    "不由得倒吸一口凉气": ["倒吸一口气", "吸了口冷气"],
-    "心中暗道": ["心想", "暗想", "心里嘀咕"],
-
-    # 动作描写套路
-    "缓缓": ["慢慢", "轻轻", "逐渐"],
-    "忽然": ["突然", "一下子", "猛地"],
-    "顿时": ["立刻", "马上", "瞬间"],
-    "竟然": ["居然", "真就", "愣是"],
-
-    # 场景过渡
-    "与此同时": ["另一边", "同一时间", "这个时候"],
-    "就在这时": ["正想着", "刚说完", "话没落"],
-    "转眼间": ["很快", "没多久", "过了一阵"],
-}
+# ─── AI 高频词替换表（已迁移到 style_rules 库可编辑；AI_WORD_MAP 保留为内置种子兼容导出）───
+from .style_rules import WORD_SEED
+AI_WORD_MAP = dict(WORD_SEED)
 
 # ─── 句式模板（AI 最爱用的）───
 # 注：与 style_ban.STYLE_BAN_LIST 部分重叠（值得一提/更重要的是/可以说/这意味着/不仅如此）。
@@ -59,18 +27,26 @@ SENTENCE_PATTERNS = [
 
 
 def apply_word_replacements(text: str) -> tuple[str, int]:
-    """规则层：替换 AI 高频词 → (替换后文本, 替换次数)"""
+    """规则层：替换 AI 高频词 → (替换后文本, 替换次数)。
+
+    词表读 style_rules 库（用户编辑后生效）；空词表 = 跳过替换。
+    """
+    from .style_rules import StyleRuleLibrary
+    word_map = StyleRuleLibrary().get_word_map()
+    if not word_map:
+        return text, 0
     count = 0
     result = text
-    for old, options in AI_WORD_MAP.items():
-        if old in result:
-            replacement = random.choice(options)
-            # 只替换部分出现（不是全部）
-            occurrences = result.count(old)
-            replace_count = max(1, occurrences // 2)
-            for _ in range(replace_count):
-                result = result.replace(old, replacement, 1)
-                count += 1
+    for old, options in word_map.items():
+        if not options or old not in result:
+            continue
+        replacement = random.choice(options)
+        # 只替换部分出现（不是全部）
+        occurrences = result.count(old)
+        replace_count = max(1, occurrences // 2)
+        for _ in range(replace_count):
+            result = result.replace(old, replacement, 1)
+            count += 1
     return result, count
 
 

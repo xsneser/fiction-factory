@@ -13,6 +13,7 @@ from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
 from libraries.gag import GagLibrary
 from libraries.character import CharacterLibrary
+from libraries.style_rules import StyleRuleLibrary
 from libraries.profiles import ProfileManager
 from libraries.book_manager import BookManager
 from libraries.cost_tracker import CostTracker
@@ -34,6 +35,7 @@ plot_lib = PlotLibrary()
 struct_lib = StructureLibrary()
 gag_lib = GagLibrary()
 char_lib = CharacterLibrary()
+style_rules = StyleRuleLibrary()   # 风格规则库（禁句式 + 去AI词表，可编辑）
 profiles = ProfileManager("profiles")
 book_mgr = BookManager("books")
 
@@ -126,7 +128,7 @@ def _seed_builder_counter(builder, ids) -> None:
 
 
 __all__ = [
-    "plot_lib", "struct_lib", "gag_lib", "char_lib", "profiles", "book_mgr",
+    "plot_lib", "struct_lib", "gag_lib", "char_lib", "style_rules", "profiles", "book_mgr",
     "get_llm", "invalidate_llm", "sse_stream_response",
     "_engines", "_storylines", "_storyline_lock",
     "_storyline_filepath", "_resolve_storyline", "_save_storyline",

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🧬 风格规则库 <span style="font-size:14px;color:#8b949e">（禁句式 {{ bans|length }} · AI 词表 {{ words|length }}）</span></h1>
+<p style="color:#8b949e;font-size:13px">竞品移植：AI-NWA promptWorkbench 简化——硬禁句式/去AI词表可增删改，写作 prompt 与审查实时生效（`style_rules.jsonl` 持久化）。</p>
+
+<div class="card" style="margin-bottom:16px">
+    <div class="title">⛔ 硬禁句式 <span style="font-size:12px;color:#8b949e">（生成时禁 + 审查检测）</span></div>
+    <div style="margin-top:8px">
+    {% for r in bans %}
+    <div class="sr-row" data-id="{{ r.id }}" data-kind="ban" style="display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap">
+        <input class="sr-pattern" value="{{ r.pattern }}" title="正则表达式" style="flex:1.6;min-width:180px;font-family:monospace">
+        <input class="sr-desc" value="{{ r.desc }}" title="描述" style="flex:1.4;min-width:160px">
+        <select class="sr-severity" style="width:110px">
+            <option value="warning" {{ 'selected' if r.severity=='warning' }}>warning</option>
+            <option value="info" {{ 'selected' if r.severity=='info' }}>info</option>
+        </select>
+        <label style="font-size:12px"><input type="checkbox" class="sr-enabled" {{ 'checked' if r.enabled }}> 启用</label>
+        <button type="button" class="small" onclick="saveRow(this)">💾 保存</button>
+        <button type="button" class="small danger" onclick="delRow('{{ r.id }}')">🗑</button>
+    </div>
+    {% endfor %}
+    <button type="button" class="small" onclick="addRow('ban')">➕ 禁句式</button>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+    <div class="title">🗯 AI 高频词 <span style="font-size:12px;color:#8b949e">（去AI味替换）</span></div>
+    <div style="margin-top:8px">
+    {% for r in words %}
+    <div class="sr-row" data-id="{{ r.id }}" data-kind="word" style="display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap">
+        <input class="sr-pattern" value="{{ r.pattern }}" title="词" style="width:130px">
+        <input class="sr-repl" value="{{ r.replacements|join('、') }}" title="替换候选（顿号分隔）" style="flex:1.6;min-width:200px">
+        <input class="sr-desc" value="{{ r.desc }}" title="描述" style="flex:1.2;min-width:140px">
+        <label style="font-size:12px"><input type="checkbox" class="sr-enabled" {{ 'checked' if r.enabled }}> 启用</label>
+        <button type="button" class="small" onclick="saveRow(this)">💾 保存</button>
+        <button type="button" class="small danger" onclick="delRow('{{ r.id }}')">🗑</button>
+    </div>
+    {% endfor %}
+    <button type="button" class="small" onclick="addRow('word')">➕ AI 词</button>
+    </div>
+</div>
+
+<script>
+async function saveRow(btn) {
+    var row = btn.closest('.sr-row');
+    var kind = row.dataset.kind;
+    var payload = {kind: kind, pattern: row.querySelector('.sr-pattern').value.trim(),
+                   desc: row.querySelector('.sr-desc').value.trim(),
+                   enabled: row.querySelector('.sr-enabled').checked};
+    if (kind === 'ban') payload.severity = row.querySelector('.sr-severity').value;
+    else payload.replacements = (row.querySelector('.sr-repl').value||'').split(/[、,]/).map(function(s){return s.trim();}).filter(Boolean);
+    const r = await fetch('/api/style-rules/' + row.dataset.id, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if (d.ok) showToast('✅ 已保存', 'success');
+    else showToast('保存失败: ' + (d.error||''), 'error');
+}
+async function delRow(id) {
+    if (!confirm('确认删除这条规则？')) return;
+    const r = await fetch('/api/style-rules/' + id + '/delete', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else showToast('删除失败: ' + (d.error||''), 'error');
+}
+async function addRow(kind) {
+    var label = kind === 'ban' ? '正则表达式（如：更重要的是）' : 'AI 高频词（如：仿佛）';
+    var pattern = prompt(label);
+    if (!pattern || !pattern.trim()) return;
+    var payload = {kind: kind, pattern: pattern.trim(), desc: '', enabled: true};
+    const r = await fetch('/api/style-rules', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else showToast('添加失败: ' + (d.error||''), 'error');
+}
+</script>
+{% endblock %}

@@ -236,5 +236,6 @@ class ContentReviewer:
         return result
 
     def _get_replacements(self, word: str) -> str:
-        options = AI_WORD_MAP.get(word, [])
+        from .style_rules import StyleRuleLibrary
+        options = StyleRuleLibrary().get_word_map().get(word, [])
         return "、".join(o for o in options if o)

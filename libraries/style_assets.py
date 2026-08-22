@@ -7,9 +7,6 @@
 import re
 from collections import Counter
 
-from .de_ai import AI_WORD_MAP
-from .style_ban import STYLE_BAN_LIST
-
 # 写法资产特征池（7 类）：extract_style_features 输出与 profile.style_assets.enabled 键一致
 STYLE_ASSET_FEATURES = (
     "sentence_length", "dialogue_ratio", "paragraph_style",
@@ -47,12 +44,14 @@ def _top_words(text: str, n: int = 8) -> list:
 
 
 def _detect_avoid_words(text: str) -> list:
-    """命中 AI 词表/硬禁句式的词（供 profile 的 avoid_words）。"""
+    """命中 AI 词表/硬禁句式的词（供 profile 的 avoid_words；读 style_rules 库）。"""
+    from .style_rules import StyleRuleLibrary
+    lib = StyleRuleLibrary()
     found = []
-    for w in AI_WORD_MAP:
+    for w in lib.get_word_map():
         if w in (text or ""):
             found.append(w)
-    for pat, desc, _sev in STYLE_BAN_LIST:
+    for pat, desc, _sev in lib.get_bans():
         if pat.search(text or ""):
             found.append(desc)
     return found[:10]

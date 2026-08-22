@@ -20,6 +20,7 @@ def dashboard():
         struct_count=len(struct_lib.templates),
         gag_count=len(gag_lib.patterns),
         char_count=len(char_lib.archetypes),
+        style_rule_count=len(style_rules.rules),
         engine_count=len(_engines),
     )
 

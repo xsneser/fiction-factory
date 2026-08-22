@@ -51,6 +51,7 @@ _LIB_TABLE = {
     "structures": (struct_lib, "templates"),
     "gags": (gag_lib, "patterns"),
     "characters": (char_lib, "archetypes"),
+    "style_rules": (style_rules, "rules"),
 }
 
 
@@ -144,6 +145,74 @@ def characters():
 def characters_api():
     """启用中的角色原型列表（供设定表单「从原型库选」下拉）。"""
     return jsonify([a.to_dict() for a in char_lib.archetypes if a.enabled])
+
+
+# ═══════════════════════════════════════════
+# 风格规则库（禁句式 + 去AI词表，可编辑）——竞品 promptWorkbench 简化
+# ═══════════════════════════════════════════
+
+@bp.route("/style-rules")
+def style_rules_page():
+    bans = [r for r in style_rules.rules if r.kind == "ban"]
+    words = [r for r in style_rules.rules if r.kind == "word"]
+    return render_template("style_rules.html", bans=bans, words=words)
+
+
+def _next_rule_id(kind: str) -> str:
+    n = 1
+    existing = {r.id for r in style_rules.rules}
+    while f"{kind}_{n}" in existing:
+        n += 1
+    return f"{kind}_{n}"
+
+
+@bp.route("/api/style-rules", methods=["POST"])
+def style_rule_create():
+    """新建禁则/词条：{kind, pattern, desc, severity, replacements}。"""
+    from libraries.style_rules import StyleRule
+    d = request.get_json(silent=True) or {}
+    kind = str(d.get("kind", "ban"))
+    pattern = str(d.get("pattern", "")).strip()
+    if kind not in ("ban", "word") or not pattern:
+        return jsonify({"ok": False, "error": "kind/pattern 必填"}), 400
+    rule = StyleRule(id=_next_rule_id(kind), kind=kind, pattern=pattern,
+                     desc=str(d.get("desc", "") or "").strip(),
+                     severity=str(d.get("severity", "warning")),
+                     replacements=[str(x) for x in (d.get("replacements") or []) if str(x).strip()])
+    style_rules.rules.append(rule)
+    style_rules._save()
+    return jsonify({"ok": True, "rule": rule.to_dict()})
+
+
+@bp.route("/api/style-rules/<rule_id>", methods=["POST"])
+def style_rule_update(rule_id):
+    """更新条目：可改 pattern/desc/severity/replacements/enabled。"""
+    d = request.get_json(silent=True) or {}
+    rule = next((r for r in style_rules.rules if r.id == rule_id), None)
+    if not rule:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if "pattern" in d:
+        rule.pattern = str(d.get("pattern", "")).strip()
+    if "desc" in d:
+        rule.desc = str(d.get("desc", "")).strip()
+    if "severity" in d:
+        rule.severity = str(d.get("severity", rule.severity))
+    if "replacements" in d:
+        rule.replacements = [str(x) for x in (d.get("replacements") or []) if str(x).strip()]
+    if "enabled" in d:
+        rule.enabled = bool(d.get("enabled", rule.enabled))
+    style_rules._save()
+    return jsonify({"ok": True, "rule": rule.to_dict()})
+
+
+@bp.route("/api/style-rules/<rule_id>/toggle", methods=["POST"])
+def style_rule_toggle(rule_id):
+    return _lib_toggle("style_rules", rule_id)
+
+
+@bp.route("/api/style-rules/<rule_id>/delete", methods=["POST"])
+def style_rule_delete(rule_id):
+    return _lib_delete("style_rules", rule_id)
 
 
 @bp.route("/structures")
