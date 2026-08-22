@@ -34,7 +34,6 @@ var __BI__ = {{ basic_info|tojson }};
 var __BOOK_TITLE__ = {{ (book.title or '')|tojson }};
 var storylineId = "{{ book.book_id }}";
 </script>
-<h3 id="world-edit">🌍 设定</h3>
 {% include "_world_edit_form.html" %}
 
 {% if basic_info.get('synopsis') %}
