@@ -234,11 +234,12 @@ def run_tests():
                 check(f"Detail world form ({bid})",
                       'id="world-idea"' in r.text,
                       "world edit form not embedded in detail")
-                # 大纲已并入详情页：有故事线的书应含可编辑大纲卡片
-                if "📋 故事线大纲" in r.text:
-                    check(f"Detail outline cards ({bid})",
-                          'class="outline-card"' in r.text,
-                          "editable outline cards not in detail")
+                # 故事线已并入详情页：有故事线的书应含 Gantt 挂载点 + 客户端渲染接线（story_line.js）
+                if 'id="detail-storyline"' in r.text:
+                    check(f"Detail storyline gantt ({bid})",
+                          "window.StoryLine.init('detail-storyline'" in r.text
+                          and "/static/js/story_line.js" in r.text,
+                          "storyline Gantt not wired in detail")
                 # 顶部按钮行不再含跳转设定/大纲的按钮（设定=页内锚点 #world-edit）
                 check(f"Detail no world/outline jump ({bid})",
                       f'href="/books/{bid}/world"' not in r.text
@@ -283,28 +284,25 @@ def run_tests():
               "详情页第一行书名应可点击编辑")
 
     # ═══ Storyline renderer consistency ═══
-    # 方案4：服务端 Jinja 渲染的桥段卡应与 JS 重绘（renderPlotList）字段一致，
-    # 必须包含 线程/收局/内涵 三个徽标，防止双份渲染漂移。
-    # 依赖数据：仅当页面实际渲染了桥段卡（该书有桥段）时校验，否则跳过。
+    # 故事线已改为客户端 Gantt（story_line.js 渲染，服务端只注入 JSON + 挂载点）：
+    # 校验写作台页的 Gantt 挂载/数据注入/脚本接线齐备，防止接线漂移后页面白屏。
     print("\n--- Storyline Renderer Consistency ---")
     tl_editor = None
     for cand in book_ids[:3] if book_ids else []:
         r = get(f"/storyline/{cand}/edit")
-        # 规划已并入统一写作台（/storyline/<id>/edit 重定向到写作台页）；用「✍️ 写作台」标记匹配
+        # /storyline/<id>/edit 302 到统一写作台；用「✍️ 写作台」标记匹配
         if r.status_code == 200 and "✍️ 写作台" in r.text:
             tl_editor = r
             break
     if tl_editor is None:
         print("  (no storyline editor page found - skipping renderer check)")
-    elif "plot-card" not in tl_editor.text:
-        print("  (no book with plots in library - skipping plot-card badge check)")
+    elif 'id="editor-storyline"' not in tl_editor.text:
+        print("  (write flow page missing storyline mount - check render path)")
     else:
-        for badge, label in [("线程:", "thread badge"),
-                             ("↪ 收局", "payoff badge"),
-                             ("💡 内涵", "theme badge")]:
-            check(f"Jinja plot card has {label}",
-                  badge in tl_editor.text,
-                  f"'{badge}' missing from server-rendered plot cards")
+        for marker, label in [("window.StoryLine.init('editor-storyline'", "gantt init wired"),
+                              ("window.__BOOK_STORYLINE__", "storyline data injected"),
+                              ("/static/js/story_line.js", "story_line.js loaded")]:
+            check(f"Write flow {label}", marker in tl_editor.text, f"'{marker}' missing")
 
     # ═══ CSS/JS consistency ═══
     print("\n--- Style Consistency ---")
