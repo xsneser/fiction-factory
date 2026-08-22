@@ -150,11 +150,6 @@ def book_detail(book_id):
         if ch:
             ch["word_count"] = count_prose_units(ch.get("content") or "")
             chapters.append(ch)
-    cost_path = f"books/{book_id}/cost.json"
-    cost = CostTracker.load(cost_path) if os.path.exists(cost_path) else CostTracker()
-    csm = CharacterStateMachine()
-    char_path = f"books/{book_id}/character_states.json"
-    if os.path.exists(char_path): csm.load(char_path)
     # 进行中章节草稿（按桥段撰写中断时落盘；详情页展示未固化内容，写作台才有写入）
     draft = None
     draft_path = f"books/{book_id}/draft_chapter.json"
@@ -171,16 +166,12 @@ def book_detail(book_id):
                 }
         except Exception as e:
             logger.warning("读取章节草稿失败: %s", e)
-    from libraries.storyline import basic_info_world_done
-    world_done = basic_info_world_done(storyline.basic_info if storyline else None)
-    has_outlines = bool(storyline and storyline.outlines)
     # 「从已有书借鉴」已挪到启动新书向导②（dashboard GET 提供 borrow_books），详情页不再传
     return render_template("book_detail.html", book=book,
         outline=outline, chapters=chapters,
         storyline=storyline,
         basic_info=basic_info,
-        cost=cost.summary(), characters=csm.characters, draft=draft,
-        world_done=world_done, has_outlines=has_outlines)
+        draft=draft)
 
 
 @bp.route("/api/book/<book_id>/generate-meta", methods=["POST"])

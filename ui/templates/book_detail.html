@@ -4,6 +4,7 @@
 {% endblock %}
 {% block content %}
 {% from "_flow_stepper.html" import status_badge %}
+<link rel="stylesheet" href="/static/css/story_line.css">
 <h1>📖 {{ book.title or '(待定)' }}</h1>
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
@@ -26,58 +27,137 @@
     <div class="detail-item"><div class="label">状态</div><div class="value">{{ status_badge(book.status) }}</div></div>
 </div>
 
-{# ─── 设定：直铺可编辑表单（原 world_card.html 迁移，确认后进入大纲生成） ─── #}
-<script>
-var BOOK_ID = "{{ book.book_id }}";
-var __BI__ = {{ basic_info|tojson }};
-var __BOOK_TITLE__ = {{ (book.title or '')|tojson }};
-var storylineId = "{{ book.book_id }}";
-</script>
-<h3 id="world-edit">🌍 设定</h3>
-{% include "_world_edit_form.html" %}
+{# ─── 世界观（只读展示） ─── #}
+<h3>🌍 世界观</h3>
+{% set wb = basic_info.get('world_building') or {} %}
+{% set wb_show = (wb.get('world_summary') or wb.get('core_conflict') or wb.get('era') or wb.get('power_system')
+                  or wb.get('geography') or wb.get('culture') or wb.get('history') or wb.get('social_structure')
+                  or wb.get('rules') or wb.get('tags')) %}
+{% if wb_show %}
+    {% if wb.get('world_summary') %}<p style="color:#c9d1d9;margin-bottom:12px">{{ wb.get('world_summary') }}</p>{% endif %}
+    <div class="detail-grid">
+        {% for label, key in [('核心矛盾','core_conflict'),('时代','era'),('力量体系','power_system'),('地理','geography'),('文化','culture'),('历史','history'),('社会结构','social_structure')] %}
+        {% if wb.get(key) %}
+        <div class="detail-item"><div class="label">{{ label }}</div><div class="value">{{ wb.get(key) }}</div></div>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% if wb.get('rules') %}
+    <p style="margin-top:10px"><span style="color:#8b949e;font-size:12px">世界规则：</span>{{ wb.get('rules') if wb.get('rules') is string else wb.get('rules')|join('；') }}</p>
+    {% endif %}
+    {% if wb.get('tags') %}
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">
+        {% for t in wb.get('tags') %}<span class="tag blue">{{ t }}</span>{% endfor %}
+    </div>
+    {% endif %}
+    {% set tone = basic_info.get('tone') or '' %}
+    {% set aud = basic_info.get('target_audience') or '' %}
+    {% set pov = basic_info.get('pov') or '' %}
+    {% set elang = basic_info.get('era_language') or '' %}
+    {% if tone or aud or pov or elang %}
+    <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:12px;color:#8b949e;font-size:13px">
+        {% if tone %}<span>基调：{{ tone }}</span>{% endif %}
+        {% if aud %}<span>目标读者：{{ aud }}</span>{% endif %}
+        {% if pov %}<span>视角：{{ pov }}</span>{% endif %}
+        {% if elang %}<span>时代语言：{{ elang }}</span>{% endif %}
+    </div>
+    {% endif %}
+{% else %}
+<div class="empty"><div class="icon">🌍</div><p>还没有世界观设定</p></div>
+{% endif %}
+
+{# ─── 势力与人物（只读，人物按所属势力归组） ─── #}
+{% macro char_profile(c) %}
+<div style="border:1px solid #30363d;border-radius:8px;padding:10px 12px;background:#0d1117">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+        <strong>{{ c.name }}</strong>
+        {% if c.role %}<span class="tag {{ 'green' if c.role == '主角' else 'red' if c.role == '反派' else 'yellow' }}">{{ c.role }}</span>{% endif %}
+        {% if c.identity %}<span style="color:#8b949e;font-size:12px">{{ c.identity }}</span>{% endif %}
+    </div>
+    <div style="font-size:12px;color:#c9d1d9;line-height:1.7">
+        {% if c.gender or c.age %}<div>性别/年龄：{{ c.gender or '未知' }}{% if c.age %} · {{ c.age }}岁{% endif %}</div>{% endif %}
+        {% if c.personality %}<div>性格：{{ c.personality }}</div>{% endif %}
+        {% if c.catchphrase %}<div>口癖：{{ c.catchphrase }}</div>{% endif %}
+        {% if c.golden_finger %}<div>金手指：{{ c.golden_finger }}</div>{% endif %}
+        {% if c.brief %}<div>简介：{{ c.brief }}</div>{% endif %}
+        {% if c.death_year %}<div>死亡：{{ c.death_year }}年</div>{% endif %}
+        {% if c.relations %}
+        <div>关系：{% for r in c.relations %}{{ r.name }}{% if r.relation %}（{{ r.relation }}）{% endif %}{% if not loop.last %}；{% endif %}{% endfor %}</div>
+        {% endif %}
+    </div>
+</div>
+{% endmacro %}
+<h3>🏛 势力与人物</h3>
+{% set wb2 = basic_info.get('world_building') or {} %}
+{% set factions = wb2.get('factions') or [] %}
+{% set chars = basic_info.get('characters') or [] %}
+{% set faction_objs = [] %}
+{% for f in factions %}
+    {% if f is string %}
+        {% set _ = faction_objs.append({'name': f, 'stance': '', 'desc': ''}) %}
+    {% elif f is mapping %}
+        {% set _ = faction_objs.append({'name': ((f.get('name') or '').strip() or '（未命名势力）'), 'stance': f.get('stance') or '', 'desc': f.get('desc') or ''}) %}
+    {% endif %}
+{% endfor %}
+{% set faction_names = faction_objs | map(attribute='name') | list %}
+{# 归一化人物：过滤无效条目并保证 importance 可排序（主角优先） #}
+{% set _tmp = [] %}
+{% for c in chars %}
+    {% if c is mapping and c.get('name') %}
+        {% set imp = c.get('importance') %}
+        {% if not imp %}{% set imp = 1 if c.get('role') == '主角' else 2 %}{% endif %}
+        {% set _ = _tmp.append([imp, loop.index0, c]) %}
+    {% endif %}
+{% endfor %}
+{% set _tmp = _tmp | sort %}
+{% set sorted_chars = [] %}
+{% for t in _tmp %}{% set _ = sorted_chars.append(t[2]) %}{% endfor %}
+{% if not faction_objs and not sorted_chars %}
+<div class="empty"><div class="icon">🏛</div><p>还没有势力与人物</p></div>
+{% else %}
+    {% for fo in faction_objs %}
+    {% set members = sorted_chars | selectattr('faction','equalto', fo.name) | list %}
+    <div class="accordion" style="margin-bottom:8px">
+        <div class="accordion-header"><span>🏛 {{ fo.name }}{% if fo.stance %} <span class="tag">{{ fo.stance }}</span>{% endif %}</span><span style="color:#8b949e;font-size:12px">{{ members|length }} 人</span></div>
+        <div class="accordion-body show">
+            {% if fo.desc %}<p style="color:#8b949e;margin-bottom:8px">{{ fo.desc }}</p>{% endif %}
+            {% if members %}
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
+                {% for c in members %}{{ char_profile(c) }}{% endfor %}
+            </div>
+            {% else %}
+            <p style="color:#8b949e;font-size:12px">暂无人物</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+    {% set unassigned = [] %}
+    {% for c in sorted_chars %}
+        {% set cf = (c.get('faction') or '').strip() %}
+        {% if not cf or cf not in faction_names %}{% set _ = unassigned.append(c) %}{% endif %}
+    {% endfor %}
+    {% if unassigned %}
+    <div class="accordion" style="margin-bottom:8px">
+        <div class="accordion-header"><span>（未归属）</span><span style="color:#8b949e;font-size:12px">{{ unassigned|length }} 人</span></div>
+        <div class="accordion-body show">
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
+                {% for c in unassigned %}{{ char_profile(c) }}{% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+{% endif %}
+
 {% if basic_info.get('synopsis') %}
 <h3>📝 简介</h3>
 <p style="color:#8b949e;margin-bottom:12px">{{ basic_info.get('synopsis') }}</p>
 {% endif %}
 
-{% if characters %}
-<h3>👤 角色状态</h3>
-<table>
-    <thead><tr><th>角色</th><th>性别</th><th>性格</th><th>关系</th><th>位置</th><th>情绪</th><th>实力</th><th>最近出场</th><th>离线</th></tr></thead>
-    <tbody>
-    {% for c in characters %}
-    <tr>
-        <td><strong>{{ c.name }}</strong></td>
-        <td>{{ c.gender or '-' }}</td>
-        <td style="font-size:12px;color:#8b949e">{{ c.personality or '-' }}{% if c.catchphrase %}「{{ c.catchphrase }}」{% endif %}</td>
-        <td>{{ c.relationship_to_mc or '-' }}</td>
-        <td>{{ c.location or '-' }}</td>
-        <td>{{ c.mood or '-' }}</td>
-        <td>{{ c.power_level or '-' }}</td>
-        <td>第{{ c.last_appeared_chapter }}章</td>
-        <td>{% if c.offline_chapters > 50 %}<span class="tag red">{{ c.offline_chapters }}章</span>{% elif c.offline_chapters > 0 %}<span class="tag yellow">{{ c.offline_chapters }}章</span>{% else %}-{% endif %}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-</table>
-{% endif %}
-
-{# ─── 大纲：故事线优先（可编辑卡片），无则回退结构大纲 ─── #}
+{# ─── 故事线：Gantt 纯展示（写作台同款组件），无 timeline 回退结构大纲 ─── #}
 {% if storyline and storyline.outlines %}
-<h3>📋 故事线大纲 ({{ storyline.outlines|length }})</h3>
-<div class="outline-list">
-    {% for o in storyline.outlines %}
-    {% include "storyline_outline_card.html" %}
-    {% set ops = storyline.plots|selectattr('outline_id','equalto', o.id)|list %}
-    {% if ops %}
-    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px 4px">
-        <span style="color:#8b949e;font-size:12px;margin-right:4px">桥段 ({{ ops|length }})：</span>
-        {% for p in ops %}
-        <span class="tag blue">{{ p.name }}</span>
-        {% endfor %}
-    </div>
-    {% endif %}
-    {% endfor %}
+<h3>📋 故事线</h3>
+<div style="height:520px;overflow:hidden;border:1px solid #2a2d3a;border-radius:8px;margin-bottom:20px">
+    <div id="detail-storyline" style="height:100%;min-height:0;overflow:hidden"></div>
 </div>
 {% elif outline %}
 <h3>📋 大纲结构</h3>
@@ -123,6 +203,16 @@ var storylineId = "{{ book.book_id }}";
 {% else %}
 <div class="empty"><div class="icon">✍️</div><p>还没有生成章节</p></div>
 {% endif %}
+<script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
+<script src="/static/js/story_line.js"></script>
+<script>
+(function () {
+    var mount = document.getElementById('detail-storyline');
+    if (window.StoryLine && window.__BOOK_STORYLINE__ && mount) {
+        window.StoryLine.init('detail-storyline', window.__BOOK_STORYLINE__, {scrollable: true});
+    }
+})();
+</script>
 <script>
 function generateMeta() {
     if (!confirm('用第 1 章内容生成书名和简介？将覆盖当前书名/简介。')) return;
