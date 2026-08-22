@@ -29,24 +29,10 @@
     <div class="detail-item"><div class="label">状态</div><div class="value">{{ status_badge(book.status) }}</div></div>
 </div>
 
-{# ─── 设定：直铺可编辑表单（原 world_card.html 迁移，确认后进入大纲生成） ─── #}
-<script>
-var BOOK_ID = "{{ book.book_id }}";
-var __BI__ = {{ basic_info|tojson }};
-var __BOOK_TITLE__ = {{ (book.title or '')|tojson }};
-var storylineId = "{{ book.book_id }}";
-</script>
-{% include "_world_edit_form.html" %}
-
-{% if basic_info.get('synopsis') %}
-<h3>📝 简介</h3>
-<p style="color:#8b949e;margin-bottom:12px">{{ basic_info.get('synopsis') }}</p>
-{% endif %}
-
 {# ─── 故事线：Gantt 纯展示（写作台同款组件），无 timeline 回退结构大纲 ─── #}
 {% if storyline and storyline.outlines %}
 <h3>📋 故事线</h3>
-<div style="height:520px;overflow:hidden;border:1px solid #2a2d3a;border-radius:8px;margin-bottom:20px">
+<div class="sl-frame">
     <div id="detail-storyline" style="height:100%;min-height:0;overflow:hidden"></div>
 </div>
 {% elif outline %}
@@ -61,6 +47,20 @@ var storylineId = "{{ book.book_id }}";
 {% endfor %}
 {% else %}
 <div class="empty"><div class="icon">📋</div><p>还没有大纲</p></div>
+{% endif %}
+
+{# ─── 设定：直铺可编辑表单（原 world_card.html 迁移，确认后进入大纲生成） ─── #}
+<script>
+var BOOK_ID = "{{ book.book_id }}";
+var __BI__ = {{ basic_info|tojson }};
+var __BOOK_TITLE__ = {{ (book.title or '')|tojson }};
+var storylineId = "{{ book.book_id }}";
+</script>
+{% include "_world_edit_form.html" %}
+
+{% if basic_info.get('synopsis') %}
+<h3>📝 简介</h3>
+<p style="color:#8b949e;margin-bottom:12px">{{ basic_info.get('synopsis') }}</p>
 {% endif %}
 
 {% if draft %}
