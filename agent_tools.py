@@ -1039,6 +1039,31 @@ def diagnose_retention(book_id: str, recent_n: int = 5) -> dict:
     return diagnose_chapters(chapters)
 
 
+def diagnose_promises(book_id: str) -> dict:
+    """伏笔台账扫描：逾期/推进/停滞/近期回收（规则层，零成本）。
+
+    复用 storyline.promises 台账（设局→pending、收局→fulfilled），
+    写前先扫一眼「欠读者什么」：哪些承诺逾期了、哪些近期没推进。
+    """
+    tl = _require_tl(book_id)
+    book = book_mgr.get(book_id)
+    if not book:
+        raise RuntimeError(f"书 {book_id} 不存在")
+    chapters = []
+    for n in range(1, book.current_chapter + 1):
+        ch = book_mgr.load_chapter(book_id, n)
+        if ch:
+            chapters.append({"num": n, "content": ch.get("content", "")})
+    from libraries.promise_ledger import scan_promises
+    result = scan_promises(tl, chapters, book.current_chapter or 0)
+    # 平铺计数键供 LoopGuard 摘要（书变化时计数变化，防误熔断）
+    result["overdue_count"] = result["counts"]["overdue"]
+    result["advanced_count"] = result["counts"]["advanced"]
+    result["stalled_count"] = result["counts"]["stalled"]
+    result["fulfilled_count"] = result["counts"]["fulfilled_recently"]
+    return result
+
+
 def tag_punch_points(book_id: str, chapter_num: int = 0) -> dict:
     """爽点标注：单章正文 → 爽点标签（打脸/升级/伏笔回收/装逼/甜宠/反转），
     chapter_num=0 用最近一章；结果落盘 books/<id>/tags.json。"""
@@ -1226,6 +1251,7 @@ def _build_registry():
         publish_check, mark_finished, publish_book, export_book,
         review_text, deai_text,
         diagnose_retention, tag_punch_points,
+        diagnose_promises,
     ]
     seen = set()
     entries = []

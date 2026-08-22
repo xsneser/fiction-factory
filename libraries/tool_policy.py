@@ -19,6 +19,7 @@ PHASE_GATES = {
     "generate_book_meta": {"ready"},
     "tag_punch_points": {"ready"},
     "diagnose_retention": {"ready"},
+    "diagnose_promises": {"ready"},
     # 大纲链 —— config/outlines/plots 阶段推进用
     "generate_full_outline": {"config", "outlines", "plots"},
     "generate_outlines": {"config", "outlines"},

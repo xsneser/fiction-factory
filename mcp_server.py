@@ -65,7 +65,9 @@ def _mcp_summary(result) -> str:
         # 否则 status 常量会让 LoopGuard 把正常推进误判为无进展循环（桥段写作被熔断）。
         for k in ("ok", "words", "word_count", "chapter", "count", "phase",
                   "status", "plots_added", "total_plots", "total_chapters",
-                  "passed", "score", "chosen", "book_id", "deleted", "cmd"):
+                  "passed", "score", "chosen", "book_id", "deleted", "cmd",
+                  "issue_count", "overdue_count", "advanced_count",
+                  "stalled_count", "fulfilled_count"):
             if k in result and result[k] not in (None, "", False):
                 return f"{k}={result[k]}"
         for k in ("summary", "message", "reply"):
