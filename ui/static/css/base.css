@@ -276,6 +276,8 @@
         @media (max-width:900px){ .world-edit .toolbar { grid-template-columns:1fr; } }
         .world-edit fieldset { border:1px solid #30363d; border-radius:8px; padding:16px; margin-bottom:16px; }
         .world-edit legend { color:#58a6ff; font-weight:600; padding:0 8px; }
+        /* 去掉全局 form 样式给 #world-form 套的外层灰框：仅保留字段集边框 */
+        .world-edit form { background:transparent; border:0; border-radius:0; padding:0; margin:0; }
         .world-edit .form-grid { max-width:1000px; }
         .world-edit .form-row { display:block; margin-bottom:12px; }
         .world-edit .form-row label { display:block; color:#c9d1d9; font-size:13px; margin-bottom:4px; }
