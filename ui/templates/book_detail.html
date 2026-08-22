@@ -73,12 +73,22 @@ var storylineId = "{{ book.book_id }}";
 <script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
 <script src="/static/js/story_line.js"></script>
 <script>
-(function () {
+/* 故事线区块默认折叠：Gantt 在隐藏态容器高度为 0，改为首次展开 #sl-toggle 时再初始化 */
+var _slInited = false;
+function initStoryline() {
+    if (_slInited) return;
     var mount = document.getElementById('detail-storyline');
     if (window.StoryLine && window.__BOOK_STORYLINE__ && mount) {
         window.StoryLine.init('detail-storyline', window.__BOOK_STORYLINE__, {scrollable: true});
+        _slInited = true;
     }
-})();
+}
+document.addEventListener('click', function(e) {
+    var h = e.target && e.target.closest ? e.target.closest('#sl-toggle') : null;
+    if (h && h.nextElementSibling && h.nextElementSibling.classList.contains('show')) {
+        initStoryline();
+    }
+});
 </script>
 <script>
 /* 点击第一行书名就地编辑，回车/失焦自动保存；复用 save-basic-info 接口同步 book.title + storyline.book_title */
