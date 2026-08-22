@@ -35,7 +35,7 @@
             <div id="wf-manuscript" class="manuscript">
                 {% for c in chapters %}
                 {% if not loop.first %}<div class="m-chapter-divider">────────</div>{% endif %}
-                <div class="m-chapter-title">第{{ c.num }}章 {{ c.title }}</div>
+                <div class="m-chapter-title">第{{ c.num }}章 {{ c.title }}{% if c.draft %}<span class="m-draft-tag">草稿</span>{% endif %}</div>
                 {% if c.bridges %}
                 {%- for b in c.bridges -%}
                 {%- if not loop.first %}{{ '\n\n' }}{% endif -%}

@@ -57,6 +57,27 @@ def storyline_write_flow(engine_id):
                     })
         except Exception as e:
             logger.warning("加载已写章节失败: %s", e)
+    # 进行中的章节草稿：与已固化章节同格式渲染（bridges 逐桥段 span.m-bridge），
+    # 让刚写完的桥段在写作台上即时可见、可点击高亮；切章固化（_clear_draft）后自动消失。
+    try:
+        draft = engine._load_draft() if hasattr(engine, "_load_draft") else None
+    except Exception as e:
+        draft = None
+        logger.warning("加载进行中草稿失败: %s", e)
+    if book and draft:
+        bridges = draft.get("bridges") or []
+        buffer = draft.get("buffer") or []
+        dn = int(draft.get("chapter_num") or 0)
+        # 已固化章节跳过（防陈旧草稿重复渲染）；旧草稿无 bridges 时回退 buffer 纯文本展示
+        if dn > (book.current_chapter or 0) and (bridges or buffer):
+            chapters.append({
+                "num": dn,
+                "title": "（写作中）",
+                "content": "\n\n".join((b.get("text") or "") for b in bridges) if bridges
+                           else "\n\n".join(buffer),
+                "bridges": bridges,
+                "draft": True,
+            })
     sl = getattr(engine, "storyline", None)
     total_ch = 0
     if sl:

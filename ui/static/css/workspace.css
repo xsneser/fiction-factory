@@ -24,6 +24,8 @@ main { overflow: hidden; }
 .manuscript { background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); padding:16px; font-size:15px; line-height:1.9; color:#c9d1d9; white-space:pre-wrap; word-break:break-word; min-height:0; }
 .manuscript .m-chapter-title { font-size:18px; font-weight:700; color:var(--fg-strong); margin:20px 0 12px; }
 .manuscript .m-chapter-divider { text-align:center; color:var(--fg-dim); font-size:12px; margin:20px 0; letter-spacing:2px; }
+/* 进行中草稿章节的辨识徽标（desk.py 追加的 draft 伪章节） */
+.manuscript .m-draft-tag { display:inline-block; vertical-align:middle; margin-left:10px; padding:1px 8px; font-size:12px; font-weight:600; color:#8b949e; border:1px dashed #30363d; border-radius:999px; }
 .m-bridge { transition: background .25s ease, box-shadow .25s ease; border-radius:3px; }
 .m-bridge-active { background:rgba(121,192,255,.28); box-shadow:0 0 0 2px rgba(121,192,255,.40); animation:m-bridge-flash 1.1s ease; }
 @keyframes m-bridge-flash { 0% { background:rgba(121,192,255,.55); } 100% { background:rgba(121,192,255,.28); } }

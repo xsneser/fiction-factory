@@ -61,8 +61,10 @@ def _mcp_summary(result) -> str:
         total = result.get("total")
         if isinstance(cand, dict) and cand.get("title") and total:
             return f"候选{total}：{cand['title']}"
-        for k in ("ok", "status", "count", "plots_added", "total_plots",
-                  "total_chapters", "chapter", "word_count", "phase",
+        # 动态进度字段优先于 status：write_next_bridge 同参但字数/章节增长时摘要须不同，
+        # 否则 status 常量会让 LoopGuard 把正常推进误判为无进展循环（桥段写作被熔断）。
+        for k in ("ok", "words", "word_count", "chapter", "count", "phase",
+                  "status", "plots_added", "total_plots", "total_chapters",
                   "passed", "score", "chosen", "book_id", "deleted", "cmd"):
             if k in result and result[k] not in (None, "", False):
                 return f"{k}={result[k]}"
