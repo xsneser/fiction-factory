@@ -47,6 +47,19 @@ class PenNameProfile:
         "action_beats": ["眯眼", "挑眉", "咂嘴", "不动声色"],
     }
     """
+    # 写法资产（从文本提取的风格特征，可保存/组合/绑定笔名）
+    style_assets: dict = field(default_factory=dict)
+    """
+    {
+        "sentence_length": "short",          # short/medium/long
+        "dialogue_ratio": 0.4,              # 对话占比
+        "paragraph_style": "chatty",         # chatty/compact/literary
+        "common_words": ["卧槽", "淦"],
+        "avoid_words": ["仿佛", "似乎"],
+        "sentence_starters": ["说实话", "啧"],
+        "action_beats": ["眯眼", "挑眉"],
+    }
+    """
     # 常用创作套路
     tropes: dict = field(default_factory=dict)
     """
@@ -89,6 +102,7 @@ class PenNameProfile:
             "id": self.id, "pen_name": self.pen_name,
             "style_fingerprint": self.style_fingerprint,
             "word_print": self.word_print, "tropes": self.tropes,
+            "style_assets": self.style_assets,
             "assigned_books": self.assigned_books,
             "platform_accounts": self.platform_accounts,
             "description": self.description,
@@ -102,6 +116,7 @@ class PenNameProfile:
             style_fingerprint=d.get("style_fingerprint", {}),
             word_print=d.get("word_print", {}),
             tropes=d.get("tropes", {}),
+            style_assets=d.get("style_assets", {}),
             assigned_books=d.get("assigned_books", []),
             platform_accounts=d.get("platform_accounts", {}),
             description=d.get("description", ""),
@@ -137,6 +152,18 @@ class PenNameProfile:
             parts.append(f"- 对话标签偏好：{', '.join(wp['dialogue_tags'])}")
         if wp.get("action_beats"):
             parts.append(f"- 动作节拍偏好：{', '.join(wp['action_beats'])}")
+
+        # 写法资产（从文本提取的风格特征）
+        sa = self.style_assets
+        if sa:
+            if sa.get("common_words"):
+                parts.append(f"- 写法资产·常用词：{', '.join(sa['common_words'])}")
+            if sa.get("avoid_words"):
+                parts.append(f"- 写法资产·需避免：{', '.join(sa['avoid_words'])}")
+            if sa.get("sentence_starters"):
+                parts.append(f"- 写法资产·句首偏好：{', '.join(sa['sentence_starters'])}")
+            if sa.get("action_beats"):
+                parts.append(f"- 写法资产·动作节拍：{', '.join(sa['action_beats'])}")
 
         if tr.get("chapter_hook_style"):
             parts.append(f"- 章末钩子风格：{tr['chapter_hook_style']}")

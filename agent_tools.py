@@ -1018,6 +1018,21 @@ def deai_text(text: str, style: str = "chatty") -> dict:
             "processed_length": len(r.processed)}
 
 
+def extract_style_asset(text: str, pen_name: str = "") -> dict:
+    """从文本提取写法资产（规则层：句长/对话比/段落风格/高频词/禁用词/句首/动作节拍），
+    可选写入笔名档案 style_assets（AI-NWA 写法引擎最小可用版）。"""
+    from libraries.style_assets import extract_style_features
+    features = extract_style_features(text)
+    if not pen_name:
+        return {"features": features, "saved": False, "message": "未指定笔名，仅返回特征"}
+    profile = profiles.get_by_name(pen_name)
+    if not profile:
+        return {"features": features, "saved": False, "message": f"笔名「{pen_name}」不存在"}
+    profile.style_assets = features
+    profiles.update(profile)
+    return {"features": features, "saved": True, "profile": pen_name}
+
+
 def diagnose_retention(book_id: str, recent_n: int = 5) -> dict:
     """追读诊断：最近 N 章正文 → 章级钩子强度/掉读风险 + 建议（规则层，零成本）。"""
     book = book_mgr.get(book_id)
@@ -1274,7 +1289,7 @@ def _build_registry():
         write_next_bridge, write_chapter, generate_book_meta,
         # 上架 / 审查 / 去AI / 质量分析
         publish_check, mark_finished, publish_book, export_book,
-        review_text, deai_text,
+        review_text, deai_text, extract_style_asset,
         diagnose_retention, tag_punch_points,
         diagnose_promises, diagnose_continuity,
     ]
