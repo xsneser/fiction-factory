@@ -16,6 +16,7 @@ import re
 from collections import OrderedDict
 
 from .storyline import BookStoryline
+from .style_ban import LANGUAGE_DISCIPLINE, build_style_ban_prompt
 from core.text_utils import count_prose_units
 
 CHARS_PER_BEAT = 200          # 每个节拍预计写多少个汉字（用于桥段字数规划）
@@ -32,7 +33,9 @@ WRITER_SYSTEM = ("你是一位专业的中文网络小说作者，擅长对话�
                  "2) 短句为基干、一句一行，句长需长短交错（8-15字为主、穿插25-45字），避免全文句式单一；"
                  "3) 对话独立成段并带神态/动作，避免连续纯叙述；"
                  "4) 视角始终锁定主角，不切换；"
-                 "5) 严禁使用：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。")
+                 "5) 严禁使用：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。"
+                 + build_style_ban_prompt()
+                 + LANGUAGE_DISCIPLINE)
 
 SELF_CHECK_ENABLED = True     # 有界自评总开关（设计文档 §2.3 设计 B）：每短句组 flash 自检
 SELF_CHECK_THRESHOLD = 6      # 自评分 <6 或 has_rewrite=true → 触发一次重写

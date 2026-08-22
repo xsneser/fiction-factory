@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from core.text_utils import count_prose_units
 from .de_ai import AI_WORD_MAP
+from .style_ban import check_style_bans
 
 
 # AI 痕迹词的展示文案（仅文案；词表本体单一来源 = de_ai.AI_WORD_MAP）
@@ -94,6 +95,17 @@ class ContentReviewer:
                         description=f"「{pattern}」句式使用 {count} 次（{desc}）",
                         suggestion="建议减少使用",
                     ))
+
+        # 硬禁句式（STYLE_BAN_LIST 单一来源，与上方 ai_sentences 部分重叠——
+        # 检测策略分离不强行合并，见 style_ban 模块注释）
+        for issue in check_style_bans(content):
+            issues.append(ReviewIssue(
+                severity=issue["severity"],
+                category=issue["category"],
+                description=issue["description"],
+                location=issue["location"],
+                suggestion=issue["suggestion"],
+            ))
 
         return issues
 
