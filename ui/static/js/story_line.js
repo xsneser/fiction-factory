@@ -1,6 +1,6 @@
 /*
  * 故事线（Story Line）组件 — 垂直 Gantt
- * 从 BookStoryline dict 渲染：章节轴 + 大纲/桥段/线程通道。
+ * 从 BookStoryline dict 渲染：字数轴 + 大纲/桥段/线程通道。
  * 支持叙事手法视觉区分：顺叙(chronological)/倒叙(flashback)/插叙(interleaved)。
  *
  * 用法：StoryLine.init('mount-id', bookStorylineDict, {currentChapter: N})
@@ -10,7 +10,7 @@
 
   var TOTAL_WORDS = 0;
   var WPC = 3000;
-  var chapters = [], outlines = [], plots = [], threads = [];
+  var outlines = [], plots = [], threads = [];
   var promises = [], promiseByPlot = {};   // 读者承诺台账：桥段id → [{kind:setup/payoff, pr}]
   var PALETTE = ['#f97583', '#79c0ff', '#56d364', '#e3b341', '#d2a8ff', '#ffa657', '#c084fc', '#7ee787'];
   var THREAD_PALETTE = ['#ffa657', '#79c0ff', '#d2a8ff', '#56d364', '#e3b341', '#ff7b72', '#7ee787'];
@@ -25,7 +25,7 @@
   /* ─── 纵向缩放：调整内容高度 → 百分比映射更多像素 → 条间距更大/更紧凑 ─── */
   var _zoom = 1;            // 缩放倍率（0.4x ~ 4x，步进 0.25）
   var _baseScrollH = 720;   // scrollable 模式下未缩放的基准内容高度
-  var _panels = [];         // 需随缩放改高度的三个面板（章节/轴/内容区）
+  var _panels = [];         // 需随缩放改高度的面板（轴/内容区）
   var _scrollableMode = false;
 
   function zoomHeight() {
@@ -81,14 +81,6 @@
       cursor = o.end + WPC * 0.5;             // 弧间留半章空隙
     });
     TOTAL_WORDS = Math.max(cursor - WPC * 0.5, WPC);
-    var totalCh = Math.max(1, Math.round(TOTAL_WORDS / WPC));
-
-    // 章节轴：每章一条虚线+圆点（不再抽稀跳号），标签按空间自动省略
-    chapters = [];
-    for (var n = 1; n <= totalCh; n++) {
-      chapters.push({ num: n, words: n * WPC });
-    }
-    if (!chapters.length) chapters.push({ num: 1, words: WPC });
 
     // 桥段 → 在大纲内按规划字数累计定位（首桥段 0—~1200字，而非 0—13517）
     plots = [];
@@ -169,9 +161,8 @@
     return { assignments: assignments, totalLanes: lanes.length };
   }
 
-  /* ─── 渲染：章节 + 轴 ─── */
-  function renderChapters(chapterPanel, axisPanel) {
-    chapterPanel.innerHTML = '';
+  /* ─── 渲染：字数轴（故事线不再分章，保留字数刻度作竖向标尺） ─── */
+  function renderAxis(axisPanel) {
     axisPanel.innerHTML = '<div class="sl-axis-line"></div>';
     for (var w = 0; w <= TOTAL_WORDS; w += 1000) {
       var yPct = wordToPercent(w);
@@ -183,26 +174,6 @@
       label.textContent = (w / 1000) + 'k';
       axisPanel.appendChild(label);
     }
-    // 每章一条虚线（连续，不再 1→9→17 跳号）；"第N章"标签按间距自动省略以免重叠
-    var h = chapterPanel.clientHeight || 400;
-    var minLabelGap = Math.max(1.5, (18 / Math.max(h, 120)) * 100);   // 标签间隔约 18px
-    var lastLabelY = -Infinity;
-    chapters.forEach(function (ch, idx) {
-      var y = wordToPercent(ch.words);
-      var line = document.createElement('div');
-      line.className = 'sl-chapter-line'; line.style.top = y + '%';
-      line.style.borderTop = '1px dashed rgba(88,166,255,.25)';
-      chapterPanel.appendChild(line);
-      var isFirst = idx === 0;
-      var isLast = idx === chapters.length - 1;
-      if (isFirst || isLast || (y - lastLabelY) >= minLabelGap) {
-        var mark = document.createElement('div');
-        mark.className = 'sl-chapter-mark'; mark.style.top = y + '%';
-        mark.innerHTML = '<div class="sl-chapter-dot"></div><div><div class="sl-chapter-num">第' + ch.num + '章</div></div>';
-        chapterPanel.appendChild(mark);
-        lastLabelY = y;
-      }
-    });
   }
 
   /* ─── 渲染：大纲 ─── */
@@ -239,7 +210,6 @@
       bar.dataset.tooltip = JSON.stringify({
         title: o.name,
         rows: [
-          ['范围', '第' + (o.start / WPC + 1 | 0) + '—' + (o.end / WPC | 0) + '章'],
           ['字数', (o.start).toLocaleString() + ' — ' + o.end.toLocaleString()],
           ['手法', o.narrative === 'chronological' ? '顺叙' : (o.narrative === 'flashback' ? '倒叙' : '插叙')],
         ],
@@ -352,7 +322,7 @@
         var label = document.createElement('span');
         label.className = 'sl-bar-label';
         label.textContent = p.name;
-        label.style.fontSize = Math.min(9, Math.max(7, height * 0.3)) + 'px';
+        label.style.fontSize = Math.min(10, Math.max(8, height * 0.3)) + 'px';
         bar.appendChild(label);
       }
       var tdot = document.createElement('span');
@@ -385,11 +355,14 @@
       plotBody.appendChild(bar);
     });
 
-    // 父子连线
+    // 父子连线（SVG path 的 d 不支持 % 坐标 → 按 bodyW/bodyH 换算成像素）
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
     svg.style.position = 'absolute'; svg.style.top = '0'; svg.style.left = '0';
     svg.style.pointerEvents = 'none'; svg.style.zIndex = '0';
+    bodyW = bodyW || plotBody.clientWidth || 1;
+    function px(x) { return (x / 100) * bodyW; }
+    function py(y) { return (y / 100) * bodyH; }
     plots.forEach(function (p) {
       if (!p.parent) return;
       var parent = null;
@@ -397,18 +370,18 @@
       if (!parent) return;
       var parentLI = laneInfo[parent.id], childLI = laneInfo[p.id];
       if (!parentLI || !childLI) return;
-      var parentMid = wordToPercent((parent.start + parent.end) / 2);
-      var childMid = wordToPercent((p.start + p.end) / 2);
+      var parentMid = py(wordToPercent((parent.start + parent.end) / 2));
+      var childMid = py(wordToPercent((p.start + p.end) / 2));
       function barCenterX(level, lane, totalLanes) {
         var blockL = (level / (maxLevel + 1)) * 100;
         var laneW = (1 / (maxLevel + 1)) * 100 / totalLanes;
         return blockL + lane * laneW + laneW / 2;
       }
-      var pcx = barCenterX(levels[parent.id], parentLI.lane, parentLI.totalLanes);
-      var ccx = barCenterX(levels[p.id], childLI.lane, childLI.totalLanes);
+      var pcx = px(barCenterX(levels[parent.id], parentLI.lane, parentLI.totalLanes));
+      var ccx = px(barCenterX(levels[p.id], childLI.lane, childLI.totalLanes));
       var midY = (parentMid + childMid) / 2;
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', 'M ' + pcx + '% ' + parentMid + '% C ' + pcx + '% ' + midY + '%, ' + ccx + '% ' + midY + '%, ' + ccx + '% ' + childMid + '%');
+      path.setAttribute('d', 'M ' + pcx + ' ' + parentMid + ' C ' + pcx + ' ' + midY + ' ' + ccx + ' ' + midY + ' ' + ccx + ' ' + childMid);
       path.setAttribute('stroke', 'rgba(255,255,255,0.1)');
       path.setAttribute('stroke-width', '1'); path.setAttribute('fill', 'none');
       svg.appendChild(path);
@@ -450,7 +423,7 @@
         var label = document.createElement('span');
         label.className = 'sl-bar-label';
         label.textContent = t.name;
-        label.style.fontSize = '9px';
+        label.style.fontSize = '10px';
         label.style.color = t.color;
         band.appendChild(label);
       }
@@ -478,7 +451,7 @@
       try { data = JSON.parse(e.currentTarget.dataset.tooltip); } catch (err) {}
       var html = '<div class="sl-tt-title">' + (data.title || '') + '</div>';
       (data.rows || []).forEach(function (r) { html += '<div class="sl-tt-row">' + r[0] + ': <span>' + r[1] + '</span></div>'; });
-      if (data.desc) html += '<div class="sl-tt-row" style="margin-top:4px;color:#8b949e;">' + data.desc + '</div>';
+      if (data.desc) html += '<div class="sl-tt-desc">' + data.desc + '</div>';
       html += '<div class="sl-tt-tag">' + (data.tag || '') + '</div>';
       el.innerHTML = html;
       el.classList.add('show');
@@ -525,9 +498,8 @@
         '<div class="sl-root">' +
         '<div class="sl-header"><h1><span class="dot"></span>故事线</h1>' +
         '<div class="sl-header-right">' + zoomHtml +
-        '<div class="sl-meta">总字数 <span>' + (TOTAL_WORDS).toLocaleString() + '</span> · 章节 <span>' + (TOTAL_WORDS / WPC | 0) + '</span> · 大纲 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
+        '<div class="sl-meta">总字数 <span>' + (TOTAL_WORDS).toLocaleString() + '</span> · 大纲 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
         '<div class="sl-main">' +
-        '<div class="sl-chapter-panel"' + hstyle + ' id="' + mountId + '-ch"></div>' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
         '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
         '<div class="sl-lane" style="flex:3"><div class="sl-lane-header">📋 大纲</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
@@ -541,7 +513,6 @@
         threadLegendHtml +
         (narrCount.flashback ? '<div class="sl-legend-item"><span class="sl-legend-swatch flashback"></span> 倒叙</div>' : '') +
         (narrCount.interleaved ? '<div class="sl-legend-item"><span class="sl-legend-swatch interleaved"></span> 插叙</div>' : '') +
-        '<div class="sl-legend-item"><span class="sl-legend-swatch circle" style="background:#58a6ff"></span> 章节</div>' +
         '</div></div>';
 
       mount.innerHTML = html;
@@ -551,7 +522,6 @@
       mount.appendChild(tooltip);
       var tt = makeTooltip(tooltip);
 
-      var chapterPanel = document.getElementById(mountId + '-ch');
       var axisPanel = document.getElementById(mountId + '-ax');
       var outlineBody = document.getElementById(mountId + '-ob');
       var plotBody = document.getElementById(mountId + '-pb');
@@ -560,7 +530,7 @@
 
       // 纵向缩放控件：记录需改高度的面板 + 绑定 + / − / 1x 按钮
       _scrollableMode = !!opts.scrollable;
-      _panels = [chapterPanel, axisPanel, contentArea];
+      _panels = [axisPanel, contentArea];
       var zoomBtns = mount.querySelectorAll('.sl-zoom-btn');
       for (var zb = 0; zb < zoomBtns.length; zb++) {
         (function (btn) {
@@ -572,7 +542,7 @@
       }
 
       function renderAll() {
-        renderChapters(chapterPanel, axisPanel);
+        renderAxis(axisPanel);
         renderOutlines(outlineBody, tooltip, tt.show, tt.move, tt.hide);
         renderPlots(plotBody, tooltip, tt.show, tt.move, tt.hide);
         renderThreads(threadBody, tooltip, tt.show, tt.move, tt.hide);
