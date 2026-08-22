@@ -224,7 +224,6 @@ D:\NovelEngine/
 │       ├── book_detail.html# 单书详情（设定/人物条目/大纲/章节）
 │       ├── start_book.html # 新书启动 3 步向导
 │       ├── storyline_write_flow.html # 写作台（两栏：故事线+正文/规划）
-│       ├── storyline_outline_card.html # 大纲卡片组件
 │       ├── publish.html / publish_index.html # 上架 / 导出
 │       ├── extract.html / scout.html # 内容提取 / 番茄侦察兵
 │       ├── settings.html / profiles.html / new_profile.html
