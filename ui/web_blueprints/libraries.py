@@ -9,6 +9,29 @@ from libraries.profiles import KNOWN_PLATFORMS, PLATFORM_LABELS  # noqa: E402
 bp = Blueprint("libraries", __name__)
 
 
+def _parse_style_assets(form):
+    """从表单解析 style_assets（写法资产特征池 + enabled 开关）。
+
+    7 类特征：4 个列表（常用词/禁用词/句首/动作节拍，逗号分隔）+ 3 个标量
+    （句长/对话比/段落风格）。无值且全启用 → 返回 {}（不写）。
+    """
+    from libraries.style_assets import STYLE_ASSET_FEATURES
+    LIST_KEYS = ("common_words", "avoid_words", "sentence_starters", "action_beats")
+    sa, enabled = {}, {}
+    for k in STYLE_ASSET_FEATURES:
+        enabled[k] = form.get(f"sa_{k}_enabled") == "on"
+        v = (form.get(f"sa_{k}", "") or "").strip()
+        if k in LIST_KEYS:
+            items = [x.strip() for x in v.split(",") if x.strip()]
+            if items:
+                sa[k] = items
+        elif v:
+            sa[k] = v
+    if sa or any(not e for e in enabled.values()):
+        sa["enabled"] = enabled
+    return sa
+
+
 def _parse_platform_accounts(form):
     """从表单解析 platform_accounts：每个已知平台 {registered, site_id, author_url, notes, last_published_at}。
 
@@ -237,7 +260,7 @@ def new_profile():
         wp = {}
         if request.form.get("common_words"): wp["common_words"] = [w.strip() for w in request.form["common_words"].split(",")]
         if request.form.get("avoid_words"): wp["avoid_words"] = [w.strip() for w in request.form["avoid_words"].split(",")]
-        profiles.create(
+        new_p = profiles.create(
             pen_name=request.form["pen_name"],
             description=request.form.get("description",""),
             style_fingerprint={
@@ -248,6 +271,11 @@ def new_profile():
             word_print=wp,
             platform_accounts=_parse_platform_accounts(request.form),
         )
+        # 写法资产（特征池 + 开关）——create 无此参数，落盘后回写
+        sa = _parse_style_assets(request.form)
+        if sa:
+            new_p.style_assets = sa
+            profiles.update(new_p)
         return redirect(url_for("libraries.profile_list"))
     return render_template("new_profile.html", profile=None, platform_labels=PLATFORM_LABELS)
 
@@ -270,6 +298,7 @@ def edit_profile(profile_id):
         }
         p.word_print = wp
         p.platform_accounts = _parse_platform_accounts(request.form)
+        p.style_assets = _parse_style_assets(request.form)   # 写法资产特征池 + 开关
         profiles.update(p)
         return redirect(url_for("libraries.profile_list"))
     return render_template("edit_profile.html", profile=p, platform_labels=PLATFORM_LABELS)

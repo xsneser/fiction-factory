@@ -277,6 +277,30 @@ def api_book_diagnose(book_id):
         return jsonify({"error": str(e)}), 500
 
 
+# ═══ 历史快照（diff 审查 + 回滚；写工具落库前自动留底） ═══
+
+@bp.route("/api/book/<book_id>/snapshots")
+def api_book_snapshots(book_id):
+    """书详情：历史快照列表（新→旧）。"""
+    from libraries.book_snapshot import list_snapshots
+    return jsonify({"book_id": book_id, "snapshots": list_snapshots(book_id)})
+
+
+@bp.route("/api/book/<book_id>/snapshots/<snapshot_id>/diff")
+def api_book_snapshot_diff(book_id, snapshot_id):
+    """书详情：某次快照 vs 当前的 unified diff（决策点落库前的人审预览）。"""
+    from libraries.book_snapshot import preview_diff
+    return jsonify(preview_diff(book_id, snapshot_id))
+
+
+@bp.route("/api/book/<book_id>/snapshots/<snapshot_id>/rollback", methods=["POST"])
+def api_book_snapshot_rollback(book_id, snapshot_id):
+    """书详情：回滚到某次快照（回滚前先自动留底一次，防误回滚）。"""
+    from libraries.book_snapshot import snapshot as _snap, rollback as _rb
+    _snap(book_id, "rollback_backup")   # 回滚前留底，保证可逆
+    return jsonify(_rb(book_id, snapshot_id))
+
+
 @bp.route("/api/book/<book_id>/chapter/<int:chapter_num>/punch-points", methods=["POST"])
 def api_chapter_punch_points(book_id, chapter_num):
     """书详情：对指定章节跑爽点标注（tag_generator 规则层），落盘 tags.json 并返回。"""

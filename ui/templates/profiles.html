@@ -14,6 +14,10 @@
     {% if p.word_print.get('common_words') %}
     <p style="font-size:11px;margin-top:8px;color:#484f58">常用词: {{ p.word_print.common_words|join(', ') }}</p>
     {% endif %}
+    {% set sa = p.style_assets %}
+    {% if sa %}
+    <p style="font-size:11px;margin-top:8px;color:#484f58">写法资产: {% set en = sa.get('enabled', {}) %}{% for f in ['common_words','avoid_words','sentence_starters','action_beats'] %}{% if sa.get(f) and en.get(f, True) %}{{ f }} · {% endif %}{% endfor %}{% for k, v in en.items() %}{% if not v %}<span class="tag red">✕ {{ k }}</span>{% endif %}{% endfor %}</p>
+    {% endif %}
     <p style="font-size:11px;color:#484f58">关联: {{ p.assigned_books|length }} 本书</p>
     <div style="margin-top:8px;font-size:12px">
         {% set regs = p.registered_platforms() %}
