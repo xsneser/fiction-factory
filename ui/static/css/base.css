@@ -274,9 +274,7 @@
         /* ─── 设定编辑表单（详情页内嵌，world_card 迁移；类名加 .world-edit 作用域避免与全局 .form-row 冲突） ─── */
         .world-edit .toolbar { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
         @media (max-width:900px){ .world-edit .toolbar { grid-template-columns:1fr; } }
-        .world-edit fieldset { border:1px solid #30363d; border-radius:8px; padding:16px; margin-bottom:16px; }
-        /* 灰色背景放到「世界观」字段集框内 */
-        .world-edit fieldset.wb-world { background:#161b22; }
+        .world-edit fieldset { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px; margin-bottom:16px; }
         .world-edit legend { color:#58a6ff; font-weight:600; padding:0 8px; }
         /* 去掉全局 form 样式给 #world-form 套的外层灰框：仅保留字段集边框 */
         .world-edit form { background:transparent; border:0; border-radius:0; padding:0; margin:0; }
