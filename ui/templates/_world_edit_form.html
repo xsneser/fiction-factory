@@ -2,7 +2,7 @@
 <div class="world-edit">
     <div id="gen-status" class="gen-status"></div>
 
-    <form id="world-form" class="form-grid">
+    <div id="world-form" class="form-grid">
         <fieldset>
             <legend>🗺️ 世界观</legend>
             {# 一句话设定 description 已从书详情页移除（用户要求）：数据仍存
@@ -36,6 +36,26 @@
             </div>
         </fieldset>
 
+        {# ─── 故事线：Gantt 纯展示（写作台同款组件），无 timeline 回退结构大纲 ─── #}
+        {% if storyline and storyline.outlines %}
+        <h3>📋 故事线</h3>
+        <div class="sl-frame">
+            <div id="detail-storyline" style="height:100%;min-height:0;overflow:hidden"></div>
+        </div>
+        {% elif outline %}
+        <h3>📋 大纲结构</h3>
+        {% for stage in outline.get('stages', []) %}
+        <div class="accordion"><div class="accordion-header"><span>{{ stage.name }} — {{ stage.description }}</span><span style="color:#8b949e">{{ stage.min_chapters }}-{{ stage.max_chapters }}章</span></div>
+            <div class="accordion-body">
+                <p><strong>关键事件:</strong> {{ stage.key_events|join(', ') }}</p>
+                {% if stage.foreshadow_opportunities %}<p><strong>伏笔机会:</strong> {{ stage.foreshadow_opportunities|join(', ') }}</p>{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="empty"><div class="icon">📋</div><p>还没有大纲</p></div>
+        {% endif %}
+
         <fieldset>
             <legend>⚔️ 势力与人物</legend>
             <div id="wb-factions"></div>
@@ -45,41 +65,7 @@
             </div>
         </fieldset>
 
-        <fieldset>
-            <legend>🎭 基调</legend>
-            <div class="form-row half">
-                <div>
-                    <label>基调 tone</label>
-                    <select id="bi-tone">
-                        <option value="">（留空由 AI）</option>
-                        <option>轻松</option><option>沉重</option><option>热血</option><option>幽默</option>
-                    </select>
-                </div>
-                <div>
-                    <label>目标读者</label>
-                    <select id="bi-target_audience">
-                        <option value="">（留空由 AI）</option>
-                        <option>男频</option><option>女频</option>
-                    </select>
-                </div>
-            </div>
-            <div class="form-row half">
-                <div>
-                    <label>视角 pov</label>
-                    <select id="bi-pov">
-                        <option value="">（留空由 AI）</option>
-                        <option>第一人称</option><option>第三人称</option>
-                    </select>
-                </div>
-                <div>
-                    <label>时代语言 era_language</label>
-                    <input id="bi-era_language" placeholder="如：禁晚于2030年的网络新词">
-                </div>
-            </div>
-        </fieldset>
-
-        <div class="form-row hint">✍️ 修改自动保存（编辑后约 1 秒落盘）。「确认并进入大纲生成」已移除——可让侧栏 Agent 继续生成大纲。</div>
-    </form>
+    </div>
 </div>
 
 <script>
@@ -532,8 +518,6 @@ function biToForm(bi) {
     $('wb-rules').value = (wb.rules || []).join('\n'); autoSizeTextarea($('wb-rules'));
     renderCharCards(Array.isArray(bi.characters) ? bi.characters : legacyChars(bi));
     syncFactionMembers();
-    $('bi-tone').value = bi.tone || ''; $('bi-target_audience').value = bi.target_audience || '';
-    $('bi-pov').value = bi.pov || ''; $('bi-era_language').value = bi.era_language || '';
 }
 function formToBi() {
     // 标签是启动向导②选定的硬约束，此表单只读透传（保留原值）
@@ -552,8 +536,7 @@ function formToBi() {
         book_title: BOOK_TITLE,
         characters: collectCharCards(),
         world_building: wb,
-        tone: $('bi-tone').value, target_audience: $('bi-target_audience').value,
-        pov: $('bi-pov').value, era_language: $('bi-era_language').value,
+        // 基调/目标读者/视角/时代语言 在建书向导确定，此处不再编辑（保存接口深合并保留原值）
     };
 }
 
