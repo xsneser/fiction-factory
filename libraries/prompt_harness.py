@@ -55,6 +55,13 @@ CATEGORY_ENEMY_LOSS = {
 }
 DEFAULT_ENEMY_LOSS = "对手付出代价或计划受挫"
 
+# 角色档案字段分类（竞品借鉴：AI-NWA character_hard_facts）——
+# 硬事实不得写反；软倾向只作语气参考，不写成旁白确认的事实
+_HARD_FIELDS = ("identity", "faction", "power_level", "location")
+_SOFT_FIELDS = ("personality", "catchphrase", "mood", "brief")
+_HARD_LABELS = {"identity": "身份", "faction": "势力", "power_level": "境界/实力", "location": "位置"}
+_SOFT_LABELS = {"personality": "性格", "catchphrase": "口头禅", "mood": "情绪", "brief": "简介"}
+
 
 def _tail_paragraphs(text: str, max_chars: int = 150) -> str:
     """按 \n\n 取尾部完整段落，累计不超过 max_chars（P0-6 段落边界尾提取）。
@@ -671,8 +678,18 @@ class PromptHarness:
             parts.append(hooks[0] + " 落地")
         return "；".join(parts) if parts else ""
 
+    def _role_hard_soft(self, c: dict) -> tuple[str, str]:
+        """把角色档案拆成「硬事实 vs 软倾向」两段文案（中文标签）。"""
+        hard = [f"{_HARD_LABELS.get(f, f)}={str(c.get(f, ''))[:30]}" for f in _HARD_FIELDS if c.get(f)]
+        soft = [f"{_SOFT_LABELS.get(f, f)}={str(c.get(f, ''))[:30]}" for f in _SOFT_FIELDS if c.get(f)]
+        return "、".join(hard), "、".join(soft)
+
     def _roles_block(self, p) -> str:
-        """本桥段出场人物：性别/性格/惯用语句/简介（防性别指代错、保持角色声线）。"""
+        """本桥段出场人物：硬事实（身份/势力/境界/位置）+ 软倾向（性格/口头禅/简介）。
+
+        竞品借鉴：AI-NWA character_hard_facts——软倾向只作语气参考，
+        不写成旁白确认的事实（防「她字错误/身份穿帮」）。
+        """
         if not self.storyline:
             return ""
         bi = self.storyline.basic_info or {}
@@ -687,11 +704,14 @@ class PromptHarness:
         lines = []
         for rname in (p.roles or [])[:4]:
             if rname == mc_name:
+                hard, soft = self._role_hard_soft(protag)
                 seg = f"- {rname}（主角）"
                 if protag.get("gender"):
                     seg += f"[{protag['gender']}]"
-                if protag.get("personality"):
-                    seg += f"，性格{str(protag['personality'])[:40]}"
+                if hard:
+                    seg += f" 硬事实：{hard}"
+                if soft:
+                    seg += f"；软倾向：{soft}"
                 lines.append(seg)
             else:
                 c = cast_map.get(rname)
@@ -701,16 +721,15 @@ class PromptHarness:
                         seg += f"（{c['title']}）"
                     if c.get("gender"):
                         seg += f"[{c['gender']}]"
-                    if c.get("personality"):
-                        seg += f"，性格{str(c['personality'])[:40]}"
-                    if c.get("catchphrase"):
-                        seg += f"，口头禅「{str(c['catchphrase'])[:40]}」"
-                    if c.get("brief"):
-                        seg += f"，{str(c['brief'])[:40]}"
+                    hard, soft = self._role_hard_soft(c)
+                    if hard:
+                        seg += f" 硬事实：{hard}"
+                    if soft:
+                        seg += f"；软倾向：{soft}"
                 lines.append(seg)
         if not lines:
             return ""
-        return ("\n【本桥段出场人物——严格保持其性别/声线/口头禅，人称别写错】\n"
+        return ("\n【本桥段出场人物——硬事实不得写反；软倾向只作语气参考，不写成旁白确认的事实】\n"
                 + "\n".join(lines))
 
     def _roles_status_block(self, item) -> str:
@@ -752,7 +771,7 @@ class PromptHarness:
                     f"- 「{rname}」（{'主角的' + rel if rel else '配角'}）："
                     f"对{event_txt}做出符合其性格的反应，去向跟随剧情走向；"
                     f"给一句符合人设的言行或心声，与主角声线区分；"
-                    f"性格：{str(c.get('personality', ''))[:30] or '待定'}，"
+                    f"性格（软倾向，只作语气参考）：{str(c.get('personality', ''))[:30] or '待定'}，"
                     f"口头禅「{str(c.get('catchphrase', ''))[:20] or '无'}」")
         if not lines:
             return ""
