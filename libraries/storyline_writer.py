@@ -12,6 +12,7 @@
 
 旧"整本先写全文再分章"（BlueprintWritingPipeline）已废弃删除。
 """
+import json
 import re
 from collections import OrderedDict
 
@@ -353,7 +354,8 @@ class StorylineChapterWriter:
                 verdict = self._self_check_group(text, item)
                 if verdict.get("rewrite") or int(verdict.get("score", 10) or 10) < SELF_CHECK_THRESHOLD:
                     rewritten = self._rewrite_group_once(
-                        text, item, verdict.get("reason") or "质量未达标")
+                        text, item, verdict.get("reason") or "质量未达标",
+                        verdict.get("quote", ""))
                     if rewritten and rewritten != text:
                         text = rewritten
                         words = count_prose_units(text)
@@ -395,9 +397,13 @@ class StorylineChapterWriter:
 
     # ── 有界自评（设计文档 §2.3 设计 B）：flash 自检 + 限 1 次重写 ──
     def _self_check_group(self, text: str, item) -> dict:
-        """flash 自检：0-10 分 + 是否需重写 + 一句理由。失败返回高分放行，不打断写作。"""
+        """flash 自检：0-10 分 + 是否需重写 + 一句理由 + 问题句引文（quote）。
+
+        竞品借鉴：OpenNovel anchored hot-fix——重写时只修引文所在句子，不误伤整组。
+        失败返回高分放行，不打断写作。
+        """
         if not self.llm or not text:
-            return {"score": 10, "rewrite": False, "reason": ""}
+            return {"score": 10, "rewrite": False, "reason": "", "quote": ""}
         p = item.get("plot")
         bridge_name = getattr(p, "name", "") if p else ""
         prompt = (f"你是小说审校编辑。为下面这段网文正文打分（这是「{bridge_name}」桥段的一小段，"
@@ -405,8 +411,10 @@ class StorylineChapterWriter:
                   f"【检查要点】1) 有无AI腔/模板词（然而/不禁/仿佛/瞬间/顿时/缓缓/微微等）；"
                   f"2) 是否画面感强、靠动作/对话推进；3) 是否与桥段目标契合；"
                   f"4) 有无重复啰嗦/多角色同质化。\n"
+                  f"若 rewrite=true，必须指出具体问题句（quote：从正文摘录 20-50 字原文，"
+                  f"供定点重写）。\n"
                   f"返回 JSON：{{\"score\": 0-10的整数, \"rewrite\": true/false, "
-                  f"\"reason\": \"一句话理由\"}}")
+                  f"\"reason\": \"一句话理由\", \"quote\": \"问题句原文（20-50字）\"}}")
         try:
             from core.llm_client import extract_json
             raw = self.llm.call(
@@ -419,21 +427,32 @@ class StorylineChapterWriter:
                 score = 10
             return {"score": max(0, min(10, score)),
                     "rewrite": bool(data.get("rewrite", False)),
-                    "reason": str(data.get("reason", ""))[:80]}
+                    "reason": str(data.get("reason", ""))[:80],
+                    "quote": str(data.get("quote", ""))[:50]}
         except Exception:
-            return {"score": 10, "rewrite": False, "reason": ""}
+            return {"score": 10, "rewrite": False, "reason": "", "quote": ""}
 
-    def _rewrite_group_once(self, text: str, item, reason: str) -> str:
-        """有界自评重写：带自评提示重写一次（硬上限 1 次），失败/反而有重复词则返回原文。"""
+    def _rewrite_group_once(self, text: str, item, reason: str, quote: str = "") -> str:
+        """有界自评重写：带自评提示重写一次（硬上限 1 次），失败/反而有重复词则返回原文。
+
+        竞品借鉴：OpenNovel anchored hot-fix——有 quote 时只重写引文所在句子，
+        保留其余部分（不误伤整组）；无 quote 时整组重写（向后兼容）。
+        """
         p = item.get("plot")
         bridge_name = getattr(p, "name", "") if p else ""
         try:
-            raw = self.llm.call(
-                WRITER_SYSTEM,
-                f"上一段正文经审校未达标：{reason}\n\n【原正文】\n{text}\n\n"
-                f"请重写这一段：改进上述问题，仍写桥段「{bridge_name}」的正文，"
-                f"3-5 个句子（约150-250字），一句一行，只输出正文。",
-                temperature=0.7, max_tokens=WRITER_MAX_TOKENS)
+            if quote:
+                user = (f"上一段正文经审校未达标：{reason}\n\n"
+                        f"【原正文】\n{text}\n\n"
+                        f"【问题句引文】{quote}\n\n"
+                        f"请只重写引文所在的那一句/几句，保留其余部分不变，"
+                        f"仍写桥段「{bridge_name}」的正文，一句一行，只输出正文。")
+            else:
+                user = (f"上一段正文经审校未达标：{reason}\n\n【原正文】\n{text}\n\n"
+                        f"请重写这一段：改进上述问题，仍写桥段「{bridge_name}」的正文，"
+                        f"3-5 个句子（约150-250字），一句一行，只输出正文。")
+            raw = self.llm.call(WRITER_SYSTEM, user,
+                                temperature=0.7, max_tokens=WRITER_MAX_TOKENS)
             rewritten = (raw or "").strip().lstrip('"“')
             if not rewritten or has_repeated_token(rewritten):
                 return text
