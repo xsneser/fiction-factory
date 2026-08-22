@@ -37,8 +37,7 @@
         </fieldset>
 
         <fieldset>
-            <legend>🏛 势力与人物</legend>
-            <div class="form-row hint">先建势力（名称/立场/描述）。点势力卡下方「👥 人物」可展开/收起该势力的成员人物卡（在人物卡的「所属势力」里可改属）；未归属的人物收进底部「🏷（未归属）」卡。</div>
+            <legend>⚔️ 势力与人物</legend>
             <div id="wb-factions"></div>
             <div class="btn-row">
                 <button type="button" class="btn-secondary" onclick="addFactionRow()">➕ 添加势力</button>
@@ -136,11 +135,11 @@ function appendFactionRow(f) {
     row.className = 'faction-row faction-card';
     row.dataset.faction = f.name || '';
     row.style.cssText = 'margin:6px 0;padding:10px;border:1px solid #30363d;border-radius:8px;background:#0d1117';
-    row.innerHTML = '<div class="f-line" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
-        + '<input class="f-name" placeholder="势力名" value="' + esc(f.name || '') + '" style="flex:1;min-width:120px">'
-        + '<input class="f-stance" placeholder="立场（如：主角阵营/反派/中立）" value="' + esc(f.stance || '') + '" style="flex:1;min-width:130px">'
-        + '<input class="f-desc" placeholder="描述（可选）" value="' + esc(f.desc || '') + '" style="flex:2;min-width:160px">'
-        + '<button type="button" class="small" onclick="removeFactionRow(this)">✕</button>'
+    row.innerHTML = '<div class="f-line" style="display:flex;gap:8px;flex-wrap:wrap">'
+        + '<div style="flex:1;min-width:140px"><label>名称 name</label><input class="f-name" placeholder="势力名" value="' + esc(f.name || '') + '"></div>'
+        + '<div style="flex:1;min-width:150px"><label>立场 stance</label><input class="f-stance" placeholder="如：主角阵营/反派/中立" value="' + esc(f.stance || '') + '"></div>'
+        + '<div style="flex:2;min-width:180px"><label>描述 desc</label><input class="f-desc" placeholder="可选" value="' + esc(f.desc || '') + '"></div>'
+        + '<button type="button" class="small" style="align-self:flex-end" onclick="removeFactionRow(this)">✕</button>'
         + '</div>'
         + '<div class="f-members"></div>'
         + '<div class="f-char-toggle accordion-header"><span>👥 人物 <span class="f-char-count">0 人</span></span><span class="f-chev">▸</span></div>'

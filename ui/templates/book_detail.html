@@ -22,8 +22,10 @@
 
 <div class="detail-grid">
     <div class="detail-item"><div class="label">笔名</div><div class="value">{{ book.pen_name }}</div></div>
-    <div class="detail-item"><div class="label">流派</div><div class="value">{{ book.genre }}{% if book.sub_genre %} / {{ book.sub_genre }}{% endif %}</div></div>
-    <div class="detail-item"><div class="label">进度</div><div class="value">已写 {{ book.current_chapter }} 章</div></div>
+    <div class="detail-item"><div class="label">题材标签</div><div class="value">{% set wb = basic_info.get('world_building') or {} %}{% set tags = wb.get('tags') or [] %}{% if tags %}{{ tags|join('、') }}{% else %}{{ book.genre }}{% if book.sub_genre %} / {{ book.sub_genre }}{% endif %}{% endif %}</div></div>
+    <div class="detail-item"><div class="label">男频/女频</div><div class="value">{{ basic_info.get('target_audience') or '—' }}</div></div>
+    <div class="detail-item"><div class="label">基调/视角</div><div class="value">{{ basic_info.get('tone') or '—' }} · {{ basic_info.get('pov') or '—' }}</div></div>
+    <div class="detail-item"><div class="label">进度</div><div class="value">{{ book.total_words }} 字 · {{ book.current_chapter }}/{{ book.chapter_count }} 章</div></div>
     <div class="detail-item"><div class="label">状态</div><div class="value">{{ status_badge(book.status) }}</div></div>
 </div>
 
