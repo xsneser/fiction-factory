@@ -35,10 +35,13 @@
                   or wb.get('rules') or wb.get('tags')) %}
 {% if wb_show %}
     {% if wb.get('world_summary') %}<p style="color:#c9d1d9;margin-bottom:12px">{{ wb.get('world_summary') }}</p>{% endif %}
-    <div class="detail-grid">
+    <div>
         {% for label, key in [('核心矛盾','core_conflict'),('时代','era'),('力量体系','power_system'),('地理','geography'),('文化','culture'),('历史','history'),('社会结构','social_structure')] %}
         {% if wb.get(key) %}
-        <div class="detail-item"><div class="label">{{ label }}</div><div class="value">{{ wb.get(key) }}</div></div>
+        <div style="margin-bottom:12px">
+            <div style="color:#8b949e;font-size:12px;margin-bottom:4px">{{ label }}</div>
+            <div style="color:#c9d1d9">{{ wb.get(key) }}</div>
+        </div>
         {% endif %}
         {% endfor %}
     </div>
