@@ -469,7 +469,8 @@ class PromptHarness:
                              inspiration_hint: str = "",
                              is_opening: bool = False,
                              review_hint: str = "",
-                             chapter_num: int = 0) -> str:
+                             chapter_num: int = 0,
+                             chapter_participants: str = "") -> str:
         """返回 user prompt 字符串（system 沿用 storyline_writer 的铁律，不在本方法内）。
 
         item = {"outline": OutlineSlot, "stage": dict, "plot": PlotSlot}
@@ -577,6 +578,12 @@ class PromptHarness:
         # 分角色态势表：本桥段每个出场角色的行动方向/去向/内心/语气（规则层，零成本）
         roles_status_block = self._roles_status_block(item) if getattr(p, "roles", None) else ""
 
+        # 本章参与者（本弧其余桥段出场角色并集）——防逐桥段重复注入、防漏写后续才出场的人
+        chapter_participants_block = ""
+        if chapter_participants:
+            chapter_participants_block = ("\n【本章参与者】" + chapter_participants
+                                          + "\n（本章/本弧出场的全部角色，硬事实同样适用；本桥段精确出场见上）")
+
         bible = self.build_book_bible_condensed()
         bible_block = f"【CANON｜书级设定（简）】\n{bible}\n\n" if bible else ""
 
@@ -605,6 +612,7 @@ class PromptHarness:
 {hook_block}
 {roles_block}
 {roles_status_block}
+{chapter_participants_block}
 {theme_block}
 {payoff_block}
 {setup_block}

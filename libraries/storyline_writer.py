@@ -231,6 +231,28 @@ class StorylineChapterWriter:
             gags.append(g.name if g else gid)
         return gags
 
+    def _chapter_participants(self, item) -> str:
+        """本章/本弧参与者：当前大纲弧内所有桥段出场角色并集（紧凑名串，≤6 个）。
+
+        竞品借鉴：AI-NWA participant_subset——「按本章出场角色精准筛选」，
+        避免逐桥段重复注入、也覆盖本弧后续才出场的人。免费规则，零 LLM。
+        """
+        if not self.storyline:
+            return ""
+        o = item.get("outline") if isinstance(item, dict) else None
+        if not o:
+            return ""
+        seen, out = set(), []
+        for q in getattr(self.storyline, "plots", None) or []:
+            if getattr(q, "outline_id", "") != o.id:
+                continue
+            for r in (getattr(q, "roles", None) or []):
+                r = str(r or "").strip()
+                if r and r not in seen:
+                    seen.add(r)
+                    out.append(r)
+        return "、".join(out[:6]) if out else ""
+
     def _group_prompt(self, item, chapter_buffer, prev_ending, bridge_text,
                       budget_remaining, character_states="",
                       summaries_context="", inspiration_hint="",
@@ -251,7 +273,8 @@ class StorylineChapterWriter:
                 inspiration_hint=inspiration_hint,
                 is_opening=is_opening,
                 review_hint=review_hint,
-                chapter_num=chapter_num)
+                chapter_num=chapter_num,
+                chapter_participants=self._chapter_participants(item))
 
         # ── 回退：无 harness 时极简兜底（只保上下文+核心约束，防止双份模板漂移）──
         p = item["plot"]
