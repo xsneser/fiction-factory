@@ -5,14 +5,11 @@
 {% block content %}
 {% from "_flow_stepper.html" import status_badge %}
 <link rel="stylesheet" href="/static/css/story_line.css">
-<h1>📖 {{ book.title or '(待定)' }}</h1>
+<h1 id="book-title" style="cursor:pointer" title="点击编辑书名">📖 {{ book.title or '(待定)' }}</h1>
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
     {% if basic_info.get('has_storyline') %}
     <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 进入写作台</a>
-    {% endif %}
-    {% if book.current_chapter >= 1 %}
-    <a href="#" class="btn" style="background:#8957e5;color:#fff;text-decoration:none" onclick="generateMeta()">🎬 生成书名/简介</a>
     {% endif %}
     <a href="/books/{{ book.book_id }}/publish" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">🚀 上架 / 导出</a>
     <form method="POST" action="/books/{{ book.book_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ book.title }}》？')">
@@ -84,22 +81,66 @@ var storylineId = "{{ book.book_id }}";
 })();
 </script>
 <script>
-function generateMeta() {
-    if (!confirm('用第 1 章内容生成书名和简介？将覆盖当前书名/简介。')) return;
-    var btn = event.target;
-    btn.textContent = '⏳ 生成中...';
-    fetch('/api/book/{{ book.book_id }}/generate-meta', {method: 'POST'})
-        .then(function(r){ return r.json(); })
-        .then(function(d){
-            if (d.ok) {
-                flashToast('✅ 已生成书名：' + d.title + (d.synopsis ? '\n简介：' + d.synopsis : ''), 'success');
-                location.reload();
+/* 点击第一行书名就地编辑，回车/失焦自动保存；复用 save-basic-info 接口同步 book.title + storyline.book_title */
+var _titleEditing = false;
+function startEditTitle() {
+    var h1 = document.getElementById('book-title');
+    if (!h1) return;
+    var current = __BOOK_TITLE__ || (h1.textContent || '').replace(/^📖\s*/, '') || '';
+    var done = false;
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.value = current;
+    input.style.fontSize = '24px';      // 与 h1 字号一致，编辑时不跳变
+    input.style.width = '300px';
+    input.style.padding = '4px 10px';
+    input.title = '回车保存，Esc 取消';
+    h1.innerHTML = '';
+    h1.appendChild(input);
+    input.focus();
+    input.select();
+
+    function finish(saved) {
+        if (done) return;
+        done = true;
+        var title = saved ? saved : (__BOOK_TITLE__ || '(待定)');
+        h1.innerHTML = '📖 ' + escapeHtml(title);
+        _titleEditing = false;
+    }
+    function doSave() {
+        if (done) return;
+        var title = (input.value || '').trim();
+        if (!title) { finish(false); showToast('书名不能为空', 'error'); return; }
+        fetch('/api/storyline/' + BOOK_ID + '/save-basic-info', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({book_title: title})
+        }).then(function(r){ return r.json(); }).then(function(data) {
+            if (data.ok) {
+                __BOOK_TITLE__ = title;
+                finish(title);
+                var cur = document.querySelector('.crumbs .cur');
+                if (cur) cur.textContent = title;
+                showToast('✅ 书名已保存', 'success');
             } else {
-                showToast('生成失败：' + (d.error || '未知错误'), 'error');
-                btn.textContent = '🎬 生成书名/简介';
+                finish(false);
+                showToast('保存失败：' + (data.error || ''), 'error');
             }
-        })
-        .catch(function(e){ showToast('生成失败：' + e, 'error'); btn.textContent = '🎬 生成书名/简介'; });
+        }).catch(function(e) {
+            finish(false);
+            showToast('保存失败：' + e, 'error');
+        });
+    }
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+        else if (e.key === 'Escape') { finish(false); showToast('已取消', 'info'); }
+    });
+    input.addEventListener('blur', doSave);
 }
+var h1El = document.getElementById('book-title');
+if (h1El) h1El.addEventListener('click', function() {
+    if (_titleEditing) return;
+    _titleEditing = true;
+    startEditTitle();
+});
 </script>
 {% endblock %}

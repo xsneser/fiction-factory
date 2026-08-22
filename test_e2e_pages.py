@@ -270,23 +270,17 @@ def run_tests():
         check("Library ops has delete btn", "删除" in r.text,
               "library missing delete button")
 
-    # 书详情状态感知引导：planning 无章节书不应出现「🎬 生成书名/简介」按钮（需第1章）
+    # 书详情：原「🎬 生成书名/简介」按钮已删除，改为点击第一行书名就地编辑（id="book-title" + 回车/失焦保存）
     for bid in book_ids[:3] if book_ids else []:
         rd = get(f"/books/{bid}")
         if rd.status_code != 200:
             continue
-        btn = 'onclick="generateMeta()">🎬 生成书名/简介'
-        has_meta_btn = btn in rd.text
-        # 进度 "n/m 章" 从页面解析
-        import re as _re
-        m = _re.search(r'(\d+)\s*/\s*(\d+)\s*章', rd.text)
-        chapter = int(m.group(1)) if m else 0
-        if chapter == 0:
-            check(f"Planning book no generate-meta btn ({bid})", not has_meta_btn,
-                  "planning 书不应显示生成书名/简介按钮")
-        else:
-            check(f"Written book has generate-meta btn ({bid})", has_meta_btn,
-                  "已写书应显示生成书名/简介按钮")
+        check(f"Book detail no generate-meta btn ({bid})", 'generateMeta' not in rd.text,
+              "详情页不应再出现生成书名/简介按钮/脚本")
+        check(f"Book detail no meta btn label ({bid})", '🎬 生成书名/简介' not in rd.text,
+              "详情页不应再出现生成书名/简介文案")
+        check(f"Book detail title click-to-edit wired ({bid})", 'id="book-title"' in rd.text,
+              "详情页第一行书名应可点击编辑")
 
     # ═══ Storyline renderer consistency ═══
     # 方案4：服务端 Jinja 渲染的桥段卡应与 JS 重绘（renderPlotList）字段一致，
