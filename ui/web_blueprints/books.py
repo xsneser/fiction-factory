@@ -259,6 +259,24 @@ def api_book_promises(book_id):
     return jsonify(scan_promises(tl, chapters, cur))
 
 
+@bp.route("/api/book/<book_id>/diagnose", methods=["POST"])
+def api_book_diagnose(book_id):
+    """书详情：质量诊断（连续性/追读/承诺，规则层零成本聚合）。
+
+    复用 agent_tools 的三个 diagnose_*（MCP 同源），点按钮跑一次全量扫描。
+    """
+    import agent_tools
+    try:
+        return jsonify({
+            "continuity": agent_tools.diagnose_continuity(book_id),
+            "retention": agent_tools.diagnose_retention(book_id),
+            "promises": agent_tools.diagnose_promises(book_id),
+        })
+    except Exception as e:
+        logger.warning("诊断失败: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
 @bp.route("/api/book/<book_id>/chapter/<int:chapter_num>/punch-points", methods=["POST"])
 def api_chapter_punch_points(book_id, chapter_num):
     """书详情：对指定章节跑爽点标注（tag_generator 规则层），落盘 tags.json 并返回。"""
