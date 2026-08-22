@@ -124,8 +124,13 @@ class PenNameProfile:
             updated_at=d.get("updated_at", ""),
         )
 
+    @staticmethod
+    def _sa_enabled(sa: dict, key: str) -> bool:
+        """写法资产特征池开关：style_assets['enabled'][key]；缺省=启用（向后兼容）。"""
+        return bool((sa.get("enabled") or {}).get(key, True))
+
     def build_style_prompt(self) -> str:
-        """生成注入写作 prompt 的风格约束文本"""
+        """生成注入写作 prompt 的风格约束文本（按特征池启用集重编译）"""
         parts = ["【本笔名的风格约束——必须严格遵守】"]
         fp = self.style_fingerprint
         wp = self.word_print
@@ -153,16 +158,16 @@ class PenNameProfile:
         if wp.get("action_beats"):
             parts.append(f"- 动作节拍偏好：{', '.join(wp['action_beats'])}")
 
-        # 写法资产（从文本提取的风格特征）
+        # 写法资产（从文本提取的风格特征；按特征池 enabled 逐项编译）
         sa = self.style_assets
         if sa:
-            if sa.get("common_words"):
+            if sa.get("common_words") and self._sa_enabled(sa, "common_words"):
                 parts.append(f"- 写法资产·常用词：{', '.join(sa['common_words'])}")
-            if sa.get("avoid_words"):
+            if sa.get("avoid_words") and self._sa_enabled(sa, "avoid_words"):
                 parts.append(f"- 写法资产·需避免：{', '.join(sa['avoid_words'])}")
-            if sa.get("sentence_starters"):
+            if sa.get("sentence_starters") and self._sa_enabled(sa, "sentence_starters"):
                 parts.append(f"- 写法资产·句首偏好：{', '.join(sa['sentence_starters'])}")
-            if sa.get("action_beats"):
+            if sa.get("action_beats") and self._sa_enabled(sa, "action_beats"):
                 parts.append(f"- 写法资产·动作节拍：{', '.join(sa['action_beats'])}")
 
         if tr.get("chapter_hook_style"):

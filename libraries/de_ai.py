@@ -165,14 +165,28 @@ class DeAIEngine:
         result.processed = processed
         return result
 
-    def build_deai_prompt_snippet(self) -> str:
-        """生成可注入写作 prompt 的去 AI 味约束"""
+    def build_deai_prompt_snippet(self, profile=None) -> str:
+        """生成可注入写作 prompt 的去 AI 味约束（按特征池启用集重编译）。
+
+        profile 提供 style_assets 时，把启用的 avoid_words 并入禁词行（enabled=False 跳过）。
+        """
+        extra_ban = []
+        if profile is not None:
+            try:
+                sa = getattr(profile, "style_assets", None) or {}
+                if (sa.get("enabled") or {}).get("avoid_words", True):
+                    extra_ban = list(sa.get("avoid_words") or [])[:8]
+            except Exception:
+                extra_ban = []
+        ban_line = "- 禁止使用：仿佛、似乎、不禁、不由得、只见、但见、缓缓、顿时、竟然"
+        if extra_ban:
+            ban_line += "、" + "、".join(extra_ban)
         return (
             "\n【去AI味约束——写作时必须遵守】\n"
-            "- 禁止使用：仿佛、似乎、不禁、不由得、只见、但见、缓缓、顿时、竟然\n"
-            "- 对话用日常语气，不要文绉绉\n"
-            "- 每段 2-3 句，不要大段描写\n"
-            "- 内心独白可以口语化（如：靠、淦、这TM...）\n"
-            "- 不要所有句子主谓宾完整——偶尔留半截话\n"
-            "- 动作描写不要每句都带修饰副词\n"
+            + ban_line + "\n"
+            + "- 对话用日常语气，不要文绉绉\n"
+            + "- 每段 2-3 句，不要大段描写\n"
+            + "- 内心独白可以口语化（如：靠、淦、这TM...）\n"
+            + "- 不要所有句子主谓宾完整——偶尔留半截话\n"
+            + "- 动作描写不要每句都带修饰副词\n"
         )

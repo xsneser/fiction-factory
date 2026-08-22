@@ -1,13 +1,25 @@
 """写法资产化 — 从文本提取风格特征，可保存/组合/绑定笔名（规则层，零 LLM）。
 
 竞品借鉴：AI-NWA 写法引擎 / creative-writing-skills style-creator（最小可用版）。
-只做 extract_style_features + 落 profile，不做「特征池组合/重编译」。
+特征池：extract_style_features 提取 7 类特征 → 落 profile.style_assets（每类带 enabled
+开关）；build_style_prompt / build_deai_prompt_snippet 按启用集重编译（特征池组合）。
 """
 import re
 from collections import Counter
 
 from .de_ai import AI_WORD_MAP
 from .style_ban import STYLE_BAN_LIST
+
+# 写法资产特征池（7 类）：extract_style_features 输出与 profile.style_assets.enabled 键一致
+STYLE_ASSET_FEATURES = (
+    "sentence_length", "dialogue_ratio", "paragraph_style",
+    "common_words", "avoid_words", "sentence_starters", "action_beats",
+)
+
+
+def default_enabled() -> dict:
+    """特征池默认开关：全部启用（落盘 style_assets['enabled']；缺省即启用=向后兼容）。"""
+    return {k: True for k in STYLE_ASSET_FEATURES}
 
 # 中文单字停用字（过滤高频功能字）
 _STOP_CHARS = set(
