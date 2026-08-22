@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 41
+EXPECT_MCP_TOOLS = 47  # 44 + preview_diff/rollback_book/list_snapshots
 PASS, FAIL = [], []
 
 

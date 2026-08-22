@@ -1272,11 +1272,36 @@ def _wrap_book_lock(fn):
         if lock is not None and not lock.acquire(timeout=30.0, purpose=fn.__name__):
             raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
         try:
+            # 决策点落库前快照（commit 语义：写工具改前先留底，供 preview_diff/rollback）
+            if book_id:
+                try:
+                    from libraries.book_snapshot import snapshot as _book_snap
+                    _book_snap(book_id, fn.__name__)
+                except Exception:
+                    pass  # 快照失败不阻断写操作
             return fn(**kwargs)
         finally:
             if lock is not None:
                 lock.release()
     return wrapper
+
+
+def preview_diff(book_id: str, snapshot_id: str) -> dict:
+    """预览某次快照与当前书状态的差异（决策点落库前的 diff 审查，只读）。"""
+    from libraries.book_snapshot import preview_diff as _pd
+    return _pd(book_id, snapshot_id)
+
+
+def rollback_book(book_id: str, snapshot_id: str) -> dict:
+    """把书全量回滚到某次快照（恢复至快照时刻状态，谨慎使用）。"""
+    from libraries.book_snapshot import rollback as _rb
+    return _rb(book_id, snapshot_id)
+
+
+def list_snapshots(book_id: str) -> dict:
+    """列出某书的全部快照（新→旧）。"""
+    from libraries.book_snapshot import list_snapshots as _ls
+    return {"book_id": book_id, "snapshots": _ls(book_id)}
 
 
 def _build_registry():
@@ -1302,6 +1327,8 @@ def _build_registry():
         review_text, deai_text, extract_style_asset,
         diagnose_retention, tag_punch_points,
         diagnose_promises, diagnose_continuity,
+        # 快照 / diff / 回滚（决策点 commit 语义）
+        preview_diff, rollback_book, list_snapshots,
     ]
     seen = set()
     entries = []
