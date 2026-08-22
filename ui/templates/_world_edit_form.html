@@ -136,9 +136,9 @@ function appendFactionRow(f) {
     row.dataset.faction = f.name || '';
     row.style.cssText = 'margin:6px 0;padding:10px;border:1px solid #30363d;border-radius:8px;background:#0d1117';
     row.innerHTML = '<div class="f-line" style="display:flex;gap:8px;flex-wrap:wrap">'
-        + '<div style="flex:1;min-width:140px"><label>名称 name</label><input class="f-name" placeholder="势力名" value="' + esc(f.name || '') + '"></div>'
-        + '<div style="flex:1;min-width:150px"><label>立场 stance</label><input class="f-stance" placeholder="如：主角阵营/反派/中立" value="' + esc(f.stance || '') + '"></div>'
-        + '<div style="flex:2;min-width:180px"><label>描述 desc</label><input class="f-desc" placeholder="可选" value="' + esc(f.desc || '') + '"></div>'
+        + '<div style="flex:1;min-width:140px"><label>名称 name</label><textarea class="f-name" rows="1" style="overflow:hidden;resize:vertical;min-height:36px" oninput="autoSizeTextarea(this)">' + esc(f.name || '') + '</textarea></div>'
+        + '<div style="flex:1;min-width:150px"><label>立场 stance</label><textarea class="f-stance" rows="1" style="overflow:hidden;resize:vertical;min-height:36px" oninput="autoSizeTextarea(this)">' + esc(f.stance || '') + '</textarea></div>'
+        + '<div style="flex:2;min-width:180px"><label>描述 desc</label><textarea class="f-desc" rows="1" style="overflow:hidden;resize:vertical;min-height:36px" oninput="autoSizeTextarea(this)">' + esc(f.desc || '') + '</textarea></div>'
         + '<button type="button" class="small" style="align-self:flex-end" onclick="removeFactionRow(this)">✕</button>'
         + '</div>'
         + '<div class="f-members"></div>'
@@ -146,6 +146,8 @@ function appendFactionRow(f) {
         + '<div class="f-char-body accordion-body"></div>';
     var wrap = $('wb-factions');
     if (wrap) wrap.appendChild(row);
+    /* 初始渲染后按内容自动增高，避免多行文本被截断 */
+    row.querySelectorAll('textarea').forEach(function(t){ autoSizeTextarea(t); });
     return row;
 }
 function addFactionRow() {
