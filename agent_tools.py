@@ -1064,6 +1064,31 @@ def diagnose_promises(book_id: str) -> dict:
     return result
 
 
+def diagnose_continuity(book_id: str, recent_n: int = 5) -> dict:
+    """连续性扫描：系统绑定重复/人称性别/数值单次/时间过渡/角色离线/伏笔逾期
+    （规则层，零成本）。返回逐项 checks 与可行性标注（partial=弱启发仅供参考）。"""
+    book = book_mgr.get(book_id)
+    if not book:
+        raise RuntimeError(f"书 {book_id} 不存在")
+    chapters = []
+    start = max(1, book.current_chapter - recent_n + 1)
+    for n in range(start, book.current_chapter + 1):
+        ch = book_mgr.load_chapter(book_id, n)
+        if ch:
+            chapters.append({"num": n, "content": ch.get("content", "")})
+    if not chapters:
+        return {"issue_count": 0, "issues": [], "suggestions": ["尚无已写章节"],
+                "scanned_chapters": 0, "checks": {}}
+    tl = _require_tl(book_id)
+    from libraries.character_state import CharacterStateMachine
+    csm = CharacterStateMachine()
+    csm_path = os.path.join(_ROOT, "books", book_id, "character_states.json")
+    if os.path.exists(csm_path):
+        csm.load(csm_path)
+    from libraries.continuity import ContinuityChecker
+    return ContinuityChecker().check_all(tl, chapters, book.current_chapter or 0, csm)
+
+
 def tag_punch_points(book_id: str, chapter_num: int = 0) -> dict:
     """爽点标注：单章正文 → 爽点标签（打脸/升级/伏笔回收/装逼/甜宠/反转），
     chapter_num=0 用最近一章；结果落盘 books/<id>/tags.json。"""
@@ -1251,7 +1276,7 @@ def _build_registry():
         publish_check, mark_finished, publish_book, export_book,
         review_text, deai_text,
         diagnose_retention, tag_punch_points,
-        diagnose_promises,
+        diagnose_promises, diagnose_continuity,
     ]
     seen = set()
     entries = []
