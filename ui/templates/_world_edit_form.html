@@ -15,20 +15,20 @@
                 <textarea id="wb-world_summary" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea>
             </div>
             <div class="form-row half">
-                <div><label>时代 era</label><input id="wb-era"></div>
-                <div><label>力量体系 power_system</label><input id="wb-power_system"></div>
+                <div><label>时代 era</label><textarea id="wb-era" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea></div>
+                <div><label>力量体系 power_system</label><textarea id="wb-power_system" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea></div>
             </div>
             <div class="form-row half">
-                <div><label>地理 geography</label><input id="wb-geography"></div>
-                <div><label>文化 culture</label><input id="wb-culture"></div>
+                <div><label>地理 geography</label><textarea id="wb-geography" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea></div>
+                <div><label>文化 culture</label><textarea id="wb-culture" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea></div>
             </div>
             <div class="form-row half">
-                <div><label>历史 history</label><input id="wb-history"></div>
-                <div><label>社会结构 social_structure</label><input id="wb-social_structure"></div>
+                <div><label>历史 history</label><textarea id="wb-history" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea></div>
+                <div><label>社会结构 social_structure</label><textarea id="wb-social_structure" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea></div>
             </div>
             <div class="form-row">
                 <label>核心矛盾 core_conflict</label>
-                <input id="wb-core_conflict">
+                <textarea id="wb-core_conflict" rows="3" style="overflow:hidden;resize:vertical" oninput="autoSizeTextarea(this)"></textarea>
             </div>
             <div class="form-row">
                 <label>世界规则 rules</label>
@@ -524,6 +524,8 @@ function biToForm(bi) {
     $('wb-geography').value = wb.geography || ''; $('wb-culture').value = wb.culture || '';
     $('wb-history').value = wb.history || ''; $('wb-social_structure').value = wb.social_structure || '';
     $('wb-core_conflict').value = wb.core_conflict || '';
+    ['wb-era','wb-power_system','wb-geography','wb-culture','wb-history','wb-social_structure','wb-core_conflict']
+        .forEach(function(id){ autoSizeTextarea($(id)); });
     $('wb-world_summary').value = wb.world_summary || ''; autoSizeTextarea($('wb-world_summary'));
     renderFactions(wb.factions);
     $('wb-rules').value = (wb.rules || []).join('\n'); autoSizeTextarea($('wb-rules'));

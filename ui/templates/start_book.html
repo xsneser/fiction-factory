@@ -85,27 +85,27 @@
             <div class="form-row hint" id="wz-world-status">进入本步时已由 AI 自动补全，可手动微调。</div>
             <div class="form-row">
                 <label>一句话设定 description</label>
-                <textarea id="wz-wb-description" rows="2"></textarea>
+                <textarea id="wz-wb-description" rows="2" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea>
             </div>
             <div class="form-row">
                 <label>设定概述 world_summary</label>
-                <textarea id="wz-wb-world_summary" rows="3"></textarea>
+                <textarea id="wz-wb-world_summary" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea>
             </div>
             <div class="form-row half">
-                <div><label>时代 era</label><input id="wz-wb-era"></div>
-                <div><label>力量体系 power_system</label><input id="wz-wb-power_system"></div>
+                <div><label>时代 era</label><textarea id="wz-wb-era" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea></div>
+                <div><label>力量体系 power_system</label><textarea id="wz-wb-power_system" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea></div>
             </div>
             <div class="form-row half">
-                <div><label>地理 geography</label><input id="wz-wb-geography"></div>
-                <div><label>文化 culture</label><input id="wz-wb-culture"></div>
+                <div><label>地理 geography</label><textarea id="wz-wb-geography" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea></div>
+                <div><label>文化 culture</label><textarea id="wz-wb-culture" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea></div>
             </div>
             <div class="form-row half">
-                <div><label>历史 history</label><input id="wz-wb-history"></div>
-                <div><label>社会结构 social_structure</label><input id="wz-wb-social_structure"></div>
+                <div><label>历史 history</label><textarea id="wz-wb-history" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea></div>
+                <div><label>社会结构 social_structure</label><textarea id="wz-wb-social_structure" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea></div>
             </div>
             <div class="form-row">
                 <label>核心矛盾 core_conflict</label>
-                <input id="wz-wb-core_conflict">
+                <textarea id="wz-wb-core_conflict" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea>
             </div>
             <div class="form-row">
                 <label>势力 factions</label>
@@ -116,7 +116,7 @@
             </div>
             <div class="form-row">
                 <label>世界规则 rules</label>
-                <textarea id="wz-wb-rules" rows="3"></textarea>
+                <textarea id="wz-wb-rules" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea>
             </div>
             <div class="form-row hint">
                 <button type="button" class="btn-secondary" id="wz-refill" onclick="WZ.refillWorld()">✨ 重新补全</button>
@@ -265,6 +265,13 @@ var WZ = {
              _outline_picks: null, _outline_picks_names: null },
 
     el: function(id) { return document.getElementById(id); },
+
+    /* textarea 自动增高：内容多时完全展开，不出现滚动条 */
+    autoSize: function(el) {
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = (el.scrollHeight + 2) + 'px';
+    },
 
     show: function(n) {
         for (var i = 1; i <= 3; i++) {
@@ -660,6 +667,10 @@ var WZ = {
         this.el('wz-wb-world_summary').value = wb.world_summary || '';
         this.renderFactions(wb.factions || []);
         this.el('wz-wb-rules').value = (wb.rules || []).join('\n');
+        var self = this;
+        ['wz-wb-description','wz-wb-era','wz-wb-power_system','wz-wb-geography','wz-wb-culture',
+         'wz-wb-history','wz-wb-social_structure','wz-wb-core_conflict','wz-wb-world_summary','wz-wb-rules']
+            .forEach(function(id){ self.autoSize(self.el(id)); });
         this.el('wz-tone').value = bi.tone || '';
         this.el('wz-target_audience').value = bi.target_audience || '';
         this.el('wz-pov').value = bi.pov || '';
