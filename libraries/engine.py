@@ -960,11 +960,14 @@ class NovelEngine:
             summaries_context=summaries)
         result = None
         last_skip = {}
+        last_stall = {}
         try:
             while True:
                 evt = next(gen)
                 if evt.get("type") == "bridge_skip":
                     last_skip = evt
+                elif evt.get("type") == "repair_stalled":
+                    last_stall = evt
                 yield evt
         except StopIteration as si:
             result = si.value
@@ -974,6 +977,9 @@ class NovelEngine:
             if last_skip.get("code") == "budget_exhausted":
                 yield {"type": "budget_paused",
                        "message": last_skip.get("reason", "预算耗尽，暂停写作")}
+                return
+            # 连续修复失败 = 主动停：repair_stalled 事件已在循环中 yield，此处保留草稿待用户决策
+            if last_stall:
                 return
             # complete / 本章已满：若还有进行中的草稿，收尾固化为最后一章，避免半章文本丢失
             self._finalize_leftover_draft()

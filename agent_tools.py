@@ -933,6 +933,9 @@ def write_next_bridge(book_id: str) -> dict:
         return {"status": "complete", "message": last.get("message"), **snap}
     if t == "budget_paused":
         return {"status": "budget_paused", "message": last.get("message"), **snap}
+    if t == "repair_stalled":
+        return {"status": "repair_stalled",
+                "message": last.get("reason") or last.get("message", "连续修复失败，暂停写作"), **snap}
     # 桥段已写但未切章（或草稿收尾）：给出已产出的桥段数
     return {"status": "bridge_written", "last_event": t,
             "bridge_done_count": sum(1 for e in events if e.get("type") == "bridge_done"),

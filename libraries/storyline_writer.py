@@ -25,6 +25,7 @@ MAX_BRIDGE_WORDS = 1200       # 单个桥段字数上限（与 frontend story_li
 WRITER_MAX_TOKENS = 1600      # 桥段写作输出上限：3-5 短句正文 + flash 推理余量
                               # （flash 先推理再输出，推理过长会吃掉 max_tokens 导致 content 为空）
 WRITER_EMPTY_RETRIES = 2      # 写作空响应重试次数（模型偶发返回空内容）
+REPAIR_STALL_THRESHOLD = 3    # 连续失败阈值：空响应/重写无改善累计达此值 → repair_stalled 主动停
 OPENING_WORD_LIMIT = 800      # 炸裂开场：第一章前 800 字
 OPENING_MAX_BRIDGES = 3       # 且最多前 3 个桥段
 
@@ -155,6 +156,7 @@ class StorylineChapterWriter:
         self.gag_injector = gag_injector  # GagInjector：灵机一动探测环（可为 None）
         self.book_id = book_id
         self.detector_frequency = detector_frequency
+        self._repair_failures = 0  # 连续失败计数（空响应/重写无改善）；达 REPAIR_STALL_THRESHOLD → repair_stalled
         self.budget_checker = budget_checker  # 预算门控：callable 返回剩余预算（元），None=不限制
         self.review_hint = ""  # 上一章规则审查（reviewer）未过的修复提示：一次性注入首个桥段，用完即清
         # 本章输入 prompt 累计（供成本计量）；跨桥段累计、跨章重置
@@ -402,15 +404,27 @@ class StorylineChapterWriter:
                     continue          # 疑似错词 → 重写一档
                 break
             if not text:
-                break
+                # 空响应保护失败：连续达阈值 → 主动停（对齐 AI-NWA「遇错主动停」），不静默吞掉
+                self._repair_failures += 1
+                if self._repair_failures >= REPAIR_STALL_THRESHOLD:
+                    yield ("repair_stalled",
+                           f"连续 {self._repair_failures} 次未产出正文（空响应），暂停写作，请检查后继续", 0)
+                    return
+                continue  # 未达阈值：换下一组重试（跨组累计失败次数）
             # 未自然收束续写（deep-novel-system append≤N）：组尾被截断时补到自然收尾
             if not _ends_naturally(text):
                 text = self._complete_unnatural_end(text, item)
             words = count_prose_units(text)
             if words <= 0:
-                break
-            # 有界自评（P3）：flash 自检 0-10 分 + 是否重写，低分/标记重写 → 重写 1 次（硬上限），
-            # 仍低或重写失败则原样落盘（不循环重试，成本有界）
+                self._repair_failures += 1
+                if self._repair_failures >= REPAIR_STALL_THRESHOLD:
+                    yield ("repair_stalled",
+                           f"连续 {self._repair_failures} 次未产出正文，暂停写作，请检查后继续", 0)
+                    return
+                continue
+            # 有界自评（P3）：flash 自检 0-10 分 + 是否重写，低分/标记重写 → 重写 1 次（硬上限）；
+            # 连续多次重写无改善 → repair_stalled 主动停（而非静默回落原文），保持成本有界
+            repair_ok = True
             if SELF_CHECK_ENABLED:
                 verdict = self._self_check_group(text, item)
                 if verdict.get("rewrite") or int(verdict.get("score", 10) or 10) < SELF_CHECK_THRESHOLD:
@@ -421,7 +435,17 @@ class StorylineChapterWriter:
                         text = rewritten
                         words = count_prose_units(text)
                         if words <= 0:
-                            break
+                            repair_ok = False
+                    else:
+                        repair_ok = False  # 重写无改善 → 记为一次修复失败
+            if repair_ok:
+                self._repair_failures = 0
+            else:
+                self._repair_failures += 1
+                if self._repair_failures >= REPAIR_STALL_THRESHOLD:
+                    yield ("repair_stalled",
+                           f"连续 {self._repair_failures} 次修复无改善，暂停写作，请检查后继续", 0)
+                    return
             bridge_text += text
             bridge_words += words
             last_groups.append(text)
@@ -598,6 +622,9 @@ class StorylineChapterWriter:
                        "reason": text.get("reason", ""),
                        "deploy_hint": text.get("deploy_hint", "")}
                 continue
+            if kind == "repair_stalled":
+                yield {"type": "repair_stalled", "plot_id": p.id, "reason": text}
+                return
             seg_parts.append(text)
             seg_words += words
             yield {"type": "group_chunk", "plot_id": p.id, "text": text, "words": words,
