@@ -301,6 +301,37 @@ def api_book_snapshot_rollback(book_id, snapshot_id):
     return jsonify(_rb(book_id, snapshot_id))
 
 
+@bp.route("/api/book/<book_id>/chapter/<int:chapter_num>/review", methods=["POST"])
+def api_chapter_review(book_id, chapter_num):
+    """书内一键审查本章（ContentReviewer 规则层）。"""
+    ch = book_mgr.load_chapter(book_id, chapter_num)
+    if not ch or not ch.get("content"):
+        return jsonify({"ok": False, "error": f"第{chapter_num}章无正文"}), 400
+    from libraries.reviewer import ContentReviewer
+    r = ContentReviewer().review(ch["content"], chapter_num=chapter_num)
+    return jsonify({
+        "ok": True, "passed": r.passed, "score": r.score, "summary": r.summary,
+        "issues": [{"severity": i.severity, "category": i.category,
+                    "description": i.description, "location": i.location,
+                    "suggestion": i.suggestion} for i in r.issues],
+    })
+
+
+@bp.route("/api/book/<book_id>/chapter/<int:chapter_num>/deai", methods=["POST"])
+def api_chapter_deai(book_id, chapter_num):
+    """书内一键去AI味本章（DeAIEngine 规则层）。"""
+    ch = book_mgr.load_chapter(book_id, chapter_num)
+    if not ch or not ch.get("content"):
+        return jsonify({"ok": False, "error": f"第{chapter_num}章无正文"}), 400
+    from libraries.de_ai import DeAIEngine
+    r = DeAIEngine().process_rule_based(ch["content"])
+    return jsonify({"ok": True, "processed": r.processed,
+                    "word_replacements": r.word_replacements,
+                    "sentences_split": r.sentences_split,
+                    "llm_rewritten": r.llm_rewritten,
+                    "processed_length": len(r.processed)})
+
+
 @bp.route("/api/book/<book_id>/chapter/<int:chapter_num>/punch-points", methods=["POST"])
 def api_chapter_punch_points(book_id, chapter_num):
     """书详情：对指定章节跑爽点标注（tag_generator 规则层），落盘 tags.json 并返回。"""

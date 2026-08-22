@@ -74,6 +74,43 @@ function doRollback(sid){
         }).catch(function(){ showToast('回滚请求失败', 'error'); });
 }
 
+/* 🔍 审查本章 / 🧹 去AI本章（书详情章节内一键跑） */
+function runChapterReview(n){
+    var el = document.getElementById('rp-review-'+n); if(!el) return;
+    el.innerHTML = '<span class="hint">审查中…</span>';
+    fetch('/api/book/'+window.BOOK_ID+'/chapter/'+n+'/review', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if(!d.ok){ el.innerHTML = '<span class="tag red">'+_rp_esc(d.error||'审查失败')+'</span>'; return; }
+            var cls = d.passed ? 'green' : 'red';
+            var issues = (d.issues||[]).map(function(i){
+                var sev = i.severity === 'error' ? 'red' : (i.severity === 'warning' ? 'yellow' : 'blue');
+                return '<div style="font-size:12px;padding:2px 0"><span class="tag '+sev+'">'+_rp_esc(i.severity||'info')+'</span> '
+                    + _rp_esc(i.description||'')
+                    + (i.location ? ' <span style="color:var(--fg-dim)">'+_rp_esc(i.location)+'</span>' : '')
+                    + '</div>';
+            }).join('');
+            el.innerHTML = '<span class="tag '+cls+'">🔍 '+d.score+'分'+(d.passed?' 通过':' 未过')+'</span>'
+                + (d.summary ? ' <span style="color:var(--fg-dim);font-size:12px">'+_rp_esc(d.summary)+'</span>' : '')
+                + (issues ? '<div style="margin-top:4px">'+issues+'</div>' : '');
+        })
+        .catch(function(){ el.innerHTML = '<span class="tag red">审查请求失败</span>'; });
+}
+function runChapterDeai(n){
+    var el = document.getElementById('rp-deai-'+n); if(!el) return;
+    el.innerHTML = '<span class="hint">去AI中…</span>';
+    fetch('/api/book/'+window.BOOK_ID+'/chapter/'+n+'/deai', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if(!d.ok){ el.innerHTML = '<span class="tag red">'+_rp_esc(d.error||'去AI失败')+'</span>'; return; }
+            el.innerHTML = '<span class="tag green">🧹 替换 '+d.word_replacements+' 处</span>'
+                + '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px;color:var(--fg-muted)">展开处理结果（'+d.processed_length+' 字）</summary>'
+                + '<pre style="white-space:pre-wrap;font-size:12px;background:var(--bg-inset);border:1px solid var(--border-soft);padding:8px;max-height:300px;overflow:auto;margin-top:4px">'+_rp_esc(d.processed)+'</pre>'
+                + '</details>';
+        })
+        .catch(function(){ el.innerHTML = '<span class="tag red">去AI请求失败</span>'; });
+}
+
 /* 🔍 质量诊断：连续性/追读/承诺（规则层，点按钮跑一次） */
 function runDiagnose(){
     var el = document.getElementById('rp-diag'); if(!el) return;

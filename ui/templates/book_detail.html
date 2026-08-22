@@ -65,8 +65,14 @@ var storylineId = "{{ book.book_id }}";
         </p>
         {% endif %}
         <div id="rp-tags-{{ ch.num }}" class="rp-tags" style="margin:6px 0;min-height:18px"></div>
+        <div id="rp-review-{{ ch.num }}" style="margin:6px 0"></div>
+        <div id="rp-deai-{{ ch.num }}" style="margin:6px 0"></div>
         <pre style="white-space:pre-wrap;max-height:480px;overflow-y:auto">{{ ch.content }}</pre>
-        <div style="margin-top:6px"><button type="button" class="small" onclick="runPunchPoints({{ ch.num }})">💥 标注爽点</button></div>
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+            <button type="button" class="small" onclick="runPunchPoints({{ ch.num }})">💥 标注爽点</button>
+            <button type="button" class="small" onclick="runChapterReview({{ ch.num }})">🔍 审查本章</button>
+            <button type="button" class="small" onclick="runChapterDeai({{ ch.num }})">🧹 去AI本章</button>
+        </div>
     </div>
 </div>
 {% endfor %}
