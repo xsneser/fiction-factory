@@ -299,6 +299,12 @@
         .world-edit .accordion:first-child { border-top:0; margin-top:0; }
         .world-edit .accordion-header { padding:8px 0; }
         .world-edit .accordion-body { padding:0; }
+        /* 势力行成员区：姓名 tag + 「＋ 添加成员」下拉（势力↔人物双向联动） */
+        .world-edit .f-members { display:flex; align-items:center; gap:6px; margin-top:6px; flex-wrap:wrap; font-size:12px; color:#8b949e; }
+        .world-edit .f-member-tag { background:#21262d; border:1px solid #30363d; border-radius:12px; padding:1px 8px; color:#c9d1d9; display:inline-flex; align-items:center; gap:4px; }
+        .world-edit .f-rm { cursor:pointer; color:#8b949e; }
+        .world-edit .f-rm:hover { color:#f85149; }
+        .world-edit .f-add-member { font-size:12px; padding:2px 6px; max-width:180px; }
 
         /* ─── 大纲可编辑卡片（详情页内嵌，与写作台共用 storyline_outline_card.html） ─── */
         .outline-list { display:flex; flex-direction:column; gap:10px; margin:12px 0; }
