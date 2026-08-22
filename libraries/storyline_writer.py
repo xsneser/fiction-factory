@@ -53,12 +53,27 @@ def planned_words(plot) -> int:
     return min(beats * CHARS_PER_BEAT, MAX_BRIDGE_WORDS)
 
 
-_SENT_END = re.compile(r'(?<=[。！？…!?])')
+# 句尾 = 句末标点（。！？…!?，连续标点如「……」整体）+ 可选右引号（"」』’），
+# 防「草！」" 在引号处被切开成孤立引号段（引号孤行 bug，archive 审查报告实测复现）
+_SENT_RE = re.compile(r'[^。！？…!?]*[。！？…!?]+["」』’]*')
 
 
 def _split_sentences(text: str) -> list:
-    """按句末标点切分句子（保留标点）。"""
-    return [s.strip() for s in _SENT_END.split(text) if s.strip()]
+    """按句末标点切分句子（保留标点与收尾右引号）。"""
+    if not text:
+        return []
+    parts, consumed = [], 0
+    for m in _SENT_RE.finditer(text):
+        seg = m.group(0).strip()
+        consumed += len(m.group(0))
+        if seg:
+            parts.append(seg)
+    # 尾部无句末标点的残留（对话被截断等）单独成句
+    if consumed < len(text):
+        tail = text[consumed:].strip()
+        if tail:
+            parts.append(tail)
+    return parts
 
 
 # 连续重复词检测（"底下底下""的的"等 LLM 复读；笑声/拟声叠词白名单放行）

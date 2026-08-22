@@ -56,6 +56,26 @@ CATEGORY_ENEMY_LOSS = {
 DEFAULT_ENEMY_LOSS = "对手付出代价或计划受挫"
 
 
+def _tail_paragraphs(text: str, max_chars: int = 150) -> str:
+    """按 \n\n 取尾部完整段落，累计不超过 max_chars（P0-6 段落边界尾提取）。
+
+    替代 prev_ending[-150:] 字符硬截断：保证上下文以完整段落收尾，
+    不把一句话从中间切断；单段超长时保留其尾部（最近内容优先），守住上限。
+    """
+    paras = [p.strip() for p in (text or "").split("\n\n") if p.strip()]
+    if not paras:
+        return ""
+    out, total = [], 0
+    for p in reversed(paras):
+        if total + len(p) > max_chars:
+            if not out:
+                return p[-max_chars:]
+            break
+        out.append(p)
+        total += len(p)
+    return "\n\n".join(reversed(out))
+
+
 # 炸裂开场（第一章前 N 桥段强制）—— 番茄/飞卢式冷开场铁律
 # 素材来源：beat_writer 危机/悬念开场、build_chapter1_prompt、番茄平台约束、开篇桥段 usage_notes
 OPENING_MODE_RULES = """【开场模式 — 炸裂开场（第一章开篇桥段强制）】
@@ -443,7 +463,7 @@ class PromptHarness:
         # 前文上下文（修复：原 _group_prompt 的 character_states 形参未被渲染）
         ctx = []
         if prev_ending:
-            ctx.append("【上一章结尾】" + prev_ending[-150:])
+            ctx.append("【上一章结尾】" + _tail_paragraphs(prev_ending))
         if chapter_buffer:
             ctx.append("【本章已写正文】" + chapter_buffer[-900:])
         if bridge_text:
