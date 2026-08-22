@@ -240,6 +240,8 @@
         .detail-item { background:#161b22; padding:16px; border-radius:6px; border:1px solid #30363d; }
         .detail-item .label { font-size:11px; color:#8b949e; }
         .detail-item .value { font-size:18px; font-weight:bold; margin-top:4px; }
+        /* 内容块灰卡（详情页只读板块容器，elevated 面板与深色页底分隔） */
+        .block-card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px; margin-bottom:20px; }
         /* Progress */
         .progress-bar { height:8px; background:#30363d; border-radius:4px; overflow:hidden; margin:8px 0; }
         .progress-fill { height:100%; background:#238636; border-radius:4px; transition:width .3s; }

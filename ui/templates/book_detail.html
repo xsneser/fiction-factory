@@ -33,6 +33,7 @@
 {% set wb_show = (wb.get('world_summary') or wb.get('core_conflict') or wb.get('era') or wb.get('power_system')
                   or wb.get('geography') or wb.get('culture') or wb.get('history') or wb.get('social_structure')
                   or wb.get('rules') or wb.get('tags')) %}
+<div class="block-card">
 {% if wb_show %}
     {% if wb.get('world_summary') %}<p style="color:#c9d1d9;margin-bottom:12px">{{ wb.get('world_summary') }}</p>{% endif %}
     <div>
@@ -68,6 +69,7 @@
 {% else %}
 <div class="empty"><div class="icon">🌍</div><p>还没有世界观设定</p></div>
 {% endif %}
+</div>
 
 {# ─── 势力与人物（只读，人物按所属势力归组） ─── #}
 {% macro char_profile(c) %}
@@ -115,6 +117,7 @@
 {% set _tmp = _tmp | sort %}
 {% set sorted_chars = [] %}
 {% for t in _tmp %}{% set _ = sorted_chars.append(t[2]) %}{% endfor %}
+<div class="block-card">
 {% if not faction_objs and not sorted_chars %}
 <div class="empty"><div class="icon">🏛</div><p>还没有势力与人物</p></div>
 {% else %}
@@ -150,6 +153,7 @@
     </div>
     {% endif %}
 {% endif %}
+</div>
 
 {% if basic_info.get('synopsis') %}
 <h3>📝 简介</h3>
