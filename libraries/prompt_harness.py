@@ -521,8 +521,8 @@ class PromptHarness:
         if item.get("resolver_name"):
             setup_block = ("\n【设局桥段】为『" + str(item.get("resolver_name")) +
                            "』埋钩子，结尾留一个明确未解决的悬念。")
-        # 读者承诺台账：本桥段要兑现的 / 已逾期的 / 活跃可推进的（免费规则）
-        promises_block = self._promises_block(p, chapter_num) if chapter_num else ""
+        # 读者承诺合同：本章必达 / 本桥段收束 / 已逾期 / 必出场角色 / 读者可见变化（免费规则）
+        promises_block = self._promises_block(p, chapter_num, events) if chapter_num else ""
         # 写前编辑诊断：本节要达到什么（读者欲望/爽点/敌人损失/追更理由）
         diag_block = self._pre_write_diagnosis(p, stage_name)
 
@@ -608,10 +608,12 @@ class PromptHarness:
             f"- 章尾追更理由：本节结尾留一个具体悬念，让读者想知道「接下来会怎样」\n\n"
         )
 
-    def _promises_block(self, p, chapter_num: int) -> str:
-        """读者承诺台账块：本桥段要兑现的、已逾期的、活跃可推进的（免费规则，从 storyline.promises 现算）。
+    def _promises_block(self, p, chapter_num: int, events=None) -> str:
+        """读者承诺合同块：本章必达 / 本桥段收束 / 已逾期 / 必出场角色 / 读者可见变化。
 
-        模拟人类作者的"伏笔账本"：写前扫一眼还有哪些欠读者没还、哪个逾期了。
+        竞品借鉴：AI-NWA obligation_contract + reader_experience（简化版）。
+        免费规则，从 storyline.promises 现算——模拟人类作者的"伏笔账本"：
+        写前扫一眼还有哪些欠读者没还、哪个逾期了、本章必须兑现什么。
         """
         if not self.storyline:
             return ""
@@ -621,12 +623,17 @@ class PromptHarness:
             return ""
         resolving = [q for q in active
                      if q.get("setup_plot_id") and q.get("setup_plot_id") == getattr(p, "resolves_plot_id", "")]
+        must_hit = [q for q in active
+                    if (q.get("deadline_chapter") or 0) == chapter_num]
         overdue = [q for q in active
                    if (q.get("deadline_chapter") or 0) and (q.get("deadline_chapter") or 0) < chapter_num]
-        reserved = {id(q) for q in resolving} | {id(q) for q in overdue}
+        reserved = {id(q) for q in resolving} | {id(q) for q in must_hit} | {id(q) for q in overdue}
         others = [q for q in active if id(q) not in reserved][:2]
 
         lines = []
+        if must_hit:
+            lines.append("本章必达：兑现「" + (must_hit[0].get("desc", "") or "前文钩子")
+                         + "」，本章内必须让读者看到结果/推进。")
         if resolving:
             lines.append("本桥段收束：兑现读者承诺「" + (resolving[0].get("desc", "") or "前文钩子")
                          + "」，给出结果/反转、补上闭环。")
@@ -636,9 +643,33 @@ class PromptHarness:
         if others:
             lines.append("活跃读者承诺（可择机自然推进）："
                          + "；".join((q.get("desc", "") or "钩子") for q in others))
+        # 必出场角色：承诺 desc 里提到的本桥段角色（兑现承诺的关键人物）
+        required_roles = [r for r in (p.roles or [])
+                          if any(r in (q.get("desc", "") or "") for q in active)]
+        if required_roles:
+            lines.append("必出场角色：" + "、".join(required_roles[:3])
+                         + "（兑现承诺的关键人物，本章必须出场）")
+        # 读者可见变化（netChange）：本桥段读者应看到什么变了
+        net_change = self._net_change_block(p, events)
+        if net_change:
+            lines.append("读者可见变化：" + net_change)
         if not lines:
             return ""
         return "【读者承诺台账】\n" + "\n".join(lines) + "\n\n"
+
+    def _net_change_block(self, p, events=None) -> str:
+        """读者可见变化（netChange）：本桥段读者应看到什么变了。
+
+        从 stage events + p.hook_points 推导（免费规则，不调 LLM）。
+        """
+        parts = []
+        evs = [str(e) for e in (events or []) if e][:2]
+        if evs:
+            parts.append("、".join(evs) + " 有结果")
+        hooks = list(getattr(p, "hook_points", None) or [])
+        if hooks:
+            parts.append(hooks[0] + " 落地")
+        return "；".join(parts) if parts else ""
 
     def _roles_block(self, p) -> str:
         """本桥段出场人物：性别/性格/惯用语句/简介（防性别指代错、保持角色声线）。"""
