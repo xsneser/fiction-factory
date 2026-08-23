@@ -74,8 +74,13 @@ def publish_page(book_id):
     except Exception:
         storyline = None
     report = _publisher().build_report(book, storyline=storyline, outline=outline)
+    # 题材标签（建书向导选定，存于 world_building.tags）；无标签的老书回退书级 genre
+    tags = []
+    if storyline and (storyline.basic_info or {}):
+        tags = ((storyline.basic_info.get("world_building") or {}).get("tags") or [])
+    tags_str = "、".join(tags) or book.genre or ""
     return render_template("publish.html", book=book, report=report,
-                           storyline=storyline, outline=outline)
+                           storyline=storyline, outline=outline, tags=tags_str)
 
 
 @bp.route("/api/books/<book_id>/publish-check", methods=["POST"])

@@ -11,8 +11,7 @@
 {{ info_bar(
     title=book.title or '(待定)',
     pen_name=book.pen_name,
-    genre=book.genre,
-    sub_genre=book.sub_genre or '',
+    tags=tags,
     platform=book.platform,
     progress=(book.current_chapter ~ ' / ' ~ book.chapter_count ~ ' 章'),
     status_html=status_badge(book.status),

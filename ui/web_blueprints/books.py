@@ -88,8 +88,15 @@ def _book_rows():
             continue
         sl = book_mgr.load_storyline(b.book_id)
         outline = book_mgr.get_outline(b.book_id)
+        # 题材标签（建书向导选定，存于 world_building.tags）；无标签的老书回退书级 genre
+        tags = []
+        if sl and (sl.basic_info or {}):
+            tags = ((sl.basic_info.get("world_building") or {}).get("tags") or [])
+        if not tags and b.genre:
+            tags = [b.genre]
         row = {
             "book": b,
+            "tags": tags,
             "has_storyline": sl is not None,
             "storyline_outlines": len(sl.outlines) if sl else 0,
             "storyline_plots": len(sl.plots) if sl else 0,

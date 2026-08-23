@@ -1,11 +1,11 @@
 {# ─── 书信息条（共享 partial）：写作台 / 上架页共用，消除 info-bar 重复 ─── #}
 {% from "_flow_stepper.html" import status_badge %}
 
-{% macro info_bar(title, pen_name, genre, sub_genre='', platform='', progress='', status_html='', extra='') -%}
+{% macro info_bar(title, pen_name, tags='', platform='', progress='', status_html='', extra='') -%}
 <div class="info-bar">
     <span>书名：<strong>{{ title }}</strong></span>
     <span>笔名：<strong>{{ pen_name }}</strong></span>
-    {% if genre %}<span>流派：<strong>{{ genre }}{% if sub_genre %}/{{ sub_genre }}{% endif %}</strong></span>{% endif %}
+    {% if tags %}<span>题材：<strong>{{ tags }}</strong></span>{% endif %}
     {% if platform %}<span>平台：<strong>{{ platform }}</strong></span>{% endif %}
     {% if progress %}<span>进度：<strong>{{ progress }}</strong></span>{% endif %}
     {% if status_html %}<span>状态：{{ status_html|safe }}</span>{% endif %}

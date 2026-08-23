@@ -29,7 +29,7 @@
         <p><strong>口癖示例:</strong> {% for c in a.catchphrases %}<span class="tag yellow">「{{ c }}」</span>{% endfor %}</p>
         {% endif %}
         {% if a.fit_genres %}
-        <p><strong>适配流派:</strong> {% for g in a.fit_genres %}<span class="tag green">{{ g }}</span>{% endfor %}</p>
+        <p><strong>适配题材:</strong> {% for g in a.fit_genres %}<span class="tag green">{{ g }}</span>{% endfor %}</p>
         {% endif %}
         <p style="color:#484f58;font-size:11px">
             收录: {{ a.created_at }}
