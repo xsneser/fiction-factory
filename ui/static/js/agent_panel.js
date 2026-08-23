@@ -1,19 +1,21 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v18 events-stream');
+console.log('[agent-panel] v19 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
     var sendBtn = document.getElementById('agent-send');
     var clearBtn = document.getElementById('agent-clear');
     var stopBtn = document.getElementById('agent-stop');
+    var tokenFlowEl = document.getElementById('agent-token-flow');
     var toolsLog = document.getElementById('agent-tools-log');
     if (!chat || !input || !sendBtn) return;   // 布局缺失则静默跳过
 
     var HISTORY_KEY = 'ne_agent_history';
     var HISTORY_LIMIT = 40;
     var busy = false;
+    var sessionTokens = 0;                      // 当前任务累计 token 流量（每个 tool_call 的 usage 相加；新任务/清空重置）
     var activeSse = false;                      // 是否有活跃 SSE 会话（活跃时 busy 由事件流管理；刷新后无 SSE 则区分后台任务）
     var pendingTask = null;                     // busy 时排队待发任务（done 后接力）
     var currentToolRun = null;                  // 当前工具卡引用
@@ -171,6 +173,20 @@ console.log('[agent-panel] v18 events-stream');
         return n >= 1000 ? (n / 1000).toFixed(1) + 'k tokens' : n + ' tokens';
     }
 
+    // 实时 token 流量：每个 tool_call 的 usage 累加到当前任务，更新侧栏指示器
+    function addSessionTokens(usage) {
+        if (!usage) return;
+        var n = (usage.input || 0) + (usage.output || 0) + (usage.cache_read || 0) + (usage.cache_write || 0);
+        if (!n) return;
+        sessionTokens += n;
+        if (tokenFlowEl) tokenFlowEl.textContent = '⚡ '
+            + (sessionTokens >= 1000 ? (sessionTokens / 1000).toFixed(1) + 'k' : sessionTokens) + ' tokens';
+    }
+    function resetTokenFlow() {
+        sessionTokens = 0;
+        if (tokenFlowEl) tokenFlowEl.textContent = '⚡ 0 tokens';
+    }
+
     // 事件流工具卡：按 callId 建档，超上限裁剪最旧（防 DOM 无限膨胀）
     function addToolCardFor(name, args, callId, usage) {
         var run = addToolCard(name, args);
@@ -326,6 +342,7 @@ console.log('[agent-panel] v18 events-stream');
         if (t === 'tool_call') {
             // dsh 核心实时推送：工具开始 → 建卡（usage = 该调用的真实 token 用量）
             currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage);
+            addSessionTokens(evt.usage);   // 实时 token 流量累计
         } else if (t === 'tool_result') {
             // 按 callId 配对卡；配不到就忽略（绝不 fallback 到别的卡，避免污染）。
             // navigate/drive_ui 的 tool/call 也会建卡，故正常情况都配得到。
@@ -436,6 +453,7 @@ console.log('[agent-panel] v18 events-stream');
     }
     function startTask(text) {
         busy = true;
+        resetTokenFlow();                    // 新任务：token 流量归零
         activeSse = true;                    // 活跃 SSE 会话开始
         setSendEnabled(false);
         removeRunningBanner();   // 新任务接管：清掉恢复期的「后台运行中」卡（SSE 实时流展示）
@@ -516,6 +534,7 @@ console.log('[agent-panel] v18 events-stream');
         history = [];
         saveHistory(history);
         chat.innerHTML = '';
+        resetTokenFlow();
         fetch('/api/agent/task-events/clear', { method: 'POST' }).catch(function() {});   // 清服务器事件存储，防清空后旧工具卡回显
         addMsg('assistant', '对话已清空。有什么可以帮你？');
     });
@@ -552,6 +571,7 @@ console.log('[agent-panel] v18 events-stream');
                         if (seen[evt.callId]) return;
                         seen[evt.callId] = true;
                         var run = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage);   // 重建卡：计时器用事件 ts 基
+                        addSessionTokens(evt.usage);   // 刷新后从持久化 usage 恢复累计
                         if (run) run.ts0 = evt.ts;   // 记事件开始 ts，运行中计时与完成时长都基于它
                     } else if (evt.type === 'tool_result') {
                         var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;

@@ -48,6 +48,7 @@
             {# 内嵌 Agent 对话（左页签）与外部 MCP 工具日志（右页签）为两种模式，输入区只属于对话页签 #}
             <div id="agent-chat"></div>
             <div id="agent-tools-log" style="display:none"></div>
+            <div id="agent-token-flow" class="agent-token-flow">⚡ 0 tokens</div>
             <div id="agent-input-wrap">
                 <textarea id="agent-input" rows="2"
                     placeholder="让 Agent 帮你建书 / 生成大纲 / 续写 / 上架…"></textarea>
@@ -62,7 +63,7 @@
     <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开" aria-label="展开">▶</button>
 
     <div id="toast-root"></div>
-    <script src="{{ url_for('static', filename='js/agent_panel.js') }}?v18"></script>
+    <script src="{{ url_for('static', filename='js/agent_panel.js') }}?v19"></script>
 </body>
 </html>
 
