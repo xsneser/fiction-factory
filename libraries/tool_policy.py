@@ -22,6 +22,11 @@ PHASE_GATES = {
     "diagnose_promises": {"ready"},
     "diagnose_continuity": {"ready"},
     "chapter_quality_gate": {"ready"},
+    # 薄工具（agent 生成后落盘；无 LLM）
+    "save_outlines": {"config", "outlines", "plots", "ready"},
+    "save_book_meta": {"ready"},
+    "save_bridge_draft": {"ready"},
+    "save_chapter_text": {"ready"},
     # 大纲链 —— config/outlines/plots 阶段推进用；ready 放行（新流程书创建即 ready，重跑走 regenerate=True）
     "generate_full_outline": {"config", "outlines", "plots", "ready"},
     "generate_outlines": {"config", "outlines"},

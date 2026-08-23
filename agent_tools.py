@@ -428,6 +428,257 @@ def save_basic_info(book_id: str, basic_info: dict) -> dict:
     return {"ok": True}
 
 
+def save_chapter_text(book_id: str, chapter_num: int, text: str,
+                      title: str = "", summary: str = "",
+                      bridge_segments: list | None = None) -> dict:
+    """[薄工具] 保存整章正文（agent 自主生成后调用，内部不调 LLM）。
+
+    agent 生成正文后，本工具负责纯规则副作用：去AI味 → 规则审查 → 章节落盘
+    （含桥段）→ 书进度/字数 → 故事线 written_chapter 进度 → 角色状态 →
+    读者承诺台账（规则）→ 清草稿。summary 由 agent 生成传入（语义摘要是 LLM
+    职责，迁到 agent）。
+    """
+    book = book_mgr.get(book_id)
+    if not book:
+        raise RuntimeError(f"书 {book_id} 不存在")
+    text = (text or "").strip()
+    if not text:
+        raise RuntimeError("正文为空，请先生成内容再调用")
+    n = int(chapter_num or 0)
+    if n < 1:
+        raise RuntimeError("chapter_num 需 >= 1")
+
+    # 1) 规则去AI味（词替换+段落节奏，无 LLM）；有桥段则逐段去并保持桥梁结构
+    processed = text
+    if bridge_segments:
+        segs = []
+        for b in bridge_segments:
+            seg_text = (b.get("text") or "")
+            try:
+                seg_text = DeAIEngine().process_rule_based(seg_text).processed
+            except Exception:
+                pass
+            segs.append({"plot_id": b.get("plot_id"), "plot_name": b.get("plot_name"), "text": seg_text})
+        bridge_segments = segs
+        processed = "\n\n".join(s["text"] for s in segs)
+    else:
+        try:
+            processed = DeAIEngine().process_rule_based(text).processed
+        except Exception:
+            pass
+
+    # 2) 规则审查（reviewer，无 LLM）→ 存 review
+    review_dict = None
+    try:
+        target = int(getattr(book, "words_per_chapter", 0) or 3000)
+        r = ContentReviewer().review(processed, chapter_num=n,
+                                     chapter_title=title or f"第{n}章", target_words=target)
+        review_dict = {"passed": r.passed, "score": r.score, "summary": r.summary,
+                       "issues": [{"severity": i.severity, "category": i.category,
+                                   "description": i.description, "location": i.location,
+                                   "suggestion": i.suggestion} for i in (r.issues or [])]}
+    except Exception:
+        pass
+
+    # 3) 落盘章节
+    book_mgr.save_chapter(book_id, n, title or f"第{n}章", processed, summary or "",
+                          review=review_dict, bridges=bridge_segments)
+
+    # 4) 书进度/字数
+    try:
+        if book.current_chapter < n:
+            book.current_chapter = n
+            book.status = "writing"
+            book.total_words = (book.total_words or 0) + count_prose_units(processed)
+            book_mgr.update(book)
+    except Exception:
+        pass
+
+    # 5) 故事线 written_chapter 进度（本桥段标记为已写）
+    try:
+        tl = book_mgr.load_storyline(book_id)
+        if tl:
+            written_plot_ids = {b.get("plot_id") for b in (bridge_segments or []) if b.get("plot_id")}
+            for p in tl.plots:
+                if not (getattr(p, "written_chapter", 0) or 0) and p.id in written_plot_ids:
+                    p.written_chapter = n
+            book_mgr.save_storyline(book_id, tl)
+    except Exception:
+        pass
+
+    # 6) 角色状态（规则自动机）
+    try:
+        from libraries.character_state import CharacterStateMachine
+        csm = CharacterStateMachine()
+        csm_path = os.path.join(_ROOT, "books", book_id, "character_states.json")
+        if os.path.exists(csm_path):
+            csm.load(csm_path)
+        csm.update_from_chapter(n, processed)
+        csm.save(csm_path)
+    except Exception:
+        pass
+
+    # 7) 读者承诺台账（规则：written_chapter 标记 + pending 承诺 op 分级演化）
+    _update_promises_ledger_thin(book_id, n)
+
+    # 8) 清进行中草稿（整章已落盘）
+    try:
+        dp = os.path.join(_ROOT, "books", book_id, "draft_chapter.json")
+        if os.path.exists(dp):
+            os.remove(dp)
+    except Exception:
+        pass
+
+    return {"ok": True, "chapter": n, "word_count": count_prose_units(processed),
+            "review": review_dict}
+
+
+def _update_promises_ledger_thin(book_id: str, chapter_num: int) -> None:
+    """薄工具用的读者承诺台账登记（规则层，无 LLM）。
+
+    标记本章已写桥段、pending 承诺按 deadline 距离重定 op（seed→touch→pressure→payoff）。
+    （完整设局/收局扫描复制 engine._update_promises_ledger，此处先做规则主路径。）
+    """
+    try:
+        tl = book_mgr.load_storyline(book_id)
+        if not tl:
+            return
+        from libraries.promise_ledger import promise_op
+        changed = False
+        promises = list(getattr(tl, "promises", None) or [])
+        for q in promises:
+            if q.get("status") == "pending" and q.get("op") != promise_op(q, chapter_num):
+                q["op"] = promise_op(q, chapter_num)
+                changed = True
+        if changed:
+            tl.promises = promises
+            book_mgr.save_storyline(book_id, tl)
+    except Exception:
+        pass
+
+
+def save_bridge_draft(book_id: str, chapter_num: int, plot_id: str,
+                      plot_name: str, text: str) -> dict:
+    """[薄工具] 保存单个桥段到进行中草稿（draft_chapter.json，断点续写保底）。
+
+    agent 逐桥段生成后调用：规则去AI味 → 追加进草稿（含 buffer/words/bridges），
+    章满后用 save_chapter_text 落盘并清草稿。
+    """
+    if not (book_id and text and (text or "").strip()):
+        raise RuntimeError("book_id 与 text 必填")
+    text = (text or "").strip()
+    try:
+        text = DeAIEngine().process_rule_based(text).processed
+    except Exception:
+        pass
+    dp = os.path.join(_ROOT, "books", book_id, "draft_chapter.json")
+    draft = {}
+    try:
+        if os.path.exists(dp):
+            with open(dp, encoding="utf-8") as f:
+                draft = json.load(f)
+    except Exception:
+        draft = {}
+    cur_ch = int(draft.get("chapter_num") or 0)
+    bridges = list(draft.get("bridges") or [])
+    if cur_ch != chapter_num:
+        # 新章节草稿：重置
+        bridges = []
+        cur_ch = chapter_num
+    bridges.append({"plot_id": plot_id or "", "plot_name": plot_name or "", "text": text})
+    buffer = [b.get("text", "") for b in bridges]
+    words = sum(count_prose_units(b) for b in buffer)
+    try:
+        os.makedirs(os.path.dirname(dp) or ".", exist_ok=True)
+        with open(dp, "w", encoding="utf-8") as f:
+            json.dump({"chapter_num": chapter_num, "buffer": buffer, "words": words,
+                       "bridges": bridges}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise RuntimeError(f"保存桥段草稿失败: {e}")
+    return {"ok": True, "chapter": chapter_num, "bridges": len(bridges), "words": words}
+
+
+def save_outlines(book_id: str, outlines: list | None = None,
+                  plots: list | None = None, threads: list | None = None,
+                  themes: list | None = None, mode: str = "replace") -> dict:
+    """[薄工具] 保存大纲/桥段/线程/内涵（agent 生成后调用，内部不调 LLM）。
+
+    接受 agent 生成的结构化 dict 列表，反序列化为 OutlineSlot / PlotSlot 落盘；
+    mode=replace 整体替换 | append 续写追加。含 plots 则 phase=plots，否则 outlines。
+    """
+    tl = _require_tl(book_id)
+    from libraries.storyline import OutlineSlot, PlotSlot
+    if mode == "replace":
+        tl.outlines = []
+        tl.plots = []
+    if outlines:
+        base = len(tl.outlines)
+        for i, o in enumerate(outlines):
+            tl.outlines.append(OutlineSlot(
+                id=o.get("id") or f"outline_{base + i + 1:04d}",
+                template_id=o.get("template_id", ""),
+                name=o.get("name") or "未命名大纲",
+                start_chapter=int(o.get("start_chapter") or 1),
+                end_chapter=int(o.get("end_chapter") or 30),
+                stages=o.get("stages") or [],
+                predecessor=o.get("predecessor", ""),
+                successor=o.get("successor", ""),
+                transition_type=o.get("transition_type", "sequential"),
+            ))
+    if plots:
+        base = len(tl.plots)
+        for i, p in enumerate(plots):
+            tl.plots.append(PlotSlot(
+                id=p.get("id") or f"plot_{base + i + 1:04d}",
+                template_id=p.get("template_id", ""),
+                name=p.get("name") or "未命名桥段",
+                category=p.get("category", ""),
+                sub_category=p.get("sub_category", ""),
+                outline_id=p.get("outline_id", ""),
+                stage_index=int(p.get("stage_index") or 0),
+                order=int(p.get("order") or 0),
+                thread_id=p.get("thread_id", "主线"),
+                resolves_plot_id=p.get("resolves_plot_id", ""),
+                resolves_name=p.get("resolves_name", ""),
+                roles=p.get("roles") or [],
+            ))
+    if threads:
+        tl.threads = threads
+    if themes:
+        tl.themes = themes
+    tl.phase = "plots" if plots else "outlines"
+    tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    save_tl(book_id, tl)
+    _drop_engine(book_id)
+    return {"ok": True, "outlines": len(tl.outlines), "plots": len(tl.plots),
+            "phase": tl.phase}
+
+
+def save_book_meta(book_id: str, title: str = "", synopsis: str = "") -> dict:
+    """[薄工具] 保存书名/简介（agent 生成后调用，内部不调 LLM）。
+
+    书名写 book.title + storyline.book_title；简介写 outline.json 的 synopsis。
+    """
+    tl = _require_tl(book_id)
+    book = book_mgr.get(book_id)
+    if title:
+        tl.book_title = title
+        if book:
+            book.title = title
+    if synopsis:
+        od = book_mgr.get_outline(book_id) or {}
+        od["synopsis"] = synopsis
+        try:
+            book_mgr.save_outline(book_id, od)
+        except Exception:
+            pass
+    if book:
+        book_mgr.update(book)
+    tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    save_tl(book_id, tl)
+    return {"ok": True, "title": title or tl.book_title, "synopsis": synopsis}
+
+
 def generate_title(book_id: str) -> dict:
     """AI 生成书名（3-5 个候选，选第一个写入 book_title + book.json.title）。"""
     tl = _require_tl(book_id)
@@ -1523,6 +1774,8 @@ _LOCKED_TOOLS = {
     "write_next_bridge", "write_chapter", "generate_full_outline",
     "generate_world", "world_candidates", "confirm_world",
     "outline_agent", "fill_plots", "fill_gags", "generate_book_meta",
+    # 薄工具（agent 生成后落盘，同样需书锁防并发）
+    "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
 }
 
 
@@ -1656,13 +1909,15 @@ def _build_registry():
         get_book_detail, get_build_status, query_structures, query_plots, query_gags, query_profiles, query_characters,
         # 规划
         save_basic_info,
+        save_outlines, save_book_meta,
         generate_title, generate_outlines, generate_full_outline,
         extend_outline, confirm_outlines, fill_plots, fill_gags, outline_agent,
         outline_material_candidates,
         generate_world, world_candidates, generate_characters, confirm_world,
         generate_core_conflict, generate_factions, generate_rest_world,
         generate_outline_preview,
-        # 写作 / 元数据
+        # 写作 / 元数据（薄工具：agent 生成后落盘；旧 write_* 留档）
+        save_bridge_draft, save_chapter_text,
         write_next_bridge, write_chapter, generate_book_meta,
         # 上架 / 审查 / 去AI / 质量分析
         publish_check, mark_finished, publish_book, export_book,
