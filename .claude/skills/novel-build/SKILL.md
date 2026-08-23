@@ -10,6 +10,8 @@ description: >-
 # 建书阶段（novel-build）
 
 > **护栏**：建书只能驱动系统向导 UI，删书只能 navigate 书库让用户手动删——直建/直删工具不在工具面，本 skill 绝不绕向导。
+>
+> **架构方向**：世界观/角色/核心矛盾等内容的 LLM 生成正迁移到 agent 自主生成（你带着设定/题材/候选上下文自己产出），经 `drive_ui(set_world/set_characters)` 填入向导表单（书未建前无 book_id，不能调 `save_basic_info`）。旧生成工具（generate_core_conflict/factions/characters/rest_world/world_candidates/generate_outline_preview）**已废弃留档**——迁移过渡期仍可作兜底，但优先 agent 自主生成。
 
 ## 前置检查（必做，只读工具）
 1. `mcp__novel-engine__list_books` 看目标书是否已存在。
