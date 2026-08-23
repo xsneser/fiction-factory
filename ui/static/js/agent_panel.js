@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v6 events-stream');
+console.log('[agent-panel] v7 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -417,10 +417,10 @@ console.log('[agent-panel] v6 events-stream');
             }
         });
     }
-    // 建书任务卡（「让 Agent 构建」按钮触发时替代用户气泡展示，任务文本仍进 history 供 SSE 取）
-    function addBuildCard(text) {
+    // 任务卡（「让 Agent 构建」/ 写作台技能卡触发时替代用户气泡展示，任务文本仍进 history 供 SSE 取）
+    function addBuildCard(text, label) {
         var card = el('div', 'agent-tool-card');
-        card.appendChild(el('div', 'agent-tool-head', '🚀 建书任务'));
+        card.appendChild(el('div', 'agent-tool-head', label || '🚀 建书任务'));
         var body = el('div', 'agent-tool-detail', text || '');
         body.style.display = 'block';
         card.appendChild(body);
@@ -432,11 +432,12 @@ console.log('[agent-panel] v6 events-stream');
         var taskText = String(text || '').trim();
         if (!taskText) return;
         // card 标记：刷新后 restore 时渲染为卡片而非「你」气泡（SSE 后端只看 role/content，card 无副作用）
-        history.push({ role: 'user', content: taskText, card: !!(opts && opts.card) });
+        history.push({ role: 'user', content: taskText, card: !!(opts && opts.card),
+                       label: (opts && opts.cardLabel) || undefined });
         saveHistory(history);
         input.value = '';
         if (opts && opts.card) {
-            addBuildCard(taskText);   // 向导按钮 → 卡片，不渲染用户气泡
+            addBuildCard(taskText, opts.cardLabel);   // 卡片头部可自定义（建书默认 🚀 建书任务）
         } else {
             addMsg('user', taskText);
         }
@@ -486,7 +487,7 @@ console.log('[agent-panel] v6 events-stream');
             addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个桥段」\n· 「打开书库看看」');
         } else {
             for (var i = 0; i < history.length; i++) {
-                if (history[i].card) addBuildCard(history[i].content);
+                if (history[i].card) addBuildCard(history[i].content, history[i].label);
                 else addMsg(history[i].role, history[i].content);
             }
         }

@@ -21,12 +21,6 @@
     extra='<span>每章：<strong>' ~ storyline.words_per_chapter ~ '字</strong></span>'
 ) }}
 
-{# ─── 技能卡 + 继续写正文：写作由侧栏 Agent（dsh）驱动 ─── #}
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:10px">
-    <span class="hint" style="color:var(--fg-dim);font-size:12px">写作由侧栏 Agent 驱动：点卡片或按钮，Agent 在侧栏执行</span>
-    <button type="button" class="btn" id="wf-write-btn" style="background:#238636;color:#fff" onclick="continueWriting()">✍️ 继续写正文</button>
-</div>
-
 {# ─── 两栏：左=故事线（可拖拽） | 右=章节正文（规划/生成/写作均由 agent 驱动） ─── #}
 <div class="editor-split">
     <div class="editor-left">
@@ -37,11 +31,12 @@
     <div class="editor-divider" id="editor-divider" title="拖动调整故事线宽度"></div>
 
     <div class="editor-mid">
-        {# ─── 技能卡：驱动侧栏 Agent 的一键动作入口（竖排，镜像建书向导候选卡） ───#}
+        {# ─── 写作任务卡：点击 → 侧栏渲染「📝 写作任务」卡，Agent 在侧栏执行续写 ───#}
         <div class="wf-skill-cards">
-            <div class="wf-skill-card" onclick="runSkill('continue')"><div class="wsc-title">✍️ 继续写正文</div><div class="wsc-sub">续写下一个桥段</div></div>
-            <div class="wf-skill-card" onclick="runSkill('full_chapter')"><div class="wsc-title">✨ 一键写完整章</div><div class="wsc-sub">写 → 质量门禁 → 汇报</div></div>
-            <div class="wf-skill-card" onclick="runSkill('gate')"><div class="wsc-title">🔍 质量门禁</div><div class="wsc-sub">连续性/追读/伏笔/审查/爽点</div></div>
+            <div class="wf-skill-card" onclick="runWritingTask()">
+                <div class="wsc-title">✍️ 继续写正文</div>
+                <div class="wsc-sub">侧栏 Agent 逐桥段续写本章，实时汇报进度/字数/切章</div>
+            </div>
         </div>
         {# ─── 正文视图：连续章节文本（桥段包 span.m-bridge 供点击高亮） ───#}
         <div id="view-write" class="view-pane" style="display:block">
@@ -160,15 +155,17 @@ function _centerManuscript(el) {
 })();
 </script>
 <script>
-/* ─── 技能卡 / 继续写正文：把任务发给侧栏 Agent（dsh）在侧栏执行 ─── */
-function runSkill(kind) {
+/* ─── 写作任务卡：构造详细任务文本发给侧栏 Agent（dsh），侧栏渲染「📝 写作任务」卡 ─── */
+function runWritingTask() {
     if (window.switchAgentTab) window.switchAgentTab('chat');   // 保证侧栏对话页签可见
-    var task = '';
-    if (kind === 'continue') task = '继续写正文 for ' + window.__STORYLINE_ID__;
-    else if (kind === 'full_chapter') task = '一键写完整章 for ' + window.__STORYLINE_ID__;
-    else if (kind === 'gate') task = '对 ' + window.__STORYLINE_ID__ + ' 跑一章完整章节质量门禁并汇报';
-    if (task && window.agentSendTask) window.agentSendTask(task);   // 渲染「你」气泡，agent 侧栏执行
+    var bid = window.__STORYLINE_ID__ || '';
+    var title = (window.__BOOK_STORYLINE__ && window.__BOOK_STORYLINE__.book_title) || '';
+    var task = '用 novel-write 流程继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：'
+        + '用 write_next_bridge 逐桥段写正文，循环直到 status=chapter_done（满字数自动切章）；'
+        + '桥段写完继续下一桥段，实时汇报进度/字数/是否切章；'
+        + '遇 budget_paused（预算耗尽）或 repair_stalled（连续修复失败）停下等我处理后再继续；'
+        + '不要跳过桥段、不要擅自改大纲或设定。';
+    if (task && window.agentSendTask) window.agentSendTask(task, { card: true, cardLabel: '📝 写作任务' });
 }
-function continueWriting() { runSkill('continue'); }
 </script>
 {% endblock %}
