@@ -86,6 +86,14 @@ def agent_task_events():
     return jsonify({"ok": True, "events": get_task_events(since)})
 
 
+@bp.route("/api/agent/task-events/clear", methods=["POST"])
+def agent_task_events_clear():
+    """清空 dsh 工具事件存储（前端「清空对话」时调用）。"""
+    from libraries.dsh_bridge import clear_task_events
+    clear_task_events()
+    return jsonify({"ok": True})
+
+
 @bp.route("/api/agent/build-status", methods=["POST"])
 def agent_build_status():
     """浏览器上报建书向导状态（WZ.reportStatus），写入 storage/build_status.json 供 MCP 工具读取。"""

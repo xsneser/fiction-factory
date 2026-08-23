@@ -173,6 +173,16 @@ def get_task_events(since: float = 0.0, limit: int = 300) -> list:
         return []
 
 
+def clear_task_events() -> None:
+    """清空 dsh 工具事件存储（前端「清空对话」时调用，防清空后旧工具卡回显）。"""
+    try:
+        if os.path.exists(_TASK_EVENTS_PATH):
+            with open(_TASK_EVENTS_PATH, "w", encoding="utf-8") as f:
+                f.write("")
+    except Exception:
+        pass
+
+
 # 强化指令：拼在任务文本前的护栏/编排提醒（persona 已在 headless profile 注入，
 # 这里按任务重申关键约束，防 dsh 擅调越权工具 / 死循环轮询）。
 _REINFORCEMENT = """[系统约束]

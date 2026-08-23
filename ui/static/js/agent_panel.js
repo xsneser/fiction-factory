@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v8 events-stream');
+console.log('[agent-panel] v9 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -479,6 +479,7 @@ console.log('[agent-panel] v8 events-stream');
         history = [];
         saveHistory(history);
         chat.innerHTML = '';
+        fetch('/api/agent/task-events/clear', { method: 'POST' }).catch(function() {});   // 清服务器事件存储，防清空后旧工具卡回显
         addMsg('assistant', '对话已清空。有什么可以帮你？');
     });
 
@@ -495,41 +496,26 @@ console.log('[agent-panel] v8 events-stream');
         }
     }
     renderHistory();
-    checkRunningTask();   // 页面可能在切页/刷新时丢了进行中任务 → 启动即感知
+    loadRestoredTaskView();   // 刷新/切页后一次性拉取服务器临时存储瞬时还原工具卡流
 
-    // ─── 切页/刷新恢复：还原运行中的任务视图（任务卡 + 工具卡流 + busy），无横幅 ───
-    // 侧栏 dsh 任务在后台继续跑；刷新后按 started_at 从 /api/agent/task-events 增量重建
-    // 工具卡流，任务卡由 renderHistory 从 history 还原（含全文），busy 显示「⏹ 停止」可取消。
-    var runningPollTimer = null;
-    var runningSince = 0;
-    var renderedTaskEvents = {};   // 已渲染事件键，增量去重
-
+    // ─── 刷新/切页瞬时还原：一次性加载服务器临时存储（task-events）渲染全部工具卡 ───
+    // 无轮询、无 busy 重建态、无「检查后台任务」提示。后台任务是否在跑不再感知——
+    // 用户下次发消息时 run_dsh_task 内部自动打断，无死锁。活跃 SSE 会话的实时渲染不受影响。
     function removeRunningBanner() {
-        // 新任务接管 / bfcache 恢复：停重建轮询、清重建态（历史里已无横幅卡，保留函数名供调用点）
-        if (runningPollTimer) { clearInterval(runningPollTimer); runningPollTimer = null; }
-        runningSince = 0;
-        renderedTaskEvents = {};
+        // 历史已无横幅卡；保留函数名供 startTask/pageshow 调用（无副作用）
     }
 
-    function restoreRunningView(d) {
-        busy = true;
-        setSendEnabled(false);          // 输入区显示「⏹ 停止」，可取消后台任务
-        if (!runningPollTimer) runningPollTimer = setInterval(checkRunningTask, 3000);
-        runningSince = d.started_at || runningSince;
-        _fetchAndRenderTaskEvents();
-    }
-
-    // 拉取 task_events（ts >= started_at）增量渲染工具卡：tool_call 建卡 / tool_result 配对收尾
-    function _fetchAndRenderTaskEvents() {
-        fetch('/api/agent/task-events?since=' + (runningSince || 0))
+    function loadRestoredTaskView() {
+        if (!history.length) return;   // 无对话则不拉（新 tab / 已清空）
+        var seen = {};
+        fetch('/api/agent/task-events')
             .then(function(r) { return r.json(); })
             .then(function(ld) {
                 if (!ld || !ld.ok) return;
                 (ld.events || []).forEach(function(evt) {
-                    var key = evt.callId || (evt.type + ':' + evt.ts);
                     if (evt.type === 'tool_call') {
-                        if (renderedTaskEvents[key]) return;
-                        renderedTaskEvents[key] = true;
+                        if (seen[evt.callId]) return;
+                        seen[evt.callId] = true;
                         addToolCardFor(evt.name, evt.args, evt.callId);
                     } else if (evt.type === 'tool_result') {
                         var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
@@ -538,24 +524,6 @@ console.log('[agent-panel] v8 events-stream');
                     }
                 });
                 scrollBottom();
-            })
-            .catch(function() {});
-    }
-
-    function checkRunningTask() {
-        fetch('/api/agent/chat/status')
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (!d || !d.ok) return;
-                if (d.running) {
-                    restoreRunningView(d);
-                } else {
-                    // 后台任务结束：停轮询、复位重建期 busy（无 SSE done 事件，靠本分支复位）
-                    if (runningPollTimer) { clearInterval(runningPollTimer); runningPollTimer = null; }
-                    runningSince = 0;
-                    renderedTaskEvents = {};
-                    if (busy) { busy = false; setSendEnabled(true); }
-                }
             })
             .catch(function() {});
     }
@@ -572,7 +540,6 @@ console.log('[agent-panel] v8 events-stream');
         setSendEnabled(true);   // 复位发送/停止按钮（bfcache 恢复，防陈旧 busy 卡输入）
         removeRunningBanner();
         renderHistory();
-        addMsg('assistant', '↩️ 页面已从浏览器缓存恢复，检查后台任务…');
-        checkRunningTask();
+        loadRestoredTaskView();
     });
 })();
