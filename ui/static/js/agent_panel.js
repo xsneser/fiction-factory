@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v11 events-stream');
+console.log('[agent-panel] v12 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -125,7 +125,11 @@ console.log('[agent-panel] v11 events-stream');
         return wrap;
     }
 
-    function addToolCard(tool, args) {
+    function formatDur(ms) {
+        return ms < 1000 ? Math.round(ms) + 'ms' : (ms / 1000).toFixed(1) + 's';
+    }
+
+    function addToolCard(tool, args, noTimer) {
         var card = el('div', 'agent-tool-card');
         var head = el('div', 'agent-tool-head', '🔧 ' + escapeHtml(toolLabel(tool, args)));
         head.title = '点击展开/收起参数';
@@ -144,30 +148,40 @@ console.log('[agent-panel] v11 events-stream');
         card.appendChild(status);
         chat.appendChild(card);
         scrollBottom();
-        return { card: card, status: status, t0: performance.now(), tool: tool, args: args };
+        var run = { card: card, status: status, t0: performance.now(), tool: tool, args: args, timer: null };
+        // 运行中实时计时（noTimer 供刷新重建卡：页面加载为基的计时错误，重建卡靠事件 ts 差算真实时长）
+        if (!noTimer) {
+            run.timer = setInterval(function() {
+                if (run.status) run.status.textContent = '运行中… ' + formatDur(performance.now() - run.t0);
+            }, 1000);
+        }
+        return run;
     }
 
     // 事件流工具卡：按 callId 建档，超上限裁剪最旧（防 DOM 无限膨胀）
-    function addToolCardFor(name, args, callId) {
-        var run = addToolCard(name, args);
+    function addToolCardFor(name, args, callId, noTimer) {
+        var run = addToolCard(name, args, noTimer);
         if (callId) toolCards[callId] = run;
         toolCardOrder.push(callId || ('#' + toolCardOrder.length));
         if (toolCardOrder.length > TOOL_CARD_LIMIT) {
             var old = toolCardOrder.shift();
             var oldRun = toolCards[old];
+            if (oldRun && oldRun.timer) { clearInterval(oldRun.timer); oldRun.timer = null; }
             if (oldRun && oldRun.card && oldRun.card.parentNode) oldRun.card.parentNode.removeChild(oldRun.card);
             delete toolCards[old];
         }
         return run;
     }
 
-    // 工具卡收尾：状态文本 + 执行耗时（⏱）+ ok/err 类名
-    function finishToolCard(run, text) {
+    // 工具卡收尾：清计时器 + 状态文本 + 执行耗时（⏱；durMs 供刷新重建卡用事件 ts 差，活跃卡用 performance 差）+ ok/err 类名
+    function finishToolCard(run, text, durMs) {
         if (!run || !run.status) return;
+        if (run.timer) { clearInterval(run.timer); run.timer = null; }
         var dur = '';
-        if (run.t0) {
-            var ms = performance.now() - run.t0;
-            dur = ' ⏱ ' + (ms < 1000 ? Math.round(ms) + 'ms' : (ms / 1000).toFixed(1) + 's');
+        if (durMs !== undefined && durMs !== null) {
+            dur = ' ⏱ ' + formatDur(durMs);
+        } else if (run.t0) {
+            dur = ' ⏱ ' + formatDur(performance.now() - run.t0);
         }
         run.status.textContent = (text || '') + dur;
         run.status.className = (text && text.indexOf('✅') === 0)
@@ -521,11 +535,15 @@ console.log('[agent-panel] v11 events-stream');
                     if (evt.type === 'tool_call') {
                         if (seen[evt.callId]) return;
                         seen[evt.callId] = true;
-                        addToolCardFor(evt.name, evt.args, evt.callId);
+                        var run = addToolCardFor(evt.name, evt.args, evt.callId, true);   // 重建卡：不启动页面计时器
+                        if (run) run.ts0 = evt.ts;   // 记事件开始 ts，完成时算真实时长
                     } else if (evt.type === 'tool_result') {
                         var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
                         if (evt.callId) delete toolCards[evt.callId];
-                        if (run) finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary));
+                        if (run) {
+                            var durMs = (run.ts0 != null) ? (evt.ts - run.ts0) * 1000 : undefined;
+                            finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary), durMs);
+                        }
                     }
                 });
                 scrollBottom();
@@ -559,6 +577,10 @@ console.log('[agent-panel] v11 events-stream');
         activeSse = false;
         pendingTask = null;
         currentToolRun = null;
+        Object.keys(toolCards).forEach(function(id) {
+            var r = toolCards[id];
+            if (r && r.timer) { clearInterval(r.timer); r.timer = null; }   // 清计时器防泄漏
+        });
         toolCards = {};
         toolCardOrder = [];
         setSendEnabled(true);   // 复位发送/停止按钮（bfcache 恢复，防陈旧 busy 卡输入）
