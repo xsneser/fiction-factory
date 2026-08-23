@@ -67,7 +67,8 @@ def _mcp_summary(result) -> str:
                   "status", "plots_added", "total_plots", "total_chapters",
                   "passed", "score", "chosen", "book_id", "deleted", "cmd",
                   "issue_count", "overdue_count", "advanced_count",
-                  "stalled_count", "fulfilled_count"):
+                  "stalled_count", "fulfilled_count",
+                  "review_score", "drop_risk_count", "complete"):
             if k in result and result[k] not in (None, "", False):
                 return f"{k}={result[k]}"
         for k in ("summary", "message", "reply"):

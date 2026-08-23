@@ -1246,6 +1246,157 @@ def tag_punch_points(book_id: str, chapter_num: int = 0) -> dict:
             "tags_saved": tags_saved, "tags_save_error": tags_save_error}
 
 
+def chapter_quality_gate(book_id: str, chapter_num: int = 0, recent_n: int = 5) -> dict:
+    """完整章节质量门禁（规则层，零成本）：一次聚合 审查/连续性/追读/伏笔/爽点 五项，
+    返回统一门禁报告。chapter_num=0 用最近一章。只报告不修复——问题作 decision_points
+    决策点由 agent/用户定夺，不自动改正文。单项异常该项 skipped 不阻断。
+
+    聚合 diagnose_retention / diagnose_continuity / diagnose_promises / review_text /
+    tag_chapter（爽点只读标注不落盘，保门禁零写副作用）。返回紧凑报告（<8KB，
+    summary/计数/decision_points 置前）；全量明细请按需调独立 diagnose_* 深挖。
+    """
+    book = book_mgr.get(book_id)
+    if not book:
+        raise RuntimeError(f"书 {book_id} 不存在")
+    cur = int((book.current_chapter if book else 0) or 0)
+    n = int(chapter_num or 0) or cur
+    if n < 1 or n > cur:
+        if cur < 1:
+            raise RuntimeError("尚无已写章节，请先 write_next_bridge / write_chapter 写作")
+        raise RuntimeError(f"第 {n} 章不存在（当前写到第 {cur} 章）")
+    ch = book_mgr.load_chapter(book_id, n)
+    content = (ch or {}).get("content") or ""
+    if not content:
+        raise RuntimeError(f"第 {n} 章无正文")
+    target_words = int(getattr(book, "words_per_chapter", 0) or 3000)
+
+    checks = {}
+    skipped = []
+    decision_points = []
+
+    def _push(check, severity, description, location="", suggestion=""):
+        if len(decision_points) >= 20:
+            return
+        decision_points.append({
+            "check": check, "severity": severity,
+            "description": str(description)[:40],
+            "location": str(location)[:40],
+            "suggestion": str(suggestion)[:40],
+        })
+
+    # 1. 审查（规则层；score>=60 视为过）
+    try:
+        r = ContentReviewer().review(content, chapter_num=n,
+                                     chapter_title=f"第{n}章", target_words=target_words)
+        top_issues = [{"severity": it.severity, "category": it.category,
+                       "description": str(it.description)[:40]}
+                      for it in (r.issues or [])[:3]]
+        checks["review"] = {"passed": bool(r.passed), "score": r.score,
+                            "issues_count": len(r.issues or []), "top_issues": top_issues}
+    except Exception as e:
+        skipped.append("review")
+        checks["review"] = {"passed": None, "skipped": True, "error": str(e)[:60]}
+
+    # 2. 连续性
+    try:
+        c = diagnose_continuity(book_id, recent_n=recent_n)
+        warnings = [it for it in (c.get("issues") or []) if it.get("severity") == "warning"]
+        status = {k: (v.get("status") if isinstance(v, dict) else str(v))
+                  for k, v in (c.get("checks") or {}).items()}
+        checks["continuity"] = {"passed": not warnings, "issue_count": len(warnings),
+                                "scanned_chapters": c.get("scanned_chapters", 0),
+                                "check_status": status}
+    except Exception as e:
+        skipped.append("continuity")
+        checks["continuity"] = {"passed": None, "skipped": True, "error": str(e)[:60]}
+
+    # 3. 追读
+    try:
+        ret = diagnose_retention(book_id, recent_n=recent_n)
+        drops = [cl for cl in (ret.get("chapter_level") or [])
+                 if int(cl.get("drop_risk") or 0) >= 7]
+        rows = [{"chapter": cl.get("chapter"), "hook_strength": cl.get("hook_strength"),
+                 "drop_risk": cl.get("drop_risk")}
+                for cl in (ret.get("chapter_level") or [])[-5:]]
+        checks["retention"] = {"passed": not drops, "issues_count": len(drops),
+                               "chapters": rows}
+    except Exception as e:
+        skipped.append("retention")
+        checks["retention"] = {"passed": None, "skipped": True, "error": str(e)[:60]}
+
+    # 4. 伏笔台账
+    try:
+        p = diagnose_promises(book_id)
+        counts = p.get("counts") or {}
+        top = [str(it.get("desc") or it.get("name") or it)[:40]
+               for it in ((p.get("overdue") or []) + (p.get("stalled") or []))[:3]]
+        checks["promises"] = {"passed": int(counts.get("overdue") or 0) == 0,
+                              "counts": {"overdue": counts.get("overdue", 0),
+                                         "stalled": counts.get("stalled", 0),
+                                         "advanced": counts.get("advanced", 0),
+                                         "fulfilled_recently": counts.get("fulfilled_recently", 0)},
+                              "issues_count": len(p.get("overdue") or []) + len(p.get("stalled") or []),
+                              "top_issues": top}
+    except Exception as e:
+        skipped.append("promises")
+        checks["promises"] = {"passed": None, "skipped": True, "error": str(e)[:60]}
+
+    # 5. 爽点标注（只读，不落盘）
+    try:
+        from libraries.tag_generator import tag_chapter
+        tags = tag_chapter(content)
+        tag_list = [t.get("tag") for t in (tags.get("tags") or []) if t.get("tag")]
+        checks["punch_points"] = {"passed": True, "tag_count": len(tag_list),
+                                  "tags": tag_list[:10]}
+    except Exception as e:
+        skipped.append("punch_points")
+        checks["punch_points"] = {"passed": None, "skipped": True, "error": str(e)[:60]}
+
+    # 决策点聚合：硬问题（review/连续性/追读）优先，伏笔为提示
+    rv = checks.get("review") or {}
+    if rv.get("passed") is False:
+        for it in (rv.get("top_issues") or []):
+            _push("review", it.get("severity") or "warning", it.get("description"))
+    cc = checks.get("continuity") or {}
+    if cc.get("passed") is False:
+        _push("continuity", "warning", f"连续性 {cc.get('issue_count')} 项 warning 级问题")
+    rt = checks.get("retention") or {}
+    if rt.get("passed") is False:
+        _push("retention", "warning", f"{rt.get('issues_count')} 章掉读风险高（drop_risk≥7）")
+    pp = checks.get("promises") or {}
+    if pp.get("passed") is False:
+        for it in (pp.get("top_issues") or []):
+            _push("promises", "info", "伏笔未推进", suggestion=it)
+
+    complete = not skipped
+    ran = [k for k in ("review", "continuity", "retention", "promises", "punch_points")
+           if (checks.get(k) or {}).get("skipped") is not True]
+    all_passed = bool(ran) and all((checks[k] or {}).get("passed") is True for k in ran)
+    passed = complete and all_passed
+    issue_count = sum(int((checks[k] or {}).get("issues_count") or (checks[k] or {}).get("issue_count") or 0)
+                      for k in ("review", "continuity", "retention", "promises", "punch_points"))
+    review_score = (rv.get("score") if isinstance(rv.get("score"), (int, float)) else 0)
+
+    if skipped:
+        summary = (f"第{n}章质量门禁：{len(skipped)} 项异常({','.join(skipped)})，"
+                   f"其余{'通过' if all_passed else '有未过项'}，{len(decision_points)} 个决策点")
+    elif passed:
+        summary = f"第{n}章质量门禁：通过，review {review_score} 分，共 {issue_count} 项提示，{len(decision_points)} 个决策点"
+    else:
+        summary = f"第{n}章质量门禁：未通过，review {review_score} 分，{issue_count} 项问题，{len(decision_points)} 个决策点"
+
+    return {
+        "book_id": book_id, "chapter": n, "word_count": count_prose_units(content),
+        "target_words": target_words, "passed": passed, "complete": complete,
+        "summary": summary, "issue_count": issue_count, "review_score": review_score,
+        "overdue_count": (checks.get("promises") or {}).get("counts", {}).get("overdue", 0),
+        "stalled_count": (checks.get("promises") or {}).get("counts", {}).get("stalled", 0),
+        "drop_risk_count": (checks.get("retention") or {}).get("issues_count", 0),
+        "decision_points": decision_points,
+        "checks": checks,
+    }
+
+
 # ═══════════════════════════════════════════════════
 # 导航 / 建书向导驱动（navigate 返回 {"__navigate__": url}，MCP 适配层据此落意图队列）
 # ═══════════════════════════════════════════════════
@@ -1443,6 +1594,7 @@ def _build_registry():
         review_text, deai_text, extract_style_asset,
         diagnose_retention, tag_punch_points,
         diagnose_promises, diagnose_continuity,
+        chapter_quality_gate,
         # 快照 / diff / 回滚（决策点 commit 语义）
         preview_diff, rollback_book, list_snapshots,
     ]

@@ -21,6 +21,7 @@ PHASE_GATES = {
     "diagnose_retention": {"ready"},
     "diagnose_promises": {"ready"},
     "diagnose_continuity": {"ready"},
+    "chapter_quality_gate": {"ready"},
     # 大纲链 —— config/outlines/plots 阶段推进用；ready 放行（新流程书创建即 ready，重跑走 regenerate=True）
     "generate_full_outline": {"config", "outlines", "plots", "ready"},
     "generate_outlines": {"config", "outlines"},
