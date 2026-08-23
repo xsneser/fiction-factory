@@ -25,6 +25,18 @@
         </div>
         <button id="btn-scout" class="btn-primary" onclick="startScout()">🍅 开始抓取</button>
     </div>
+
+    <!-- 抓取实时进度（web 表单 / MCP fetch_novel 工具共用 /api/crawl/progress） -->
+    <div id="crawl-progress" style="display:none;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px;margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <span id="cp-phase" style="font-size:13px;color:#c9d1d9">…</span>
+            <span id="cp-count" style="font-size:12px;color:#8b949e"></span>
+        </div>
+        <div style="background:#21262d;border-radius:4px;height:8px;margin-top:8px;overflow:hidden">
+            <div id="cp-fill" style="height:100%;width:0%;background:#58a6ff;border-radius:4px;transition:width .3s"></div>
+        </div>
+        <div id="cp-msg" style="font-size:12px;color:#8b949e;margin-top:6px"></div>
+    </div>
 </div>
 
 <div id="result-area" style="display:none"></div>
@@ -183,5 +195,41 @@ function showReviewCards(d) {
     var area = document.getElementById('result-area');
     area.scrollIntoView({behavior:'smooth', block:'start'});
 }
+
+/* ─── 抓取实时进度（轮询 /api/crawl/progress；web 表单 / MCP fetch_novel 工具共用） ─── */
+function pollCrawlProgress() {
+    fetch('/api/crawl/progress')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            var box = document.getElementById('crawl-progress');
+            if (!box || !d || !d.ok) return;
+            var phaseEl = document.getElementById('cp-phase');
+            var countEl = document.getElementById('cp-count');
+            var fillEl = document.getElementById('cp-fill');
+            var msgEl = document.getElementById('cp-msg');
+            if (d.state === 'running') {
+                box.style.display = '';
+                var pct = d.total > 0 ? Math.round(d.current / d.total * 100) : 0;
+                if (fillEl) fillEl.style.width = pct + '%';
+                if (phaseEl) phaseEl.textContent = d.phase || '';
+                if (countEl) countEl.textContent = d.total > 0 ? (d.current + ' / ' + d.total) : '';
+                if (msgEl) msgEl.textContent = d.message || '';
+            } else if (d.state === 'done') {
+                box.style.display = '';
+                if (fillEl) fillEl.style.width = '100%';
+                if (phaseEl) phaseEl.textContent = '✅ 完成';
+                if (countEl) countEl.textContent = '';
+                if (msgEl) msgEl.textContent = d.message || '';
+            } else if (d.state === 'error') {
+                box.style.display = '';
+                if (fillEl) fillEl.style.width = '0%';
+                if (phaseEl) phaseEl.textContent = '❌ 失败';
+                if (countEl) countEl.textContent = '';
+                if (msgEl) msgEl.textContent = d.message || '';
+            }
+        })
+        .catch(function() {});
+}
+setInterval(pollCrawlProgress, 1000);
 </script>
 {% endblock %}

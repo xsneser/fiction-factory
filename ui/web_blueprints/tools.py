@@ -72,6 +72,7 @@ def scout_run():
         import json as _json
         import queue as _queue
         import threading as _threading
+        from libraries.crawl_progress import write_crawl_progress
 
         def send_event(event, d):
             return f"data: {_json.dumps({'event': event, **d}, ensure_ascii=False)}\n\n"
@@ -118,6 +119,8 @@ def scout_run():
             if task_manager.is_cancelled(task_id):
                 raise _cancel_exception
             evt_queue.put(("progress", phase, current, total, message))
+            # 共享进度文件（/scout 页轮询 /api/crawl/progress，与 MCP fetch_novel 工具同源）
+            write_crawl_progress("running", phase, current, total, message)
             # 同步更新全局任务管理器
             if phase == "search":
                 task_manager.progress(task_id, current, total, "搜索", message)
@@ -135,6 +138,8 @@ def scout_run():
                 # 如果没有被取消才标记完成
                 if not task_manager.is_cancelled(task_id):
                     task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")
+                    write_crawl_progress("done", "download", dl_info["chapters"], dl_info["chapters"],
+                                         f"下载完成 {dl_info['chapters']}章")
                     evt_queue.put(("fetch_done", {"novel_info": novel_info, "dl_info": dl_info}))
             except Exception as e:
                 import traceback
@@ -150,6 +155,7 @@ def scout_run():
                 elif "Connection" in err_msg:
                     err_msg = "网络连接失败，请检查网络"
                 task_manager.fail(task_id, err_msg)
+                write_crawl_progress("error", "", 0, 0, err_msg)
                 evt_queue.put(("error", err_msg))
 
         t = _threading.Thread(target=worker, daemon=True, name="scout-fetch")
@@ -187,6 +193,14 @@ def scout_run():
 
     resp = sse_stream_response(generate())
     return resp
+
+
+@bp.route("/api/crawl/progress", methods=["GET"])
+def crawl_progress():
+    """抓取实时进度（/scout 页轮询）：{state: running|done|error, phase, current,
+    total, message, ts}。web 表单与 MCP fetch_novel 工具共用 crawl_progress.json。"""
+    from libraries.crawl_progress import read_crawl_progress
+    return jsonify({"ok": True, **read_crawl_progress()})
 
 
 # ─── 入库（人工筛选后） ───

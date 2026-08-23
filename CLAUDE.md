@@ -1,6 +1,6 @@
 # NovelEngine — Claude Code 工作台
 
-NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 41 个工具，Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
+NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 51 个工具，Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
 
 > **当前驱动形态**：侧栏聊天大脑 = **dsh**（内置 agent `plugins/agent_loop.py` 已删除，无 builtin 可切回）。`libraries/dsh_bridge.py` 转发 vendored `vendor/dsh-ne/`（精简核心，改名防冲突）headless 子进程，经 MCP 驱动平台；`vendor/dsh-ne/events-runner.mjs` 把 dsh 的每个工具调用/结果实时推成 SSE（tool_call/tool_result/navigate/ui_command），侧栏实时工具卡、导航零延迟；护栏：phase 门控 `tool_policy.py` / MCP 循环熔断 `loop_guard.py` / 建书 reset。agent 架构见 `docs/架构文档-内置agent-dsh.md`，上手交接见 `docs/交接文档-2026-08-22-内置agent整体.md`。
 > **架构速览**（系统分层/工具注册表/双通道驱动/各阶段入口/常见坑）：`docs/架构总览.md`——交接/上手先读它，不必重新探索。设计权威仍为 `docs/设计文档-总览-claude.md`。
@@ -14,7 +14,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 
 ## 发现与编排规则
 
-- **意图 → skill 分发表**：「开新书 / 写设定 / 建书 / 构思世界观 / 生成候选」→ dsh 侧 `novel-build-candidates`（生成候选并**呈现**到步 2，**停在交互点等用户挑选，不自动选/跳步**）；**侧栏要求建书先 `navigate("/books/start")` 翻到步 1 表单**（已给全则预填，笔名留用户选），用户填完点「🚀 让 Agent 构建」后按钮路径接管（只生成候选并呈现，停步 2）；「已选候选 / 补全世界观 / 继续建书」→ `novel-build`（步 3 分步建书 + submit + 完整大纲）；「生成大纲 / 排故事线 / 选桥段 / 一键完整大纲 / 续写 / 扩写」→ `novel-outline`；「写正文 / 写下一章 / 继续写 / 写桥段 / 一键写完整章 / 写完整章 / 一键完整章节 / 完整章节构建」→ `novel-write`（完整章节构建含质量门禁 `chapter_quality_gate`，默认执行、只报告不修复，问题作决策点）；「上架 / 发布 / 完本 / 导出 / 生成书名简介 / 检查能否发书」→ `novel-publish`。「删书」**无 skill**——`navigate("/books")` 让用户手动点删除（直删工具不在工具面）。拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」。（**Claude Code 侧为交互式 `novel-build`，与 dsh 侧拆分独立演进、不做镜像**；Claude Code 端也可直接跑 `novel-master` 统一调度，dsh 端无此 skill，按上表自分发。）
+- **意图 → skill 分发表**：「开新书 / 写设定 / 建书 / 构思世界观 / 生成候选」→ dsh 侧 `novel-build-candidates`（生成候选并**呈现**到步 2，**停在交互点等用户挑选，不自动选/跳步**）；**侧栏要求建书先 `navigate("/books/start")` 翻到步 1 表单**（已给全则预填，笔名留用户选），用户填完点「🚀 让 Agent 构建」后按钮路径接管（只生成候选并呈现，停步 2）；「已选候选 / 补全世界观 / 继续建书」→ `novel-build`（步 3 分步建书 + submit + 完整大纲）；「生成大纲 / 排故事线 / 选桥段 / 一键完整大纲 / 续写 / 扩写」→ `novel-outline`；「写正文 / 写下一章 / 继续写 / 写桥段 / 一键写完整章 / 写完整章 / 一键完整章节 / 完整章节构建」→ `novel-write`（完整章节构建含质量门禁 `chapter_quality_gate`，默认执行、只报告不修复，问题作决策点）；「上架 / 发布 / 完本 / 导出 / 生成书名简介 / 检查能否发书」→ `novel-publish`。「删书」**无 skill**——`navigate("/books")` 让用户手动点删除（直删工具不在工具面）。「抓取 / 下载番茄小说 / 侦察热榜」→ `fetch_novel`（按书名/book_id 下载章节入库 `storage/novels/fanqie/`，无需 LLM，进度在 `/scout` 页实时显示）/ `discover_hot`（热榜）。拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」。（**Claude Code 侧为交互式 `novel-build`，与 dsh 侧拆分独立演进、不做镜像**；Claude Code 端也可直接跑 `novel-master` 统一调度，dsh 端无此 skill，按上表自分发。）
 - 每个分 skill 先用 `mcp__novel-engine__get_book_detail` / `get_book_state` 做前置 phase 检查；phase 不满足时引导前一阶段，不要跨阶段硬做。
 - 状态信号：`storyline.phase ∈ config/outlines/plots/ready`；`book.status ∈ planning/writing/reviewing/finished/published/paused`。
 - 写类工具带书级文件锁，冲突抛 `BookBusyError`，稍后重试；`budget_paused` 表示预算/额度触发，停下问用户。

@@ -477,7 +477,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 | `libraries.py` | `/plots` `/structures` `/gags` `/profiles` `/profiles/new` + 启禁删除 API | 12 |
 | `publish.py` | `/publish` 发布索引、`/books/<id>/publish` 上架页 + check/mark-finished/export API | 7 |
 | `settings.py` | `/settings`（API Key/模型/预算/context_budget 配置 + 测试连接）、任务状态 API | 6 |
-| `tools.py` | `/scout` 番茄侦察兵、`/extract` 提取、`/review-test`、`/deai`、`/write` 兼容跳转 | 9 |
+| `tools.py` | `/scout` 番茄侦察兵（实时进度 `/api/crawl/progress`，web 表单 / MCP `fetch_novel` 共用 `storage/crawl_progress.json`）、`/extract` 提取、`/review-test`、`/deai`、`/write` 兼容跳转 | 10 |
 | `world_builder.py` | `/books/<id>/world` 世界观设定卡 + generate/candidates/borrow-preview/confirm | 5 |
 | `ctx.py` | 共享：全局服务、get_llm、引擎缓存、故事线统一存取、`sse_stream_response` | — |
 
@@ -522,10 +522,11 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 把引擎全部操作暴露为**共享工具注册表**，供 **MCP 服务器**（Claude Code 外部客户端 + dsh-ne 侧栏大脑）消费。内置 Agent 循环（`plugins/agent_loop.py`）已删除——侧栏聊天经 `libraries/dsh_bridge.py` 转发 vendored `vendor/dsh-ne/` headless 子进程，经 MCP 驱动同一工具面。
 
-**共享工具注册表 `agent_tools.py`（40 个）**：
+**共享工具注册表 `agent_tools.py`（51 个）**：
 - 单一工具来源 `TOOL_REGISTRY = [{name, description, input_schema, func}]`，schema 用 `inspect.signature` 自动生成。复用 `ctx` 单例——Web 进程内与 UI 共享同一状态；MCP 独立进程各自一份，经 `books/` 文件协调。
 - 覆盖「创建→上架」全链路：只读/建书（`list_books`/`get_book_state`/`get_storyline`/`borrow_preview`/`query_*`）→ 规划（`save_basic_info`/`generate_core_conflict`/`generate_factions`/`generate_characters`/`generate_rest_world`/`generate_world`/`world_candidates`/`confirm_world`）→ 大纲（`generate_outlines`/`generate_full_outline`/`confirm_outlines`/`fill_plots`/`fill_gags`/`outline_agent`/`extend_outline`/`outline_material_candidates`）→ 写作（`write_next_bridge`/`write_chapter`/`generate_book_meta`/`tag_punch_points`/`diagnose_retention`）→ 上架（`publish_check`/`publish_book`/`mark_finished`/`export_book`）→ 审查/去AI（`review_text`/`deai_text`）→ 导航/向导（`navigate`/`drive_ui` 写意图队列）。护栏：直建/直删工具不存在（建书走系统向导、删书走书库页手动）。
 - 工具排序把 `navigate`/`drive_ui` 前置（flash 对列表前部工具更敏感，保证"打开X页"正确触发导航）。
+- 抓取/侦察（`plugins/fanqie_scout.py`）：`fetch_novel`（按书名/book_id 下载番茄小说章节到 `storage/novels/fanqie/`，纯抓取无需 LLM，进度写 `storage/crawl_progress.json`，`/scout` 页轮询 `/api/crawl/progress` 实时展示）+ `discover_hot`（热榜侦察）。`/scout` web 表单抓取与 MCP 工具共用同一进度文件（`libraries/crawl_progress.py`）。
 
 **右侧栏 Agent 聊天面板**：
 - `base.html` 的 `aside#status-bar` 为纯对话：`#agent-chat` 消息区（用户/助手气泡 + 🔧 工具步骤卡）+ `#agent-input` 输入框；`ui/static/js/agent_panel.js` 用 fetch+getReader 手写解析消费 `/api/agent/chat` SSE（`tool_start`/`reply`/`error`/`done`）。

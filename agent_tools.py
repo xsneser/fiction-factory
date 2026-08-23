@@ -1571,6 +1571,80 @@ def list_snapshots(book_id: str) -> dict:
     return {"book_id": book_id, "snapshots": _ls(book_id)}
 
 
+def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
+                download_delay: float = 1.0) -> dict:
+    """抓取番茄小说：按书名或 book_id 搜索→下载指定章数→保存到 storage/novels/fanqie/。
+
+    纯抓取、无需 LLM（复用 FanqieCrawler + novel_storage.save_novel）。进度实时写入
+    storage/crawl_progress.json（/scout 页轮询展示）。返回 {ok, title, author,
+    saved_chapters, folder, platform}。
+    """
+    if not title and not book_id:
+        raise RuntimeError("请提供书名 title 或 book_id")
+    from libraries.crawl_progress import write_crawl_progress
+    from plugins.fanqie_scout import FanqieCrawler
+    import re as _re
+    import time as _time
+    crawler = FanqieCrawler()
+
+    def on_progress(phase, current, total, message):
+        write_crawl_progress("running", phase, current, total, message)
+
+    try:
+        novel = (crawler._get_novel_from_page(book_id) if book_id
+                 else crawler.search_novel(title))
+        if not novel:
+            raise RuntimeError(f"未找到：{title or book_id}")
+        on_progress("search", 1, 1, f"找到: {novel.title}")
+
+        chapter_list = crawler.get_chapter_list(novel.book_id, chapters)
+        total_ch = len(chapter_list)
+        downloaded = []
+        for i, ch in enumerate(chapter_list):
+            content = crawler.download_chapter(novel.book_id, ch["id"])
+            if content.strip():
+                downloaded.append({
+                    "index": ch["index"], "title": ch["title"],
+                    "content": content,
+                    "word_count": len(_re.findall(r"[一-鿿]", content)),
+                })
+            on_progress("download", i + 1, total_ch, ch["title"][:30])
+            if i < total_ch - 1:
+                _time.sleep(download_delay)   # 礼貌爬取间隔
+
+        from plugins.novel_storage import save_novel
+        folder = save_novel("fanqie", {
+            "title": novel.title, "author": novel.author,
+            "book_id": novel.book_id, "url": novel.url,
+            "genre": novel.genre, "chapter_count": novel.chapter_count,
+        }, downloaded)
+        write_crawl_progress("done", "download", len(downloaded), len(downloaded),
+                             f"下载完成 {len(downloaded)}章")
+        return {"ok": True, "title": novel.title, "author": novel.author,
+                "saved_chapters": len(downloaded), "folder": folder,
+                "platform": "fanqie"}
+    except Exception as e:
+        write_crawl_progress("error", "", 0, 0, str(e))
+        raise
+
+
+def discover_hot(genre: str = "", count: int = 10) -> dict:
+    """侦察番茄小说热榜：返回热门书列表（书名/作者/题材/字数/章数/热度/简介）。
+
+    genre 为题材中文名（如"玄幻""都市"，空=全站热榜）；count 默认 10。
+    返回 {"ok", "count", "novels": [{book_id,title,author,genre,sub_genre,
+    word_count,chapter_count,hot_score,intro,url}]}。
+    """
+    from plugins.fanqie_scout import FanqieCrawler
+    crawler = FanqieCrawler()
+    genre_id = 0
+    if genre:
+        genre_id = {v: k for k, v in FanqieCrawler.GENRE_MAP.items()}.get(genre.strip(), 0)
+    novels = crawler.discover_hot(genre_id=genre_id, count=count)
+    return {"ok": True, "count": len(novels),
+            "novels": [n.__dict__ for n in novels]}
+
+
 def _build_registry():
     # 顺序有讲究：导航/建书向导驱动排最前（flash 对列表前部工具更敏感，能保证
     # "打开页面"请求正确触发 navigate），其次只读摸底，再创作链/上架/工具。
@@ -1598,6 +1672,8 @@ def _build_registry():
         chapter_quality_gate,
         # 快照 / diff / 回滚（决策点 commit 语义）
         preview_diff, rollback_book, list_snapshots,
+        # 抓取 / 侦察（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示）
+        fetch_novel, discover_hot,
     ]
     seen = set()
     entries = []
