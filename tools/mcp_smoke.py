@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 47  # 44 + preview_diff/rollback_book/list_snapshots
+EXPECT_MCP_TOOLS = 48  # 47 + generate_outline_preview
 PASS, FAIL = [], []
 
 
@@ -134,6 +134,9 @@ async def main():
                 check("navigate 返回 __navigate__", nav.get("__navigate__") == "/books")
                 dui = await call_json(session, "drive_ui", {"cmd": "next"})
                 check("drive_ui 返回 __ui_command__", dui.get("__ui_command__") == "next")
+                dui2 = await call_json(session, "drive_ui", {"cmd": "set_outline",
+                    "args": {"outlines": [{"id": "outline_0001", "name": "测试大纲"}], "plots": []}})
+                check("drive_ui set_outline 返回 __ui_command__", dui2.get("__ui_command__") == "set_outline")
                 intent_file = os.path.join(_ROOT, "storage", "nav_intent.json")
                 intents = []
                 if os.path.exists(intent_file):
@@ -146,6 +149,8 @@ async def main():
                       any(i.get("url") == "/books" and i.get("kind") == "navigate" for i in intents))
                 check("drive_ui 已写入意图队列（kind=ui_command cmd=next）",
                       any(i.get("kind") == "ui_command" and i.get("cmd") == "next" for i in intents))
+                check("drive_ui set_outline 已写入意图队列（kind=ui_command cmd=set_outline）",
+                      any(i.get("kind") == "ui_command" and i.get("cmd") == "set_outline" for i in intents))
 
                 # ── 4. tool-log source=mcp 断言 ──
                 log_file = os.path.join(_ROOT, "storage", "tool_log.jsonl")
