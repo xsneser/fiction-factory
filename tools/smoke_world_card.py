@@ -109,12 +109,12 @@ def run_smoke():
         print("[6] GET", d["redirect"], "->", r.status_code,
               "| 写作台:", "✍️ 写作台" in html, "| 错误页:", "⚠️ 无法进入写作" in html,
               "| 一键生成完整大纲:", "✨ 一键生成完整大纲" in html,
-              "| 写桥段按钮(应无):", "▶ 写下一个桥段" in html)
+              "| 写正文按钮:", "继续写正文" in html)
         assert r.status_code == 200, "写作台应可渲染"
         assert "✍️ 写作台" in html, "应渲染写作台"
         assert "⚠️ 无法进入写作" not in html, "不应是错误页"
         assert "✨ 一键生成完整大纲" in html, "规划态应见一键生成完整大纲按钮"
-        assert "▶ 写下一个桥段" not in html, "规划态不应显示写桥段按钮（已门控）"
+        assert "继续写正文" in html, "写作台应渲染写正文按钮"
 
         print("\nSMOKE OK")
     finally:

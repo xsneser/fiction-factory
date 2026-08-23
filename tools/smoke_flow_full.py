@@ -67,7 +67,7 @@ def main():
         html = r.get_data(as_text=True)
         assert "✍️ 写作台" in html and "⚠️ 无法进入写作" not in html, "应渲染写作台而非错误页"
         assert "✨ 一键生成完整大纲" in html, "规划态应见一键生成完整大纲"
-        assert "▶ 写下一个桥段" not in html, "规划态不应显示写桥段按钮"
+        assert "继续写正文" in html, "写作台应渲染写正文按钮"
         print("[4] 写作台（规划态）OK")
 
         # 5) 一键生成完整大纲（真实 LLM 6 阶段，可能 1-3 分钟）
@@ -87,7 +87,7 @@ def main():
         # 7) 再进写作台：应建写作者（可写桥段）
         r = client.get(f"/books/{book_id}/continue", follow_redirects=True)
         html = r.get_data(as_text=True)
-        assert "✍️ 写作台" in html and "▶ 写下一个桥段" in html, "有大纲后应见写桥段按钮"
+        assert "✍️ 写作台" in html and "继续写正文" in html, "有大纲后应见写正文按钮"
         eng = _engines.get(f"cont_{book_id}")
         assert eng is not None and eng.storyline_writer is not None, "引擎应已建桥段写作者"
         print("[7] 再进写作台，写作者已建 OK")

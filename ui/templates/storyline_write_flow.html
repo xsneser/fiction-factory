@@ -21,12 +21,16 @@
     extra='<span>每章：<strong>' ~ storyline.words_per_chapter ~ '字</strong></span>'
 ) }}
 
-{# ─── 手动写桥段控制条 + gen-feed 事件流（预算耗尽/修复失败停下问用户） ─── #}
-<div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
-    <button type="button" class="btn" id="wf-write-btn" style="background:#238636;color:#fff" onclick="writeNextBridge()">▶ 写下一个桥段</button>
-    <span class="hint" style="color:var(--fg-dim);font-size:12px">手动驱动引擎逐桥段写；预算耗尽 / 连续修复失败会在此停下，处理后可继续</span>
+{# ─── 技能卡 + 继续写正文：写作由侧栏 Agent（dsh）驱动 ─── #}
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:10px">
+    <span class="hint" style="color:var(--fg-dim);font-size:12px">写作由侧栏 Agent 驱动：点卡片或按钮，Agent 在侧栏执行</span>
+    <button type="button" class="btn" id="wf-write-btn" style="background:#238636;color:#fff" onclick="continueWriting()">✍️ 继续写正文</button>
 </div>
-<div id="wf-feed" class="gen-feed" style="display:none;margin-bottom:12px;max-height:220px;overflow-y:auto"></div>
+<div class="wf-skill-cards">
+    <div class="wf-skill-card" onclick="runSkill('continue')"><div class="wsc-title">✍️ 继续写正文</div><div class="wsc-sub">续写下一个桥段</div></div>
+    <div class="wf-skill-card" onclick="runSkill('full_chapter')"><div class="wsc-title">✨ 一键写完整章</div><div class="wsc-sub">写 → 质量门禁 → 汇报</div></div>
+    <div class="wf-skill-card" onclick="runSkill('gate')"><div class="wsc-title">🔍 质量门禁</div><div class="wsc-sub">连续性/追读/伏笔/审查/爽点</div></div>
+</div>
 
 {# ─── 两栏：左=故事线（可拖拽） | 右=章节正文（规划/生成/写作均由 agent 驱动） ─── #}
 <div class="editor-split">
@@ -59,6 +63,14 @@
 
 <style>
 .view-pane { flex:1; min-height:0; overflow-y:auto; padding-right:4px; }
+/* 技能卡：驱动侧栏 Agent 的一键动作入口 */
+.wf-skill-cards { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+.wf-skill-card { background:#161b22; border:1px solid #30363d; border-radius:8px;
+    padding:10px 16px; cursor:pointer; transition:border-color .2s, background .2s;
+    flex:1; min-width:150px; max-width:220px; }
+.wf-skill-card:hover { border-color:#58a6ff; background:#1c2128; }
+.wf-skill-card .wsc-title { font-size:13px; font-weight:600; color:#f0f6fc; margin-bottom:2px; }
+.wf-skill-card .wsc-sub { font-size:11px; color:var(--fg-dim,#8b949e); }
 </style>
 
 <script src="/static/js/story_line.js"></script>
@@ -148,66 +160,15 @@ function _centerManuscript(el) {
 })();
 </script>
 <script>
-/* ─── 写作台 gen-feed：手动写桥段（SSE 事件流；预算耗尽/修复失败停下问用户） ─── */
-var _wfWriting = false;
-function _wfAdd(cls, text) {
-    var feed = document.getElementById('wf-feed'); if (!feed) return;
-    feed.style.display = 'block';
-    var el = document.createElement('div');
-    el.className = 'gf-item ' + cls;
-    el.textContent = text;
-    feed.appendChild(el);
-    feed.scrollTop = feed.scrollHeight;
+/* ─── 技能卡 / 继续写正文：把任务发给侧栏 Agent（dsh）在侧栏执行 ─── */
+function runSkill(kind) {
+    if (window.switchAgentTab) window.switchAgentTab('chat');   // 保证侧栏对话页签可见
+    var task = '';
+    if (kind === 'continue') task = '继续写正文 for ' + window.__STORYLINE_ID__;
+    else if (kind === 'full_chapter') task = '一键写完整章 for ' + window.__STORYLINE_ID__;
+    else if (kind === 'gate') task = '对 ' + window.__STORYLINE_ID__ + ' 跑一章完整章节质量门禁并汇报';
+    if (task && window.agentSendTask) window.agentSendTask(task);   // 渲染「你」气泡，agent 侧栏执行
 }
-function _wfHandle(evt) {
-    window.__lastWriteEvent = evt;
-    var t = evt.type;
-    if (t === 'bridge_start') _wfAdd('info', '▶ 开始桥段「' + (evt.plot_name || '') + '」');
-    else if (t === 'bridge_done') _wfAdd('success', '✅ 桥段完成 · ' + evt.words + ' 字' + (evt.cut_chapter ? '（本章已满，切章）' : ''));
-    else if (t === 'chapter_done') _wfAdd('success', '📄 第' + evt.chapter + '章完成 · ' + evt.word_count + ' 字');
-    else if (t === 'complete') _wfAdd('success', '🏁 ' + (evt.message || '全书完成'));
-    else if (t === 'budget_paused') _wfAdd('decision', '💰 ' + (evt.message || '预算耗尽，暂停写作（调高预算后可继续）'));
-    else if (t === 'repair_stalled') _wfAdd('decision', '🛑 ' + (evt.reason || evt.message || '连续修复失败，暂停写作'));
-    else if (t === 'error') _wfAdd('error', '❌ ' + (evt.message || '写入出错'));
-}
-function _wfDone() {
-    var last = window.__lastWriteEvent || {};
-    var stuck = last.type === 'budget_paused' || last.type === 'repair_stalled' || last.type === 'error';
-    var btn = document.getElementById('wf-write-btn');
-    if (btn) btn.disabled = false;
-    if (stuck) { _wfAdd('decision', '→ 处理后可再点「▶ 写下一个桥段」继续'); return; }
-    setTimeout(function () { location.reload(); }, 500);   // 成功写完刷新正文与故事线
-}
-function writeNextBridge() {
-    var btn = document.getElementById('wf-write-btn'); if (!btn || btn.disabled) return;
-    btn.disabled = true;
-    var feed = document.getElementById('wf-feed'); if (feed) feed.innerHTML = '';
-    window.__lastWriteEvent = null;
-    _wfAdd('info', '开始写下一个桥段…');
-    fetch('/api/storyline-engine/' + window.__ENGINE_ID__ + '/write-bridge', { method: 'POST' })
-        .then(function (r) {
-            if (!r.ok || !r.body) { _wfAdd('error', '请求失败: HTTP ' + r.status); _wfDone(); return null; }
-            return r.body.getReader();
-        })
-        .then(function (reader) {
-            if (!reader) return;
-            var dec = new TextDecoder(); var buf = '';
-            function pump() {
-                return reader.read().then(function (x) {
-                    if (x.done) { _wfDone(); return; }
-                    buf += dec.decode(x.value, { stream: true });
-                    var lines = buf.split('\n'); buf = lines.pop() || '';
-                    for (var i = 0; i < lines.length; i++) {
-                        var line = lines[i];
-                        if (line.indexOf('data: ') !== 0) continue;
-                        try { _wfHandle(JSON.parse(line.slice(6))); } catch (e) {}
-                    }
-                    return pump();
-                });
-            }
-            return pump();
-        })
-        .catch(function (e) { _wfAdd('error', '写入请求异常: ' + e.message); _wfDone(); });
-}
+function continueWriting() { runSkill('continue'); }
 </script>
 {% endblock %}
