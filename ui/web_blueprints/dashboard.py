@@ -60,6 +60,11 @@ def start_new_book():
         data = request.get_json(silent=True) or {} if is_json else {}
         src = data if is_json else request.form
 
+        # 新流程：步 3 ②生成的大纲+桥段（generate_outline_preview 产出，set_outline 存入）
+        outline_data = data.get("_outline_data") if is_json else None
+        if not isinstance(outline_data, dict):
+            outline_data = None
+
         pen_name = src.get("pen_name", "")
         genre = src.get("genre", "")
         sub_genre = src.get("sub_genre", "")
@@ -82,16 +87,21 @@ def start_new_book():
         # form（smoke 兼容）回退 protag_* 单主角
         characters = data.get("characters") if is_json else None
         if not isinstance(characters, list) or not characters:
-            characters = [{
-                "name": src.get("protag_name", ""),
-                "role": "主角",
-                "importance": 1,
-                "identity": src.get("protag_identity", ""),
-                "personality": src.get("protag_personality", ""),
-                "golden_finger": src.get("protag_golden_finger", ""),
-                "gender": "", "catchphrase": "", "brief": "", "title": "",
-                "age": 0, "death_year": 0, "archetype_id": "", "relations": [],
-            }]
+            # 新流程兜底：步 3 ②大纲管线 Phase 1 产出的临时人物（步 4 未生成/失败时用）
+            temp_chars = ((outline_data or {}).get("basic_info") or {}).get("characters") or []
+            if temp_chars:
+                characters = temp_chars
+            else:
+                characters = [{
+                    "name": src.get("protag_name", ""),
+                    "role": "主角",
+                    "importance": 1,
+                    "identity": src.get("protag_identity", ""),
+                    "personality": src.get("protag_personality", ""),
+                    "golden_finger": src.get("protag_golden_finger", ""),
+                    "gender": "", "catchphrase": "", "brief": "", "title": "",
+                    "age": 0, "death_year": 0, "archetype_id": "", "relations": [],
+                }]
 
         # 世界观补全（向导③ JSON）：客户端 world_building 为 12 维 dict；form/旧入口回退 description+tags
         wb = data.get("world_building") if is_json else None
@@ -100,9 +110,11 @@ def start_new_book():
         wb.setdefault("description", description)
         wb.setdefault("tags", tags)
         from libraries.storyline import DEFAULT_WORLD_BUILDING
+        # 新流程兜底：Phase 1 产出的世界观补空（步 3 ⑤未生成/失败时用）
+        fallback_wb = ((outline_data or {}).get("basic_info") or {}).get("world_building") or {}
         for k, v in DEFAULT_WORLD_BUILDING.items():
             if k not in wb:
-                wb[k] = list(v) if isinstance(v, list) else v
+                wb[k] = fallback_wb.get(k, list(v) if isinstance(v, list) else v)
 
         basic_info = {
             "characters": characters,
@@ -112,6 +124,15 @@ def start_new_book():
             "pov": (data.get("pov") if is_json else "") or "第三人称",
             "era_language": (data.get("era_language") if is_json else "") or "",
         }
+        # 新流程兜底：基调空时用 Phase 1 产出值
+        if is_json and outline_data:
+            obi = outline_data.get("basic_info") or {}
+            if not basic_info.get("tone"):
+                basic_info["tone"] = obi.get("tone", "")
+            if not basic_info.get("target_audience"):
+                basic_info["target_audience"] = obi.get("target_audience", "")
+            if not basic_info.get("era_language"):
+                basic_info["era_language"] = obi.get("era_language", "")
         # 世界观已在向导③补全且充实 → 打 _world_generated，让 generate_full_outline 跳过 Phase 1 故事分析
         if is_json:
             from libraries.outline_generator import basic_info_is_rich
@@ -137,6 +158,24 @@ def start_new_book():
             basic_info=basic_info,
             phase="config",
         )
+
+        # 新流程：步 3 ②生成的大纲+桥段随书落库 → 书创建即 phase=ready
+        # （不再 submit 后手动 generate_full_outline；roles 用最终人物重标，幂等）
+        if outline_data and isinstance(outline_data.get("outlines"), list) and outline_data["outlines"]:
+            from libraries.storyline import BookStoryline as _BS, annotate_plot_roles
+            _tmp = _BS.from_dict({
+                "outlines": outline_data["outlines"],
+                "plots": outline_data.get("plots", []),
+                "threads": outline_data.get("threads", []),
+                "themes": outline_data.get("themes", []),
+            })
+            storyline.outlines = _tmp.outlines
+            storyline.plots = _tmp.plots
+            storyline.threads = _tmp.threads
+            storyline.themes = _tmp.themes
+            storyline.phase = "ready"
+            storyline.generated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+            annotate_plot_roles(storyline)
 
         # 直接建正式书（规划书=书目录内的书；草稿目录已废弃）
         book = book_mgr.create(
