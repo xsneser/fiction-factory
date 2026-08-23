@@ -140,7 +140,10 @@
         }
         aside#status-bar .agent-tool-card.ok  { border-left-color:#3fb950; }
         aside#status-bar .agent-tool-card.err { border-left-color:#f85149; }
-        aside#status-bar .agent-tool-head { color:#79c0ff; cursor:pointer; font-weight:500; }
+        aside#status-bar .agent-tool-head { color:#79c0ff; cursor:pointer; font-weight:500;
+            display:flex; justify-content:space-between; align-items:center; gap:8px; }
+        aside#status-bar .agent-tool-head-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        aside#status-bar .agent-tool-head-meta { color:#8b949e; font-weight:400; font-size:10px; white-space:nowrap; flex-shrink:0; }
         aside#status-bar .agent-tool-detail {
             font-size:10px; color:#8b949e; white-space:pre-wrap; word-break:break-all;
             margin-top:4px; padding:4px; background:#161b22; border-radius:4px; max-height:180px; overflow-y:auto;

@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v13 events-stream');
+console.log('[agent-panel] v14 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -131,8 +131,10 @@ console.log('[agent-panel] v13 events-stream');
 
     function addToolCard(tool, args, noTimer) {
         var card = el('div', 'agent-tool-card');
-        var head = el('div', 'agent-tool-head', '🔧 ' + escapeHtml(toolLabel(tool, args)));
+        var head = el('div', 'agent-tool-head');
         head.title = '点击展开/收起参数';
+        var label = el('span', 'agent-tool-head-label', '🔧 ' + escapeHtml(toolLabel(tool, args)));
+        var meta = el('span', 'agent-tool-head-meta', '');   // 第一行右侧：⏱ 运行时长 · token 用量
         var detail = el('div', 'agent-tool-detail', '');
         detail.style.display = 'none';
         if (args && typeof args === 'object' && Object.keys(args).length) {
@@ -142,17 +144,20 @@ console.log('[agent-panel] v13 events-stream');
                 if (show) detail.textContent = JSON.stringify(zhKeys(args), null, 2);
             };
         }
+        head.appendChild(label);
+        head.appendChild(meta);
         var status = el('div', 'agent-tool-status', '运行中…');
         card.appendChild(head);
         card.appendChild(detail);
         card.appendChild(status);
         chat.appendChild(card);
         scrollBottom();
-        var run = { card: card, status: status, t0: performance.now(), tool: tool, args: args, timer: null };
+        var run = { card: card, status: status, meta: meta, t0: performance.now(), tool: tool, args: args, timer: null };
         // 运行中实时计时（noTimer 供刷新重建卡：页面加载为基的计时错误，重建卡靠事件 ts 差算真实时长）
         if (!noTimer) {
             run.timer = setInterval(function() {
-                if (run.status) run.status.textContent = '运行中… ' + formatDur(performance.now() - run.t0);
+                if (run.meta) run.meta.textContent = '⏱ ' + formatDur(performance.now() - run.t0)
+                    + (run.usage ? ' · ' + formatTokens(run.usage) : '');
             }, 1000);
         }
         return run;
@@ -180,18 +185,19 @@ console.log('[agent-panel] v13 events-stream');
         return run;
     }
 
-    // 工具卡收尾：清计时器 + 状态文本 + 执行耗时（⏱；durMs 供刷新重建卡用事件 ts 差，活跃卡用 performance 差）+ token 用量 + ok/err 类名
+    // 工具卡收尾：清计时器；第一行右侧 meta 显示 ⏱ 时长（durMs 供重建卡用事件 ts 差，活跃卡用 performance 差）+ token 用量；状态行只留摘要
     function finishToolCard(run, text, durMs) {
         if (!run || !run.status) return;
         if (run.timer) { clearInterval(run.timer); run.timer = null; }
-        var dur = '';
+        var durStr = '';
         if (durMs !== undefined && durMs !== null) {
-            dur = ' ⏱ ' + formatDur(durMs);
+            durStr = '⏱ ' + formatDur(durMs);
         } else if (run.t0) {
-            dur = ' ⏱ ' + formatDur(performance.now() - run.t0);
+            durStr = '⏱ ' + formatDur(performance.now() - run.t0);
         }
         var tok = run.usage ? ' · ' + formatTokens(run.usage) : '';
-        run.status.textContent = (text || '') + dur + tok;
+        if (run.meta) run.meta.textContent = durStr + tok;
+        run.status.textContent = (text || '');
         run.status.className = (text && text.indexOf('✅') === 0)
             ? 'agent-tool-status ok' : 'agent-tool-status err';
     }
