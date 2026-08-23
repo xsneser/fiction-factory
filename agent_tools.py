@@ -680,7 +680,7 @@ def save_book_meta(book_id: str, title: str = "", synopsis: str = "") -> dict:
 
 
 def generate_title(book_id: str) -> dict:
-    """AI 生成书名（3-5 个候选，选第一个写入 book_title + book.json.title）。"""
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 AI 生成书名（3-5 个候选，选第一个写入 book_title + book.json.title）。"""
     tl = _require_tl(book_id)
     llm = _require_llm()
     bi = tl.basic_info or {}
@@ -714,7 +714,7 @@ def generate_title(book_id: str) -> dict:
 
 
 def generate_outlines(book_id: str, mode: str = "ai", max_outlines: int = 5) -> dict:
-    """生成大纲序列（mode=ai 用 LLM；rule 用题材方向模板确定性生成）。"""
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 生成大纲序列（mode=ai 用 LLM；rule 用题材方向模板确定性生成）。"""
     tl = _require_tl(book_id)
     llm = get_llm() if mode == "ai" else None
     builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
@@ -757,7 +757,7 @@ def outline_material_candidates(book_id: str) -> dict:
 
 def generate_full_outline(book_id: str, picks: dict = None,
                           regenerate: bool = False) -> dict:
-    """一键生成完整大纲（5 阶段：分析→大纲→桥段→内涵/吸睛→一致性），原地累加并逐步落盘。
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 一键生成完整大纲（5 阶段：分析→大纲→桥段→内涵/吸睛→一致性），原地累加并逐步落盘。
 
     picks（可选，决策点预选）形如 {"templates": ["structure_id", ...],
     "plots": ["plot_id", ...]}——plots 为扁平优先序列表（与 outline_material_candidates
@@ -818,7 +818,7 @@ def generate_full_outline(book_id: str, picks: dict = None,
 
 
 def extend_outline(book_id: str, mode: str = "ai") -> dict:
-    """续写时扩展故事线：末尾追加新大纲弧 + 填充桥段 + 加料，同步 bump 章节总数。"""
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 续写时扩展故事线：末尾追加新大纲弧 + 填充桥段 + 加料，同步 bump 章节总数。"""
     tl = _require_tl(book_id)
     if not tl.outlines:
         raise RuntimeError("尚无故事线大纲，请先 generate_full_outline 后再扩展")
@@ -900,7 +900,7 @@ def fill_gags(book_id: str) -> dict:
 
 
 def outline_agent(book_id: str, message: str) -> dict:
-    """大纲助手：用自然语言调整故事线（改桥段/加笑点/增删桥段/改大纲等），直接落盘。"""
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 大纲助手：用自然语言调整故事线（改桥段/加笑点/增删桥段/改大纲等），直接落盘。"""
     tl = _require_tl(book_id)
     if not message.strip():
         raise RuntimeError("消息为空")
@@ -916,7 +916,7 @@ def outline_agent(book_id: str, message: str) -> dict:
 
 def generate_world(book_id: str, mode: str = "one", idea: str = "",
                    source_book_id: str = "", tweak: str = "") -> dict:
-    """生成世界观设定（mode=one 一句话生成；borrow 从源书借鉴+微调），返回 basic_info。"""
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 生成世界观设定（mode=one 一句话生成；borrow 从源书借鉴+微调），返回 basic_info。"""
     tl = _require_tl(book_id)
     llm = _require_llm()
     mode = mode or "one"
@@ -988,7 +988,7 @@ def _clear_wizard_candidates() -> None:
 
 def world_candidates(book_id: str = "", idea: str = "", genre: str = "",
                      sub_genre: str = "", tags: list = None) -> dict:
-    """增量生成世界观候选并**自动填入**步 2（一次 1 个，给 LLM 充分思考空间）。
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 增量生成世界观候选并**自动填入**步 2（一次 1 个，给 LLM 充分思考空间）。
 
     book_id 为空 = 建书前调用（新书向导②）：每次调用只产出 1 个**新**候选并
     push add_candidate 自动填入浏览器步 2；候选按 (idea, tags) 持久化去重——
@@ -1053,7 +1053,7 @@ def generate_characters(idea: str, genre: str = "", sub_genre: str = "",
                         core_conflict: str = "", factions: list = None,
                         outline_preview: str = "",
                         outline_data: dict = None) -> dict:
-    """生成角色候选（无书，建书向导步 3 用）：主角 + 配角，供 drive_ui(set_characters) 推给页面。
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 生成角色候选（无书，建书向导步 3 用）：主角 + 配角，供 drive_ui(set_characters) 推给页面。
 
     分阶段构建④可带已定核心矛盾/势力/大纲桥段上下文（core_conflict/factions/outline_preview/
     outline_data），让角色与之自洽。outline_data 为 generate_outline_preview 产出的大纲+桥段
@@ -1089,7 +1089,7 @@ def generate_characters(idea: str, genre: str = "", sub_genre: str = "",
 def generate_core_conflict(idea: str, world_brief: str = "", tags: list = None,
                            genre: str = "", sub_genre: str = "",
                            pen_name: str = "") -> dict:
-    """分阶段构建①（无书）：从一句话设定+题材标签推导故事主线核心矛盾。
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 分阶段构建①（无书）：从一句话设定+题材标签推导故事主线核心矛盾。
 
     返回 {"core_conflict", "genre"}（genre 供②按大纲库查模板/桥段）。
     """
@@ -1116,7 +1116,7 @@ def generate_core_conflict(idea: str, world_brief: str = "", tags: list = None,
 def generate_factions(idea: str, world_brief: str = "", core_conflict: str = "",
                       tags: list = None, genre: str = "", sub_genre: str = "",
                       outline_data: dict = None) -> dict:
-    """分阶段构建③（无书）：从一句话设定+核心矛盾发散世界里的势力派系。
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 分阶段构建③（无书）：从一句话设定+核心矛盾发散世界里的势力派系。
 
     outline_data 为 generate_outline_preview 产出的大纲+桥段（真实数据），非空时
     序列化为 outline_preview 上下文，让势力与已定故事线自洽。
@@ -1143,7 +1143,7 @@ def generate_rest_world(idea: str, world_brief: str = "", core_conflict: str = "
                         factions: list = None, outline_preview: str = "",
                         tags: list = None, genre: str = "", sub_genre: str = "",
                         pen_name: str = "") -> dict:
-    """分阶段构建⑤（无书）：大纲确定后补全其余世界观维度 + 基调，保留 core_conflict/factions。
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 分阶段构建⑤（无书）：大纲确定后补全其余世界观维度 + 基调，保留 core_conflict/factions。
 
     返回 {"world_building": {era, power_system, geography, culture, history,
     social_structure, rules, world_summary}, "tone", "target_audience", "pov", "era_language"}。
@@ -1175,7 +1175,7 @@ def generate_outline_preview(idea: str, genre: str = "", sub_genre: str = "",
                              pen_name: str = "", world_brief: str = "",
                              words_per_chapter: int = 3000,
                              picks: dict = None) -> dict:
-    """分阶段构建②（无书）：步3内先生成大纲+桥段（跑完整大纲管线，纯内存不落盘）。
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 分阶段构建②（无书）：步3内先生成大纲+桥段（跑完整大纲管线，纯内存不落盘）。
 
     返回 {"outlines", "plots", "threads", "themes", "basic_info", "phase", "stats", "event_count"}。
     供 drive_ui(set_outline) 存进向导 state，submit 时随书落库（书创建即 phase=ready）。
@@ -1273,7 +1273,7 @@ def confirm_world(book_id: str) -> dict:
 # ═══════════════════════════════════════════════════
 
 def write_next_bridge(book_id: str) -> dict:
-    """写「下一个」桥段（按桥段撰写，阻塞至该桥段写完）：本章满字数自动切章。"""
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 写「下一个」桥段（按桥段撰写，阻塞至该桥段写完）：本章满字数自动切章。"""
     engine = get_engine(book_id)
     last, events = consume_dict_stream(engine._write_next_bridge_stream())
     snap = _snapshot(book_id)
@@ -1302,7 +1302,7 @@ def write_next_bridge(book_id: str) -> dict:
 
 
 def write_chapter(book_id: str, chapter_num: int = 0) -> dict:
-    """整章同步写作（按桥段驱动，一次写完一章），chapter_num=0 表示写下一章。"""
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 整章同步写作（按桥段驱动，一次写完一章），chapter_num=0 表示写下一章。"""
     from libraries.engine import Instruction, Op
     engine = get_engine(book_id)
     n = chapter_num or engine.state.current_chapter + 1
@@ -1315,7 +1315,7 @@ def write_chapter(book_id: str, chapter_num: int = 0) -> dict:
 
 
 def generate_book_meta(book_id: str) -> dict:
-    """基于第 1 章生成书名+简介并落盘（book.json / storyline.json / outline.json）。"""
+    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 基于第 1 章生成书名+简介并落盘（book.json / storyline.json / outline.json）。"""
     if not book_mgr.get(book_id):
         raise RuntimeError(f"书 {book_id} 不存在")
     ch1 = book_mgr.load_chapter(book_id, 1)
