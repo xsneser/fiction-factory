@@ -26,11 +26,6 @@
     <span class="hint" style="color:var(--fg-dim);font-size:12px">写作由侧栏 Agent 驱动：点卡片或按钮，Agent 在侧栏执行</span>
     <button type="button" class="btn" id="wf-write-btn" style="background:#238636;color:#fff" onclick="continueWriting()">✍️ 继续写正文</button>
 </div>
-<div class="wf-skill-cards">
-    <div class="wf-skill-card" onclick="runSkill('continue')"><div class="wsc-title">✍️ 继续写正文</div><div class="wsc-sub">续写下一个桥段</div></div>
-    <div class="wf-skill-card" onclick="runSkill('full_chapter')"><div class="wsc-title">✨ 一键写完整章</div><div class="wsc-sub">写 → 质量门禁 → 汇报</div></div>
-    <div class="wf-skill-card" onclick="runSkill('gate')"><div class="wsc-title">🔍 质量门禁</div><div class="wsc-sub">连续性/追读/伏笔/审查/爽点</div></div>
-</div>
 
 {# ─── 两栏：左=故事线（可拖拽） | 右=章节正文（规划/生成/写作均由 agent 驱动） ─── #}
 <div class="editor-split">
@@ -42,6 +37,12 @@
     <div class="editor-divider" id="editor-divider" title="拖动调整故事线宽度"></div>
 
     <div class="editor-mid">
+        {# ─── 技能卡：驱动侧栏 Agent 的一键动作入口（竖排，镜像建书向导候选卡） ───#}
+        <div class="wf-skill-cards">
+            <div class="wf-skill-card" onclick="runSkill('continue')"><div class="wsc-title">✍️ 继续写正文</div><div class="wsc-sub">续写下一个桥段</div></div>
+            <div class="wf-skill-card" onclick="runSkill('full_chapter')"><div class="wsc-title">✨ 一键写完整章</div><div class="wsc-sub">写 → 质量门禁 → 汇报</div></div>
+            <div class="wf-skill-card" onclick="runSkill('gate')"><div class="wsc-title">🔍 质量门禁</div><div class="wsc-sub">连续性/追读/伏笔/审查/爽点</div></div>
+        </div>
         {# ─── 正文视图：连续章节文本（桥段包 span.m-bridge 供点击高亮） ───#}
         <div id="view-write" class="view-pane" style="display:block">
             <div id="wf-manuscript" class="manuscript">
@@ -63,14 +64,13 @@
 
 <style>
 .view-pane { flex:1; min-height:0; overflow-y:auto; padding-right:4px; }
-/* 技能卡：驱动侧栏 Agent 的一键动作入口 */
-.wf-skill-cards { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
-.wf-skill-card { background:#161b22; border:1px solid #30363d; border-radius:8px;
-    padding:10px 16px; cursor:pointer; transition:border-color .2s, background .2s;
-    flex:1; min-width:150px; max-width:220px; }
-.wf-skill-card:hover { border-color:#58a6ff; background:#1c2128; }
-.wf-skill-card .wsc-title { font-size:13px; font-weight:600; color:#f0f6fc; margin-bottom:2px; }
-.wf-skill-card .wsc-sub { font-size:11px; color:var(--fg-dim,#8b949e); }
+/* 技能卡：驱动侧栏 Agent 的一键动作入口（竖排单列，镜像建书向导候选卡） */
+.wf-skill-cards { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
+.wf-skill-card { background:#0d1117; border:1px solid #21262d; border-radius:8px;
+    padding:10px 12px; cursor:pointer; transition:all .2s; }
+.wf-skill-card:hover { border-color:#58a6ff; }
+.wf-skill-card .wsc-title { color:#58a6ff; font-weight:600; font-size:13px; margin-bottom:4px; }
+.wf-skill-card .wsc-sub { color:#8b949e; font-size:11px; line-height:1.6; }
 </style>
 
 <script src="/static/js/story_line.js"></script>
