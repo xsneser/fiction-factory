@@ -780,22 +780,43 @@ def world_candidates(book_id: str = "", idea: str = "", genre: str = "",
             "total": len(existing) + 1}
 
 
+def _outline_preview_text(outline_data: dict) -> str:
+    """把 generate_outline_preview 产出的大纲+桥段序列化为 prompt 预览文本。"""
+    if not outline_data:
+        return ""
+    lines = []
+    for o in (outline_data.get("outlines") or [])[:5]:
+        lines.append(f"· {o.get('name', '')}（第{o.get('start_chapter', 1)}-{o.get('end_chapter', 30)}章）")
+        for s in (o.get("stages") or [])[:4]:
+            evs = "、".join((s.get("events") or [])[:3])
+            lines.append(f"  - {s.get('name', '')}：{evs}")
+    plots = (outline_data.get("plots") or [])[:15]
+    if plots:
+        lines.append("桥段：" + "、".join(p.get("name", "") for p in plots))
+    return "\n".join(lines)
+
+
 def generate_characters(idea: str, genre: str = "", sub_genre: str = "",
                         tags: list = None, title: str = "",
                         archetype_ids: list = None,
                         core_conflict: str = "", factions: list = None,
-                        outline_preview: str = "") -> dict:
+                        outline_preview: str = "",
+                        outline_data: dict = None) -> dict:
     """生成角色候选（无书，建书向导步 3 用）：主角 + 配角，供 drive_ui(set_characters) 推给页面。
 
-    分阶段构建④可带已定核心矛盾/势力/开篇大纲桥段上下文（core_conflict/factions/outline_preview），
-    让角色与之自洽。原型选择：archetype_ids 非空则按 id 取；否则按 tags[0]→genre→启用原型回退
-    （照旧 /api/world-builder/characters 端点逻辑）。返回 {"protagonists": [...], "supporting_cast": [...]}。
+    分阶段构建④可带已定核心矛盾/势力/大纲桥段上下文（core_conflict/factions/outline_preview/
+    outline_data），让角色与之自洽。outline_data 为 generate_outline_preview 产出的大纲+桥段
+    （真实数据），非空时自动序列化为 outline_preview 文本。原型选择：archetype_ids 非空则按 id 取；
+    否则按 tags[0]→genre→启用原型回退（照旧 /api/world-builder/characters 端点逻辑）。
+    返回 {"protagonists": [...], "supporting_cast": [...]}。
     """
     llm = _require_llm()
     from libraries.world_builder import WorldBuildingGenerator
     from libraries.prompt_harness import PromptHarness
     harness = PromptHarness()   # 无书：storyline=None
     gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
+    if outline_data:
+        outline_preview = outline_preview or _outline_preview_text(outline_data)
     if archetype_ids:
         archetypes = [a.to_dict() for i in archetype_ids
                       if (a := char_lib.get_by_id(i)) is not None][:10]
@@ -842,9 +863,12 @@ def generate_core_conflict(idea: str, world_brief: str = "", tags: list = None,
 
 
 def generate_factions(idea: str, world_brief: str = "", core_conflict: str = "",
-                      tags: list = None, genre: str = "", sub_genre: str = "") -> dict:
+                      tags: list = None, genre: str = "", sub_genre: str = "",
+                      outline_data: dict = None) -> dict:
     """分阶段构建③（无书）：从一句话设定+核心矛盾发散世界里的势力派系。
 
+    outline_data 为 generate_outline_preview 产出的大纲+桥段（真实数据），非空时
+    序列化为 outline_preview 上下文，让势力与已定故事线自洽。
     返回 {"factions": [{"name", "stance", "desc"}]}。
     """
     llm = _require_llm()
@@ -857,7 +881,8 @@ def generate_factions(idea: str, world_brief: str = "", core_conflict: str = "",
         genre = derive_genre(list(tags or []))
     factions = gen.generate_factions(
         genre=genre, sub_genre=sub_genre, idea=world_brief or idea or "",
-        core_conflict=core_conflict or "", tags=list(tags or []))
+        core_conflict=core_conflict or "", tags=list(tags or []),
+        outline_preview=_outline_preview_text(outline_data))
     if not factions:
         raise RuntimeError("势力生成失败，请重试")
     return {"factions": factions}
@@ -892,6 +917,76 @@ def generate_rest_world(idea: str, world_brief: str = "", core_conflict: str = "
     if not result.get("world_building"):
         raise RuntimeError("世界观维度补全失败，请重试")
     return result
+
+
+def generate_outline_preview(idea: str, genre: str = "", sub_genre: str = "",
+                             tags: list = None, core_conflict: str = "",
+                             pen_name: str = "", world_brief: str = "",
+                             words_per_chapter: int = 3000,
+                             picks: dict = None) -> dict:
+    """分阶段构建②（无书）：步3内先生成大纲+桥段（跑完整大纲管线，纯内存不落盘）。
+
+    返回 {"outlines", "plots", "threads", "themes", "basic_info", "phase", "stats", "event_count"}。
+    供 drive_ui(set_outline) 存进向导 state，submit 时随书落库（书创建即 phase=ready）。
+    阻塞运行至完成（可能数分钟）。Phase 1 产出临时人物/世界观（供大纲上下文与 roles 标注），
+    最终人物由步④ generate_characters 生成后覆盖，submit 时重跑 annotate_plot_roles。
+    """
+    llm = _require_llm()
+    from libraries.outline_generator import OutlineGenerator
+    from libraries.prompt_harness import PromptHarness
+    from libraries.storyline import BookStoryline
+    profile = None
+    if pen_name:
+        profile = _profile_for(BookStoryline(pen_name=pen_name))
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(list(tags or []))
+
+    # 临时故事线：不设 _world_generated、无主角名 → Phase 1 正常跑（产出临时人物/世界观）
+    tl = BookStoryline(
+        genre=genre, sub_genre=sub_genre,
+        words_per_chapter=words_per_chapter, pen_name=pen_name,
+        basic_info={
+            "characters": [],
+            "world_building": {
+                "description": world_brief or idea or "",
+                "tags": list(tags or []),
+                "core_conflict": core_conflict or "",
+            },
+            "tone": "", "target_audience": "", "pov": "第三人称", "era_language": "",
+        },
+    )
+    harness = PromptHarness(storyline=tl, profile=profile,
+                            gag_lib=gag_lib, plot_lib=plot_lib)
+    gen = OutlineGenerator(llm_client=llm, structure_lib=struct_lib,
+                           plot_lib=plot_lib, gag_lib=gag_lib,
+                           profile=profile, harness=harness)
+    ctx_parts = []
+    if core_conflict:
+        ctx_parts.append(f"核心矛盾：{core_conflict}")
+    if world_brief or idea:
+        ctx_parts.append(f"世界观：{world_brief or idea}")
+    custom_context = "；".join(ctx_parts)
+
+    last_t, last_d, events = consume_triple_stream(gen.generate(
+        genre=genre, sub_genre=sub_genre,
+        custom_context=custom_context, pen_name=pen_name,
+        words_per_chapter=words_per_chapter,
+        storyline=tl, on_save=None, skip_analyze=False,
+        agent_picks=picks))
+
+    d = tl.to_dict()
+    stats = (last_d or {}).get("stats", {}) if isinstance(last_d, dict) else {}
+    return {
+        "outlines": d.get("outlines", []),
+        "plots": d.get("plots", []),
+        "threads": d.get("threads", []),
+        "themes": d.get("themes", []),
+        "basic_info": d.get("basic_info", {}),
+        "phase": d.get("phase", ""),
+        "stats": stats,
+        "event_count": len(events),
+    }
 
 
 def confirm_world(book_id: str) -> dict:
@@ -1169,6 +1264,7 @@ _WIZARD_CMDS = {
     "pick_candidate": (),   # 兼容保留：candidate={title, world_brief, one_liner} 内嵌传入（idx 仅卡片高亮，可选）；新 skill 不用
     "set_world": ("world_building",),   # 分阶段内容构建：部分世界观 dict 合并进步 3 表单
     "set_picks": ("templates",),   # 开篇大纲/桥段选择（templates 或 plots 任一非空，drive_ui 特判）
+    "set_outline": ("outlines", "plots"),   # 步3②生成的大纲+桥段（generate_outline_preview 产出，submit 随书落库）
     "next": (), "prev": (),
     "load_candidates": (), "skip_candidates": (),
     "fill_world": (),   # 步骤③世界观重新补全（Agent 兜底/重试）
@@ -1193,6 +1289,12 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
     if cmd == "set_picks":   # templates 或 plots 任一非空即可（[] 会被通用校验误判为缺参）
         if not (args.get("templates") or args.get("plots")):
             raise RuntimeError(f"命令 {cmd} 缺少必填参数：templates 或 plots")
+    elif cmd == "set_outline":   # outlines 非空列表；plots 允许空列表（不能走通用缺参校验）
+        outs = args.get("outlines")
+        if not (isinstance(outs, list) and outs):
+            raise RuntimeError(f"命令 {cmd} 需 outlines 非空列表")
+        if not isinstance(args.get("plots"), list):
+            raise RuntimeError(f"命令 {cmd} 需 plots 列表")
     elif cmd == "set_candidates":   # 呈现候选：非空 list、每项 dict 且含 title
         cands = args.get("candidates")
         if not (isinstance(cands, list) and cands
@@ -1320,6 +1422,7 @@ def _build_registry():
         outline_material_candidates,
         generate_world, world_candidates, generate_characters, confirm_world,
         generate_core_conflict, generate_factions, generate_rest_world,
+        generate_outline_preview,
         # 写作 / 元数据
         write_next_bridge, write_chapter, generate_book_meta,
         # 上架 / 审查 / 去AI / 质量分析

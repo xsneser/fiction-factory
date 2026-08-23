@@ -310,13 +310,17 @@ class WorldBuildingGenerator:
 
     def generate_factions(self, genre: str = "", sub_genre: str = "",
                           idea: str = "", core_conflict: str = "",
-                          tags=None) -> list:
-        """分阶段构建③：从一句话+核心矛盾发散 2-4 个势力派系（name/stance/desc）。失败重试≤3。"""
+                          tags=None, outline_preview: str = "") -> list:
+        """分阶段构建③：从一句话+核心矛盾发散 2-4 个势力派系（name/stance/desc）。失败重试≤3。
+
+        outline_preview：已生成的大纲+桥段预览文本（可选），让势力与已定故事线自洽。
+        """
         if not self.llm:
             return []
         prompt = self.harness.render_factions_prompt(
             idea=idea, core_conflict=core_conflict or "",
-            genre=genre or "", sub_genre=sub_genre or "", tags=tags)
+            genre=genre or "", sub_genre=sub_genre or "", tags=tags,
+            outline_preview=outline_preview or "")
         from core.llm_client import extract_json
         for attempt in range(3):
             try:

@@ -1138,19 +1138,24 @@ class PromptHarness:
 
     def render_factions_prompt(self, idea: str, core_conflict: str = "",
                                genre: str = "", sub_genre: str = "",
-                               tags=None) -> str:
-        """分阶段构建③：基于一句话设定 + 核心矛盾 + 题材标签，发散世界里的主要势力派系。
+                               tags=None, outline_preview: str = "") -> str:
+        """分阶段构建③：基于一句话设定 + 核心矛盾 + 题材标签 + 已定大纲桥段，发散世界里的主要势力派系。
 
         返回 JSON list，供 generate_factions 使用。
         """
         tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
-        return "\n".join([
+        parts = [
             f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
             f"【一句话设定】{idea or '（无）'}",
             f"【核心矛盾】{core_conflict or '（未定）'}",
             f"【题材标签】{'、'.join(tags) if tags else '（未选）'}（硬约束，必须契合）",
+        ]
+        if outline_preview:
+            parts.append(f"【已定大纲与桥段】\n{outline_preview}")
+        parts += [
             "【任务】你是网文世界观架构师。思考这个世界应该存在哪些势力/派系（2-4 个），"
             "它们围绕【核心矛盾】各自持什么立场、追求什么，彼此冲突或结盟。每个势力给出："
-            "name 名称、stance 立场（一句）、desc 背景与目标（一句）。势力要呼应核心矛盾，不要泛泛的'官方''反派'。",
+            "name 名称、stance 立场（一句）、desc 背景与目标（一句）。势力要呼应核心矛盾与已定故事线，不要泛泛的'官方''反派'。",
             '只返回 JSON：{"factions":[{"name":"","stance":"","desc":""}]}',
-        ])
+        ]
+        return "\n".join(parts)
