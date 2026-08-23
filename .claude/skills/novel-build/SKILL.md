@@ -60,13 +60,13 @@ description: >-
 2. 在聊天里定：方向、笔名、一句话种子、题材标签（上面的决策点）。
 3. `drive_ui(set_field {field:"idea", value:种子})` + `drive_ui(set_field {field:"pen", value:笔名})` + `drive_ui(set_tags {tags:[题材标签]})`——**同批推送，浏览器按序应用**（步 1 校验 idea+pen 非空；题材标签在步 1 多选，题材方向随之推导，并作候选生成硬约束）。**步 1 已无「下一步」**——由步 1 底部「🎲 生成候选」替代（见下条）。
 4. **世界观候选（必须完成，见上）**：**循环 `world_candidates(book_id="", idea=种子, tags)` 约 5 次**（每次 1 个并自动填入步 2，无需 `set_candidates`）→ 用户在平台点选候选卡（高亮、可换）→ 用户点「已挑选完毕」进步 3（**页面自动把建书任务交给 dsh 驱动步 3**；Claude Code 不重复驱动）。不想选 → `drive_ui(skip_candidates)`。
-5. **进步 3 = 内容构建工作台（默认已交棒 dsh；Claude Code 仅手动驱动时才走）**：用户在步 2 点「已挑选完毕」后步 3 默认由 **dsh（novel-build）分阶段驱动**（页面 `_agentDriving` 已抑制浏览器一键补全）。**Claude Code 不要与页面 task2 同时驱动步 3**——只在用户明确要求「由 Claude 直接驱动步 3」且页面未自动发任务时，才按下列规范逐段驱动（每段结果经 `drive_ui` 落进表单）：
-   ① **核心矛盾**：`generate_core_conflict(idea=世界观简述, world_brief=候选简述, tags, pen_name)` → `drive_ui(set_world, {world_building:{core_conflict:"..."}})`（genre 由题材标签经 derive_genre 推导，返回供②选模板）。
-   ② **大纲+桥段（步3内先生成，阻塞数分钟）**：`generate_outline_preview(idea, genre=①, tags, core_conflict=①, pen_name, world_brief)`。**它会自动把大纲+桥段推送进步3展示**（后端直推 nav_intent，浏览器消费后存向导 state，submit 随书落库，书创建即 phase=ready）——**不要**再显式 `drive_ui(set_outline, {...})`（大纲载荷常 >8KB，经 dsh 工具结果裁剪后模型拿不到全量，无法忠实回传；直推是唯一可靠通道）。**不再 query_structures/query_plots/set_picks**。
-   ③ **势力**（根据桥段分析）：`generate_factions(idea, world_brief, core_conflict=①, tags, genre, outline_data=②)` → `drive_ui(set_world, {world_building:{factions:[...]}})`。
-   ④ **主要人物**（势力生成之后，依据大纲+桥段+势力）：`query_characters` 看原型 → `generate_characters(idea=世界观简述, title, tags, genre, archetype_ids=选中的原型, core_conflict=①, factions=③, outline_data=②)` → `drive_ui(set_characters, {characters:[平铺映射后的列表]})`——**传全 14 字段**：`name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id/gender/brief/title/age/death_year/role`（主角 importance=1、配角补 relation；gender/brief/title/age/death_year 由 generate_characters 产出，agent 原样透传，向导不展示但会保到建书，详情页可编辑）。
-   ⑤ **其余世界观维度**：`generate_rest_world(idea, world_brief, core_conflict=①, factions=③, outline_preview=②序列化文本, tags, genre, pen_name)` → `drive_ui(set_world, {world_building:{era,power_system,geography,culture,history,social_structure,rules,world_summary}, tone, target_audience, pov, era_language})`。
-   失败/跳过：任一段失败重试一次，仍失败跳过该段继续（已填内容保留、部分构建可提交）；② 失败则退回旧路径（`set_picks` 选材，submit 后 `generate_full_outline` 补生成）；⑤ 未做则 `_world_generated` 不置位。书名已由候选带入步 3，想改才 `drive_ui(set_field title=...)`。
+5. **进步 3 = 内容构建工作台（默认已交棒 dsh；Claude Code 仅手动驱动时才走）**：用户在步 2 点「已挑选完毕」后步 3 默认由 **dsh（novel-build）分阶段驱动**（页面 `_agentDriving` 已抑制浏览器一键补全）。**Claude Code 不要与页面 task2 同时驱动步 3**——只在用户明确要求「由 Claude 直接驱动步 3」且页面未自动发任务时，才按下列规范逐段驱动（每段由**你自主生成**后经 `drive_ui` 落进表单）：
+   ① **核心矛盾**：你基于一句话设定 + 候选简述 + tags 自主生成 1-2 句 → `drive_ui(set_world, {world_building:{core_conflict:"..."}})`。
+   ② **大纲+桥段（步3内先生成）**：你自主生成 `{outlines, plots, threads, themes, basic_info}` → `drive_ui(set_outline, {outlines, plots, threads, themes, basic_info})`（**你在自身上下文生成，不受 dsh 8KB 裁剪**；submit 随书落库 phase=ready）。**不再 query_structures/query_plots/set_picks**。
+   ③ **势力**（根据②桥段分析）：你自主生成 2-4 个势力 `{name, stance, desc}` → `drive_ui(set_world, {world_building:{factions:[...]}})`。
+   ④ **主要人物**（依据②+③）：你自主生成角色列表（**全 14 字段**：`name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id/gender/brief/title/age/death_year/role`，主角 importance=1、配角补 relation）→ `drive_ui(set_characters, {characters:[...]})`。
+   ⑤ **其余世界观维度**：你自主生成 `{world_building:{era,power_system,geography,culture,history,social_structure,rules,world_summary}, tone, target_audience, pov, era_language}` → `drive_ui(set_world, {...})`。
+   失败/跳过：任一段生成失败重试一次，仍失败跳过该段继续（已填内容保留、部分构建可提交）；② 失败 → submit 后走 novel-outline 用 `save_outlines` 补大纲；⑤ 未做则 `_world_generated` 不置位。书名已由候选带入步 3，想改才 `drive_ui(set_field title=...)`。
 6. 用户在浏览器可编辑/删角色行后继续。
 7. **submit**：无需等一键补全，随时 `drive_ui(submit)`（步 3 仅拦进行中的 `fillWorld` 兜底）。**系统** `POST /books/start` 建书——步 3 分阶段构建的各段内容 + ②生成的大纲+桥段（`_outline_data`）已随 submit 落库，**书创建即 phase=ready**（不再 submit 后手动 generate_full_outline）。
 
@@ -74,9 +74,9 @@ description: >-
 - `drive_ui(submit)` 建书成功后，**向导直接跳转书详情页（/books/&lt;id&gt;）**——3 步建书结束，步 3 分阶段构建的各段内容（核心矛盾/大纲+桥段/势力/人物/其余维度）已随 submit 落库，书创建即 phase=ready。
 - 用只读工具轮询定位新书：
   1. `list_books` → 找到新书 `book_id`。
-  2. `get_book_detail(book_id)` 检查世界观是否已充实（`basic_info.world_building` 各维非空）。通常已是——步 3 各段已随 submit 落库；仅当单薄（如 ⑤ 未做或 LLM 失败用户仍提交）才兜底 `generate_world(book_id, mode="one", idea=...)`。
+  2. `get_book_detail(book_id)` 检查世界观是否已充实（`basic_info.world_building` 各维非空）。通常已是——步 3 各段已随 submit 落库；仅当单薄（如 ⑤ 未做或生成失败用户仍提交）才兜底你自主生成 → `save_basic_info`。
   2.5 **保真度校验（必做）**：核对 `tags` 与用户设定一致（`genre` 由标签推导、随标签同步，无需单核）；漂移 → `navigate("/books/start")` + `drive_ui(reset)` + 重填 set_field/set_tags 重走批处理（最多重试 1 次，仍漂移则如实汇报停止）。
-  3. `get_book_detail(book_id)` 确认 `phase == "ready"` 且 `outlines`/`plots` 非空（② 失败退回旧路径时，此处才需 `generate_full_outline(book_id)` 补生成）。
+  3. `get_book_detail(book_id)` 确认 `phase == "ready"` 且 `outlines`/`plots` 非空（② 失败时此处走 novel-outline `save_outlines` 补生成）。
   4. `navigate(url="/books/<book_id>/continue")` 交棒写作台写前三章。
 - 建书后**不要在向导页再 `drive_ui(next)`**（向导已跳书详情，命令桥守卫 bookId 已拦）。
 
