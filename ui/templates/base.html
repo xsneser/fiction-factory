@@ -54,6 +54,7 @@
                 <div class="agent-input-actions">
                     <button id="agent-clear" title="清空对话">🗑</button>
                     <button id="agent-send" title="发送">发送</button>
+                    <button id="agent-stop" title="停止当前任务（类似 Ctrl+C）" style="display:none">⏹ 停止</button>
                 </div>
             </div>
         </aside>
@@ -61,7 +62,7 @@
     <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开" aria-label="展开">▶</button>
 
     <div id="toast-root"></div>
-    <script src="{{ url_for('static', filename='js/agent_panel.js') }}?v5"></script>
+    <script src="{{ url_for('static', filename='js/agent_panel.js') }}?v6"></script>
 </body>
 </html>
 

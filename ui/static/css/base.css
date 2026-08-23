@@ -165,6 +165,13 @@
             padding:6px 10px; font-size:12px; cursor:pointer; transition:color .2s, border-color .2s;
         }
         aside#status-bar #agent-clear:hover { color:#f0f6fc; border-color:#58a6ff; }
+        aside#status-bar #agent-stop {
+            background:none; border:1px solid #f85149; color:#f85149; border-radius:6px;
+            padding:6px 10px; font-size:12px; cursor:pointer;
+            transition:color .2s, border-color .2s, background .2s;
+        }
+        aside#status-bar #agent-stop:hover { background:rgba(248,81,73,.12); }
+        aside#status-bar #agent-stop:disabled { opacity:.4; cursor:not-allowed; }
         h1 { font-size:24px; margin-bottom:20px; color:#f0f6fc; }
         h2 { font-size:18px; margin:20px 0 12px; color:#c9d1d9; }
         h3 { font-size:15px; margin:12px 0 8px; color:#8b949e; }

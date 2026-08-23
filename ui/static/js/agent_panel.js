@@ -1,12 +1,13 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v5 events-stream');
+console.log('[agent-panel] v6 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
     var sendBtn = document.getElementById('agent-send');
     var clearBtn = document.getElementById('agent-clear');
+    var stopBtn = document.getElementById('agent-stop');
     var toolsLog = document.getElementById('agent-tools-log');
     if (!chat || !input || !sendBtn) return;   // 布局缺失则静默跳过
 
@@ -382,6 +383,12 @@ console.log('[agent-panel] v5 events-stream');
     function setSendEnabled(on) {
         sendBtn.disabled = !on;
         sendBtn.textContent = on ? '发送' : '…';
+        // 停止按钮与发送态联动：busy（send 禁用）时显示，idle 时隐藏复位
+        if (stopBtn) {
+            stopBtn.style.display = on ? 'none' : '';
+            stopBtn.disabled = false;
+            stopBtn.textContent = '⏹ 停止';
+        }
     }
     function startTask(text) {
         busy = true;
@@ -441,6 +448,17 @@ console.log('[agent-panel] v5 events-stream');
     }
 
     sendBtn.addEventListener('click', send);
+    // 停止按钮（类似 Ctrl+C）：打断当前 dsh 任务，UI 复位由 SSE 的 done 事件接管
+    if (stopBtn) stopBtn.addEventListener('click', function() {
+        if (!busy) return;
+        stopBtn.disabled = true;              // 防连点
+        stopBtn.textContent = '停止中…';
+        fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
+        // 兜底：正常由 done 事件复位 busy；若 SSE 流异常卡死，超时强制复位防发送永久禁用
+        setTimeout(function() {
+            if (busy) { busy = false; setSendEnabled(true); }
+        }, 8000);
+    });
     input.addEventListener('keydown', function(e) {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
     });
@@ -533,6 +551,7 @@ console.log('[agent-panel] v5 events-stream');
         currentToolRun = null;
         toolCards = {};
         toolCardOrder = [];
+        setSendEnabled(true);   // 复位发送/停止按钮（bfcache 恢复，防陈旧 busy 卡输入）
         removeRunningBanner();
         renderHistory();
         addMsg('assistant', '↩️ 页面已从浏览器缓存恢复，检查后台任务…');
