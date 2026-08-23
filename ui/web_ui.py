@@ -25,6 +25,17 @@ from ui.web_blueprints import register_blueprints
 register_blueprints(app)
 
 
+@app.after_request
+def _no_html_cache(resp):
+    """HTML 页不缓存：浏览器加载模板改动后总是拿到新 DOM（防旧缓存导致布局错乱，
+    如步3 两栏在旧 DOM 里因缺 workspace.css 塌成一栏）。静态资源由 ?v= 版本参数控制。"""
+    if resp.content_type and resp.content_type.startswith("text/html"):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    return resp
+
+
 if __name__ == "__main__":
     os.makedirs("ui/templates", exist_ok=True)
     os.makedirs("ui/static", exist_ok=True)
