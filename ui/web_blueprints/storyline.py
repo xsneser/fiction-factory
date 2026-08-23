@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
 from .ctx import *
+from libraries.world_tags import genre_from_tags
 
 bp = Blueprint("storyline", __name__)
 
@@ -43,7 +44,7 @@ def _build_next_arc(builder, tl, mode="rule"):
     """在故事线末尾追加下一段大纲弧。rule=确定性模板循环；ai=单弧 LLM 再锚定。"""
     if mode == "ai":
         seq = builder.build_outline_sequence(
-            genre=tl.genre, sub_genre=tl.sub_genre,
+            genre=genre_from_tags(tl),
             custom_context=tl.basic_info.get("world_building", {}).get("description", ""),
             max_outlines=1, mode="ai")
         if not seq:
@@ -59,7 +60,7 @@ def _build_next_arc(builder, tl, mode="rule"):
         return arc
 
     # rule：按题材方向模板循环取下一个
-    structs = struct_lib.search(genre=tl.genre) or struct_lib.templates
+    structs = struct_lib.search(genre=genre_from_tags(tl)) or struct_lib.templates
     if not structs:
         return None
     idx = len(tl.outlines) % len(structs)
@@ -174,7 +175,7 @@ def generate_title(storyline_id):
     bi = tl.basic_info or {}
     protag = get_mc(bi)
     world = bi.get("world_building") or {}
-    ctx = f"题材方向：{tl.genre}{'/' + tl.sub_genre if tl.sub_genre else ''}"
+    ctx = f"题材标签：{','.join((tl.basic_info or {}).get('world_building', {}).get('tags') or [])}"
     if protag.get("name"):
         ctx += f"；主角：{protag.get('name')}（{protag.get('identity','')}）"
     if world.get("description"):
@@ -237,10 +238,10 @@ def api_generate_outlines(storyline_id):
     mode = request.args.get("mode", "ai")
     try:
         if mode == "rule":
-            tl.outlines = builder.build_outline_sequence(genre=tl.genre, mode="rule")
+            tl.outlines = builder.build_outline_sequence(genre=genre_from_tags(tl), mode="rule")
         else:
             tl.outlines = builder.build_outline_sequence(
-                genre=tl.genre, sub_genre=tl.sub_genre,
+                genre=genre_from_tags(tl),
                 custom_context=tl.basic_info.get("world_building", {}).get("description", ""),
                 mode="ai",
             )
@@ -603,7 +604,7 @@ def api_generate_full(storyline_id):
 
         try:
             for event_type, message, data_dict in gen.generate(
-                genre=tl.genre, sub_genre=tl.sub_genre,
+                genre=genre_from_tags(tl),
                 custom_context=custom_context, pen_name=tl.pen_name,
                 words_per_chapter=tl.words_per_chapter,
                 storyline=tl,                       # 原地累加，可逐步落盘

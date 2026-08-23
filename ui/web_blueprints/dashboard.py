@@ -39,7 +39,7 @@ def _borrow_books(exclude_book_id: str = ""):
         if src and (src.basic_info or {}):
             rows.append({"book_id": b.book_id,
                          "title": src.book_title or b.title,
-                         "genre": src.genre or b.genre})
+                         "tags": ((src.basic_info or {}).get("world_building") or {}).get("tags") or []})
     return rows
 
 
@@ -66,8 +66,6 @@ def start_new_book():
             outline_data = None
 
         pen_name = src.get("pen_name", "")
-        genre = src.get("genre", "")
-        sub_genre = src.get("sub_genre", "")
         platform = src.get("platform", "") or "fanqie"
 
         # 一句话设定（主入口）→ 存 world_building.description（世界观由它直接生成，不再追加）

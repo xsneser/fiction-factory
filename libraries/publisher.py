@@ -277,8 +277,8 @@ class Publisher:
         meta = {
             "title": book.title or "",
             "pen_name": book.pen_name or "",
-            "genre": book.genre or "",
-            "sub_genre": book.sub_genre or "",
+            "genre": "",
+            "sub_genre": "",
             "platform": book.platform or "",
             "chapter_count": len(chapters),
             "total_words": total_words,

@@ -50,6 +50,15 @@ TAG_GENRE_MAP = {
 }
 
 
+def genre_from_tags(tl) -> str:
+    """从故事线的题材标签推导流派（tl 无 genre 字段，tags 是唯一题材来源）。"""
+    try:
+        tags = (tl.basic_info or {}).get("world_building", {}).get("tags") or []
+    except Exception:
+        tags = []
+    return derive_genre(tags)
+
+
 def derive_genre(tags, fallback: str = "玄幻") -> str:
     """从题材标签推导粗粒度流派（按标签顺序第一个命中；无命中回退 fallback）。"""
     for t in (tags or []):

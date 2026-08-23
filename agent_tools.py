@@ -133,7 +133,6 @@ def _build_next_arc(builder, tl, mode="rule"):
     """故事线末尾追加下一段大纲弧（rule=模板循环；ai=单弧 LLM 再锚定）。镜像 storyline.py。"""
     if mode == "ai":
         seq = builder.build_outline_sequence(
-            genre=tl.genre, sub_genre=tl.sub_genre,
             custom_context=(tl.basic_info or {}).get("world_building", {}).get("description", ""),
             max_outlines=1, mode="ai")
         if not seq:
@@ -148,7 +147,7 @@ def _build_next_arc(builder, tl, mode="rule"):
             tl.outlines[-1].successor = arc.id
         return arc
 
-    structs = struct_lib.search(genre=tl.genre) or struct_lib.templates
+    structs = struct_lib.search(genre=genre_from_tags(tl)) or struct_lib.templates
     if not structs:
         return None
     idx = len(tl.outlines) % len(structs)
@@ -312,7 +311,7 @@ def borrow_preview(source_book_id: str) -> dict:
         raise RuntimeError("源书没有可借鉴的设定")
     return {"seed": seed,
             "source_title": src.book_title or src.pen_name or source_book_id,
-            "source_genre": src.genre}
+            "source_genre": genre_from_tags(src)}
 
 
 # ═══════════════════════════════════════════════════
@@ -362,7 +361,7 @@ def get_build_status() -> dict:
 def query_structures(keyword: str = "", genre: str = "", sub_genre: str = "") -> dict:
     """查大纲库：按题材标签/关键词（名称）返回模板清单（兼容按题材方向参数查询）。"""
     kw = (keyword or "").strip()
-    rows = struct_lib.search(genre=genre, sub_genre=sub_genre)
+    rows = struct_lib.search(sub_genre=sub_genre)
     if kw:
         rows = [t for t in rows if kw in (t.name or "")]
     return {"templates": [{
@@ -429,7 +428,7 @@ def query_profiles(keyword: str = "") -> dict:
 def query_characters(keyword: str = "", tag: str = "", genre: str = "") -> dict:
     """查角色原型库：按标签/适配题材/关键词返回启用原型，供外部 agent 选原型生成角色。"""
     kw = (keyword or "").strip()
-    rows = char_lib.search(tag=tag, genre=genre, kw=kw)
+    rows = char_lib.search(tag=tag, kw=kw)
     return {"archetypes": [a.to_dict() for a in rows if getattr(a, "enabled", True)][:20]}
 
 
@@ -729,7 +728,7 @@ def generate_title(book_id: str) -> dict:
     bi = tl.basic_info or {}
     protag = get_mc(bi)
     world = bi.get("world_building") or {}
-    ctx = f"题材方向：{tl.genre}{'/' + tl.sub_genre if tl.sub_genre else ''}"
+    ctx = f"题材标签：{','.join((tl.basic_info or {}).get('world_building', {}).get('tags') or [])}"
     if protag.get("name"):
         ctx += f"；主角：{protag.get('name')}（{protag.get('identity','')}）"
     if world.get("description"):
@@ -763,11 +762,10 @@ def generate_outlines(book_id: str, mode: str = "ai", max_outlines: int = 5) -> 
     builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
                                gag_lib=gag_lib, llm_client=llm)
     if mode == "rule":
-        tl.outlines = builder.build_outline_sequence(genre=tl.genre, mode="rule",
+        tl.outlines = builder.build_outline_sequence(mode="rule",
                                                      max_outlines=max_outlines)
     else:
         tl.outlines = builder.build_outline_sequence(
-            genre=tl.genre, sub_genre=tl.sub_genre,
             custom_context=(tl.basic_info or {}).get("world_building", {}).get("description", ""),
             max_outlines=max_outlines, mode="ai")
     tl.phase = "outlines"
@@ -782,7 +780,7 @@ def outline_material_candidates(book_id: str) -> dict:
     返回的 plots 为扁平列表（{id,name,category}），可直接作 generate_full_outline 的
     picks["plots"]（扁平优先序：想先出现的桥段排前）。"""
     tl = _require_tl(book_id)
-    candidates = struct_lib.search(genre=tl.genre, sub_genre=tl.sub_genre)
+    candidates = struct_lib.search(genre=genre_from_tags(tl))
     if not candidates:
         candidates = struct_lib.templates[:5]
     templates = [{
@@ -847,7 +845,6 @@ def generate_full_outline(book_id: str, picks: dict = None,
     custom_context = "；".join(ctx_parts) or (tl.book_title or "")
 
     last_t, last_d, events = consume_triple_stream(gen.generate(
-        genre=tl.genre, sub_genre=tl.sub_genre,
         custom_context=custom_context, pen_name=tl.pen_name,
         words_per_chapter=tl.words_per_chapter,
         storyline=tl, on_save=lambda _tl: save_tl(book_id, _tl),
@@ -985,7 +982,7 @@ def generate_world(book_id: str, mode: str = "one", idea: str = "",
     gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
 
     last_t, last_d, events = consume_triple_stream(gen.generate(
-        genre=tl.genre, sub_genre=tl.sub_genre, idea=idea,
+        idea=idea,
         pen_name=tl.pen_name, platform=tl.platform,
         seed_basic_info=seed, storyline=tl,
         on_save=lambda _tl: save_tl(book_id, _tl)))
@@ -1045,8 +1042,8 @@ def world_candidates(book_id: str = "", idea: str = "", genre: str = "",
     from libraries.prompt_harness import PromptHarness
     if book_id:
         tl = _require_tl(book_id)
-        genre = genre or tl.genre
-        sub_genre = sub_genre or tl.sub_genre
+        genre = genre or genre_from_tags(tl)
+        sub_genre = sub_genre or ""
         profile = _profile_for(tl)
         harness = PromptHarness(storyline=tl, profile=profile)
         gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
@@ -1055,11 +1052,10 @@ def world_candidates(book_id: str = "", idea: str = "", genre: str = "",
         harness = PromptHarness()   # storyline=None；tags 由 generate_candidate 透传
         gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
         if not genre and tags:
-            from libraries.world_tags import derive_genre
+            from libraries.world_tags import derive_genre, genre_from_tags
             genre = derive_genre(list(tags or []))
     existing = _wizard_existing_candidates(idea, tags)
-    cand = gen.generate_candidate(genre=genre or "都市", sub_genre=sub_genre or "",
-                                  idea=idea, tags=list(tags or []),
+    cand = gen.generate_candidate(idea=idea, tags=list(tags or []),
                                   existing_candidates=existing)
     if not cand:
         raise RuntimeError("示例候选生成失败，请重试")
@@ -1121,8 +1117,7 @@ def generate_characters(idea: str, genre: str = "", sub_genre: str = "",
     else:
         archetypes = [a.to_dict() for a in char_lib.archetypes if getattr(a, "enabled", True)][:10]
     result = gen.generate_characters(
-        idea=idea or "", genre=genre, sub_genre=sub_genre,
-        tags=list(tags or []), title=title or "", archetypes=archetypes,
+        idea=idea or "", tags=list(tags or []), title=title or "", archetypes=archetypes,
         core_conflict=core_conflict or "", factions=list(factions or []),
         outline_preview=outline_preview or "")
     if not result:
@@ -1146,10 +1141,10 @@ def generate_core_conflict(idea: str, world_brief: str = "", tags: list = None,
     harness = PromptHarness(profile=profile)
     gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
     if not genre and tags:
-        from libraries.world_tags import derive_genre
+        from libraries.world_tags import derive_genre, genre_from_tags
         genre = derive_genre(list(tags or []))
     conflict = gen.generate_core_conflict(
-        genre=genre, sub_genre=sub_genre, idea=world_brief or idea or "",
+        idea=world_brief or idea or "",
         tags=list(tags or []), pen_name=pen_name or "")
     if not conflict:
         raise RuntimeError("核心矛盾生成失败，请重试")
@@ -1171,10 +1166,10 @@ def generate_factions(idea: str, world_brief: str = "", core_conflict: str = "",
     harness = PromptHarness()
     gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
     if not genre and tags:
-        from libraries.world_tags import derive_genre
+        from libraries.world_tags import derive_genre, genre_from_tags
         genre = derive_genre(list(tags or []))
     factions = gen.generate_factions(
-        genre=genre, sub_genre=sub_genre, idea=world_brief or idea or "",
+        idea=world_brief or idea or "",
         core_conflict=core_conflict or "", tags=list(tags or []),
         outline_preview=_outline_preview_text(outline_data))
     if not factions:
@@ -1201,10 +1196,10 @@ def generate_rest_world(idea: str, world_brief: str = "", core_conflict: str = "
     harness = PromptHarness(profile=profile)
     gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
     if not genre and tags:
-        from libraries.world_tags import derive_genre
+        from libraries.world_tags import derive_genre, genre_from_tags
         genre = derive_genre(list(tags or []))
     result = gen.generate_rest_world(
-        genre=genre, sub_genre=sub_genre, idea=idea or "",
+        idea=idea or "",
         world_brief=world_brief or "", core_conflict=core_conflict or "",
         factions=[f for f in (factions or []) if isinstance(f, dict)],
         outline_preview=outline_preview or "", tags=list(tags or []), pen_name=pen_name or "")
@@ -1233,12 +1228,11 @@ def generate_outline_preview(idea: str, genre: str = "", sub_genre: str = "",
     if pen_name:
         profile = _profile_for(BookStoryline(pen_name=pen_name))
     if not genre and tags:
-        from libraries.world_tags import derive_genre
+        from libraries.world_tags import derive_genre, genre_from_tags
         genre = derive_genre(list(tags or []))
 
     # 临时故事线：不设 _world_generated、无主角名 → Phase 1 正常跑（产出临时人物/世界观）
     tl = BookStoryline(
-        genre=genre, sub_genre=sub_genre,
         words_per_chapter=words_per_chapter, pen_name=pen_name,
         basic_info={
             "characters": [],
@@ -1263,7 +1257,6 @@ def generate_outline_preview(idea: str, genre: str = "", sub_genre: str = "",
     custom_context = "；".join(ctx_parts)
 
     last_t, last_d, events = consume_triple_stream(gen.generate(
-        genre=genre, sub_genre=sub_genre,
         custom_context=custom_context, pen_name=pen_name,
         words_per_chapter=words_per_chapter,
         storyline=tl, on_save=None, skip_analyze=False,

@@ -70,12 +70,10 @@ def _make_test_book():
     from libraries.book_manager import BookManager
     from libraries.storyline import BookStoryline
     bm = BookManager(os.path.join(_ROOT, "books"))
-    cfg = bm.create(title="MCP冒烟", pen_name="测试", genre="都市", sub_genre="爽文",
-                    chapter_count=500)
+    cfg = bm.create(title="MCP冒烟", pen_name="测试", chapter_count=500)
     bid = cfg.book_id
     bm.save_storyline(bid, BookStoryline(
-        book_title=cfg.title, genre=cfg.genre, sub_genre=cfg.sub_genre,
-        pen_name=cfg.pen_name, platform=cfg.platform,
+        book_title=cfg.title, pen_name=cfg.pen_name, platform=cfg.platform,
         words_per_chapter=3000, basic_info={}, phase="config"))
     return bm, bid
 

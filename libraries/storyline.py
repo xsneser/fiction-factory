@@ -11,6 +11,7 @@ from typing import Optional
 import json
 
 from core.json_store import read_json, write_json_atomic
+from libraries.world_tags import genre_from_tags
 
 
 # ═══════════════════════════════════════════
@@ -258,8 +259,6 @@ class PlotSlot:
 class BookStoryline:
     """整本书的故事线配置 —— 新书启动的核心产出"""
     book_title: str = ""
-    genre: str = ""
-    sub_genre: str = ""
     words_per_chapter: int = 3000
     pen_name: str = ""
     platform: str = "fanqie"   # 目标平台：fanqie/qidian（写作时注入平台写作约束）
@@ -344,8 +343,6 @@ class BookStoryline:
     def from_dict(cls, d: dict) -> "BookStoryline":
         tl = cls(
             book_title=d.get("book_title", ""),
-            genre=d.get("genre", ""),
-            sub_genre=d.get("sub_genre", ""),
             words_per_chapter=d.get("words_per_chapter", 3000),
             pen_name=d.get("pen_name", ""),
             platform=d.get("platform", "fanqie"),
@@ -624,9 +621,9 @@ class StorylineBuilder:
 
             # 匹配桥段：阶段名+事件描述+题材方向
             context = f"{outline.name} {stage_name} {' '.join(events)}"
-            candidates = self.plots.match_for_chapter(context, storyline.genre)
+            candidates = self.plots.match_for_chapter(context, genre_from_tags(storyline))
             if not candidates:
-                candidates = self.plots.search(category=storyline.genre)
+                candidates = self.plots.search(category=genre_from_tags(storyline))
                 if not candidates:
                     candidates = self.plots.templates[:1]
 

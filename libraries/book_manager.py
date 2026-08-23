@@ -19,8 +19,6 @@ class BookConfig:
     book_id: str = ""
     title: str = ""                        # 书名
     pen_name: str = ""                     # 笔名
-    genre: str = ""                        # 题材方向（由题材标签经 derive_genre 推导）
-    sub_genre: str = ""                    # 题材细分
     platform: str = ""                     # 目标平台：fanqie/qidian/...
     chapter_count: int = 500
     current_chapter: int = 0
@@ -133,7 +131,7 @@ class BookManager:
         book_id = self._next_book_id()
         cfg = BookConfig(
             book_id=book_id, title=title, pen_name=pen_name,
-            genre=genre, sub_genre=sub_genre, platform=platform,
+            platform=platform,
             chapter_count=chapter_count,
             structure_template_id=structure_template_id,
             style_profile_id=style_profile_id,

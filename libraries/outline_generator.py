@@ -7,7 +7,7 @@
 
 用法:
     gen = OutlineGenerator(llm, structure_lib, plot_lib, gag_lib)
-    for event in gen.generate(genre="玄幻", sub_genre="重生", ...):
+    for event in gen.generate(...):
         # event = ("phase"|"progress"|"done"|"error", message, data_dict)
         yield sse_event(event)
 """
@@ -22,6 +22,7 @@ from .storyline import (
 from .structure import StructureLibrary
 from .plot import PlotLibrary
 from .gag import GagLibrary
+from libraries.world_tags import genre_from_tags
 
 
 def basic_info_is_rich(basic_info: dict) -> bool:
@@ -160,7 +161,6 @@ class OutlineGenerator:
             语义=全书出现优先级，跨 outline/跨阶段按序消费；兼容旧 dict 形态（按值序展开，已弃用）。
         """
         tl = storyline if storyline is not None else BookStoryline(
-            genre=genre, sub_genre=sub_genre,
             words_per_chapter=words_per_chapter, pen_name=pen_name,
         )
         if self.harness:
@@ -484,7 +484,7 @@ class OutlineGenerator:
             return []
 
         # 获取候选模板
-        candidates = self.structures.search(genre=genre, sub_genre=sub_genre)
+        candidates = self.structures.search(sub_genre=sub_genre)
         if not candidates:
             candidates = self.structures.templates[:5]
         candidates = candidates[:10]  # 最多给 AI 10 个候选
@@ -1371,7 +1371,6 @@ class OutlineGenerator:
         } for o in tl.outlines[:10]]
 
         prompt = f"""请审查下面这本小说故事线的合理性：
-题材方向：{tl.genre}
 大纲：{json.dumps(outlines_view, ensure_ascii=False, indent=1)}
 桥段总数：{len(tl.plots)}；内涵已按桥段挂载。
 
@@ -1417,7 +1416,7 @@ def quick_generate(
         llm_client, structure_lib, plot_lib, gag_lib)
     result = None
     for event_type, message, data in gen.generate(
-        genre=genre, sub_genre=sub_genre, custom_context=custom_context,
+        custom_context=custom_context,
         pen_name=pen_name, words_per_chapter=words_per_chapter,
     ):
         if event_type == "done":

@@ -79,7 +79,7 @@ def _make_test_book():
                     chapter_count=500)
     bid = cfg.book_id
     bm.save_storyline(bid, BookStoryline(
-        book_title=cfg.title, genre=cfg.genre, sub_genre=cfg.sub_genre,
+        book_title=cfg.title,
         pen_name=cfg.pen_name, platform=cfg.platform,
         words_per_chapter=3000, basic_info={}, phase="ready"))
     cfg.current_chapter = 1

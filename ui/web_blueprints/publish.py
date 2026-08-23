@@ -78,7 +78,7 @@ def publish_page(book_id):
     tags = []
     if storyline and (storyline.basic_info or {}):
         tags = ((storyline.basic_info.get("world_building") or {}).get("tags") or [])
-    tags_str = "、".join(tags) or book.genre or ""
+    tags_str = "、".join(tags)
     return render_template("publish.html", book=book, report=report,
                            storyline=storyline, outline=outline, tags=tags_str)
 

@@ -86,7 +86,7 @@ def api_world_generate(book_id):
                            url=f"/books/{book_id}")
         try:
             for event_type, message, data_dict in gen.generate(
-                genre=tl.genre, sub_genre=tl.sub_genre, idea=idea,
+                idea=idea,
                 pen_name=tl.pen_name, platform=tl.platform,
                 seed_basic_info=seed, storyline=tl,
                 on_save=lambda _tl: _save_storyline(_tl, book_id),
@@ -146,7 +146,7 @@ def api_world_candidates(book_id):
                        title=tl.book_title or tl.pen_name or "",
                        url=f"/books/{book_id}")
     try:
-        candidates = gen.generate_candidates(genre=tl.genre, sub_genre=tl.sub_genre, idea=idea)
+        candidates = gen.generate_candidates(idea=idea)
     except Exception as e:
         task_manager.fail(tid, str(e))
         raise
@@ -181,7 +181,7 @@ def api_world_candidates_nobook():
     from libraries.prompt_harness import PromptHarness
     harness = PromptHarness()   # 无书：storyline=None，_tags_block 空；tags 由 generate_candidates 透传
     gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
-    candidates = gen.generate_candidates(genre=genre, sub_genre=sub_genre, idea=idea, tags=tags)
+    candidates = gen.generate_candidates(idea=idea, tags=tags)
     if not candidates:
         return jsonify({"ok": False, "error": "示例候选生成失败，请重试"}), 500
     return jsonify({"ok": True, "candidates": candidates})
@@ -219,7 +219,7 @@ def api_world_complete_nobook():
     from libraries.world_builder import WorldBuildingGenerator
     from libraries.prompt_harness import PromptHarness
     from libraries.storyline import BookStoryline
-    tl = BookStoryline(genre=genre, sub_genre=sub_genre, pen_name=pen_name,
+    tl = BookStoryline(pen_name=pen_name,
                        platform="fanqie",
                        basic_info={"characters": [],
                                    "world_building": {"description": seed, "tags": tags},
@@ -231,7 +231,7 @@ def api_world_complete_nobook():
     done_basic_info = None
     try:
         for event_type, message, data_dict in gen.generate(
-                genre=genre, sub_genre=sub_genre, idea=seed,
+                idea=seed,
                 pen_name=pen_name, platform="fanqie", storyline=tl):
             if event_type == "done":
                 done_basic_info = data_dict.get("basic_info") or tl.basic_info
@@ -283,7 +283,7 @@ def api_stage_core_conflict():
         return jsonify({"ok": False, "error": "LLM 未配置"}), 500
     gen = _stage_gen(llm, pen_name)
     conflict = gen.generate_core_conflict(
-        genre=genre, sub_genre=sub_genre, idea=world_brief or idea,
+        idea=world_brief or idea,
         tags=tags, pen_name=pen_name)
     if not conflict:
         return jsonify({"ok": False, "error": "核心矛盾生成失败，请重试"}), 500
@@ -311,7 +311,7 @@ def api_stage_factions():
         return jsonify({"ok": False, "error": "LLM 未配置"}), 500
     gen = _stage_gen(llm)
     factions = gen.generate_factions(
-        genre=genre, sub_genre=sub_genre, idea=world_brief or idea,
+        idea=world_brief or idea,
         core_conflict=core_conflict, tags=tags)
     if not factions:
         return jsonify({"ok": False, "error": "势力生成失败，请重试"}), 500
@@ -344,7 +344,7 @@ def api_stage_rest_world():
         return jsonify({"ok": False, "error": "LLM 未配置"}), 500
     gen = _stage_gen(llm, pen_name)
     result = gen.generate_rest_world(
-        genre=genre, sub_genre=sub_genre, idea=idea, world_brief=world_brief,
+        idea=idea, world_brief=world_brief,
         core_conflict=core_conflict, factions=factions,
         outline_preview=outline_preview, tags=tags, pen_name=pen_name)
     if not result.get("world_building"):
@@ -378,7 +378,7 @@ def api_stage_characters():
         return jsonify({"ok": False, "error": "LLM 未配置"}), 500
     gen = _stage_gen(llm)
     result = gen.generate_characters(
-        idea=world_brief or idea, genre=genre, sub_genre=sub_genre, tags=tags,
+        idea=world_brief or idea, tags=tags,
         title=title, core_conflict=core_conflict, factions=factions,
         outline_preview=outline_preview)
     if not result:
@@ -404,7 +404,7 @@ def _borrow_preview():
         return jsonify({"ok": False, "error": "源书没有可借鉴的设定"}), 404
     return jsonify({"ok": True, "seed": seed,
                     "source_title": src.book_title or src.pen_name or source_book_id,
-                    "source_genre": src.genre})
+                    "source_genre": genre_from_tags(src)})
 
 
 @bp.route("/api/world-builder/<book_id>/borrow-preview", methods=["POST"])

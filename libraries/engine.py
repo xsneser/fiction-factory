@@ -89,8 +89,6 @@ class EngineState:
     # 书目信息
     title: str = ""
     pen_name: str = ""
-    genre: str = ""
-    sub_genre: str = ""
     platform: str = "fanqie"
 
     # 大纲
@@ -194,8 +192,6 @@ class NovelEngine:
             book_id=book_id,
             title=self.book.title,
             pen_name=self.book.pen_name,
-            genre=self.book.genre,
-            sub_genre=self.book.sub_genre,
             platform=self.book.platform,
             current_chapter=self.book.current_chapter,
             total_chapters=self.book.chapter_count,
@@ -690,8 +686,6 @@ class NovelEngine:
         """
         if not self.llm or not self.book:
             return {"status": "skip"}
-        genre = self.state.genre or ""
-        sub_genre = self.state.sub_genre or ""
         platform = self.state.platform or "fanqie"
         ch1 = chapter1_text or ""
 

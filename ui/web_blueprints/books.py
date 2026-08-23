@@ -92,8 +92,7 @@ def _book_rows():
         tags = []
         if sl and (sl.basic_info or {}):
             tags = ((sl.basic_info.get("world_building") or {}).get("tags") or [])
-        if not tags and b.genre:
-            tags = [b.genre]
+        # genre 已从模型移除；无标签老书 tags 留空（展示层标「未选标签」）
         row = {
             "book": b,
             "tags": tags,

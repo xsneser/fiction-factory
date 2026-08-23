@@ -80,7 +80,7 @@ def main():
                                profile=None)
         result = None
         for evt, msg, data in gen.generate(
-                genre=args.genre, sub_genre=args.sub, custom_context=args.context,
+                custom_context=args.context,
                 pen_name="模拟笔名", words_per_chapter=args.words_per_chapter,
                 max_outlines=args.max_outlines):
             if evt == "done":
@@ -105,7 +105,6 @@ def main():
         book = bm.create(
             title=sl.book_title or "(待定)",
             pen_name=sl.pen_name or "模拟笔名",
-            genre=sl.genre, sub_genre=sl.sub_genre,
             platform=sl.platform or "fanqie",
             chapter_count=max((o.end_chapter for o in sl.outlines), default=500),
             structure_template_id="storyline")

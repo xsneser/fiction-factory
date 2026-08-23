@@ -45,7 +45,6 @@ def build_gen(tl):
 def run_preview():
     """复刻 generate_outline_preview 的无书流程（on_save=None 纯内存）。"""
     tl = BookStoryline(
-        genre="都市", sub_genre="爽文",
         words_per_chapter=3000, pen_name="测试",
         basic_info={
             "characters": [{"name": "王小明", "role": "主角", "importance": 1,
@@ -59,7 +58,6 @@ def run_preview():
     gen = build_gen(tl)
     events = []
     for ev in gen.generate(
-            genre="都市", sub_genre="爽文",
             custom_context="核心矛盾：主角被系统选中，在都市中逆袭；世界观：都市爽文开挂升级",
             pen_name="测试", storyline=tl, skip_analyze=False, on_save=None):
         events.append(ev)

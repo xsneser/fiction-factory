@@ -43,13 +43,12 @@ def build_gen(tl):
 
 
 def run_generate(agent_picks):
-    tl = BookStoryline(genre="都市", sub_genre="爽文",
-                       words_per_chapter=3000, pen_name="测试")
+    tl = BookStoryline(words_per_chapter=3000, pen_name="测试")
     gen = build_gen(tl)
     last = {}
     events = []
     for ev in gen.generate(
-            genre="都市", sub_genre="爽文", custom_context="都市爽文开挂升级",
+            custom_context="都市爽文开挂升级",
             pen_name="测试", storyline=tl, skip_analyze=True,
             agent_picks=agent_picks, on_save=lambda t: last.update(tl=t)):
         events.append(ev)

@@ -25,6 +25,7 @@ from .storyline import (
 from .prompt_harness import (
     PromptHarness, WORLD_BUILD_SYSTEM, WORLD_BUILD_STRUCT_SYSTEM, WORLD_CANDIDATES_SYSTEM,
 )
+from .world_tags import genre_from_tags
 
 
 _WORLD_SCALAR_KEYS = ("description", "era", "power_system", "geography", "culture",
@@ -143,12 +144,11 @@ class WorldBuildingGenerator:
         事件: phase/progress/thinking/world_summary/phase_done/done/error
         """
         tl = storyline if storyline is not None else BookStoryline(
-            genre=genre or "", sub_genre=sub_genre or "",
             pen_name=pen_name or "", platform=platform or "fanqie",
         )
         self.harness.storyline = tl
-        g = genre or tl.genre
-        sg = sub_genre or tl.sub_genre
+        g = genre or genre_from_tags(tl)
+        sg = sub_genre or ""
         pn = pen_name or tl.pen_name
         pf = platform or tl.platform or "fanqie"
         bi = tl.basic_info or {}
@@ -206,8 +206,7 @@ class WorldBuildingGenerator:
         if not self.llm:
             return []
         prompt = self.harness.render_world_candidates_prompt(
-            idea=idea, genre=genre or "", sub_genre=sub_genre or "",
-            count=count, tags=tags)
+            idea=idea, count=count, tags=tags)
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
@@ -235,8 +234,7 @@ class WorldBuildingGenerator:
         if not self.llm:
             return None
         prompt = self.harness.render_world_candidates_prompt(
-            idea=idea, genre=genre or "", sub_genre=sub_genre or "",
-            count=1, tags=tags, existing_candidates=existing_candidates or [])
+            idea=idea, count=1, tags=tags, existing_candidates=existing_candidates or [])
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
@@ -265,8 +263,7 @@ class WorldBuildingGenerator:
         if not self.llm:
             return None
         prompt = self.harness.render_characters_prompt(
-            idea=idea, genre=genre or "", sub_genre=sub_genre or "",
-            tags=tags, title=title, archetypes=archetypes,
+            idea=idea, tags=tags, title=title, archetypes=archetypes,
             core_conflict=core_conflict or "", factions=factions or [],
             outline_preview=outline_preview or "")
         from core.llm_client import extract_json
@@ -293,8 +290,7 @@ class WorldBuildingGenerator:
         if not self.llm:
             return ""
         prompt = self.harness.render_core_conflict_prompt(
-            idea=idea, genre=genre or "", sub_genre=sub_genre or "",
-            tags=tags, profile=self.profile)
+            idea=idea, tags=tags, profile=self.profile)
         for attempt in range(3):
             try:
                 raw = (self.llm.call("你只返回核心矛盾一句话。", prompt,
@@ -319,7 +315,7 @@ class WorldBuildingGenerator:
             return []
         prompt = self.harness.render_factions_prompt(
             idea=idea, core_conflict=core_conflict or "",
-            genre=genre or "", sub_genre=sub_genre or "", tags=tags,
+            tags=tags,
             outline_preview=outline_preview or "")
         from core.llm_client import extract_json
         for attempt in range(3):
@@ -358,8 +354,7 @@ class WorldBuildingGenerator:
             desc = desc + "\n【已选开篇大纲与桥段】" + outline_txt
         elif outline_txt:
             desc = outline_txt
-        tl = BookStoryline(genre=genre or "", sub_genre=sub_genre or "",
-                           pen_name=pen_name or "", platform="fanqie",
+        tl = BookStoryline(pen_name=pen_name or "", platform="fanqie",
                            basic_info={"characters": [],
                                        "world_building": {
                                            "description": desc,
@@ -372,7 +367,7 @@ class WorldBuildingGenerator:
         done_basic_info = None
         try:
             for event_type, message, data_dict in self.generate(
-                    genre=genre or "", sub_genre=sub_genre or "", idea=desc,
+                    idea=desc,
                     pen_name=pen_name or "", platform="fanqie", storyline=tl):
                 if event_type == "done":
                     done_basic_info = data_dict.get("basic_info") or tl.basic_info
@@ -399,8 +394,7 @@ class WorldBuildingGenerator:
                              platform: str, seed_basic_info):
         """Call A：一句话 → 世界观设定短文（流式转发 thinking，返回短文全文）。失败重试≤3。"""
         prompt = self.harness.render_world_build_draft_prompt(
-            idea=idea, genre=genre, sub_genre=sub_genre,
-            seed_basic_info=seed_basic_info, platform=platform)
+            idea=idea, seed_basic_info=seed_basic_info, platform=platform)
         last_err = None
         for attempt in range(3):
             collected = []
@@ -426,8 +420,7 @@ class WorldBuildingGenerator:
         from core.llm_client import extract_json
         for attempt in range(3):
             prompt = self.harness.render_world_build_struct_prompt(
-                world_summary=summary, idea=idea, genre=genre, sub_genre=sub_genre,
-                seed_basic_info=seed_basic_info, profile=self.profile)
+                world_summary=summary, idea=idea, seed_basic_info=seed_basic_info, profile=self.profile)
             collected = []
             try:
                 # 推理型模型：max_tokens 留足推理+大 JSON 余量（同 outline_generator 用 8192）
