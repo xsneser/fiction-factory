@@ -105,6 +105,12 @@ try:
         "return document.querySelectorAll('#wz-storyline .sl-root').length === 0;")
     check("步3 两栏布局（左=故事线）", left_ok and mount_exists, f"left={left_ok} mount={mount_exists}")
     check("未生成时左栏空白（无 Gantt）", blank0, f"blank={blank0}")
+    wide_ok = driver.execute_script(
+        "var w=document.querySelector('.wz-panels'); return !!(w && w.classList.contains('wide'));")
+    split_w = driver.execute_script(
+        "var s=document.querySelector('#panel-3 .editor-split'); return s ? s.getBoundingClientRect().width : 0;")
+    check("步3 两栏自适应放宽（.wz-panels.wide >800px）", wide_ok and split_w > 800,
+          f"wide={wide_ok} split_w={split_w:.0f}")
 
     # 真实路径：drive_ui(set_outline) → nav_intent.json → 浏览器轮询(2.5s) → ne:command 分发
     from libraries.nav_intent import push_ui_command

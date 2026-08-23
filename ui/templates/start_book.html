@@ -168,6 +168,7 @@
 .wz-step.clickable { cursor:pointer; }
 .wz-step.clickable:hover { border-color:#58a6ff; }
 .wz-panels { max-width:800px; }
+.wz-panels.wide { max-width:none; }   /* 步3 两栏（故事线+世界观表单）放宽，自适应主区宽度 */
 .wz-panel fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
 .wz-panel legend { color:#58a6ff; font-weight:600; padding:0 8px; }
 /* 步3 复用书详情页 .world-edit 视觉：fieldset 间距与书详情页一致 */
@@ -261,6 +262,9 @@ var WZ = {
             s.onclick = (sn < n && !self.bookId) ? function() { self.show(sn); } : null;
         });
         this.cur = n;
+        // 步3 两栏布局放宽（故事线左栏 + 世界观表单右栏），其余步保持 800px 卡片
+        var wrap = document.querySelector('.wz-panels');
+        if (wrap) wrap.classList.toggle('wide', n === 3);
         this.el('wz-prev').style.display = (!this.bookId && n > 1 && n <= 3) ? 'inline-block' : 'none';
         this.el('wz-gen').style.display = (n === 1 && !this.bookId) ? 'inline-block' : 'none';   // 步 1 主按钮：生成候选=进入下一步
         this.el('wz-next').style.display = (n === 2) ? 'inline-block' : 'none';   // 步 2=「已挑选完毕」
