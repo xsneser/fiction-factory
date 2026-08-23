@@ -95,24 +95,33 @@ async function run(ctx, task, io) {
 	});
 	await agent.whenIdle();
 	const firstSeq = agent.session.seq;
-	// 捕获 dsh agent 的 token usage（assistant/message 的 data.usage），挂到下一个 tool/call 事件
+	// 捕获 dsh agent 的 token usage，挂到 tool/call 事件：
+	// usage 来源有两处——流式 assistant/chunk(type=usage) 的 chunk.usage、整段 assistant/message 的 data.usage。
+	// 归因：每个 tool/call 前必有 LLM 回合，取最近一次 usage；同回合并行 tool/call 共享（不清 lastUsage，
+	// 待无 usage 的 assistant/message 到达才清，防串到下一回合）。
 	let lastUsage = null;
 	ctx.on("session/event", (session, event) => {
 		if (event.seq < firstSeq) return;
-		if (event.type === "assistant/message" && event.data?.usage) {
-			const u = event.data.usage;
+		let u = null;
+		if (event.type === "assistant/message") {
+			u = event.data?.usage ?? null;
+		} else if (event.type === "assistant/chunk" && event.data?.chunk?.type === "usage") {
+			u = event.data.chunk.usage ?? null;
+		}
+		if (u) {
 			lastUsage = {
 				input: u.inputTokens,
 				output: u.outputTokens,
 				cache_read: u.cacheReadTokens,
 				cache_write: u.cacheWriteTokens
 			};
+		} else if (event.type === "assistant/message") {
+			lastUsage = null;   // 本回合无 usage：清掉，避免上一回合残留串到后续 tool/call
 		}
 		if (!FORWARD.has(event.type)) return;
 		let data = event.data;
 		if (event.type === "tool/call" && lastUsage) {
 			data = { ...event.data, usage: lastUsage };
-			lastUsage = null;
 		}
 		emit(io, { type: event.type, data });
 	});
