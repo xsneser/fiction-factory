@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v17 events-stream');
+console.log('[agent-panel] v18 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -46,7 +46,9 @@ console.log('[agent-panel] v17 events-stream');
         query_characters: '查角色原型', query_gags: '查笑点库', query_plots: '查桥段库',
         query_profiles: '查笔名档案', query_structures: '查大纲库', review_text: '审查文本',
         save_basic_info: '保存基础设定', tag_punch_points: '标注爽点', world_candidates: '生成世界观候选',
-        write_chapter: '写章节', write_next_bridge: '写下一桥段'
+        write_chapter: '写章节', write_next_bridge: '写下一桥段',
+        save_bridge_draft: '保存桥段', save_chapter_text: '保存整章',
+        save_outlines: '保存大纲', save_book_meta: '保存书名简介'
     };
     var CMD_ZH = {
         set_world: '写入世界观', set_characters: '写入角色', set_candidates: '填入候选',
