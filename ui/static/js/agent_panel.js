@@ -129,7 +129,7 @@ console.log('[agent-panel] v15 events-stream');
         return ms < 1000 ? Math.round(ms) + 'ms' : (ms / 1000).toFixed(1) + 's';
     }
 
-    function addToolCard(tool, args, noTimer) {
+    function addToolCard(tool, args) {
         var card = el('div', 'agent-tool-card');
         var head = el('div', 'agent-tool-head');
         head.title = '点击展开/收起参数';
