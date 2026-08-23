@@ -114,6 +114,65 @@ def interrupt_current_task() -> bool:
             pass
         return True
 
+
+# ─── dsh 工具事件持久化：供前端刷新后重建工具卡流 ───
+# 侧栏 dsh 的 MCP 调用（source=dsh，mcp_server 以 --source dsh 拉起）只写在临时 mcp_server
+# 进程内存缓冲，进程退出即丢、不进 Web 可查的 tool_log；故在桥层把 tool_call/tool_result
+# 事件落盘 task_events.jsonl，前端刷新后按 started_at 拉取重建「刷新前的工具卡流」。
+_TASK_EVENTS_PATH = os.path.join(_ROOT, "storage", "task_events.jsonl")
+_MAX_TASK_EVENTS_BYTES = 256 * 1024
+_MAX_TASK_EVENTS_LINES = 1000
+_KEEP_TASK_EVENTS_LINES = 500
+
+
+def _append_task_event(evt: dict) -> None:
+    """把 dsh 工具事件追加到 task_events.jsonl（尽力而为，异常静默降级）。
+
+    超长自动截断：字节阈值快筛 + 行数上限，防磁盘无限增长（仿 tool_log）。
+    """
+    try:
+        rec = dict(evt or {})
+        rec["ts"] = time.time()
+        os.makedirs(os.path.dirname(_TASK_EVENTS_PATH) or ".", exist_ok=True)
+        with open(_TASK_EVENTS_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        try:
+            if os.path.getsize(_TASK_EVENTS_PATH) > _MAX_TASK_EVENTS_BYTES:
+                with open(_TASK_EVENTS_PATH, "r", encoding="utf-8") as f:
+                    all_lines = f.readlines()
+                if len(all_lines) > _MAX_TASK_EVENTS_LINES:
+                    with open(_TASK_EVENTS_PATH, "w", encoding="utf-8") as f:
+                        f.writelines(all_lines[-_KEEP_TASK_EVENTS_LINES:])
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def get_task_events(since: float = 0.0, limit: int = 300) -> list:
+    """读取 task_events.jsonl 中 ts >= since 的事件（升序，供刷新重建工具卡流）。"""
+    try:
+        if not os.path.exists(_TASK_EVENTS_PATH):
+            return []
+        with open(_TASK_EVENTS_PATH, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        items = []
+        for line in lines[-limit:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if rec.get("ts", 0) >= since:
+                items.append(rec)
+        items.sort(key=lambda e: e.get("ts", 0))
+        return items
+    except Exception:
+        return []
+
+
 # 强化指令：拼在任务文本前的护栏/编排提醒（persona 已在 headless profile 注入，
 # 这里按任务重申关键约束，防 dsh 擅调越权工具 / 死循环轮询）。
 _REINFORCEMENT = """[系统约束]
@@ -502,6 +561,8 @@ def run_dsh_task(task: str, history: list | None = None,
                     continue
                 saw_any = True
                 for sse in _map_dsh_event(evt, pending):
+                    if sse.get("type") in ("tool_call", "tool_result"):
+                        _append_task_event(sse)   # 持久化工具事件，供刷新后重建工具卡流
                     if sse.get("type") == "done":
                         saw_done_event = True
                     yield sse

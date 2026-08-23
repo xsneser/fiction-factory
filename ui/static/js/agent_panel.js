@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v7 events-stream');
+console.log('[agent-panel] v8 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -325,8 +325,10 @@ console.log('[agent-panel] v7 events-stream');
             // 残留重放（drive_ui(next) 走两步 / submit 二次建书）。取走清空，丢弃安全。
             fetch('/api/agent/nav-intents').catch(function(){});
             if (pendingTask) {
+                // 接力排队任务（busy 保持 true）：先打断已 done，此刻才渲染新任务卡并启动 —— 严格先打断后开始
                 var pt = pendingTask; pendingTask = null;
-                startTask(pt);   // 接力排队任务（busy 保持 true，不清）
+                renderTaskStart(pt.text, pt.opts || {});
+                startTask(pt.text);
             } else {
                 busy = false;
                 setSendEnabled(true);
@@ -407,10 +409,9 @@ console.log('[agent-panel] v7 events-stream');
         consumeSSE({ messages: history }).catch(function(err) {
             addMsg('assistant', '⚠️ 请求失败：' + err.message);
             if (pendingTask) {
-                var t = pendingTask; pendingTask = null;
-                history.push({ role: 'user', content: t });
-                saveHistory(history);
-                startTask(t);
+                var pt = pendingTask; pendingTask = null;
+                renderTaskStart(pt.text, pt.opts || {});
+                startTask(pt.text);
             } else {
                 busy = false;
                 setSendEnabled(true);
@@ -428,6 +429,11 @@ console.log('[agent-panel] v7 events-stream');
         scrollBottom();
         return card;
     }
+    // 渲染任务卡/气泡（由 agentSendTask 或 done 接力调用；busy 排队时等上一个任务被打断才渲染）
+    function renderTaskStart(text, opts) {
+        if (opts && opts.card) addBuildCard(text, opts.cardLabel);
+        else addMsg('user', text);
+    }
     function agentSendTask(text, opts) {
         var taskText = String(text || '').trim();
         if (!taskText) return;
@@ -436,16 +442,12 @@ console.log('[agent-panel] v7 events-stream');
                        label: (opts && opts.cardLabel) || undefined });
         saveHistory(history);
         input.value = '';
-        if (opts && opts.card) {
-            addBuildCard(taskText, opts.cardLabel);   // 卡片头部可自定义（建书默认 🚀 建书任务）
-        } else {
-            addMsg('user', taskText);
-        }
         if (busy) {
-            // 打断当前任务，排队新任务；当前流的 done 处理器接力 pendingTask
-            pendingTask = taskText;
+            // 先打断当前任务，新任务卡等当前任务 done（被打断）后再渲染并启动 —— 严格先打断后开始
+            pendingTask = { text: taskText, opts: opts || {} };
             fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
         } else {
+            renderTaskStart(taskText, opts || {});
             startTask(taskText);
         }
     }
@@ -495,47 +497,49 @@ console.log('[agent-panel] v7 events-stream');
     renderHistory();
     checkRunningTask();   // 页面可能在切页/刷新时丢了进行中任务 → 启动即感知
 
-    // ─── 切页恢复：bfcache 恢复清陈旧状态 + 轮询后台运行中任务 ───
+    // ─── 切页/刷新恢复：还原运行中的任务视图（任务卡 + 工具卡流 + busy），无横幅 ───
+    // 侧栏 dsh 任务在后台继续跑；刷新后按 started_at 从 /api/agent/task-events 增量重建
+    // 工具卡流，任务卡由 renderHistory 从 history 还原（含全文），busy 显示「⏹ 停止」可取消。
     var runningPollTimer = null;
-    var runningBannerEl = null;
-
-    function showRunningBanner(d) {
-        if (runningBannerEl && runningBannerEl.parentNode) return;   // 已有卡，幂等
-        var card = el('div', 'agent-tool-card running');
-        var head = el('div', 'agent-tool-head', '⏳ 任务在后台运行中');
-        var body = el('div', 'agent-tool-detail', '');
-        body.style.display = 'block';
-        var lines = [];
-        if (d.task) lines.push('任务：' + d.task);
-        if (d.started_at) lines.push('开始于：' + new Date(d.started_at * 1000).toLocaleTimeString());
-        lines.push('（页面已刷新，实时工具流不可回放；任务会在后台继续跑完）');
-        var cancelBtn = el('button', 'small', '🛑 取消任务');
-        cancelBtn.onclick = function() {
-            fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
-        };
-        body.appendChild(el('div', '', lines.join('\n')));
-        body.appendChild(cancelBtn);
-        card.appendChild(head);
-        card.appendChild(body);
-        chat.appendChild(card);
-        scrollBottom();
-        runningBannerEl = card;
-        if (!runningPollTimer) runningPollTimer = setInterval(checkRunningTask, 3000);
-    }
-
-    function finishRunningBanner(text) {
-        if (runningPollTimer) { clearInterval(runningPollTimer); runningPollTimer = null; }
-        if (runningBannerEl && runningBannerEl.parentNode) {
-            var body = runningBannerEl.querySelector('.agent-tool-detail');
-            if (body) body.firstChild.textContent = text || '✅ 任务已结束';
-            runningBannerEl = null;
-        }
-    }
+    var runningSince = 0;
+    var renderedTaskEvents = {};   // 已渲染事件键，增量去重
 
     function removeRunningBanner() {
+        // 新任务接管 / bfcache 恢复：停重建轮询、清重建态（历史里已无横幅卡，保留函数名供调用点）
         if (runningPollTimer) { clearInterval(runningPollTimer); runningPollTimer = null; }
-        if (runningBannerEl && runningBannerEl.parentNode) runningBannerEl.parentNode.removeChild(runningBannerEl);
-        runningBannerEl = null;
+        runningSince = 0;
+        renderedTaskEvents = {};
+    }
+
+    function restoreRunningView(d) {
+        busy = true;
+        setSendEnabled(false);          // 输入区显示「⏹ 停止」，可取消后台任务
+        if (!runningPollTimer) runningPollTimer = setInterval(checkRunningTask, 3000);
+        runningSince = d.started_at || runningSince;
+        _fetchAndRenderTaskEvents();
+    }
+
+    // 拉取 task_events（ts >= started_at）增量渲染工具卡：tool_call 建卡 / tool_result 配对收尾
+    function _fetchAndRenderTaskEvents() {
+        fetch('/api/agent/task-events?since=' + (runningSince || 0))
+            .then(function(r) { return r.json(); })
+            .then(function(ld) {
+                if (!ld || !ld.ok) return;
+                (ld.events || []).forEach(function(evt) {
+                    var key = evt.callId || (evt.type + ':' + evt.ts);
+                    if (evt.type === 'tool_call') {
+                        if (renderedTaskEvents[key]) return;
+                        renderedTaskEvents[key] = true;
+                        addToolCardFor(evt.name, evt.args, evt.callId);
+                    } else if (evt.type === 'tool_result') {
+                        var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
+                        if (evt.callId) delete toolCards[evt.callId];
+                        if (run) finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary));
+                    }
+                });
+                scrollBottom();
+            })
+            .catch(function() {});
     }
 
     function checkRunningTask() {
@@ -544,10 +548,13 @@ console.log('[agent-panel] v7 events-stream');
             .then(function(d) {
                 if (!d || !d.ok) return;
                 if (d.running) {
-                    showRunningBanner(d);
+                    restoreRunningView(d);
                 } else {
-                    finishRunningBanner('✅ 任务已结束');
-                    if (busy) { busy = false; setSendEnabled(true); }   // 防陈旧 busy 卡输入
+                    // 后台任务结束：停轮询、复位重建期 busy（无 SSE done 事件，靠本分支复位）
+                    if (runningPollTimer) { clearInterval(runningPollTimer); runningPollTimer = null; }
+                    runningSince = 0;
+                    renderedTaskEvents = {};
+                    if (busy) { busy = false; setSendEnabled(true); }
                 }
             })
             .catch(function() {});

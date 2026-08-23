@@ -74,6 +74,18 @@ def agent_chat_status():
     return jsonify({"ok": True, **get_current_task_status()})
 
 
+@bp.route("/api/agent/task-events", methods=["GET"])
+def agent_task_events():
+    """刷新后重建工具卡流：读取 dsh 工具事件（ts >= since，unix 秒）。
+
+    侧栏 dsh 的工具调用落盘 task_events.jsonl（source=dsh 不进 tool_log）；
+    前端刷新后按任务 started_at 拉取，重建「刷新前」的工具卡流。
+    """
+    since = float(request.args.get("since", "0") or 0)
+    from libraries.dsh_bridge import get_task_events
+    return jsonify({"ok": True, "events": get_task_events(since)})
+
+
 @bp.route("/api/agent/build-status", methods=["POST"])
 def agent_build_status():
     """浏览器上报建书向导状态（WZ.reportStatus），写入 storage/build_status.json 供 MCP 工具读取。"""
