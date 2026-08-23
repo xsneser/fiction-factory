@@ -12,7 +12,7 @@
     <tr>
         <td><strong><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title or '(待定)' }}</a></strong></td>
         <td>{{ b.pen_name }}</td>
-        <td>{% if b.tags %}{% for t in b.tags[:6] %}<span class="tag">{{ t }}</span>{% endfor %}{% else %}—{% endif %}</td>
+        <td>{% if r.tags %}{% for t in r.tags[:6] %}<span class="tag">{{ t }}</span>{% endfor %}{% else %}—{% endif %}</td>
         <td>
             {% if r.has_storyline %}
             <span class="tag blue">{{ r.storyline_outlines }}故事线 · {{ r.storyline_plots }}桥段</span>
