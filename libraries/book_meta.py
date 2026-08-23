@@ -13,7 +13,7 @@ def build_title_prompt(genre: str, sub_genre: str, platform: str,
 
 根据以下信息，为这本小说提供 5 个备选书名：
 
-【流派】：{genre}/{sub_genre}
+【题材方向】：{genre}/{sub_genre}
 【平台】：{platform}
 【开篇内容摘要】：
 {chapter_123[:1000]}...
@@ -35,7 +35,7 @@ def build_synopsis_prompt(genre: str, sub_genre: str, platform: str,
 
 根据以下开篇内容，为这本小说写一段简介（100-200字）：
 
-【流派】：{genre}/{sub_genre}
+【题材方向】：{genre}/{sub_genre}
 【开篇内容摘要】：
 {chapter_123[:1000]}...
 

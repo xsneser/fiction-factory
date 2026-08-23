@@ -956,8 +956,8 @@ class PromptHarness:
         parts = [
             "请根据以下一句话设定，构思一段【世界观设定短文】（300-500 字叙事化文字，不要列条目）：",
             "",
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
-            f"【一句话设定】{idea or '（请按该流派标准开局自由构思）'}",
+            f"【题材方向】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
+            f"【一句话设定】{idea or '（请按该题材方向标准开局自由构思）'}",
         ]
         if platform:
             parts.append(f"【目标平台】{platform}")
@@ -978,7 +978,7 @@ class PromptHarness:
         """Call B：设定短文 → 结构化 JSON（扩展世界观 + 主角/配角推导）。"""
         style = _profile_style_text(profile if profile is not None else self.profile)
         parts = [
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
+            f"【题材方向】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
             f"【一句话设定】{idea or ''}",
         ]
         if str(world_summary or "").strip():
@@ -1014,7 +1014,7 @@ class PromptHarness:
                                        tags=None, existing_candidates=None) -> str:
         """示例候选：一次产出 count 个差异化世界观候选。
 
-        步 1 用户给一句话设定 + 题材标签、不显式选流派——【流派】未指定时要求 AI
+        步 1 用户给一句话设定 + 题材标签、不另选题材——【题材方向】未指定时要求 AI
         从一句话/题材标签自行推导，避免输出被示例模板固化。
         existing_candidates 传入时改为「增量」模式：只生成 **1 个**与已有候选
         差异明显的新方向（逐个生成、给足思考空间，质量高于一次多个）。
@@ -1027,8 +1027,8 @@ class PromptHarness:
                       + "。世界观候选必须契合这些标签的网文套路与读者预期，"
                         "禁止漂移到标签之外题材。")
         parts = [
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else "（未指定，由你自行推导这句话隐含的题材/流派）"),
-            f"【一句话设定】{idea or '（无，按流派自由发散）'}",
+            f"【题材方向】{genre}" + (f"/{sub_genre}" if sub_genre else "（未指定，由你自行推导这句话隐含的题材方向）"),
+            f"【一句话设定】{idea or '（无，按题材方向自由发散）'}",
             tb if tb else "",
         ]
         if existing_candidates:
@@ -1039,13 +1039,13 @@ class PromptHarness:
                 f"【已生成候选】\n{listed}\n"
                 f"【要求】在已有候选基础上，只产出 **1 个**与它们差异最明显、最出彩的**新**世界观方向"
                 f"（严禁与已有候选重复/雷同；给足这一方向的深度设定与差异化亮点）。"
-                f"若【流派】未指定：先自行推导这句话隐含的题材/流派，再在该框架内挑一个与众不同的走向。")
+                f"若【题材方向】未指定：先自行推导这句话隐含的题材方向，再在该框架内挑一个与众不同的走向。")
         else:
             parts.append(
                 f"【要求】从这句话发散出 {count} 个截然不同的世界观方向，方向之间差异要明显。"
-                f"若【流派】未指定：先自行推导这句话隐含的题材/流派（例如用户想写的是都市、玄幻、科幻、悬疑、历史等），"
-                f"再在该题材框架内发散差异明显的方向；不要套用固定的子流派模板，候选只体现同源设定下的不同走向。")
-        parts.append('返回 JSON：{"candidates":[{"title":"候选名/书名","one_liner":"一句话核心设定（可直接作为新书的一句话种子）","world_brief":"120-200字世界观简述","genre_hint":"子流派标签"}]}')
+                f"若【题材方向】未指定：先自行推导这句话隐含的题材方向（例如用户想写的是都市、玄幻、科幻、悬疑、历史等），"
+                f"再在该题材框架内发散差异明显的方向；不要套用固定的题材细分模板，候选只体现同源设定下的不同走向。")
+        parts.append('返回 JSON：{"candidates":[{"title":"候选名/书名","one_liner":"一句话核心设定（可直接作为新书的一句话种子）","world_brief":"120-200字世界观简述","genre_hint":"题材细分标签"}]}')
         return "\n".join(parts)
 
     def render_characters_prompt(self, idea: str, genre: str = "",
@@ -1060,9 +1060,9 @@ class PromptHarness:
         """
         tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
         parts = [
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
+            f"【题材方向】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
             f"【书名】{title or '（待定）'}",
-            f"【世界观】{idea or '（无，按流派自由发散）'}",
+            f"【世界观】{idea or '（无，按题材方向自由发散）'}",
         ]
         if tags:
             parts.append(f"【题材标签】{'、'.join(tags)}（硬约束，必须契合）")
@@ -1125,7 +1125,7 @@ class PromptHarness:
         if profile and getattr(profile, "summary", ""):
             style = f"\n【笔名风格】{profile.summary}"
         return "\n".join([
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else "（未指定，由你推导）"),
+            f"【题材方向】{genre}" + (f"/{sub_genre}" if sub_genre else "（未指定，由你推导）"),
             f"【一句话设定】{idea or '（无）'}",
             f"【题材标签】{'、'.join(tags) if tags else '（未选）'}（硬约束，必须契合）",
             style,
@@ -1145,7 +1145,7 @@ class PromptHarness:
         """
         tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
         parts = [
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
+            f"【题材方向】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
             f"【一句话设定】{idea or '（无）'}",
             f"【核心矛盾】{core_conflict or '（未定）'}",
             f"【题材标签】{'、'.join(tags) if tags else '（未选）'}（硬约束，必须契合）",

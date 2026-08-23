@@ -58,7 +58,7 @@ def _build_next_arc(builder, tl, mode="rule"):
             tl.outlines[-1].successor = arc.id
         return arc
 
-    # rule：按流派模板循环取下一个
+    # rule：按题材方向模板循环取下一个
     structs = struct_lib.search(genre=tl.genre) or struct_lib.templates
     if not structs:
         return None
@@ -174,7 +174,7 @@ def generate_title(storyline_id):
     bi = tl.basic_info or {}
     protag = get_mc(bi)
     world = bi.get("world_building") or {}
-    ctx = f"流派：{tl.genre}{'/' + tl.sub_genre if tl.sub_genre else ''}"
+    ctx = f"题材方向：{tl.genre}{'/' + tl.sub_genre if tl.sub_genre else ''}"
     if protag.get("name"):
         ctx += f"；主角：{protag.get('name')}（{protag.get('identity','')}）"
     if world.get("description"):

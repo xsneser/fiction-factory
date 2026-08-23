@@ -1,6 +1,6 @@
 """
 大纲库（Structure Library）
-各类网文流派的故事骨架结构模板
+各类网文题材的故事骨架结构模板
 """
 from dataclasses import dataclass, field
 from .base_library import JsonLibrary
@@ -23,8 +23,8 @@ class StructureTemplate:
     """大纲结构模板"""
     id: str
     name: str
-    genre: str                     # 流派：玄幻/都市/言情/悬疑/...
-    sub_genre: str = ""            # 子流派：升级流/系统流/重生/...
+    genre: str                     # 题材方向：玄幻/都市/言情/悬疑/...
+    sub_genre: str = ""            # 题材细分：升级流/系统流/重生/...
     description: str = ""
     total_chapters: int = 500
     stages: list[StageNode] = field(default_factory=list)

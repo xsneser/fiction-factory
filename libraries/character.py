@@ -19,7 +19,7 @@ class CharacterArchetype:
     examples: list[str] = field(default_factory=list)     # 代表人物（作品/场景）
     catchphrases: list[str] = field(default_factory=list) # 常见口癖/惯用语句
     tags: list[str] = field(default_factory=list)         # 性格标签
-    fit_genres: list[str] = field(default_factory=list)   # 适配流派
+    fit_genres: list[str] = field(default_factory=list)   # 适配题材
     source: str = ""              # 来源
     created_at: str = "2026-08-18"
     enabled: bool = True
@@ -63,7 +63,7 @@ class CharacterLibrary(JsonLibrary):
 
     def search(self, tag: str = "", genre: str = "",
                kw: str = "") -> list[CharacterArchetype]:
-        """按性格标签 / 适配流派 / 关键词搜索原型。"""
+        """按性格标签 / 适配题材 / 关键词搜索原型。"""
         results = self.archetypes
         if tag:
             results = [a for a in results if tag in a.tags]
@@ -75,7 +75,7 @@ class CharacterLibrary(JsonLibrary):
         return results
 
     def categories(self) -> list[str]:
-        """返回所有性格标签 + 适配流派并集（供页面 tab / 表单原型选择分组）。"""
+        """返回所有性格标签 + 适配题材并集（供页面 tab / 表单原型选择分组）。"""
         cats = set()
         for a in self.archetypes:
             cats.update(a.tags or [])

@@ -19,8 +19,8 @@ class BookConfig:
     book_id: str = ""
     title: str = ""                        # 书名
     pen_name: str = ""                     # 笔名
-    genre: str = ""                        # 流派
-    sub_genre: str = ""                    # 子流派
+    genre: str = ""                        # 题材方向（由题材标签经 derive_genre 推导）
+    sub_genre: str = ""                    # 题材细分
     platform: str = ""                     # 目标平台：fanqie/qidian/...
     chapter_count: int = 500
     current_chapter: int = 0

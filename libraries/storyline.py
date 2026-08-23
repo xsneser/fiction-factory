@@ -457,7 +457,7 @@ def mount_themes_and_hooks(plot: "PlotSlot", storyline_themes: list) -> None:
 
 
 class StorylineBuilder:
-    """根据流派和用户需求，生成大纲故事线 + 桥段配置"""
+    """根据题材方向和用户需求，生成大纲故事线 + 桥段配置"""
 
     def __init__(self, structure_lib=None, plot_lib=None, gag_lib=None, llm_client=None):
         self.structures = structure_lib
@@ -487,11 +487,11 @@ class StorylineBuilder:
         return self._ai_build_sequence(genre, sub_genre, custom_context, max_outlines)
 
     def _rule_build_sequence(self, genre: str) -> list[OutlineSlot]:
-        """规则拼接：按流派选 2-3 个大纲，默认顺序接续"""
+        """规则拼接：按题材方向选 2-3 个大纲，默认顺序接续"""
         if not self.structures:
             return []
 
-        # 流派→常见大纲序列
+        # 题材方向→常见大纲序列
         genre_map = {
             "玄幻": ["struct_xuanhuan_01", "struct_xuanhuan_01"],  # 升级×2
             "都市": ["struct_dushi_01", "struct_dushi_01"],
@@ -558,7 +558,7 @@ class StorylineBuilder:
 
 注意：
 - 相邻大纲建议有 3-5 章的重叠区（过渡更自然）
-- 同一流派下可以有不同风格的大纲（如开局爽文→中期正剧）
+- 同一题材方向下可以有不同风格的大纲（如开局爽文→中期正剧）
 - 总章节数控制在合理范围内（不要超过 500）
 
 可用大纲模板：
@@ -624,7 +624,7 @@ class StorylineBuilder:
             stage_name = stage.get("name", "")
             events = stage.get("events", [])
 
-            # 匹配桥段：阶段名+事件描述+流派
+            # 匹配桥段：阶段名+事件描述+题材方向
             context = f"{outline.name} {stage_name} {' '.join(events)}"
             candidates = self.plots.match_for_chapter(context, storyline.genre)
             if not candidates:

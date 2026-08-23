@@ -2,7 +2,7 @@
 大纲生成引擎（Outline Generator）
 6 阶段 LLM 管线：故事分析 → 故事线规划 → 桥段编排 → 线程与呼应 → 内涵挂载 → 一致性验证
 
-输入: 流派/子流派/自定义描述 + 四大库（候选池） + 笔名档案
+输入: 题材方向/题材细分/自定义描述 + 四大库（候选池） + 笔名档案
 输出: BookStoryline JSON（多大纲+桥段+内涵+吸睛；笑点完全涌现、不写入大纲）
 
 用法:
@@ -377,13 +377,13 @@ class OutlineGenerator:
         prompt = f"""你是一位资深网文策划编辑。请为以下小说构思基础设定。
 
 【基本信息】
-流派：{genre}{'/'+sub_genre if sub_genre else ''}
+题材方向：{genre}{'/'+sub_genre if sub_genre else ''}
 每章目标：3000字
 {style_hint}
 {tags_block}
 
 【用户想法】
-{custom_context or '按该流派标准开局'}
+{custom_context or '按该题材方向标准开局'}
 
 【要求】
 1. 主角设定：名字（2-3字中文）、身份（穿越前/重生前是什么人）、性格特征、背景故事、金手指、性别、当前年龄、死亡年份（若重生设定）
@@ -839,7 +839,7 @@ class OutlineGenerator:
             events = stage.get("events", [])
             context = f"{outline.name} {stage_name} {' '.join(events)}"
 
-            # 候选池：上下文匹配 + 流派匹配 + 阶段事件关键词，去重保序
+            # 候选池：上下文匹配 + 题材方向匹配 + 阶段事件关键词，去重保序
             candidates = self._collect_plot_candidates(context, genre, stage)
             if not candidates:
                 candidates = self.plots.templates[:5]
@@ -915,7 +915,7 @@ class OutlineGenerator:
         return new_plots
 
     def _collect_plot_candidates(self, context: str, genre: str, stage: dict) -> list:
-        """聚合桥段候选池：上下文匹配 + 流派匹配 + 阶段事件关键词，去重保序。"""
+        """聚合桥段候选池：上下文匹配 + 题材方向匹配 + 阶段事件关键词，去重保序。"""
         seen = {}
 
         def add(t):
@@ -970,9 +970,9 @@ class OutlineGenerator:
         prompt = f"""{bible_block}在大纲「{outline.name}」的「{stage_name}」阶段选择合适的桥段。
 
 【阶段事件】
-{'、'.join(events) if events else '按流派惯例推进'}
+{'、'.join(events) if events else '按题材惯例推进'}
 
-【流派】{genre}
+【题材方向】{genre}
 【本弧主题】{outline.name}
 
 【候选桥段】
@@ -1374,7 +1374,7 @@ class OutlineGenerator:
         } for o in tl.outlines[:10]]
 
         prompt = f"""请审查下面这本小说故事线的合理性：
-流派：{tl.genre}
+题材方向：{tl.genre}
 大纲：{json.dumps(outlines_view, ensure_ascii=False, indent=1)}
 桥段总数：{len(tl.plots)}；内涵已按桥段挂载。
 

@@ -435,7 +435,7 @@ def generate_title(book_id: str) -> dict:
     bi = tl.basic_info or {}
     protag = get_mc(bi)
     world = bi.get("world_building") or {}
-    ctx = f"流派：{tl.genre}{'/' + tl.sub_genre if tl.sub_genre else ''}"
+    ctx = f"题材方向：{tl.genre}{'/' + tl.sub_genre if tl.sub_genre else ''}"
     if protag.get("name"):
         ctx += f"；主角：{protag.get('name')}（{protag.get('identity','')}）"
     if world.get("description"):
