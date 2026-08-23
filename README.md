@@ -19,7 +19,7 @@
 | **引擎** (`libraries/engine.py`) | 新书启动 → 规划 → 逐章续写，全自动闭环 | ✅ |
 | **桥段写作** (`libraries/storyline_writer.py`) | 唯一写作核心：桥段驱动逐短句组增量生成 + 炸裂开场 | ✅ |
 | **桥段库** (`libraries/plot.py`) | 网文经典桥段的结构化模板（47 模板，内置+采集） | ✅ |
-| **大纲库** (`libraries/structure.py`) | 各流派卷/弧/章骨架 + **阶段级内涵**（11 模板） | ✅ |
+| **大纲库** (`libraries/structure.py`) | 各题材方向卷/弧/章骨架 + **阶段级内涵**（11 模板） | ✅ |
 | **笑点库** (`libraries/gag.py`) | 搞笑模式模板 + 例句（24 模式，写作时探测器涌现注入） | ✅ |
 | **角色原型库** (`libraries/character.py`) | 人物性格原型 + 代表人物（10 原型，设定表单「从原型库选」） | ✅ 新 |
 | **内涵系统** | 母题跟随大纲阶段，阶段级 `themes` 带插入位置，写作 prompt 注入 | ✅ 新 |
@@ -91,7 +91,7 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 
 - 题材标签在步 1 选择，存入 `world_building.tags`（预置 **50 标签 5 组** `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束，并约束步 2 候选生成。
 - 步 3「世界观补全」：进入时自动调无书端点 `POST /api/world-builder/world-complete` 补全 `world_building` 12 维 + 基调（tone/target_audience/pov/era_language），可手动编辑后随 `/books/start` 落库；`generate_world` 仅在世界观单薄时兜底。另提供**分阶段内容构建工具**（内部 agent / skill 自主编排，步 3 顶部状态区 5 徽标实时显示 ✅/未填）：`generate_core_conflict`（①核心矛盾）→ `query_structures`/`query_plots` + `set_picks`（②开篇大纲+桥段，落 `_outline_picks`）→ `generate_factions`（③势力）→ `generate_characters`（④主要人物，带核心矛盾/势力/大纲上下文）→ `generate_rest_world`（⑤其余维度，大纲确定后补）；`generate_full_outline` 自动消费 `_outline_picks`。
-- 流派由标签推导（`TAG_GENRE_MAP`）；平台留到发布页。
+- 题材方向由标签推导（`TAG_GENRE_MAP`）；平台留到发布页。
 - 角色由外部 Agent 从原型库生成（`generate_characters`）经 `drive_ui(set_characters)` 填入步 3，可手动编辑；书名由步 2 选中候选带入步 3 可改。
 
 ### 续写循环
@@ -136,7 +136,7 @@ PUA 字体解码器 `plugins/font_decoder.py` 内置 362 条映射表，支持�
 
 ### 大纲库 —— `libraries/structure.py`
 
-11 套流派模板，覆盖卷/弧/章三级骨架：玄幻、都市、悬疑、言情、穿越、科幻、修真等。**大纲模板自带阶段级内涵**（`StageNode.themes`：`{name, position, how}`），如"最终清算"阶段在结尾放置 复仇/热血；生成时从选中大纲带出书级内涵、挂到能承载的桥段、注入写作 prompt。
+11 套题材方向模板，覆盖卷/弧/章三级骨架：玄幻、都市、悬疑、言情、穿越、科幻、修真等。**大纲模板自带阶段级内涵**（`StageNode.themes`：`{name, position, how}`），如"最终清算"阶段在结尾放置 复仇/热血；生成时从选中大纲带出书级内涵、挂到能承载的桥段、注入写作 prompt。
 
 ### 笑点库 —— `libraries/gag.py`
 
@@ -144,7 +144,7 @@ PUA 字体解码器 `plugins/font_decoder.py` 内置 362 条映射表，支持�
 
 ### 角色原型库 —— `libraries/character.py`
 
-10 个性格原型 + 代表人物（高冷毒舌/沙雕谐星/温柔治愈/热血莽夫/腹黑军师/傲娇大小姐/忠犬伙伴/阴险反派/市侩商人/吐槽役青梅），带口癖示例与适配流派。设定表单里每张人物卡可「🎭 从原型库选」一键填充性格/口癖/简介。
+10 个性格原型 + 代表人物（高冷毒舌/沙雕谐星/温柔治愈/热血莽夫/腹黑军师/傲娇大小姐/忠犬伙伴/阴险反派/市侩商人/吐槽役青梅），带口癖示例与适配题材。设定表单里每张人物卡可「🎭 从原型库选」一键填充性格/口癖/简介。
 
 > 四大库数据存 `libraries/data/{plots,structures,gags,characters}.jsonl`（JSONL 一行一条；旧单 JSON 首次加载自动迁移）。
 
@@ -195,7 +195,7 @@ D:\NovelEngine/
 │   ├── publisher.py        # 上架检查/状态机
 │   ├── cost_tracker.py     # API 费用追踪
 │   ├── character_state.py  # 角色状态跟踪
-│   ├── world_tags.py       # 预置题材标签库（50 标签 + 流派推导）
+│   ├── world_tags.py       # 预置题材标签库（50 标签 + 题材方向推导）
 │   ├── base_library.py     # 资产库基类（JSONL 单例 + 读写）
 │   ├── reset_data.py       # 一键重置四大库
 │   ├── plot.py             # 桥段库（47 模板）

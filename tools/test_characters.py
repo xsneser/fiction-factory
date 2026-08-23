@@ -120,8 +120,8 @@ def test_character_library():
     lib = CharacterLibrary()
     check("角色库: 内置原型非空", len(lib.archetypes) >= 8, str(len(lib.archetypes)))
     check("角色库: 包含高冷毒舌", lib.get_by_id("char_001") is not None)
-    check("角色库: categories 含性格/流派", "高冷" in lib.categories() or "玄幻" in lib.categories())
-    check("角色库: search 按流派", len(lib.search(genre="玄幻")) > 0)
+    check("角色库: categories 含性格/题材", "高冷" in lib.categories() or "玄幻" in lib.categories())
+    check("角色库: search 按题材", len(lib.search(genre="玄幻")) > 0)
     check("角色库: search 按关键词", len(lib.search(kw="腹黑")) > 0)
 
 

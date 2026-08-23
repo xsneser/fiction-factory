@@ -170,7 +170,7 @@ D:\NovelEngine/
 
 ### 3.2 OutlineSlot（大纲槽位）
 
-`template_id`（流派模板）、`name`、`start_chapter`/`end_chapter`、`stages[]`（`{name,min_ch,max_ch,events}`）、`transition_type`（sequential/overlap/merge）、`narrative`（chronological/flashback/interleaved）、`overlaps_with`（与哪些大纲重叠 id 列表）、`predecessor`/`successor`（前驱/后继大纲 id）。
+`template_id`（题材方向模板）、`name`、`start_chapter`/`end_chapter`、`stages[]`（`{name,min_ch,max_ch,events}`）、`transition_type`（sequential/overlap/merge）、`narrative`（chronological/flashback/interleaved）、`overlaps_with`（与哪些大纲重叠 id 列表）、`predecessor`/`successor`（前驱/后继大纲 id）。
 
 ### 3.3 PlotSlot（桥段槽位）
 
@@ -191,7 +191,7 @@ D:\NovelEngine/
 | 库 | 模块 | 数据文件 | 数量 | 用途 |
 |---|---|---|---|---|
 | 桥段库 | `plot.py` | `plots.jsonl` | 47 模板（12 内置 + 采集） | 桥段模板：category / template_structure / slots / fit_contexts；写作时作【桥段骨架】注入 |
-| 大纲库 | `structure.py` | `structures.jsonl` | 11 模板（5 内置 + 采集） | 卷→弧→章三级骨架，按流派搜索；阶段级内涵 |
+| 大纲库 | `structure.py` | `structures.jsonl` | 11 模板（5 内置 + 采集） | 卷→弧→章三级骨架，按题材方向搜索；阶段级内涵 |
 | 笑点库 | `gag.py` | `gags.jsonl` | 24 模式（10 内置 + 采集） | 探测器候选池（不写进大纲） |
 | 角色原型库 | `character.py` | `characters.jsonl` | 10 原型 | 性格原型 + 代表人物；设定表单「从原型库选」 |
 
@@ -227,16 +227,16 @@ D:\NovelEngine/
 ### 4.2 新书创建（单页多步向导，v1.6）
 
 启动新书改为**单页 3 步向导**（`start_book.html`，横条步骤条 wz-steps，JS 切换；提交即入库跳书详情，不再有生成大纲/前三章步骤）：
-1. **①一句话设定**（必填 idea + 笔名 + 🏷️ 题材标签 chips——**50 标签 5 组**，`libraries/world_tags.py`，流派/题材一体，存入 `world_building.tags`）。
+1. **①一句话设定**（必填 idea + 笔名 + 🏷️ 题材标签 chips——**50 标签 5 组**，`libraries/world_tags.py`，题材方向由题材标签推导，存入 `world_building.tags`）。
 2. **②挑选世界观**：受题材标签硬约束（`generate_candidates` 注入【题材标签（硬约束）】，genre 空时 `derive_genre(tags)` 推导），从一句话设定生成 **5 个**世界观方向（无书 `POST /api/world-builder/candidates`，count=5），挑一个（`one_liner` 并入一句话设定）；「从已有书借鉴」备选（`borrow-preview` 无书别名预览，`extract_seed`）；可「跳过，手动设定」（跳过按钮在步 2 导航区，与「已挑选完毕」并排）。
 3. **③世界观补全**：进入步 3 时**自动**调无书端点 `POST /api/world-builder/world-complete`（复用 `WorldBuildingGenerator.generate`，seed=候选 world_brief||一句话，标签硬约束 + 笔名风格档案），补全 **world_building 12 维 + 基调（tone/target_audience/pov/era_language）** 为可编辑表单；📖 书名（由②选中候选带入，可改）+ 每章字数；🎭 角色候选（外部 Agent 经 `generate_characters`/`set_characters` 填入，可手动编辑）。补全中 `submit` 被拦截；`drive_ui(fill_world)` 可重触发。
-4. **提交建书（③结束即入库）**：步 3 `submit` JSON 建书（POST /books/start 双轨：JSON→book_id、form→302；**流派由 tags 经 `derive_genre` 推导**、平台默认 fanqie，留发布页调整；**收客户端 `world_building` dict + tone/pov，`DEFAULT_WORLD_BUILDING` backfill 12 维，`basic_info_is_rich` 时打 `_world_generated`**），建书 phase=config，成功后**直接跳书详情页**（入库成书目）。
+4. **提交建书（③结束即入库）**：步 3 `submit` JSON 建书（POST /books/start 双轨：JSON→book_id、form→302；**题材方向由 tags 经 `derive_genre` 推导**、平台默认 fanqie，留发布页调整；**收客户端 `world_building` dict + tone/pov，`DEFAULT_WORLD_BUILDING` backfill 12 维，`basic_info_is_rich` 时打 `_world_generated`**），建书 phase=config，成功后**直接跳书详情页**（入库成书目）。
 5. **建书后**：**完整大纲由外部 Agent 经 MCP `generate_full_outline` 生成**（世界观已随提交落库，`generate_world` 仅兜底；世界观充实自动跳过 Phase 1 分析；**自动消费 `_outline_picks`**），`phase=ready` 后进入写作台（`/books/<id>/continue`）写前三章。
 
 - **分阶段内容构建（步 3 工作台，内部 agent / skill 自主编排）**：步 3 顶部状态区徽标条已删（用户 2026-08-21）。工具（无书端点 + MCP）：`generate_core_conflict`（①核心矛盾）→ `generate_factions`（势力）→ `generate_characters(..., core_conflict, factions)`（人物，基于势力和核心矛盾）→ `generate_rest_world`（其余维度，保留 core_conflict/factions）。②开篇大纲+桥段选材**默认省略**（`generate_full_outline` 自动选材）；需要自定义时经 `query_structures`/`query_plots` + `drive_ui(set_picks)` 补充（落 `_outline_picks` 随 submit 存库）。任一段失败重试/跳过，部分构建可提交；⑤ 未做则 `generate_full_outline` Phase 1 自动补齐。`drive_ui(set_world)` 将部分世界观 dict 合并进表单。
 
 - 产出「设定圣经」维度：tags / description / era / power_system / factions / rules（数值语义写死，全书唯一口径）/ geography / culture / history / social_structure / core_conflict / world_summary（`DEFAULT_WORLD_BUILDING`）+ 基调（tone / target_audience / pov / era_language）。
-- 已从向导删除：流派与平台（流派=题材标签，`TAG_GENRE_MAP` 推导 book.genre；平台留发布页）、模板选择、故事线描述、子类型。
+- 已从向导删除：单独选题材方向与平台（题材方向由题材标签经 `TAG_GENRE_MAP` 推导 book.genre；平台留发布页）、模板选择、故事线描述、子类型。
 - 书详情页设定表单保留可编辑世界/人物/基调 + 保存/确认（存量书回退路径）；借鉴已移入向导②。
 - 全站单行「当前阶段 → 下一步」状态条（`flow_status` 宏）已删除（v1.4），仅新书向导保留步骤条；`status_badge` 徽标保留。
 
@@ -371,13 +371,13 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 | 编号 | 用途 | 调用点 | 流式 | temp | max_tokens | 关键输入 | 频率 |
 |---|---|---|---|---|---|---|---|
-| A | 故事分析 | `_analyze_story` | 非流式 | 0.7 | 2048 | 流派/子流派+笔名风格+用户想法 | 每新书 1 次 |
+| A | 故事分析 | `_analyze_story` | 非流式 | 0.7 | 2048 | 题材方向/题材细分+笔名风格+用户想法 | 每新书 1 次 |
 | B | 故事线规划 | `_ai_sequence` | 流式 | 0.7 | 8192 | 设定卡≤900 + 候选模板≤10 | 每新书 1 次 |
 | C | 桥段选择 | `_ai_select_plots` | 流式 | 0.5 | 8192 | 设定卡精简 + 候选≤12 | 每阶段 1 次 |
 | D | 线程与呼应 | `_plan_threads_and_splits` | 非流式 | 0.3 | **16384** | 设定卡+大纲+桥段≤60 | 每新书 1 次 |
 | E | 内涵复查(4.5) | `_review_theme_assignments` | 流式 | 0.3 | 8192 | 桥段快照≤20 | 每新书 1 次 |
 | F | 一致性验证 | `_validate_with_llm` | 流式 | 0.3 | 8192 | 大纲视图≤10 | 每新书 1 次 |
-| G | 书名生成 | `_generate_book_meta` | 非流式 | 0.8 | 1024 | 流派/平台+第1章前1000字 | 详情页手动触发 |
+| G | 书名生成 | `_generate_book_meta` | 非流式 | 0.8 | 1024 | 题材方向/平台+第1章前1000字 | 详情页手动触发 |
 | H | 简介生成 | `_generate_book_meta` | 非流式 | 0.8 | 1024 | 同 G | 同上 |
 | I | 桥段写作 | `StorylineChapterWriter._group_prompt` | 非流式 | 0.7 | **1600** | 设定卡精简+计划+摘要+前文窗口+命中提示 | 每短句组 |
 | J | 笑点探测器 | `GagInjector.detect` | 非流式 | 0.3 | 400 | ≤500 token（recent 450 字 + 池 4×60） | 每短句组（按频率） |
