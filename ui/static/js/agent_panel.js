@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v16 events-stream');
+console.log('[agent-panel] v17 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -153,11 +153,12 @@ console.log('[agent-panel] v16 events-stream');
         chat.appendChild(card);
         scrollBottom();
         var run = { card: card, status: status, meta: meta, t0: performance.now(), ts0: null, tool: tool, args: args, timer: null };
-        // 运行中实时计时：活跃卡用 performance 基；刷新重建卡 run.ts0=事件 ts，用 Date.now 基算真实已用时长
+        // 运行中实时计时：活跃卡用 performance 基；刷新重建卡 run.ts0=事件 ts，用 Date.now 基算真实已用时长。
+        // 运行中只显示 ⏱（token 是决策那轮已消耗的固定值，工具完成时才与最终时长一起显示，避免「token 已出现却仍运行中」误解）。
         run.timer = setInterval(function() {
             if (!run.meta) return;
             var ms = run.ts0 ? (Date.now() / 1000 - run.ts0) * 1000 : (performance.now() - run.t0);
-            run.meta.textContent = '⏱ ' + formatDur(ms) + (run.usage ? ' · ' + formatTokens(run.usage) : '');
+            run.meta.textContent = '⏱ ' + formatDur(ms);
         }, 1000);
         return run;
     }
