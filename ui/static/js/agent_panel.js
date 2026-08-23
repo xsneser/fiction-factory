@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v10 events-stream');
+console.log('[agent-panel] v11 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -14,6 +14,7 @@ console.log('[agent-panel] v10 events-stream');
     var HISTORY_KEY = 'ne_agent_history';
     var HISTORY_LIMIT = 40;
     var busy = false;
+    var activeSse = false;                      // 是否有活跃 SSE 会话（活跃时 busy 由事件流管理；刷新后无 SSE 则区分后台任务）
     var pendingTask = null;                     // busy 时排队待发任务（done 后接力）
     var currentToolRun = null;                  // 当前工具卡引用
     var toolPollTimer = null;                   // 工具日志轮询定时器
@@ -324,6 +325,7 @@ console.log('[agent-panel] v10 events-stream');
             // 每次都无条件写队列，这些意图已由 SSE 事件流实时执行过；done 后轮询恢复会把
             // 残留重放（drive_ui(next) 走两步 / submit 二次建书）。取走清空，丢弃安全。
             fetch('/api/agent/nav-intents').catch(function(){});
+            activeSse = false;   // 当前 SSE 会话结束（done）
             if (pendingTask) {
                 // 接力排队任务（busy 保持 true）：先打断已 done，此刻才渲染新任务卡并启动 —— 严格先打断后开始
                 var pt = pendingTask; pendingTask = null;
@@ -404,6 +406,7 @@ console.log('[agent-panel] v10 events-stream');
     }
     function startTask(text) {
         busy = true;
+        activeSse = true;                    // 活跃 SSE 会话开始
         setSendEnabled(false);
         removeRunningBanner();   // 新任务接管：清掉恢复期的「后台运行中」卡（SSE 实时流展示）
         consumeSSE({ messages: history }).catch(function(err) {
@@ -413,6 +416,7 @@ console.log('[agent-panel] v10 events-stream');
                 renderTaskStart(pt.text, pt.opts || {});
                 startTask(pt.text);
             } else {
+                activeSse = false;
                 busy = false;
                 setSendEnabled(true);
             }
@@ -442,11 +446,12 @@ console.log('[agent-panel] v10 events-stream');
                        label: (opts && opts.cardLabel) || undefined });
         saveHistory(history);
         input.value = '';
-        if (busy) {
-            // 先打断当前任务，新任务卡等当前任务 done（被打断）后再渲染并启动 —— 严格先打断后开始
+        if (busy && activeSse) {
+            // 活跃 SSE 会话中：先打断当前任务，新任务卡等当前任务 done（被打断）后再渲染并启动 —— 严格先打断后开始
             pendingTask = { text: taskText, opts: opts || {} };
             fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
         } else {
+            // 非活跃 SSE（刷新后的后台任务 / 空闲）：直接启动，run_dsh_task 内部自动打断后台任务，无死锁
             renderTaskStart(taskText, opts || {});
             startTask(taskText);
         }
@@ -467,6 +472,8 @@ console.log('[agent-panel] v10 events-stream');
         stopBtn.disabled = true;              // 防连点
         stopBtn.textContent = '停止中…';
         fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
+        // 刷新后（无活跃 SSE）：点停止后延时重查，后台任务取消则「⏹ 停止」自动消失
+        setTimeout(refreshRunningState, 1500);
         // 兜底：正常由 done 事件复位 busy；若 SSE 流异常卡死，超时强制复位防发送永久禁用
         setTimeout(function() {
             if (busy) { busy = false; setSendEnabled(true); }
@@ -494,7 +501,7 @@ console.log('[agent-panel] v10 events-stream');
     }
     renderHistory();
     loadRestoredTaskView();   // 刷新/切页后一次性拉取服务器临时存储瞬时还原工具卡流
-    refreshRunningBar();      // 刷新后还原「任务运行中」非阻塞指示
+    refreshRunningState();    // 刷新后若后台任务在跑 → busy → 右下角「⏹ 停止」显现（运行状态）
 
     // ─── 刷新/切页瞬时还原：一次性加载服务器临时存储（task-events）渲染全部工具卡 ───
     // 无轮询、无 busy 重建态、无「检查后台任务」提示。后台任务是否在跑不再感知——
@@ -526,40 +533,22 @@ console.log('[agent-panel] v10 events-stream');
             .catch(function() {});
     }
 
-    // ─── 运行状态非阻塞指示：刷新/切页后若后台任务仍在跑，对话最上方插一条「⏳ 运行中 🛑 停止」 ───
-    // 不置 busy（不锁发送框）——用户随时可发新消息，run_dsh_task 内部自动打断后台任务，无死锁。
-    // 无定时轮询：靠启动时一次 + 页面重新获得焦点时重查（后台任务结束、切回页面即自动移除）。
-    var runningBarEl = null;
-
-    function refreshRunningBar() {
+    // ─── 运行状态由右下角「⏹ 停止」按钮表示：busy 则它出现（无横幅、无轮询） ───
+    // 刷新/切页后从状态端点恢复 busy；focus/visibilitychange/停止点击后重查。
+    function refreshRunningState() {
+        if (activeSse) return;   // 活跃 SSE 会话由事件流管理 busy，不干扰
         fetch('/api/agent/chat/status')
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d || !d.ok) return;
-                if (d.running && !runningBarEl) {
-                    var bar = el('div', 'agent-tool-card running');
-                    var head = el('div', 'agent-tool-head', '⏳ 任务运行中');
-                    var body = el('div', 'agent-tool-detail', '');
-                    body.style.display = 'block';
-                    var stopBtn = el('button', 'small', '🛑 停止');
-                    stopBtn.onclick = function() {
-                        fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
-                    };
-                    body.appendChild(stopBtn);
-                    bar.appendChild(head);
-                    bar.appendChild(body);
-                    chat.insertBefore(bar, chat.firstChild);   // 置于对话最上方
-                    runningBarEl = bar;
-                } else if (!d.running && runningBarEl) {
-                    if (runningBarEl.parentNode) runningBarEl.parentNode.removeChild(runningBarEl);
-                    runningBarEl = null;
-                }
+                if (d.running) { busy = true; setSendEnabled(false); }   // →「⏹ 停止」显现
+                else { busy = false; setSendEnabled(true); }
             })
             .catch(function() {});
     }
-    window.addEventListener('focus', refreshRunningBar);
+    window.addEventListener('focus', refreshRunningState);
     document.addEventListener('visibilitychange', function() {
-        if (!document.hidden) refreshRunningBar();
+        if (!document.hidden) refreshRunningState();
     });
 
     // bfcache（前进/后退）恢复：清切页前的陈旧状态（死 SSE、卡住的 busy/工具卡），
@@ -567,6 +556,7 @@ console.log('[agent-panel] v10 events-stream');
     window.addEventListener('pageshow', function(e) {
         if (!e.persisted) return;
         busy = false;
+        activeSse = false;
         pendingTask = null;
         currentToolRun = null;
         toolCards = {};
@@ -575,6 +565,6 @@ console.log('[agent-panel] v10 events-stream');
         removeRunningBanner();
         renderHistory();
         loadRestoredTaskView();
-        refreshRunningBar();
+        refreshRunningState();
     });
 })();
