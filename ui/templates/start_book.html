@@ -134,7 +134,7 @@
     <button id="wz-gen" class="btn-primary" style="display:none" onclick="WZ.agentBuild()">🚀 让 Agent 构建 →</button>
     <button id="wz-skip" class="btn-secondary" style="display:none" onclick="WZ.skipCandidates()">⏭ 跳过，手动设定</button>
     <button id="wz-next" class="btn-primary" style="display:none" onclick="WZ.next()">已挑选完毕 →</button>
-    <button id="wz-submit" class="btn-primary" style="display:none" onclick="WZ.createBook()">🚀 创建并生成大纲</button>
+    <button id="wz-submit" class="btn-primary" style="display:none" onclick="WZ.createBook()">🚀 创建并进入写作台</button>
 </div>
 
 <style>
@@ -224,7 +224,7 @@ var WZ = {
              protag_personality: '', protag_golden_finger: '',
              opening_template_id: '', golden_finger_template_id: '', structure_template_id: '',
              world_building: null, tone: '', target_audience: '', pov: '第三人称', era_language: '',
-             _outline_picks: null, _outline_picks_names: null },
+             _outline_picks: null, _outline_picks_names: null, _outline_data: null },
 
     el: function(id) { return document.getElementById(id); },
 
@@ -295,9 +295,10 @@ var WZ = {
             this._task2Fired = true;
             this._agentDriving = true;
             var task = '用 novel-build 流程继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」）：'
-                + '步 3 分阶段补全世界观（generate_core_conflict→generate_factions→generate_characters→generate_rest_world，'
-                + '每段 drive_ui 落表单）→ drive_ui(submit) 建书 → get_build_status 拿 book_id 校验 → '
-                + 'generate_full_outline → navigate 写作台。不要再 world_candidates / pick_candidate / 发步 1→2 的 next。';
+                + '步 3 分阶段构建（generate_core_conflict→generate_outline_preview+set_outline→generate_factions→'
+                + 'generate_characters→generate_rest_world，每段 drive_ui 落表单）→ drive_ui(submit) 建书'
+                + '（书创建即带大纲 phase=ready）→ get_build_status 拿 book_id 校验 → navigate 写作台。'
+                + '不要再 world_candidates / pick_candidate / 发步 1→2 的 next。';
             if (typeof window.agentSendTask === 'function') {
                 window.agentSendTask(task, { card: true });
             } else if (typeof showToast === 'function') {
@@ -355,7 +356,7 @@ var WZ = {
                        protag_personality: '', protag_golden_finger: '',
                        opening_template_id: '', golden_finger_template_id: '', structure_template_id: '',
                        world_building: null, tone: '', target_audience: '', pov: '第三人称', era_language: '',
-                       _outline_picks: null, _outline_picks_names: null };
+                       _outline_picks: null, _outline_picks_names: null, _outline_data: null };
         this._picked = false; this._worldFilled = false; this._worldFilling = false; this.bookId = ''; this.creating = false;
         this._agentDriving = false; this._task2Fired = false; window.__CANDIDATES__ = [];
         ['wz-idea', 'wz-title', 'wz-wb-description', 'wz-borrow-source', 'wz-borrow-tweak'].forEach(function(id) {
@@ -976,22 +977,22 @@ var WZ = {
         }).then(function(r) { return r.json(); }).then(function(d) {
             if (!d.ok) {
                 if (typeof showToast === 'function') showToast('创建失败：' + (d.error || '未知错误'), 'error');
-                btn.disabled = false; btn.textContent = '🚀 创建并生成大纲';
+                btn.disabled = false; btn.textContent = '🚀 创建并进入写作台';
                 self.creating = false;
                 return;
             }
             self.bookId = d.book_id;
             self.reportStatus();   // 上报 bookId → agent get_build_status 拿到建书结果
             try { sessionStorage.removeItem(self.PERSIST_KEY); } catch (e) {}   // 建书成功清空草稿
-            // 3 步建书结束：直接入库 → 跳书详情；世界观已在步 3 补全并随 submit 落库，
-            // 完整大纲由外部 Agent 后续经 MCP generate_full_outline 生成后进入写作台。
+            // 3 步建书结束：直接入库 → 跳书详情；世界观/大纲/桥段/人物已在步 3 分阶段构建
+            // 并随 submit 落库（书创建即 phase=ready），直接进入写作台。
             // SPA 跳转（navigateTo 失败自动 fallback 整页）：不卸载页面，保留进行中的
             // SSE 事件流会话，使 dsh 的最终 reply 与工具卡不因页面刷新而丢失
             if (typeof navigateTo === 'function') navigateTo('/books/' + d.book_id);
             else window.location.href = '/books/' + d.book_id;
         }).catch(function(e) {
             if (typeof showToast === 'function') showToast('创建失败：' + e.message, 'error');
-            btn.disabled = false; btn.textContent = '🚀 创建并生成大纲';
+            btn.disabled = false; btn.textContent = '🚀 创建并进入写作台';
             self.creating = false;
         });
     },
@@ -1026,7 +1027,10 @@ var WZ = {
                     creating: !!this.creating,
                     _picked: !!this._picked,
                     has_world: !!(this.state && this.state.world_building),
-                    has_picks: !!(this.state && this.state._outline_picks)
+                    has_picks: !!(this.state && this.state._outline_picks),
+                    has_outline: !!(this.state && this.state._outline_data
+                                    && this.state._outline_data.outlines
+                                    && this.state._outline_data.outlines.length)
                 })
             }).catch(function() {});
         } catch (e) {}
@@ -1205,6 +1209,19 @@ window.onnecommand = function(e) {
         WZ.state._outline_picks = { templates: tplIds, plots: plotIds };
         WZ.state._outline_picks_names = { templates: tplNames, plots: plotNames };
         if (typeof showToast === 'function') showToast('已记录开篇大纲/桥段选择', 'success');
+    } else if (cmd === 'set_outline') {
+        // 步3②生成的大纲+桥段（generate_outline_preview 产出）：存 state，submit 时随 POST 落库
+        WZ.state._outline_data = {
+            outlines: Array.isArray(args.outlines) ? args.outlines : [],
+            plots: Array.isArray(args.plots) ? args.plots : [],
+            threads: Array.isArray(args.threads) ? args.threads : [],
+            themes: Array.isArray(args.themes) ? args.themes : [],
+            basic_info: (args.basic_info && typeof args.basic_info === 'object') ? args.basic_info : null
+        };
+        if (typeof showToast === 'function') {
+            showToast('已记录大纲与桥段（' + WZ.state._outline_data.outlines.length
+                + ' 条大纲 / ' + WZ.state._outline_data.plots.length + ' 个桥段）', 'success');
+        }
     } else if (cmd === 'next') { WZ.next(); }
     else if (cmd === 'prev') { WZ.prev(); }
     else if (cmd === 'load_candidates') { WZ.loadCandidates(); }
@@ -1219,7 +1236,7 @@ window.onnecommand = function(e) {
                      protag_personality: '', protag_golden_finger: '',
                      opening_template_id: '', golden_finger_template_id: '', structure_template_id: '',
                      world_building: null, tone: '', target_audience: '', pov: '第三人称', era_language: '',
-                     _outline_picks: null, _outline_picks_names: null };
+                     _outline_picks: null, _outline_picks_names: null, _outline_data: null };
         WZ._picked = false; WZ._worldFilled = false; WZ._worldFilling = false; WZ.bookId = ''; WZ.creating = false;
         WZ._agentDriving = false; WZ._task2Fired = false; window.__CANDIDATES__ = [];
         ['wz-idea', 'wz-title', 'wz-wb-description', 'wz-borrow-source', 'wz-borrow-tweak'].forEach(function(id) {

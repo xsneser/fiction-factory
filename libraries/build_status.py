@@ -22,6 +22,7 @@ _DEFAULTS = {
     "_picked": False,
     "has_world": False,
     "has_picks": False,
+    "has_outline": False,
     "updated_at": "",
 }
 
