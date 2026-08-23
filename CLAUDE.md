@@ -7,7 +7,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 
 | 阶段 | 分 skill | 前置 phase | 出口 | 主要工具 |
 |---|---|---|---|---|
-| 建书 | `novel-build-candidates` + `novel-build` | 无书 / phase=config | `ready`（dsh 侧拆两 skill：`novel-build-candidates` 生成候选并**呈现**（`set_candidates`），停在步 2 等用户挑选；用户点「已挑选完毕」后页面自动触发 `novel-build`——步 3「内容构建工作台」分阶段构建世界观并随提交落库，提交后入库跳书详情；完整大纲由 agent 经 MCP `generate_full_outline` 生成后进入写作台） | drive_ui（驱动建书向导，含 set_candidates）/ world_candidates / generate_core_conflict / generate_factions / generate_characters / generate_rest_world / generate_full_outline / generate_world（仅世界观单薄时兜底）/ save_basic_info / confirm_world |
+| 建书 | `novel-build-candidates` + `novel-build` | 无书 / phase=config | `ready`（dsh 侧拆两 skill：`novel-build-candidates` 生成候选并**呈现**（`set_candidates`），停在步 2 等用户挑选；用户点「已挑选完毕」后页面自动触发 `novel-build`——步 3「内容构建工作台」分阶段构建（core_conflict→大纲+桥段→势力→人物→其余维度）并随提交落库，**书创建即带大纲 phase=ready**，直接进写作台） | drive_ui（驱动建书向导，含 set_candidates/set_outline）/ world_candidates / generate_core_conflict / generate_outline_preview / generate_factions / generate_characters / generate_rest_world / generate_full_outline（仅步3②失败兜底）/ generate_world（仅世界观单薄时兜底）/ save_basic_info / confirm_world |
 | 大纲 | `novel-outline` | `config` 且 basic_info 充实 | `ready` | outline_material_candidates / generate_full_outline / generate_outlines / confirm_outlines / fill_plots / fill_gags / extend_outline |
 | 写作 | `novel-write` | `ready` | 章节/桥段写完 | write_next_bridge / write_chapter / generate_book_meta / review_text / deai_text / diagnose_retention / tag_punch_points |
 | 上架 | `novel-publish` | 已有第 1 章正文 | `published` / `finished` | publish_check / publish_book / mark_finished / export_book |
@@ -19,7 +19,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 - 状态信号：`storyline.phase ∈ config/outlines/plots/ready`；`book.status ∈ planning/writing/reviewing/finished/published/paused`。
 - 写类工具带书级文件锁，冲突抛 `BookBusyError`，稍后重试；`budget_paused` 表示预算/额度触发，停下问用户。
 - 需要可视化页面时用 `mcp__novel-engine__navigate` 切站内页（完整路由表见下）。切页与读数据是两回事：即使已用 get_book_state 读过数据，只要用户要「打开页面」就要再调 navigate。
-- **护栏（必须遵守）**：建/删书工具不在工具面（无法经 MCP/任何工具面直调）。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；**世界观在向导步 3「内容构建工作台」分阶段构建（core_conflict→大纲/桥段 picks→势力→人物→其余维度）并随提交落库，提交后入库跳书详情；完整大纲由 agent 经 MCP `generate_full_outline` 生成**（`generate_world` 仅世界观单薄时兜底）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
+- **护栏（必须遵守）**：建/删书工具不在工具面（无法经 MCP/任何工具面直调）。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；**世界观在向导步 3「内容构建工作台」分阶段构建（core_conflict→大纲+桥段（`generate_outline_preview` 步3内生成）→势力→人物→其余维度）并随提交落库，书创建即带大纲 phase=ready 直接进写作台**（`generate_full_outline` 仅步3②失败兜底；`generate_world` 仅世界观单薄时兜底）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
 
 ## 站内页面路由表（navigate 用；无书时部分页 302 重定向）
 
