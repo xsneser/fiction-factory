@@ -95,10 +95,6 @@
             </div>
             <div class="form-row hint" id="wz-world-status">进入本步时已由 AI 自动补全，可手动微调。</div>
             <div class="form-row">
-                <label>一句话设定 description</label>
-                <textarea id="wz-wb-description" rows="2" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea>
-            </div>
-            <div class="form-row">
                 <label>设定概述 world_summary</label>
                 <textarea id="wz-wb-world_summary" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea>
             </div>
@@ -169,6 +165,7 @@
 .wz-step.clickable:hover { border-color:#58a6ff; }
 .wz-panels { max-width:800px; }
 .wz-panels.wide { max-width:none; }   /* 步3 两栏（故事线+世界观表单）放宽，自适应主区宽度 */
+#panel-3 .editor-mid { overflow-y:auto; }   /* 步3 中间栏可滚动（长世界观表单不被截断） */
 .wz-panel fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
 .wz-panel legend { color:#58a6ff; font-weight:600; padding:0 8px; }
 /* 步3 复用书详情页 .world-edit 视觉：fieldset 间距与书详情页一致 */
@@ -397,7 +394,7 @@ var WZ = {
         this._picked = false; this._worldFilled = false; this._worldFilling = false; this.bookId = ''; this.creating = false;
         this._agentDriving = false; this._task2Fired = false; window.__CANDIDATES__ = [];
         var slFs = this.el('wz-storyline-fieldset'); if (slFs) slFs.style.display = 'none';
-        ['wz-idea', 'wz-title', 'wz-wb-description', 'wz-borrow-source', 'wz-borrow-tweak'].forEach(function(id) {
+        ['wz-idea', 'wz-title', 'wz-borrow-source', 'wz-borrow-tweak'].forEach(function(id) {
             var el = WZ.el(id); if (el) el.value = '';
         });
         if (this.el('wz-pen')) this.el('wz-pen').value = keepPen;
@@ -886,7 +883,6 @@ var WZ = {
     worldToForm: function(bi) {
         bi = bi || {};
         var wb = bi.world_building || {};
-        this.el('wz-wb-description').value = wb.description || '';
         this.el('wz-wb-era').value = wb.era || '';
         this.el('wz-wb-power_system').value = wb.power_system || '';
         this.el('wz-wb-geography').value = wb.geography || '';
@@ -898,7 +894,7 @@ var WZ = {
         this.renderFactions(wb.factions || []);
         this.el('wz-wb-rules').value = (wb.rules || []).join('\n');
         var self = this;
-        ['wz-wb-description','wz-wb-era','wz-wb-power_system','wz-wb-geography','wz-wb-culture',
+        ['wz-wb-era','wz-wb-power_system','wz-wb-geography','wz-wb-culture',
          'wz-wb-history','wz-wb-social_structure','wz-wb-core_conflict','wz-wb-world_summary','wz-wb-rules']
             .forEach(function(id){ self.autoSize(self.el(id)); });
         // 基调不再有 UI（字段集已移除）：AI/agent set_world 传入时写入 state，供 /books/start 落库
@@ -914,7 +910,7 @@ var WZ = {
     },
     worldToBi: function() {
         return {
-            description: this.el('wz-wb-description').value.trim(),
+            description: (this.state.world_building || {}).description || '',   // 一句话设定保留在 state，步3 不展示/编辑
             tags: Array.isArray(this.state.tags) ? this.state.tags : [],
             era: this.el('wz-wb-era').value.trim(),
             power_system: this.el('wz-wb-power_system').value.trim(),
@@ -974,7 +970,7 @@ var WZ = {
 
     collect: function() {
         // 世界观补全（步骤③ description 字段可编辑）作为世界种子；步骤①一句话作兜底
-        this.state.idea = (this.el('wz-wb-description') && this.el('wz-wb-description').value.trim())
+        this.state.idea = ((this.state.world_building || {}).description || '').trim()
             || this.el('wz-idea').value.trim();
         this.state.pen_name = this.el('wz-pen').value;
         this.state.borrow = { source_book_id: this.el('wz-borrow-source').value,
@@ -1131,7 +1127,6 @@ window.onnecommand = function(e) {
     }
     var FIELDS = {
         idea: 'wz-idea', pen: 'wz-pen', title: 'wz-title', words: 'wz-words',
-        world_desc: 'wz-wb-description', world_desc3: 'wz-wb-description',
         borrow_source: 'wz-borrow-source', borrow_tweak: 'wz-borrow-tweak',
     };
     if (cmd === 'set_field') {
@@ -1277,7 +1272,7 @@ window.onnecommand = function(e) {
         WZ._picked = false; WZ._worldFilled = false; WZ._worldFilling = false; WZ.bookId = ''; WZ.creating = false;
         WZ._agentDriving = false; WZ._task2Fired = false; window.__CANDIDATES__ = [];
         var slFs = WZ.el('wz-storyline-fieldset'); if (slFs) slFs.style.display = 'none';
-        ['wz-idea', 'wz-title', 'wz-wb-description', 'wz-borrow-source', 'wz-borrow-tweak'].forEach(function(id) {
+        ['wz-idea', 'wz-title', 'wz-borrow-source', 'wz-borrow-tweak'].forEach(function(id) {
             var el = WZ.el(id); if (el) el.value = '';
         });
         if (WZ.el('wz-pen')) WZ.el('wz-pen').value = keepPen;
