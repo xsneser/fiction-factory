@@ -96,17 +96,15 @@ try:
         WZ.show(3);
     """)
     time.sleep(0.5)
-    # 常驻模块：未生成时 fieldset 显示 + 空态/生成按钮可见 + Gantt 挂载隐藏
-    fs0 = driver.execute_script(
-        "return document.getElementById('wz-storyline-fieldset').style.display;")
-    btn0 = driver.execute_script(
-        "var b=document.getElementById('wz-gen-storyline'); return b ? b.style.display : 'MISSING';")
-    sl0 = driver.execute_script(
-        "var s=document.getElementById('wz-storyline'); return s ? s.style.display : 'MISSING';")
-    check("常驻故事线模块显示（未生成：空态+按钮）",
-          fs0 != 'none' and btn0 != 'MISSING' and btn0 != 'none',
-          f"fs={fs0} btn={btn0}")
-    check("空态下 Gantt 挂载隐藏", sl0 == 'none', f"sl={sl0}")
+    # 两栏布局（仿写作台）：未生成时左栏「📋 故事线」存在且空白（无 .sl-root）
+    left_ok = driver.execute_script(
+        "return !!document.querySelector('#panel-3 .editor-left');")
+    mount_exists = driver.execute_script(
+        "return !!document.getElementById('wz-storyline');")
+    blank0 = driver.execute_script(
+        "return document.querySelectorAll('#wz-storyline .sl-root').length === 0;")
+    check("步3 两栏布局（左=故事线）", left_ok and mount_exists, f"left={left_ok} mount={mount_exists}")
+    check("未生成时左栏空白（无 Gantt）", blank0, f"blank={blank0}")
 
     # 真实路径：drive_ui(set_outline) → nav_intent.json → 浏览器轮询(2.5s) → ne:command 分发
     from libraries.nav_intent import push_ui_command
@@ -114,9 +112,6 @@ try:
     print("[intent] 已写入 nav_intent.json（真实 drive_ui 路径），等待浏览器轮询…")
     time.sleep(5.0)   # 轮询间隔 2.5s + 渲染余量
 
-    fs_display = driver.execute_script(
-        "return document.getElementById('wz-storyline-fieldset').style.display;")
-    check("故事线 fieldset 已显示", fs_display != 'none', f"display={fs_display}")
     outline_bars = driver.execute_script(
         "return document.querySelectorAll('#wz-storyline .sl-bar-outline').length;")
     plot_bars = driver.execute_script(
@@ -126,9 +121,6 @@ try:
     meta = driver.execute_script(
         "var m = document.querySelector('#wz-storyline .sl-meta'); return m ? m.textContent : '';")
     check("StoryLine 元信息（总字数/大纲/桥段/线程）", '大纲' in meta and '桥段' in meta, f"meta={meta.strip()[:80]}")
-    btn1 = driver.execute_script(
-        "var b=document.getElementById('wz-gen-storyline'); return b ? b.style.display : 'MISSING';")
-    check("生成后生成按钮隐藏", btn1 == 'none', f"btn={btn1}")
 
     driver.save_screenshot(os.path.join(OUT, "verify_wizard_storyline.png"))
     errs = page_errors()
