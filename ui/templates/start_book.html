@@ -117,10 +117,7 @@
                 <label>世界规则 rules</label>
                 <textarea id="wz-wb-rules" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea>
             </div>
-            <div class="form-row hint">
-                <button type="button" class="btn-secondary" id="wz-refill" onclick="WZ.refillWorld()">✨ 重新补全</button>
-                <span style="margin-left:8px">可直接编辑；点「重新补全」重生成。</span>
-            </div>
+            <div class="form-row hint">可直接编辑；世界观由步3分阶段构建自动填充。</div>
         </fieldset>
         <fieldset>
             <legend>⚔️ 势力与人物</legend>
@@ -269,6 +266,7 @@ var WZ = {
             if (titleEl && this.state.title) titleEl.value = this.state.title;
             var ideaEl = this.el('wz-idea');
             var hasSeed = this.state.world_brief || (ideaEl && ideaEl.value.trim());
+            this.renderStoryline();   // 恢复/返回步3时有 _outline_data 则渲染故事线
             if (this._agentDriving) {
                 var st = this.el('wz-world-status');
                 if (st) st.textContent = '⏳ 已挑选完毕，等待 Agent 分阶段补全世界观…';
@@ -278,6 +276,29 @@ var WZ = {
         }
         this.persist();   // 步骤切换即存草稿
         this.reportStatus();   // 上报建书状态（agent 经 get_build_status 感知进度）
+    },
+
+    /* 渲染步3故事线（借鉴书详情页 StoryLine 组件）：有 _outline_data 则显示 Gantt，否则隐藏。
+       set_outline / show(3) / restore 三处调用，覆盖刷新恢复场景。 */
+    renderStoryline: function() {
+        var slFs = this.el('wz-storyline-fieldset');
+        if (!slFs) return;
+        var d = this.state._outline_data;
+        if (!d || !d.outlines || !d.outlines.length) {
+            slFs.style.display = 'none';
+            return;
+        }
+        slFs.style.display = '';
+        if (window.StoryLine) {
+            window.StoryLine.init('wz-storyline', {
+                words_per_chapter: this.state.words_per_chapter || 3000,
+                outlines: d.outlines,
+                plots: d.plots,
+                threads: d.threads,
+                themes: d.themes,
+                promises: []
+            }, {scrollable: true});
+        }
     },
 
     validate: function(n) {
@@ -906,10 +927,9 @@ var WZ = {
         this._worldFilling = true;
         this.collect();   // 同步 state.idea/tags/title/pen_name
         var status = this.el('wz-world-status');
-        var sub = this.el('wz-submit'), rf = this.el('wz-refill');
+        var sub = this.el('wz-submit');
         if (status) { status.textContent = '⏳ AI 补全世界观中（约 30-60s）…'; }
         if (sub) sub.disabled = true;
-        if (rf) rf.disabled = true;
         var self = this;
         fetch('/api/world-builder/world-complete', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -928,7 +948,6 @@ var WZ = {
             self.state.world_building = self.worldToBi();   // 回写 state（persist 用）
             if (status) { status.textContent = '✅ 已补全，可编辑'; }
             if (sub) sub.disabled = false;
-            if (rf) rf.disabled = false;
             if (typeof showToast === 'function') showToast('世界观已自动补全，可手动微调', 'success');
             self.persist();
         }).catch(function(e) {
@@ -936,7 +955,6 @@ var WZ = {
             self._worldFilling = false;
             if (status) { status.textContent = '❌ 补全失败：' + e.message + '（可重试）'; }
             if (sub) sub.disabled = false;
-            if (rf) rf.disabled = false;
             if (typeof showToast === 'function') showToast('世界观补全失败：' + e.message, 'error');
         });
     },
@@ -1226,22 +1244,11 @@ window.onnecommand = function(e) {
             themes: Array.isArray(args.themes) ? args.themes : [],
             basic_info: (args.basic_info && typeof args.basic_info === 'object') ? args.basic_info : null
         };
-        // 展示故事线（借鉴书详情页 StoryLine 组件：大纲/桥段/线程垂直 Gantt）
-        var slFs = document.getElementById('wz-storyline-fieldset');
-        if (slFs) slFs.style.display = '';
-        if (window.StoryLine && WZ.state._outline_data.outlines.length) {
-            window.StoryLine.init('wz-storyline', {
-                words_per_chapter: WZ.state.words_per_chapter || 3000,
-                outlines: WZ.state._outline_data.outlines,
-                plots: WZ.state._outline_data.plots,
-                threads: WZ.state._outline_data.threads,
-                themes: WZ.state._outline_data.themes,
-                promises: []
-            }, {scrollable: true});
-        }
+        WZ.renderStoryline();   // 展示故事线 Gantt
+        WZ.persist();   // 存草稿（刷新后 restore 也能渲染故事线）
         if (typeof showToast === 'function') {
-            showToast('已记录大纲与桥段（' + WZ.state._outline_data.outlines.length
-                + ' 条大纲 / ' + WZ.state._outline_data.plots.length + ' 个桥段）', 'success');
+            showToast('故事线已生成：' + WZ.state._outline_data.outlines.length
+                + ' 条大纲 / ' + WZ.state._outline_data.plots.length + ' 个桥段', 'success');
         }
     } else if (cmd === 'next') { WZ.next(); }
     else if (cmd === 'prev') { WZ.prev(); }

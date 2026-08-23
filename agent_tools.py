@@ -977,12 +977,25 @@ def generate_outline_preview(idea: str, genre: str = "", sub_genre: str = "",
 
     d = tl.to_dict()
     stats = (last_d or {}).get("stats", {}) if isinstance(last_d, dict) else {}
-    return {
+    # 服务端直推 set_outline 进步3（镜像 world_candidates→add_candidate 模式）：大纲+桥段载荷
+    # 往往 >8KB，经 dsh 核心 tool-result-pruner（thresholdChars=8192）会被裁成 head/tail 残片，
+    # dsh 模型拿不到全量、无法经 drive_ui(set_outline) 回传 → 故事线不显示。这里由工具直接写入
+    # nav_intent 意图队列（浏览器 busy 中也消费 set_outline，见 agent_panel.js consumeNavIntents）。
+    from libraries.nav_intent import push_ui_command
+    set_outline_payload = {
         "outlines": d.get("outlines", []),
         "plots": d.get("plots", []),
         "threads": d.get("threads", []),
         "themes": d.get("themes", []),
         "basic_info": d.get("basic_info", {}),
+    }
+    push_ui_command("set_outline", set_outline_payload)
+    return {
+        "outlines": set_outline_payload["outlines"],
+        "plots": set_outline_payload["plots"],
+        "threads": set_outline_payload["threads"],
+        "themes": set_outline_payload["themes"],
+        "basic_info": set_outline_payload["basic_info"],
         "phase": d.get("phase", ""),
         "stats": stats,
         "event_count": len(events),

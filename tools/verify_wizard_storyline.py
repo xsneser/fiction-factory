@@ -87,7 +87,7 @@ def page_errors():
 try:
     driver.get(BASE + "/books/start")
     time.sleep(1.5)
-    # 步1 填 idea/pen/tags → 进步3（StoryLine 挂载在 panel-3）
+    # 步1 填 idea → 跳步3（StoryLine 挂载在 panel-3）
     driver.execute_script("""
         var WZ = window.WZ;
         WZ.el('wz-idea').value = '都市爽文开挂升级';
@@ -95,15 +95,11 @@ try:
         WZ.show(3);
     """)
     time.sleep(0.5)
-    # 注入 set_outline 事件（模拟 agent_panel.js 命令桥：ne:command → window.onnecommand 委托）
-    payload = json.dumps(outline_payload)
-    driver.execute_script("""
-        var payload = %s;
-        window.dispatchEvent(new CustomEvent('ne:command', {detail: {
-            cmd: 'set_outline', args: payload
-        }}));
-    """ % payload)
-    time.sleep(2.0)
+    # 真实路径：drive_ui(set_outline) → nav_intent.json → 浏览器轮询(2.5s) → ne:command 分发
+    from libraries.nav_intent import push_ui_command
+    push_ui_command("set_outline", outline_payload)
+    print("[intent] 已写入 nav_intent.json（真实 drive_ui 路径），等待浏览器轮询…")
+    time.sleep(5.0)   # 轮询间隔 2.5s + 渲染余量
 
     fs_display = driver.execute_script(
         "return document.getElementById('wz-storyline-fieldset').style.display;")
@@ -121,6 +117,27 @@ try:
     driver.save_screenshot(os.path.join(OUT, "verify_wizard_storyline.png"))
     errs = page_errors()
     check("无 console 错误", len(errs) == 0, f"errs={errs[:2]}")
+
+    # 第6项：generate_outline_preview 服务端直推 set_outline（镜像 world_candidates→add_candidate）。
+    # 大纲载荷常 >8KB，经 dsh 核心 tool-result-pruner（thresholdChars=8192）会被裁成 head/tail 残片、
+    # 模型拿不到全量无法回传；由工具自身直推 nav_intent，浏览器 busy 中也消费（agent_panel.js）。
+    # 绕开 LLM：把 _require_llm patch 成 None → OutlineGenerator 走规则回退管线（零 LLM 成本）。
+    import agent_tools as _at
+    from unittest import mock as _mock
+    from core.json_store import read_json
+    with _mock.patch.object(_at, "_require_llm", return_value=None):
+        _at.generate_outline_preview(idea="都市爽文开挂升级", genre="都市", sub_genre="爽文",
+                                     tags=["都市", "爽文"],
+                                     core_conflict="主角被系统选中，在都市中逆袭",
+                                     pen_name="测试", words_per_chapter=3000)
+    intents = read_json(os.path.join(_ROOT, "storage", "nav_intent.json"), []) or []
+    pushed = [i for i in intents
+              if i.get("kind") == "ui_command" and i.get("cmd") == "set_outline"]
+    outlines_n = len(pushed[-1]["args"]["outlines"]) if pushed else 0
+    check("generate_outline_preview 服务端直推 set_outline",
+          bool(pushed) and outlines_n >= 1, f"pushed={len(pushed)} outlines={outlines_n}")
+    from libraries.nav_intent import take_nav_intents
+    take_nav_intents()   # 排空残留意图，防下次运行浏览器误消费旧 set_outline
 finally:
     driver.quit()
 

@@ -336,19 +336,29 @@ console.log('[agent-panel] v6 events-stream');
 
     // ─── navigate 外部驱动桥（P1b）：轮询 MCP 写入的导航意图，取到即翻页/切页签 ───
     var navTimer = null;
-    function pollNavIntents() {
-        if (busy) return;   // dsh 会话进行中：导航/命令已由事件流实时推送，跳过轮询防双触发
-        fetch('/api/agent/nav-intents')
+    // 消费意图队列。onlyCmds 非空时只处理指定的 ui_command（busy 中用）：dsh 会话中模型驱动的
+    // 命令（set_field/set_world/set_characters/next/submit…）与 add_candidate 已由 SSE 实时推送，
+    // 轮询消费会双触发；但 set_outline 由 generate_outline_preview 后端直推（SSE 无此事件），
+    // 必须 busy 中也消费，否则大纲数据落不进向导、步3 故事线不显示。
+    function consumeNavIntents(onlyCmds) {
+        return fetch('/api/agent/nav-intents')
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d || !d.ok) return;
                 (d.intents || []).forEach(function(it) {
-                    if (it.kind === 'ui_command') { dispatchCommand(it); return; }
+                    if (it.kind === 'ui_command') {
+                        if (onlyCmds && onlyCmds.indexOf(it.cmd) < 0) return;
+                        dispatchCommand(it); return;
+                    }
                     if (it.url) handleNavigate(it.url);
                     if (it.tab && (it.tab === 'chat' || it.tab === 'tools')) switchAgentTab(it.tab);
                 });
             })
             .catch(function() {});
+    }
+    function pollNavIntents() {
+        if (busy) { consumeNavIntents(['set_outline']); return; }   // dsh 会话中：仅消费工具直推的 set_outline
+        consumeNavIntents(null);
     }
     navTimer = setInterval(pollNavIntents, 2500);
 
