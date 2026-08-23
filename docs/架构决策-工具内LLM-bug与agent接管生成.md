@@ -40,3 +40,15 @@
 ## 相关 skill
 
 novel-write / novel-outline / novel-build / novel-publish 已改为 agent 自主生成 + save_* 薄工具流程。
+
+---
+
+# 题材标签 tags 取代流派 genre/sub_genre（2026-08-23）
+
+**流派（genre/sub_genre）概念已从模型彻底移除，由题材标签 tags 取代。**
+
+- **删除**：`BookConfig` / `BookStoryline` / `EngineState` 的 `genre`/`sub_genre` 字段；LLM prompt 里的 `【题材方向】` 注入行；agent 可见输出（get_book_detail / get_book_state / list_books / storyline）不再返回流派，只显示题材标签。
+- **替代**：题材标签 `tags`（存于 `basic_info.world_building.tags`，番茄式多选硬约束）是**唯一题材来源**；模板/桥段匹配内部用 `derive_genre(tags)` 从标签推导粗粒度流派做兜底匹配（`libraries/world_tags.py` 的 `genre_from_tags(tl)`）。
+- **原因**：genre 本是 tags 的派生缓存（约 46 标签映射），与题材标签同源、写作 prompt 零依赖；保留两套概念冗余且向 agent 呈现「流派/题材方向」造成混淆。
+- **注意**：番茄侦察兵（scout）小说的 `novel.genre` 是站点爬取数据自带字段，不属于本书概念，保留。
+- 改动：约 18 文件（模型字段/匹配函数/prompt/输出/测试）。
