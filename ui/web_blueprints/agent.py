@@ -94,6 +94,22 @@ def agent_task_events_clear():
     return jsonify({"ok": True})
 
 
+@bp.route("/api/agent/token-usage", methods=["GET"])
+def agent_token_usage():
+    """实时 token 流量（本地 API 代理检测器累计；前端 2s 轮询）。"""
+    from libraries.token_proxy import ensure_proxy, get_token_usage
+    ensure_proxy()
+    return jsonify({"ok": True, **get_token_usage()})
+
+
+@bp.route("/api/agent/token-usage/clear", methods=["POST"])
+def agent_token_usage_clear():
+    """清零 token 流量累计（新任务/清空对话时调用）。"""
+    from libraries.token_proxy import clear_token_usage
+    clear_token_usage()
+    return jsonify({"ok": True})
+
+
 @bp.route("/api/agent/build-status", methods=["POST"])
 def agent_build_status():
     """浏览器上报建书向导状态（WZ.reportStatus），写入 storage/build_status.json 供 MCP 工具读取。"""

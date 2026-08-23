@@ -102,7 +102,9 @@ class LLMClient:
 
     def call(self, system_prompt: str, user_prompt: str,
              temperature: float = 0.7, max_tokens: int = 4096) -> str:
-        """同步调用 LLM"""
+        """同步调用 LLM（经本地 API 代理，token 流量被检测）"""
+        from libraries.token_proxy import ensure_proxy
+        ensure_proxy()
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})

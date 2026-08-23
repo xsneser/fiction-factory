@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v20 events-stream');
+console.log('[agent-panel] v21 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -190,24 +190,38 @@ console.log('[agent-panel] v20 events-stream');
         _renderTokenFlow();
         _tokenFlowRaf = requestAnimationFrame(_animateTokenFlow);
     }
-    function addSessionTokens(usage) {
-        if (!usage) return;
-        var n = (usage.input || 0) + (usage.output || 0) + (usage.cache_read || 0) + (usage.cache_write || 0);
-        if (!n) return;
-        sessionTokens += n;
-        if (tokenFlowEl) {
-            if (!_tokenFlowRaf) _animateTokenFlow();
-            // 脉冲高亮：新流量到达时短暂提亮，模拟流量滚动
-            tokenFlowEl.classList.add('pulse');
-            clearTimeout(_tokenFlowPulseT);
-            _tokenFlowPulseT = setTimeout(function() { tokenFlowEl.classList.remove('pulse'); }, 400);
-        }
+    // 实时 token 流量：2s 轮询本地 API 代理检测器（show-me-the-story tokenPoll 模式），
+    // 拉取 total 驱动平滑滚动；不再依赖 tool_call 事件推送。
+    function pollTokenUsage() {
+        fetch('/api/agent/token-usage')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d || !d.ok) return;
+                var total = d.total || 0;
+                if (total !== sessionTokens) {
+                    sessionTokens = total;
+                    if (tokenFlowEl) {
+                        if (!_tokenFlowRaf) _animateTokenFlow();
+                        // 脉冲高亮：新流量到达时短暂提亮，模拟流量滚动
+                        tokenFlowEl.classList.add('pulse');
+                        clearTimeout(_tokenFlowPulseT);
+                        _tokenFlowPulseT = setTimeout(function() { tokenFlowEl.classList.remove('pulse'); }, 400);
+                    }
+                }
+            })
+            .catch(function() {});
+    }
+    var tokenPollTimer = null;
+    function startTokenPoll() {
+        if (!tokenPollTimer) tokenPollTimer = setInterval(pollTokenUsage, 2000);
+        pollTokenUsage();
     }
     function resetTokenFlow() {
         sessionTokens = 0;
         _tokenFlowShown = 0;
         if (_tokenFlowRaf) { cancelAnimationFrame(_tokenFlowRaf); _tokenFlowRaf = null; }
         _renderTokenFlow();
+        fetch('/api/agent/token-usage/clear', { method: 'POST' }).catch(function() {});   // 清零代理累计
     }
 
     // 事件流工具卡：按 callId 建档，超上限裁剪最旧（防 DOM 无限膨胀）
@@ -365,7 +379,6 @@ console.log('[agent-panel] v20 events-stream');
         if (t === 'tool_call') {
             // dsh 核心实时推送：工具开始 → 建卡（usage = 该调用的真实 token 用量）
             currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage);
-            addSessionTokens(evt.usage);   // 实时 token 流量累计
         } else if (t === 'tool_result') {
             // 按 callId 配对卡；配不到就忽略（绝不 fallback 到别的卡，避免污染）。
             // navigate/drive_ui 的 tool/call 也会建卡，故正常情况都配得到。
@@ -573,6 +586,7 @@ console.log('[agent-panel] v20 events-stream');
     }
     renderHistory();
     loadRestoredTaskView();   // 刷新/切页后一次性拉取服务器临时存储瞬时还原工具卡流
+    startTokenPoll();   // 实时 token 流量：2s 轮询本地 API 代理检测器
     refreshRunningState();    // 刷新后若后台任务在跑 → busy → 右下角「⏹ 停止」显现（运行状态）
 
     // ─── 刷新/切页瞬时还原：一次性加载服务器临时存储（task-events）渲染全部工具卡 ───
@@ -594,7 +608,6 @@ console.log('[agent-panel] v20 events-stream');
                         if (seen[evt.callId]) return;
                         seen[evt.callId] = true;
                         var run = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage);   // 重建卡：计时器用事件 ts 基
-                        addSessionTokens(evt.usage);   // 刷新后从持久化 usage 恢复累计
                         if (run) run.ts0 = evt.ts;   // 记事件开始 ts，运行中计时与完成时长都基于它
                     } else if (evt.type === 'tool_result') {
                         var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
