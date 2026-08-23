@@ -48,4 +48,4 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 | 设置 | `/settings` | 否 | — |
 
 （旧/内部路由 `/desk`、`/timeline/<id>/edit`、`/storyline/<id>/edit` 等为引擎内部页，agent 一般不用。）
-- 平台 Web 服务端口 `58080`（`launch.bat` 启动）。主 skill 会探测并拉起，**拉起成功后自动打开浏览器页面**（复刻 launch.bat 的 `start "" http://localhost:58080` 行为），勿重复启动。
+- 平台 Web 服务端口 `58080`（`launch.bat` 启动）。主 skill 探测到未启动时**必须经 `launch.bat` 拉起**（`cmd //c start "" launch.bat`——可见独立终端窗口，用户可随时关窗停服；**勿用 `run_in_background` 跑 `python ui/web_ui.py`**，无可见窗口用户无法手动关闭）；`launch.bat` 会自动打开浏览器（`start "" http://localhost:58080`），勿重复启动。

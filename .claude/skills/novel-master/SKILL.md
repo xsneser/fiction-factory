@@ -12,12 +12,12 @@ description: >-
 ## 第一步：启动平台（只做一次）
 
 1. 探测 `http://localhost:58080` 是否可访问（`curl -s -m 3 http://localhost:58080`）。
-2. 未启动 → 用 Bash **后台**拉起服务（不要阻塞当前会话）：
-   - 项目根目录下 `python ui/web_ui.py`（run_in_background）。**不要用 `launch.bat` 直接跑**——它前台阻塞且交互式（pause/start）。
-   - 等 1-2 秒再探测一次；仍未起则提示用户手动跑 `launch.bat`。
-3. 服务就绪后**自动打开浏览器页面**（复刻 launch.bat 第 65 行的 `start "" http://localhost:58080`，这一步**必做**，否则用户看不到可视化）：
-   - 推荐 `python -m webbrowser http://localhost:58080`（跨 shell 无引号坑）；
-   - 或 Git Bash 里 `cmd //c start "" http://localhost:58080`。
+2. 未启动 → **必须用 `launch.bat` 打开可见的独立终端窗口**（用户可随时关窗停服）：
+   - Git Bash：`cmd //c start "" launch.bat`（`start` 开新 cmd 窗口跑 launch.bat，命令立即返回不阻塞本会话；该窗口前台跑 `python ui/web_ui.py`，**关窗即停服**）。
+   - PowerShell 备选：`Start-Process -FilePath .\launch.bat`。
+   - **不要**再用 `run_in_background` 跑 `python ui/web_ui.py`——无可见窗口，用户无法手动关闭。
+   - 等 1-2 秒再探测一次；未起再等/重试一次，仍不起则提示用户手动跑 `launch.bat`。
+3. 服务就绪后**确认浏览器已打开**：`launch.bat` 会自动 `start "" http://localhost:58080`；若未开再 `python -m webbrowser http://localhost:58080` 兜底（跨 shell 无引号坑）。
 4. 服务本已就绪 → 不重复启动，用 `mcp__novel-engine__navigate` 切到相关页面（浏览器已在轮询，能消费意图）。
 
 ## 第二步：判断用户意图，分发到分 skill
