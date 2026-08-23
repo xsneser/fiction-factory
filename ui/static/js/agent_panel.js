@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v9 events-stream');
+console.log('[agent-panel] v10 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -483,20 +483,18 @@ console.log('[agent-panel] v9 events-stream');
         addMsg('assistant', '对话已清空。有什么可以帮你？');
     });
 
-    // 初始欢迎语 + 恢复会话历史（card 标记 → 渲染建书任务卡片，而非「你」气泡）
+    // 初始欢迎语（开篇语常驻：无论是否有历史都置顶） + 恢复会话历史（card 标记 → 渲染卡片）
     function renderHistory() {
         chat.innerHTML = '';
-        if (!history.length) {
-            addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个桥段」\n· 「打开书库看看」');
-        } else {
-            for (var i = 0; i < history.length; i++) {
-                if (history[i].card) addBuildCard(history[i].content, history[i].label);
-                else addMsg(history[i].role, history[i].content);
-            }
+        addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个桥段」\n· 「打开书库看看」');
+        for (var i = 0; i < history.length; i++) {
+            if (history[i].card) addBuildCard(history[i].content, history[i].label);
+            else addMsg(history[i].role, history[i].content);
         }
     }
     renderHistory();
     loadRestoredTaskView();   // 刷新/切页后一次性拉取服务器临时存储瞬时还原工具卡流
+    refreshRunningBar();      // 刷新后还原「任务运行中」非阻塞指示
 
     // ─── 刷新/切页瞬时还原：一次性加载服务器临时存储（task-events）渲染全部工具卡 ───
     // 无轮询、无 busy 重建态、无「检查后台任务」提示。后台任务是否在跑不再感知——
@@ -528,8 +526,44 @@ console.log('[agent-panel] v9 events-stream');
             .catch(function() {});
     }
 
+    // ─── 运行状态非阻塞指示：刷新/切页后若后台任务仍在跑，对话最上方插一条「⏳ 运行中 🛑 停止」 ───
+    // 不置 busy（不锁发送框）——用户随时可发新消息，run_dsh_task 内部自动打断后台任务，无死锁。
+    // 无定时轮询：靠启动时一次 + 页面重新获得焦点时重查（后台任务结束、切回页面即自动移除）。
+    var runningBarEl = null;
+
+    function refreshRunningBar() {
+        fetch('/api/agent/chat/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d || !d.ok) return;
+                if (d.running && !runningBarEl) {
+                    var bar = el('div', 'agent-tool-card running');
+                    var head = el('div', 'agent-tool-head', '⏳ 任务运行中');
+                    var body = el('div', 'agent-tool-detail', '');
+                    body.style.display = 'block';
+                    var stopBtn = el('button', 'small', '🛑 停止');
+                    stopBtn.onclick = function() {
+                        fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
+                    };
+                    body.appendChild(stopBtn);
+                    bar.appendChild(head);
+                    bar.appendChild(body);
+                    chat.insertBefore(bar, chat.firstChild);   // 置于对话最上方
+                    runningBarEl = bar;
+                } else if (!d.running && runningBarEl) {
+                    if (runningBarEl.parentNode) runningBarEl.parentNode.removeChild(runningBarEl);
+                    runningBarEl = null;
+                }
+            })
+            .catch(function() {});
+    }
+    window.addEventListener('focus', refreshRunningBar);
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) refreshRunningBar();
+    });
+
     // bfcache（前进/后退）恢复：清切页前的陈旧状态（死 SSE、卡住的 busy/工具卡），
-    // 重渲染历史并感知后台任务。整页重载不触发本监听，靠启动时 checkRunningTask 兜底。
+    // 重渲染历史并感知后台任务。整页重载不触发本监听，靠启动时兜底。
     window.addEventListener('pageshow', function(e) {
         if (!e.persisted) return;
         busy = false;
@@ -541,5 +575,6 @@ console.log('[agent-panel] v9 events-stream');
         removeRunningBanner();
         renderHistory();
         loadRestoredTaskView();
+        refreshRunningBar();
     });
 })();
