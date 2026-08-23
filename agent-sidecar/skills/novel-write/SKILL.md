@@ -12,17 +12,16 @@ description: 写作阶段。开始写/开写/写正文/写下一章/继续写/�
 1. `mcp__novelengine__get_book_state(book_id)`：`phase != ready` → 先 novel-outline；看 current_chapter 与草稿定位续写点。
 2. `mcp__novelengine__get_storyline(book_id)` → 下一个待写桥段（plot_id/名称/章号）。
 
-## 上下文组装
-1. `get_book_detail(book_id)` → 风格/基调/目标读者。
-2. `get_storyline(book_id)` → 当前桥段 + 出场角色。
-3. `get_book_state(book_id)` → 最近 1-2 章（接续语气）。
-4. 整理成「写哪个桥段 + 出场角色 + 风格 + 前文语气」，**自己生成正文**。
+## 上下文组装（单次读取）
+1. **一次** `mcp__novelengine__get_writing_context(book_id)` → 书(tags)+故事线+大纲+章节摘要+draft+next_bridge，一次拿全。
+2. 整理成「写 next_bridge + 出场角色 + 风格 + 前文语气」，**自己生成正文**。
+3. 逐桥段循环每轮只重取一次 get_writing_context；**不要**再单独调 get_book_detail/get_storyline。
 
 ## 写作规则（生成时内嵌）
 一致性铁律（人名/绑定/数值不冲突、呼应伏笔）；视角统一（默认第三人称）；禁 AI 味句式（仿佛/似乎/不禁/只见 堆叠）；前三章首句强钩/三章内出爽点/章末留钩；每章约 words_per_chapter 字、桥段 800-2500 字。
 
 ## 生成 → 落盘（逐桥段）
-1. 找下一个未写桥段（written_chapter==0）→ **你自主生成正文**。
+1. 用 get_writing_context 的 next_bridge（第一个未写桥段）→ **你自主生成正文**。
 2. `mcp__novelengine__save_bridge_draft(book_id, chapter_num=N, plot_id=..., plot_name=..., text=...)` 落草稿。
 3. 每桥段后自我核查（语气/伏笔/错词），有问题就地重写再落盘。
 
