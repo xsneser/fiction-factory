@@ -166,13 +166,8 @@
 .wz-panels { max-width:800px; }
 .wz-panels.wide { max-width:none; }   /* 步3 两栏（故事线+世界观表单）放宽，自适应主区宽度 */
 #panel-3 .editor-mid { overflow-y:auto; }   /* 步3 中间栏可滚动（长世界观表单不被截断） */
-/* 故事线容器为空时也显示：虚线边框 + 淡背景空框（内容仍空；有 Gantt 后 :empty 失效自动消失） */
-#wz-storyline.editor-storyline:empty {
-    border: 1px dashed var(--border);
-    border-radius: 8px;
-    background: var(--bg-inset);
-    min-height: 200px;   /* 防极端情况左栏不撑高的兜底 */
-}
+/* 步3 两栏保持可见高度（写作台式）：故事线为空时左栏也是可见空白竖栏，min-height 兜底（无装饰） */
+#panel-3 .editor-split { min-height: max(520px, calc(100vh - 200px)); }
 .wz-panel fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
 .wz-panel legend { color:#58a6ff; font-weight:600; padding:0 8px; }
 /* 步3 复用书详情页 .world-edit 视觉：fieldset 间距与书详情页一致 */
