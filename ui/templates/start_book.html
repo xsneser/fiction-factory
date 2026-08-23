@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}启动新书 — NovelEngine{% endblock %}
-{% block head %}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/css/story_line.css">
+{% endblock %}
 {% block content %}
 <h1>🔰 启动新书</h1>
 
@@ -124,6 +126,10 @@
                 <button type="button" class="btn-secondary" onclick="WZ.addCharCard()">➕ 添加人物</button>
             </div>
         </fieldset>
+        <fieldset id="wz-storyline-fieldset" style="display:none">
+            <legend>📋 故事线（步3②生成，可预览）</legend>
+            <div id="wz-storyline" style="height:480px;min-height:0;overflow:hidden"></div>
+        </fieldset>
         </div>
     </section>
 
@@ -211,6 +217,7 @@
 .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
 </style>
 
+<script src="/static/js/story_line.js"></script>
 <script>
 var WZ = {
     cur: 1, bookId: '', creating: false, _picked: false,
@@ -359,6 +366,7 @@ var WZ = {
                        _outline_picks: null, _outline_picks_names: null, _outline_data: null };
         this._picked = false; this._worldFilled = false; this._worldFilling = false; this.bookId = ''; this.creating = false;
         this._agentDriving = false; this._task2Fired = false; window.__CANDIDATES__ = [];
+        var slFs = this.el('wz-storyline-fieldset'); if (slFs) slFs.style.display = 'none';
         ['wz-idea', 'wz-title', 'wz-wb-description', 'wz-borrow-source', 'wz-borrow-tweak'].forEach(function(id) {
             var el = WZ.el(id); if (el) el.value = '';
         });
@@ -1218,6 +1226,19 @@ window.onnecommand = function(e) {
             themes: Array.isArray(args.themes) ? args.themes : [],
             basic_info: (args.basic_info && typeof args.basic_info === 'object') ? args.basic_info : null
         };
+        // 展示故事线（借鉴书详情页 StoryLine 组件：大纲/桥段/线程垂直 Gantt）
+        var slFs = document.getElementById('wz-storyline-fieldset');
+        if (slFs) slFs.style.display = '';
+        if (window.StoryLine && WZ.state._outline_data.outlines.length) {
+            window.StoryLine.init('wz-storyline', {
+                words_per_chapter: WZ.state.words_per_chapter || 3000,
+                outlines: WZ.state._outline_data.outlines,
+                plots: WZ.state._outline_data.plots,
+                threads: WZ.state._outline_data.threads,
+                themes: WZ.state._outline_data.themes,
+                promises: []
+            }, {scrollable: true});
+        }
         if (typeof showToast === 'function') {
             showToast('已记录大纲与桥段（' + WZ.state._outline_data.outlines.length
                 + ' 条大纲 / ' + WZ.state._outline_data.plots.length + ' 个桥段）', 'success');
@@ -1239,6 +1260,7 @@ window.onnecommand = function(e) {
                      _outline_picks: null, _outline_picks_names: null, _outline_data: null };
         WZ._picked = false; WZ._worldFilled = false; WZ._worldFilling = false; WZ.bookId = ''; WZ.creating = false;
         WZ._agentDriving = false; WZ._task2Fired = false; window.__CANDIDATES__ = [];
+        var slFs = WZ.el('wz-storyline-fieldset'); if (slFs) slFs.style.display = 'none';
         ['wz-idea', 'wz-title', 'wz-wb-description', 'wz-borrow-source', 'wz-borrow-tweak'].forEach(function(id) {
             var el = WZ.el(id); if (el) el.value = '';
         });
