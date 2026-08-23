@@ -1352,10 +1352,11 @@ def chapter_quality_gate(book_id: str, chapter_num: int = 0, recent_n: int = 5) 
         skipped.append("punch_points")
         checks["punch_points"] = {"passed": None, "skipped": True, "error": str(e)[:60]}
 
-    # 决策点聚合：硬问题（review/连续性/追读）优先，伏笔为提示
+    # 决策点聚合：硬问题（review/连续性/追读）优先，伏笔为提示。
+    # review 的 warning/error 级问题无论是否通过都进决策点（如 AI 味词提示，供用户定夺去 AI 味）
     rv = checks.get("review") or {}
-    if rv.get("passed") is False:
-        for it in (rv.get("top_issues") or []):
+    for it in (rv.get("top_issues") or []):
+        if it.get("severity") in ("warning", "error"):
             _push("review", it.get("severity") or "warning", it.get("description"))
     cc = checks.get("continuity") or {}
     if cc.get("passed") is False:
