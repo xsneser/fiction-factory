@@ -198,7 +198,7 @@ console.log('[agent-panel] v21 events-stream');
             .then(function(d) {
                 if (!d || !d.ok) return;
                 var total = d.total || 0;
-                if (total !== sessionTokens) {
+                if (total > 0 && total !== sessionTokens) {   // 代理有值才覆盖（dsh 未走代理时保持事件累计）
                     sessionTokens = total;
                     if (tokenFlowEl) {
                         if (!_tokenFlowRaf) _animateTokenFlow();
@@ -210,6 +210,18 @@ console.log('[agent-panel] v21 events-stream');
                 }
             })
             .catch(function() {});
+    }
+    function addSessionTokens(usage) {
+        if (!usage) return;
+        var n = (usage.input || 0) + (usage.output || 0) + (usage.cache_read || 0) + (usage.cache_write || 0);
+        if (!n) return;
+        sessionTokens += n;
+        if (tokenFlowEl) {
+            if (!_tokenFlowRaf) _animateTokenFlow();
+            tokenFlowEl.classList.add('pulse');
+            clearTimeout(_tokenFlowPulseT);
+            _tokenFlowPulseT = setTimeout(function() { tokenFlowEl.classList.remove('pulse'); }, 400);
+        }
     }
     var tokenPollTimer = null;
     function startTokenPoll() {
@@ -379,6 +391,7 @@ console.log('[agent-panel] v21 events-stream');
         if (t === 'tool_call') {
             // dsh 核心实时推送：工具开始 → 建卡（usage = 该调用的真实 token 用量）
             currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage);
+            addSessionTokens(evt.usage);   // 事件驱动累计（dsh 真实 usage）
         } else if (t === 'tool_result') {
             // 按 callId 配对卡；配不到就忽略（绝不 fallback 到别的卡，避免污染）。
             // navigate/drive_ui 的 tool/call 也会建卡，故正常情况都配得到。
