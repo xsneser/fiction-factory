@@ -1,14 +1,13 @@
 ---
 name: novel-publish
-description: 上架阶段。上架/发布/完本/导出投稿包/生成书名+简介/检查能否发书。流程:generate_book_meta → publish_check → 决策 → publish_book/mark_finished/export_book。前置:已有第 1 章正文。
+description: 上架阶段。上架/发布/完本/导出投稿包/生成书名+简介/检查能否发书。流程:agent 生成书名简介 → save_book_meta → publish_check → 决策 → publish_book/mark_finished/export_book。前置:已有第 1 章正文。
 ---
 
 # 上架阶段（novel-publish）— 侧栏版
 
 ## 前置检查（必做）
-1. `mcp__novelengine__get_book_detail(book_id)`：看 `status`、`current_chapter`、`synopsis`、`pen_name`、`platform`（目标平台）。
-2. 无第 1 章 → 先 novel-write。有第 1 章但无 synopsis/书名不佳 → 先 `generate_book_meta`。
-3. **笔名平台注册软提醒**：`query_profiles(keyword=书名笔名)` 看 `platform_accounts`/`registered_platforms`——未在目标平台登记账号 → 如实告知「正式上架前需在平台注册同名账号」（软提醒不拦截，平台不实际代登录）。
+1. `mcp__novelengine__get_book_detail(book_id)`：看 `status`、`current_chapter`、`synopsis`。
+2. 无第 1 章 → 先 novel-write。有第 1 章但无 synopsis/书名不佳 → **你自主生成书名+简介**（读第 1 章提炼）→ `save_book_meta`。
 
 ## 决策点
 - `publish_check` 报告：全部通过 → 直接 `publish_book`；有不过项 → **报告问题让用户决策**（force 强发 or 先修），headless 不擅自 force。
@@ -16,7 +15,7 @@ description: 上架阶段。上架/发布/完本/导出投稿包/生成书名+�
 - 完本 → `mark_finished`；导出投稿包 → `export_book`。
 
 ## 批处理
-1. `mcp__novelengine__generate_book_meta(book_id)`（缺 synopsis 时）。
+1. **你自主生成书名+简介**（缺 synopsis 时）：读 `get_book_detail` / 第 1 章 → `mcp__novelengine__save_book_meta(book_id, title=..., synopsis=...)`。
 2. `mcp__novelengine__publish_check(book_id)` → 5 项规则报告（书名/简介/字数/审查/完本）。
 3. 决策后：`publish_book(book_id, force=False)` / `mark_finished(book_id)` / `export_book(book_id)`。
 

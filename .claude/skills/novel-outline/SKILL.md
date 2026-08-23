@@ -2,43 +2,50 @@
 name: novel-outline
 description: >-
   大纲阶段。Use when the user wants to 生成大纲/排故事线/选桥段/一键完整大纲/续写/扩写/规划剧情
-  (plan the storyline, pick structure templates and plot beats, extend the book)。
-  流程：确认世界观/主角 → outline_material_candidates 拿候选 → 用户选模板/桥段（picks）→
-  generate_full_outline 一键落库（或分步 generate_outlines → confirm_outlines → fill_plots → fill_gags）。
-  前置：phase=config 且 basic_info 充实。退出：phase=ready。不做正文（那是 novel-write）。
+  (plan the storyline, generate outline arcs and plot beats, extend the book)。
+  流程：确认世界观/主角 → **agent 自主生成大纲弧 + 桥段**（保持上下文连续）→ save_outlines 落盘
+  → fill_gags 挂内涵到 ready。前置：phase=config 且 basic_info 充实。退出：phase=ready。不做正文（那是 novel-write）。
 ---
-# 大纲阶段（novel-outline）
+# 大纲阶段（novel-outline）— agent 自主生成
+
+> **核心原则**：大纲/桥段由你（agent）**自主生成**——你带着世界观/主角设定/题材，自己规划故事弧、
+> 章节区间、桥段列表，然后调用**薄工具** `save_outlines` 落盘。**不要**调用内部跑 LLM 的旧工具
+> （generate_full_outline / generate_outlines mode=ai，已废弃留档）。
 
 ## 前置检查（必做）
 1. `mcp__novel-engine__get_book_detail` 看 `phase`：
-   - `config` 且世界观/主角充实（确认过 `confirm_world`）→ 可生成。
-   - `outlines/plots` → 已有大纲，问用户：重做 / 续写（`extend_outline`） / 直接去写作。
+   - `config` 且世界观/主角充实（`confirm_world` 过）→ 可生成。
+   - `outlines/plots` → 已有大纲，问用户：重做 / 续写 / 直接去写作。
    - `ready` → 已就绪，问续写还是去写作。
-2. 无书 → 提示先跑 `novel-build`。世界观/主角不充实 → 提示先跑 `novel-build` 补设定。
+2. 无书 → 提示先跑 `novel-build`。设定不充实 → 先跑 `novel-build` 补。
 
-## 决策点（选材，必须让用户参与）
-1. `mcp__novel-engine__outline_material_candidates(book_id)` → 返回 `{templates, plots}` 候选池。
-2. 让用户挑：
-   - **模板**：候选 `templates` 里的 `id` 列表 → `picks["templates"]`（想用的排前，可选 1-N 个）。
-   - **桥段**：候选 `plots` 里的 `id` **扁平优先序列表**（想先出现的排前）→ `picks["plots"]`。
-     注意：预选 id 必须来自 candidates；失效 id 会被管线静默忽略（见失败处置）。
-   - 用户不选 → 不传 picks，走管线内 AI/规则选材。
-3. 确认后进批处理。
+## 上下文组装
+1. `get_book_detail(book_id)` → 世界观、主角、基调、目标读者、题材。
+2. `get_storyline(book_id)` → 已有大纲（续写时读末尾弧）。
 
-## 批处理（二选一）
-- **一键（推荐，LLM）**：`mcp__novel-engine__generate_full_outline(book_id, picks={"templates": [...], "plots": [...]})`。
-  阻塞数分钟（6 阶段：分析→大纲→桥段→内涵→吸睛→一致性），完成后 `get_book_detail` 确认 `phase=ready`。
-- **分步（无 LLM 或想逐步确认）**：`generate_outlines(mode="rule")` → `confirm_outlines`（phase→plots）→ `fill_plots` → `fill_gags`（phase 到 ready）。
+## 决策点（选材，让用户参与）
+1. `mcp__novel-engine__outline_material_candidates(book_id)` → `{templates, plots}` 候选池。
+2. 让用户挑模板/桥段偏好（参考候选；不选则你自主排布）。
+3. 确认后进入生成。
+
+## 生成 → 落盘
+1. **你自主生成**（你的 LLM 直接产出，上下文连续）：
+   - `outlines`：大纲弧列表，每项 `{name, start_chapter, end_chapter, stages:[{name,min_ch,max_ch,events}], predecessor?, successor?, transition_type}`。
+   - `plots`：桥段列表，每项 `{name, outline_id, stage_index, order, category, thread_id, resolves_plot_id?, roles?}`。
+   - `threads`：叙事线程 `[{id,name,desc}]`；`themes`：内涵 `[str]`。
+2. 调用 `mcp__novel-engine__save_outlines(book_id, outlines=..., plots=..., threads=..., themes=..., mode="replace")` 落盘（返回 outlines/plots 计数，phase=plots）。
+3. `mcp__novel-engine__fill_gags(book_id)` —— 规则挂内涵/吸睛，phase→ready。
+4. `get_book_detail` 确认 `phase=ready`。
 
 ## 续写
-- 已 ready 想加剧情 → `mcp__novel-engine__extend_outline(book_id, mode="ai")`（末尾追加新弧+桥段，bump 章节总数）。
+- 已 ready 想加剧情 → 读 `get_storyline` 末尾弧 → **你自主生成下一弧 + 桥段** → `save_outlines(book_id, outlines=[新弧], mode="append")` → `fill_gags`。
 
 ## 退出状态
 - `phase=ready`，`get_book_detail` 可见 outlines 与 plots。
-- 可 `navigate`（url=`/books/generator` 或 `/books/<book_id>`）让用户可视化查看故事线。
+- 可 `navigate`（url=`/books/<book_id>`）让用户可视化查看故事线。
 
 ## 失败处置
-- picks 里的 id 失效 → 管线静默回退 AI（设计如此），但向用户说明哪些 id 未命中、用了默认选材。
-- `BookBusyError` → 另一进程在操作，稍后重试。
-- 分步流程中 `fill_plots` 前必须先 `confirm_outlines`，否则 phase 不对会报错。
-- `generate_full_outline` 中途断 → 因逐步落盘已保存已产出部分，可重跑续接。
+- phase 不过 → 引导对应前置阶段。
+- `BookBusyError` → 稍后重试。
+- 生成结构不合法（缺 start/end_chapter 等）→ 补全后重调 save_outlines。
+- `fill_gags` 前必须先 save_outlines（phase=plots），否则 phase 不对报错。
