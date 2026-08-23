@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v19 events-stream');
+console.log('[agent-panel] v20 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -173,18 +173,41 @@ console.log('[agent-panel] v19 events-stream');
         return n >= 1000 ? (n / 1000).toFixed(1) + 'k tokens' : n + ' tokens';
     }
 
-    // 实时 token 流量：每个 tool_call 的 usage 累加到当前任务，更新侧栏指示器
+    // 实时 token 流量：每个 tool_call 的 usage 累加到当前任务。
+    // 显示用平滑 count-up 滚动（每帧朝目标渐进），模拟流量滚动而非每次推送跳变；新增时脉冲高亮。
+    var _tokenFlowShown = 0;
+    var _tokenFlowRaf = null;
+    var _tokenFlowPulseT = null;
+    function _renderTokenFlow() {
+        if (tokenFlowEl) tokenFlowEl.textContent = '⚡ '
+            + (_tokenFlowShown >= 1000 ? (_tokenFlowShown / 1000).toFixed(1) + 'k' : _tokenFlowShown) + ' tokens';
+    }
+    function _animateTokenFlow() {
+        if (_tokenFlowShown === sessionTokens) { _tokenFlowRaf = null; return; }
+        var d = sessionTokens - _tokenFlowShown;
+        _tokenFlowShown += Math.max(1, Math.ceil(Math.abs(d) * 0.2)) * (d < 0 ? -1 : 1);
+        if (Math.abs(sessionTokens - _tokenFlowShown) <= 1) _tokenFlowShown = sessionTokens;
+        _renderTokenFlow();
+        _tokenFlowRaf = requestAnimationFrame(_animateTokenFlow);
+    }
     function addSessionTokens(usage) {
         if (!usage) return;
         var n = (usage.input || 0) + (usage.output || 0) + (usage.cache_read || 0) + (usage.cache_write || 0);
         if (!n) return;
         sessionTokens += n;
-        if (tokenFlowEl) tokenFlowEl.textContent = '⚡ '
-            + (sessionTokens >= 1000 ? (sessionTokens / 1000).toFixed(1) + 'k' : sessionTokens) + ' tokens';
+        if (tokenFlowEl) {
+            if (!_tokenFlowRaf) _animateTokenFlow();
+            // 脉冲高亮：新流量到达时短暂提亮，模拟流量滚动
+            tokenFlowEl.classList.add('pulse');
+            clearTimeout(_tokenFlowPulseT);
+            _tokenFlowPulseT = setTimeout(function() { tokenFlowEl.classList.remove('pulse'); }, 400);
+        }
     }
     function resetTokenFlow() {
         sessionTokens = 0;
-        if (tokenFlowEl) tokenFlowEl.textContent = '⚡ 0 tokens';
+        _tokenFlowShown = 0;
+        if (_tokenFlowRaf) { cancelAnimationFrame(_tokenFlowRaf); _tokenFlowRaf = null; }
+        _renderTokenFlow();
     }
 
     // 事件流工具卡：按 callId 建档，超上限裁剪最旧（防 DOM 无限膨胀）
