@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v15 events-stream');
+console.log('[agent-panel] v16 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -560,8 +560,22 @@ console.log('[agent-panel] v15 events-stream');
                     }
                 });
                 scrollBottom();
+                refreshRunningState();   // 重建完再查一次运行态：任务不在跑则把残留「运行中…」卡标记为结果未保存
             })
             .catch(function() {});
+    }
+
+    // 任务不在跑时，把仍显示「运行中…」的工具卡（刷新时 in-flight、结果未持久化）标记为已结束未保存
+    function settleInFlightCards() {
+        Object.keys(toolCards).forEach(function(id) {
+            var r = toolCards[id];
+            if (r && r.timer) {
+                clearInterval(r.timer);
+                r.timer = null;
+                r.status.textContent = '⚠️ 结果未保存（任务已结束）';
+                r.status.className = 'agent-tool-status err';
+            }
+        });
     }
 
     // ─── 运行状态由右下角「⏹ 停止」按钮表示：busy 则它出现（无横幅、无轮询） ───
@@ -573,7 +587,7 @@ console.log('[agent-panel] v15 events-stream');
             .then(function(d) {
                 if (!d || !d.ok) return;
                 if (d.running) { busy = true; setSendEnabled(false); }   // →「⏹ 停止」显现
-                else { busy = false; setSendEnabled(true); }
+                else { busy = false; setSendEnabled(true); settleInFlightCards(); }
             })
             .catch(function() {});
     }
