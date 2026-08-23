@@ -77,9 +77,16 @@
 
     {# ─── ③ 世界观补全：AI 自动补全 12 维 + 基调（可编辑）+ 角色候选 ─── #}
     <section class="wz-panel" id="panel-3" style="display:none">
-        <fieldset id="wz-storyline-fieldset" style="display:none">
-            <legend>📋 故事线（步3②生成，可预览）</legend>
-            <div id="wz-storyline" style="height:480px;min-height:0;overflow:hidden"></div>
+        <fieldset id="wz-storyline-fieldset">
+            <legend>📋 故事线</legend>
+            <div id="wz-storyline" style="height:480px;min-height:0;overflow:hidden;display:none"></div>
+            <div id="wz-storyline-empty">
+                <div class="form-row hint">故事线（大纲+桥段）尚未生成。</div>
+                <div class="btn-row">
+                    <button type="button" class="btn-secondary" id="wz-gen-storyline" onclick="WZ.genStoryline()">✨ 生成故事线</button>
+                    <span style="margin-left:8px">点此由 AI 生成（约 1-3 分钟）；agent 建书时也会自动生成。</span>
+                </div>
+            </div>
         </fieldset>
         <div class="world-edit">
         <fieldset>
@@ -278,18 +285,23 @@ var WZ = {
         this.reportStatus();   // 上报建书状态（agent 经 get_build_status 感知进度）
     },
 
-    /* 渲染步3故事线（借鉴书详情页 StoryLine 组件）：有 _outline_data 则显示 Gantt，否则隐藏。
+    /* 渲染步3常驻故事线模块（借鉴书详情页 StoryLine 组件）：fieldset 始终显示；
+       有 _outline_data 则展示 Gantt，否则显示空态占位 + 「✨ 生成故事线」按钮。
        set_outline / show(3) / restore 三处调用，覆盖刷新恢复场景。 */
     renderStoryline: function() {
         var slFs = this.el('wz-storyline-fieldset');
         if (!slFs) return;
         var d = this.state._outline_data;
-        if (!d || !d.outlines || !d.outlines.length) {
-            slFs.style.display = 'none';
-            return;
-        }
+        var hasOutline = !!(d && d.outlines && d.outlines.length);
         slFs.style.display = '';
-        if (window.StoryLine) {
+        var sl = this.el('wz-storyline');
+        var empty = this.el('wz-storyline-empty');
+        var btn = this.el('wz-gen-storyline');
+        if (sl) sl.style.display = hasOutline ? '' : 'none';
+        if (empty) empty.style.display = hasOutline ? 'none' : '';
+        // agent 驱动时隐藏生成按钮（agent 会生成并直推 set_outline）
+        if (btn) btn.style.display = (hasOutline || this._agentDriving) ? 'none' : '';
+        if (hasOutline && window.StoryLine) {
             window.StoryLine.init('wz-storyline', {
                 words_per_chapter: this.state.words_per_chapter || 3000,
                 outlines: d.outlines,
@@ -299,6 +311,67 @@ var WZ = {
                 promises: []
             }, {scrollable: true});
         }
+    },
+
+    /* 手动流程「✨ 生成故事线」：POST 后台生成端点（非阻塞），轮询 /status 感知完成/失败；
+       成功后 set_outline 已由服务端直推，浏览器 pollNavIntents 消费后 renderStoryline 自动展示。 */
+    genStoryline: function() {
+        if (this._genOutline) return;   // 防重入
+        this._genOutline = true;
+        var btn = this.el('wz-gen-storyline');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ 生成中（约1-3分钟）…'; }
+        this.collect();   // 同步 state.idea/tags/title/pen_name/world_building（含 core_conflict）
+        var wb = this.state.world_building || {};
+        var body = {
+            idea: this.state.idea || '',
+            world_brief: this.state.world_brief || '',
+            tags: this.state.tags || [],
+            title: this.state.title || '',
+            pen_name: this.state.pen_name || '',
+            core_conflict: (wb && wb.core_conflict) || '',
+            words_per_chapter: this.state.words_per_chapter || 3000,
+        };
+        var self = this;
+        fetch('/api/world-builder/outline-preview', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        }).then(function(r) { return r.json(); }).then(function(d) {
+            if (!d.ok) throw new Error(d.error || '故事线生成失败');
+            self._pollGenStatus(0);
+        }).catch(function(e) {
+            self._genOutline = false;
+            if (btn) { btn.disabled = false; btn.textContent = '✨ 生成故事线'; }
+            if (typeof showToast === 'function') showToast('故事线生成失败：' + e.message, 'error');
+        });
+    },
+    _pollGenStatus: function(tries) {
+        var self = this;
+        var btn = this.el('wz-gen-storyline');
+        if (tries > 120) {   // 4 分钟兜底
+            self._genOutline = false;
+            if (btn) { btn.disabled = false; btn.textContent = '✨ 生成故事线'; }
+            if (typeof showToast === 'function') showToast('故事线生成超时，请重试', 'error');
+            return;
+        }
+        fetch('/api/world-builder/outline-preview/status')
+            .then(function(r) { return r.json(); })
+            .then(function(s) {
+                if (s && s.state === 'done') {
+                    self._genOutline = false;
+                    if (btn) { btn.disabled = false; btn.textContent = '✨ 生成故事线'; }
+                    // set_outline 已服务端直推，浏览器轮询消费后 renderStoryline 自动展示；兜底补渲染
+                    setTimeout(function() { self.renderStoryline(); }, 2500);
+                    return;
+                }
+                if (s && s.state === 'error') {
+                    self._genOutline = false;
+                    if (btn) { btn.disabled = false; btn.textContent = '✨ 生成故事线'; }
+                    if (typeof showToast === 'function') showToast('故事线生成失败：' + (s.error || '未知错误'), 'error');
+                    return;
+                }
+                setTimeout(function() { self._pollGenStatus(tries + 1); }, 2000);
+            })
+            .catch(function() { setTimeout(function() { self._pollGenStatus(tries + 1); }, 2000); });
     },
 
     validate: function(n) {

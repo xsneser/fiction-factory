@@ -92,9 +92,22 @@ try:
         var WZ = window.WZ;
         WZ.el('wz-idea').value = '都市爽文开挂升级';
         WZ.state.idea = '都市爽文开挂升级';
+        WZ._worldFilled = true;   // 抑制 show(3) 触发 fillWorld（单线程服务器会被阻塞，拖住轮询）
         WZ.show(3);
     """)
     time.sleep(0.5)
+    # 常驻模块：未生成时 fieldset 显示 + 空态/生成按钮可见 + Gantt 挂载隐藏
+    fs0 = driver.execute_script(
+        "return document.getElementById('wz-storyline-fieldset').style.display;")
+    btn0 = driver.execute_script(
+        "var b=document.getElementById('wz-gen-storyline'); return b ? b.style.display : 'MISSING';")
+    sl0 = driver.execute_script(
+        "var s=document.getElementById('wz-storyline'); return s ? s.style.display : 'MISSING';")
+    check("常驻故事线模块显示（未生成：空态+按钮）",
+          fs0 != 'none' and btn0 != 'MISSING' and btn0 != 'none',
+          f"fs={fs0} btn={btn0}")
+    check("空态下 Gantt 挂载隐藏", sl0 == 'none', f"sl={sl0}")
+
     # 真实路径：drive_ui(set_outline) → nav_intent.json → 浏览器轮询(2.5s) → ne:command 分发
     from libraries.nav_intent import push_ui_command
     push_ui_command("set_outline", outline_payload)
@@ -113,6 +126,9 @@ try:
     meta = driver.execute_script(
         "var m = document.querySelector('#wz-storyline .sl-meta'); return m ? m.textContent : '';")
     check("StoryLine 元信息（总字数/大纲/桥段/线程）", '大纲' in meta and '桥段' in meta, f"meta={meta.strip()[:80]}")
+    btn1 = driver.execute_script(
+        "var b=document.getElementById('wz-gen-storyline'); return b ? b.style.display : 'MISSING';")
+    check("生成后生成按钮隐藏", btn1 == 'none', f"btn={btn1}")
 
     driver.save_screenshot(os.path.join(OUT, "verify_wizard_storyline.png"))
     errs = page_errors()

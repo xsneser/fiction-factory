@@ -247,6 +247,77 @@ def api_world_complete_nobook():
 
 
 # ═══════════════════════════════════════════
+# 故事线生成（步3「✨ 生成故事线」按钮，非阻塞后台线程 + 状态轮询）
+# ═══════════════════════════════════════════
+
+_OUTLINE_STATUS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "storage", "outline_preview_status.json")
+
+
+def _read_outline_status() -> dict:
+    from core.json_store import read_json
+    return read_json(_OUTLINE_STATUS_PATH, {}) or {}
+
+
+def _write_outline_status(state: str, error: str = "") -> None:
+    from core.json_store import write_json_atomic
+    write_json_atomic(_OUTLINE_STATUS_PATH, {"state": state, "error": error, "ts": time.time()})
+
+
+@bp.route("/api/world-builder/outline-preview", methods=["POST"])
+def api_outline_preview_nobook():
+    """故事线生成（无目标书版本，供启动向导③「✨ 生成故事线」按钮）。
+
+    body {idea, world_brief?, tags?, title?, genre?, sub_genre?, pen_name?,
+          core_conflict?, words_per_chapter?}。
+    非阻塞：后台线程调 generate_outline_preview（阻塞数分钟，生成完**服务端直推 set_outline**
+    进步3 展示），立即返回 {ok:true}；浏览器轮询 GET /outline-preview/status 感知完成/失败。
+    """
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    if not idea:
+        return jsonify({"ok": False, "error": "缺少一句话设定"}), 400
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置，请先在设置页配置 API"}), 500
+    if _read_outline_status().get("state") == "running":
+        return jsonify({"ok": False, "error": "已有故事线生成进行中，请稍候"}), 409
+
+    payload = {
+        "idea": idea,
+        "genre": (body.get("genre") or "").strip(),
+        "sub_genre": (body.get("sub_genre") or "").strip(),
+        "tags": [str(t).strip() for t in (body.get("tags") or [])
+                 if isinstance(t, str) and t.strip()],
+        "pen_name": (body.get("pen_name") or "").strip(),
+        "core_conflict": (body.get("core_conflict") or "").strip(),
+        "world_brief": (body.get("world_brief") or "").strip(),
+        "words_per_chapter": int(body.get("words_per_chapter") or 3000),
+    }
+    _write_outline_status("running")
+
+    def _run():
+        try:
+            from agent_tools import generate_outline_preview
+            generate_outline_preview(**payload)   # 内部生成完服务端直推 set_outline
+            _write_outline_status("done")
+        except Exception as e:   # noqa: BLE001
+            import traceback
+            _write_outline_status("error", str(e))
+            print(f"[outline-preview] 生成失败：{e}\n{traceback.format_exc()}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/world-builder/outline-preview/status", methods=["GET"])
+def api_outline_preview_status():
+    """故事线生成状态：{state: running|done|error, error?, ts?}。"""
+    return jsonify({"ok": True, **_read_outline_status()})
+
+
+# ═══════════════════════════════════════════
 # 分阶段内容构建端点（无书，供内部 agent / skill 逐步填充向导步 3）
 # ═══════════════════════════════════════════
 
