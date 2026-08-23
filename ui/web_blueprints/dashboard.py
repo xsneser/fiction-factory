@@ -75,7 +75,7 @@ def start_new_book():
         world_idea = (src.get("idea") or src.get("world_idea", "") or "").strip()
         description = world_idea
 
-        # 题材标签（番茄式硬约束，向导①多选 chips）；流派与标签同源，为空时从标签推导
+        # 题材标签（番茄式硬约束，向导①多选 chips）；题材方向与标签同源，为空时从标签推导
         tags = data.get("tags") if is_json else []
         if not isinstance(tags, list):
             tags = []
