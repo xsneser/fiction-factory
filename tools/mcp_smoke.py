@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 48  # 47 + generate_outline_preview
+EXPECT_MCP_TOOLS = 49  # 48 + chapter_quality_gate
 PASS, FAIL = [], []
 
 
@@ -103,7 +103,7 @@ async def main():
                 check("drive_ui 在列（建书向导命令桥）", "drive_ui" in names)
                 check("navigate 在列（外部经意图桥驱动浏览器）", "navigate" in names)
                 for t in ("query_plots", "diagnose_retention", "generate_full_outline", "query_profiles",
-                          "query_characters", "generate_characters"):
+                          "query_characters", "generate_characters", "chapter_quality_gate"):
                     check(f"工具 {t} 在列", t in names)
 
                 # ── 2. 对临时书做 MCP 往返 ──
