@@ -298,8 +298,6 @@ class BookStoryline:
     def to_dict(self) -> dict:
         return {
             "book_title": self.book_title,
-            "genre": self.genre,
-            "sub_genre": self.sub_genre,
             "words_per_chapter": self.words_per_chapter,
             "pen_name": self.pen_name,
             "platform": self.platform,

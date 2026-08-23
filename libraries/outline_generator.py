@@ -377,7 +377,6 @@ class OutlineGenerator:
         prompt = f"""你是一位资深网文策划编辑。请为以下小说构思基础设定。
 
 【基本信息】
-题材方向：{genre}{'/'+sub_genre if sub_genre else ''}
 每章目标：3000字
 {style_hint}
 {tags_block}
@@ -971,8 +970,6 @@ class OutlineGenerator:
 
 【阶段事件】
 {'、'.join(events) if events else '按题材惯例推进'}
-
-【题材方向】{genre}
 【本弧主题】{outline.name}
 
 【候选桥段】
