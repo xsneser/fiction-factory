@@ -447,7 +447,8 @@ def _map_dsh_event(evt: dict, pending: dict):
         call_id = data.get("callId", "")
         args = _parse_args(data.get("arguments"))
         pending[call_id] = {"name": name, "callId": call_id, "args": args}
-        yield {"type": "tool_call", "name": name, "args": args, "callId": call_id}
+        yield {"type": "tool_call", "name": name, "args": args, "callId": call_id,
+               "usage": data.get("usage")}   # dsh agent 该工具调用的真实 token 用量（events-runner 转发）
         if name == "navigate":
             url = args.get("url") if isinstance(args, dict) else ""
             if url:

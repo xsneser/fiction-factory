@@ -95,10 +95,26 @@ async function run(ctx, task, io) {
 	});
 	await agent.whenIdle();
 	const firstSeq = agent.session.seq;
+	// 捕获 dsh agent 的 token usage（assistant/message 的 data.usage），挂到下一个 tool/call 事件
+	let lastUsage = null;
 	ctx.on("session/event", (session, event) => {
 		if (event.seq < firstSeq) return;
+		if (event.type === "assistant/message" && event.data?.usage) {
+			const u = event.data.usage;
+			lastUsage = {
+				input: u.inputTokens,
+				output: u.outputTokens,
+				cache_read: u.cacheReadTokens,
+				cache_write: u.cacheWriteTokens
+			};
+		}
 		if (!FORWARD.has(event.type)) return;
-		emit(io, { type: event.type, data: event.data });
+		let data = event.data;
+		if (event.type === "tool/call" && lastUsage) {
+			data = { ...event.data, usage: lastUsage };
+			lastUsage = null;
+		}
+		emit(io, { type: event.type, data });
 	});
 	agent.followup(createUserMessage({
 		content: [{ type: "text", text: task }],
