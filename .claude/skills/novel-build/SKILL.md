@@ -23,14 +23,14 @@ description: >-
 > 选择类提问优先用 **AskUserQuestion 工具**（Claude Code 渲染成按钮/编号选项）；该工具不可用时，文字列编号选项等用户回数字。
 
 1. **写作方向（编号菜单）**：先列方向让用户挑，再补一句核心冲突/主角：
-   1. 都市爽文 — 重生/签到/神医/校花/首富/打脸（genre=都市）
-   2. 玄幻升级 — 修仙/异界/洪荒/武侠/诸天/无敌流（genre=玄幻）
-   3. 科幻脑洞 — 星际/无限流/快穿/游戏/电竞（genre=科幻）
-   4. 悬疑烧脑 — 悬疑/权谋/复仇/悬念（genre=悬疑）
-   5. 言情甜宠 — 甜宠/双强/团宠/白月光/追妻火葬场（genre=言情）
-   6. 历史权谋 — 历史/权谋/军婚（genre=历史）
+   1. 都市爽文 — 重生/签到/神医/校花/首富/打脸
+   2. 玄幻升级 — 修仙/异界/洪荒/武侠/诸天/无敌流
+   3. 科幻脑洞 — 星际/无限流/快穿/游戏/电竞
+   4. 悬疑烧脑 — 悬疑/权谋/复仇/悬念
+   5. 言情甜宠 — 甜宠/双强/团宠/白月光/追妻火葬场
+   6. 历史权谋 — 历史/权谋/军婚
    7. 自由发挥 — 用户直接给一句话设定
-   流派不用让用户纠结——平台流派由题材标签推导，向导建书时据此填 genre。
+   题材标签就是书的题材方向——用户在步 1 多选 chips 确定；genre（题材方向值）由标签经 derive_genre 推导（向导建书时据此填），不用单独让用户询问。
 2. **笔名（先查现成档案，给编号选项）**：
    - 先 `mcp__novel-engine__query_profiles` 拉现有笔名档案（预设 枫落/夜雨/青衫 + 用户自建），把 `pen_name` + 风格摘要 + **平台注册状态**列成编号选项让用户挑（`registered_platforms` 已注册平台；新书默认平台 fanqie，顺带标注该笔名是否已注册番茄）。
    - 档案里没有合意的 → 让用户报一个新笔名（drive_ui set_field pen 会自动补 option）。
@@ -45,7 +45,7 @@ description: >-
 > **交棒**：用户在步 2 点「已挑选完毕」后，**页面会自动给 agent（dsh）发建书任务（`novel-build`）驱动步 3**。Claude Code 只负责生成候选、呈现、等待挑选并确认，**不重复驱动步 3**（双驱动会互相覆盖）。
 
 **推荐路线——agent 逐张生成候选、用户点选**：
-1. **循环 `mcp__novel-engine__world_candidates(book_id="", idea=种子, genre=方向genre, tags=题材标签)` 约 5 次**（每次 LLM 只生成 **1 个**候选并**自动填入**步 2，工具按 idea/tags 持久化去重；卡逐张出现）——不需要 5 张可提前停。
+1. **循环 `mcp__novel-engine__world_candidates(book_id="", idea=种子, tags=题材标签)` 约 5 次**（每次 LLM 只生成 **1 个**候选并**自动填入**步 2，工具按 idea/tags 持久化去重；genre 由标签自动推导；卡逐张出现）——不需要 5 张可提前停。
 2. 单次失败/空 → 重试一次；仍空跳过继续。
 3. **告诉用户在平台上点选喜欢的候选方向**（agent 不要把候选搬到聊天里——平台卡片点选会自然带入书名/世界观简述到步 3；点卡仅高亮、可换）。
 4. 用户确认点选后点「已挑选完毕」（步 2 按钮）→ 进步 3，页面自动触发建书任务交给 dsh；不想要候选 → `drive_ui(skip_candidates)`（「跳过，手动设定」在步 2 导航区，手动点不触发 agent 建书）。
@@ -56,10 +56,10 @@ description: >-
 1. `navigate(url="/books/start")`。
 1.5. **`drive_ui(reset)`**：每次建书前先重置向导 state（除笔名），清除上一本残留草稿对 set_field/set_tags 的干扰（建书保真度护栏，spike 实测 issue）。
 2. 在聊天里定：方向、笔名、一句话种子、题材标签（上面的决策点）。
-3. `drive_ui(set_field {field:"idea", value:种子})` + `drive_ui(set_field {field:"pen", value:笔名})` + `drive_ui(set_tags {tags:[题材标签]})`——**同批推送，浏览器按序应用**（步 1 校验 idea+pen 非空；题材标签在步 1 多选，流派随之推导，并作候选生成硬约束）。**步 1 已无「下一步」**——由步 1 底部「🎲 生成候选」替代（见下条）。
-4. **世界观候选（必须完成，见上）**：**循环 `world_candidates(book_id="", idea=种子, genre, tags)` 约 5 次**（每次 1 个并自动填入步 2，无需 `set_candidates`）→ 用户在平台点选候选卡（高亮、可换）→ 用户点「已挑选完毕」进步 3（**页面自动把建书任务交给 dsh 驱动步 3**；Claude Code 不重复驱动）。不想选 → `drive_ui(skip_candidates)`。
+3. `drive_ui(set_field {field:"idea", value:种子})` + `drive_ui(set_field {field:"pen", value:笔名})` + `drive_ui(set_tags {tags:[题材标签]})`——**同批推送，浏览器按序应用**（步 1 校验 idea+pen 非空；题材标签在步 1 多选，题材方向随之推导，并作候选生成硬约束）。**步 1 已无「下一步」**——由步 1 底部「🎲 生成候选」替代（见下条）。
+4. **世界观候选（必须完成，见上）**：**循环 `world_candidates(book_id="", idea=种子, tags)` 约 5 次**（每次 1 个并自动填入步 2，无需 `set_candidates`）→ 用户在平台点选候选卡（高亮、可换）→ 用户点「已挑选完毕」进步 3（**页面自动把建书任务交给 dsh 驱动步 3**；Claude Code 不重复驱动）。不想选 → `drive_ui(skip_candidates)`。
 5. **进步 3 = 内容构建工作台（默认已交棒 dsh；Claude Code 仅手动驱动时才走）**：用户在步 2 点「已挑选完毕」后步 3 默认由 **dsh（novel-build）分阶段驱动**（页面 `_agentDriving` 已抑制浏览器一键补全）。**Claude Code 不要与页面 task2 同时驱动步 3**——只在用户明确要求「由 Claude 直接驱动步 3」且页面未自动发任务时，才按下列规范逐段驱动（每段结果经 `drive_ui` 落进表单）：
-   ① **核心矛盾**：`generate_core_conflict(idea=世界观简述, world_brief=候选简述, tags, pen_name)` → `drive_ui(set_world, {world_building:{core_conflict:"..."}})`（返回 genre 供②）。
+   ① **核心矛盾**：`generate_core_conflict(idea=世界观简述, world_brief=候选简述, tags, pen_name)` → `drive_ui(set_world, {world_building:{core_conflict:"..."}})`（genre 由题材标签经 derive_genre 推导，返回供②选模板）。
    ② **大纲+桥段（步3内先生成，阻塞数分钟）**：`generate_outline_preview(idea, genre=①, tags, core_conflict=①, pen_name, world_brief)` → `drive_ui(set_outline, {outlines, plots, threads, themes, basic_info})`（返回的大纲+桥段存向导 state，submit 随书落库，书创建即 phase=ready）。**不再 query_structures/query_plots/set_picks**。
    ③ **势力**（根据桥段分析）：`generate_factions(idea, world_brief, core_conflict=①, tags, genre, outline_data=②)` → `drive_ui(set_world, {world_building:{factions:[...]}})`。
    ④ **主要人物**（势力生成之后，依据大纲+桥段+势力）：`query_characters` 看原型 → `generate_characters(idea=世界观简述, title, tags, genre, archetype_ids=选中的原型, core_conflict=①, factions=③, outline_data=②)` → `drive_ui(set_characters, {characters:[平铺映射后的列表]})`——**传全 14 字段**：`name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id/gender/brief/title/age/death_year/role`（主角 importance=1、配角补 relation；gender/brief/title/age/death_year 由 generate_characters 产出，agent 原样透传，向导不展示但会保到建书，详情页可编辑）。
@@ -73,7 +73,7 @@ description: >-
 - 用只读工具轮询定位新书：
   1. `list_books` → 找到新书 `book_id`。
   2. `get_book_detail(book_id)` 检查世界观是否已充实（`basic_info.world_building` 各维非空）。通常已是——步 3 各段已随 submit 落库；仅当单薄（如 ⑤ 未做或 LLM 失败用户仍提交）才兜底 `generate_world(book_id, mode="one", idea=...)`。
-  2.5 **保真度校验（必做）**：核对 `genre` / `sub_genre` / `tags` 与用户设定一致；漂移 → `navigate("/books/start")` + `drive_ui(reset)` + 重填 set_field/set_tags 重走批处理（最多重试 1 次，仍漂移则如实汇报停止）。
+  2.5 **保真度校验（必做）**：核对 `tags` 与用户设定一致（`genre` 由标签推导、随标签同步，无需单核）；漂移 → `navigate("/books/start")` + `drive_ui(reset)` + 重填 set_field/set_tags 重走批处理（最多重试 1 次，仍漂移则如实汇报停止）。
   3. `get_book_detail(book_id)` 确认 `phase == "ready"` 且 `outlines`/`plots` 非空（② 失败退回旧路径时，此处才需 `generate_full_outline(book_id)` 补生成）。
   4. `navigate(url="/books/<book_id>/continue")` 交棒写作台写前三章。
 - 建书后**不要在向导页再 `drive_ui(next)`**（向导已跳书详情，命令桥守卫 bookId 已拦）。
