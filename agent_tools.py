@@ -1807,9 +1807,7 @@ def _func_to_schema(fn):
 
 # 写类工具：进入前须拿书锁（防 Web / MCP 双进程同书撞写），退出释放。
 _LOCKED_TOOLS = {
-    "write_next_bridge", "write_chapter", "generate_full_outline",
-    "generate_world", "world_candidates", "confirm_world",
-    "outline_agent", "fill_plots", "fill_gags", "generate_book_meta",
+    "confirm_world", "fill_gags",
     # 薄工具（agent 生成后落盘，同样需书锁防并发）
     "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
 }
@@ -1943,18 +1941,14 @@ def _build_registry():
         # 只读摸底
         list_books, get_book_state, get_writing_context, get_storyline, borrow_preview,
         get_book_detail, get_build_status, query_structures, query_plots, query_gags, query_profiles, query_characters,
-        # 规划
+        # 规划（薄工具：agent 生成后落盘；旧 LLM 生成工具已存档 archive/deprecated_tools.md）
         save_basic_info,
         save_outlines, save_book_meta,
-        generate_title, generate_outlines, generate_full_outline,
-        extend_outline, confirm_outlines, fill_plots, fill_gags, outline_agent,
+        confirm_outlines, fill_gags,
         outline_material_candidates,
-        generate_world, world_candidates, generate_characters, confirm_world,
-        generate_core_conflict, generate_factions, generate_rest_world,
-        generate_outline_preview,
-        # 写作 / 元数据（薄工具：agent 生成后落盘；旧 write_* 留档）
+        confirm_world,
+        # 写作 / 元数据（薄工具：agent 生成后落盘）
         save_bridge_draft, save_chapter_text,
-        write_next_bridge, write_chapter, generate_book_meta,
         # 上架 / 审查 / 去AI / 质量分析
         publish_check, mark_finished, publish_book, export_book,
         review_text, deai_text, extract_style_asset,

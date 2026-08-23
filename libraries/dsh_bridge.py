@@ -13,8 +13,8 @@ storage/tool_log.jsonl（source=mcp）供「工具日志」页签轮询聚合（
 Claude Code 经 MCP 调用的总览）。
 
 护栏：
-  - 运行期 overlay 强制注入 toolCallTimeoutMs=600000（generate_full_outline /
-    write_next_bridge 阻塞数分钟，否则被 MCP 掐断，spike 已验证），并同时挂
+  - 运行期 overlay 强制注入 toolCallTimeoutMs=600000（save_outlines / save_chapter_text
+    等薄工具与 agent 长生成阻塞数分钟，否则被 MCP 掐断，spike 已验证），并同时挂
     events-runner（禁 headless-runner 的 summarize、换事件流输出）。
   - 强化指令拼进任务文本前缀（persona 已在 headless profile 注入，这里按任务重申
     护栏：禁直建/直删（工具不在面）、phase 门控、防死循环轮询）。
@@ -192,7 +192,7 @@ _REINFORCEMENT = """[系统约束]
 - 按四阶段推进（建书→大纲→写作→上架），每阶段前用 get_book_detail 校验 phase，phase 不满足不跨阶段硬做。
 - 建书必须 drive_ui 驱动浏览器向导，删书必须 navigate /books 让用户手动删——直建/直删工具不在工具面。
 - 工具被 phase 门控拒绝或抛 BookBusyError 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即为循环，应停止并如实汇报。
-- 长工具（generate_full_outline / write_next_bridge）会阻塞数分钟属正常，等待结果，不要反复用同参重查。"""
+- 薄工具（save_outlines / save_chapter_text）可能阻塞数分钟属正常，等待结果，不要反复用同参重查。"""
 
 
 def _agent_cfg(key: str, default):

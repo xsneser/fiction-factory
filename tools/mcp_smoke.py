@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 56  # 55 + get_writing_context
+EXPECT_MCP_TOOLS = 40  # 56 - 16 厚工具（存档 archive/deprecated_tools.md）
 PASS, FAIL = [], []
 
 
@@ -100,8 +100,8 @@ async def main():
                 check("delete_book 工具不存在（护栏：删书走书库页手动）", "delete_book" not in names)
                 check("drive_ui 在列（建书向导命令桥）", "drive_ui" in names)
                 check("navigate 在列（外部经意图桥驱动浏览器）", "navigate" in names)
-                for t in ("query_plots", "diagnose_retention", "generate_full_outline", "query_profiles",
-                          "query_characters", "generate_characters", "chapter_quality_gate",
+                for t in ("query_plots", "diagnose_retention", "query_profiles",
+                          "query_characters", "chapter_quality_gate",
                           "fetch_novel", "discover_hot",
                           "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
                           "get_writing_context"):
@@ -114,13 +114,12 @@ async def main():
                         "name": "王小明", "identity": "程序员", "golden_finger": "读心术"}},
                 })).get("ok")
                 check("save_basic_info OK", bool(ok_save))
-                r = await call_json(session, "generate_outlines",
-                                    {"book_id": bid, "mode": "rule", "max_outlines": 2})
-                check("generate_outlines(rule) count=2", r.get("ok") and r.get("count") == 2,
+                r = await call_json(session, "save_outlines",
+                                    {"book_id": bid, "outlines": [{"name": "开篇", "start_chapter": 1,
+                                                                   "end_chapter": 30}],
+                                     "plots": [{"name": "穿越开局", "outline_id": "outline_0001"}]})
+                check("save_outlines OK", r.get("ok") and r.get("outlines") == 1,
                       f"{r}")
-                ok_confirm = (await call_json(
-                    session, "confirm_outlines", {"book_id": bid})).get("ok")
-                check("confirm_outlines OK", bool(ok_confirm))
                 ok_gags = (await call_json(
                     session, "fill_gags", {"book_id": bid})).get("ok")
                 check("fill_gags OK", bool(ok_gags))
