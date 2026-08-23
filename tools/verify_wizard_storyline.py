@@ -29,7 +29,7 @@ from libraries.storyline import BookStoryline  # noqa: E402
 from agent_tools import struct_lib, plot_lib, gag_lib, _profile_for  # noqa: E402
 
 tl = BookStoryline(
-    genre="都市", sub_genre="爽文", words_per_chapter=3000, pen_name="测试",
+    words_per_chapter=3000, pen_name="测试",
     basic_info={"characters": [{"name": "王小明", "role": "主角", "importance": 1,
                                 "identity": "程序员", "golden_finger": "读心术"}],
                 "world_building": {"description": "都市爽文开挂升级", "tags": ["都市", "爽文"],
@@ -96,15 +96,18 @@ try:
         WZ.show(3);
     """)
     time.sleep(0.5)
-    # 两栏布局（仿写作台）：未生成时左栏「📋 故事线」存在且空白（无 .sl-root）
+    # 两栏布局（仿写作台）：未生成时左栏「📋 故事线」容器也渲染（.sl-root 在、0 条）
     left_ok = driver.execute_script(
         "return !!document.querySelector('#panel-3 .editor-left');")
     mount_exists = driver.execute_script(
         "return !!document.getElementById('wz-storyline');")
-    blank0 = driver.execute_script(
-        "return document.querySelectorAll('#wz-storyline .sl-root').length === 0;")
+    container0 = driver.execute_script(
+        "return document.querySelectorAll('#wz-storyline .sl-root').length >= 1;")
+    bars0 = driver.execute_script(
+        "return document.querySelectorAll('#wz-storyline .sl-bar-outline, #wz-storyline .sl-bar-plot').length;")
     check("步3 两栏布局（左=故事线）", left_ok and mount_exists, f"left={left_ok} mount={mount_exists}")
-    check("未生成时左栏空白（无 Gantt）", blank0, f"blank={blank0}")
+    check("空态下故事线容器仍渲染（0 条）", container0 and bars0 == 0,
+          f"container={container0} bars={bars0}")
     wide_ok = driver.execute_script(
         "var w=document.querySelector('.wz-panels'); return !!(w && w.classList.contains('wide'));")
     split_w = driver.execute_script(

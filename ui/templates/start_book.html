@@ -288,25 +288,21 @@ var WZ = {
         this.reportStatus();   // 上报建书状态（agent 经 get_build_status 感知进度）
     },
 
-    /* 渲染步3左栏故事线（仿写作台 StoryLine 组件）：有 _outline_data 则展示 Gantt，
-       否则清空挂载（无内容时空栏）。set_outline / show(3) / restore 三处调用。 */
+    /* 渲染步3左栏故事线容器（仿写作台 StoryLine 组件）：**始终**渲染容器（标题/meta/
+       三泳道/图例），无大纲时传空数据 → 0 计数 + 空泳道，容器仍可见。
+       set_outline / show(3) / restore 三处调用。 */
     renderStoryline: function() {
         var mount = this.el('wz-storyline');
-        if (!mount) return;
-        var d = this.state._outline_data;
-        var hasOutline = !!(d && d.outlines && d.outlines.length);
-        if (hasOutline && window.StoryLine) {
-            window.StoryLine.init('wz-storyline', {
-                words_per_chapter: this.state.words_per_chapter || 3000,
-                outlines: d.outlines,
-                plots: d.plots,
-                threads: d.threads,
-                themes: d.themes,
-                promises: []
-            }, {scrollable: true});
-        } else if (window.StoryLine) {
-            mount.innerHTML = '';   // 无内容时空置
-        }
+        if (!mount || !window.StoryLine) return;
+        var d = this.state._outline_data || {};
+        window.StoryLine.init('wz-storyline', {
+            words_per_chapter: this.state.words_per_chapter || 3000,
+            outlines: (d.outlines && d.outlines.length) ? d.outlines : [],
+            plots: (d.plots && d.plots.length) ? d.plots : [],
+            threads: (d.threads && d.threads.length) ? d.threads : [],
+            themes: (d.themes && d.themes.length) ? d.themes : [],
+            promises: []
+        }, {scrollable: true});
     },
 
     validate: function(n) {
