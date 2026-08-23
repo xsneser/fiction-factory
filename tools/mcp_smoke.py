@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 55  # 51 + save_chapter_text + save_bridge_draft + save_outlines + save_book_meta
+EXPECT_MCP_TOOLS = 56  # 55 + get_writing_context
 PASS, FAIL = [], []
 
 
@@ -105,7 +105,8 @@ async def main():
                 for t in ("query_plots", "diagnose_retention", "generate_full_outline", "query_profiles",
                           "query_characters", "generate_characters", "chapter_quality_gate",
                           "fetch_novel", "discover_hot",
-                          "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta"):
+                          "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
+                          "get_writing_context"):
                     check(f"工具 {t} 在列", t in names)
 
                 # ── 2. 对临时书做 MCP 往返 ──

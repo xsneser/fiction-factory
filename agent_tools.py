@@ -201,16 +201,27 @@ def consume_triple_stream(gen):
 # 只读 / 建书类（无 LLM，供上下文供给与测试）
 # ═══════════════════════════════════════════════════
 
+def _book_tags(book_id: str) -> list:
+    """取一本书的题材标签（basic_info.world_building.tags；无则空）。genre 已移除，tags 是唯一题材来源。"""
+    try:
+        tl = book_mgr.load_storyline(book_id)
+        if tl:
+            wb = (tl.basic_info or {}).get("world_building") or {}
+            return list(wb.get("tags") or [])
+    except Exception:
+        pass
+    return []
+
+
 def list_books() -> list:
-    """列出书库全部书籍的摘要（book_id/书名/题材/状态/进度）。"""
+    """列出书库全部书籍的摘要（book_id/书名/题材标签/状态/进度）。"""
     rows = []
     for b in book_mgr.list_all():
         rows.append({
             "book_id": b.book_id,
             "title": b.title,
             "pen_name": b.pen_name,
-            "genre": b.genre,
-            "sub_genre": b.sub_genre,
+            "tags": _book_tags(b.book_id),
             "status": b.status,
             "current_chapter": b.current_chapter,
             "chapter_count": b.chapter_count,
@@ -239,7 +250,7 @@ def get_book_state(book_id: str) -> dict:
     return {
         "book": {
             "book_id": book.book_id, "title": book.title, "pen_name": book.pen_name,
-            "genre": book.genre, "sub_genre": book.sub_genre, "platform": book.platform,
+            "tags": _book_tags(book_id), "platform": book.platform,
             "status": book.status, "current_chapter": book.current_chapter,
             "chapter_count": book.chapter_count, "total_words": book.total_words or 0,
         },
@@ -248,6 +259,38 @@ def get_book_state(book_id: str) -> dict:
         "chapters": chapters,
         "draft": _draft_read(book_id),
     }
+
+
+def get_writing_context(book_id: str) -> dict:
+    """[薄工具] 一次返回写正文所需的完整上下文（书配置+故事线+角色/世界观+大纲+最近章摘要+草稿）。
+
+    复用 get_book_state 全量 payload（get_storyline / get_book_detail 是其子集/重叠），
+    追加就地提取的扁平字段：synopsis（outline）、protagonist（get_mc）、
+    next_bridge（第一个未写桥段 written_chapter==0，含 plot_id/name/roles/outline_id）。
+    agent 逐桥段循环每轮只调本工具一次，避免重复读上下文。
+    """
+    payload = get_book_state(book_id)
+    tl = book_mgr.load_storyline(book_id)
+    outline = payload.get("outline") or {}
+    # synopsis：outline.json 的 synopsis
+    payload["synopsis"] = outline.get("synopsis") or ""
+    # protagonist：basic_info.characters 中 role=主角 的第一个
+    protagonist = None
+    if tl and tl.basic_info:
+        protagonist = get_mc(tl.basic_info)
+    payload["protagonist"] = protagonist
+    # next_bridge：第一个未写桥段（written_chapter==0）
+    next_bridge = None
+    if tl:
+        for p in tl.plots:
+            if not (getattr(p, "written_chapter", 0) or 0):
+                next_bridge = {
+                    "plot_id": p.id, "name": p.name, "roles": list(getattr(p, "roles", None) or []),
+                    "outline_id": getattr(p, "outline_id", "") or "",
+                }
+                break
+    payload["next_bridge"] = next_bridge
+    return payload
 
 
 def get_storyline(book_id: str) -> dict:
@@ -287,7 +330,7 @@ def get_book_detail(book_id: str) -> dict:
     outline = book_mgr.get_outline(book_id) or {}
     return {
         "book_id": book.book_id, "title": book.title, "pen_name": book.pen_name,
-        "genre": book.genre, "sub_genre": book.sub_genre, "platform": book.platform,
+        "tags": _book_tags(book_id), "platform": book.platform,
         "status": book.status, "current_chapter": book.current_chapter,
         "chapter_count": book.chapter_count, "total_words": book.total_words or 0,
         "synopsis": (outline.get("synopsis") or ""),
@@ -1905,7 +1948,7 @@ def _build_registry():
         # 导航 / 建书向导驱动（用户高频意图，必须前置）
         navigate, drive_ui,
         # 只读摸底
-        list_books, get_book_state, get_storyline, borrow_preview,
+        list_books, get_book_state, get_writing_context, get_storyline, borrow_preview,
         get_book_detail, get_build_status, query_structures, query_plots, query_gags, query_profiles, query_characters,
         # 规划
         save_basic_info,
