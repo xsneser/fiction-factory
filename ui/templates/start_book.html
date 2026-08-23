@@ -77,6 +77,10 @@
 
     {# ─── ③ 世界观补全：AI 自动补全 12 维 + 基调（可编辑）+ 角色候选 ─── #}
     <section class="wz-panel" id="panel-3" style="display:none">
+        <fieldset id="wz-storyline-fieldset" style="display:none">
+            <legend>📋 故事线（步3②生成，可预览）</legend>
+            <div id="wz-storyline" style="height:480px;min-height:0;overflow:hidden"></div>
+        </fieldset>
         <div class="world-edit">
         <fieldset>
             <legend>🗺️ 世界观</legend>
@@ -125,10 +129,6 @@
                 <button type="button" class="btn-secondary" onclick="WZ.addFactionRow()">➕ 添加势力</button>
                 <button type="button" class="btn-secondary" onclick="WZ.addCharCard()">➕ 添加人物</button>
             </div>
-        </fieldset>
-        <fieldset id="wz-storyline-fieldset" style="display:none">
-            <legend>📋 故事线（步3②生成，可预览）</legend>
-            <div id="wz-storyline" style="height:480px;min-height:0;overflow:hidden"></div>
         </fieldset>
         </div>
     </section>
