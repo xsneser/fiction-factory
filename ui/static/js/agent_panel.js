@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v14 events-stream');
+console.log('[agent-panel] v15 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -152,14 +152,13 @@ console.log('[agent-panel] v14 events-stream');
         card.appendChild(status);
         chat.appendChild(card);
         scrollBottom();
-        var run = { card: card, status: status, meta: meta, t0: performance.now(), tool: tool, args: args, timer: null };
-        // 运行中实时计时（noTimer 供刷新重建卡：页面加载为基的计时错误，重建卡靠事件 ts 差算真实时长）
-        if (!noTimer) {
-            run.timer = setInterval(function() {
-                if (run.meta) run.meta.textContent = '⏱ ' + formatDur(performance.now() - run.t0)
-                    + (run.usage ? ' · ' + formatTokens(run.usage) : '');
-            }, 1000);
-        }
+        var run = { card: card, status: status, meta: meta, t0: performance.now(), ts0: null, tool: tool, args: args, timer: null };
+        // 运行中实时计时：活跃卡用 performance 基；刷新重建卡 run.ts0=事件 ts，用 Date.now 基算真实已用时长
+        run.timer = setInterval(function() {
+            if (!run.meta) return;
+            var ms = run.ts0 ? (Date.now() / 1000 - run.ts0) * 1000 : (performance.now() - run.t0);
+            run.meta.textContent = '⏱ ' + formatDur(ms) + (run.usage ? ' · ' + formatTokens(run.usage) : '');
+        }, 1000);
         return run;
     }
 
@@ -170,8 +169,8 @@ console.log('[agent-panel] v14 events-stream');
     }
 
     // 事件流工具卡：按 callId 建档，超上限裁剪最旧（防 DOM 无限膨胀）
-    function addToolCardFor(name, args, callId, noTimer, usage) {
-        var run = addToolCard(name, args, noTimer);
+    function addToolCardFor(name, args, callId, usage) {
+        var run = addToolCard(name, args);
         run.usage = usage || null;   // dsh agent 该工具调用的真实 token 用量
         if (callId) toolCards[callId] = run;
         toolCardOrder.push(callId || ('#' + toolCardOrder.length));
@@ -323,7 +322,7 @@ console.log('[agent-panel] v14 events-stream');
         var t = evt.type;
         if (t === 'tool_call') {
             // dsh 核心实时推送：工具开始 → 建卡（usage = 该调用的真实 token 用量）
-            currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId, undefined, evt.usage);
+            currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage);
         } else if (t === 'tool_result') {
             // 按 callId 配对卡；配不到就忽略（绝不 fallback 到别的卡，避免污染）。
             // navigate/drive_ui 的 tool/call 也会建卡，故正常情况都配得到。
@@ -549,8 +548,8 @@ console.log('[agent-panel] v14 events-stream');
                     if (evt.type === 'tool_call') {
                         if (seen[evt.callId]) return;
                         seen[evt.callId] = true;
-                        var run = addToolCardFor(evt.name, evt.args, evt.callId, true, evt.usage);   // 重建卡：不启动页面计时器
-                        if (run) run.ts0 = evt.ts;   // 记事件开始 ts，完成时算真实时长
+                        var run = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage);   // 重建卡：计时器用事件 ts 基
+                        if (run) run.ts0 = evt.ts;   // 记事件开始 ts，运行中计时与完成时长都基于它
                     } else if (evt.type === 'tool_result') {
                         var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
                         if (evt.callId) delete toolCards[evt.callId];

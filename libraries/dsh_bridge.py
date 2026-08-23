@@ -501,13 +501,14 @@ def run_dsh_task(task: str, history: list | None = None,
     本任务也可被后续任务 / `/api/agent/chat/cancel` 打断（被打断则 error+done 收尾）。
     finally 里收尸（杀残留 proc + wait），避免孤儿进程。
     """
+    # 全服务单任务：新任务先打断正在跑的旧任务；清空旧任务事件存储（刷新重建只反映当前任务）
+    interrupt_current_task()
+    clear_task_events()
     overlay = _write_runtime_overlay()
     cmd = get_dsh_argv() + [
         "--profile", get_dsh_profile(),
         "--patch", overlay, _build_task_text(task, history),
     ]
-    # 全服务单任务：新任务先打断正在跑的旧任务
-    interrupt_current_task()
 
     proc = None
     saw_any = False
