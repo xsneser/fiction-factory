@@ -269,7 +269,7 @@ _CMD_ZH = {
     "set_picks": "记录选材",
 }
 _KEY_ZH = {
-    "core_conflict": "核心矛盾", "genre": "流派", "sub_genre": "子流派", "factions": "势力",
+    "core_conflict": "核心矛盾", "genre": "题材", "sub_genre": "题材细分", "factions": "势力",
     "faction": "势力", "name": "名称", "stance": "立场", "desc": "描述", "characters": "人物",
     "protagonist": "主角", "supporting_cast": "配角", "identity": "身份", "personality": "性格",
     "golden_finger": "金手指", "catchphrase": "口癖", "role": "角色", "importance": "重要度",

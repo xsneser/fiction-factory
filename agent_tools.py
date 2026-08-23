@@ -202,7 +202,7 @@ def consume_triple_stream(gen):
 # ═══════════════════════════════════════════════════
 
 def list_books() -> list:
-    """列出书库全部书籍的摘要（book_id/书名/流派/状态/进度）。"""
+    """列出书库全部书籍的摘要（book_id/书名/题材/状态/进度）。"""
     rows = []
     for b in book_mgr.list_all():
         rows.append({
@@ -317,7 +317,7 @@ def get_build_status() -> dict:
 
 
 def query_structures(keyword: str = "", genre: str = "", sub_genre: str = "") -> dict:
-    """查大纲库：按流派/子流派/关键词（名称）返回模板清单。"""
+    """查大纲库：按题材标签/关键词（名称）返回模板清单（兼容按题材方向参数查询）。"""
     kw = (keyword or "").strip()
     rows = struct_lib.search(genre=genre, sub_genre=sub_genre)
     if kw:
@@ -384,7 +384,7 @@ def query_profiles(keyword: str = "") -> dict:
 
 
 def query_characters(keyword: str = "", tag: str = "", genre: str = "") -> dict:
-    """查角色原型库：按标签/适配流派/关键词返回启用原型，供外部 agent 选原型生成角色。"""
+    """查角色原型库：按标签/适配题材/关键词返回启用原型，供外部 agent 选原型生成角色。"""
     kw = (keyword or "").strip()
     rows = char_lib.search(tag=tag, genre=genre, kw=kw)
     return {"archetypes": [a.to_dict() for a in rows if getattr(a, "enabled", True)][:20]}
@@ -463,7 +463,7 @@ def generate_title(book_id: str) -> dict:
 
 
 def generate_outlines(book_id: str, mode: str = "ai", max_outlines: int = 5) -> dict:
-    """生成大纲序列（mode=ai 用 LLM；rule 用流派模板确定性生成）。"""
+    """生成大纲序列（mode=ai 用 LLM；rule 用题材方向模板确定性生成）。"""
     tl = _require_tl(book_id)
     llm = get_llm() if mode == "ai" else None
     builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
