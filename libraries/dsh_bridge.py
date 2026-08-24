@@ -415,19 +415,6 @@ def _zh_tool_summary(name, args, msg):
         cmd = (args or {}).get("cmd", "") if isinstance(args, dict) else ""
         zh = _CMD_ZH.get(cmd, cmd or "")
         return "已" + zh if zh else "已执行向导命令"
-    if name == "world_candidates":
-        try:
-            obj = json.loads(text)
-            cand = (obj or {}).get("candidate") or {}
-            total = (obj or {}).get("total")
-            head = f"已生成第 {total or '?'} 个候选"
-            t = (cand.get("title") or "").strip()
-            if t:
-                head += f"：「{t}」"
-            ol = (cand.get("one_liner") or "").strip()
-            return head + (("　" + ol) if ol else "")
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
     try:
         obj = json.loads(text)
         if isinstance(obj, dict):
@@ -435,18 +422,6 @@ def _zh_tool_summary(name, args, msg):
     except (json.JSONDecodeError, TypeError, ValueError):
         pass
     return text[:200].strip()
-
-
-def _result_candidate(msg):
-    """从 world_candidates 的 tool/result 全文抽新增候选 dict（供 dsh 会话实时 add_candidate）。"""
-    try:
-        obj = json.loads(_extract_result_text(msg))
-        cand = (obj or {}).get("candidate")
-        if isinstance(cand, dict) and cand.get("title"):
-            return cand
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
-    return None
 
 
 def _map_dsh_event(evt: dict, pending: dict):
@@ -458,7 +433,7 @@ def _map_dsh_event(evt: dict, pending: dict):
     （并行），同 turn/step 会碰撞覆盖，callId 天然去重。
     navigate / drive_ui 的 tool/call 除了转成 navigate / ui_command 推送（浏览器
     执行跳转/向导命令），**同时**发 tool_call 建卡——否则它们的 tool/result 在前端
-    找不到卡，会 fallback 污染上一张卡（曾把 drive_ui 错误贴到 world_candidates 卡）。
+    找不到卡，会 fallback 污染上一张卡（曾把 drive_ui 错误贴到别的工具卡）。
     """
     t = evt.get("type")
     data = evt.get("data") or {}
@@ -493,14 +468,6 @@ def _map_dsh_event(evt: dict, pending: dict):
                "callId": call_id or p.get("callId") or "",
                "ok": ok,
                "summary": _zh_tool_summary(name, p.get("args"), msg)}
-        # 合并工具 world_candidates 已内部「生成 1 个候选 + 自动填入」：dsh 会话 busy 期间
-        # 浏览器跳过 nav-intent 轮询，这里从结果里实时合成 add_candidate SSE 渲染
-        # （外部 MCP 路径由工具自身 push 的 add_candidate 意图轮询兜底，done 后清空不重放）。
-        if ok and name == "world_candidates":
-            cand = _result_candidate(msg)
-            if cand:
-                yield {"type": "ui_command", "cmd": "add_candidate",
-                       "args": {"candidate": cand}}
     elif t == "llm/call":
         # 调试模式（NOVEL_AGENT_DEBUG=1 时 events-runner 才 emit）：一次 LLM 调用的
         # 提示词/MCP工具/返回JSON，前端渲染「LLM 调用」调试卡。不持久化 task_events。

@@ -197,7 +197,6 @@ D:\NovelEngine/
 │   ├── character_state.py  # 角色状态跟踪
 │   ├── world_tags.py       # 预置题材标签库（50 标签 + 题材方向推导）
 │   ├── base_library.py     # 资产库基类（JSONL 单例 + 读写）
-│   ├── reset_data.py       # 一键重置四大库
 │   ├── plot.py             # 桥段库（47 模板）
 │   ├── structure.py        # 大纲库（11 模板 + 阶段级内涵）
 │   ├── gag.py              # 笑点库（24 模式）
@@ -254,14 +253,13 @@ D:\NovelEngine/
 ├── test_chapters.py        # 章节生成测试
 ├── test_e2e_pages.py       # 端到端页面测试（全部页面路由/侧栏/内容完整性）
 ├── test_reader.py          # 番茄阅读解析测试
-└── tools/                  # 运维/专项脚本（test_themes / test_world_builder / simulate_full_flow / shot_ui_pages …）
+└── tools/                  # 运维/专项脚本（test_themes / test_world_builder / simulate_full_flow 等）
 │
 ├── docs/                   # 文档
 │   ├── 设计文档-总览-claude.md  # 唯一主设计文档
-│   └── archive/            # 全部历史文档归档（设计稿/交接/优化/调研/审查报告等 19 份）
 │
 ├── requirements.txt
-├── agent_tools.py            # 共享 Agent 工具注册表（41 工具，全链路）
+├── agent_tools.py            # 共享 Agent 工具注册表（40 工具，全链路）
 ├── vendor/dsh-ne/            # vendored dsh 精简核心（改名 dsh-ne；node_modules 不入库，npm install 重建）
 ├── mcp_server.py             # MCP 适配层（从 agent_tools 注册，claude mcp add 接入）
 └── LICENSE

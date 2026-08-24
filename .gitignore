@@ -57,3 +57,4 @@ vendor/dsh-ne/node_modules/
 
 # UI 截图产物（tools/*_shot*/verify 脚本输出，不入库）
 tools/shots_ux/
+tools/shots/

@@ -13,10 +13,7 @@ from typing import Optional
 
 # 工具名 → 允许调用时的 storyline.phase 集合（未收录 = 不门控）
 PHASE_GATES = {
-    # 写作 / 元数据 / 质量 —— 需大纲就绪（phase=ready）
-    "write_next_bridge": {"ready"},
-    "write_chapter": {"ready"},
-    "generate_book_meta": {"ready"},
+    # 质量 / 诊断 —— 需大纲就绪（phase=ready）
     "tag_punch_points": {"ready"},
     "diagnose_retention": {"ready"},
     "diagnose_promises": {"ready"},
@@ -28,22 +25,11 @@ PHASE_GATES = {
     "save_bridge_draft": {"ready"},
     "save_chapter_text": {"ready"},
     # 大纲链 —— config/outlines/plots 阶段推进用；ready 放行（新流程书创建即 ready，重跑走 regenerate=True）
-    "generate_full_outline": {"config", "outlines", "plots", "ready"},
-    "generate_outlines": {"config", "outlines"},
     "confirm_outlines": {"config", "outlines"},
-    "extend_outline": {"plots", "ready"},
-    "fill_plots": {"outlines"},
     "fill_gags": {"plots"},
-    "outline_agent": {"outlines", "plots"},
     # 建书规划 —— 仅 config 阶段（未建大纲前）
     "save_basic_info": {"config"},
-    "generate_world": {"config"},
-    "world_candidates": {"config"},
-    "generate_characters": {"config"},
     "confirm_world": {"config"},
-    "generate_core_conflict": {"config"},
-    "generate_factions": {"config"},
-    "generate_rest_world": {"config"},
     # 上架 —— 需已有正文
     "publish_check": {"ready"},
     "publish_book": {"ready"},
