@@ -474,7 +474,7 @@ console.log('[agent-panel] v24 events-stream');
             addLlmCallCard(evt);
         } else if (t === 'reply') {
             addMsg('assistant', evt.content);
-            history.push({ role: 'assistant', content: evt.content });
+            history.push({ role: 'assistant', content: evt.content, ts: Date.now() / 1000 });   // ts 供刷新后与卡片按时间交错
             saveHistory(history);
         } else if (t === 'error') {
             addMsg('assistant', '⚠️ ' + (evt.message || '发生错误'));
@@ -611,7 +611,8 @@ console.log('[agent-panel] v24 events-stream');
         if (!taskText) return;
         // card 标记：刷新后 restore 时渲染为卡片而非「你」气泡（SSE 后端只看 role/content，card 无副作用）
         history.push({ role: 'user', content: taskText, card: !!(opts && opts.card),
-                       label: (opts && opts.cardLabel) || undefined });
+                       label: (opts && opts.cardLabel) || undefined,
+                       ts: Date.now() / 1000 });   // ts 供刷新后与卡片按时间交错
         saveHistory(history);
         input.value = '';
         if (busy && activeSse) {
@@ -679,17 +680,57 @@ console.log('[agent-panel] v24 events-stream');
         renderDebugBtn();
     }
 
-    // 初始欢迎语（开篇语常驻：无论是否有历史都置顶） + 恢复会话历史（card 标记 → 渲染卡片）
-    function renderHistory() {
+    // 初始欢迎语（开篇语常驻：无论是否有历史都置顶）+ 按时间戳合并渲染会话（历史气泡 + 服务器存储卡片交错）。
+    // 消息 ts 在 agentSendTask / reply 时写入历史；卡片 ts 为服务器 time.time()（localhost 与浏览器同源对齐）。
+    function renderConversation() {
         chat.innerHTML = '';
         addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个桥段」\n· 「打开书库看看」');
-        for (var i = 0; i < history.length; i++) {
-            if (history[i].card) addBuildCard(history[i].content, history[i].label);
-            else addMsg(history[i].role, history[i].content);
-        }
+        fetch('/api/agent/task-events').then(function(r) { return r.json(); }).then(function(ld) {
+            var cards = (ld && ld.ok && ld.events) ? ld.events : [];
+            var items = [];
+            history.forEach(function(m) {
+                // 旧消息无 ts → 排最前（欢迎语之后、卡片之前），退回旧观感；新消息按 ts 与卡片交错
+                items.push({ kind: 'msg', ts: (m.ts != null) ? m.ts : -Infinity, m: m });
+            });
+            cards.forEach(function(c) { items.push({ kind: 'card', ts: c.ts || 0, c: c }); });
+            items.sort(function(a, b) {
+                if (a.ts !== b.ts) return a.ts - b.ts;
+                if (a.kind !== b.kind) return a.kind === 'card' ? -1 : 1;   // 同秒卡片先于消息
+                return 0;
+            });
+            var seen = {};
+            items.forEach(function(it) {
+                if (it.kind === 'msg') {
+                    if (it.m.card) addBuildCard(it.m.content, it.m.label);
+                    else addMsg(it.m.role, it.m.content);
+                } else {
+                    var e = it.c;
+                    if (e.type === 'tool_call') {
+                        if (seen[e.callId]) return;
+                        seen[e.callId] = true;
+                        var run = addToolCardFor(e.name, e.args, e.callId, e.usage);   // 重建卡：计时器用事件 ts 基
+                        if (run) run.ts0 = e.ts;
+                    } else if (e.type === 'tool_result') {
+                        var run = toolCards[e.callId] ? toolCards[e.callId] : null;
+                        if (e.callId) delete toolCards[e.callId];
+                        if (run) {
+                            var durMs = (run.ts0 != null) ? (e.ts - run.ts0) * 1000 : undefined;
+                            finishToolCard(run, (e.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, e.summary), durMs);
+                        }
+                    } else if (e.type === 'llm_call') {
+                        addLlmCallCard(e);
+                    }
+                }
+            });
+            scrollBottom();
+            refreshRunningState();   // 重建完再查运行态：任务不在跑则把残留「运行中…」卡标记为结果未保存
+        }).catch(function() {
+            // 拉取失败兜底：只渲染历史气泡
+            history.forEach(function(m) { if (m.card) addBuildCard(m.content, m.label); else addMsg(m.role, m.content); });
+            scrollBottom();
+        });
     }
-    renderHistory();
-    loadRestoredTaskView();   // 刷新/切页后一次性拉取服务器临时存储瞬时还原工具卡流
+    renderConversation();
     startTokenPoll();   // 实时 token 流量：2s 轮询本地 API 代理检测器
     refreshRunningState();    // 刷新后若后台任务在跑 → busy → 右下角「⏹ 停止」显现（运行状态）
 
@@ -698,37 +739,6 @@ console.log('[agent-panel] v24 events-stream');
     // 用户下次发消息时 run_dsh_task 内部自动打断，无死锁。活跃 SSE 会话的实时渲染不受影响。
     function removeRunningBanner() {
         // 历史已无横幅卡；保留函数名供 startTask/pageshow 调用（无副作用）
-    }
-
-    function loadRestoredTaskView() {
-        // 渲染源 = 服务器事件存储（task_events.jsonl，重启服务才消失），不依赖 sessionStorage
-        // 聊天历史：新标签页 / 浏览器重启后历史为空，卡片仍应从存储重建。
-        var seen = {};
-        fetch('/api/agent/task-events')
-            .then(function(r) { return r.json(); })
-            .then(function(ld) {
-                if (!ld || !ld.ok) return;
-                (ld.events || []).forEach(function(evt) {
-                    if (evt.type === 'tool_call') {
-                        if (seen[evt.callId]) return;
-                        seen[evt.callId] = true;
-                        var run = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage);   // 重建卡：计时器用事件 ts 基
-                        if (run) run.ts0 = evt.ts;   // 记事件开始 ts，运行中计时与完成时长都基于它
-                    } else if (evt.type === 'tool_result') {
-                        var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
-                        if (evt.callId) delete toolCards[evt.callId];
-                        if (run) {
-                            var durMs = (run.ts0 != null) ? (evt.ts - run.ts0) * 1000 : undefined;
-                            finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary), durMs);
-                        }
-                    } else if (evt.type === 'llm_call') {
-                        addLlmCallCard(evt);   // 调试卡同样从存储重建（文件顺序：llm_call 先于其 tool_call）
-                    }
-                });
-                scrollBottom();
-                refreshRunningState();   // 重建完再查一次运行态：任务不在跑则把残留「运行中…」卡标记为结果未保存
-            })
-            .catch(function() {});
     }
 
     // 任务不在跑时，把仍显示「运行中…」的工具卡（刷新时 in-flight、结果未持久化）标记为已结束未保存
@@ -778,8 +788,7 @@ console.log('[agent-panel] v24 events-stream');
         toolCardOrder = [];
         setSendEnabled(true);   // 复位发送/停止按钮（bfcache 恢复，防陈旧 busy 卡输入）
         removeRunningBanner();
-        renderHistory();
-        loadRestoredTaskView();
+        renderConversation();   // bfcache 恢复：按 ts 交错渲染（历史气泡 + 服务器存储卡片）
         refreshRunningState();
     });
 })();
