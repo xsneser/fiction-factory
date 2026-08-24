@@ -19,7 +19,7 @@ class CharacterArchetype:
     examples: list[str] = field(default_factory=list)     # 代表人物（作品/场景）
     catchphrases: list[str] = field(default_factory=list) # 常见口癖/惯用语句
     tags: list[str] = field(default_factory=list)         # 性格标签
-    fit_genres: list[str] = field(default_factory=list)   # 适配题材
+    fit_tags: list[str] = field(default_factory=list)     # 适配题材标签（原 fit_genres）
     source: str = ""              # 来源
     created_at: str = "2026-08-18"
     enabled: bool = True
@@ -30,12 +30,15 @@ class CharacterArchetype:
             "description": self.description,
             "archetypes": self.archetypes, "examples": self.examples,
             "catchphrases": self.catchphrases, "tags": self.tags,
-            "fit_genres": self.fit_genres, "source": self.source,
+            "fit_tags": self.fit_tags, "source": self.source,
             "created_at": self.created_at, "enabled": self.enabled,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "CharacterArchetype":
+        # 旧数据 fit_genres → fit_tags（题材已换标签）；下次 _save() 自然清掉旧键
+        if d.get("fit_genres") and not d.get("fit_tags"):
+            d = dict(d, fit_tags=d.get("fit_genres"))
         return CharacterArchetype(**{k: v for k, v in d.items()
                                      if k in CharacterArchetype.__dataclass_fields__})
 
@@ -61,25 +64,25 @@ class CharacterLibrary(JsonLibrary):
                 return a
         return None
 
-    def search(self, tag: str = "", genre: str = "",
+    def search(self, tag: str = "", fit_tag: str = "",
                kw: str = "") -> list[CharacterArchetype]:
-        """按性格标签 / 适配题材 / 关键词搜索原型。"""
+        """按性格标签 / 适配标签 / 关键词搜索原型。"""
         results = self.archetypes
         if tag:
             results = [a for a in results if tag in a.tags]
-        if genre:
-            results = [a for a in results if genre in a.fit_genres]
+        if fit_tag:
+            results = [a for a in results if fit_tag in a.fit_tags]
         if kw:
             results = [a for a in results
                        if kw in a.name or kw in a.personality or kw in a.description]
         return results
 
     def categories(self) -> list[str]:
-        """返回所有性格标签 + 适配题材并集（供页面 tab / 表单原型选择分组）。"""
+        """返回所有性格标签 + 适配标签并集（供页面 tab / 表单原型选择分组）。"""
         cats = set()
         for a in self.archetypes:
             cats.update(a.tags or [])
-            cats.update(a.fit_genres or [])
+            cats.update(a.fit_tags or [])
         return sorted(c for c in cats if c)
 
 
@@ -92,7 +95,7 @@ BUILTIN_CHARACTERS = [
         archetypes=["冰山大佬", "毒舌前辈", "冷面管家"],
         examples=["权谋剧里算无遗策的军师", "动漫里嘴毒心软的前辈"],
         catchphrases=["呵。", "脑子是个好东西，可惜你没有。"],
-        tags=["高冷", "毒舌"], fit_genres=["都市", "玄幻", "悬疑"],
+        tags=["高冷", "毒舌"], fit_tags=["都市", "玄幻", "悬疑"],
     ),
     CharacterArchetype(
         id="char_002", name="沙雕谐星", personality="沙雕乐观、气氛担当",
@@ -100,7 +103,7 @@ BUILTIN_CHARACTERS = [
         archetypes=["活宝队友", "损友", "整活大师"],
         examples=["热血漫里扛起笑点的活宝队友", "日常番里的损友"],
         catchphrases=["包在我身上！（然后翻车）", "这事儿我熟，虽然上次也这么说。"],
-        tags=["沙雕", "搞笑"], fit_genres=["都市", "日常", "情感"],
+        tags=["沙雕", "搞笑"], fit_tags=["都市", "日常", "情感"],
     ),
     CharacterArchetype(
         id="char_003", name="温柔治愈系", personality="细腻体贴、温柔坚定",
@@ -108,7 +111,7 @@ BUILTIN_CHARACTERS = [
         archetypes=["治愈系女主", "知心大姐姐", "温和前辈"],
         examples=["治愈系故事的女主", "食堂老板娘般暖心长辈"],
         catchphrases=["没关系的，慢慢来。", "先喝碗汤吧。"],
-        tags=["温柔", "治愈"], fit_genres=["情感", "日常", "都市"],
+        tags=["温柔", "治愈"], fit_tags=["情感", "日常", "都市"],
     ),
     CharacterArchetype(
         id="char_004", name="热血莽夫", personality="热血冲动、直来直去",
@@ -116,7 +119,7 @@ BUILTIN_CHARACTERS = [
         archetypes=["热血少年", "铁头小师弟", "热血班长"],
         examples=["热血少年漫主角", "宗门里一言不合就开打的师弟"],
         catchphrases=["打就完了！", "我先上，你们跟上！"],
-        tags=["热血", "莽撞"], fit_genres=["玄幻", "战斗", "都市"],
+        tags=["热血", "莽撞"], fit_tags=["玄幻", "战斗", "都市"],
     ),
     CharacterArchetype(
         id="char_005", name="腹黑军师", personality="谋定后动、腹黑从容",
@@ -124,7 +127,7 @@ BUILTIN_CHARACTERS = [
         archetypes=["幕后大管家", "棋盘操盘手", "笑眯眯的谋士"],
         examples=["笑里藏刀的幕后主事人", "把所有人当棋子的军师"],
         catchphrases=["有意思。", "都在计划之内。"],
-        tags=["腹黑", "谋略"], fit_genres=["玄幻", "悬疑", "权谋"],
+        tags=["腹黑", "谋略"], fit_tags=["玄幻", "悬疑", "权谋"],
     ),
     CharacterArchetype(
         id="char_006", name="傲娇大小姐", personality="傲娇别扭、口是心非",
@@ -132,7 +135,7 @@ BUILTIN_CHARACTERS = [
         archetypes=["贵族大小姐", "宗族嫡女", "天才师妹"],
         examples=["贵族学院的大小姐", "嘴上不饶人的家族嫡女"],
         catchphrases=["才……才不是特意等你！", "哼，随便你。"],
-        tags=["傲娇", "大小姐"], fit_genres=["都市", "情感", "玄幻"],
+        tags=["傲娇", "大小姐"], fit_tags=["都市", "情感", "玄幻"],
     ),
     CharacterArchetype(
         id="char_007", name="忠犬伙伴", personality="忠诚可靠、行动派",
@@ -140,7 +143,7 @@ BUILTIN_CHARACTERS = [
         archetypes=["老部下", "忠犬队友", "得力助手"],
         examples=["追随多年的老部下", "捡来的忠心耿耿的队友"],
         catchphrases=["您说了算。", "我永远站在您这边。"],
-        tags=["忠诚", "伙伴"], fit_genres=["玄幻", "都市", "战斗"],
+        tags=["忠诚", "伙伴"], fit_tags=["玄幻", "都市", "战斗"],
     ),
     CharacterArchetype(
         id="char_008", name="阴险反派", personality="笑里藏刀、城府深",
@@ -148,7 +151,7 @@ BUILTIN_CHARACTERS = [
         archetypes=["伪善长老", "微笑幕后黑手", "笑面虎对手"],
         examples=["道貌岸然的伪善长老", "全程微笑的幕后黑手"],
         catchphrases=["年轻人，还是太嫩。", "你的底牌，我早就看穿了。"],
-        tags=["反派", "阴险"], fit_genres=["悬疑", "玄幻", "权谋"],
+        tags=["反派", "阴险"], fit_tags=["悬疑", "玄幻", "权谋"],
     ),
     CharacterArchetype(
         id="char_009", name="市侩商人", personality="精明重利、见风使舵",
@@ -156,7 +159,7 @@ BUILTIN_CHARACTERS = [
         archetypes=["茶馆老板", "丹药铺掌柜", "情报贩子"],
         examples=["两头讨好的茶馆老板", "坐地起价的丹药铺掌柜"],
         catchphrases=["价格好商量，质量你放心。", "一文钱一分货。"],
-        tags=["精明", "市侩"], fit_genres=["都市", "玄幻", "日常"],
+        tags=["精明", "市侩"], fit_tags=["都市", "玄幻", "日常"],
     ),
     CharacterArchetype(
         id="char_010", name="吐槽役青梅", personality="吐槽补刀、毒舌亲近",
@@ -164,6 +167,6 @@ BUILTIN_CHARACTERS = [
         archetypes=["青梅竹马", "损友邻居", "吐槽担当"],
         examples=["从小一起长大的青梅", "天天互相嫌弃的邻居"],
         catchphrases=["又来了又来了。", "你这猪脑子，我说过八百遍了。"],
-        tags=["吐槽", "青梅"], fit_genres=["日常", "情感", "都市"],
+        tags=["吐槽", "青梅"], fit_tags=["日常", "情感", "都市"],
     ),
 ]

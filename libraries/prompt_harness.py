@@ -1080,9 +1080,9 @@ class PromptHarness:
             for a in archetypes[:10]:
                 a_ph = "、".join((a.get("catchphrases") or [])[:2]) or "—"
                 a_tags = "、".join(a.get("tags") or []) or "—"
-                a_genres = "、".join(a.get("fit_genres") or []) or "—"
+                a_fit_tags = "、".join(a.get("fit_tags") or []) or "—"
                 lines.append(f"- {a.get('id')} {a.get('name')}（性格:{a.get('personality') or '—'}｜"
-                             f"标签:{a_tags}｜适配:{a_genres}｜口癖:{a_ph}）")
+                             f"标签:{a_tags}｜适配:{a_fit_tags}｜口癖:{a_ph}）")
             parts.append("【可选角色原型（从中挑选 archetype_id 并适配到本书）】\n" + "\n".join(lines))
         parts.append(
             "你是网文人物策划。根据上述世界观、书名与可选角色原型：\n"
