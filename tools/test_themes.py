@@ -22,7 +22,7 @@ def check(name, cond, detail=""):
 
 
 # ─── 1) 模板级内涵已移除（内涵唯一来源 = StageNode.themes）───
-t0 = StructureTemplate(id="t1", name="测试", genre="玄幻")
+t0 = StructureTemplate(id="t1", name="测试", tags=["玄幻"])
 d0 = t0.to_dict()
 check("模板级无 themes 字段", "themes" not in d0)
 check("模板 from_dict 兼容", StructureTemplate.from_dict({"id": "x", "name": "n", "genre": "g"}).id == "x")
@@ -77,7 +77,7 @@ check("阶段级优先 theme_hints", p2.theme_hints == ["复仇（Revenge）", "
 st = StageNode("朋友阵亡", "挚友为救主角而死", 3, 8,
                ["身陷重围", "挚友牺牲", "主角含泪立誓"], [],
                MOMENTS)
-tt = StructureTemplate(id="t9", name="测试", genre="玄幻", stages=[st])
+tt = StructureTemplate(id="t9", name="测试", tags=["玄幻"], stages=[st])
 d = tt.to_dict()
 tt2 = StructureTemplate.from_dict(d)
 check("阶段 themes 序列化往返", tt2.stages[0].themes == MOMENTS, str(tt2.stages[0].themes))

@@ -66,7 +66,7 @@ def test_normalize():
 
 
 def test_picks_distribute():
-    tids = [t.id for t in struct_lib.search(genre="都市")[:2]] \
+    tids = [t.id for t in struct_lib.search(tags=["都市"])[:2]] \
         or [t.id for t in struct_lib.templates[:2]]
     pids = [t.id for t in plot_lib.templates[:6]]
     if not tids or not pids:

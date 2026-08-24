@@ -59,8 +59,9 @@ def _build_next_arc(builder, tl, mode="rule"):
             tl.outlines[-1].successor = arc.id
         return arc
 
-    # rule：按题材方向模板循环取下一个
-    structs = struct_lib.search(genre=genre_from_tags(tl)) or struct_lib.templates
+    # rule：按书题材标签匹配模板循环取下一个
+    _tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
+    structs = struct_lib.search(tags=_tags) or struct_lib.templates
     if not structs:
         return None
     idx = len(tl.outlines) % len(structs)

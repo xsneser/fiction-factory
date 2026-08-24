@@ -483,8 +483,9 @@ class OutlineGenerator:
         if not self.structures:
             return []
 
-        # 获取候选模板
-        candidates = self.structures.search(sub_genre=sub_genre)
+        # 获取候选模板（题材已换标签：按书的题材标签任一命中）
+        _tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
+        candidates = self.structures.search(tags=_tags)
         if not candidates:
             candidates = self.structures.templates[:5]
         candidates = candidates[:10]  # 最多给 AI 10 个候选

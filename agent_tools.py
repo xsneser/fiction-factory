@@ -241,14 +241,15 @@ def get_build_status() -> dict:
     return _read()
 
 
-def query_structures(keyword: str = "", genre: str = "", sub_genre: str = "") -> dict:
-    """查大纲库：按题材标签/关键词（名称）返回模板清单（兼容按题材方向参数查询）。"""
+def query_structures(keyword: str = "", tags: str = "") -> dict:
+    """查大纲库：按标签/关键词（名称）返回模板清单（标签逗号/空格分隔，任一命中）。"""
     kw = (keyword or "").strip()
-    rows = struct_lib.search(sub_genre=sub_genre)
+    tag_list = [x.strip() for x in (tags or "").replace("，", " ").replace(",", " ").split() if x.strip()]
+    rows = struct_lib.search(tags=tag_list)
     if kw:
         rows = [t for t in rows if kw in (t.name or "")]
     return {"templates": [{
-        "id": t.id, "name": t.name, "genre": t.genre, "sub_genre": t.sub_genre,
+        "id": t.id, "name": t.name, "tags": t.tags,
         "total_chapters": t.total_chapters,
         "stages": [s.name for s in (t.stages or [])[:5]],
     } for t in rows[:20]]}
@@ -610,7 +611,8 @@ def outline_material_candidates(book_id: str) -> dict:
     返回的 plots 为扁平列表（{id,name,category}），可直接作 generate_full_outline 的
     picks["plots"]（扁平优先序：想先出现的桥段排前）。"""
     tl = _require_tl(book_id)
-    candidates = struct_lib.search(genre=genre_from_tags(tl))
+    _tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
+    candidates = struct_lib.search(tags=_tags)
     if not candidates:
         candidates = struct_lib.templates[:5]
     templates = [{

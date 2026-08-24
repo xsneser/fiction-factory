@@ -20,11 +20,9 @@ class StageNode:
 
 @dataclass
 class StructureTemplate:
-    """大纲结构模板"""
+    """大纲结构模板（题材已换标签，tags 是唯一题材来源）"""
     id: str
     name: str
-    genre: str                     # 题材方向：玄幻/都市/言情/悬疑/...
-    sub_genre: str = ""            # 题材细分：升级流/系统流/重生/...
     description: str = ""
     total_chapters: int = 500
     stages: list[StageNode] = field(default_factory=list)
@@ -38,7 +36,6 @@ class StructureTemplate:
     def to_dict(self) -> dict:
         return {
             "id": self.id, "name": self.name,
-            "genre": self.genre, "sub_genre": self.sub_genre,
             "description": self.description,
             "total_chapters": self.total_chapters,
             "stages": [{"name": s.name, "description": s.description,
@@ -57,9 +54,9 @@ class StructureTemplate:
 
     @classmethod
     def from_dict(cls, d: dict) -> "StructureTemplate":
+        # 旧数据仍可能带 genre/sub_genre 键：忽略即可，下次 _save() 自动清掉
         return StructureTemplate(
             id=d["id"], name=d.get("name", ""),
-            genre=d.get("genre", ""), sub_genre=d.get("sub_genre", ""),
             description=d.get("description", ""),
             total_chapters=d.get("total_chapters", 500),
             stages=[StageNode(**s) for s in d.get("stages", [])],
@@ -87,13 +84,15 @@ class StructureLibrary(JsonLibrary):
     def _builtin(cls) -> list:
         return BUILTIN_STRUCTURES
 
-    def search(self, genre: str = "", sub_genre: str = "",
-               chapter_count: int = 0) -> list[StructureTemplate]:
+    def search(self, tags=None, chapter_count: int = 0) -> list[StructureTemplate]:
+        """按标签（任一命中）/总章节数筛选模板。tags 为列表或逗号/空格分隔字符串。"""
         results = self.templates
-        if genre:
-            results = [t for t in results if genre in t.genre]
-        if sub_genre:
-            results = [t for t in results if sub_genre in t.sub_genre]
+        if isinstance(tags, str):
+            tags = [x.strip() for x in tags.replace("，", " ").replace(",", " ").split() if x.strip()]
+        if tags:
+            tag_set = {str(t).strip() for t in tags if str(t).strip()}
+            results = [t for t in results if tag_set.intersection(t.tags or [])]
+            results.sort(key=lambda t: -len(tag_set.intersection(t.tags or [])))  # 命中多的排前
         if chapter_count:
             # 找总章节数最接近的模板
             results.sort(key=lambda t: abs(t.total_chapters - chapter_count))
@@ -111,7 +110,6 @@ class StructureLibrary(JsonLibrary):
 BUILTIN_STRUCTURES = [
     StructureTemplate(
         id="struct_xuanhuan_01", name="玄幻升级流（标准版）",
-        genre="玄幻", sub_genre="升级流",
         description="最经典的玄幻修仙升级结构，从凡人到天帝的旅程",
         total_chapters=500,
         stages=[
@@ -156,7 +154,6 @@ BUILTIN_STRUCTURES = [
     ),
     StructureTemplate(
         id="struct_dushi_01", name="都市爽文（逆袭流）",
-        genre="都市", sub_genre="逆袭流",
         description="落魄主角获得外挂后逆袭人生的爽文结构",
         total_chapters=300,
         stages=[
@@ -199,7 +196,6 @@ BUILTIN_STRUCTURES = [
     ),
     StructureTemplate(
         id="struct_xuanyi_01", name="悬疑推理（单元剧+主线）",
-        genre="悬疑", sub_genre="推理",
         description="单元式案件+隐藏主线，适用于修仙/都市/灵异侦探背景",
         total_chapters=200,
         stages=[
@@ -230,7 +226,6 @@ BUILTIN_STRUCTURES = [
     ),
     StructureTemplate(
         id="struct_tianwen_01", name="言情甜文（日常向）",
-        genre="言情", sub_genre="甜宠日常",
         description="以日常互动和情感发展为主的轻松甜文",
         total_chapters=100,
         stages=[
@@ -265,7 +260,6 @@ BUILTIN_STRUCTURES = [
     ),
     StructureTemplate(
         id="struct_chuanyue_01", name="穿越/重生爽文（快节奏）",
-        genre="穿越", sub_genre="重生逆袭",
         description="快节奏的穿越/重生爽文，用于番茄/短篇平台",
         total_chapters=150,
         stages=[

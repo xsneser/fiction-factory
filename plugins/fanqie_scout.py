@@ -789,7 +789,6 @@ class LibraryIngestor:
                 ))
         template = StructureTemplate(
             id=sid, name=data.get("name",""),
-            genre="", sub_genre="",
             total_chapters=data.get("total_chapters",500),
             stages=stages,
         )

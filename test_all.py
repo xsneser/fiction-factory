@@ -61,7 +61,7 @@ assert_ok("桥段库-匹配", len(plot.match_for_chapter("主角在家族大会�
 
 struct = StructureLibrary()
 assert_ok("大纲库-数量", len(struct.templates) >= 5)
-assert_ok("大纲库-搜索", len(struct.search(genre="玄幻")) >= 1)
+assert_ok("大纲库-搜索", len(struct.search(tags=["玄幻"])) >= 1)
 
 gag = GagLibrary()
 assert_ok("笑点库-数量", len(gag.patterns) >= 10, f"{len(gag.patterns)} 模式")
