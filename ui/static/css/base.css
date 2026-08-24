@@ -123,7 +123,7 @@
         @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
         /* Agent 聊天面板（OpenClaw 式：对话 + 工具步骤卡） */
         aside#status-bar #agent-chat {
-            flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:8px;
+            flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:8px;
         }
         aside#status-bar .agent-msg { display:flex; flex-direction:column; gap:2px; }
         aside#status-bar .agent-msg-label { font-size:10px; color:var(--fg-dim); }
@@ -148,7 +148,7 @@
             font-size:10px; color:#8b949e; white-space:pre-wrap; word-break:break-all;
             margin-top:4px; padding:4px; background:#161b22; border-radius:4px; max-height:180px; overflow-y:auto;
         }
-        aside#status-bar .agent-tool-status { color:var(--fg-dim); margin-top:4px; }
+        aside#status-bar .agent-tool-status { color:var(--fg-dim); margin-top:4px; word-break:break-word; }
         aside#status-bar .agent-llm-card {   /* 调试模式「LLM 调用」卡（提示词/工具/返回JSON 三段折叠） */
             font-size:11px; background:#0d1117; border:1px solid #30363d;
             border-left:3px solid #d29922; border-radius:6px; padding:6px 10px;
@@ -259,7 +259,7 @@
         .agent-tabs { display:flex; gap:2px; border-bottom:1px solid #21262d; margin-bottom:8px; }
         .agent-tabs a { flex:1; text-align:center; padding:6px 0; color:#8b949e; cursor:pointer; font-size:12px; border-bottom:2px solid transparent; }
         .agent-tabs a.active, .agent-tabs a:hover { color:#f0f6fc; border-bottom-color:#58a6ff; }
-        #agent-tools-log { flex:1; overflow-y:auto; min-height:0; }
+        #agent-tools-log { flex:1; overflow-y:auto; overflow-x:hidden; min-height:0; }
         /* Alerts */
         .alert { padding:12px 16px; border-radius:6px; margin-bottom:16px; font-size:13px; }
         .alert.success { background:#0d3322; border:1px solid #238636; color:#3fb950; }
