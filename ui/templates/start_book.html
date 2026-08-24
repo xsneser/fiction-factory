@@ -1183,11 +1183,16 @@ window.onnecommand = function(e) {
         WZ.renderCandidates();
         if (typeof showToast === 'function') showToast('候选已生成，请在步 2 挑选一个方向', 'success');
     } else if (cmd === 'add_candidate') {
-        // 增量（合并工具 world_candidates 每次生成 1 个自动填入）：追加一张候选卡、等用户挑选。
-        var cand = (args.candidate && typeof args.candidate === 'object') ? args.candidate : null;
-        if (!cand || !cand.title) {
-            if (typeof showToast === 'function') showToast('候选缺 title，跳过', 'error');
+        // 增量（agent 每次生成 1 个自动填入）：追加一张候选卡、等用户挑选。
+        // 容错：candidate 可嵌套 args.candidate 或平铺在 args；缺 title 时用 one_liner 兜底成书名，
+        // 避免静默丢弃（服务端 drive_ui 已校验 title 必填，这是双保险）。
+        var cand = (args.candidate && typeof args.candidate === 'object')
+            ? args.candidate
+            : (args.title || args.one_liner || args.world_brief) ? args : null;
+        if (!cand) {
+            if (typeof showToast === 'function') showToast('候选载荷为空，跳过', 'error');
         } else {
+            if (!(cand.title || '').trim()) cand.title = (cand.one_liner || cand.world_brief || '候选').slice(0, 12);
             (window.__CANDIDATES__ = window.__CANDIDATES__ || []).push(cand);
             WZ._picked = false;   // 新候选集 → 需重新挑选
             WZ._task2Fired = false; WZ._agentDriving = false;

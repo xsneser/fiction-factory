@@ -24,7 +24,8 @@
       - Build (new book): navigate /books/start to the step-1 form (pre-fill idea/tags if already
         stated, leave the pen to the user) and let the user click "🚀 让 Agent 构建"; after that,
         generate candidate worlds yourself and add them to step 2 one-by-one via
-        drive_ui(add_candidate), then STOP for the user to pick (never auto-pick/next); once picked,
+        drive_ui(cmd="add_candidate", args={candidate:{title, one_liner, world_brief}}) (title is required —
+        the wizard drops candidates without it), then STOP for the user to pick (never auto-pick/next); once picked,
         generate the step-3 content (core conflict → outline+beats → world → characters → rest) and
         fill via drive_ui(set_world/set_outline/set_characters) → drive_ui(submit) → book is created
         phase=ready → get_build_status for book_id → verify.

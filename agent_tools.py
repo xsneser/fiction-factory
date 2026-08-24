@@ -1752,6 +1752,10 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
         if not (isinstance(cands, list) and cands
                 and all(isinstance(c, dict) and c.get("title") for c in cands)):
             raise RuntimeError(f"命令 {cmd} 需 candidates 非空列表（每项 {{title, one_liner?, world_brief?}}）")
+    elif cmd == "add_candidate":   # 增量追加 1 张候选卡：candidate 需 dict 且 title 非空，否则浏览器端会静默丢弃（agent 误以为成功）
+        cand = args.get("candidate")
+        if not (isinstance(cand, dict) and (cand.get("title") or "").strip()):
+            raise RuntimeError(f"命令 {cmd} 需 candidate={{title, one_liner?, world_brief?}}，title 必填")
     elif cmd == "pick_candidate":   # candidate 内嵌传入为主；idx 仅卡片高亮，可选但至少给其一
         has_candidate = isinstance(args.get("candidate"), dict) and bool(args["candidate"])
         has_idx = isinstance(args.get("idx"), int)
