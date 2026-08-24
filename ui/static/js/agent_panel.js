@@ -182,7 +182,6 @@ console.log('[agent-panel] v23 events-stream');
     var _tokenFlowShown = 0;
     var _tokenFlowRaf = null;
     var _tokenFlowPulseT = null;
-    var _lastTotal = 0;         // 最近一次轮询的代理 total（含流式中 pending）
     var _proxyActive = false;   // 代理有值（total>0）→ 事件累计不叠加，避免双计
     var _liveLlml = null;       // 「LLM 生成中」实时行（每步 LLM 流式期间实时滚动的载体）
     function _renderTokenFlow() {
@@ -206,7 +205,6 @@ console.log('[agent-panel] v23 events-stream');
             .then(function(d) {
                 if (!d || !d.ok) return;
                 var total = d.total || 0;
-                _lastTotal = total;
                 _proxyActive = (total > 0);   // 代理有值 → 事件累计不叠加（addSessionTokens 双计防护）
                 var pending = (d.pending_prompt || 0) + (d.pending_completion || 0);
                 // LLM 流式进行中 → 显示/更新「LLM 生成中」实时行；结束（pending=0）移除
