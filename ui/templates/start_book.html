@@ -279,6 +279,13 @@ var WZ = {
             if (titleEl && this.state.title) titleEl.value = this.state.title;
             var ideaEl = this.el('wz-idea');
             var hasSeed = this.state.world_brief || (ideaEl && ideaEl.value.trim());
+            // 步2 候选的设定概述(world_brief) 落到步3 的 world_summary 字段作可见起点：
+            // 旧版 desc3 字段移除后丢了这个直接回填；pickCandidate/pick_candidate 已 seed，
+            // 这里兜底 restore 等字段仍空的情况（只种空字段，不覆盖 agent/fillWorld 内容）。
+            if (this.state.world_brief) {
+                var wsmEl = this.el('wz-wb-world_summary');
+                if (wsmEl && !(wsmEl.value || '').trim()) this.seedWorldBrief(this.state.world_brief);
+            }
             this.renderStoryline();   // 恢复/返回步3时有 _outline_data 则渲染故事线
             if (this._agentDriving) {
                 var st = this.el('wz-world-status');
@@ -429,7 +436,7 @@ var WZ = {
         if (!c) return;
         // 书名 = 选中候选标题（第③步展示可编辑，不再生成）；one_liner 并入一句话作世界种子
         if (c.title) this.state.title = c.title;
-        if (c.world_brief) this.state.world_brief = c.world_brief;
+        if (c.world_brief) this.seedWorldBrief(c.world_brief);
         if (c.one_liner) {
             var ideaEl = this.el('wz-idea');
             if (ideaEl) ideaEl.value = ideaEl.value.trim() ? ideaEl.value.trim() + '。' + c.one_liner : c.one_liner;
@@ -875,6 +882,17 @@ var WZ = {
         }
         return false;
     },
+    /* 把步2 候选的设定概述(world_brief) 同步进步3 的 world_summary 字段与 state：
+       旧版 desc3 字段移除后丢了这个直接回填；字段+state.world_building.world_summary 双写，
+       使 set_world 合并跳过空值时该种子不被清空，重选候选也以新 brief 为准。 */
+    seedWorldBrief: function(brief) {
+        if (!brief) return;
+        this.state.world_brief = brief;
+        this.state.world_building = this.state.world_building || {};
+        this.state.world_building.world_summary = brief;
+        var el = this.el('wz-wb-world_summary');
+        if (el) { el.value = brief; this.autoSize(el); }
+    },
     worldToForm: function(bi) {
         bi = bi || {};
         var wb = bi.world_building || {};
@@ -1153,7 +1171,7 @@ window.onnecommand = function(e) {
         // MCP 路线：candidate 由 agent 内嵌传入（前端固定候选管线已移除），渲染卡片供实时显示
         var cand = (args.candidate && typeof args.candidate === 'object') ? args.candidate : {};
         if (cand.title) WZ.state.title = cand.title;
-        if (cand.world_brief) WZ.state.world_brief = cand.world_brief;
+        if (cand.world_brief) WZ.seedWorldBrief(cand.world_brief);
         (function() {
             var box = WZ.el('wz-candidate-box');
             if (!box || !cand.title) return;
