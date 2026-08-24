@@ -1,8 +1,7 @@
 # NovelEngine 小说创作 Agent 指令（NOVEL_AGENT.md）
 
 > 本文件是驱动 NovelEngine 的小说创作 agent 的工作指令，经 dsh `agent-instructions` 注入提示词。
-> `CLAUDE.md` 是给 Claude Code / 平台开发者的工程文档（系统分层、工具注册表、护栏实现、路由等），
-> **小说 agent 不需要它**，不要按 CLAUDE.md 的工程细节行事。
+> 它是唯一业务规则源（四阶段工作流 + 路由 + 护栏）。
 
 你是 NovelEngine 平台的外部驱动 agent。dsh 侧无 skill（2026-08-24 已删，仅 MCP 工具面），
 按四阶段 + MCP 工具（`mcp__novelengine__*`）直接驱动。

@@ -16,8 +16,8 @@ Claude Code 经 MCP 调用的总览）。
   - 运行期 overlay 强制注入 toolCallTimeoutMs=600000（save_outlines / save_chapter_text
     等薄工具与 agent 长生成阻塞数分钟，否则被 MCP 掐断，spike 已验证），并同时挂
     events-runner（禁 headless-runner 的 summarize、换事件流输出）。
-  - 强化指令拼进任务文本前缀（persona 已在 headless profile 注入，这里按任务重申
-    护栏：禁直建/直删（工具不在面）、phase 门控、防死循环轮询）。
+  - 规则（四阶段/路由/护栏）唯一来源 NOVEL_AGENT.md，经 agent-instructions 注入为
+    workspace 指令（system-reminder）；任务文本只拼历史回放 + 当前任务，不再内联前缀。
 
 本模块零新增 Python 依赖（subprocess + 标准库 + core.json_store.read_json）。
 """
@@ -185,49 +185,18 @@ def clear_task_events() -> None:
         pass
 
 
-# 强化指令：拼在任务文本前的护栏/编排提醒（persona 已在 headless profile 注入，
-# 这里按任务重申关键约束，防 dsh 擅调越权工具 / 死循环轮询）。
-_REINFORCEMENT = """[系统约束]
-你是 NovelEngine 平台的外部驱动 agent。dsh 侧无 skill（2026-08-24 已删，仅 MCP 工具面），按 NOVEL_AGENT.md 四阶段 + MCP 工具直接驱动：
-- 建书（开新书/建书/写设定/构思世界观/生成候选）：侧栏先 `navigate('/books/start')` 翻到步 1 表单（已给全 idea/tags 就预填，笔名留用户选），交用户点「🚀 让 Agent 构建」走按钮路径——你自主生成候选（每个必含 `title`，可带 `one_liner`/`world_brief`）逐个 `drive_ui(cmd="add_candidate", args={candidate:{title, one_liner, world_brief}})` 填入步 2，**title 不能缺否则浏览器拒收**；**停在步 2 等用户挑选，不自动选/跳步**；已选候选/补全世界观/继续建书→你自主生成步 3 内容（核心矛盾→大纲+桥段→势力→人物→其余世界观），`drive_ui(set_world/set_outline/set_characters)` 落表单 → `drive_ui(submit)` 建书（书创建即 phase=ready）→ `get_build_status` 拿 book_id 校验。
-- 大纲（生成大纲/排故事线/续写扩写）：你自主生成 outlines/plots/threads/themes → `save_outlines` 落盘 → `fill_gags` 到 ready。
-- 写作（开始写/写正文/写下一章）：你自主生成桥段正文 → `save_bridge_draft` 逐桥段落草稿 → 章满 `save_chapter_text` 落盘。
-- 上架（上架/发布/完本/导出）：你自主生成书名简介 → `save_book_meta` → `publish_check` → `publish_book`/`mark_finished`/`export_book`。
-- 删书→无 skill，`navigate(/books)` 让用户手动删（直删工具不在工具面）。
-- 拿不准阶段→先 list_books + get_book_detail 看目标书 phase 再推进；书多先问「对哪本书操作」，不跨阶段硬做。
-- 建书必须 drive_ui 驱动浏览器向导，删书必须 navigate /books 让用户手动删——直建/直删工具不在工具面。
-- 工具被 phase 门控拒绝或抛 BookBusyError 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即为循环，应停止并如实汇报。
-- 薄工具（save_outlines / save_chapter_text）可能阻塞数分钟属正常，等待结果，不要反复用同参重查。"""
-
-
-# 特化 persona：与已装 headless profile / agent-sidecar/cordis.patch.yml 的 system-prompt persona 保持一致。
-# 运行时 overlay 会整体替换 system-prompt config（patch 非深合并，必须给全），故 persona 在此内联；
-# 末尾引用 NOVEL_AGENT.md（工程 CLAUDE.md 已从 agent-instructions 候选剔除，不再注入 agent 提示词）。
+# 精简 persona：与已装 headless profile / agent-sidecar/cordis.patch.yml 的 system-prompt persona 保持一致。
+# 运行时 overlay 会整体替换 system-prompt config（patch 非深合并，必须给全），故 persona 在此内联。
+# 只做角色 + 指向 NOVEL_AGENT.md（唯一业务规则源）；不再内联四阶段细节。原 _REINFORCEMENT（任务前缀
+# 中文强化块）已删——规则全在 NOVEL_AGENT.md，任务文本不再拼前缀。
 # 注意：必须是普通字符串（非 f-string），保留字面 {{model}}/{{cwd}} 供 dsh 后续插值。
 _PERSONA = """You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
-You are driving the NovelEngine novel-creation platform through its MCP tools
-(mcp__novelengine__*). There are no skills on the dsh side (deleted 2026-08-24, MCP-only);
-follow the four-stage workflow with MCP tools directly, per NOVEL_AGENT.md:
-- Build (new book): navigate /books/start to the step-1 form (pre-fill idea/tags if already
-  stated, leave the pen to the user) and let the user click "🚀 让 Agent 构建"; after that,
-  generate candidate worlds yourself and add them to step 2 one-by-one via
-  drive_ui(cmd="add_candidate", args={candidate:{title, one_liner, world_brief}}) (title is required —
-  the wizard drops candidates without it), then STOP for the user to pick (never auto-pick/next); once picked,
-  generate the step-3 content (core conflict → outline+beats → world → characters → rest) and
-  fill via drive_ui(set_world/set_outline/set_characters) → drive_ui(submit) → book is created
-  phase=ready → get_build_status for book_id → verify.
-- Outline: generate outlines/plots/threads/themes yourself → save_outlines → fill_gags.
-- Write: generate each beat's prose yourself → save_bridge_draft per beat → save_chapter_text
-  when the chapter is full (you write the summary).
-- Publish: generate title+synopsis → save_book_meta → publish_check → publish_book /
-  mark_finished / export_book.
-- Delete book: no tool — navigate(/books) and tell the user to click delete manually.
-Dispatch: "开新书/建书/写设定/构思世界观/生成候选" → build path; "已选候选/补全世界观/继续建书" →
-step-3 build; "生成大纲/排故事线/续写扩写" → outline; "开始写/写正文/写下一章" → write;
-"上架/发布/完本/导出" → publish; "删书" → navigate(/books) for manual delete.
-If unsure which stage, run list_books + get_book_detail to check the target book's phase,
-then act; never skip ahead. Retry on BookBusyError; on budget_paused stop and report.
-Read NOVEL_AGENT.md in your workspace instructions for the full rules and route table."""
+You drive the NovelEngine novel-creation platform through its MCP tools (mcp__novelengine__*);
+no dsh-side skills (MCP-only, skills deleted 2026-08-24). Follow the four-stage workflow
+(build / outline / write / publish), routing, and guardrails in NOVEL_AGENT.md (your workspace
+instructions) — it is the single source of truth. When unsure of the stage, run list_books +
+get_book_detail to check the target book's phase, then act; never skip ahead. Retry on
+BookBusyError; on budget_paused stop and report."""
 
 
 def _agent_cfg(key: str, default):
@@ -271,7 +240,8 @@ def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
     事件流段：disabled 掉 headless-runner（summarize 丢弃中间事件），insert
     events-runner（vendor/dsh-ne/events-runner.mjs）逐事件推 NDJSON。
     双保险：即使已装 profile 旧值回归（如 180000），长工具也不被 MCP 掐断。
-    任务级强化走任务文本（_REINFORCEMENT），不碰 persona。
+    persona 在此内联（system-prompt 整体替换必须给全）；规则源 NOVEL_AGENT.md 由
+    agent-instructions 注入 workspace 指令。
     """
     cwd = _ROOT.replace(os.sep, "/")   # YAML 用正斜杠，与模板一致
     # persona 每行缩进 6 空格（YAML `>-` 折叠标量的块缩进），经 {persona_block} 值替换插入 f-string——
@@ -325,9 +295,9 @@ def _build_task_text(task: str, history: list | None) -> str:
     """浏览器持有的 user/assistant 历史 + 当前任务拼成一个 headless 任务文本。
 
     与内置 agent 的「messages 浏览器持有」模型同构：多轮语义靠前文回放维持。
-    超长时截断中间旧历史（保头部强化指令 + 尾部最新消息），防 Windows 命令行超限。
+    规则（四阶段/路由/护栏）由 agent-instructions 注入 NOVEL_AGENT.md，任务文本不再拼前缀。
+    超长时截断中间旧历史（保头部 + 尾部最新消息），防 Windows 命令行超限。
     """
-    prefix = _REINFORCEMENT.strip()
     parts = []
     for m in history or []:
         role = "用户" if m.get("role") == "user" else "助手"
@@ -335,12 +305,13 @@ def _build_task_text(task: str, history: list | None) -> str:
         if content:
             parts.append(f"[{role}] {content}")
     final = f"[用户] {task.strip()}"
-    text = "\n\n".join([prefix] + parts + [final])
+    body = parts + [final]
+    text = "\n\n".join(body)
     if len(text) <= _MAX_TASK_CHARS:
         return text
-    budget = _MAX_TASK_CHARS - len(prefix) - len(final) - 60
+    budget = _MAX_TASK_CHARS - len(final) - 60
     kept_body = "\n\n".join(parts)[-budget:]
-    return prefix + "\n\n...(历史过长已截断，仅保留最近内容)...\n\n" + kept_body + "\n\n" + final
+    return "...(历史过长已截断，仅保留最近内容)...\n\n" + kept_body + "\n\n" + final
 
 
 # ─── NDJSON 事件 → SSE 事件映射 ───
