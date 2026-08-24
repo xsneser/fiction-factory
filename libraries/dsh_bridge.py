@@ -513,9 +513,9 @@ def run_dsh_task(task: str, history: list | None = None,
     本任务也可被后续任务 / `/api/agent/chat/cancel` 打断（被打断则 error+done 收尾）。
     finally 里收尸（杀残留 proc + wait），避免孤儿进程。
     """
-    # 全服务单任务：新任务先打断正在跑的旧任务；清空旧任务事件存储（刷新重建只反映当前任务）
+    # 全服务单任务：新任务先打断正在跑的旧任务。事件存储（task_events.jsonl）不清空——
+    # 它是「刷新重建」的渲染源（重启服务才消失），跨任务累积，仅显式「清空对话」清空。
     interrupt_current_task()
-    clear_task_events()
     overlay = _write_runtime_overlay()
     cmd = get_dsh_argv() + [
         "--profile", get_dsh_profile(),
@@ -594,8 +594,9 @@ def run_dsh_task(task: str, history: list | None = None,
                     continue
                 saw_any = True
                 for sse in _map_dsh_event(evt, pending):
-                    if sse.get("type") in ("tool_call", "tool_result"):
-                        _append_task_event(sse)   # 持久化工具事件，供刷新后重建工具卡流
+                    # 持久化所有可渲染卡片（工具卡 + 调试模式 LLM 调用卡），供刷新后重建卡片流
+                    if sse.get("type") in ("tool_call", "tool_result", "llm_call"):
+                        _append_task_event(sse)
                     if sse.get("type") == "done":
                         saw_done_event = True
                     yield sse

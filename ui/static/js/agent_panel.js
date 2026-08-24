@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v23 events-stream');
+console.log('[agent-panel] v24 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -701,7 +701,8 @@ console.log('[agent-panel] v23 events-stream');
     }
 
     function loadRestoredTaskView() {
-        if (!history.length) return;   // 无对话则不拉（新 tab / 已清空）
+        // 渲染源 = 服务器事件存储（task_events.jsonl，重启服务才消失），不依赖 sessionStorage
+        // 聊天历史：新标签页 / 浏览器重启后历史为空，卡片仍应从存储重建。
         var seen = {};
         fetch('/api/agent/task-events')
             .then(function(r) { return r.json(); })
@@ -720,6 +721,8 @@ console.log('[agent-panel] v23 events-stream');
                             var durMs = (run.ts0 != null) ? (evt.ts - run.ts0) * 1000 : undefined;
                             finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary), durMs);
                         }
+                    } else if (evt.type === 'llm_call') {
+                        addLlmCallCard(evt);   // 调试卡同样从存储重建（文件顺序：llm_call 先于其 tool_call）
                     }
                 });
                 scrollBottom();
