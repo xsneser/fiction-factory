@@ -55,7 +55,7 @@
             setTimeout(function() {
                 t.classList.add('toast-out');
                 setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 350);
-            }, 3400);
+            }, 5000);
         }
         function flashToast(msg, type) {
             try { sessionStorage.setItem('ne_toast', JSON.stringify({m: msg, t: type || 'success'})); } catch(e) {}
