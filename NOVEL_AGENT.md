@@ -14,10 +14,9 @@
 - 用户点「🚀 让 Agent 构建」后：**先 `get_build_status()` 确认当前步**（应在步 2、未建书；不符则 `navigate('/books/start')` 对齐），再自主生成 **3~5 个候选**，逐个 `drive_ui(cmd="add_candidate", args={candidate:{title, one_liner, world_brief}})` 填入步 2 —— **title 必填**，否则浏览器拒收。
 - **停在步 2 等用户挑选，不自动选/跳步**。
 - 已选候选 / 补全世界观 / 继续建书：自主生成步 3 内容（核心矛盾 → 大纲+桥段 → 势力 → 人物 → 其余世界观），
-  `drive_ui(set_world/set_outline/set_characters)` 落表单 → `drive_ui(submit)` 建书（书创建即 phase=ready）
-  → `get_build_status` 拿 book_id 校验。
-- `drive_ui(submit)` 后：`get_build_status` 可**同参多次轮询**等建书完成（已豁免循环熔断），拿到 book_id 校验；
-  多次无进展则如实汇报用户，不无限重试。
+  `drive_ui(set_world/set_outline/set_characters)` 落表单 → `drive_ui(submit)` 建书——**submit 会等真实结果**：
+  成功返回 `book_id`（书创建即 phase=ready）；失败抛「建书失败：<原因>」；返回 `pending` 时用 `get_build_status`
+  看 `submit_error` 并如实汇报用户，不要重复 submit。
 
 ### 2 大纲（生成大纲 / 排故事线 / 续写扩写）
 - 自主生成 outlines/plots/threads/themes → `save_outlines` 落盘 → `fill_gags` 到 ready。

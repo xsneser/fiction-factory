@@ -227,7 +227,7 @@ main { overflow-y:auto; }   /* 页面可上下滚动：workspace.css 的 main{ov
 <script src="/static/js/story_line.js"></script>
 <script>
 var WZ = {
-    cur: 1, bookId: '', creating: false, _picked: false,
+    cur: 1, bookId: '', creating: false, _picked: false, submitError: '',
     _worldFilled: false, _worldFilling: false,
     _agentDriving: false,   // 已挑选完毕 → 已把步 3 交给 agent 驱动（抑制 show(3) 自动一键补全）
     _task2Fired: false,   // 本次候选下已触发过第二个建书任务（重选候选后复位允许再触发）
@@ -1011,6 +1011,8 @@ var WZ = {
         }
         if (this.creating) return;
         this.creating = true;
+        this.submitError = '';   // 清旧错误,防 agent 读到上一次失败
+        this.reportStatus();
         this.collect();
         var btn = this.el('wz-submit');
         btn.disabled = true; btn.textContent = '⏳ 创建中…';
@@ -1020,6 +1022,8 @@ var WZ = {
             body: JSON.stringify(this.state)
         }).then(function(r) { return r.json(); }).then(function(d) {
             if (!d.ok) {
+                self.submitError = d.error || '未知错误';
+                self.reportStatus();   // 失败原因进 build_status → agent 经 drive_ui(submit)/get_build_status 感知
                 if (typeof showToast === 'function') showToast('创建失败：' + (d.error || '未知错误'), 'error');
                 btn.disabled = false; btn.textContent = '🚀 创建并进入写作台';
                 self.creating = false;
@@ -1035,6 +1039,8 @@ var WZ = {
             if (typeof navigateTo === 'function') navigateTo('/books/' + d.book_id);
             else window.location.href = '/books/' + d.book_id;
         }).catch(function(e) {
+            self.submitError = e.message || '未知错误';
+            self.reportStatus();
             if (typeof showToast === 'function') showToast('创建失败：' + e.message, 'error');
             btn.disabled = false; btn.textContent = '🚀 创建并进入写作台';
             self.creating = false;
@@ -1074,7 +1080,8 @@ var WZ = {
                     has_picks: !!(this.state && this.state._outline_picks),
                     has_outline: !!(this.state && this.state._outline_data
                                     && this.state._outline_data.outlines
-                                    && this.state._outline_data.outlines.length)
+                                    && this.state._outline_data.outlines.length),
+                    submit_error: this.submitError || ''
                 })
             }).catch(function() {});
         } catch (e) {}

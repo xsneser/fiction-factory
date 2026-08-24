@@ -1123,7 +1123,31 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
     if cmd == "reset":
         _clear_wizard_candidates()   # 新会话清空候选持久化，防跨会话残留
     from libraries.nav_intent import push_ui_command
+    # submit 半同步：推送前快照 submit_error，只对「新错误」反应，规避陈旧错误误判
+    _read_st = None
+    _old_err = ""
+    if cmd == "submit":
+        try:
+            from libraries.build_status import get_build_status as _read_st
+            _old_err = (_read_st() or {}).get("submit_error") or ""
+        except Exception:
+            pass
     push_ui_command(cmd, args)
+    if cmd == "submit":
+        # 等真实建书结果：浏览器 ~2.5s 轮询消费 submit → WZ.createBook() → POST /books/start
+        # → reportStatus 写 book_id(成功)或 submit_error(失败)。成功返回 book_id,失败 raise(工具卡红叉),
+        # 超时返回 pending(不 raise,防 agent 重复 submit)。
+        _deadline = time.time() + 15
+        while time.time() < _deadline:
+            time.sleep(0.5)
+            st = (_read_st() or {}) if _read_st else {}
+            if st.get("created") and st.get("book_id"):
+                return {"ok": True, "book_id": st.get("book_id"), "__ui_command__": "submit"}
+            err = st.get("submit_error") or ""
+            if err and err != _old_err:
+                raise RuntimeError(f"建书失败：{err}")
+        return {"ok": False, "pending": True,
+                "message": "建书仍在进行/超时,请 get_build_status 确认 submit_error", "__ui_command__": "submit"}
     return {"__ui_command__": cmd, "cmd": cmd}
 
 

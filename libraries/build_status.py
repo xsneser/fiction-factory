@@ -24,6 +24,7 @@ _DEFAULTS = {
     "has_picks": False,
     "has_outline": False,
     "updated_at": "",
+    "submit_error": "",   # 建书 submit 失败原因(浏览器上报;agent 经 drive_ui(submit)/get_build_status 感知)
 }
 
 
