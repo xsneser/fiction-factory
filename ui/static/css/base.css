@@ -149,6 +149,10 @@
             margin-top:4px; padding:4px; background:#161b22; border-radius:4px; max-height:180px; overflow-y:auto;
         }
         aside#status-bar .agent-tool-status { color:var(--fg-dim); margin-top:4px; }
+        aside#status-bar .agent-llm-live { font-size:11px; color:#58a6ff; background:#0d1117;
+            border:1px dashed #58a6ff66; border-radius:6px; padding:6px 10px;
+            animation: agent-llm-live-pulse 1.2s ease-in-out infinite; }
+        @keyframes agent-llm-live-pulse { 0%,100%{opacity:1;} 50%{opacity:.55;} }
         aside#status-bar .agent-token-flow { font-size:11px; color:#8b949e; text-align:right;
             padding:2px 10px; border-top:1px solid #21262d; background:#0d1117; transition:color .3s; }
         aside#status-bar .agent-token-flow.pulse { color:#58a6ff; }   /* 新流量到达脉冲提亮，模拟流量滚动 */

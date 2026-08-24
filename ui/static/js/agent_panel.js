@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v22 events-stream');
+console.log('[agent-panel] v23 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -182,6 +182,9 @@ console.log('[agent-panel] v22 events-stream');
     var _tokenFlowShown = 0;
     var _tokenFlowRaf = null;
     var _tokenFlowPulseT = null;
+    var _lastTotal = 0;         // 最近一次轮询的代理 total（含流式中 pending）
+    var _proxyActive = false;   // 代理有值（total>0）→ 事件累计不叠加，避免双计
+    var _liveLlml = null;       // 「LLM 生成中」实时行（每步 LLM 流式期间实时滚动的载体）
     function _renderTokenFlow() {
         if (tokenFlowEl) tokenFlowEl.textContent = '⚡ '
             + (_tokenFlowShown >= 1000 ? (_tokenFlowShown / 1000).toFixed(1) + 'k' : _tokenFlowShown) + ' tokens';
@@ -194,28 +197,48 @@ console.log('[agent-panel] v22 events-stream');
         _renderTokenFlow();
         _tokenFlowRaf = requestAnimationFrame(_animateTokenFlow);
     }
-    // 实时 token 流量：2s 轮询本地 API 代理检测器（show-me-the-story tokenPoll 模式），
-    // 拉取 total 驱动平滑滚动；不再依赖 tool_call 事件推送。
+    // 实时 token 流量：500ms 轮询本地 API 代理检测器（show-me-the-story tokenPoll 模式）。
+    // total 含流式中 pending → LLM 调用期间状态栏实时滚动；pending>0 时在聊天流里
+    // 显示「⏳ LLM 生成中」实时行（每步 LLM 的 token 从开始到结束实时增长，随后落工具卡）。
     function pollTokenUsage() {
         fetch('/api/agent/token-usage')
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d || !d.ok) return;
                 var total = d.total || 0;
+                _lastTotal = total;
+                _proxyActive = (total > 0);   // 代理有值 → 事件累计不叠加（addSessionTokens 双计防护）
+                var pending = (d.pending_prompt || 0) + (d.pending_completion || 0);
+                // LLM 流式进行中 → 显示/更新「LLM 生成中」实时行；结束（pending=0）移除
+                if (pending > 0) {
+                    if (!_liveLlml) {
+                        _liveLlml = el('div', 'agent-llm-live', '');
+                        chat.appendChild(_liveLlml);
+                        scrollBottom();
+                    }
+                    _liveLlml.textContent = '⏳ LLM 生成中 · '
+                        + formatTokens({ input: d.pending_prompt || 0, output: d.pending_completion || 0 });
+                } else if (_liveLlml) {
+                    _liveLlml.remove();
+                    _liveLlml = null;
+                }
                 if (total > 0 && total !== sessionTokens) {   // 代理有值才覆盖（dsh 未走代理时保持事件累计）
                     sessionTokens = total;
                     if (tokenFlowEl) {
                         if (!_tokenFlowRaf) _animateTokenFlow();
-                        // 脉冲高亮：新流量到达时短暂提亮，模拟流量滚动
-                        tokenFlowEl.classList.add('pulse');
-                        clearTimeout(_tokenFlowPulseT);
-                        _tokenFlowPulseT = setTimeout(function() { tokenFlowEl.classList.remove('pulse'); }, 400);
+                        // 脉冲只在每次 LLM 结束提交时（pending=0）闪，流式中只滚动不闪（避免连闪）
+                        if (pending === 0) {
+                            tokenFlowEl.classList.add('pulse');
+                            clearTimeout(_tokenFlowPulseT);
+                            _tokenFlowPulseT = setTimeout(function() { tokenFlowEl.classList.remove('pulse'); }, 400);
+                        }
                     }
                 }
             })
             .catch(function() {});
     }
     function addSessionTokens(usage) {
+        if (_proxyActive) return;   // 代理已实时计数（含流式中 pending），事件累计叠加会双计；代理失效时照常兜底
         if (!usage) return;
         var n = (usage.input || 0) + (usage.output || 0) + (usage.cache_read || 0) + (usage.cache_write || 0);
         if (!n) return;
@@ -229,13 +252,14 @@ console.log('[agent-panel] v22 events-stream');
     }
     var tokenPollTimer = null;
     function startTokenPoll() {
-        if (!tokenPollTimer) tokenPollTimer = setInterval(pollTokenUsage, 2000);
+        if (!tokenPollTimer) tokenPollTimer = setInterval(pollTokenUsage, 500);   // 500ms：流式中 token 实时滚动
         pollTokenUsage();
     }
     function resetTokenFlow() {
         sessionTokens = 0;
         _tokenFlowShown = 0;
         if (_tokenFlowRaf) { cancelAnimationFrame(_tokenFlowRaf); _tokenFlowRaf = null; }
+        if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }   // 清掉残留的「LLM 生成中」行
         _renderTokenFlow();
         fetch('/api/agent/token-usage/clear', { method: 'POST' }).catch(function() {});   // 清零代理累计
     }
@@ -394,6 +418,7 @@ console.log('[agent-panel] v22 events-stream');
         var t = evt.type;
         if (t === 'tool_call') {
             // dsh 核心实时推送：工具开始 → 建卡（usage = 该调用的真实 token 用量）
+            if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }   // LLM 已结束，实时行让位给工具卡
             currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage);
             addSessionTokens(evt.usage);   // 事件驱动累计（dsh 真实 usage）
         } else if (t === 'tool_result') {
@@ -401,7 +426,7 @@ console.log('[agent-panel] v22 events-stream');
             // navigate/drive_ui 的 tool/call 也会建卡，故正常情况都配得到。
             var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
             if (evt.callId) delete toolCards[evt.callId];
-            if (run) finishToolCard(run, evt.ok ? '✅' : '❌');   // 卡片内容精简：只留状态图标，结果正文不写卡（工具日志页签有全量）
+            if (run) finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary));
         } else if (t === 'navigate') {
             handleNavigate(evt.url);            // dsh 调用 navigate → 实时切页
         } else if (t === 'ui_command') {
@@ -414,6 +439,7 @@ console.log('[agent-panel] v22 events-stream');
             addMsg('assistant', '⚠️ ' + (evt.message || '发生错误'));
             if (currentToolRun) finishToolCard(currentToolRun, '❌ 失败');
         } else if (t === 'done') {
+            if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }   // 会话结束清实时行
             // C3：收尾所有未 resolve 的工具卡（result 缺失/滞后时兜底），清空映射
             Object.keys(toolCards).forEach(function(id) {
                 finishToolCard(toolCards[id], '⚠️ 会话结束未收尾');
@@ -526,15 +552,9 @@ console.log('[agent-panel] v22 events-stream');
     // 任务卡（「让 Agent 构建」/ 写作台技能卡触发时替代用户气泡展示，任务文本仍进 history 供 SSE 取）
     function addBuildCard(text, label) {
         var card = el('div', 'agent-tool-card');
-        var head = el('div', 'agent-tool-head', label || '🚀 建书任务');
-        head.title = '点击展开/收起任务内容';
-        head.style.cursor = 'pointer';
+        card.appendChild(el('div', 'agent-tool-head', label || '🚀 建书任务'));
         var body = el('div', 'agent-tool-detail', text || '');
-        body.style.display = 'none';   // 任务卡内容默认收起：只留标题卡，点开看正文
-        head.addEventListener('click', function() {
-            body.style.display = body.style.display === 'none' ? 'block' : 'none';
-        });
-        card.appendChild(head);
+        body.style.display = 'block';
         card.appendChild(body);
         chat.appendChild(card);
         scrollBottom();
@@ -637,7 +657,7 @@ console.log('[agent-panel] v22 events-stream');
                         if (evt.callId) delete toolCards[evt.callId];
                         if (run) {
                             var durMs = (run.ts0 != null) ? (evt.ts - run.ts0) * 1000 : undefined;
-                            finishToolCard(run, evt.ok ? '✅' : '❌', durMs);   // 卡片内容精简：只留状态图标
+                            finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary), durMs);
                         }
                     }
                 });

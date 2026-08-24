@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}NovelEngine — 小说工厂{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v3">
     <script src="{{ url_for('static', filename='js/base.js') }}"></script>
     {% block head %}{% endblock %}
 </head>
@@ -63,7 +63,7 @@
     <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开" aria-label="展开">▶</button>
 
     <div id="toast-root"></div>
-    <script src="{{ url_for('static', filename='js/agent_panel.js') }}?v22"></script>
+    <script src="{{ url_for('static', filename='js/agent_panel.js') }}?v23"></script>
 </body>
 </html>
 
