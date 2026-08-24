@@ -321,12 +321,12 @@ var WZ = {
             }
             return;
         }
-        // 步 2「已挑选完毕」→ 交给 agent 继续建书：自动发第二个任务（novel-build skill），
+        // 步 2「已挑选完毕」→ 交给 agent 继续建书：自动发第二个建书任务（dsh 侧 skill 已于 2026-08-24 删除，agent 用 MCP 直驱），
         // 步 3 由 agent 分阶段补全世界观 → submit → 大纲。取代旧「前端自动跳步 + 一键补全」路径。
         if (this.cur === 2 && this._picked && !this._task2Fired) {
             this._task2Fired = true;
             this._agentDriving = true;
-            var task = '用 novel-build 流程继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」）：'
+            var task = '请继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」）：'
                 + '你自主生成 步3 内容（核心矛盾→大纲+桥段→势力→人物→其余世界观维度，保持上下文连续），'
                 + '分别 drive_ui(set_world/set_outline/set_characters) 落表单 → drive_ui(submit) 建书'
                 + '（书创建即带大纲 phase=ready）→ get_build_status 拿 book_id 校验 → navigate 写作台。'
@@ -410,7 +410,7 @@ var WZ = {
         this.show(2);
         var box = this.el('wz-candidate-box');
         if (box) box.innerHTML = '<div class="wz-borrow-preview">⏳ 等待 Agent 生成候选…</div>';
-        var task = '用 novel-build-candidates 流程建这本新书（已完成步 1 填表、已自动进步 2）：一句话设定「' + idea + '」'
+        var task = '请为这本新书生成世界观候选（已完成步 1 填表、已自动进步 2）：一句话设定「' + idea + '」'
             + '题材标签「' + (tags.join('、') || '（未选）') + '」'
             + '笔名「' + (pen || '（未选，请帮我选）') + '」。'
             + '你自主生成 5 个差异化世界观候选（记住已生成的 title），逐个 drive_ui(add_candidate) 填入步 2，'
