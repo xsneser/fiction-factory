@@ -1049,6 +1049,17 @@ _WIZARD_CMDS = {
     "submit": (),
 }
 
+# 步敏感命令 → 需求向导步（步 1 表单 / 步 2 候选 / 步 3 内容构建）。
+# drive_ui 执行前据此校验当前步——把浏览器「错误步静默丢弃命令」变成「真错误」（agent 能收到拒绝信息）。
+# next/prev/reset 不入此表（跨步移动/重置任何时候都允许）。
+_WIZARD_STEP_GATE = {
+    "set_field": 1, "set_tags": 1,
+    "set_candidates": 2, "add_candidate": 2, "pick_candidate": 2,
+    "load_candidates": 2, "skip_candidates": 2,
+    "set_world": 3, "set_characters": 3, "set_picks": 3,
+    "set_outline": 3, "fill_world": 3, "submit": 3,
+}
+
 
 def drive_ui(cmd: str, args: dict = None) -> dict:
     """驱动「启动新书」向导 UI（命令桥）：set_field/set_tags/set_characters/set_candidates/
@@ -1090,6 +1101,25 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
         for k in _WIZARD_CMDS[cmd]:
             if not args.get(k):
                 raise RuntimeError(f"命令 {cmd} 缺少必填参数：{k}")
+    # 步校验：把「浏览器错误步静默丢弃命令」变成「真错误」（agent 能收到拒绝信息）。
+    # 宽松阀：build_status 无真实记录（updated_at 空 = 浏览器从未上报向导状态）时跳过，
+    # 避免误伤向导未启动 / 测试场景（mcp_smoke 等）。
+    req_step = _WIZARD_STEP_GATE.get(cmd)
+    if req_step is not None:
+        try:
+            from libraries.build_status import get_build_status as _read_st
+            st = _read_st() or {}
+        except Exception:
+            st = {}
+        if st.get("updated_at"):
+            if st.get("created"):
+                raise RuntimeError(
+                    f"书已创建(book_id={st.get('book_id')})，建书流程已结束，不能执行 {cmd}")
+            cur = st.get("cur")
+            if cur is not None and cur != req_step:
+                raise RuntimeError(
+                    f"向导当前在步 {cur}，{cmd} 需在步 {req_step}；"
+                    "请先 get_build_status 确认当前步，或 drive_ui(next/prev) 对齐后再操作")
     if cmd == "reset":
         _clear_wizard_candidates()   # 新会话清空候选持久化，防跨会话残留
     from libraries.nav_intent import push_ui_command

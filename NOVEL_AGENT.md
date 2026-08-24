@@ -16,6 +16,8 @@
 - 已选候选 / 补全世界观 / 继续建书：自主生成步 3 内容（核心矛盾 → 大纲+桥段 → 势力 → 人物 → 其余世界观），
   `drive_ui(set_world/set_outline/set_characters)` 落表单 → `drive_ui(submit)` 建书（书创建即 phase=ready）
   → `get_build_status` 拿 book_id 校验。
+- `drive_ui(submit)` 后：`get_build_status` 可**同参多次轮询**等建书完成（已豁免循环熔断），拿到 book_id 校验；
+  多次无进展则如实汇报用户，不无限重试。
 
 ### 2 大纲（生成大纲 / 排故事线 / 续写扩写）
 - 自主生成 outlines/plots/threads/themes → `save_outlines` 落盘 → `fill_gags` 到 ready。

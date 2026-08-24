@@ -129,6 +129,14 @@ async def main():
                       and (detail.get("protagonist") or {}).get("name") == "王小明",
                       f"phase={detail.get('phase')}")
 
+                # drive_ui 步校验的宽松阀：写默认 build_status（updated_at 空 = 无真实向导状态），
+                # 使 set_outline 等步敏感命令的步校验跳过，测试不依赖 live 向导状态。
+                try:
+                    from libraries.build_status import set_build_status as _reset_st
+                    _reset_st({})
+                except Exception:
+                    pass
+
                 # ── 3. navigate + drive_ui → 意图队列 ──
                 nav = await call_json(session, "navigate", {"url": "/books", "tab": "tools"})
                 check("navigate 返回 __navigate__", nav.get("__navigate__") == "/books")

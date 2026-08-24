@@ -68,7 +68,10 @@ def _mcp_summary(result) -> str:
                   "passed", "score", "chosen", "book_id", "deleted", "cmd",
                   "issue_count", "overdue_count", "advanced_count",
                   "stalled_count", "fulfilled_count",
-                  "review_score", "drop_risk_count", "complete"):
+                  "review_score", "drop_risk_count", "complete",
+                  # get_build_status 建书状态：摘要须随 cur/creating/created 变化，
+                  # 否则 LoopGuard 把「等异步建书完成的合法轮询」误判为无进展循环
+                  "cur", "creating", "created"):
             if k in result and result[k] not in (None, "", False):
                 return f"{k}={result[k]}"
         for k in ("summary", "message", "reply"):

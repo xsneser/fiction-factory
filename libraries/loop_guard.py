@@ -22,6 +22,11 @@ _REPEAT_WINDOW = 5      # 观察近 N 步
 _REPEAT_COUNT = 3       # 同签名同结果出现 ≥3 次
 _MAX_CONSEC_FAIL = 5    # 连续失败熔断
 
+# 同参无进展熔断豁免：get_build_status 是「等异步建书完成」的合法状态轮询，
+# 同参同结果不代表无进展（结果变化由 _mcp_summary 的动态 cur/creating/created 摘要体现）。
+# 只豁免同参熔断；连续失败熔断仍生效。get_book_detail 等死轮询不豁免。
+_NO_PROGRESS_EXEMPT = {"get_build_status"}
+
 
 def _digest(value) -> str:
     try:
@@ -46,8 +51,8 @@ class LoopGuard:
         with self._lock:
             if self._consec_fail >= _MAX_CONSEC_FAIL:
                 raise RuntimeError(
-                    f"LoopGuard 熔断：连续 {self._consec_fail} 次工具调用失败"
-                    "（疑似死循环）。请检查 phase 状态或改变策略后重试。")
+                    f"连续 {self._consec_fail} 次工具调用失败（疑似死循环），"
+                    "应停止并如实汇报，不要继续同参重试。")
 
     def after_call(self, tool: str, args: dict, ok: bool, result_summary: str) -> None:
         """调用后记账：更新近 window 步与连续失败计数；命中无进展循环 → 熔断。"""
@@ -58,6 +63,9 @@ class LoopGuard:
                 self._consec_fail += 1
                 return
             self._consec_fail = 0
+            # 同参无进展熔断豁免工具（如 get_build_status 状态轮询）：跳过记账与同参熔断
+            if tool in _NO_PROGRESS_EXEMPT:
+                return
             arg_digest = _digest(args)
             res_digest = _digest({"s": (result_summary or "")[:200]})
             self._steps.append((tool, arg_digest, res_digest))
@@ -71,8 +79,8 @@ class LoopGuard:
                 results = {r for (_t, _a, r) in matches}
                 if len(results) == 1:   # 全部同参调用结果相同 = 无进展
                     raise RuntimeError(
-                        f"LoopGuard 熔断：{tool} 同参调用 ≥{_REPEAT_COUNT} 次且结果无进展"
-                        f"（最近 {len(matches)} 次摘要一致）。疑似死循环轮询，请检查 phase 状态或改变策略。")
+                        f"同一只读工具「{tool}」同参调用 ≥{_REPEAT_COUNT} 次且结果无进展"
+                        f"（最近 {len(matches)} 次摘要一致，疑似循环轮询），应停止并如实汇报。")
 
 
 _guard = LoopGuard()
