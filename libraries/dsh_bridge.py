@@ -188,7 +188,7 @@ def clear_task_events() -> None:
 # 强化指令：拼在任务文本前的护栏/编排提醒（persona 已在 headless profile 注入，
 # 这里按任务重申关键约束，防 dsh 擅调越权工具 / 死循环轮询）。
 _REINFORCEMENT = """[系统约束]
-你是 NovelEngine 平台的外部驱动 agent。dsh 侧无 skill（2026-08-24 已删，仅 MCP 工具面），按 CLAUDE.md 四阶段 + MCP 工具直接驱动：
+你是 NovelEngine 平台的外部驱动 agent。dsh 侧无 skill（2026-08-24 已删，仅 MCP 工具面），按 NOVEL_AGENT.md 四阶段 + MCP 工具直接驱动：
 - 建书（开新书/建书/写设定/构思世界观/生成候选）：侧栏先 `navigate('/books/start')` 翻到步 1 表单（已给全 idea/tags 就预填，笔名留用户选），交用户点「🚀 让 Agent 构建」走按钮路径——你自主生成候选（每个必含 `title`，可带 `one_liner`/`world_brief`）逐个 `drive_ui(cmd="add_candidate", args={candidate:{title, one_liner, world_brief}})` 填入步 2，**title 不能缺否则浏览器拒收**；**停在步 2 等用户挑选，不自动选/跳步**；已选候选/补全世界观/继续建书→你自主生成步 3 内容（核心矛盾→大纲+桥段→势力→人物→其余世界观），`drive_ui(set_world/set_outline/set_characters)` 落表单 → `drive_ui(submit)` 建书（书创建即 phase=ready）→ `get_build_status` 拿 book_id 校验。
 - 大纲（生成大纲/排故事线/续写扩写）：你自主生成 outlines/plots/threads/themes → `save_outlines` 落盘 → `fill_gags` 到 ready。
 - 写作（开始写/写正文/写下一章）：你自主生成桥段正文 → `save_bridge_draft` 逐桥段落草稿 → 章满 `save_chapter_text` 落盘。
@@ -198,6 +198,36 @@ _REINFORCEMENT = """[系统约束]
 - 建书必须 drive_ui 驱动浏览器向导，删书必须 navigate /books 让用户手动删——直建/直删工具不在工具面。
 - 工具被 phase 门控拒绝或抛 BookBusyError 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即为循环，应停止并如实汇报。
 - 薄工具（save_outlines / save_chapter_text）可能阻塞数分钟属正常，等待结果，不要反复用同参重查。"""
+
+
+# 特化 persona：与已装 headless profile / agent-sidecar/cordis.patch.yml 的 system-prompt persona 保持一致。
+# 运行时 overlay 会整体替换 system-prompt config（patch 非深合并，必须给全），故 persona 在此内联；
+# 末尾引用 NOVEL_AGENT.md（工程 CLAUDE.md 已从 agent-instructions 候选剔除，不再注入 agent 提示词）。
+# 注意：必须是普通字符串（非 f-string），保留字面 {{model}}/{{cwd}} 供 dsh 后续插值。
+_PERSONA = """You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
+You are driving the NovelEngine novel-creation platform through its MCP tools
+(mcp__novelengine__*). There are no skills on the dsh side (deleted 2026-08-24, MCP-only);
+follow the four-stage workflow with MCP tools directly, per NOVEL_AGENT.md:
+- Build (new book): navigate /books/start to the step-1 form (pre-fill idea/tags if already
+  stated, leave the pen to the user) and let the user click "🚀 让 Agent 构建"; after that,
+  generate candidate worlds yourself and add them to step 2 one-by-one via
+  drive_ui(cmd="add_candidate", args={candidate:{title, one_liner, world_brief}}) (title is required —
+  the wizard drops candidates without it), then STOP for the user to pick (never auto-pick/next); once picked,
+  generate the step-3 content (core conflict → outline+beats → world → characters → rest) and
+  fill via drive_ui(set_world/set_outline/set_characters) → drive_ui(submit) → book is created
+  phase=ready → get_build_status for book_id → verify.
+- Outline: generate outlines/plots/threads/themes yourself → save_outlines → fill_gags.
+- Write: generate each beat's prose yourself → save_bridge_draft per beat → save_chapter_text
+  when the chapter is full (you write the summary).
+- Publish: generate title+synopsis → save_book_meta → publish_check → publish_book /
+  mark_finished / export_book.
+- Delete book: no tool — navigate(/books) and tell the user to click delete manually.
+Dispatch: "开新书/建书/写设定/构思世界观/生成候选" → build path; "已选候选/补全世界观/继续建书" →
+step-3 build; "生成大纲/排故事线/续写扩写" → outline; "开始写/写正文/写下一章" → write;
+"上架/发布/完本/导出" → publish; "删书" → navigate(/books) for manual delete.
+If unsure which stage, run list_books + get_book_detail to check the target book's phase,
+then act; never skip ahead. Retry on BookBusyError; on budget_paused stop and report.
+Read NOVEL_AGENT.md in your workspace instructions for the full rules and route table."""
 
 
 def _agent_cfg(key: str, default):
@@ -244,6 +274,9 @@ def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
     任务级强化走任务文本（_REINFORCEMENT），不碰 persona。
     """
     cwd = _ROOT.replace(os.sep, "/")   # YAML 用正斜杠，与模板一致
+    # persona 每行缩进 6 空格（YAML `>-` 折叠标量的块缩进），经 {persona_block} 值替换插入 f-string——
+    # 值内 {{model}}/{{cwd}} 不会被 f-string 二次解析，保持字面供 dsh 插值。
+    persona_block = "\n".join("      " + ln for ln in _PERSONA.strip().splitlines())
     yaml_text = (
         "# dsh 运行期 overlay（dsh_bridge 生成）—— 强制长工具超时 + 事件流 runner。\n"
         "# 注意：dsh patch 对 id-targeted entry 整体替换 config，必须给全；\n"
@@ -258,6 +291,17 @@ def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
         "    args: ['mcp_server.py', '--source', 'dsh']\n"
         f"    cwd: '{cwd}'\n"
         f"    toolCallTimeoutMs: {timeout_ms}\n"
+        "# workspace instructions：只注入小说写作指令（NOVEL_AGENT.md），不注入给 Claude Code 的工程 CLAUDE.md\n"
+        "- id: agent-instructions\n"
+        "  config:\n"
+        "    maxBytes: 20000\n"
+        "    instructionFileCandidates: ['NOVEL_AGENT.md']\n"
+        "    localInstructionFileCandidates: []\n"
+        "# 系统提示词：persona + 关运行时快照（沙箱/审批对纯 MCP 小说 agent 无意义，对应工具已禁）\n"
+        "- id: system-prompt\n"
+        "  config:\n"
+        "    includeRuntimeContext: false\n"
+        f"    persona: >-\n{persona_block}\n"
         "# 事件流：禁 headless-runner（只打印最终文本），换 events-runner 推 NDJSON。\n"
         "- id: headless-runner\n"
         "  disabled: true\n"

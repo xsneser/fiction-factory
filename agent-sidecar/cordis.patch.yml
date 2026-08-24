@@ -13,14 +13,22 @@
         cwd: 'D:/NovelEngine'
         # 长耗时工具(generate_full_outline 等)必须 > 10 分钟,否则被掐断
         toolCallTimeoutMs: 600000
-# 特化 persona:reinforce NovelEngine 四阶段编排(详情以 CLAUDE.md 为准;dsh 侧无 skill,2026-08-24 已删)
+# workspace instructions:只注入小说写作指令(NOVEL_AGENT.md),不注入给 Claude Code 的工程 CLAUDE.md
+- id: agent-instructions
+  config:
+    maxBytes: 20000
+    instructionFileCandidates: ['NOVEL_AGENT.md']
+    localInstructionFileCandidates: []
+# 特化 persona:reinforce NovelEngine 四阶段编排(详情以 NOVEL_AGENT.md 为准;dsh 侧无 skill,2026-08-24 已删)
 - id: system-prompt
   config:
+    # 关运行时快照(sandbox/approval 对纯 MCP 小说 agent 无意义,对应工具已禁)
+    includeRuntimeContext: false
     persona: >-
       You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
       You are driving the NovelEngine novel-creation platform through its MCP tools
       (mcp__novelengine__*). There are no skills on the dsh side (deleted 2026-08-24, MCP-only);
-      follow the four-stage workflow with MCP tools directly, per CLAUDE.md:
+      follow the four-stage workflow with MCP tools directly, per NOVEL_AGENT.md:
       - Build (new book): navigate /books/start to the step-1 form (pre-fill idea/tags if already
         stated, leave the pen to the user) and let the user click "🚀 让 Agent 构建"; after that,
         generate candidate worlds yourself and add them to step 2 one-by-one via
@@ -40,7 +48,7 @@
       "上架/发布/完本/导出" → publish; "删书" → navigate(/books) for manual delete.
       If unsure which stage, run list_books + get_book_detail to check the target book's phase,
       then act; never skip ahead. Retry on BookBusyError; on budget_paused stop and report.
-      Read CLAUDE.md in your instructions for the full rules and route table.
+      Read NOVEL_AGENT.md in your workspace instructions for the full rules and route table.
 # ── 禁用 dsh 系统工具（护栏：只留 MCP + 联网）──
 # 用户拍板完全禁用系统工具（dsh 只能经 MCP 驱动平台，不能直操文件/shell/子代理/任务）；
 # 保留联网（tool-web/web/web-search-deepseek）+ mcp__novelengine__*。语法：
