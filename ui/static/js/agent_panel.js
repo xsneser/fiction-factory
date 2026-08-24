@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v21 events-stream');
+console.log('[agent-panel] v22 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -50,7 +50,11 @@ console.log('[agent-panel] v21 events-stream');
         save_basic_info: '保存基础设定', tag_punch_points: '标注爽点', world_candidates: '生成世界观候选',
         write_chapter: '写章节', write_next_bridge: '写下一桥段',
         save_bridge_draft: '保存桥段', save_chapter_text: '保存整章',
-        save_outlines: '保存大纲', save_book_meta: '保存书名简介'
+        save_outlines: '保存大纲', save_book_meta: '保存书名简介',
+        skill: '技能', chapter_quality_gate: '章节质量门禁', diagnose_continuity: '连续性扫描',
+        diagnose_promises: '伏笔扫描', discover_hot: '侦察热榜', fetch_novel: '抓取小说',
+        get_writing_context: '读取写作上下文', list_snapshots: '列出快照', preview_diff: '预览快照差异',
+        rollback_book: '回滚书'
     };
     var CMD_ZH = {
         set_world: '写入世界观', set_characters: '写入角色', set_candidates: '填入候选',
@@ -397,7 +401,7 @@ console.log('[agent-panel] v21 events-stream');
             // navigate/drive_ui 的 tool/call 也会建卡，故正常情况都配得到。
             var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
             if (evt.callId) delete toolCards[evt.callId];
-            if (run) finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary));
+            if (run) finishToolCard(run, evt.ok ? '✅' : '❌');   // 卡片内容精简：只留状态图标，结果正文不写卡（工具日志页签有全量）
         } else if (t === 'navigate') {
             handleNavigate(evt.url);            // dsh 调用 navigate → 实时切页
         } else if (t === 'ui_command') {
@@ -522,9 +526,15 @@ console.log('[agent-panel] v21 events-stream');
     // 任务卡（「让 Agent 构建」/ 写作台技能卡触发时替代用户气泡展示，任务文本仍进 history 供 SSE 取）
     function addBuildCard(text, label) {
         var card = el('div', 'agent-tool-card');
-        card.appendChild(el('div', 'agent-tool-head', label || '🚀 建书任务'));
+        var head = el('div', 'agent-tool-head', label || '🚀 建书任务');
+        head.title = '点击展开/收起任务内容';
+        head.style.cursor = 'pointer';
         var body = el('div', 'agent-tool-detail', text || '');
-        body.style.display = 'block';
+        body.style.display = 'none';   // 任务卡内容默认收起：只留标题卡，点开看正文
+        head.addEventListener('click', function() {
+            body.style.display = body.style.display === 'none' ? 'block' : 'none';
+        });
+        card.appendChild(head);
         card.appendChild(body);
         chat.appendChild(card);
         scrollBottom();
@@ -627,7 +637,7 @@ console.log('[agent-panel] v21 events-stream');
                         if (evt.callId) delete toolCards[evt.callId];
                         if (run) {
                             var durMs = (run.ts0 != null) ? (evt.ts - run.ts0) * 1000 : undefined;
-                            finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary), durMs);
+                            finishToolCard(run, evt.ok ? '✅' : '❌', durMs);   // 卡片内容精简：只留状态图标
                         }
                     }
                 });
