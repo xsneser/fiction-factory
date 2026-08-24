@@ -124,7 +124,12 @@ class _Handler(BaseHTTPRequestHandler):
             "Content-Type": "application/json",
             "Accept": "text/event-stream" if payload.get("stream") else "application/json",
         }
-        if api_key:
+        # 优先透传调用方自带的 Authorization（dsh 用 ~/.dsh/.env 的 key），
+        # 仅当缺失时回退 api.json 的 key——避免 dsh 流量被静默改记到平台 key 名下。
+        incoming_auth = self.headers.get("Authorization")
+        if incoming_auth:
+            headers["Authorization"] = incoming_auth
+        elif api_key:
             headers["Authorization"] = "Bearer " + api_key
         try:
             resp = requests.post(target, json=payload, headers=headers, stream=True, timeout=600)

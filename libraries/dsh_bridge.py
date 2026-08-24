@@ -29,6 +29,8 @@ import subprocess
 import threading
 import time
 
+from libraries.token_proxy import ensure_proxy   # 拉起本地 token 检测代理（dsh 走它计 token）
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _OVERLAY_PATH = os.path.join(_ROOT, "storage", "dsh_runtime.yml")
 
@@ -515,10 +517,14 @@ def run_dsh_task(task: str, history: list | None = None,
     saw_done_event = False
     try:
         try:
+            ensure_proxy()   # 保证本地 token 代理(58082)已监听，dsh 的 LLM 调用才能走它计 token
             proc = subprocess.Popen(
                 cmd, cwd=_ROOT,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding="utf-8", errors="replace",
+                # 让 dsh 的 LLM 走本地代理：DEEPSEEK_BASE_URL 是 bootstrap-only 变量
+                # （只能来自启动进程环境，写 .env 会抛错），dsh 解析链 baseURL 优先取它。
+                env={**os.environ, "DEEPSEEK_BASE_URL": "http://127.0.0.1:58082"},
             )
         except FileNotFoundError:
             yield {"type": "error",
