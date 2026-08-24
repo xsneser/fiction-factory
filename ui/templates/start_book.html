@@ -326,11 +326,7 @@ var WZ = {
         if (this.cur === 2 && this._picked && !this._task2Fired) {
             this._task2Fired = true;
             this._agentDriving = true;
-            var task = '请继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」）：'
-                + '你自主生成 步3 内容（核心矛盾→大纲+桥段→势力→人物→其余世界观维度，保持上下文连续），'
-                + '分别 drive_ui(set_world/set_outline/set_characters) 落表单 → drive_ui(submit) 建书'
-                + '（书创建即带大纲 phase=ready）→ get_build_status 拿 book_id 校验 → navigate 写作台。'
-                + '不要调已移除的生成工具，不要再 pick_candidate / 发步 1→2 的 next。';
+            var task = '请继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」）：自主生成步 3 内容落表单 → submit 建书 → 校验交棒写作台。';
             if (typeof window.agentSendTask === 'function') {
                 window.agentSendTask(task, { card: true });
             } else if (typeof showToast === 'function') {
@@ -413,9 +409,7 @@ var WZ = {
         var task = '请为这本新书生成世界观候选（已完成步 1 填表、已自动进步 2）：一句话设定「' + idea + '」'
             + '题材标签「' + (tags.join('、') || '（未选）') + '」'
             + '笔名「' + (pen || '（未选，请帮我选）') + '」。'
-            + '你自主生成 5 个差异化世界观候选（记住已生成的 title），逐个 drive_ui(add_candidate) 填入步 2，'
-            + '等我在步 2 挑选，不要自动选/next/submit。'
-            + '笔名若未选可 drive_ui(set_field pen) 补。';
+            + '笔名未选就 query_profiles 查一个最匹配的并 drive_ui(set_field pen) 补填。';
         if (typeof window.agentSendTask === 'function') {
             window.agentSendTask(task, { card: true });   // 右侧显示「🚀 建书任务」卡片，而非用户气泡
         } else {

@@ -160,12 +160,7 @@ function runWritingTask() {
     if (window.switchAgentTab) window.switchAgentTab('chat');   // 保证侧栏对话页签可见
     var bid = window.__STORYLINE_ID__ || '';
     var title = (window.__BOOK_STORYLINE__ && window.__BOOK_STORYLINE__.book_title) || '';
-    var task = '请继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：'
-        + '你自主生成下一桥段正文（保持上下文连续），逐桥段调 save_bridge_draft(book_id, chapter_num, plot_id, plot_name, text) 落盘；'
-        + '桥段写完继续下一桥段，实时汇报进度/字数；'
-        + '本满章后你生成章节摘要并调 save_chapter_text(book_id, chapter_num, text=全文, title, summary, bridge_segments) 落盘；'
-        + '再调 chapter_quality_gate 跑门禁汇报。'
-        + '不要调用 write_next_bridge / write_chapter（已废弃），不要擅自改大纲或设定。';
+    var task = '请继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：写下一章正文，章末跑 chapter_quality_gate 门禁汇报。';
     if (task && window.agentSendTask) window.agentSendTask(task, { card: true, cardLabel: '📝 写作任务' });
 }
 </script>
