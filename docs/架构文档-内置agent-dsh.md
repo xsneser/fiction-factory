@@ -72,7 +72,7 @@
 
 ---
 
-## 五、skill 体系与意图分发
+## 五、skill 体系与意图分发（历史记录——dsh 侧 skill 已于 2026-08-24 删除，仅 MCP 工具面，重写待后续会话；本节描述旧机制，供重写参考）
 
 **双副本**（**必须保持一致**，部署时复制同步）：
 - `agent-sidecar/skills/novel-*/SKILL.md` —— **版本正本**（入库）。
@@ -140,7 +140,7 @@
 | 侧栏面板 | `ui/static/js/agent_panel.js` | 工具卡 + 耗时 + busy 打断排队 + SSE 消费 |
 | 建书向导 | `ui/templates/start_book.html` | 步 1-3 + `onnecommand` 命令桥 + `reportStatus` + `_agentDriving` |
 | Web 端点 | `ui/web_blueprints/agent.py` | `/api/agent/chat`（SSE）/cancel/build-status/tool-log/nav-intents |
-| 技能 | `agent-sidecar/skills/novel-*.md` ↔ `.dsh/skills/novel-*.md` | 五个分 skill（双副本同步） |
+| 技能 | `agent-sidecar/skills/novel-*.md` ↔ `.dsh/skills/novel-*.md` | ~~五个分 skill（双副本同步）~~ 已删除（2026-08-24，仅 MCP；重写待后续会话） |
 
 ---
 
@@ -148,7 +148,7 @@
 
 - 外部 agent 经 MCP（`claude mcp add … -- python mcp_server.py`）驱动，**同一工具注册表**，同样受 phase 门控 / 循环熔断 / 书锁约束。
 - 外部无 SSE 通道 → `navigate` / `drive_ui` 走意图队列轮询兜底（~2.5s），实时性弱于 dsh 内部。
-- 外部 agent 侧有**独立的 skill 实现**（`.claude/skills/novel-master` 统一调度 + 分 skill），与 dsh 侧 skill **独立演进、不做镜像**（见 `CLAUDE.md` 发现与编排规则）。
+- 外部 agent 侧有**独立的 skill 实现**（`.claude/skills/novel-master` 统一调度 + 分 skill）；dsh 侧 skill 已于 2026-08-24 删除、仅 MCP 工具面。Claude 侧 `.claude/skills/` **未动**，仍独立演进（见 `CLAUDE.md` 发现与编排规则）。
 
 ---
 
@@ -157,6 +157,6 @@
 1. **headless one-shot**：每任务一次性进程，无进程级会话记忆；会话记忆 v1 = 浏览器内历史。
 2. **长工具阻塞**：`generate_full_outline` / `write_next_bridge` 阻塞数分钟，`toolCallTimeoutMs` 必须 ≥600000。
 3. **打断丢中间结果**：单任务打断是 kill 整树，未落盘中间结果丢失（管线逐步落盘可续接）。
-4. **skill 双副本漂移风险**：`.dsh/skills/` 与 `agent-sidecar/skills/` 须手动同步，改 skill 必须两处都改。
+4. **skill 双副本漂移风险（已解除，2026-08-24）**：`.dsh/skills/` 与 `agent-sidecar/skills/` 曾须手动同步；两目录现已删除，仅剩 MCP 工具面。
 5. **dsh 版本锁定**：`vendor/dsh-ne/` 依赖去 caret 锁精确快照（rc.8 子包）；升级前回归 `mcp_smoke`/`test_all`。
 6. **persona 级一致**：已装 headless profile 的 persona 靠 `_REINFORCEMENT` 每任务覆盖；如需 persona 级一致用 `agent-sidecar/cordis.patch.yml` 模板重装。

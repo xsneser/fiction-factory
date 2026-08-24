@@ -3,7 +3,7 @@
 用 **DeepSeek Harness(`@deepseek-ai/dsh`,Node 侧车)** 作为现成开源 agent,经 MCP 客户端驱动 NovelEngine。
 Spike 结论与 dsh 现状见 `docs/架构总览.md` §七(3 摩擦点;spike 文档已删)。
 
-> ⚠️ **状态**:spike 已验证「桥接 + 建书向导」可行,但暴露长工具超时 / 建书保真度差 / 自主循环失控三个摩擦点(已被护栏层解决)。**侧车已是侧栏唯一大脑(`libraries/dsh_bridge.py`),事件流推送 2026-08-20 落地后实时工具卡/导航不再靠轮询。** 本目录同时是复现模板与交付物(events-runner 为生产运行文件)。
+> ⚠️ **状态**:spike 已验证「桥接 + 建书向导」可行,但暴露长工具超时 / 建书保真度差 / 自主循环失控三个摩擦点(已被护栏层解决)。**侧车已是侧栏唯一大脑(`libraries/dsh_bridge.py`),事件流推送 2026-08-20 落地后实时工具卡/导航不再靠轮询。** **2026-08-24:dsh 侧 skill 已全部删除、仅剩 MCP 工具面,重写待后续会话;Claude 侧 `.claude/skills/` 未动。** 本目录同时是复现模板与交付物(events-runner 为生产运行文件)。
 
 ## 环境
 
@@ -14,7 +14,7 @@ Spike 结论与 dsh 现状见 `docs/架构总览.md` §七(3 摩擦点;spike 文
 ## 配置
 
 1. `cordis.patch.yml`(本目录)拷到 `~/.dsh/profiles/headless/cordis.patch.yml` —— 挂 `python mcp_server.py` 为 MCP 客户端 + 注入四阶段 persona。
-2. `skills/`(novel-build/outline/write/publish)复制到 `D:\NovelEngine\.dsh\skills\`(`dsh-skill-filesystem` 扫 `<projectRoot>/.dsh/skills`)。
+2. ~~`skills/`(novel-build/outline/write/publish)复制到 `D:\NovelEngine\.dsh\skills\`~~——**dsh 侧 skill 已于 2026-08-24 全部删除，仅保留 MCP 工具面**（`agent-sidecar/skills/` 与 `.dsh/skills/` 均已移除；skill 重写待后续会话）。`dsh-skill-filesystem` 原本扫 `<projectRoot>/.dsh/skills`，现为空目录。
 3. 首次 `dsh --profile headless` 自动初始化 profile。
 
 ## 运行
@@ -44,7 +44,7 @@ node vendor/dsh-ne/lib/bin.js --profile headless \
 - **循环失控**:phase 未达 ready 时 agent 会反复轮询 `get_book_detail`,需护栏层熔断。
 - **建书保真度**:set_field/set_tags/pick_candidate 未忠实传达任务设定,需向导状态保护。
 - **护栏**:直建/直删工具不存在(41 工具),建书必须经浏览器向导 drive_ui。
-- **系统工具已禁(2026-08-20)**:dsh 自带 tool-fs/tool-bash/subagent 等系统工具默认会暴露(cwd=D:/NovelEngine 无沙箱,可绕过 MCP 直操文件)。`cordis.patch.yml` 已用 `disabled: true` 批量禁掉,只留 MCP + skills + 联网(web 三件)。改此模板须同步 `~/.dsh/profiles/headless/cordis.patch.yml`。
+- **系统工具已禁(2026-08-20)**:dsh 自带 tool-fs/tool-bash/subagent 等系统工具默认会暴露(cwd=D:/NovelEngine 无沙箱,可绕过 MCP 直操文件)。`cordis.patch.yml` 已用 `disabled: true` 批量禁掉,只留 MCP + 联网(web 三件;skill 已于 2026-08-24 删除)。改此模板须同步 `~/.dsh/profiles/headless/cordis.patch.yml`。
 
 ## 结论
 
