@@ -96,7 +96,7 @@ def _book_tags(book_id: str) -> list:
 
 
 def list_books() -> list:
-    """列出书库全部书籍的摘要（book_id/书名/题材标签/状态/进度）。"""
+    """列出书库全部书籍的摘要（book_id/书名/标签/状态/进度）。"""
     rows = []
     for b in book_mgr.list_all():
         rows.append({
@@ -194,7 +194,7 @@ def borrow_preview(source_book_id: str) -> dict:
         raise RuntimeError("源书没有可借鉴的设定")
     return {"seed": seed,
             "source_title": src.book_title or src.pen_name or source_book_id,
-            "source_genre": genre_from_tags(src)}
+            "source_tags": ((src.basic_info or {}).get("world_building") or {}).get("tags") or []}
 
 
 # ═══════════════════════════════════════════════════
@@ -309,8 +309,8 @@ def query_profiles(keyword: str = "") -> dict:
     } for p in rows[:30]]}
 
 
-def query_characters(keyword: str = "", tag: str = "", genre: str = "") -> dict:
-    """查角色原型库：按标签/适配题材/关键词返回启用原型，供外部 agent 选原型生成角色。"""
+def query_characters(keyword: str = "", tag: str = "") -> dict:
+    """查角色原型库：按标签/关键词返回启用原型，供外部 agent 选原型生成角色。"""
     kw = (keyword or "").strip()
     rows = char_lib.search(tag=tag, kw=kw)
     return {"archetypes": [a.to_dict() for a in rows if getattr(a, "enabled", True)][:20]}
