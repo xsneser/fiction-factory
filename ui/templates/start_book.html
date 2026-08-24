@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block title %}启动新书 — NovelEngine{% endblock %}
-{% block head %}
+{% block content %}
+{# 页面 CSS 放 content 顶部（而非 head）：SPA 导航只替换 main 内容、不应用 head 样式表，
+   放这里让侧栏点「启动新书」经 navigateTo 跳转时也能加载（对齐写作台/书详情约定）。
+   缺了 workspace.css 时步3 .editor-split 的 display:flex 失效 → 两栏叠成竖排（老 bug）。 #}
 <link rel="stylesheet" href="/static/css/story_line.css?v=2">
 <link rel="stylesheet" href="/static/css/workspace.css?v=2">
-{% endblock %}
-{% block content %}
 <h1>🔰 启动新书</h1>
 
 <ol class="wz-steps" id="wz-steps">
@@ -167,7 +168,7 @@
 .wz-panels.wide { max-width:none; }   /* 步3 两栏（故事线+世界观表单）放宽，自适应主区宽度 */
 #panel-3 .editor-mid { overflow-y:auto; }   /* 步3 中间栏可滚动（长世界观表单不被截断） */
 /* 步3 两栏保持可见高度（写作台式）：故事线为空时左栏也是可见空白竖栏，min-height 兜底（无装饰） */
-#panel-3 .editor-split { min-height: max(520px, calc(100vh - 200px)); }
+#panel-3 .editor-split { display:flex; height: calc(100vh - 200px); min-height: 520px; }
 .wz-panel fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
 .wz-panel legend { color:#58a6ff; font-weight:600; padding:0 8px; }
 /* 步3 复用书详情页 .world-edit 视觉：fieldset 间距与书详情页一致 */
