@@ -23,8 +23,8 @@ sys.path.insert(0, _ROOT)
 
 from ui.web_blueprints.ctx import (  # noqa: E402
     plot_lib, struct_lib, gag_lib, char_lib, profiles, book_mgr,
-    get_llm, _engines, _resolve_storyline, _save_storyline,
-    NovelEngine, BookStoryline, StorylineBuilder,
+    _engines, _resolve_storyline, _save_storyline,
+    StorylineBuilder,
     ContentReviewer, DeAIEngine,
 )
 from core.text_utils import count_prose_units  # noqa: E402
@@ -35,13 +35,6 @@ from libraries.tool_policy import _wrap_phase_gate  # noqa: E402
 
 
 # ─── 基础辅助 ───
-
-def _require_llm():
-    llm = get_llm()
-    if not llm:
-        raise RuntimeError("LLM 未配置：请在设置页保存 API 配置（或 api.json 填 api_key）")
-    return llm
-
 
 def load_tl(book_id: str):
     """读故事线（走 ctx 缓存，与 Web 共享）。"""
@@ -57,42 +50,13 @@ def _require_tl(book_id: str):
     tl = load_tl(book_id)
     if tl is None:
         raise RuntimeError(f"「{book_id}」无故事线（storyline.json）。"
-                           "请先经「启动新书」向导建书 + save_basic_info / generate_world 生成设定，"
-                           "再 generate_full_outline 生成大纲。")
+                           "请先经「启动新书」向导建书（步 3 内容随 submit 落库）。")
     return tl
-
-
-def get_engine(book_id: str):
-    """进程内引擎会话，键 cont_<book_id>，与写作台共享同一 NovelEngine 实例。"""
-    key = f"cont_{book_id}"
-    if key not in _engines:
-        e = NovelEngine(llm_client=_require_llm())
-        try:
-            e.continue_book(book_id)
-        except ValueError as ex:
-            raise RuntimeError(f"「{book_id}」无法进入写作：{ex}\n"
-                               "请先用 save_basic_info / generate_world / "
-                               "generate_full_outline 生成设定与大纲。") from ex
-        _engines[key] = e
-    return _engines[key]
 
 
 def _drop_engine(book_id: str) -> None:
     """使该书引擎会话过期（规划/编辑类改动后调用）。"""
     _engines.pop(f"cont_{book_id}", None)
-
-
-def _snapshot(book_id: str) -> dict:
-    """book.json 当前进度快照（各写入工具返回前补上）。"""
-    b = book_mgr.get(book_id)
-    if not b:
-        return {}
-    return {
-        "current_chapter": b.current_chapter,
-        "chapter_count": b.chapter_count,
-        "status": b.status,
-        "total_words": b.total_words or 0,
-    }
 
 
 def _draft_read(book_id: str):
@@ -113,87 +77,6 @@ def _profile_for(tl):
         except Exception:
             return None
     return None
-
-
-def _max_id_suffix(ids) -> int:
-    import re as _re
-    max_n = 0
-    for i in ids:
-        m = _re.search(r"_(\d+)$", i or "")
-        if m:
-            max_n = max(max_n, int(m.group(1)))
-    return max_n
-
-
-def _seed_builder_counter(builder, ids) -> None:
-    builder._counter = _max_id_suffix(ids)
-
-
-def _build_next_arc(builder, tl, mode="rule"):
-    """故事线末尾追加下一段大纲弧（rule=模板循环；ai=单弧 LLM 再锚定）。镜像 storyline.py。"""
-    if mode == "ai":
-        seq = builder.build_outline_sequence(
-            custom_context=(tl.basic_info or {}).get("world_building", {}).get("description", ""),
-            max_outlines=1, mode="ai")
-        if not seq:
-            return None
-        arc = seq[0]
-        max_end = max((o.end_chapter for o in tl.outlines), default=0)
-        span = max(arc.end_chapter - arc.start_chapter + 1, 20)
-        arc.start_chapter = max_end + 1
-        arc.end_chapter = arc.start_chapter + span - 1
-        if tl.outlines:
-            arc.predecessor = tl.outlines[-1].id
-            tl.outlines[-1].successor = arc.id
-        return arc
-
-    structs = struct_lib.search(genre=genre_from_tags(tl)) or struct_lib.templates
-    if not structs:
-        return None
-    idx = len(tl.outlines) % len(structs)
-    tmpl = structs[idx]
-    max_end = max((o.end_chapter for o in tl.outlines), default=0)
-    start = max_end + 1
-    span = min(tmpl.total_chapters, 60)
-    arc = OutlineSlot(
-        id=builder._next_id("outline"),
-        template_id=tmpl.id,
-        name=f"{tmpl.name}(第{len(tl.outlines) + 1}部分)",
-        start_chapter=start,
-        end_chapter=start + span - 1,
-        stages=[{"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
-                 "events": s.key_events[:5]}
-                for s in tmpl.stages],
-        predecessor=tl.outlines[-1].id if tl.outlines else "",
-        transition_type="sequential",
-    )
-    if tl.outlines:
-        tl.outlines[-1].successor = arc.id
-    return arc
-
-
-# ─── 阻塞式消费生成器（把 SSE 流式改造成同步结果）───
-
-def consume_dict_stream(gen):
-    """迭代 yield-dict 生成器到完成；error 事件/异常转 RuntimeError。返回 (last_event, events)。"""
-    last, events = None, []
-    for evt in gen:
-        if isinstance(evt, dict) and evt.get("type") == "error":
-            raise RuntimeError(evt.get("message", "LLM 生成失败"))
-        events.append(evt)
-        last = evt
-    return last, events
-
-
-def consume_triple_stream(gen):
-    """迭代 (event_type, message, data_dict) 生成器；error 事件转 RuntimeError。返回 (last_t, last_d, events)。"""
-    last_t, last_d, events = None, None, []
-    for t, msg, d in gen:
-        if t == "error":
-            raise RuntimeError(msg or "LLM 生成失败")
-        events.append((t, msg, d))
-        last_t, last_d = t, d
-    return last_t, last_d, events
 
 
 # ═══════════════════════════════════════════════════
@@ -721,59 +604,6 @@ def save_book_meta(book_id: str, title: str = "", synopsis: str = "") -> dict:
     return {"ok": True, "title": title or tl.book_title, "synopsis": synopsis}
 
 
-def generate_title(book_id: str) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 AI 生成书名（3-5 个候选，选第一个写入 book_title + book.json.title）。"""
-    tl = _require_tl(book_id)
-    llm = _require_llm()
-    bi = tl.basic_info or {}
-    protag = get_mc(bi)
-    world = bi.get("world_building") or {}
-    ctx = f"题材标签：{','.join((tl.basic_info or {}).get('world_building', {}).get('tags') or [])}"
-    if protag.get("name"):
-        ctx += f"；主角：{protag.get('name')}（{protag.get('identity','')}）"
-    if world.get("description"):
-        ctx += f"；世界观：{world['description']}"
-    if bi.get("tone"):
-        ctx += f"；基调：{bi['tone']}"
-    prompt = (f"为下面这本网络小说起书名（3-5 个，2-10 字，朗朗上口、有网文味）。\n\n{ctx}\n\n"
-              '返回 JSON：{"titles": ["书名1", "书名2", "书名3"]}')
-    from core.llm_client import extract_json
-    raw = llm.call("你是网文书名策划。只返回JSON。", prompt,
-                   temperature=0.8, max_tokens=1024)
-    data = json.loads(extract_json(raw))
-    titles = [t for t in (data.get("titles") or [])
-              if isinstance(t, str) and t.strip()]
-    if not titles:
-        raise RuntimeError("书名生成失败（LLM 无有效候选）")
-    tl.book_title = titles[0]
-    save_tl(book_id, tl)
-    book = book_mgr.get(book_id)
-    if book:
-        book.title = titles[0]
-        book_mgr.update(book)
-    _drop_engine(book_id)
-    return {"titles": titles, "chosen": titles[0]}
-
-
-def generate_outlines(book_id: str, mode: str = "ai", max_outlines: int = 5) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 生成大纲序列（mode=ai 用 LLM；rule 用题材方向模板确定性生成）。"""
-    tl = _require_tl(book_id)
-    llm = get_llm() if mode == "ai" else None
-    builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
-                               gag_lib=gag_lib, llm_client=llm)
-    if mode == "rule":
-        tl.outlines = builder.build_outline_sequence(mode="rule",
-                                                     max_outlines=max_outlines)
-    else:
-        tl.outlines = builder.build_outline_sequence(
-            custom_context=(tl.basic_info or {}).get("world_building", {}).get("description", ""),
-            max_outlines=max_outlines, mode="ai")
-    tl.phase = "outlines"
-    save_tl(book_id, tl)
-    _drop_engine(book_id)
-    return {"ok": True, "count": len(tl.outlines)}
-
-
 def outline_material_candidates(book_id: str) -> dict:
     """选材决策点候选池：大纲库模板 + 桥段库（供外部 agent 预选后把 picks 传给 generate_full_outline）。
 
@@ -796,105 +626,6 @@ def outline_material_candidates(book_id: str) -> dict:
             "has_outline": bool(getattr(tl, "outlines", None))}
 
 
-def generate_full_outline(book_id: str, picks: dict = None,
-                          regenerate: bool = False) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 一键生成完整大纲（5 阶段：分析→大纲→桥段→内涵/吸睛→一致性），原地累加并逐步落盘。
-
-    picks（可选，决策点预选）形如 {"templates": ["structure_id", ...],
-    "plots": ["plot_id", ...]}——plots 为扁平优先序列表（与 outline_material_candidates
-    返回的 plots 形状一致，语义=全书出现优先级）；兼容旧 dict 形态 {outline_id: [plot_id]}
-    （已弃用，按值序展开）。外部 agent 先调 outline_material_candidates 看候选，选定后
-    传入即按预选排布；不传则走管线内 AI/规则选材。
-    regenerate：书已存在大纲时默认拒绝重跑（避免清空重排覆盖已有内容），确认重做须传 True。
-    阻塞运行至完成（可能数分钟），返回最终 timeline 快照（含 phase=ready，完成时自动落盘）。
-    """
-    tl = _require_tl(book_id)
-    if tl.outlines and not regenerate:
-        raise RuntimeError(
-            f"已有 {len(tl.outlines)} 条大纲（phase={tl.phase}）。确认重做请传 regenerate=True"
-            "（会清空重排现有大纲），否则可 extend_outline 续写 / 直接写作。")
-    llm = _require_llm()
-    profile = _profile_for(tl)
-
-    # 向导步 3 分阶段构建②选定的开篇大纲/桥段（_outline_picks）→ picks 未传时自动消费
-    if picks is None:
-        saved = (tl.basic_info or {}).get("_outline_picks")
-        if isinstance(saved, dict) and (saved.get("templates") or saved.get("plots")):
-            picks = saved
-
-    from libraries.outline_generator import OutlineGenerator
-    from libraries.prompt_harness import PromptHarness
-    harness = PromptHarness(storyline=tl, profile=profile,
-                            gag_lib=gag_lib, plot_lib=plot_lib)
-    gen = OutlineGenerator(llm_client=llm, structure_lib=struct_lib,
-                           plot_lib=plot_lib, gag_lib=gag_lib,
-                           profile=profile, harness=harness)
-
-    bi = tl.basic_info or {}
-    world = bi.get("world_building", {}) or {}
-    protag = get_mc(bi)
-    ctx_parts = []
-    if world.get("world_summary"):
-        ctx_parts.append(f"世界观概述：{world['world_summary']}")
-    if world.get("description"):
-        ctx_parts.append(f"世界观：{world['description']}")
-    if protag.get("name") or protag.get("identity"):
-        ctx_parts.append(f"主角：{protag.get('name','')}（{protag.get('identity','')}）")
-    if bi.get("storyline_hint"):
-        ctx_parts.append(f"故事线想法：{bi['storyline_hint']}")
-    custom_context = "；".join(ctx_parts) or (tl.book_title or "")
-
-    last_t, last_d, events = consume_triple_stream(gen.generate(
-        custom_context=custom_context, pen_name=tl.pen_name,
-        words_per_chapter=tl.words_per_chapter,
-        storyline=tl, on_save=lambda _tl: save_tl(book_id, _tl),
-        skip_analyze=bool((tl.basic_info or {}).get("_world_generated")),
-        agent_picks=picks))
-
-    tl = load_tl(book_id)  # on_save 已逐步落盘，重新读取最终快照
-    _drop_engine(book_id)
-    return {"stats": last_d, "event_count": len(events),
-            "timeline": tl.to_dict() if tl else None}
-
-
-def extend_outline(book_id: str, mode: str = "ai") -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 续写时扩展故事线：末尾追加新大纲弧 + 填充桥段 + 加料，同步 bump 章节总数。"""
-    tl = _require_tl(book_id)
-    if not tl.outlines:
-        raise RuntimeError("尚无故事线大纲，请先 generate_full_outline 后再扩展")
-    llm = get_llm() if mode == "ai" else None
-    builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
-                               gag_lib=gag_lib, llm_client=llm)
-    _seed_builder_counter(builder,
-                          [o.id for o in tl.outlines] + [p.id for p in tl.plots])
-
-    new_arc = _build_next_arc(builder, tl, mode)
-    if new_arc is None:
-        raise RuntimeError("无可用大纲模板")
-    tl.outlines.append(new_arc)
-    new_plots = builder.fill_plots_for_outline(new_arc, tl)
-    existing_ids = {p.id for p in tl.plots}
-    added = [p for p in new_plots if p.id not in existing_ids]
-    tl.plots.extend(added)
-    builder.fill_themes_and_hooks(added, tl)
-    annotate_plot_roles(tl)
-    tl.phase = "ready"
-    save_tl(book_id, tl)
-
-    new_total = 0
-    book = book_mgr.get(book_id)
-    if book:
-        new_total = max(book.chapter_count, new_arc.end_chapter)
-        if new_total > book.chapter_count:
-            book.chapter_count = new_total
-            book_mgr.update(book)
-    _drop_engine(book_id)
-    return {"outline": {"id": new_arc.id, "name": new_arc.name,
-                        "start_chapter": new_arc.start_chapter,
-                        "end_chapter": new_arc.end_chapter},
-            "plots_added": len(added), "total_chapters": new_total}
-
-
 def confirm_outlines(book_id: str) -> dict:
     """确认大纲序列，进入桥段编排阶段（phase → plots）。"""
     tl = _require_tl(book_id)
@@ -902,28 +633,6 @@ def confirm_outlines(book_id: str) -> dict:
     save_tl(book_id, tl)
     _drop_engine(book_id)
     return {"ok": True, "phase": tl.phase}
-
-
-def fill_plots(book_id: str) -> dict:
-    """给每个大纲填充桥段（LLM），返回新增数量与累计总量。"""
-    tl = _require_tl(book_id)
-    if not tl.outlines:
-        raise RuntimeError("请先生成大纲序列（generate_outlines / generate_full_outline）")
-    builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
-                               gag_lib=gag_lib, llm_client=_require_llm())
-    _seed_builder_counter(builder, [p.id for p in tl.plots])
-
-    new_plots = []
-    for o in tl.outlines:
-        new_plots.extend(builder.fill_plots_for_outline(o, tl))
-
-    existing_ids = {p.id for p in tl.plots}
-    added = [p for p in new_plots if p.id not in existing_ids]
-    tl.plots.extend(added)
-    annotate_plot_roles(tl)
-    save_tl(book_id, tl)
-    _drop_engine(book_id)
-    return {"plots_added": len(added), "total_plots": len(tl.plots)}
 
 
 def fill_gags(book_id: str) -> dict:
@@ -939,82 +648,7 @@ def fill_gags(book_id: str) -> dict:
     return {"ok": True, "phase": tl.phase}
 
 
-def outline_agent(book_id: str, message: str) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 大纲助手：用自然语言调整故事线（改桥段/加笑点/增删桥段/改大纲等），直接落盘。"""
-    tl = _require_tl(book_id)
-    if not message.strip():
-        raise RuntimeError("消息为空")
-    llm = _require_llm()
-    from libraries.outline_agent import OutlineAgent
-    agent = OutlineAgent(llm=llm, structure_lib=struct_lib, plot_lib=plot_lib,
-                         gag_lib=gag_lib)
-    result = agent.handle(tl, message)
-    save_tl(book_id, tl)
-    _drop_engine(book_id)
-    return result
-
-
-def generate_world(book_id: str, mode: str = "one", idea: str = "",
-                   source_book_id: str = "", tweak: str = "") -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 生成世界观设定（mode=one 一句话生成；borrow 从源书借鉴+微调），返回 basic_info。"""
-    tl = _require_tl(book_id)
-    llm = _require_llm()
-    mode = mode or "one"
-    idea = (idea or "").strip()
-    source_book_id = (source_book_id or "").strip()
-    tweak = (tweak or "").strip()
-
-    seed = None
-    if mode == "borrow" and source_book_id:
-        src = load_tl(source_book_id)
-        if src:
-            from libraries.world_builder import WorldBuildingGenerator
-            seed = WorldBuildingGenerator.extract_seed(src.basic_info)
-    if mode == "borrow":
-        idea = tweak
-    if not idea:
-        idea = str((tl.basic_info or {}).get("world_building", {}).get("description", "") or "").strip()
-
-    profile = _profile_for(tl)
-    from libraries.world_builder import WorldBuildingGenerator
-    from libraries.prompt_harness import PromptHarness
-    harness = PromptHarness(storyline=tl, profile=profile)
-    gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
-
-    last_t, last_d, events = consume_triple_stream(gen.generate(
-        idea=idea,
-        pen_name=tl.pen_name, platform=tl.platform,
-        seed_basic_info=seed, storyline=tl,
-        on_save=lambda _tl: save_tl(book_id, _tl)))
-
-    tl = load_tl(book_id)
-    _drop_engine(book_id)
-    return {"basic_info": tl.basic_info if tl else None,
-            "event_count": len(events), "done_data": last_d}
-
-
 _WIZARD_CAND_FILE = os.path.join(_ROOT, "storage", "wizard_candidates.json")
-
-
-def _wizard_candidate_key(idea: str, tags: list) -> str:
-    """候选持久化会话 key：一句话设定 + 题材标签（排序）唯一化一个建书会话。"""
-    return json.dumps({
-        "idea": (idea or "").strip(),
-        "tags": sorted(str(t).strip() for t in (tags or []) if str(t).strip()),
-    }, ensure_ascii=False)
-
-
-def _wizard_existing_candidates(idea: str, tags: list) -> list:
-    """读当前会话已积累的候选（按 idea+tags key）；key 不匹配视为新会话返回空。"""
-    from core.json_store import read_json
-    try:
-        st = read_json(_WIZARD_CAND_FILE, None)
-        if st and st.get("key") == _wizard_candidate_key(idea, tags) \
-                and isinstance(st.get("candidates"), list):
-            return st["candidates"]
-    except Exception:
-        pass
-    return []
 
 
 def _clear_wizard_candidates() -> None:
@@ -1024,50 +658,6 @@ def _clear_wizard_candidates() -> None:
         write_json_atomic(_WIZARD_CAND_FILE, {"key": "", "candidates": []})
     except Exception:
         pass
-
-
-def world_candidates(book_id: str = "", idea: str = "", genre: str = "",
-                     sub_genre: str = "", tags: list = None) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 增量生成世界观候选并**自动填入**步 2（一次 1 个，给 LLM 充分思考空间）。
-
-    book_id 为空 = 建书前调用（新书向导②）：每次调用只产出 1 个**新**候选并
-    push add_candidate 自动填入浏览器步 2；候选按 (idea, tags) 持久化去重——
-    连调 N 次即积累 N 张卡；侧栏「再来几个」复用同 idea/tags 续接（差异化基于
-    已生成的候选）。book_id 非空 = 用该书的 genre/sub_genre（忽略传入 genre）。
-    返回 {"candidate", "candidates"(全部累计), "total"}。
-    """
-    llm = _require_llm()
-    idea = (idea or "").strip()
-    from libraries.world_builder import WorldBuildingGenerator
-    from libraries.prompt_harness import PromptHarness
-    if book_id:
-        tl = _require_tl(book_id)
-        genre = genre or genre_from_tags(tl)
-        sub_genre = sub_genre or ""
-        profile = _profile_for(tl)
-        harness = PromptHarness(storyline=tl, profile=profile)
-        gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
-    else:
-        # 无书（向导②）：generate_candidate 本就不读目标书
-        harness = PromptHarness()   # storyline=None；tags 由 generate_candidate 透传
-        gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
-        if not genre and tags:
-            from libraries.world_tags import derive_genre, genre_from_tags
-            genre = derive_genre(list(tags or []))
-    existing = _wizard_existing_candidates(idea, tags)
-    cand = gen.generate_candidate(idea=idea, tags=list(tags or []),
-                                  existing_candidates=existing)
-    if not cand:
-        raise RuntimeError("示例候选生成失败，请重试")
-    from core.json_store import write_json_atomic
-    write_json_atomic(_WIZARD_CAND_FILE, {
-        "key": _wizard_candidate_key(idea, tags),
-        "candidates": existing + [cand],
-    })
-    from libraries.nav_intent import push_ui_command
-    push_ui_command("add_candidate", {"candidate": cand})
-    return {"candidate": cand, "candidates": existing + [cand],
-            "total": len(existing) + 1}
 
 
 def _outline_preview_text(outline_data: dict) -> str:
@@ -1086,209 +676,6 @@ def _outline_preview_text(outline_data: dict) -> str:
     return "\n".join(lines)
 
 
-def generate_characters(idea: str, genre: str = "", sub_genre: str = "",
-                        tags: list = None, title: str = "",
-                        archetype_ids: list = None,
-                        core_conflict: str = "", factions: list = None,
-                        outline_preview: str = "",
-                        outline_data: dict = None) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 生成角色候选（无书，建书向导步 3 用）：主角 + 配角，供 drive_ui(set_characters) 推给页面。
-
-    分阶段构建④可带已定核心矛盾/势力/大纲桥段上下文（core_conflict/factions/outline_preview/
-    outline_data），让角色与之自洽。outline_data 为 generate_outline_preview 产出的大纲+桥段
-    （真实数据），非空时自动序列化为 outline_preview 文本。原型选择：archetype_ids 非空则按 id 取；
-    否则按 tags[0]→genre→启用原型回退（照旧 /api/world-builder/characters 端点逻辑）。
-    返回 {"protagonists": [...], "supporting_cast": [...]}。
-    """
-    llm = _require_llm()
-    from libraries.world_builder import WorldBuildingGenerator
-    from libraries.prompt_harness import PromptHarness
-    harness = PromptHarness()   # 无书：storyline=None
-    gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
-    if outline_data:
-        outline_preview = outline_preview or _outline_preview_text(outline_data)
-    if archetype_ids:
-        archetypes = [a.to_dict() for i in archetype_ids
-                      if (a := char_lib.get_by_id(i)) is not None][:10]
-    elif tags:
-        archetypes = [a.to_dict() for a in char_lib.search(tag=str(tags[0]).strip())][:10]
-    elif genre:
-        archetypes = [a.to_dict() for a in char_lib.search(genre=genre)][:10]
-    else:
-        archetypes = [a.to_dict() for a in char_lib.archetypes if getattr(a, "enabled", True)][:10]
-    result = gen.generate_characters(
-        idea=idea or "", tags=list(tags or []), title=title or "", archetypes=archetypes,
-        core_conflict=core_conflict or "", factions=list(factions or []),
-        outline_preview=outline_preview or "")
-    if not result:
-        raise RuntimeError("角色候选生成失败，请重试")
-    return result
-
-def generate_core_conflict(idea: str, world_brief: str = "", tags: list = None,
-                           genre: str = "", sub_genre: str = "",
-                           pen_name: str = "") -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 分阶段构建①（无书）：从一句话设定+题材标签推导故事主线核心矛盾。
-
-    返回 {"core_conflict", "genre"}（genre 供②按大纲库查模板/桥段）。
-    """
-    llm = _require_llm()
-    from libraries.world_builder import WorldBuildingGenerator
-    from libraries.prompt_harness import PromptHarness
-    from libraries.storyline import BookStoryline
-    profile = None
-    if pen_name:
-        profile = _profile_for(BookStoryline(pen_name=pen_name))
-    harness = PromptHarness(profile=profile)
-    gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
-    if not genre and tags:
-        from libraries.world_tags import derive_genre, genre_from_tags
-        genre = derive_genre(list(tags or []))
-    conflict = gen.generate_core_conflict(
-        idea=world_brief or idea or "",
-        tags=list(tags or []), pen_name=pen_name or "")
-    if not conflict:
-        raise RuntimeError("核心矛盾生成失败，请重试")
-    return {"core_conflict": conflict, "genre": genre}
-
-
-def generate_factions(idea: str, world_brief: str = "", core_conflict: str = "",
-                      tags: list = None, genre: str = "", sub_genre: str = "",
-                      outline_data: dict = None) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 分阶段构建③（无书）：从一句话设定+核心矛盾发散世界里的势力派系。
-
-    outline_data 为 generate_outline_preview 产出的大纲+桥段（真实数据），非空时
-    序列化为 outline_preview 上下文，让势力与已定故事线自洽。
-    返回 {"factions": [{"name", "stance", "desc"}]}。
-    """
-    llm = _require_llm()
-    from libraries.world_builder import WorldBuildingGenerator
-    from libraries.prompt_harness import PromptHarness
-    harness = PromptHarness()
-    gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
-    if not genre and tags:
-        from libraries.world_tags import derive_genre, genre_from_tags
-        genre = derive_genre(list(tags or []))
-    factions = gen.generate_factions(
-        idea=world_brief or idea or "",
-        core_conflict=core_conflict or "", tags=list(tags or []),
-        outline_preview=_outline_preview_text(outline_data))
-    if not factions:
-        raise RuntimeError("势力生成失败，请重试")
-    return {"factions": factions}
-
-
-def generate_rest_world(idea: str, world_brief: str = "", core_conflict: str = "",
-                        factions: list = None, outline_preview: str = "",
-                        tags: list = None, genre: str = "", sub_genre: str = "",
-                        pen_name: str = "") -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 分阶段构建⑤（无书）：大纲确定后补全其余世界观维度 + 基调，保留 core_conflict/factions。
-
-    返回 {"world_building": {era, power_system, geography, culture, history,
-    social_structure, rules, world_summary}, "tone", "target_audience", "pov", "era_language"}。
-    """
-    llm = _require_llm()
-    from libraries.world_builder import WorldBuildingGenerator
-    from libraries.prompt_harness import PromptHarness
-    from libraries.storyline import BookStoryline
-    profile = None
-    if pen_name:
-        profile = _profile_for(BookStoryline(pen_name=pen_name))
-    harness = PromptHarness(profile=profile)
-    gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
-    if not genre and tags:
-        from libraries.world_tags import derive_genre, genre_from_tags
-        genre = derive_genre(list(tags or []))
-    result = gen.generate_rest_world(
-        idea=idea or "",
-        world_brief=world_brief or "", core_conflict=core_conflict or "",
-        factions=[f for f in (factions or []) if isinstance(f, dict)],
-        outline_preview=outline_preview or "", tags=list(tags or []), pen_name=pen_name or "")
-    if not result.get("world_building"):
-        raise RuntimeError("世界观维度补全失败，请重试")
-    return result
-
-
-def generate_outline_preview(idea: str, genre: str = "", sub_genre: str = "",
-                             tags: list = None, core_conflict: str = "",
-                             pen_name: str = "", world_brief: str = "",
-                             words_per_chapter: int = 3000,
-                             picks: dict = None) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 分阶段构建②（无书）：步3内先生成大纲+桥段（跑完整大纲管线，纯内存不落盘）。
-
-    返回 {"outlines", "plots", "threads", "themes", "basic_info", "phase", "stats", "event_count"}。
-    供 drive_ui(set_outline) 存进向导 state，submit 时随书落库（书创建即 phase=ready）。
-    阻塞运行至完成（可能数分钟）。Phase 1 产出临时人物/世界观（供大纲上下文与 roles 标注），
-    最终人物由步④ generate_characters 生成后覆盖，submit 时重跑 annotate_plot_roles。
-    """
-    llm = _require_llm()
-    from libraries.outline_generator import OutlineGenerator
-    from libraries.prompt_harness import PromptHarness
-    from libraries.storyline import BookStoryline
-    profile = None
-    if pen_name:
-        profile = _profile_for(BookStoryline(pen_name=pen_name))
-    if not genre and tags:
-        from libraries.world_tags import derive_genre, genre_from_tags
-        genre = derive_genre(list(tags or []))
-
-    # 临时故事线：不设 _world_generated、无主角名 → Phase 1 正常跑（产出临时人物/世界观）
-    tl = BookStoryline(
-        words_per_chapter=words_per_chapter, pen_name=pen_name,
-        basic_info={
-            "characters": [],
-            "world_building": {
-                "description": world_brief or idea or "",
-                "tags": list(tags or []),
-                "core_conflict": core_conflict or "",
-            },
-            "tone": "", "target_audience": "", "pov": "第三人称", "era_language": "",
-        },
-    )
-    harness = PromptHarness(storyline=tl, profile=profile,
-                            gag_lib=gag_lib, plot_lib=plot_lib)
-    gen = OutlineGenerator(llm_client=llm, structure_lib=struct_lib,
-                           plot_lib=plot_lib, gag_lib=gag_lib,
-                           profile=profile, harness=harness)
-    ctx_parts = []
-    if core_conflict:
-        ctx_parts.append(f"核心矛盾：{core_conflict}")
-    if world_brief or idea:
-        ctx_parts.append(f"世界观：{world_brief or idea}")
-    custom_context = "；".join(ctx_parts)
-
-    last_t, last_d, events = consume_triple_stream(gen.generate(
-        custom_context=custom_context, pen_name=pen_name,
-        words_per_chapter=words_per_chapter,
-        storyline=tl, on_save=None, skip_analyze=False,
-        agent_picks=picks))
-
-    d = tl.to_dict()
-    stats = (last_d or {}).get("stats", {}) if isinstance(last_d, dict) else {}
-    # 服务端直推 set_outline 进步3（镜像 world_candidates→add_candidate 模式）：大纲+桥段载荷
-    # 往往 >8KB，经 dsh 核心 tool-result-pruner（thresholdChars=8192）会被裁成 head/tail 残片，
-    # dsh 模型拿不到全量、无法经 drive_ui(set_outline) 回传 → 故事线不显示。这里由工具直接写入
-    # nav_intent 意图队列（浏览器 busy 中也消费 set_outline，见 agent_panel.js consumeNavIntents）。
-    from libraries.nav_intent import push_ui_command
-    set_outline_payload = {
-        "outlines": d.get("outlines", []),
-        "plots": d.get("plots", []),
-        "threads": d.get("threads", []),
-        "themes": d.get("themes", []),
-        "basic_info": d.get("basic_info", {}),
-    }
-    push_ui_command("set_outline", set_outline_payload)
-    return {
-        "outlines": set_outline_payload["outlines"],
-        "plots": set_outline_payload["plots"],
-        "threads": set_outline_payload["threads"],
-        "themes": set_outline_payload["themes"],
-        "basic_info": set_outline_payload["basic_info"],
-        "phase": d.get("phase", ""),
-        "stats": stats,
-        "event_count": len(events),
-    }
-
-
 def confirm_world(book_id: str) -> dict:
     """确认世界观设定：basic_info 够充实则打标 _world_generated（后续大纲跳过 Phase 1 分析）。"""
     tl = _require_tl(book_id)
@@ -1302,68 +689,6 @@ def confirm_world(book_id: str) -> dict:
     save_tl(book_id, tl)
     _drop_engine(book_id)
     return {"ok": True, "world_generated": bool(tl.basic_info.get("_world_generated"))}
-
-
-# ═══════════════════════════════════════════════════
-# 写作 / 元数据类（调 LLM，保留引擎会话以支持断点续写）
-# ═══════════════════════════════════════════════════
-
-def write_next_bridge(book_id: str) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 写「下一个」桥段（按桥段撰写，阻塞至该桥段写完）：本章满字数自动切章。"""
-    engine = get_engine(book_id)
-    last, events = consume_dict_stream(engine._write_next_bridge_stream())
-    snap = _snapshot(book_id)
-    if last is None:
-        return {"status": "noop", **snap}
-    t = last.get("type")
-    if t == "chapter_done":
-        return {"status": "chapter_done", "chapter": last.get("chapter"),
-                "word_count": last.get("word_count"), "beats": last.get("beats"),
-                "review": last.get("review"), "cost": last.get("cost"), **snap}
-    if t == "chapter_progress":
-        return {"status": "bridge_written", "chapter": last.get("chapter"),
-                "words": last.get("words"), "target": last.get("target"),
-                "draft": _draft_read(book_id), **snap}
-    if t == "complete":
-        return {"status": "complete", "message": last.get("message"), **snap}
-    if t == "budget_paused":
-        return {"status": "budget_paused", "message": last.get("message"), **snap}
-    if t == "repair_stalled":
-        return {"status": "repair_stalled",
-                "message": last.get("reason") or last.get("message", "连续修复失败，暂停写作"), **snap}
-    # 桥段已写但未切章（或草稿收尾）：给出已产出的桥段数
-    return {"status": "bridge_written", "last_event": t,
-            "bridge_done_count": sum(1 for e in events if e.get("type") == "bridge_done"),
-            "draft": _draft_read(book_id), **snap}
-
-
-def write_chapter(book_id: str, chapter_num: int = 0) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 整章同步写作（按桥段驱动，一次写完一章），chapter_num=0 表示写下一章。"""
-    from libraries.engine import Instruction, Op
-    engine = get_engine(book_id)
-    n = chapter_num or engine.state.current_chapter + 1
-    result = engine.execute(Instruction(Op.WRITE_STORYLINE_CHAPTER, chapter_num=n))
-    if isinstance(result, dict) and result.get("error"):
-        raise RuntimeError(result["error"])
-    out = dict(result or {})
-    out.update(_snapshot(book_id))
-    return out
-
-
-def generate_book_meta(book_id: str) -> dict:
-    """[DEPRECATED] 工具内调 LLM（信息传递损失）→ agent 生成后走 save_* 薄工具。 基于第 1 章生成书名+简介并落盘（book.json / storyline.json / outline.json）。"""
-    if not book_mgr.get(book_id):
-        raise RuntimeError(f"书 {book_id} 不存在")
-    ch1 = book_mgr.load_chapter(book_id, 1)
-    if not ch1 or not ch1.get("content"):
-        raise RuntimeError("尚无第 1 章正文，请先 write_next_bridge / write_chapter 写作")
-    llm = _require_llm()
-    engine = NovelEngine(llm_client=llm)
-    engine.continue_book(book_id)
-    result = engine._generate_book_meta(ch1["content"])
-    book_mgr._cache.pop(book_id, None)   # 让后续读取看到新 title
-    _drop_engine(book_id)
-    return result
 
 
 # ═══════════════════════════════════════════════════
@@ -1945,7 +1270,7 @@ def _build_registry():
         # 只读摸底
         list_books, get_book_state, get_writing_context, get_storyline, borrow_preview,
         get_book_detail, get_build_status, query_structures, query_plots, query_gags, query_profiles, query_characters,
-        # 规划（薄工具：agent 生成后落盘；旧 LLM 生成工具已存档 archive/deprecated_tools.md）
+        # 规划（薄工具：agent 生成后落盘；旧工具内 LLM 生成已由 agent 自主生成接管）
         save_basic_info,
         save_outlines, save_book_meta,
         confirm_outlines, fill_gags,
