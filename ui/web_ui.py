@@ -40,7 +40,10 @@ if __name__ == "__main__":
     os.makedirs("ui/templates", exist_ok=True)
     os.makedirs("ui/static", exist_ok=True)
     from libraries.token_proxy import ensure_proxy
+    from libraries.dsh_bridge import clear_task_events
     ensure_proxy()   # 拉起本地 LLM API 代理（token 流量检测器）
+    clear_task_events()   # 清空上次进程残留的 task-events：侧栏工具/debug 卡片只在当前进程内有效，
+                          # 否则重启后页面加载会重放旧事件（renderConversation 拉 /api/agent/task-events）
     # debug 由环境变量控制：开发用 NOVEL_DEBUG=1，默认关闭（避免 reloader 干扰自动化）
     debug = os.environ.get("NOVEL_DEBUG") == "1"
     host = os.environ.get("NOVEL_HOST", "127.0.0.1")
