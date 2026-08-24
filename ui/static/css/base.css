@@ -167,17 +167,18 @@
         aside#status-bar .agent-msg-body pre code { background:none; border:0; padding:0; font-size:11px; }
         aside#status-bar .agent-msg-body a { color:#58a6ff; text-decoration:none; word-break:break-all; }
         aside#status-bar .agent-msg-body a:hover { text-decoration:underline; }
-        /* 表格：窄容器内横向滚动，不撑破 360px 气泡 */
+        /* 表格：窄容器内不横向滚动——压缩列宽、单元格折行，高度自然增加 */
         aside#status-bar .agent-msg-table {
-            margin:6px 0; max-width:100%; overflow-x:auto;
+            margin:6px 0; max-width:100%;
             border:1px solid #21262d; border-radius:6px;
         }
         aside#status-bar .agent-msg-body table { width:100%; margin:0; border-collapse:collapse; font-size:11px; }
         aside#status-bar .agent-msg-body th,
         aside#status-bar .agent-msg-body td {
             padding:5px 8px; text-align:left; border-bottom:1px solid #21262d;
-            white-space:nowrap; vertical-align:top;
+            vertical-align:top; white-space:normal; word-break:break-word;
         }
+        aside#status-bar .agent-msg-body img { max-width:100%; height:auto; }   /* 防表格内图片把气泡再撑出横向溢出 */
         aside#status-bar .agent-msg-body th { color:#8b949e; font-weight:600; background:#161b22; }
         aside#status-bar .agent-msg-body tr:last-child td { border-bottom:none; }
         aside#status-bar .agent-tool-card {
