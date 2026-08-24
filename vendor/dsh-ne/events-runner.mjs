@@ -13,7 +13,7 @@
 import { randomUUID } from "node:crypto";
 import z from "@deepseek-ai/schemastery";
 import { installModelSelection } from "@deepseek-ai/dsh-agent";
-import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { createUserMessage, isAgentLoopRequest } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 
 /** 稳定插件名。 */
@@ -23,6 +23,13 @@ const inject = ["agentDefaultModel", "agents", "sessions", "headlessStartup"];
 const Config = z.object({ task: z.string().required() });
 /** 进程 IO（测试可替换）。 */
 const internals = { stdout: process.stdout, stderr: process.stderr };
+
+/**
+ * 调试模式开关（dsh_bridge 注入 NOVEL_AGENT_DEBUG=1 才开启）：LLM 请求详情
+ * （提示词 system+messages、MCP 工具 schema）与响应随 llm/call 事件流出，
+ * 供前端「LLM 调用」调试卡呈现。关闭时不注册监听、不发数据，零开销。
+ */
+const DEBUG = process.env.NOVEL_AGENT_DEBUG === "1";
 
 /** 只转发的 session 事件类型（不推模型中间输出，见 docs/架构总览.md §三）。 */
 const FORWARD = new Set(["tool/call", "tool/result"]);
@@ -100,6 +107,11 @@ async function run(ctx, task, io) {
 	// 归因：每个 tool/call 前必有 LLM 回合，取最近一次 usage；同回合并行 tool/call 共享（不清 lastUsage，
 	// 待无 usage 的 assistant/message 到达才清，防串到下一回合）。
 	let lastUsage = null;
+	// 调试模式：llm/stream 快照请求（提示词 + MCP 工具），assistant/message 配对响应 →
+	// 每条 LLM 调用 emit 一条 llm/call。llmSeq 逐调用递增、pendingLlm 单槽（agent-loop 严格
+	// 串行，一次只有一轮在跑；isAgentLoopRequest 过滤掉内部 summarize/探测调用防串号）。
+	let llmSeq = 0;
+	let pendingLlm = null;
 	ctx.on("session/event", (session, event) => {
 		if (event.seq < firstSeq) return;
 		let u = null;
@@ -118,6 +130,25 @@ async function run(ctx, task, io) {
 		} else if (event.type === "assistant/message") {
 			lastUsage = null;   // 本回合无 usage：清掉，避免上一回合残留串到后续 tool/call
 		}
+		// 调试模式：assistant/message 是 LLM 回合终点，配对 llm/stream 快照 emit llm/call
+		//（response = 组装后的完整 assistant 消息，含 tool-call 块与 arguments，即「返回 JSON 原文」）。
+		if (DEBUG && event.type === "assistant/message" && pendingLlm) {
+			emit(io, { type: "llm/call", data: {
+				seq: pendingLlm.seq,
+				turn: event.data.turn,
+				step: event.data.step,
+				request: {
+					provider: pendingLlm.provider,
+					model: pendingLlm.model,
+					system: pendingLlm.system,
+					messages: pendingLlm.messages,
+					tools: pendingLlm.tools
+				},
+				response: event.data.message,
+				usage: lastUsage
+			}});
+			pendingLlm = null;
+		}
 		if (!FORWARD.has(event.type)) return;
 		let data = event.data;
 		if (event.type === "tool/call" && lastUsage) {
@@ -125,6 +156,23 @@ async function run(ctx, task, io) {
 		}
 		emit(io, { type: event.type, data });
 	});
+	// 调试模式：监听 llm/stream（与 dsh-agent-loop/lib/invariant.js 同款 global 注册），
+	// 只快照不改请求（options 是 deepFreeze，直接引用即可）。关闭时不注册，零开销。
+	if (DEBUG) {
+		ctx.on("llm/stream", (options, next) => {
+			if (!isAgentLoopRequest(options)) return next();   // 排除内部 summarize/探测调用
+			llmSeq += 1;
+			pendingLlm = {
+				seq: llmSeq,
+				provider: options.provider,
+				model: options.model,
+				system: options.system ?? null,
+				messages: options.messages ?? [],
+				tools: options.tools ?? []
+			};
+			return next();
+		}, { global: true, prepend: true });
+	}
 	agent.followup(createUserMessage({
 		content: [{ type: "text", text: task }],
 		source: { kind: "user" }

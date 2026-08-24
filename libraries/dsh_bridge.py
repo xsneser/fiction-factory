@@ -486,6 +486,13 @@ def _map_dsh_event(evt: dict, pending: dict):
             if cand:
                 yield {"type": "ui_command", "cmd": "add_candidate",
                        "args": {"candidate": cand}}
+    elif t == "llm/call":
+        # 调试模式（NOVEL_AGENT_DEBUG=1 时 events-runner 才 emit）：一次 LLM 调用的
+        # 提示词/MCP工具/返回JSON，前端渲染「LLM 调用」调试卡。不持久化 task_events。
+        yield {"type": "llm_call",
+               "seq": data.get("seq"), "turn": data.get("turn"), "step": data.get("step"),
+               "request": data.get("request"), "response": data.get("response"),
+               "usage": data.get("usage")}
     elif t == "reply":
         yield {"type": "reply", "content": data.get("text") or ""}
     elif t == "error":
@@ -495,7 +502,7 @@ def _map_dsh_event(evt: dict, pending: dict):
 
 
 def run_dsh_task(task: str, history: list | None = None,
-                 timeout_s: int = 900):
+                 timeout_s: int = 900, debug: bool = False):
     """跑一次 dsh headless 任务，实时产出 SSE 事件 dict。
 
     事件序列（由 events-runner 的 NDJSON 流实时驱动）：tool_call / tool_result /
@@ -521,13 +528,18 @@ def run_dsh_task(task: str, history: list | None = None,
     try:
         try:
             ensure_proxy()   # 保证本地 token 代理(58082)已监听，dsh 的 LLM 调用才能走它计 token
+            env = {**os.environ, "DEEPSEEK_BASE_URL": "http://127.0.0.1:58082"}
+            if debug:
+                # 调试模式：通知 events-runner 把每次 LLM 调用的提示词/MCP工具/返回JSON emit 成 llm/call。
+                # 关闭时不注入 → 子进程不发数据，零开销。
+                env["NOVEL_AGENT_DEBUG"] = "1"
             proc = subprocess.Popen(
                 cmd, cwd=_ROOT,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding="utf-8", errors="replace",
                 # 让 dsh 的 LLM 走本地代理：DEEPSEEK_BASE_URL 是 bootstrap-only 变量
                 # （只能来自启动进程环境，写 .env 会抛错），dsh 解析链 baseURL 优先取它。
-                env={**os.environ, "DEEPSEEK_BASE_URL": "http://127.0.0.1:58082"},
+                env=env,
             )
         except FileNotFoundError:
             yield {"type": "error",

@@ -8,11 +8,13 @@ console.log('[agent-panel] v23 events-stream');
     var sendBtn = document.getElementById('agent-send');
     var clearBtn = document.getElementById('agent-clear');
     var stopBtn = document.getElementById('agent-stop');
+    var debugBtn = document.getElementById('agent-debug');
     var tokenFlowEl = document.getElementById('agent-token-flow');
     var toolsLog = document.getElementById('agent-tools-log');
     if (!chat || !input || !sendBtn) return;   // 布局缺失则静默跳过
 
     var HISTORY_KEY = 'ne_agent_history';
+    var DEBUG_KEY = 'ne_agent_debug';           // 调试模式开关（localStorage 持久化）
     var HISTORY_LIMIT = 40;
     var busy = false;
     var sessionTokens = 0;                      // 当前任务累计 token 流量（每个 tool_call 的 usage 相加；新任务/清空重置）
@@ -23,6 +25,8 @@ console.log('[agent-panel] v23 events-stream');
     var toolCards = {};                         // callId → 工具卡（事件流配对）
     var toolCardOrder = [];                     // 工具卡创建顺序（上限裁剪用）
     var TOOL_CARD_LIMIT = 20;                   // 对话页签工具卡上限（防 DOM 膨胀）
+    var llmCards = [];                          // LLM 调用调试卡 DOM 顺序（上限裁剪用）
+    var LLM_CARD_LIMIT = 10;                    // 调试卡上限（体积大，比工具卡更保守）
 
     function loadHistory() {
         try { return JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]'); }
@@ -294,6 +298,40 @@ console.log('[agent-panel] v23 events-stream');
         run.status.className = (text && text.indexOf('✅') === 0)
             ? 'agent-tool-status ok' : 'agent-tool-status err';
     }
+    // ─── LLM 调用调试卡（调试模式：每次 LLM 调用的提示词 / MCP 工具 / 返回 JSON 原文）───
+    // 对应 events-runner emit 的 llm/call → bridge llm_call → handleEvent。三段独立折叠，
+    // 内容一律 textContent 写入（防 HTML 注入）；体积大，上限比工具卡更保守。
+    function addLlmCallCard(evt) {
+        var req = evt.request || {};
+        var msgs = req.messages || [];
+        var tools = req.tools || [];
+        var card = el('div', 'agent-llm-card');
+        var head = el('div', 'agent-llm-head');
+        head.appendChild(el('span', 'agent-llm-head-label', '🤖 LLM 调用 · ' + (req.model || '?')));
+        head.appendChild(el('span', 'agent-llm-head-meta', evt.usage ? '⚡ ' + formatTokens(evt.usage) : ''));
+        card.appendChild(head);
+        var sections = [
+            ['💬 提示词（system + ' + msgs.length + ' 条消息）', { system: req.system || '', messages: msgs }],
+            ['🧰 MCP 工具（' + tools.length + ' 个）', tools],
+            ['📦 返回 JSON', evt.response !== undefined ? evt.response : null]
+        ];
+        for (var i = 0; i < sections.length; i++) {
+            var det = el('details', 'agent-llm-section');
+            det.appendChild(el('summary', '', sections[i][0]));
+            var pre = el('pre', '', '');
+            try { pre.textContent = JSON.stringify(sections[i][1], null, 2); }
+            catch (e) { pre.textContent = String(sections[i][1]); }
+            det.appendChild(pre);
+            card.appendChild(det);
+        }
+        chat.appendChild(card);
+        scrollBottom();
+        llmCards.push(card);
+        if (llmCards.length > LLM_CARD_LIMIT) {
+            var old = llmCards.shift();
+            if (old && old.parentNode) old.parentNode.removeChild(old);
+        }
+    }
     // ─── 工具日志页签（右侧面板「💬 对话 / 🔧 工具日志」切换）───
     function switchAgentTab(key) {
         var chatPane = document.getElementById('agent-chat');
@@ -429,6 +467,11 @@ console.log('[agent-panel] v23 events-stream');
             handleNavigate(evt.url);            // dsh 调用 navigate → 实时切页
         } else if (t === 'ui_command') {
             dispatchCommand({ cmd: evt.cmd, args: evt.args || {} });  // drive_ui → 驱动建书向导
+        } else if (t === 'llm_call') {
+            // 调试模式：一次 LLM 调用 → 一张「LLM 调用」调试卡（提示词/工具/返回JSON），
+            // 在它产生的工具卡之前渲染（assistant/message 先于 tool/call 到达）。
+            if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }
+            addLlmCallCard(evt);
         } else if (t === 'reply') {
             addMsg('assistant', evt.content);
             history.push({ role: 'assistant', content: evt.content });
@@ -534,7 +577,7 @@ console.log('[agent-panel] v23 events-stream');
         activeSse = true;                    // 活跃 SSE 会话开始
         setSendEnabled(false);
         removeRunningBanner();   // 新任务接管：清掉恢复期的「后台运行中」卡（SSE 实时流展示）
-        consumeSSE({ messages: history }).catch(function(err) {
+        consumeSSE({ messages: history, debug: isDebugOn() }).catch(function(err) {
             addMsg('assistant', '⚠️ 请求失败：' + err.message);
             if (pendingTask) {
                 var pt = pendingTask; pendingTask = null;
@@ -615,6 +658,26 @@ console.log('[agent-panel] v23 events-stream');
         fetch('/api/agent/task-events/clear', { method: 'POST' }).catch(function() {});   // 清服务器事件存储，防清空后旧工具卡回显
         addMsg('assistant', '对话已清空。有什么可以帮你？');
     });
+    // ─── 调试模式开关：🔍 按钮（localStorage 持久化；开启后每次 LLM 调用出「LLM 调用」调试卡）───
+    function isDebugOn() { return localStorage.getItem(DEBUG_KEY) === '1'; }
+    function renderDebugBtn() {
+        if (!debugBtn) return;
+        debugBtn.classList.toggle('active', isDebugOn());
+        debugBtn.title = isDebugOn()
+            ? '调试模式已开：每次 LLM 调用显示「提示词 / MCP 工具 / 返回JSON」'
+            : '调试模式已关：LLM 调用不显示调试详情';
+    }
+    if (debugBtn) {
+        debugBtn.addEventListener('click', function() {
+            var on = !isDebugOn();
+            localStorage.setItem(DEBUG_KEY, on ? '1' : '0');
+            renderDebugBtn();
+            addMsg('assistant', on
+                ? '🔍 调试模式已开启 —— 后续每次 LLM 调用会显示「提示词 / MCP 工具 / 返回 JSON」。'
+                : '🔍 调试模式已关闭。');
+        });
+        renderDebugBtn();
+    }
 
     // 初始欢迎语（开篇语常驻：无论是否有历史都置顶） + 恢复会话历史（card 标记 → 渲染卡片）
     function renderHistory() {

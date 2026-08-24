@@ -32,6 +32,7 @@ def agent_chat():
     """
     data = request.get_json(silent=True) or {}
     raw_messages = data.get("messages") or []
+    debug = bool(data.get("debug"))   # 调试模式：前端 🔍 开关，透传给 dsh 子进程 emit llm/call
     messages = []
     for m in raw_messages:
         role = m.get("role")
@@ -48,7 +49,7 @@ def agent_chat():
             if history and history[-1].get("role") == "user":
                 last = history.pop(-1)
                 task = last.get("content", "")
-            for evt in run_dsh_task(task, history):
+            for evt in run_dsh_task(task, history, debug=debug):
                 yield emit(evt)
         except Exception as e:
             import traceback
