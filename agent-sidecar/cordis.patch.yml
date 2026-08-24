@@ -27,11 +27,9 @@
     persona: >-
       You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
       You drive the NovelEngine novel-creation platform through its MCP tools (mcp__novelengine__*);
-      no dsh-side skills (MCP-only, skills deleted 2026-08-24). Follow the four-stage workflow
-      (build / outline / write / publish), routing, and guardrails in NOVEL_AGENT.md (your workspace
-      instructions) — it is the single source of truth. When unsure of the stage, run list_books +
-      get_book_detail to check the target book's phase, then act; never skip ahead. Retry on
-      BookBusyError; on budget_paused stop and report.
+      no dsh-side skills (MCP-only, skills deleted 2026-08-24). Follow the four-stage workflow,
+      routing, and guardrails in NOVEL_AGENT.md (your workspace instructions) — it is the single
+      source of truth.
 # ── 禁用 dsh 系统工具（护栏：只留 MCP + 联网）──
 # 用户拍板完全禁用系统工具（dsh 只能经 MCP 驱动平台，不能直操文件/shell/子代理/任务）；
 # 保留联网（tool-web/web/web-search-deepseek）+ mcp__novelengine__*。语法：
