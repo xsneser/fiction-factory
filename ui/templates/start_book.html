@@ -1020,7 +1020,12 @@ var WZ = {
         fetch('/books/start', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(this.state)
-        }).then(function(r) { return r.json(); }).then(function(d) {
+        }).then(function(r) {
+            // 非 JSON(如 500 HTML 错误页)时 r.json() 会抛 → 先试解析,失败给可读错误(HTTP 状态)
+            return r.json().catch(function() {
+                return { ok: false, error: '服务器错误(HTTP ' + r.status + '，返回非 JSON)' };
+            });
+        }).then(function(d) {
             if (!d.ok) {
                 self.submitError = d.error || '未知错误';
                 self.reportStatus();   // 失败原因进 build_status → agent 经 drive_ui(submit)/get_build_status 感知

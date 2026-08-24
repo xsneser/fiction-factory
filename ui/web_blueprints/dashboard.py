@@ -73,13 +73,14 @@ def start_new_book():
         world_idea = (src.get("idea") or src.get("world_idea", "") or "").strip()
         description = world_idea
 
-        # 题材标签（番茄式硬约束，向导①多选 chips）；题材方向与标签同源，为空时从标签推导
+        # 题材标签（番茄式硬约束，向导①多选 chips）；题材方向与标签同源，恒由标签推导
+        # （genre/sub_genre 已从可见面移除，仅内部 book.json 保留；修复曾引用未定义 genre 的 NameError）
         tags = data.get("tags") if is_json else []
         if not isinstance(tags, list):
             tags = []
-        if not genre:
-            from libraries.world_tags import derive_genre
-            genre = derive_genre(tags)
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
+        sub_genre = ""
 
         # 主角 + 配角（向导③可多选/多次生成/手动编辑）：JSON 带 characters 数组直接用；
         # form（smoke 兼容）回退 protag_* 单主角
@@ -145,11 +146,9 @@ def start_new_book():
         if storyline_hint:
             basic_info["storyline_hint"] = storyline_hint
 
-        # 创建故事线配置
+        # 创建故事线配置（BookStoryline 是 @dataclass，无 genre/sub_genre 字段——已随流派移除删除）
         storyline = BookStoryline(
             book_title=src.get("title", ""),
-            genre=genre,
-            sub_genre=sub_genre,
             words_per_chapter=parse_int(src.get("words_per_chapter"), 3000, min_value=500, max_value=20000),
             pen_name=pen_name,
             platform=platform,
