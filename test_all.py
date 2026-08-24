@@ -434,7 +434,7 @@ try:
         _raised = True
     assert_ok("规划-无storyline报错", _raised)
 
-    _tl = BookStoryline(genre="玄幻")
+    _tl = BookStoryline()
     _tl.basic_info["world_building"]["description"] = "一句话种子"
     bm.save_storyline(_tbid, _tl)
     _eng = NovelEngine()
