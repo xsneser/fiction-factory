@@ -217,7 +217,7 @@ console.log('[agent-panel] v23 events-stream');
                         scrollBottom();
                     }
                     _liveLlml.textContent = '⏳ LLM 生成中 · '
-                        + formatTokens({ input: d.pending_prompt || 0, output: d.pending_completion || 0 });
+                        + formatTokens({ output: d.pending_completion || 0 });
                 } else if (_liveLlml) {
                     _liveLlml.remove();
                     _liveLlml = null;

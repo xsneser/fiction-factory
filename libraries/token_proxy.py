@@ -72,7 +72,10 @@ class _UsageAccumulator:
         with self.lock:
             pend_p = sum(r["prompt"] for r in self._inflight.values())
             pend_c = sum(r["completion"] for r in self._inflight.values())
-            total = self.prompt + self.completion + pend_p + pend_c
+            # total 只含流式中「生成中」的 pending_completion（实时滚动来源）；不含
+            # pending_prompt：dsh 上下文巨大，char×1.5 对 prompt 高估严重，计入会造成
+            # 「先涨后跌」伪影。prompt 真实成本在调用提交时精确计入（total 向上跳）。
+            total = self.prompt + self.completion + pend_c
             return {"prompt": self.prompt, "completion": self.completion,
                     "calls": self.calls, "pending_prompt": pend_p,
                     "pending_completion": pend_c, "total": total}
@@ -123,6 +126,33 @@ def _parse_usage_objs(text):
         except Exception:
             pass
     return prompt, completion
+
+
+def _count_output_chars(text):
+    """累计 SSE 流中实际生成文本的字符数（choices[0].delta.content + reasoning_content）。
+
+    只数增量文本、不算 `data:` 包装与 JSON 键（否则把响应体积误当 token 高估），
+    与 show-me-the-story 的 updateStreamContent 只计 delta.Content 同思路；
+    加上 reasoning_content 让流式估算覆盖 DeepSeek 的思考段（真实 completion_tokens 含它）。
+    """
+    n = 0
+    for line in text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        data = line[6:].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            obj = json.loads(data)
+            for ch in obj.get("choices") or []:
+                delta = ch.get("delta") or {}
+                for key in ("content", "reasoning_content"):
+                    c = delta.get(key)
+                    if c:
+                        n += len(c)
+        except Exception:
+            pass
+    return n
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -197,6 +227,7 @@ class _Handler(BaseHTTPRequestHandler):
                 inflight_key = USAGE.begin_inflight(est_prompt)
                 decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
                 char_count = 0
+                text_tail = ""
                 buf = b""
                 for chunk in resp.iter_content(chunk_size=1024):
                     if not chunk:
@@ -204,8 +235,13 @@ class _Handler(BaseHTTPRequestHandler):
                     self.wfile.write(chunk)      # 实时透传（保持 SSE 原始格式，不破坏 dsh 流解析）
                     self.wfile.flush()
                     buf += chunk
-                    char_count += len(decoder.decode(chunk))
-                    USAGE.update_inflight(inflight_key, _estimate_tokens(char_count))
+                    # 只处理完整 data: 行，按实际输出文本(delta.content/reasoning_content)估 token
+                    text_tail += decoder.decode(chunk)
+                    nl = text_tail.rfind("\n")
+                    if nl >= 0:
+                        char_count += _count_output_chars(text_tail[:nl + 1])
+                        text_tail = text_tail[nl + 1:]
+                        USAGE.update_inflight(inflight_key, _estimate_tokens(char_count))
                 decoder.decode(b"", final=True)
                 chars = len(buf)
                 prompt, completion = _parse_usage_objs(buf.decode("utf-8", errors="replace"))
