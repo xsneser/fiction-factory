@@ -720,10 +720,12 @@ class NovelAnalyzer:
 class LibraryIngestor:
     """将分析结果导入各库（桥段/大纲/笑点）"""
 
-    def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None):
+    def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None,
+                 char_lib=None):
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
         self.gag_lib = gag_lib
+        self.char_lib = char_lib
 
     def ingest(self, analysis: dict, source: str = "fanqie") -> dict:
         """导入分析结果到各库"""
@@ -806,10 +808,34 @@ class LibraryIngestor:
             category=data.get("category",""),
             pattern_description=data.get("pattern_description",""),
             template=data.get("pattern_description",""),
-            fit_scenes=data.get("scene_fit",[]),
+            fit_scenes=data.get("fit_scenes") or data.get("scene_fit") or [],
             examples=data.get("examples",[]),
         )
         self.gag_lib.patterns.append(pattern)
+
+    def _add_character(self, data: dict, source: str):
+        from libraries.character import CharacterArchetype
+        if not self.char_lib:
+            return
+        cid = f"scout_{source}_{data.get('name','unknown')}"
+        for c in self.char_lib.archetypes:
+            if c.id == cid:
+                return
+
+        kwargs = dict(
+            id=cid, name=data.get("name", ""),
+            personality=data.get("personality", ""),
+            description=data.get("description", ""),
+            archetypes=data.get("archetypes", []),
+            examples=data.get("examples", []),
+            catchphrases=data.get("catchphrases", []),
+            tags=data.get("tags", []),
+            fit_tags=data.get("fit_tags", []),
+            source=source,
+        )
+        if data.get("created_at"):
+            kwargs["created_at"] = data["created_at"]
+        self.char_lib.archetypes.append(CharacterArchetype(**kwargs))
 
 
 # ═══════════════════════════════════════════
@@ -827,13 +853,14 @@ class FanqieScoutAgent:
     """
 
     def __init__(self, llm_client=None, plot_lib=None, struct_lib=None,
-                 gag_lib=None, verify: bool = True):
+                 gag_lib=None, char_lib=None, verify: bool = True):
         self.crawler = FanqieCrawler(verify=verify)
         self.analyzer = NovelAnalyzer(llm_client)
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
         self.gag_lib = gag_lib
-        self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib)
+        self.char_lib = char_lib
+        self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib, char_lib)
 
     def run(self, genre: str = "", book_count: int = 5,
             chapters_per_book: int = 30, delay: float = 1.5,
@@ -1003,13 +1030,13 @@ class FanqieScoutAgent:
         return result
 
     def ingest_selected(self, plots: list = None, structures: list = None,
-                        gags: list = None,
+                        gags: list = None, characters: list = None,
                         source: str = "fanqie", on_progress=None) -> dict:
-        """选择性入库"""
+        """选择性入库（含角色原型库）"""
         from datetime import datetime
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        stats = {"plots": 0, "structures": 0, "gags": 0}
+        stats = {"plots": 0, "structures": 0, "gags": 0, "characters": 0}
 
         if plots and self.plot_lib:
             for item in plots:
@@ -1040,6 +1067,16 @@ class FanqieScoutAgent:
             if on_progress:
                 on_progress("ingest", 1, 1, f"笑点已入库 {stats['gags']}个")
             self.gag_lib._save()
+
+        if characters and self.char_lib:
+            for item in characters:
+                item["source"] = source
+                item["created_at"] = now
+                self.ingestor._add_character(item, source)
+                stats["characters"] += 1
+            if on_progress:
+                on_progress("ingest", 1, 1, f"角色已入库 {stats['characters']}个")
+            self.char_lib._save()
 
         return stats
 
