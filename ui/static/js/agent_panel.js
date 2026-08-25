@@ -57,7 +57,7 @@ console.log('[agent-panel] v26 events-stream');
         save_outlines: '保存大纲', save_book_meta: '保存书名简介',
         skill: '技能', chapter_quality_gate: '章节质量门禁', diagnose_continuity: '连续性扫描',
         diagnose_promises: '伏笔扫描', discover_hot: '侦察热榜', fetch_novel: '抓取小说',
-        list_crawled_novels: '已抓取书库', read_crawled_novel: '读抓取书',
+        list_crawled_novels: '已抓取书库', read_crawled_novel: '读抓取书', ingest_library_assets: '提取入库',
         get_writing_context: '读取写作上下文', list_snapshots: '列出快照', preview_diff: '预览快照差异',
         rollback_book: '回滚书'
     };

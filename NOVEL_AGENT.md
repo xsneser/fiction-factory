@@ -12,7 +12,8 @@
 - 「侦察热榜」→ `discover_hot(genre)`（genre 空=全站；返回书名/题材/热度/简介，供挑题材/参考爆款）。
 - 「抓取参考书」→ `fetch_novel(title 或 book_id, chapters)`（下载到 storage/novels/fanqie/<书名>/，进度写 crawl_progress.json，无需 LLM）。
 - 抓完想读：`list_crawled_novels()` 列出已抓书库；`read_crawled_novel(folder, chapter=N)` 读章节目录（默认）或单章正文——**参考书内容供借鉴设定/写法，不改书**。
-- 用途建议：建书前侦察热榜可辅助题材选择；抓取爆款可借鉴其开局/爽点结构（借鉴走建书向导的借用链路，不直改参考书）。
+- 「提取入库」→ 读完参考书后，agent 自主提炼可复用资产（桥段/大纲/笑点/角色），调 `ingest_library_assets(plots/structures/gags/characters)` 入库四库（纯规则、无 LLM）。字段：plot `{name,category,sub_category,structure,slots[{name,options}],notes,word_range}`；structure `{name,total_chapters,stages[{name,description,min_chapters,max_chapters,key_events}]}`；gag `{name,category,pattern_description,fit_scenes,examples}`；character `{name,personality,description,archetypes,examples,catchphrases,tags,fit_tags}`。
+- 用途建议：建书前侦察热榜可辅助题材选择；抓取爆款可借鉴其开局/爽点结构（借鉴走建库复用，不直改参考书）。
 
 ### 1 建书（开新书 / 写设定 / 构思世界观 / 生成候选）
 - 先 `navigate('/books/start')` 翻到步 1 表单；idea/tags 已给全就预填。
@@ -37,7 +38,7 @@
 - 无直删工具：`navigate('/books')` 让用户手动点删除。
 
 ## 路由
-- 「侦察热榜/抓取下载番茄小说/读已抓取书/抓参考书」→ 侦察/抓取（建书可选前置）。
+- 「侦察热榜/抓取下载番茄小说/读已抓取书/抓参考书/提取入库/入库资产/提炼桥段大纲笑点角色」→ 侦察/抓取（建书可选前置）。
 - 「开新书/建书/写设定/构思世界观/生成候选」→ 建书；「已选候选/补全世界观/继续建书」→ 步 3 建书；
 - 「生成大纲/排故事线/续写扩写」→ 大纲；「开始写/写正文/写下一章」→ 写作；
 - 「上架/发布/完本/导出」→ 上架；「删书」→ navigate(/books) 手动删。
