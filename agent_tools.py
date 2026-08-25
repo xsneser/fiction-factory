@@ -1363,6 +1363,29 @@ def read_crawled_novel(platform: str = "fanqie", folder: str = "",
     return result
 
 
+def ingest_library_assets(plots: list | None = None, structures: list | None = None,
+                          gags: list | None = None, characters: list | None = None,
+                          source: str = "fanqie") -> dict:
+    """提取入库：把 agent 从参考书/已抓取书提炼的桥段/大纲/笑点/角色写入四库。
+
+    纯规则落盘、无 LLM（复用 FanqieScoutAgent.ingest_selected，角色走新增
+    _add_character）。字段格式——plot {name, category, sub_category, structure,
+    slots[{name, options}], notes, word_range}；structure {name, total_chapters,
+    stages[{name, description, min_chapters, max_chapters, key_events}]}；gag
+    {name, category, pattern_description, fit_scenes, examples}；character {name,
+    personality, description, archetypes, examples, catchphrases, tags, fit_tags}。
+    返回 {ok, source, plots, structures, gags, characters}。
+    """
+    if not any([plots, structures, gags, characters]):
+        raise RuntimeError("至少提供 plots/structures/gags/characters 之一")
+    from plugins.fanqie_scout import FanqieScoutAgent
+    scout = FanqieScoutAgent(plot_lib=plot_lib, struct_lib=struct_lib,
+                             gag_lib=gag_lib, char_lib=char_lib)
+    stats = scout.ingest_selected(plots=plots, structures=structures,
+                                  gags=gags, characters=characters, source=source)
+    return {"ok": True, "source": source, **stats}
+
+
 def _build_registry():
     # 顺序有讲究：导航/建书向导驱动排最前（flash 对列表前部工具更敏感，能保证
     # "打开页面"请求正确触发 navigate），其次只读摸底，再创作链/上架/工具。
@@ -1388,8 +1411,9 @@ def _build_registry():
         chapter_quality_gate,
         # 快照 / diff / 回滚（决策点 commit 语义）
         preview_diff, rollback_book, list_snapshots,
-        # 抓取 / 侦察（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示）
+        # 抓取 / 侦察 / 提取入库（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示）
         fetch_novel, discover_hot, list_crawled_novels, read_crawled_novel,
+        ingest_library_assets,
     ]
     seen = set()
     entries = []
