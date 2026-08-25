@@ -451,6 +451,50 @@ finally:
     bm.delete(_tbid)
 
 # ══════════════════════════════════════════════
+#  Phase: 建书向导步门控（drive_ui + build_status）
+# ══════════════════════════════════════════════
+print("\n═══ Phase: 建书向导步门控（drive_ui + build_status）═══")
+import libraries.build_status as _bs_mod
+import libraries.nav_intent as _ni_mod
+from agent_tools import drive_ui as _drive_ui
+
+# build_status 盖章：真实上报（非空 state）→ updated_at 有值；空 state（测试清理）→ 不盖章（宽松阀）
+_bs_mod.set_build_status({"cur": 3, "bookId": ""})
+assert_ok("门控-真实上报盖章 updated_at", bool(_bs_mod.get_build_status().get("updated_at")))
+_bs_mod.set_build_status({})
+assert_ok("门控-空状态不盖章（宽松阀）", not (_bs_mod.get_build_status().get("updated_at")))
+
+# drive_ui 步门控：patch 掉入队（不写 storage/nav_intent.json），假 build_status 验拒绝/放行
+_orig_push = _ni_mod.push_ui_command
+_orig_get = _bs_mod.get_build_status
+_ni_mod.push_ui_command = lambda cmd, args=None: None
+def _gate_run(st, cmd, args):
+    _bs_mod.get_build_status = lambda: dict(st)
+    try:
+        _drive_ui(cmd, args)
+        return True, ""
+    except RuntimeError as _e:
+        return False, str(_e)
+_ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 2, "created": False},
+                   "set_world", {"world_building": {"core_conflict": "x"}})
+assert_ok("门控-错误步拒绝（步2≠步3）", not _ok)
+_ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 3, "created": False},
+                   "set_world", {"world_building": {"core_conflict": "x"}})
+assert_ok("门控-正确步放行", _ok)
+_ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 3, "created": True, "book_id": "book_x"},
+                   "set_outline", {"outlines": [{"id": "o1", "name": "n"}], "plots": []})
+assert_ok("门控-已建书拒绝", not _ok)
+_ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 3, "created": False},
+                   "set_field", {"field": "title", "value": "t"})
+assert_ok("门控-set_field 跨步放行", _ok)
+_ok, _ = _gate_run({"updated_at": "", "cur": 2, "created": False},
+                   "set_outline", {"outlines": [{"id": "o1", "name": "n"}], "plots": []})
+assert_ok("门控-宽松阀跳过（updated_at 空）", _ok)
+_ni_mod.push_ui_command = _orig_push
+_bs_mod.get_build_status = _orig_get
+_bs_mod.set_build_status({})   # 恢复空态，不残留真实向导状态
+
+# ══════════════════════════════════════════════
 #  汇总
 # ══════════════════════════════════════════════
 print(f"\n{'='*55}")

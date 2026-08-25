@@ -8,6 +8,7 @@
 与 nav_intent（消费型队列）不同：本文件是**持久状态快照**，重复读不消费。
 """
 import os
+import time
 
 from core.json_store import read_json, write_json_atomic  # noqa: E402
 
@@ -32,6 +33,8 @@ def set_build_status(state: dict) -> None:
     """写建书状态快照（浏览器上报；空 state 视为清空）。
 
     浏览器 WZ 用驼峰字段（bookId/creating/_picked），这里映射到 `_DEFAULTS` 的下划线键。
+    非空 state（真实向导上报）盖章 updated_at——drive_ui 步门控据此激活；
+    空 state（测试清理/宽松阀）不盖章，保持 updated_at 空（见 agent_tools.drive_ui 步校验注释）。
     """
     data = dict(_DEFAULTS)
     if state:
@@ -42,6 +45,7 @@ def set_build_status(state: dict) -> None:
             elif k in _DEFAULTS:
                 mapped[k] = v
         data.update(mapped)
+        data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     data["created"] = bool(data.get("book_id"))
     write_json_atomic(_STATUS_PATH, data)
 

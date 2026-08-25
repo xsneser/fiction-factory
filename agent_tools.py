@@ -1051,11 +1051,13 @@ _WIZARD_CMDS = {
     "submit": (),
 }
 
-# 步敏感命令 → 需求向导步（步 1 表单 / 步 2 候选 / 步 3 内容构建）。
-# drive_ui 执行前据此校验当前步——把浏览器「错误步静默丢弃命令」变成「真错误」（agent 能收到拒绝信息）。
-# next/prev/reset 不入此表（跨步移动/重置任何时候都允许）。
+# 步敏感命令 → 需求向导步（步 2 候选 / 步 3 内容构建）。
+# drive_ui 执行前据此校验当前步——把浏览器「错误步静默丢弃/静默失败命令」变成「真错误」（agent 能收到拒绝信息）。
+# 激活条件：build_status.updated_at 非空（浏览器上报过真实向导状态）；空状态（向导未启动/测试）走宽松阀跳过。
+# 步 3 内容命令锁步 3：防候选未选/未进步 3 时提前写内容或建书（submit）。
+# set_field/set_tags 不入表：表单字段全在 DOM，步 3 跨步改书名/笔名/标签合法。
+# next/prev/reset 不入表（跨步移动/重置任何时候都允许）。
 _WIZARD_STEP_GATE = {
-    "set_field": 1, "set_tags": 1,
     "set_candidates": 2, "add_candidate": 2, "pick_candidate": 2,
     "load_candidates": 2, "skip_candidates": 2,
     "set_world": 3, "set_characters": 3, "set_picks": 3,
@@ -1065,12 +1067,35 @@ _WIZARD_STEP_GATE = {
 
 def drive_ui(cmd: str, args: dict = None) -> dict:
     """驱动「启动新书」向导 UI（命令桥）：set_field/set_tags/set_characters/set_candidates/
-    pick_candidate/next/prev/load_candidates/skip_candidates/reset/submit。
+    add_candidate/pick_candidate/set_world/set_picks/set_outline/next/prev/load_candidates/
+    skip_candidates/fill_world/reset/submit。
 
     非阻塞：把命令写入意图队列，浏览器每 ~2.5s 轮询消费（start_book.html 的
     window.onnecommand 执行）。不入书锁（不写书）。
     建书仍走系统向导（/books/start POST）：agent 只驱动表单、点下一步/提交，
     **不能绕过向导直建**（护栏：无直建工具）。
+
+    必填 args（cmd → 必填键，缺则报错）：
+    - set_field: {field, value}   field ∈ idea/pen/title/words/borrow_source/borrow_tweak
+    - set_tags: {tags: [str]}
+    - set_characters: {characters: [{name, role, importance, identity, personality, golden_finger,
+      gender, catchphrase, brief, title, age, death_year, faction, relations}]}（整体替换）
+      role 只取 主角/配角/反派/其他；importance 必传（主角=1）；**relations 必须 [{name, relation}] 数组**
+      （传字符串会让前端渲染中断、后续角色全丢）
+    - set_candidates: {candidates: [{title, one_liner?, world_brief?}]}   title 必填
+    - add_candidate: {candidate: {title, one_liner?, world_brief?}}   title 必填，增量追加 1 张候选卡
+    - pick_candidate: {candidate: {title, world_brief, one_liner}} 或 {idx: int}（至少其一）
+    - set_world: {world_building: {era?, power_system?, geography?, culture?, history?,
+      social_structure?, core_conflict?, rules?, world_summary?, factions?},
+      tone?, target_audience?, pov?, era_language?}   **顶层键必须叫 world_building**（部分维可分批提交，合并进表单不覆盖已填）；
+      **rules 必须数组**（传字符串会被忽略）
+    - set_picks: {templates: [id|{id,name}]} 或 {plots: [id|{id,name}]}（任一非空）
+    - set_outline: {outlines: [非空列表], plots: [list], threads?, themes?}   步3②大纲+桥段，submit 随书落库
+      outlines 每项 {id, name, start_chapter, end_chapter, notes, stages?}（id 唯一必填、备注用 notes 非 description）；
+      plots 每项 {id, name, outline_id, order, category?, thread_id?, roles?, template_structure?}
+      （id 唯一必填、outline_id 必填指向所属大纲 id、order 卷内序号）——缺 id/outline_id 故事线桥段不显示
+    - submit: {}  **⚠️ 建书即创建书目并跳书详情页，调用前必须先向用户汇报设定概要并取得确认**
+    - next / prev / reset / load_candidates / skip_candidates / fill_world: {} 无必填
     """
     cmd = (cmd or "").strip()
     if cmd not in _WIZARD_CMDS:
