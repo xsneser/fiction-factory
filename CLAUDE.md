@@ -4,6 +4,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 
 > **当前驱动形态**：侧栏聊天大脑 = **dsh**（内置 agent `plugins/agent_loop.py` 已删除，无 builtin 可切回）。`libraries/dsh_bridge.py` 转发 vendored `vendor/dsh-ne/`（精简核心，改名防冲突）headless 子进程，经 MCP 驱动平台；`vendor/dsh-ne/events-runner.mjs` 把 dsh 的每个工具调用/结果实时推成 SSE（tool_call/tool_result/navigate/ui_command），侧栏实时工具卡、导航零延迟；护栏：phase 门控 `tool_policy.py` / MCP 循环熔断 `loop_guard.py` / 建书 reset。agent 架构见 `docs/架构文档-内置agent-dsh.md`，上手交接见 `docs/交接文档-2026-08-25-建书链路Agent修复.md`（2026-08-25 建书链路修复）与 `docs/交接文档-2026-08-25-小说抓取入库.md`。
 > **架构速览**（系统分层/工具注册表/双通道驱动/各阶段入口/常见坑）：`docs/架构总览.md`——交接/上手先读它，不必重新探索。设计权威仍为 `docs/设计文档-总览-claude.md`。
+> **故事线概念研究**（大纲/桥段/线程 三者关系、「大纲≠卷」建模、插叙/并行视角现状）：`docs/研究文档-故事线大纲桥段线程.md`（2026-08-25 只读研究，未改代码）。
 
 | 阶段 | 分 skill | 前置 phase | 出口 | 主要工具 |
 |---|---|---|---|---|
