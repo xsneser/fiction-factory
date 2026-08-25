@@ -11,7 +11,7 @@ description: >-
 
 > **护栏**：建书只能驱动系统向导 UI，删书只能 navigate 书库让用户手动删——直建/直删工具不在工具面，本 skill 绝不绕向导。
 >
-> **架构方向**：世界观/角色/核心矛盾等内容的 LLM 生成正迁移到 agent 自主生成（你带着设定/题材/候选上下文自己产出），经 `drive_ui(set_world/set_characters)` 填入向导表单（书未建前无 book_id，不能调 `save_basic_info`）。旧生成工具（generate_core_conflict/factions/characters/rest_world/world_candidates/generate_outline_preview）**已废弃留档**——迁移过渡期仍可作兜底，但优先 agent 自主生成。
+> **架构方向**：世界观/角色/核心矛盾等内容的 LLM 生成正迁移到 agent 自主生成（你带着设定/题材/候选上下文自己产出），经 `drive_ui(set_world/set_characters)` 填入向导表单（书未建前无 book_id，不能调 `save_basic_info`）。旧生成工具（generate_core_conflict/factions/characters/rest_world/world_candidates/generate_outline_preview）**已删除**（2026-08-24 大清理，无兜底）；候选经 agent 自主生成 → `drive_ui(add_candidate)` 逐张呈现，内容经 set_world/set_characters/set_outline 落表。
 
 ## 前置检查（必做，只读工具）
 1. `mcp__novel-engine__list_books` 看目标书是否已存在。
@@ -47,22 +47,22 @@ description: >-
 > **交棒**：用户在步 2 点「已挑选完毕」后，**页面会自动给 agent（dsh）发建书任务（`novel-build`）驱动步 3**。Claude Code 只负责生成候选、呈现、等待挑选并确认，**不重复驱动步 3**（双驱动会互相覆盖）。
 
 **推荐路线——agent 逐张生成候选、用户点选**：
-1. **循环 `mcp__novel-engine__world_candidates(book_id="", idea=种子, tags=题材标签)` 约 5 次**（每次 LLM 只生成 **1 个**候选并**自动填入**步 2，工具按 idea/tags 持久化去重；genre 由标签自动推导；卡逐张出现）——不需要 5 张可提前停。
-2. 单次失败/空 → 重试一次；仍空跳过继续。
+1. **agent 自身上下文生成 3~5 个候选，逐个 `drive_ui(add_candidate, {candidate:{title, one_liner, world_brief}})` 填入步 2**（title 必填，浏览器拒空；genre 由标签自动推导；卡逐张出现）——不需要 5 张可提前停。
+2. 单次生成失败/空 → 重试一次；仍空跳过继续。
 3. **告诉用户在平台上点选喜欢的候选方向**（agent 不要把候选搬到聊天里——平台卡片点选会自然带入书名/世界观简述到步 3；点卡仅高亮、可换）。
 4. 用户确认点选后点「已挑选完毕」（步 2 按钮）→ 进步 3，页面自动触发建书任务交给 dsh；不想要候选 → `drive_ui(skip_candidates)`（「跳过，手动设定」在步 2 导航区，手动点不触发 agent 建书）。
 
-**兜底**：`world_candidates` 失败/空 → 重试一次；仍空 → `drive_ui(skip_candidates)` + `drive_ui(set_field world_desc=手动拼好的世界观简述)`（步 3 自动补全仍会触发）——**skip 也要向用户说明**，不能无声跳过。
+**兜底**：agent 生成候选失败/空 → 重试一次；仍空 → `drive_ui(skip_candidates)` + `drive_ui(set_field idea=手动拼好的世界观简述)`（步 3 自动补全仍会触发）——**skip 也要向用户说明**，不能无声跳过。
 
 ## 批处理（驱动向导 UI；agent 只填表单/点按钮，由系统建书）
 1. `navigate(url="/books/start")`。
 1.5. **`drive_ui(reset)`**：每次建书前先重置向导 state（除笔名），清除上一本残留草稿对 set_field/set_tags 的干扰（建书保真度护栏，spike 实测 issue）。
 2. 在聊天里定：方向、笔名、一句话种子、题材标签（上面的决策点）。
 3. `drive_ui(set_field {field:"idea", value:种子})` + `drive_ui(set_field {field:"pen", value:笔名})` + `drive_ui(set_tags {tags:[题材标签]})`——**同批推送，浏览器按序应用**（步 1 校验 idea+pen 非空；题材标签在步 1 多选，题材方向随之推导，并作候选生成硬约束）。**步 1 已无「下一步」**——由步 1 底部「🎲 生成候选」替代（见下条）。
-4. **世界观候选（必须完成，见上）**：**循环 `world_candidates(book_id="", idea=种子, tags)` 约 5 次**（每次 1 个并自动填入步 2，无需 `set_candidates`）→ 用户在平台点选候选卡（高亮、可换）→ 用户点「已挑选完毕」进步 3（**页面自动把建书任务交给 dsh 驱动步 3**；Claude Code 不重复驱动）。不想选 → `drive_ui(skip_candidates)`。
+4. **世界观候选（必须完成，见上）**：**agent 自身上下文生成 3~5 个候选，逐个 `drive_ui(add_candidate, {candidate:{title, one_liner, world_brief}})` 填入步 2**（无需 `set_candidates`）→ 用户在平台点选候选卡（高亮、可换）→ 用户点「已挑选完毕」进步 3（**页面自动把建书任务交给 dsh 驱动步 3**；Claude Code 不重复驱动）。不想选 → `drive_ui(skip_candidates)`。
 5. **进步 3 = 内容构建工作台（默认已交棒 dsh；Claude Code 仅手动驱动时才走）**：用户在步 2 点「已挑选完毕」后步 3 默认由 **dsh（novel-build）分阶段驱动**（页面 `_agentDriving` 已抑制浏览器一键补全）。**Claude Code 不要与页面 task2 同时驱动步 3**——只在用户明确要求「由 Claude 直接驱动步 3」且页面未自动发任务时，才按下列规范逐段驱动（每段由**你自主生成**后经 `drive_ui` 落进表单）：
    ① **核心矛盾**：你基于一句话设定 + 候选简述 + tags 自主生成 1-2 句 → `drive_ui(set_world, {world_building:{core_conflict:"..."}})`。
-   ② **大纲+桥段（步3内先生成）**：你自主生成 `{outlines, plots, threads, themes, basic_info}` → `drive_ui(set_outline, {outlines, plots, threads, themes, basic_info})`（**你在自身上下文生成，不受 dsh 8KB 裁剪**；submit 随书落库 phase=ready）。**不再 query_structures/query_plots/set_picks**。
+   ② **大纲+桥段（步3内先生成）**：可先 `query_structures`/`outline_material_candidates` 选最匹配大纲模板作参考（与 dsh 侧 NOVEL_AGENT 步3① 口径一致），再在**自身上下文生成** `{outlines, plots, threads, themes, basic_info}` → `drive_ui(set_outline, {outlines, plots, threads, themes, basic_info})`（**你在自身上下文生成，不受 dsh 8KB 裁剪**；submit 随书落库 phase=ready）。**不再单独 `set_picks`**（旧选材→generate_full_outline 机制已删，generate_full_outline 工具亦已删除）。
    ③ **势力**（根据②桥段分析）：你自主生成 2-4 个势力 `{name, stance, desc}` → `drive_ui(set_world, {world_building:{factions:[...]}})`。
    ④ **主要人物**（依据②+③）：你自主生成角色列表（**全 14 字段**：`name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id/gender/brief/title/age/death_year/role`，主角 importance=1、配角补 relation）→ `drive_ui(set_characters, {characters:[...]})`。
    ⑤ **其余世界观维度**：你自主生成 `{world_building:{era,power_system,geography,culture,history,social_structure,rules,world_summary}, tone, target_audience, pov, era_language}` → `drive_ui(set_world, {...})`。
@@ -98,5 +98,5 @@ description: >-
 - 「LLM 未配置」→ 提示到设置页或 `api.json` 配 key 后重试。
 - `drive_ui` 后浏览器没反应 → 检查浏览器是否停在 `/books/start`（`navigate` 一次再试）；命令桥就绪轮询 ≤10s。
 - 建书后浏览器未跳书详情 → `list_books`/`get_book_detail` 确认书已建，若已建可直接 `navigate` 书详情/写作台。
-- `world_candidates`（路线 B）空 → 重试一次；仍空改 `drive_ui(skip_candidates)` + 手动 `set_field world_desc`。
+- agent 生成候选空 → 重试一次；仍空改 `drive_ui(skip_candidates)` + 手动 `set_field idea`。
 - `BookBusyError` → 另一进程在操作此书，稍后重试。

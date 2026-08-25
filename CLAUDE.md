@@ -2,13 +2,13 @@
 
 NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 43 个工具，Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
 
-> **当前驱动形态**：侧栏聊天大脑 = **dsh**（内置 agent `plugins/agent_loop.py` 已删除，无 builtin 可切回）。`libraries/dsh_bridge.py` 转发 vendored `vendor/dsh-ne/`（精简核心，改名防冲突）headless 子进程，经 MCP 驱动平台；`vendor/dsh-ne/events-runner.mjs` 把 dsh 的每个工具调用/结果实时推成 SSE（tool_call/tool_result/navigate/ui_command），侧栏实时工具卡、导航零延迟；护栏：phase 门控 `tool_policy.py` / MCP 循环熔断 `loop_guard.py` / 建书 reset。agent 架构见 `docs/架构文档-内置agent-dsh.md`，上手交接见 `docs/交接文档-2026-08-22-内置agent整体.md`。
+> **当前驱动形态**：侧栏聊天大脑 = **dsh**（内置 agent `plugins/agent_loop.py` 已删除，无 builtin 可切回）。`libraries/dsh_bridge.py` 转发 vendored `vendor/dsh-ne/`（精简核心，改名防冲突）headless 子进程，经 MCP 驱动平台；`vendor/dsh-ne/events-runner.mjs` 把 dsh 的每个工具调用/结果实时推成 SSE（tool_call/tool_result/navigate/ui_command），侧栏实时工具卡、导航零延迟；护栏：phase 门控 `tool_policy.py` / MCP 循环熔断 `loop_guard.py` / 建书 reset。agent 架构见 `docs/架构文档-内置agent-dsh.md`，上手交接见 `docs/交接文档-2026-08-25-建书链路Agent修复.md`（2026-08-25 建书链路修复）与 `docs/交接文档-2026-08-25-小说抓取入库.md`。
 > **架构速览**（系统分层/工具注册表/双通道驱动/各阶段入口/常见坑）：`docs/架构总览.md`——交接/上手先读它，不必重新探索。设计权威仍为 `docs/设计文档-总览-claude.md`。
 
 | 阶段 | 分 skill | 前置 phase | 出口 | 主要工具 |
 |---|---|---|---|---|
-| 建书 | `novel-build-candidates` + `novel-build` | 无书 / phase=config | `ready`（dsh 侧 skill 已删（2026-08-24，仅 MCP），历史拆分：`novel-build-candidates` 生成候选并**呈现**（`set_candidates`），停在步 2 等用户挑选；用户点「已挑选完毕」后页面自动触发 `novel-build`——步 3「内容构建工作台」分阶段构建（core_conflict→大纲+桥段→势力→人物→其余维度）并随提交落库，**书创建即带大纲 phase=ready**，直接进写作台） | drive_ui（驱动建书向导，含 set_candidates/set_outline）/ world_candidates / generate_core_conflict / generate_outline_preview / generate_factions / generate_characters / generate_rest_world / generate_full_outline（仅步3②失败兜底）/ generate_world（仅世界观单薄时兜底）/ save_basic_info / confirm_world |
-| 大纲 | `novel-outline` | `config` 且 basic_info 充实 | `ready` | **agent 自主生成 → `save_outlines`** / outline_material_candidates / confirm_outlines / fill_gags / extend_outline（旧 generate_full_outline 等已废弃留档） |
+| 建书 | `novel-build-candidates` + `novel-build` | 无书 / phase=config | `ready`（dsh 侧 skill 已删（2026-08-24，仅 MCP），历史拆分：`novel-build-candidates` 生成候选并**呈现**（`set_candidates`），停在步 2 等用户挑选；用户点「已挑选完毕」后页面自动触发 `novel-build`——步 3「内容构建工作台」分阶段构建（core_conflict→大纲+桥段→势力→人物→其余维度）并随提交落库，**书创建即带大纲 phase=ready**，直接进写作台） | drive_ui（驱动建书向导，含 set_candidates/set_outline）/ query_structures / outline_material_candidates / query_plots / query_characters / save_basic_info / confirm_world（旧 world_candidates / generate_core_conflict / generate_outline_preview / generate_factions / generate_characters / generate_rest_world / generate_full_outline / generate_world 工具**已删除**（2026-08-24 大清理，无兜底），步 3 内容全由 agent 自主生成经 set_outline / set_world / set_characters 落表） |
+| 大纲 | `novel-outline` | `config` 且 basic_info 充实 | `ready` | **agent 自主生成 → `save_outlines`** / outline_material_candidates / confirm_outlines / fill_gags |
 | 写作 | `novel-write` | `ready` | 章节/桥段写完 | **agent 自主生成 → `save_bridge_draft` / `save_chapter_text`** / `save_book_meta` / chapter_quality_gate（完整章节质量门禁）/ review_text / deai_text / diagnose_retention / tag_punch_points（旧 write_next_bridge 等已废弃留档） |
 | 上架 | `novel-publish` | 已有第 1 章正文 | `published` / `finished` | publish_check / publish_book / mark_finished / export_book |
 
@@ -21,7 +21,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 - 状态信号：`storyline.phase ∈ config/outlines/plots/ready`；`book.status ∈ planning/writing/reviewing/finished/published/paused`。
 - 写类工具带书级文件锁，冲突抛 `BookBusyError`，稍后重试；`budget_paused` 表示预算/额度触发，停下问用户。
 - 需要可视化页面时用 `mcp__novel-engine__navigate` 切站内页（完整路由表见下）。切页与读数据是两回事：即使已用 get_book_state 读过数据，只要用户要「打开页面」就要再调 navigate。
-- **护栏（必须遵守）**：建/删书工具不在工具面（无法经 MCP/任何工具面直调）。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；**世界观在向导步 3「内容构建工作台」分阶段构建（core_conflict→大纲+桥段（`generate_outline_preview` 步3内生成）→势力→人物→其余维度）并随提交落库，书创建即带大纲 phase=ready 直接进写作台**（`generate_full_outline` 仅步3②失败兜底；`generate_world` 仅世界观单薄时兜底）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
+- **护栏（必须遵守）**：建/删书工具不在工具面（无法经 MCP/任何工具面直调）。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；**世界观在向导步 3「内容构建工作台」分阶段构建（core_conflict→大纲+桥段→势力→人物→其余维度）并随提交落库，书创建即带大纲 phase=ready 直接进写作台**（大纲+桥段由 **agent 自主生成**经 `drive_ui(set_outline)` 落表、随 submit 落库；旧 `generate_outline_preview`/`generate_full_outline`/`generate_world` 工具已删，兜底走 agent 自主生成 → `save_outlines`/`save_basic_info`）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
 
 ## 站内页面路由表（navigate 用；无书时部分页 302 重定向）
 
