@@ -1317,6 +1317,52 @@ def discover_hot(genre: str = "", count: int = 10) -> dict:
             "novels": [n.__dict__ for n in novels]}
 
 
+def list_crawled_novels(platform: str = "fanqie") -> dict:
+    """列出已抓取/下载的小说库（元数据+已存章数），供 agent 选书借鉴。
+
+    复用 novel_storage.list_novels。返回 {"ok", "count",
+    "novels": [{title, author, platform, book_id, genre, chapter_count,
+    saved_chapters, folder}]}。
+    """
+    from plugins.novel_storage import list_novels
+    novels = list_novels(platform)
+    return {"ok": True, "count": len(novels), "novels": novels}
+
+
+def read_crawled_novel(platform: str = "fanqie", folder: str = "",
+                       chapter: int = 0) -> dict:
+    """读已抓取小说的内容：chapter=0 返回元数据+章节目录（标题/字数）；
+    chapter>0 返回该章正文。供 agent 抓取参考书后借鉴设定/写法。
+
+    复用 novel_storage.load_novel。返回 {ok, title, author, platform, genre,
+    chapter_count, chapters:[{index,title,word_count}], chapter:{...}}。
+    """
+    from plugins.novel_storage import load_novel
+    if not folder:
+        raise RuntimeError("请提供 folder（书名目录，来自 list_crawled_novels）")
+    data = load_novel(platform, folder)
+    if not data:
+        raise RuntimeError(f"未找到已抓取小说：{platform}/{folder}")
+    info, chapters = data["info"], data["chapters"]
+    result = {
+        "ok": True,
+        "title": info.get("title", ""), "author": info.get("author", ""),
+        "platform": platform, "genre": info.get("genre", ""),
+        "book_id": info.get("book_id", ""), "chapter_count": len(chapters),
+        "chapters": [{"index": c.get("index", i + 1), "title": c.get("title", ""),
+                      "word_count": c.get("word_count", 0)}
+                     for i, c in enumerate(chapters)],
+    }
+    if chapter:
+        for c in chapters:
+            if c.get("index") == chapter:
+                result["chapter"] = {"index": c.get("index"), "title": c.get("title", ""),
+                                     "content": c.get("content", "")}
+                return result
+        raise RuntimeError(f"章节不存在：第{chapter}章")
+    return result
+
+
 def _build_registry():
     # 顺序有讲究：导航/建书向导驱动排最前（flash 对列表前部工具更敏感，能保证
     # "打开页面"请求正确触发 navigate），其次只读摸底，再创作链/上架/工具。
@@ -1343,7 +1389,7 @@ def _build_registry():
         # 快照 / diff / 回滚（决策点 commit 语义）
         preview_diff, rollback_book, list_snapshots,
         # 抓取 / 侦察（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示）
-        fetch_novel, discover_hot,
+        fetch_novel, discover_hot, list_crawled_novels, read_crawled_novel,
     ]
     seen = set()
     entries = []
