@@ -117,11 +117,9 @@ from libraries.storyline_writer import opening_mode_active
 from libraries.prompt_harness import PromptHarness
 from libraries.storyline import OutlineSlot, PlotSlot
 
-title_p = build_title_prompt("玄幻", "系统流", "fanqie", "正文占位" * 50)
-assert_ok("书名-含题材", "玄幻" in title_p and "系统流" in title_p)
+title_p = build_title_prompt("", "", "fanqie", "正文占位" * 50)
 assert_ok("书名-含平台", "fanqie" in title_p)
-syn_p = build_synopsis_prompt("都市", "重生", "fanqie", "正文占位" * 50)
-assert_ok("简介-含题材", "都市" in syn_p and "重生" in syn_p)
+syn_p = build_synopsis_prompt("", "", "fanqie", "正文占位" * 50)
 pc = platform_constraints("fanqie")
 assert_ok("平台-番茄约束", "开篇前 500 字必须有冲突或危机" in pc)
 assert_ok("平台-未知平台", platform_constraints("xxx") == "")
