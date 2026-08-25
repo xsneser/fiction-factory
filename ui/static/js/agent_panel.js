@@ -519,10 +519,10 @@ console.log('[agent-panel] v26 events-stream');
 
     // ─── navigate 外部驱动桥（P1b）：轮询 MCP 写入的导航意图，取到即翻页/切页签 ───
     var navTimer = null;
-    // 消费意图队列。onlyCmds 非空时只处理指定的 ui_command（busy 中用）：dsh 会话中模型驱动的
-    // 命令（set_field/set_world/set_characters/next/submit…）与 add_candidate 已由 SSE 实时推送，
-    // 轮询消费会双触发；但 set_outline 由 generate_outline_preview 后端直推（SSE 无此事件），
-    // 必须 busy 中也消费，否则大纲数据落不进向导、步3 故事线不显示。
+    // 消费意图队列。onlyCmds 非空时只处理指定的 ui_command（busy 中用）。
+    // dsh 会话中（busy）所有向导命令（set_field/set_world/set_characters/set_outline/next/submit…）
+    // 均由 drive_ui → SSE ui_command 实时推送（generate_outline_preview 已废弃、无后端直推），
+    // 轮询消费会双触发——busy 时只取走清空队列、不派发，残留由 done 后 C1 drain 丢弃。
     function consumeNavIntents(onlyCmds) {
         return fetch('/api/agent/nav-intents')
             .then(function(r) { return r.json(); })
@@ -540,7 +540,7 @@ console.log('[agent-panel] v26 events-stream');
             .catch(function() {});
     }
     function pollNavIntents() {
-        if (busy) { consumeNavIntents(['set_outline']); return; }   // dsh 会话中：仅消费工具直推的 set_outline
+        if (busy) { consumeNavIntents([]); return; }   // dsh 会话中：命令全走 SSE，只清队列不派发
         consumeNavIntents(null);
     }
     navTimer = setInterval(pollNavIntents, 2500);
