@@ -373,22 +373,34 @@ def api_update_outline(storyline_id):
     oid = data.get("id", "")
     field = data.get("field", "")
     val = data.get("value", 0)
-    # 字段白名单：只允许改章节范围，避免任意字段被客户端 setattr
-    if field not in ("start_chapter", "end_chapter"):
+    # 字段白名单：章节/字数量程，避免任意字段被客户端 setattr
+    if field not in ("start_chapter", "end_chapter", "start_word", "end_word"):
         return jsonify({"ok": False, "error": "非法字段"}), 400
     try:
         val = int(val)
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "章节号必须是整数"}), 400
-    if val < 1:
-        return jsonify({"ok": False, "error": "章节号必须 ≥ 1"}), 400
+        return jsonify({"ok": False, "error": "数值必须是整数"}), 400
+    min_val = 0 if field.endswith("_word") else 1
+    if val < min_val:
+        return jsonify({"ok": False, "error": f"数值必须 ≥ {min_val}"}), 400
     for o in tl.outlines:
         if o.id == oid:
-            if field == "end_chapter" and val < o.start_chapter:
+            if field == "end_chapter" and val < (o.start_chapter or 1):
                 return jsonify({"ok": False, "error": "结束章节不能小于起始章节"}), 400
             if field == "start_chapter" and o.end_chapter and val > o.end_chapter:
                 return jsonify({"ok": False, "error": "起始章节不能大于结束章节"}), 400
+            if field == "end_word" and val < (o.start_word or 0):
+                return jsonify({"ok": False, "error": "结束字数不能小于起始字数"}), 400
+            if field == "start_word" and o.end_word and val > o.end_word:
+                return jsonify({"ok": False, "error": "起始字数不能大于结束字数"}), 400
             setattr(o, field, val)
+            # 改一轴 → 清对轴 → 幂等 reconcile（保证章/字双坐标同步）
+            if field in ("start_chapter", "end_chapter"):
+                o.start_word = o.end_word = None
+            else:
+                o.start_chapter = o.end_chapter = None
+            from libraries.storyline import reconcile_outline
+            reconcile_outline(o, tl.words_per_chapter or 3000)
             break
     _save_storyline(tl, storyline_id)
     return jsonify({"ok": True})

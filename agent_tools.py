@@ -555,19 +555,23 @@ def save_outlines(book_id: str, outlines: list | None = None,
     mode=replace 整体替换 | append 续写追加。含 plots 则 phase=plots，否则 outlines。
     """
     tl = _require_tl(book_id)
-    from libraries.storyline import OutlineSlot, PlotSlot
+    from libraries.storyline import OutlineSlot, PlotSlot, reconcile_outline
     if mode == "replace":
         tl.outlines = []
         tl.plots = []
     if outlines:
         base = len(tl.outlines)
         for i, o in enumerate(outlines):
+            _sw = o.get("start_word"); _ew = o.get("end_word")
+            _sc = o.get("start_chapter"); _ec = o.get("end_chapter")
             tl.outlines.append(OutlineSlot(
                 id=o.get("id") or f"outline_{base + i + 1:04d}",
                 template_id=o.get("template_id", ""),
                 name=o.get("name") or "未命名弧",
-                start_chapter=int(o.get("start_chapter") or 1),
-                end_chapter=int(o.get("end_chapter") or 30),
+                start_chapter=int(_sc) if _sc is not None else None,
+                end_chapter=int(_ec) if _ec is not None else None,
+                start_word=int(_sw) if _sw is not None else None,
+                end_word=int(_ew) if _ew is not None else None,
                 stages=o.get("stages") or [],
                 predecessor=o.get("predecessor", ""),
                 successor=o.get("successor", ""),
@@ -576,6 +580,8 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 narrative=o.get("narrative", "chronological"),
                 narrative_target=o.get("narrative_target", ""),
             ))
+        for _o in tl.outlines:
+            reconcile_outline(_o, tl.words_per_chapter or 3000)
     if plots:
         base = len(tl.plots)
         for i, p in enumerate(plots):
@@ -1116,10 +1122,12 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
       **rules 必须数组**（传字符串会被忽略）
     - set_picks: {templates: [id|{id,name}]} 或 {plots: [id|{id,name}]}（任一非空）
     - set_outline: {outlines: [非空列表], plots: [list], threads?, themes?}   步3②弧+桥段，submit 随书落库
-      outlines 每项 {id, name, start_chapter, end_chapter, parent_arc_id?, notes, stages?}（id 唯一必填、备注用 notes 非
-      description、parent_arc_id 指向父弧 id 支持弧树嵌套）；弧=情节弧（约 5-15 章，有方向/目标），不是卷；
+      outlines 每项 {id, name, start_word, end_word, parent_arc_id?, notes, stages?}（id 唯一必填、备注用 notes 非
+      description、start_word/end_word 为 0 基字数坐标（start 含/end 不含，权威；可同时传 start_chapter/end_chapter
+      兼容）、parent_arc_id 指向父弧 id 支持弧树嵌套）；弧=树状目标节点（定义见 NOVEL_AGENT.md 1.1），
+      字数跨度由剧情结构决定、不设固定章数；仅最底层弧可拥有桥段；
       plots 每项 {id, name, outline_id, order, category?, thread_id?, roles?, template_structure?}
-      （id 唯一必填、outline_id 必填指向所属弧 id、order 弧内序号）——缺 id/outline_id 故事线桥段不显示
+      （id 唯一必填、outline_id 必填指向所属弧 id（须为最底层弧）、order 弧内序号）——缺 id/outline_id 故事线桥段不显示
     - submit: {}  **⚠️ 建书即创建书目并跳书详情页，调用前必须先向用户汇报设定概要并取得确认**
     - next / prev / reset / load_candidates / skip_candidates / fill_world: {} 无必填
     """

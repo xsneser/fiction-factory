@@ -9,6 +9,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 import json
+import math
 
 from core.json_store import read_json, write_json_atomic
 from libraries.world_tags import genre_from_tags
@@ -194,14 +195,54 @@ def relation_to_mc(c, bi) -> str:
                 return str(r.get("relation", "") or "")
     return str(c.get("relation", "") or "")
 
+
+# ─── 弧的章/字双坐标换算（字数轴=落盘权威；start_word/end_word 0 基、start 含/end 不含） ───
+def chapter_to_word(ch, wpc):
+    """1-based 章号 → 0-based 字数起点：第 N 章占 [(N-1)*wpc, N*wpc)。"""
+    return max(0, (int(ch) - 1) * int(wpc or 3000))
+
+
+def word_to_chapter_start(w, wpc):
+    """0-based 字数 w（含）→ 所在章（1-based）。"""
+    return 1 if (w or 0) <= 0 else (int(w) // int(wpc or 3000)) + 1
+
+
+def word_to_chapter_end(ew, wpc):
+    """排他 end 字数 → 覆盖到的末章（1-based）。"""
+    if not ew or ew <= 0:
+        return 1
+    return max(1, math.ceil(int(ew) / int(wpc or 3000)))
+
+
+def reconcile_outline(o, wpc):
+    """幂等同步弧的章/字双坐标：缺哪对补哪对；双全则原样保留（防字坐标被章坐标覆盖丢精度）。
+
+    - 仅章坐标（旧书）→ 按每章字数推导字坐标（整章对齐）。
+    - 仅字坐标（新书，无章节输入）→ 推导章坐标作兼容视图。
+    - 双全 → 都不动。"""
+    wpc = wpc or 3000
+    has_word = (o.start_word is not None and o.end_word is not None
+                and o.start_word >= 0 and o.end_word >= 0)
+    has_ch = (o.start_chapter is not None and o.end_chapter is not None
+              and o.start_chapter > 0 and o.end_chapter > 0)
+    if not has_word:
+        o.start_word = chapter_to_word(o.start_chapter if has_ch else 1, wpc)
+        o.end_word = int(o.end_chapter if has_ch else 30) * wpc
+    if not has_ch:
+        o.start_chapter = word_to_chapter_start(o.start_word, wpc)
+        o.end_chapter = max(o.start_chapter, word_to_chapter_end(o.end_word, wpc))
+
+
 @dataclass
 class OutlineSlot:
-    """一个大纲（情节弧）在故事线上的位置：约 5-15 章，有方向/目标，可套子弧（parent_arc_id）。大纲≠卷，卷是输出分组。"""
+    """一个大纲（情节弧）在故事线上的位置：树状目标节点，字数跨度（0 基，start 含/end 不含），可多层嵌套（parent_arc_id）；start_chapter/end_chapter 为兼容/推导视图。"""
     id: str                        # 唯一标识
     template_id: str               # 对应 StructureLibrary 里的模板，""=已展开不依赖模板
     name: str                      # 显示名称（如"末日来临前囤物资"）
-    start_chapter: int = 1         # 从第几章开始
+    start_chapter: int = 1         # 从第几章开始（兼容/推导视图）
     end_chapter: int = 30          # 到第几章
+    start_word: Optional[int] = None  # 0-based inclusive 字数，权威；None=由 chapter 推导
+    end_word: Optional[int] = None    # exclusive 字数，权威；None=由 chapter 推导
     stages: list = field(default_factory=list)   # 从模板展开的阶段 [{name,min_ch,max_ch,events,description,foreshadow_opportunities,themes}]
     expanded: bool = False         # 是否已展开填充了桥段
     notes: str = ""                # 用户备注
@@ -296,15 +337,12 @@ class BookStoryline:
     updated_at: str = ""
 
     def to_dict(self) -> dict:
-        return {
-            "book_title": self.book_title,
-            "words_per_chapter": self.words_per_chapter,
-            "pen_name": self.pen_name,
-            "platform": self.platform,
-            "basic_info": self.basic_info,
-            "outlines": [{
+        def _outline_dict(o):
+            reconcile_outline(o, self.words_per_chapter or 3000)   # 落盘前同步章/字双坐标
+            return {
                 "id": o.id, "template_id": o.template_id, "name": o.name,
                 "start_chapter": o.start_chapter, "end_chapter": o.end_chapter,
+                "start_word": o.start_word, "end_word": o.end_word,
                 "stages": o.stages, "expanded": o.expanded, "notes": o.notes,
                 "overlaps_with": o.overlaps_with,
                 "predecessor": o.predecessor, "successor": o.successor,
@@ -312,7 +350,14 @@ class BookStoryline:
                 "narrative": o.narrative,
                 "narrative_target": o.narrative_target,
                 "parent_arc_id": o.parent_arc_id,
-            } for o in self.outlines],
+            }
+        return {
+            "book_title": self.book_title,
+            "words_per_chapter": self.words_per_chapter,
+            "pen_name": self.pen_name,
+            "platform": self.platform,
+            "basic_info": self.basic_info,
+            "outlines": [_outline_dict(o) for o in self.outlines],
             "plots": [{
                 "id": p.id, "template_id": p.template_id, "name": p.name,
                 "category": p.category, "sub_category": p.sub_category,
@@ -355,19 +400,31 @@ class BookStoryline:
             generated_at=d.get("generated_at", ""),
             updated_at=d.get("updated_at", ""),
         )
-        tl.outlines = [OutlineSlot(
-            id=o.get("id", ""), template_id=o.get("template_id", ""),
-            name=o.get("name", ""), start_chapter=o.get("start_chapter", 1),
-            end_chapter=o.get("end_chapter", 30), stages=o.get("stages", []),
-            expanded=o.get("expanded", False), notes=o.get("notes", ""),
-            overlaps_with=o.get("overlaps_with", []),
-            predecessor=o.get("predecessor", ""),
-            successor=o.get("successor", ""),
-            transition_type=o.get("transition_type", "sequential"),
-            narrative=o.get("narrative", "chronological"),
-            narrative_target=o.get("narrative_target", ""),
-            parent_arc_id=o.get("parent_arc_id", ""),
-        ) for o in d.get("outlines", [])]
+        tl.outlines = []
+        for o in d.get("outlines", []):
+            _sc = o.get("start_chapter")
+            _ec = o.get("end_chapter")
+            _sw = o.get("start_word")
+            _ew = o.get("end_word")
+            _slot = OutlineSlot(
+                id=o.get("id", ""), template_id=o.get("template_id", ""),
+                name=o.get("name", ""),
+                start_chapter=int(_sc) if _sc is not None else None,
+                end_chapter=int(_ec) if _ec is not None else None,
+                start_word=int(_sw) if _sw is not None else None,
+                end_word=int(_ew) if _ew is not None else None,
+                stages=o.get("stages", []),
+                expanded=o.get("expanded", False), notes=o.get("notes", ""),
+                overlaps_with=o.get("overlaps_with", []),
+                predecessor=o.get("predecessor", ""),
+                successor=o.get("successor", ""),
+                transition_type=o.get("transition_type", "sequential"),
+                narrative=o.get("narrative", "chronological"),
+                narrative_target=o.get("narrative_target", ""),
+                parent_arc_id=o.get("parent_arc_id", ""),
+            )
+            reconcile_outline(_slot, tl.words_per_chapter or 3000)
+            tl.outlines.append(_slot)
         tl.plots = [PlotSlot(
             id=p.get("id", ""), template_id=p.get("template_id", ""),
             name=p.get("name", ""), category=p.get("category", ""),

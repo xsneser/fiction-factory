@@ -215,6 +215,17 @@ _stgDict = structure_to_stages(_stgTmpl)[0]
 assert_ok("弧-阶段保留描述", _stgDict.get("description") == "阶段描述"
           and _stgDict.get("foreshadow_opportunities") == ["坑1"])
 
+# 字数轴：弧章/字双坐标（2026-08-27 故事线纵轴=字数，落盘权威=start_word/end_word）
+_wtl = BookStoryline.from_dict({"words_per_chapter": 3000, "outlines": [
+    {"id": "w1", "template_id": "t", "name": "仅章", "start_chapter": 1, "end_chapter": 12}]})
+assert_ok("字轴-仅章推导", _wtl.outlines[0].start_word == 0 and _wtl.outlines[0].end_word == 36000)
+_wtl2 = BookStoryline.from_dict({"words_per_chapter": 3000, "outlines": [
+    {"id": "w2", "template_id": "t", "name": "仅字", "start_word": 500, "end_word": 1200}]})
+assert_ok("字轴-仅字推导章", _wtl2.outlines[0].start_chapter == 1 and _wtl2.outlines[0].end_chapter == 1)
+_wtl3 = BookStoryline.from_dict(BookStoryline.from_dict({"words_per_chapter": 3000, "outlines": [
+    {"id": "w3", "template_id": "t", "name": "无损", "start_word": 500, "end_word": 1200}]}).to_dict())
+assert_ok("字轴-往返无损", _wtl3.outlines[0].start_word == 500 and _wtl3.outlines[0].end_word == 1200)
+
 # ══════════════════════════════════════════════
 #  Phase 3.6: 叙事纪律 + 角色档案（无 LLM）
 # ══════════════════════════════════════════════
