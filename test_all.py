@@ -145,7 +145,7 @@ assert_ok("非开场-不含铁律", "开场模式" not in normal_p)
 # ══════════════════════════════════════════════
 print("\n═══ Phase 3.5: 线程穿插 + 桥段拆分（无 LLM）═══")
 
-from libraries.storyline import BookStoryline, OutlineSlot, PlotSlot
+from libraries.storyline import BookStoryline, OutlineSlot, PlotSlot, structure_to_stages
 from libraries.storyline_writer import StorylineChapterWriter
 from libraries.outline_generator import OutlineGenerator
 
@@ -193,6 +193,27 @@ assert_ok("线程-分类兜底",
           _genB._default_thread_for_category("悬疑") == "伏笔阴谋线"
           and _genB._default_thread_for_category("情感") == "副线"
           and _genB._default_thread_for_category("爽文") == "主线")
+
+# 大纲=弧：parent_arc_id 弧树嵌套（2026-08-27 数据模型升级）
+_slD = BookStoryline()
+_slD.outlines = [
+    OutlineSlot(id="a1", template_id="t", name="顶层弧"),
+    OutlineSlot(id="a2", template_id="t", name="子弧", parent_arc_id="a1"),
+]
+assert_ok("弧-字段默认", OutlineSlot(id="a0", template_id="t", name="顶层").parent_arc_id == "")
+_dD = _slD.to_dict()
+assert_ok("弧-序列化含键", _dD["outlines"][1]["parent_arc_id"] == "a1")
+assert_ok("弧-往返一致", BookStoryline.from_dict(_dD).outlines[1].parent_arc_id == "a1")
+assert_ok("弧-旧数据兼容", BookStoryline.from_dict(
+    {"outlines": [{"id": "a3", "template_id": "t", "name": "旧数据"}]}).outlines[0].parent_arc_id == "")
+from libraries.structure import StageNode
+_stgTmpl = type("StubTmpl", (), {"stages": [
+    StageNode(name="阶段1", description="阶段描述", min_chapters=5, max_chapters=15,
+              key_events=["事件A", "事件B"], foreshadow_opportunities=["坑1"], themes=[])
+]})()
+_stgDict = structure_to_stages(_stgTmpl)[0]
+assert_ok("弧-阶段保留描述", _stgDict.get("description") == "阶段描述"
+          and _stgDict.get("foreshadow_opportunities") == ["坑1"])
 
 # ══════════════════════════════════════════════
 #  Phase 3.6: 叙事纪律 + 角色档案（无 LLM）
