@@ -78,7 +78,9 @@ def _build_next_arc(builder, tl, mode="rule"):
         end_chapter=start + span - 1,
         stages=[
             {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
-             "events": s.key_events[:5]}
+             "events": s.key_events[:5],
+             "description": getattr(s, "description", ""),
+             "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or [])}
             for s in tmpl.stages
         ],
         predecessor=tl.outlines[-1].id if tl.outlines else "",

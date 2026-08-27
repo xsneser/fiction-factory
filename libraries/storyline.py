@@ -196,13 +196,13 @@ def relation_to_mc(c, bi) -> str:
 
 @dataclass
 class OutlineSlot:
-    """一个大纲在故事线上的位置"""
+    """一个大纲（情节弧）在故事线上的位置：约 5-15 章，有方向/目标，可套子弧（parent_arc_id）。大纲≠卷，卷是输出分组。"""
     id: str                        # 唯一标识
     template_id: str               # 对应 StructureLibrary 里的模板，""=已展开不依赖模板
-    name: str                      # 显示名称（如"都市爽文开篇"）
+    name: str                      # 显示名称（如"末日来临前囤物资"）
     start_chapter: int = 1         # 从第几章开始
     end_chapter: int = 30          # 到第几章
-    stages: list = field(default_factory=list)   # 从模板展开的阶段 [{name,min_ch,max_ch,events}]
+    stages: list = field(default_factory=list)   # 从模板展开的阶段 [{name,min_ch,max_ch,events,description,foreshadow_opportunities,themes}]
     expanded: bool = False         # 是否已展开填充了桥段
     notes: str = ""                # 用户备注
 
@@ -211,6 +211,7 @@ class OutlineSlot:
     predecessor: str = ""          # 前驱大纲 id
     successor: str = ""            # 后继大纲 id
     transition_type: str = "sequential"  # sequential(顺序接续)|overlap(重叠过渡)|merge(融合)
+    parent_arc_id: str = ""          # 弧树嵌套：父弧 id，空=顶层弧
 
     # 叙事手法（故事线严谨性：顺叙/倒叙/插叙）
     narrative: str = "chronological"   # chronological(顺叙)|flashback(倒叙)|interleaved(插叙)
@@ -310,6 +311,7 @@ class BookStoryline:
                 "transition_type": o.transition_type,
                 "narrative": o.narrative,
                 "narrative_target": o.narrative_target,
+                "parent_arc_id": o.parent_arc_id,
             } for o in self.outlines],
             "plots": [{
                 "id": p.id, "template_id": p.template_id, "name": p.name,
@@ -364,6 +366,7 @@ class BookStoryline:
             transition_type=o.get("transition_type", "sequential"),
             narrative=o.get("narrative", "chronological"),
             narrative_target=o.get("narrative_target", ""),
+            parent_arc_id=o.get("parent_arc_id", ""),
         ) for o in d.get("outlines", [])]
         tl.plots = [PlotSlot(
             id=p.get("id", ""), template_id=p.get("template_id", ""),
@@ -397,10 +400,12 @@ class BookStoryline:
 # ═══════════════════════════════════════════
 
 def structure_to_stages(tmpl) -> list[dict]:
-    """把结构模板的阶段展开为 stage dict（name/min_ch/max_ch/events/themes）——多实现共用防漂移。"""
+    """把结构模板的阶段展开为 stage dict（name/min_ch/max_ch/events/description/foreshadow_opportunities/themes）——多实现共用防漂移。"""
     return [
         {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
          "events": s.key_events[:5],
+         "description": getattr(s, "description", ""),
+         "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or []),
          "themes": list(s.themes or [])}
         for s in tmpl.stages
     ]
