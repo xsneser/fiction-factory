@@ -242,7 +242,7 @@ def get_build_status() -> dict:
 
 
 def query_structures(keyword: str = "", tags: str = "") -> dict:
-    """查大纲库：按标签/关键词（名称）返回模板清单（标签逗号/空格分隔，任一命中）。"""
+    """查情节弧库：按标签/关键词（名称）返回模板清单（标签逗号/空格分隔，任一命中）。"""
     kw = (keyword or "").strip()
     tag_list = [x.strip() for x in (tags or "").replace("，", " ").replace(",", " ").split() if x.strip()]
     rows = struct_lib.search(tags=tag_list)
@@ -609,7 +609,7 @@ def save_book_meta(book_id: str, title: str = "", synopsis: str = "") -> dict:
 
 
 def outline_material_candidates(book_id: str) -> dict:
-    """选材决策点候选池：大纲库模板 + 桥段库（供外部 agent 预选后把 picks 传给 generate_full_outline）。
+    """选材决策点候选池：情节弧库模板 + 桥段库（供外部 agent 预选后把 picks 传给 generate_full_outline）。
 
     返回的 plots 为扁平列表（{id,name,category}），可直接作 generate_full_outline 的
     picks["plots"]（扁平优先序：想先出现的桥段排前）。"""

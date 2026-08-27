@@ -50,7 +50,7 @@ console.log('[agent-panel] v26 events-stream');
         mark_finished: '标记完本', navigate: '页面跳转', outline_agent: '大纲助手',
         outline_material_candidates: '取选材候选', publish_book: '上架', publish_check: '上架检查',
         query_characters: '查角色原型', query_gags: '查笑点库', query_plots: '查桥段库',
-        query_profiles: '查笔名档案', query_structures: '查大纲库', review_text: '审查文本',
+        query_profiles: '查笔名档案', query_structures: '查情节弧库', review_text: '审查文本',
         save_basic_info: '保存基础设定', tag_punch_points: '标注爽点', world_candidates: '生成世界观候选',
         write_chapter: '写章节', write_next_bridge: '写下一桥段',
         save_bridge_draft: '保存桥段', save_chapter_text: '保存整章',

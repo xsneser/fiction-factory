@@ -204,8 +204,8 @@ class OutlineGenerator:
 
             # ── Phase 2: 故事线规划 ──
             yield ("phase", "故事线规划", {"phase": 2, "total": total_phases,
-                   "desc": f"从大纲库选择 {max_outlines} 个模板，排布故事线..."})
-            yield ("progress", "分析大纲库候选...", {})
+                   "desc": f"从情节弧库选择 {max_outlines} 个模板，排布故事线..."})
+            yield ("progress", "分析情节弧库候选...", {})
 
             tl.outlines = []  # 原地累加：每条大纲确定后立即写入，供实时刷新
             outlines = yield from self._plan_storyline(
@@ -474,7 +474,7 @@ class OutlineGenerator:
         max_outlines: int = 5,
         agent_picks: Optional[dict] = None,
     ):
-        """从大纲库选模板 → AI 排布故事线 → 展开阶段。
+        """从情节弧库选模板 → AI 排布故事线 → 展开阶段。
 
         生成器：AI 模式下 yield thinking/decision 事件，最终 return list[OutlineSlot]。
         每条大纲确定后立即写入 tl.outlines 并 yield outline_added，供前端实时刷新。
@@ -650,7 +650,7 @@ class OutlineGenerator:
             "step": "候选大纲模板",
             "candidates": cand_list,
             "chosen": {},
-            "reason": "以下模板来自大纲库，AI 将从其中挑选并排布故事线",
+            "reason": "以下模板来自情节弧库，AI 将从其中挑选并排布故事线",
         })
 
         outlines_data = None
@@ -674,7 +674,7 @@ class OutlineGenerator:
                     "step": "故事线规划（回退规则模式）",
                     "candidates": cand_list,
                     "chosen": {"id": fallback[0].template_id, "name": fallback[0].name},
-                    "reason": "LLM 流式输出解析失败，改用大纲库模板顺序排布",
+                    "reason": "LLM 流式输出解析失败，改用情节弧库模板顺序排布",
                 })
             return fallback
 

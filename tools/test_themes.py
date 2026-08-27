@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""内涵嵌入大纲库 单元测试（python tools/test_themes.py）"""
+"""内涵嵌入情节弧库 单元测试（python tools/test_themes.py）"""
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -151,6 +151,6 @@ with tempfile.TemporaryDirectory() as td:
 
 
 if __name__ == "__main__":
-    print("═══ 内涵嵌入大纲库 测试 ═══")
+    print("═══ 内涵嵌入情节弧库 测试 ═══")
     print("\n结果:", "全部通过 ✅" if not FAIL else f"失败 {len(FAIL)} 项 ❌")
     sys.exit(1 if FAIL else 0)

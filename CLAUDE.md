@@ -39,7 +39,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 | 上架总览 | `/publish` | 否 | — |
 | 桥段库 | `/plots` | 否 | — |
 | 角色库 | `/characters` | 否 | — |
-| 大纲库 | `/structures` | 否 | — |
+| 情节弧库 | `/structures` | 否 | — |
 | 笑点库 | `/gags` | 否 | — |
 | 笔名档案 | `/profiles` | 否 | — |
 | 新建笔名 | `/profiles/new` | 否 | — |

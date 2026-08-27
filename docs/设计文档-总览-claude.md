@@ -191,7 +191,7 @@ D:\NovelEngine/
 | 库 | 模块 | 数据文件 | 数量 | 用途 |
 |---|---|---|---|---|
 | 桥段库 | `plot.py` | `plots.jsonl` | 47 模板（12 内置 + 采集） | 桥段模板：category / template_structure / slots / fit_contexts；写作时作【桥段骨架】注入 |
-| 大纲库 | `structure.py` | `structures.jsonl` | 11 模板（5 内置 + 采集） | 卷→弧→章三级骨架，按题材方向搜索；阶段级内涵 |
+| 情节弧库 | `structure.py` | `structures.jsonl` | 11 模板（5 内置 + 采集） | 卷→弧→章三级骨架，按题材方向搜索；阶段级内涵 |
 | 笑点库 | `gag.py` | `gags.jsonl` | 24 模式（10 内置 + 采集） | 探测器候选池（不写进大纲） |
 | 角色原型库 | `character.py` | `characters.jsonl` | 10 原型 | 性格原型 + 代表人物；设定表单「从原型库选」 |
 
@@ -536,7 +536,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 **MCP 服务器 `mcp_server.py`（适配层）**：从 `TOOL_REGISTRY` 逐个注册 FastMCP 工具（mcp SDK **1.x**，固定 `mcp>=1.2.0,<2.0`；**mcp 2.0 移除了 FastMCP API，勿升级**）。独立 stdio 进程，与 Web 并存；长操作阻塞式（`consume_dict_stream`/`consume_triple_stream`）。注册：`claude mcp add --scope project novel-engine -- python mcp_server.py`。
 
-**限制**：会话记忆 v1 = 浏览器内历史；**系统内自主 agent v0.4 设计已废弃**——方向转向 dsh 核心替换内置 agent（见 `docs/架构文档-内置agent-dsh.md` 与 `docs/交接文档-2026-08-22-内置agent整体.md`；v0.4 设计文档已删，ToolPolicy/LoopGuard 概念在 Phase 1 落地为 `libraries/tool_policy.py` / `loop_guard.py`）；资产库 CRUD 与 scout 工具留 v1.5；双进程勿同时操作同一本书。
+**限制**：会话记忆 v1 = 浏览器内历史；**系统内自主 agent v0.4 设计已废弃**——方向转向 dsh 核心替换内置 agent（见 `docs/架构文档-内置agent-dsh.md` 与 `docs/交接文档-2026-08-25-建书链路Agent修复.md`；v0.4 设计文档已删，ToolPolicy/LoopGuard 概念在 Phase 1 落地为 `libraries/tool_policy.py` / `loop_guard.py`）；资产库 CRUD 与 scout 工具留 v1.5；双进程勿同时操作同一本书。
 
 ---
 
@@ -648,7 +648,8 @@ docs/ 顶层当前文档（唯一主设计文档 = 本文档；交接/上手速�
 | `设计文档-总览-claude.md` | **唯一主设计文档**（本文档） |
 | `架构总览.md` | **交接/上手速查**（系统分层/工具面/双通道/管线入口/坑；2026-08-20 新增） |
 | `架构文档-内置agent-dsh.md` | 内置 agent（dsh）架构参考：进程/事件流/护栏链/skill 体系/建书驱动 |
-| `交接文档-2026-08-22-内置agent整体.md` | agent 侧交接文档：现状/关键文件/验证/待办 + 坑 |
+| `交接文档-2026-08-25-建书链路Agent修复.md` | 交接文档（2026-08-25）：建书链路 agent 参数契约/前端兜底/确认门/存量修复 + 坑 |
+| `交接文档-2026-08-25-小说抓取入库.md` | 交接文档（2026-08-25）：小说抓取/侦察/读取 + 入库工具 |
 | `skill设计思路，人工手写版本.md` | 早期 skill 设计语音草稿（原始想法，仅供参考） |
 | `archive/` | 全部已合并/历史文档（设计稿、交接、优化、UX、任务系统、调研、审查报告等 19 份，时间胶囊不改） |
 

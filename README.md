@@ -19,7 +19,7 @@
 | **引擎** (`libraries/engine.py`) | 新书启动 → 规划 → 逐章续写，全自动闭环 | ✅ |
 | **桥段写作** (`libraries/storyline_writer.py`) | 唯一写作核心：桥段驱动逐短句组增量生成 + 炸裂开场 | ✅ |
 | **桥段库** (`libraries/plot.py`) | 网文经典桥段的结构化模板（47 模板，内置+采集） | ✅ |
-| **大纲库** (`libraries/structure.py`) | 各题材方向卷/弧/章骨架 + **阶段级内涵**（11 模板） | ✅ |
+| **情节弧库** (`libraries/structure.py`) | 各题材方向卷/弧/章骨架 + **阶段级内涵**（11 模板） | ✅ |
 | **笑点库** (`libraries/gag.py`) | 搞笑模式模板 + 例句（24 模式，写作时探测器涌现注入） | ✅ |
 | **角色原型库** (`libraries/character.py`) | 人物性格原型 + 代表人物（10 原型，设定表单「从原型库选」） | ✅ 新 |
 | **内涵系统** | 母题跟随大纲阶段，阶段级 `themes` 带插入位置，写作 prompt 注入 | ✅ 新 |
@@ -134,7 +134,7 @@ PUA 字体解码器 `plugins/font_decoder.py` 内置 362 条映射表，支持�
 - 冲突：宗门/家族危机
 - 情感：英雄救美、修罗场/情感博弈
 
-### 大纲库 —— `libraries/structure.py`
+### 情节弧库 —— `libraries/structure.py`
 
 11 套题材方向模板，覆盖卷/弧/章三级骨架：玄幻、都市、悬疑、言情、穿越、科幻、修真等。**大纲模板自带阶段级内涵**（`StageNode.themes`：`{name, position, how}`），如"最终清算"阶段在结尾放置 复仇/热血；生成时从选中大纲带出书级内涵、挂到能承载的桥段、注入写作 prompt。
 
@@ -198,7 +198,7 @@ D:\NovelEngine/
 │   ├── world_tags.py       # 预置题材标签库（50 标签 + 题材方向推导）
 │   ├── base_library.py     # 资产库基类（JSONL 单例 + 读写）
 │   ├── plot.py             # 桥段库（47 模板）
-│   ├── structure.py        # 大纲库（11 模板 + 阶段级内涵）
+│   ├── structure.py        # 情节弧库（11 模板 + 阶段级内涵）
 │   ├── gag.py              # 笑点库（24 模式）
 │   └── character.py        # 角色原型库（10 原型）
 │

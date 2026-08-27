@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>📋 大纲库 <span style="font-size:14px;color:#8b949e">（{{ templates|length }} 模板）</span></h1>
+<h1>📋 情节弧库 <span style="font-size:14px;color:#8b949e">（{{ templates|length }} 模板）</span></h1>
 {% for t in templates %}
 <div class="card" style="margin-bottom:16px;opacity:{{ '0.5' if not t.enabled else '1' }}">
     <div class="title">
@@ -86,7 +86,7 @@ async function toggleStruct(id) {
     else showToast('操作失败: ' + (d.error||''), 'error');
 }
 async function deleteStruct(id) {
-    if (!confirm('确认删除大纲「' + id + '」？')) return;
+    if (!confirm('确认删除情节弧「' + id + '」？')) return;
     const r = await fetch('/api/structures/' + id + '/delete', {method:'POST'});
     const d = await r.json();
     if (d.ok) location.reload();

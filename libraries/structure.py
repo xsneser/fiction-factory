@@ -1,5 +1,5 @@
 """
-大纲库（Structure Library）
+情节弧库（Structure Library）
 各类网文题材的故事骨架结构模板
 """
 from dataclasses import dataclass, field
@@ -8,7 +8,7 @@ from .base_library import JsonLibrary
 
 @dataclass
 class StageNode:
-    """大纲阶段节点"""
+    """情节弧阶段节点"""
     name: str            # 阶段名，如 "入门"
     description: str     # 描述
     min_chapters: int = 3
@@ -20,7 +20,7 @@ class StageNode:
 
 @dataclass
 class StructureTemplate:
-    """大纲结构模板（题材已换标签，tags 是唯一题材来源）"""
+    """情节弧结构模板（题材已换标签，tags 是唯一题材来源）"""
     id: str
     name: str
     description: str = ""
@@ -70,7 +70,7 @@ class StructureTemplate:
 
 
 class StructureLibrary(JsonLibrary):
-    """大纲库管理器（进程内单例，JSONL 一行一模板，持久化由基类按 .jsonl 后缀处理）"""
+    """情节弧库管理器（进程内单例，JSONL 一行一模板，持久化由基类按 .jsonl 后缀处理）"""
     _instance = None
     _list_attr = "templates"
     _key = "templates"
@@ -105,7 +105,7 @@ class StructureLibrary(JsonLibrary):
         return None
 
 
-# ─── 内置大纲结构模板 ───
+# ─── 内置情节弧结构模板 ───
 
 BUILTIN_STRUCTURES = [
     StructureTemplate(
