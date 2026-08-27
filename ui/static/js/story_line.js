@@ -1,6 +1,6 @@
 /*
  * 故事线（Story Line）组件 — 垂直 Gantt
- * 从 BookStoryline dict 渲染：章节轴 + 大纲/桥段/线程通道。
+ * 从 BookStoryline dict 渲染：章节轴 + 弧/桥段/线程通道。
  * 支持叙事手法视觉区分：顺叙(chronological)/倒叙(flashback)/插叙(interleaved)。
  *
  * 用法：StoryLine.init('mount-id', bookStorylineDict, {currentChapter: N})
@@ -72,7 +72,7 @@
       if (o.id) rawOutlineToSyn[String(o.id)] = syn;
     });
 
-    // Pass 2：桥段按所属大纲分组（syn outline id 作键；空/dangling outline_id 按位置均分保序）
+    // Pass 2：桥段按所属弧分组（syn outline id 作键；空/dangling outline_id 按位置均分保序）
     var byOutline = {};
     rawPlots.forEach(function (p, i) {
       var synPid = p.id ? String(p.id) : '__plot_' + (i + 1);
@@ -109,7 +109,7 @@
       return { start_ch: s, end_ch: e };
     }
 
-    // 大纲（情节弧）→ 按真实章节跨度落位（章节轴），弧树嵌套靠 parent
+    // 弧→ 按真实章节跨度落位（章节轴），弧树嵌套靠 parent
     outlines = rawOutlines.map(function (o, i) {
       var syn = outlineSynAt[i];
       var ch = arcChapters(o);
@@ -238,7 +238,7 @@
     if ((TOTAL_CHAPTERS - 1) % step !== 0) addTick(TOTAL_CHAPTERS);   // 兜底末章刻度
   }
 
-  /* ─── 渲染：大纲（弧树嵌套：parent_arc_id 层级缩进 + 父子弧连线 + narrative_target 目标） ─── */
+  /* ─── 渲染：弧（弧树嵌套：parent_arc_id 层级缩进 + 父子弧连线 + narrative_target 目标） ─── */
   function renderOutlines(outlineBody, tooltip, showTooltip, moveTooltip, hideTooltip) {
     outlineBody.innerHTML = '';
     var bodyW = outlineBody.clientWidth, bodyH = outlineBody.clientHeight;
@@ -316,7 +316,7 @@
           parentName ? ['父弧', parentName] : null,
           o.narrative_target ? ['目标', o.narrative_target] : null,
         ].filter(Boolean),
-        tag: '大纲',
+        tag: '弧',
       });
       if (height > 1.2) {
         var label = document.createElement('span');
@@ -698,16 +698,16 @@
         '<div class="sl-root">' +
         '<div class="sl-header"><h1><span class="dot"></span>故事线</h1>' +
         '<div class="sl-header-right">' + zoomHtml +
-        '<div class="sl-meta">总章节数 <span>' + TOTAL_CHAPTERS + '</span> · 每章约 <span>' + WPC + '</span> 字 · 大纲 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
+        '<div class="sl-meta">总章节数 <span>' + TOTAL_CHAPTERS + '</span> · 每章约 <span>' + WPC + '</span> 字 · 弧 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
         '<div class="sl-main">' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
         '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
-        '<div class="sl-lane" style="flex:3"><div class="sl-lane-header">📋 大纲</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
-        '<div class="sl-lane" style="flex:7"><div class="sl-lane-header">🔗 桥段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
+        '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">📋 弧</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
+        '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">🔗 桥段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
         '<div class="sl-lane" style="flex:2"><div class="sl-lane-header">🧵 线程</div><div class="sl-lane-body" id="' + mountId + '-tb"></div></div>' +
         '</div></div>' +
         '<div class="sl-legend">' +
-        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#f97583"></span> 大纲</div>' +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#f97583"></span> 弧</div>' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#79c0ff"></span> 主桥段</div>' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#a5d6ff"></span> 子桥段</div>' +
         threadLegendHtml +
@@ -756,7 +756,7 @@
       renderAll();
     },
 
-    /* 高亮：按 outline_id / plot_id 给故事线里对应的大纲/桥段条加高亮并滚动到可见位置。
+    /* 高亮：按 outline_id / plot_id 给故事线里对应的弧/桥段条加高亮并滚动到可见位置。
        写作流页面在 plot_start / plot_done 时调用。 */
     highlight: function (target) {
       var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
@@ -765,7 +765,7 @@
       var prev = mount.querySelectorAll('.sl-bar.sl-highlight');
       for (var i = 0; i < prev.length; i++) prev[i].classList.remove('sl-highlight');
       var sel = [];
-      // 用类限定：大纲条只匹配 sl-bar-outline；桥段条只匹配 sl-bar-plot（避免 data-oid 把整个大纲的桥段全点亮）
+      // 用类限定：弧条只匹配 sl-bar-outline；桥段条只匹配 sl-bar-plot（避免 data-oid 把整个弧的桥段全点亮）
       if (target && target.outline_id) sel.push('.sl-bar-outline[data-oid="' + target.outline_id + '"]');
       if (target && target.plot_id) sel.push('.sl-bar-plot[data-pid="' + target.plot_id + '"]');
       if (!sel.length) return;
@@ -780,7 +780,7 @@
       }
     },
 
-    /* 纯滚动：把故事线滚动到目标大纲/桥段条可见（不改变高亮状态）。
+    /* 纯滚动：把故事线滚动到目标弧/桥段条可见（不改变高亮状态）。
        Agent 画布控制 scroll_to_plot / scroll_to_outline 使用。 */
     scrollTo: function (target) {
       var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
