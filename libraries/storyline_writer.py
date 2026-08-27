@@ -162,8 +162,12 @@ class StorylineChapterWriter:
         # 本章输入 prompt 累计（供成本计量）；跨桥段累计、跨章重置
         self._input_chapter = 0
         self._input_texts: list = []
-        self._total_chapters = (max((o.end_chapter for o in storyline.outlines), default=0)
-                                if storyline else 0)
+        # 章节轴→字数轴：总章数由桥段预计字数推导（ceil(总字数/每章字数)），不再读弧的 end_chapter
+        self._total_chapters = 0
+        if storyline:
+            wpc = getattr(storyline, "words_per_chapter", None) or 3000
+            _w = sum(planned_words(p) for p in storyline.plots) if storyline.plots else 0
+            self._total_chapters = max(1, (_w + wpc - 1) // wpc)
 
     # ── 桥段按故事顺序（上→下）与层次（左→右：弧→阶段→桥段）排列 ──
     def _threaded_ordered_plots(self):

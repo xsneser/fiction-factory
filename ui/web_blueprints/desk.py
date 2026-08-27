@@ -139,10 +139,14 @@ def storyline_write_flow(engine_id):
                 "draft": True,
             })
     sl = getattr(engine, "storyline", None)
-    total_ch = 0
-    if sl:
+    # 字数轴：总章数优先用引擎已字数化的 state.total_chapters，否则由桥段 planned_words 推导
+    total_ch = getattr(getattr(engine, "state", None), "total_chapters", 0) or 0
+    if not total_ch and sl:
         try:
-            total_ch = max((o.end_chapter for o in sl.outlines), default=0)
+            from libraries.storyline_writer import planned_words
+            _w = sum(planned_words(p) for p in sl.plots) if sl.plots else 0
+            _wpc = (sl.words_per_chapter or 3000)
+            total_ch = max(1, (_w + _wpc - 1) // _wpc)
         except Exception:
             total_ch = 0
     from libraries.storyline import basic_info_world_done
