@@ -13,8 +13,6 @@
   var outlines = [], plots = [], threads = [];
   var promises = [], promiseByPlot = {};   // 读者承诺台账：桥段id → [{kind:setup/payoff, pr}]
   var setupIds = {};                       // 设局桥段 id 集合（被 resolves_plot_id 引用的桥段）
-  var arcLevelById = {}, plotLevelById = {};  // 弧/桥段层级（adapt 一次算好，渲染共享）
-  var arcLaneInfo = {};                    // 弧带 lane 分道（同级重叠弧并排）
   var PALETTE = ['#f97583', '#79c0ff', '#56d364', '#e3b341', '#d2a8ff', '#ffa657', '#c084fc', '#7ee787'];
   var THREAD_PALETTE = ['#ffa657', '#79c0ff', '#d2a8ff', '#56d364', '#e3b341', '#ff7b72', '#7ee787'];
 
@@ -39,24 +37,6 @@
      故 height=chapterToPercent(end-start)、mid=(start+end)/2 公式直接成立 */
   function chapterToPercent(ch) {
     return (TOTAL_CHAPTERS > 0) ? (ch / TOTAL_CHAPTERS) * 100 : 0;
-  }
-
-  /* ─── 弧=容器带 坐标纯函数（合并泳道内：弧带 + 桥段内嵌） ─── */
-  var ARC_OUTER_PAD = 2, ARC_LEVEL_INDENT = 5, ARC_LABEL_W = 12, PLOT_LEVEL_INDENT = 3;
-  function bandLeft(aLv) { return ARC_OUTER_PAD + aLv * ARC_LEVEL_INDENT; }   // 弧区左缘（按弧层级缩进）
-  function bandRight() { return 100 - ARC_OUTER_PAD; }                          // 所有弧共用右缘
-  function bandW(aLv) { return bandRight() - bandLeft(aLv); }
-  // 弧带可能因同级重叠被 lane 分道：band base 叠加 lane*(bandW/totalLanes)
-  function arcBandLeft(aLv, lane, totalLanes) { return bandLeft(aLv) + lane * (bandW(aLv) / totalLanes); }
-  function arcBandW(aLv, totalLanes) { return bandW(aLv) / totalLanes; }
-  function arcBandPlotLeft(aLv, lane, totalLanes) { return arcBandLeft(aLv, lane, totalLanes) + ARC_LABEL_W; }
-  function arcBandPlotW(aLv, totalLanes) { return Math.max(arcBandW(aLv, totalLanes) - ARC_LABEL_W, 2); }
-  // 桥段在弧带内：弧 lane 区 + 桥段嵌套缩进 + 桥段 lane 分道
-  function plotAreaLeft(aLv, lane, totalLanes, pLv) { return arcBandPlotLeft(aLv, lane, totalLanes) + pLv * PLOT_LEVEL_INDENT; }
-  function plotAreaW(aLv, totalLanes, pLv) { return Math.max(arcBandPlotW(aLv, totalLanes) - pLv * PLOT_LEVEL_INDENT, 2); }
-  function arcBandCenterX(aLv, lane, totalLanes) { return arcBandLeft(aLv, lane, totalLanes) + arcBandW(aLv, totalLanes) / 2; }
-  function plotBarCenterX(aLv, lane, totalLanes, pLv, plotLane, plotTotal) {
-    return plotAreaLeft(aLv, lane, totalLanes, pLv) + (plotLane + 0.5) * (plotAreaW(aLv, totalLanes, pLv) / plotTotal);
   }
 
   /* 线程 id → 颜色 */
@@ -151,30 +131,6 @@
       if (o.end > TOTAL_CHAPTERS) TOTAL_CHAPTERS = o.end;
     });
 
-    // 弧层级（parent_arc_id 递归，父缺失→0 防环）
-    arcLevelById = {};
-    function arcDepth(id) {
-      if (arcLevelById[id] !== undefined) return arcLevelById[id];
-      var o = null;
-      for (var i = 0; i < outlines.length; i++) if (outlines[i].id === id) { o = outlines[i]; break; }
-      if (!o || !o.parent) return (arcLevelById[id] = 0);
-      return (arcLevelById[id] = arcDepth(o.parent) + 1);
-    }
-    outlines.forEach(function (o) { arcDepth(o.id); });
-    // 每层弧 lane 分道：同级重叠弧并排（顺序弧全 lane 0 满宽），供 renderArcs/renderPlots 共用
-    arcLaneInfo = {};
-    var arcByLevel = {};
-    outlines.forEach(function (o) {
-      var lv = arcLevelById[o.id];
-      (arcByLevel[lv] = arcByLevel[lv] || []).push({ id: o.id, start: o.start, end: o.end });
-    });
-    Object.keys(arcByLevel).forEach(function (lv) {
-      var res = assignLanes(arcByLevel[lv]);
-      arcByLevel[lv].forEach(function (it, idx) {
-        arcLaneInfo[it.id] = { lane: res.assignments[idx], totalLanes: res.totalLanes };
-      });
-    });
-
     // 桥段 → 在弧内按序比例均分章节段（弧 [s,e] 内 n 个桥段均分）
     plots = [];
     var outlineById = {};
@@ -200,7 +156,7 @@
           start: oStart + (i / n) * span,
           end: oStart + ((i + 1) / n) * span,
           parent: parentSyn,
-          color: rootColor,   // 全继承弧色；嵌套靠渲染层 alpha 区分
+          color: parentSyn ? '#a5d6ff' : rootColor,
           category: p.category || '',
           thread: p.thread_id || '主线',
           resolves: resolvesSyn || '',
@@ -209,17 +165,6 @@
         });
       });
     });
-
-    // 桥段层级（parent_plot_id 递归，父缺失→0 防环）
-    plotLevelById = {};
-    function plotDepth(id) {
-      if (plotLevelById[id] !== undefined) return plotLevelById[id];
-      var p = null;
-      for (var i = 0; i < plots.length; i++) if (plots[i].id === id) { p = plots[i]; break; }
-      if (!p || !p.parent) return (plotLevelById[id] = 0);
-      return (plotLevelById[id] = plotDepth(p.parent) + 1);
-    }
-    plots.forEach(function (p) { plotDepth(p.id); });
 
     // 叙事线程 → 横带区间（id/name 双表匹配，解决存量「thread_id 与 threads 列表不闭合」；
     // 每线程收集 members 供泳道 tooltip 与设局/收局点）
@@ -293,59 +238,77 @@
     if ((TOTAL_CHAPTERS - 1) % step !== 0) addTick(TOTAL_CHAPTERS);   // 兜底末章刻度
   }
 
-  /* ─── 共享连线 SVG 创建（合并泳道最底层，三个渲染函数共用） ─── */
-  function createLineSvg() {
-    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('class', 'sl-lines');
-    svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
-    svg.style.position = 'absolute'; svg.style.top = '0'; svg.style.left = '0';
-    svg.style.pointerEvents = 'none'; svg.style.zIndex = '0';
-    return svg;
-  }
-
-  /* ─── 渲染：弧=容器带（弧名+章节范围，level 缩进，子弧在父带内再套；桥段在带内由 renderPlots 画） ─── */
-  function renderArcs(arcLayer, svg, tooltip, showTooltip, moveTooltip, hideTooltip) {
-    arcLayer.innerHTML = '';
-    var bodyW = arcLayer.clientWidth, bodyH = arcLayer.clientHeight;
+  /* ─── 渲染：大纲（弧树嵌套：parent_arc_id 层级缩进 + 父子弧连线 + narrative_target 目标） ─── */
+  function renderOutlines(outlineBody, tooltip, showTooltip, moveTooltip, hideTooltip) {
+    outlineBody.innerHTML = '';
+    var bodyW = outlineBody.clientWidth, bodyH = outlineBody.clientHeight;
     if (!bodyH || bodyH < 40) bodyH = 400;
 
+    // 弧树层级：沿 parent（parent_arc_id）递归，父缺失→0 防环
+    function getArcLevel(o, cache) {
+      if (cache[o.id] !== undefined) return cache[o.id];
+      if (!o.parent) return (cache[o.id] = 0);
+      var parent = null;
+      for (var i = 0; i < outlines.length; i++) { if (outlines[i].id === o.parent) { parent = outlines[i]; break; } }
+      cache[o.id] = parent ? getArcLevel(parent, cache) + 1 : 0;
+      return cache[o.id];
+    }
+    var levels = {};
+    outlines.forEach(function (o) { getArcLevel(o, levels); });
+    var maxLevel = 0;
+    outlines.forEach(function (o) { if (levels[o.id] > maxLevel) maxLevel = levels[o.id]; });
+
+    var byLevel = {};
     outlines.forEach(function (o) {
-      var aLv = arcLevelById[o.id] || 0;
-      var ali = arcLaneInfo[o.id] || { lane: 0, totalLanes: 1 };
+      var lv = levels[o.id];
+      (byLevel[lv] = byLevel[lv] || []).push({ id: o.id, start: o.start, end: o.end });
+    });
+    var laneInfo = {};
+    Object.keys(byLevel).forEach(function (lv) {
+      var res = assignLanes(byLevel[lv]);
+      byLevel[lv].forEach(function (it, idx) {
+        laneInfo[it.id] = { lane: res.assignments[idx], totalLanes: res.totalLanes };
+      });
+    });
+    var levelBlockW = 100 / (maxLevel + 1);
+    var gap = 3;
+
+    outlines.forEach(function (o) {
+      var level = levels[o.id];
+      var li = laneInfo[o.id] || { lane: 0, totalLanes: 1 };
       var top = chapterToPercent(o.start);
       var height = chapterToPercent(o.end - o.start);
-      var bandL = arcBandLeft(aLv, ali.lane, ali.totalLanes);
-      var bw = arcBandW(aLv, ali.totalLanes);
+      var blockLeft = level * levelBlockW;
+      var laneW = 100 / li.totalLanes;
+      var innerLeft = li.lane * laneW;
+      var barLeft = blockLeft + innerLeft * (levelBlockW / 100);
+      var barW = levelBlockW / li.totalLanes - gap;
 
-      var band = document.createElement('div');
-      band.className = 'sl-arc-band sl-bar-outline level-' + aLv;   // 保留 sl-bar-outline 供 highlight/scrollTo
-      band.dataset.oid = o.id;
-      band.style.top = top + '%';
-      band.style.height = Math.max(height, 1) + '%';               // 空弧带最小高
-      band.style.left = bandL + '%';
-      band.style.width = 'calc(' + bw + '% - ' + (2 * ARC_OUTER_PAD) + 'px)';
-      band.style.zIndex = '1';
+      var bar = document.createElement('div');
+      bar.className = 'sl-bar sl-bar-outline level-' + level;
+      bar.dataset.oid = o.id;
+      bar.style.top = top + '%';
+      bar.style.height = Math.max(height, 0.5) + '%';
+      bar.style.left = barLeft + '%';
+      bar.style.width = 'calc(' + barW + '% - ' + (li.totalLanes * gap) + 'px)';
+      bar.style.right = 'auto';
+      bar.style.zIndex = 10 + level;
       if (o.narrative === 'flashback') {
-        band.classList.add('sl-flashback');
-        band.style.background = 'linear-gradient(135deg,#d2992233,#d299221f)';
+        bar.style.background = 'linear-gradient(135deg,#d29922,#d29922cc)';
+        bar.classList.add('sl-flashback');
       } else if (o.narrative === 'interleaved') {
-        band.classList.add('sl-interleaved');
-        band.style.background = 'linear-gradient(135deg,#3fb9502e,#3fb9501c)';
+        bar.style.background = 'linear-gradient(135deg,#3fb950,#3fb950aa)';
+        bar.classList.add('sl-interleaved');
       } else {
-        band.style.background = 'linear-gradient(135deg,' + o.color + '30,' + o.color + '1c)';
+        bar.style.background = 'linear-gradient(135deg,' + o.color + ',' + o.color + 'cc)';
       }
-      arcLayer.appendChild(band);
-
-      // 弧名 + 章节范围 label（带内左上，可交互；弧带本身 pointer-events:none）
+      var narration = o.narrative === 'flashback' ? '（倒叙）' : (o.narrative === 'interleaved' ? '（插叙）' : '');
+      // 父弧名（供 tooltip）
       var parentName = '';
       if (o.parent) {
         for (var pi = 0; pi < outlines.length; pi++) { if (outlines[pi].id === o.parent) { parentName = outlines[pi].name; break; } }
       }
-      var narration = o.narrative === 'flashback' ? '（倒叙）' : (o.narrative === 'interleaved' ? '（插叙）' : '');
-      var label = document.createElement('span');
-      label.className = 'sl-arc-band-label';
-      label.textContent = o.name + ' · 第' + o.start_ch + '—' + o.end_ch + '章' + narration;
-      label.dataset.tooltip = JSON.stringify({
+      bar.dataset.tooltip = JSON.stringify({
         title: o.name,
         rows: [
           ['章节', '第' + o.start_ch + '—' + o.end_ch + '章'],
@@ -353,40 +316,57 @@
           parentName ? ['父弧', parentName] : null,
           o.narrative_target ? ['目标', o.narrative_target] : null,
         ].filter(Boolean),
-        tag: '弧',
+        tag: '大纲',
       });
+      if (height > 1.2) {
+        var label = document.createElement('span');
+        label.className = 'sl-bar-label';
+        label.textContent = o.name + narration;
+        bar.appendChild(label);
+      }
+      // 叙事目标标记：倒叙/插叙且有 narrative_target 时在条上标 ◉
       if (o.narrative_target && o.narrative !== 'chronological') {
         var mark = document.createElement('span');
         mark.className = 'sl-target-mark';
-        mark.textContent = ' ◉';
+        mark.textContent = '◉';
         mark.title = '目标：' + o.narrative_target;
-        label.appendChild(mark);
+        bar.appendChild(mark);
       }
-      label.addEventListener('mouseenter', showTooltip);
-      label.addEventListener('mousemove', moveTooltip);
-      label.addEventListener('mouseleave', hideTooltip);
-      label.addEventListener('click', function (e) {
+      bar.addEventListener('mouseenter', showTooltip);
+      bar.addEventListener('mousemove', moveTooltip);
+      bar.addEventListener('mouseleave', hideTooltip);
+      bar.addEventListener('click', function (e) {
         e.stopPropagation();
-        label.dispatchEvent(new CustomEvent('sl:outline-click',
+        bar.dispatchEvent(new CustomEvent('sl:outline-click',
           {detail: {outline_id: o.id}, bubbles: true}));
       });
-      band.appendChild(label);
+      outlineBody.appendChild(bar);
     });
 
-    // 父子弧连线（共享 svg，bandCenterX 用 arcLaneInfo）
-    function px(x) { return (x / 100) * (bodyW || arcLayer.clientWidth || 1); }
+    // 父子弧连线（SVG 贝塞尔，复用桥段父子线的 px/py/barCenterX 机制）
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
+    svg.style.position = 'absolute'; svg.style.top = '0'; svg.style.left = '0';
+    svg.style.pointerEvents = 'none'; svg.style.zIndex = '0';
+    bodyW = bodyW || outlineBody.clientWidth || 1;
+    function px(x) { return (x / 100) * bodyW; }
     function py(y) { return (y / 100) * bodyH; }
+    function arcCenterX(level, lane, totalLanes) {
+      var blockL = (level / (maxLevel + 1)) * 100;
+      var laneW = (1 / (maxLevel + 1)) * 100 / totalLanes;
+      return blockL + lane * laneW + laneW / 2;
+    }
     outlines.forEach(function (o) {
       if (!o.parent) return;
       var parent = null;
       for (var i = 0; i < outlines.length; i++) { if (outlines[i].id === o.parent) { parent = outlines[i]; break; } }
       if (!parent) return;
-      var pAli = arcLaneInfo[parent.id] || { lane: 0, totalLanes: 1 };
-      var cAli = arcLaneInfo[o.id] || { lane: 0, totalLanes: 1 };
+      var parentLI = laneInfo[parent.id], childLI = laneInfo[o.id];
+      if (!parentLI || !childLI) return;
       var parentMid = py(chapterToPercent((parent.start + parent.end) / 2));
       var childMid = py(chapterToPercent((o.start + o.end) / 2));
-      var pcx = px(arcBandCenterX(arcLevelById[parent.id] || 0, pAli.lane, pAli.totalLanes));
-      var ccx = px(arcBandCenterX(arcLevelById[o.id] || 0, cAli.lane, cAli.totalLanes));
+      var pcx = px(arcCenterX(levels[parent.id], parentLI.lane, parentLI.totalLanes));
+      var ccx = px(arcCenterX(levels[o.id], childLI.lane, childLI.totalLanes));
       var midY = (parentMid + childMid) / 2;
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', 'M ' + pcx + ' ' + parentMid + ' C ' + pcx + ' ' + midY + ' ' + ccx + ' ' + midY + ' ' + ccx + ' ' + childMid);
@@ -394,20 +374,33 @@
       path.setAttribute('stroke-width', '1'); path.setAttribute('fill', 'none');
       svg.appendChild(path);
     });
+    outlineBody.appendChild(svg);
   }
 
-  /* ─── 渲染：桥段（内嵌弧带，共享 SVG 连线） ─── */
-  function renderPlots(plotLayer, svg, tooltip, showTooltip, moveTooltip, hideTooltip) {
-    plotLayer.innerHTML = '';
-    var bodyW = plotLayer.clientWidth, bodyH = plotLayer.clientHeight;
+  /* ─── 渲染：桥段（嵌套 + 通道 + SVG 连线） ─── */
+  function renderPlots(plotBody, tooltip, showTooltip, moveTooltip, hideTooltip) {
+    plotBody.innerHTML = '';
+    var bodyW = plotBody.clientWidth, bodyH = plotBody.clientHeight;
     if (!bodyH || bodyH < 40) bodyH = 400;
     var plotById = {};
     plots.forEach(function (p) { plotById[p.id] = p; });
 
-    // 每桥段层级内 lane 分道（同弧同层重叠桥段并排）
+    function getLevel(plot, cache) {
+      if (cache[plot.id] !== undefined) return cache[plot.id];
+      if (!plot.parent) return (cache[plot.id] = 0);
+      var parent = null;
+      for (var i = 0; i < plots.length; i++) { if (plots[i].id === plot.parent) { parent = plots[i]; break; } }
+      cache[plot.id] = parent ? getLevel(parent, cache) + 1 : 0;
+      return cache[plot.id];
+    }
+    var levels = {};
+    plots.forEach(function (p) { getLevel(p, levels); });
+    var maxLevel = 0;
+    plots.forEach(function (p) { if (levels[p.id] > maxLevel) maxLevel = levels[p.id]; });
+
     var byLevel = {};
     plots.forEach(function (p) {
-      var lv = plotLevelById[p.id] || 0;
+      var lv = levels[p.id];
       (byLevel[lv] = byLevel[lv] || []).push({ id: p.id, start: p.start, end: p.end });
     });
     var laneInfo = {};
@@ -418,33 +411,34 @@
       });
     });
 
+    var levelBlockW = 100 / (maxLevel + 1);
+    var gap = 3;
+
     plots.forEach(function (p) {
-      var pLv = plotLevelById[p.id] || 0;
-      var aLv = arcLevelById[p.oid] || 0;
-      var ali = arcLaneInfo[p.oid] || { lane: 0, totalLanes: 1 };
+      var level = levels[p.id];
       var li = laneInfo[p.id] || { lane: 0, totalLanes: 1 };
       var top = chapterToPercent(p.start);
       var height = chapterToPercent(p.end - p.start);
-      var areaLeft = plotAreaLeft(aLv, ali.lane, ali.totalLanes, pLv);
-      var areaW = plotAreaW(aLv, ali.totalLanes, pLv);
-      var laneW = areaW / li.totalLanes;
-      var barLeft = areaLeft + li.lane * laneW;
-      var barW = laneW;
+      var blockLeft = level * levelBlockW;
+      var laneW = 100 / li.totalLanes;
+      var innerLeft = li.lane * laneW;
+      var barLeft = blockLeft + innerLeft * (levelBlockW / 100);
+      var barW = levelBlockW / li.totalLanes - gap;
 
       var bar = document.createElement('div');
-      bar.className = 'sl-bar sl-bar-plot level-' + pLv;
+      bar.className = 'sl-bar sl-bar-plot level-' + level;
       bar.dataset.pid = p.id;
       if (p.oid) bar.dataset.oid = p.oid;
       bar.style.top = top + '%';
       bar.style.height = Math.max(height, 0.4) + '%';
       bar.style.left = barLeft + '%';
-      bar.style.width = 'calc(' + barW + '% - ' + (li.totalLanes * 3) + 'px)';
+      bar.style.width = 'calc(' + barW + '% - ' + (li.totalLanes * gap) + 'px)';
       bar.style.right = 'auto';
-      bar.style.zIndex = 5 + pLv;
-      if (pLv === 0) {
+      bar.style.zIndex = 5 + level;
+      if (level === 0) {
         bar.style.background = 'linear-gradient(135deg,' + p.color + ',' + p.color + 'cc)';
         bar.style.border = '1px solid rgba(255,255,255,.2)';
-      } else if (pLv === 1) {
+      } else if (level === 1) {
         bar.style.background = 'linear-gradient(135deg,' + p.color + '99,' + p.color + '88)';
         bar.style.borderLeft = '2px solid rgba(255,255,255,.3)';
       } else {
@@ -462,7 +456,7 @@
       bar.dataset.tooltip = JSON.stringify({
         title: p.name,
         rows: [
-          ['层级', pLv === 0 ? '主桥段' : '子桥段 L' + pLv],
+          ['层级', level === 0 ? '主桥段' : '子桥段 L' + level],
           ['章节', '第' + Math.round(p.start + 1) + '—' + Math.round(p.end) + '章'],
           ['线程', p.thread || '主线'],
           p.resolves ? ['收局', '解决「' + p.resolves_name + '」'] : null,
@@ -512,24 +506,33 @@
         bar.dispatchEvent(new CustomEvent('sl:plot-click',
           {detail: {plot_id: p.id, outline_id: p.oid}, bubbles: true}));
       });
-      plotLayer.appendChild(bar);
+      plotBody.appendChild(bar);
     });
 
-    // 父子桥段连线（共享 svg，px/py 按 plotLayer 尺寸换算）
-    function px(x) { return (x / 100) * (bodyW || plotLayer.clientWidth || 1); }
+    // 父子连线（SVG path 的 d 不支持 % 坐标 → 按 bodyW/bodyH 换算成像素）
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
+    svg.style.position = 'absolute'; svg.style.top = '0'; svg.style.left = '0';
+    svg.style.pointerEvents = 'none'; svg.style.zIndex = '0';
+    bodyW = bodyW || plotBody.clientWidth || 1;
+    function px(x) { return (x / 100) * bodyW; }
     function py(y) { return (y / 100) * bodyH; }
     plots.forEach(function (p) {
       if (!p.parent) return;
-      var parent = plotById[p.parent];
+      var parent = null;
+      for (var i = 0; i < plots.length; i++) { if (plots[i].id === p.parent) { parent = plots[i]; break; } }
       if (!parent) return;
       var parentLI = laneInfo[parent.id], childLI = laneInfo[p.id];
       if (!parentLI || !childLI) return;
-      var pAli = arcLaneInfo[parent.oid] || { lane: 0, totalLanes: 1 };
-      var cAli = arcLaneInfo[p.oid] || { lane: 0, totalLanes: 1 };
       var parentMid = py(chapterToPercent((parent.start + parent.end) / 2));
       var childMid = py(chapterToPercent((p.start + p.end) / 2));
-      var pcx = px(plotBarCenterX(arcLevelById[parent.oid] || 0, pAli.lane, pAli.totalLanes, plotLevelById[parent.id] || 0, parentLI.lane, parentLI.totalLanes));
-      var ccx = px(plotBarCenterX(arcLevelById[p.oid] || 0, cAli.lane, cAli.totalLanes, plotLevelById[p.id] || 0, childLI.lane, childLI.totalLanes));
+      function barCenterX(level, lane, totalLanes) {
+        var blockL = (level / (maxLevel + 1)) * 100;
+        var laneW = (1 / (maxLevel + 1)) * 100 / totalLanes;
+        return blockL + lane * laneW + laneW / 2;
+      }
+      var pcx = px(barCenterX(levels[parent.id], parentLI.lane, parentLI.totalLanes));
+      var ccx = px(barCenterX(levels[p.id], childLI.lane, childLI.totalLanes));
       var midY = (parentMid + childMid) / 2;
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', 'M ' + pcx + ' ' + parentMid + ' C ' + pcx + ' ' + midY + ' ' + ccx + ' ' + midY + ' ' + ccx + ' ' + childMid);
@@ -545,12 +548,15 @@
       if (!target) return;
       var srcLI = laneInfo[p.id], tgtLI = laneInfo[target.id];
       if (!srcLI || !tgtLI) return;
-      var sAli = arcLaneInfo[p.oid] || { lane: 0, totalLanes: 1 };
-      var tAli = arcLaneInfo[target.oid] || { lane: 0, totalLanes: 1 };
       var srcMid = py(chapterToPercent((p.start + p.end) / 2));
       var tgtMid = py(chapterToPercent((target.start + target.end) / 2));
-      var pcx = px(plotBarCenterX(arcLevelById[p.oid] || 0, sAli.lane, sAli.totalLanes, plotLevelById[p.id] || 0, srcLI.lane, srcLI.totalLanes));
-      var ccx = px(plotBarCenterX(arcLevelById[target.oid] || 0, tAli.lane, tAli.totalLanes, plotLevelById[target.id] || 0, tgtLI.lane, tgtLI.totalLanes));
+      function barCenterX(level, lane, totalLanes) {
+        var blockL = (level / (maxLevel + 1)) * 100;
+        var laneW = (1 / (maxLevel + 1)) * 100 / totalLanes;
+        return blockL + lane * laneW + laneW / 2;
+      }
+      var pcx = px(barCenterX(levels[p.id], srcLI.lane, srcLI.totalLanes));
+      var ccx = px(barCenterX(levels[target.id], tgtLI.lane, tgtLI.totalLanes));
       var midY = (srcMid + tgtMid) / 2;
       // 跨长距离（连线高度 >60% 面板）衰减透明度，避免长线喧宾夺主
       var distRatio = Math.abs(srcMid - tgtMid) / Math.max(bodyH, 1);
@@ -564,6 +570,7 @@
       path.setAttribute('fill', 'none');
       svg.appendChild(path);
     });
+    plotBody.appendChild(svg);
   }
 
   /* ─── 渲染：叙事线程横带（成员列表 tooltip + 设局/收局点，多线重叠=穿插可视） ─── */
@@ -695,16 +702,14 @@
         '<div class="sl-main">' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
         '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
-        '<div class="sl-lane" style="flex:8"><div class="sl-lane-header">📋 弧·桥段</div><div class="sl-lane-body" id="' + mountId + '-cb">' +
-        '<div class="sl-arc-layer" id="' + mountId + '-al"></div>' +
-        '<div class="sl-plot-layer" id="' + mountId + '-pl"></div>' +
-        '</div></div>' +
+        '<div class="sl-lane" style="flex:3"><div class="sl-lane-header">📋 大纲</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
+        '<div class="sl-lane" style="flex:7"><div class="sl-lane-header">🔗 桥段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
         '<div class="sl-lane" style="flex:2"><div class="sl-lane-header">🧵 线程</div><div class="sl-lane-body" id="' + mountId + '-tb"></div></div>' +
         '</div></div>' +
         '<div class="sl-legend">' +
-        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#f97583"></span> 弧（容器带）</div>' +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#f97583"></span> 大纲</div>' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#79c0ff"></span> 主桥段</div>' +
-        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#a5d6ff"></span> 子桥段（弧色淡）</div>' +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#a5d6ff"></span> 子桥段</div>' +
         threadLegendHtml +
         '<div class="sl-legend-item"><span class="sl-legend-swatch payoff-line"></span> ◉设局 → ↪收局</div>' +
         (narrCount.flashback ? '<div class="sl-legend-item"><span class="sl-legend-swatch flashback"></span> 倒叙</div>' : '') +
@@ -719,9 +724,8 @@
       var tt = makeTooltip(tooltip);
 
       var axisPanel = document.getElementById(mountId + '-ax');
-      var combinedBody = document.getElementById(mountId + '-cb');
-      var arcLayer = document.getElementById(mountId + '-al');
-      var plotLayer = document.getElementById(mountId + '-pl');
+      var outlineBody = document.getElementById(mountId + '-ob');
+      var plotBody = document.getElementById(mountId + '-pb');
       var threadBody = document.getElementById(mountId + '-tb');
       var contentArea = document.getElementById(mountId + '-ct');
 
@@ -740,12 +744,8 @@
 
       function renderAll() {
         renderAxis(axisPanel);
-        var old = combinedBody.querySelector('svg.sl-lines');
-        if (old) old.remove();                        // resize/zoom 重跑去重
-        var svg = createLineSvg();                    // 合并泳道共享连线层（最底）
-        combinedBody.appendChild(svg);
-        renderArcs(arcLayer, svg, tooltip, tt.show, tt.move, tt.hide);
-        renderPlots(plotLayer, svg, tooltip, tt.show, tt.move, tt.hide);
+        renderOutlines(outlineBody, tooltip, tt.show, tt.move, tt.hide);
+        renderPlots(plotBody, tooltip, tt.show, tt.move, tt.hide);
         renderThreads(threadBody, tooltip, tt.show, tt.move, tt.hide);
         var existing = contentArea.querySelector('.sl-cursor');
         if (existing) existing.remove();

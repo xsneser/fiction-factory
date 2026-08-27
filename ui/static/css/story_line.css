@@ -106,31 +106,9 @@
 .sl-bar-plot.level-1 { left: 14px; right: 4px; z-index: 4; }
 .sl-bar-plot.level-2 { left: 28px; right: 0; z-index: 5; }
 
-/* ─── 弧=容器带（合并泳道：弧层/桥段层/共享 SVG 叠放） ─── */
-.sl-arc-layer, .sl-plot-layer { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
-.sl-arc-band {
-  position: absolute;
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(255,255,255,.12);
-  overflow: visible;            /* 短带不裁 label */
-  pointer-events: none;         /* 不挡桥段 hover/click（核心） */
-  z-index: 1;
-}
-.sl-arc-band-label {
-  position: absolute; top: 2px; left: 4px; right: 4px; z-index: 2;
-  font-size: 10px; font-weight: 600; color: var(--fg-strong);
-  text-shadow: 0 1px 3px rgba(0,0,0,.6);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  pointer-events: auto; cursor: pointer; line-height: 1.2;
-}
-.sl-arc-band-label:hover { filter: brightness(1.3); }
-.sl-arc-band.sl-highlight {
-  z-index: 2; filter: brightness(1.5); border-color: #fff;
-  box-shadow: 0 0 0 2px var(--fg-strong), 0 0 18px rgba(255,255,255,.5);
-  animation: sl-breathe 1.6s ease-in-out infinite;
-}
-.sl-arc-band.sl-flashback { border-color: var(--sl-flashback-border); }
-.sl-arc-band.sl-interleaved { border: 1px dashed var(--sl-interleaved-border); }
+/* ─── 弧树嵌套层级（JS 内联覆盖，此处兜底） ─── */
+.sl-bar-outline.level-1 { left: 10px; right: 6px; z-index: 11; }
+.sl-bar-outline.level-2 { left: 20px; right: 4px; z-index: 12; }
 
 /* ─── 叙事线程横带 + 桥段线程/收局/设局徽标 ─── */
 .sl-bar-thread { border: 1px solid rgba(255,255,255,.08); }
