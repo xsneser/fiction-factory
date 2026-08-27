@@ -491,16 +491,16 @@ class StorylineBuilder:
         if not self.structures:
             return []
 
-        # 题材方向→常见大纲序列
+        # 题材方向→常见弧模板序列
         genre_map = {
-            "玄幻": ["struct_xuanhuan_01", "struct_xuanhuan_01"],  # 升级×2
-            "都市": ["struct_dushi_01", "struct_dushi_01"],
-            "言情": ["struct_tianwen_01", "struct_tianwen_01"],
-            "悬疑": ["struct_xuanyi_01", "struct_xuanyi_01"],
-            "穿越": ["struct_chuanyue_01", "struct_xuanhuan_01"],
+            "玄幻": ["arc_xuanhuan_01", "arc_xuanhuan_01"],  # 试炼扬名×2
+            "都市": ["arc_dushi_01", "arc_dushi_01"],
+            "言情": ["arc_tianwen_01", "arc_tianwen_01"],
+            "悬疑": ["arc_xuanyi_01", "arc_xuanyi_01"],
+            "穿越": ["arc_chuanyue_01", "arc_xuanhuan_01"],
         }
 
-        template_ids = genre_map.get(genre, ["struct_xuanhuan_01"])
+        template_ids = genre_map.get(genre, ["arc_xuanhuan_01"])
         outlines = []
         ch = 1
         for i, tid in enumerate(template_ids):

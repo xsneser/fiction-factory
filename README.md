@@ -90,7 +90,7 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 ```
 
 - 题材标签在步 1 选择，存入 `world_building.tags`（预置 **50 标签 5 组** `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束，并约束步 2 候选生成。
-- 步 3「世界观补全」：进入时自动调无书端点 `POST /api/world-builder/world-complete` 补全 `world_building` 12 维 + 基调（tone/target_audience/pov/era_language），可手动编辑后随 `/books/start` 落库；`generate_world` 仅在世界观单薄时兜底。另提供**分阶段内容构建工具**（内部 agent / skill 自主编排，步 3 顶部状态区 5 徽标实时显示 ✅/未填）：`generate_core_conflict`（①核心矛盾）→ `query_structures`/`query_plots` + `set_picks`（②开篇大纲+桥段，落 `_outline_picks`）→ `generate_factions`（③势力）→ `generate_characters`（④主要人物，带核心矛盾/势力/大纲上下文）→ `generate_rest_world`（⑤其余维度，大纲确定后补）；`generate_full_outline` 自动消费 `_outline_picks`。
+- 步 3「世界观补全」：进入时自动调无书端点 `POST /api/world-builder/world-complete` 补全 `world_building` 12 维 + 基调（tone/target_audience/pov/era_language），可手动编辑后随 `/books/start` 落库；`generate_world` 仅在世界观单薄时兜底。另提供**分阶段内容构建工具**（内部 agent / skill 自主编排，步 3 顶部状态区 5 徽标实时显示 ✅/未填）：`generate_core_conflict`（①核心矛盾）→ `query_arc_library`/`query_plots` + `set_picks`（②开篇大纲+桥段，落 `_outline_picks`）→ `generate_factions`（③势力）→ `generate_characters`（④主要人物，带核心矛盾/势力/大纲上下文）→ `generate_rest_world`（⑤其余维度，大纲确定后补）；`generate_full_outline` 自动消费 `_outline_picks`。
 - 题材方向由标签推导（`TAG_GENRE_MAP`）；平台留到发布页。
 - 角色由外部 Agent 从原型库生成（`generate_characters`）经 `drive_ui(set_characters)` 填入步 3，可手动编辑；书名由步 2 选中候选带入步 3 可改。
 

@@ -24,7 +24,7 @@ description: >-
 2. `get_storyline(book_id)` → 已有弧（续写时读末尾弧）。
 
 ## 决策点（选材，让用户参与）
-1. `mcp__novel-engine__outline_material_candidates(book_id)` → `{templates, plots}` 候选池。
+1. `mcp__novel-engine__arc_material_candidates(book_id)` → `{templates, plots}` 候选池。
 2. 让用户挑模板/桥段偏好（参考候选；不选则你自主排布）。
 3. 确认后进入生成。
 

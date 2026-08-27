@@ -96,7 +96,7 @@ for b in bm.list_all():
         bm.delete(b.book_id)
 
 cfg = bm.create("系统修仙录", "枫落", genre="玄幻", sub_genre="系统流",
-                structure_template_id="struct_xuanhuan_01",
+                structure_template_id="arc_xuanhuan_01",
                 style_profile_id=profile.id)
 assert_ok("图书-创建", cfg.book_id.startswith("book_"))
 
@@ -104,7 +104,7 @@ bm.save_chapter(cfg.book_id, 1, "第一章", "测试正文内容")
 ch = bm.load_chapter(cfg.book_id, 1)
 assert_ok("图书-章节", ch is not None and ch["title"] == "第一章")
 
-bm.save_outline(cfg.book_id, {"structure": "struct_xuanhuan_01"})
+bm.save_outline(cfg.book_id, {"structure": "arc_xuanhuan_01"})
 assert_ok("图书-大纲", bm.get_outline(cfg.book_id) is not None)
 
 # ══════════════════════════════════════════════

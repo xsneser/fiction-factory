@@ -51,7 +51,7 @@ def normalize_plot_picks(picks):
     """把外部预选桥段归一化为「扁平优先序列表」。
 
     兼容两种形态：
-      - 推荐：扁平列表 [plot_id, ...]（与 outline_material_candidates 返回的 plots 形状一致）。
+      - 推荐：扁平列表 [plot_id, ...]（与 arc_material_candidates 返回的 plots 形状一致）。
         语义 = 全书出现优先级；每个阶段消费队首第一个命中候选池的未消费预选作锚点，
         其余槽位规则回填，随后阶段继续按序消费；用尽即回退 AI/规则。
       - 兼容（旧契约，已弃用）：{"<outline_id>": ["plot_id", ...]}。

@@ -22,7 +22,7 @@
   submit 会等真实结果：成功返回 `book_id`（书创建即 phase=ready）；失败抛「建书失败：<原因>」；返回 `pending` 时用
   `get_build_status` 看 `submit_error` 并如实汇报用户，不要重复 submit。
 - **步 3 分阶段流程 ↔ 命令对照**（按新流程顺序推进，每步落对应表单）：
-  ① 挑选弧 → `query_structures`/`outline_material_candidates` 选最匹配模板；② 构建核心矛盾 →
+  ① 挑选弧 → `query_arc_library`/`arc_material_candidates` 选最匹配模板；② 构建核心矛盾 →
   `set_world({world_building:{core_conflict}})`；③ 创建势力 → `set_world({world_building:{factions}})`；
   ④ 挑选桥段 → 随 `set_outline` 的 `plots` 一并给（不必单独 `set_picks`）；
   ⑤ 各势力人物适配 → `set_characters`；⑥ 补全其余表单 → `set_world`（world_building 各维 + 顶层基调）；

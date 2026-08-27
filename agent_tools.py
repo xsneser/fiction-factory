@@ -241,7 +241,7 @@ def get_build_status() -> dict:
     return _read()
 
 
-def query_structures(keyword: str = "", tags: str = "") -> dict:
+def query_arc_library(keyword: str = "", tags: str = "") -> dict:
     """查情节弧库：按标签/关键词（名称）返回模板清单（标签逗号/空格分隔，任一命中）。"""
     kw = (keyword or "").strip()
     tag_list = [x.strip() for x in (tags or "").replace("，", " ").replace(",", " ").split() if x.strip()]
@@ -608,11 +608,11 @@ def save_book_meta(book_id: str, title: str = "", synopsis: str = "") -> dict:
     return {"ok": True, "title": title or tl.book_title, "synopsis": synopsis}
 
 
-def outline_material_candidates(book_id: str) -> dict:
-    """选材决策点候选池：情节弧库模板 + 桥段库（供外部 agent 预选后把 picks 传给 generate_full_outline）。
+def arc_material_candidates(book_id: str) -> dict:
+    """选材决策点候选池：情节弧库模板 + 桥段库（供外部 agent 预选弧模板作参考，再在自身上下文生成弧+桥段）。
 
-    返回的 plots 为扁平列表（{id,name,category}），可直接作 generate_full_outline 的
-    picks["plots"]（扁平优先序：想先出现的桥段排前）。"""
+    返回 {templates, plots}：templates 为弧级模板清单（{id,name,total_chapters,stages[:5]}），
+    plots 为桥段库候选（{id,name,category,sub_category}）。"""
     tl = _require_tl(book_id)
     _tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
     candidates = struct_lib.search(tags=_tags)
@@ -1423,12 +1423,12 @@ def _build_registry():
         navigate, drive_ui,
         # 只读摸底
         list_books, get_book_state, get_writing_context, get_storyline, borrow_preview,
-        get_book_detail, get_build_status, query_structures, query_plots, query_gags, query_profiles, query_characters,
+        get_book_detail, get_build_status, query_arc_library, query_plots, query_gags, query_profiles, query_characters,
         # 规划（薄工具：agent 生成后落盘；旧工具内 LLM 生成已由 agent 自主生成接管）
         save_basic_info,
         save_outlines, save_book_meta,
         confirm_outlines, fill_gags,
-        outline_material_candidates,
+        arc_material_candidates,
         confirm_world,
         # 写作 / 元数据（薄工具：agent 生成后落盘）
         save_bridge_draft, save_chapter_text,
