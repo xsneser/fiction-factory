@@ -113,7 +113,7 @@ def list_books() -> list:
 
 
 def get_book_state(book_id: str) -> dict:
-    """读取一本书的完整状态：book 配置、故事线、结构大纲、章节摘要、进行中草稿。"""
+    """读取一本书的完整状态：book 配置、故事线、结构弧、章节摘要、进行中草稿。"""
     book = book_mgr.get(book_id)
     if not book:
         raise RuntimeError(f"书 {book_id} 不存在")
@@ -144,7 +144,7 @@ def get_book_state(book_id: str) -> dict:
 
 
 def get_writing_context(book_id: str) -> dict:
-    """[薄工具] 一次返回写正文所需的完整上下文（书配置+故事线+角色/世界观+大纲+最近章摘要+草稿）。
+    """[薄工具] 一次返回写正文所需的完整上下文（书配置+故事线+角色/世界观+弧+最近章摘要+草稿）。
 
     复用 get_book_state 全量 payload（get_storyline / get_book_detail 是其子集/重叠），
     追加就地提取的扁平字段：synopsis（outline）、protagonist（get_mc）、
@@ -176,7 +176,7 @@ def get_writing_context(book_id: str) -> dict:
 
 
 def get_storyline(book_id: str) -> dict:
-    """读取一本书的故事线（timeline）JSON：大纲/桥段/线程/内涵/基础设定。"""
+    """读取一本书的故事线（timeline）JSON：弧/桥段/线程/内涵/基础设定。"""
     tl = _require_tl(book_id)
     return tl.to_dict()
 
@@ -527,7 +527,7 @@ def save_bridge_draft(book_id: str, chapter_num: int, plot_id: str,
 def save_outlines(book_id: str, outlines: list | None = None,
                   plots: list | None = None, threads: list | None = None,
                   themes: list | None = None, mode: str = "replace") -> dict:
-    """[薄工具] 保存大纲/桥段/线程/内涵（agent 生成后调用，内部不调 LLM）。
+    """[薄工具] 保存弧/桥段/线程/内涵（agent 生成后调用，内部不调 LLM）。
 
     接受 agent 生成的结构化 dict 列表，反序列化为 OutlineSlot / PlotSlot 落盘；
     mode=replace 整体替换 | append 续写追加。含 plots 则 phase=plots，否则 outlines。
@@ -543,7 +543,7 @@ def save_outlines(book_id: str, outlines: list | None = None,
             tl.outlines.append(OutlineSlot(
                 id=o.get("id") or f"outline_{base + i + 1:04d}",
                 template_id=o.get("template_id", ""),
-                name=o.get("name") or "未命名大纲",
+                name=o.get("name") or "未命名弧",
                 start_chapter=int(o.get("start_chapter") or 1),
                 end_chapter=int(o.get("end_chapter") or 30),
                 stages=o.get("stages") or [],
@@ -632,7 +632,7 @@ def outline_material_candidates(book_id: str) -> dict:
 
 
 def confirm_outlines(book_id: str) -> dict:
-    """确认大纲序列，进入桥段编排阶段（phase → plots）。"""
+    """确认弧序列，进入桥段编排阶段（phase → plots）。"""
     tl = _require_tl(book_id)
     tl.phase = "plots"
     save_tl(book_id, tl)
@@ -666,7 +666,7 @@ def _clear_wizard_candidates() -> None:
 
 
 def _outline_preview_text(outline_data: dict) -> str:
-    """把 generate_outline_preview 产出的大纲+桥段序列化为 prompt 预览文本。"""
+    """把 generate_outline_preview 产出的弧+桥段序列化为 prompt 预览文本。"""
     if not outline_data:
         return ""
     lines = []
@@ -682,7 +682,7 @@ def _outline_preview_text(outline_data: dict) -> str:
 
 
 def confirm_world(book_id: str) -> dict:
-    """确认世界观设定：basic_info 够充实则打标 _world_generated（后续大纲跳过 Phase 1 分析）。"""
+    """确认世界观设定：basic_info 够充实则打标 _world_generated（后续弧跳过 Phase 1 分析）。"""
     tl = _require_tl(book_id)
     tl.basic_info = tl.basic_info or {}
     from libraries.outline_generator import basic_info_is_rich
@@ -1045,8 +1045,8 @@ _WIZARD_CMDS = {
     "add_candidate": ("candidate",),   # 增量追加 1 张候选卡（world_candidates 合并工具自动 push；候选={title, one_liner, world_brief}）
     "pick_candidate": (),   # 兼容保留：candidate={title, world_brief, one_liner} 内嵌传入（idx 仅卡片高亮，可选）；新 skill 不用
     "set_world": ("world_building",),   # 分阶段内容构建：部分世界观 dict 合并进步 3 表单
-    "set_picks": ("templates",),   # 开篇大纲/桥段选择（templates 或 plots 任一非空，drive_ui 特判）
-    "set_outline": ("outlines", "plots"),   # 步3②生成的大纲+桥段（generate_outline_preview 产出，submit 随书落库）
+    "set_picks": ("templates",),   # 开篇弧/桥段选择（templates 或 plots 任一非空，drive_ui 特判）
+    "set_outline": ("outlines", "plots"),   # 步3②生成的弧+桥段（generate_outline_preview 产出，submit 随书落库）
     "next": (), "prev": (),
     "load_candidates": (), "skip_candidates": (),
     "fill_world": (),   # 步骤③世界观重新补全（Agent 兜底/重试）
@@ -1093,11 +1093,11 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
       tone?, target_audience?, pov?, era_language?}   **顶层键必须叫 world_building**（部分维可分批提交，合并进表单不覆盖已填）；
       **rules 必须数组**（传字符串会被忽略）
     - set_picks: {templates: [id|{id,name}]} 或 {plots: [id|{id,name}]}（任一非空）
-    - set_outline: {outlines: [非空列表], plots: [list], threads?, themes?}   步3②大纲+桥段，submit 随书落库
+    - set_outline: {outlines: [非空列表], plots: [list], threads?, themes?}   步3②弧+桥段，submit 随书落库
       outlines 每项 {id, name, start_chapter, end_chapter, parent_arc_id?, notes, stages?}（id 唯一必填、备注用 notes 非
-      description、parent_arc_id 指向父弧 id 支持弧树嵌套）；大纲=情节弧（约 5-15 章，有方向/目标），不是卷；
+      description、parent_arc_id 指向父弧 id 支持弧树嵌套）；弧=情节弧（约 5-15 章，有方向/目标），不是卷；
       plots 每项 {id, name, outline_id, order, category?, thread_id?, roles?, template_structure?}
-      （id 唯一必填、outline_id 必填指向所属大纲 id、order 弧内序号）——缺 id/outline_id 故事线桥段不显示
+      （id 唯一必填、outline_id 必填指向所属弧 id、order 弧内序号）——缺 id/outline_id 故事线桥段不显示
     - submit: {}  **⚠️ 建书即创建书目并跳书详情页，调用前必须先向用户汇报设定概要并取得确认**
     - next / prev / reset / load_candidates / skip_candidates / fill_world: {} 无必填
     """
@@ -1395,7 +1395,7 @@ def read_crawled_novel(platform: str = "fanqie", folder: str = "",
 def ingest_library_assets(plots: list | None = None, structures: list | None = None,
                           gags: list | None = None, characters: list | None = None,
                           source: str = "fanqie") -> dict:
-    """提取入库：把 agent 从参考书/已抓取书提炼的桥段/大纲/笑点/角色写入四库。
+    """提取入库：把 agent 从参考书/已抓取书提炼的桥段/弧/笑点/角色写入四库。
 
     纯规则落盘、无 LLM（复用 FanqieScoutAgent.ingest_selected，角色走新增
     _add_character）。字段格式——plot {name, category, sub_category, structure,

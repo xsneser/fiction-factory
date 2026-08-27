@@ -2,7 +2,7 @@
 蓝图式写作引擎 v3 — 桥段驱动的逐章增量写作
 
 架构约定（用户明确）：
-  · 左→右 = 层次顺序：大纲 → 阶段 → 桥段
+  · 左→右 = 层次顺序：弧 → 阶段 → 桥段
   · 上→下 = 故事顺序：沿故事线逐桥段推进
   · 桥段是生成单元：每个桥段写完后累计字数，满 words_per_chapter 即切成一章
   · 短句组生成：每个桥段内逐「短句组」调用 LLM（每次 1-3 个短句，约 50-100 字），
@@ -134,7 +134,7 @@ class StorylineChapterWriter:
     章节级蓝图写作器 — 桥段驱动的逐章增量写作。
 
     架构约定（用户明确）：桥段是生成单元。
-      · 左→右 = 层次顺序：大纲 → 阶段 → 桥段
+      · 左→右 = 层次顺序：弧 → 阶段 → 桥段
       · 上→下 = 故事顺序：沿故事线逐桥段推进
     每个桥段写完累计字数，达到 words_per_chapter 即切成一章；
     桥段 written_chapter 写入 storyline 便于断点续写，章节正文由调用方立即落盘。
@@ -165,11 +165,11 @@ class StorylineChapterWriter:
         self._total_chapters = (max((o.end_chapter for o in storyline.outlines), default=0)
                                 if storyline else 0)
 
-    # ── 桥段按故事顺序（上→下）与层次（左→右：大纲→阶段→桥段）排列 ──
+    # ── 桥段按故事顺序（上→下）与层次（左→右：弧→阶段→桥段）排列 ──
     def _threaded_ordered_plots(self):
         """按叙事线程轮流排列桥段（主线加权 2:1，副线/伏笔线各 1）。
 
-        线程内按 (大纲, stage, order, thread_seq) 排序；主线每轮取 2 个、其他线程各 1 个。
+        线程内按 (弧, stage, order, thread_seq) 排序；主线每轮取 2 个、其他线程各 1 个。
         向后兼容：全部 thread_id="主线" 时退化为原严格顺序（单组顺序取）。
         """
         outlines = self.storyline.outlines
@@ -244,7 +244,7 @@ class StorylineChapterWriter:
         return gags
 
     def _chapter_participants(self, item) -> str:
-        """本章/本弧参与者：当前大纲弧内所有桥段出场角色并集（紧凑名串，≤6 个）。
+        """本章/本弧参与者：当前弧内所有桥段出场角色并集（紧凑名串，≤6 个）。
 
         竞品借鉴：AI-NWA participant_subset——「按本章出场角色精准筛选」，
         避免逐桥段重复注入、也覆盖本弧后续才出场的人。免费规则，零 LLM。

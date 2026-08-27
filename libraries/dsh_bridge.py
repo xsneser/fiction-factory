@@ -191,10 +191,9 @@ def clear_task_events() -> None:
 # 中文强化块）已删——规则全在 NOVEL_AGENT.md，任务文本不再拼前缀。
 # 注意：必须是普通字符串（非 f-string），保留字面 {{model}}/{{cwd}} 供 dsh 后续插值。
 _PERSONA = """You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
-You drive the NovelEngine novel-creation platform through its MCP tools (mcp__novelengine__*);
-no dsh-side skills (MCP-only, skills deleted 2026-08-24). Follow the four-stage workflow,
-routing, and guardrails in NOVEL_AGENT.md (your workspace instructions) — it is the single
-source of truth."""
+You drive the NovelEngine novel-creation platform through its MCP tools (mcp__novelengine__*).
+Follow the workflow, routing, and guardrails in NOVEL_AGENT.md (your workspace instructions)
+— it is the single source of truth."""
 
 
 def _agent_cfg(key: str, default):
@@ -369,13 +368,13 @@ _KEY_ZH = {
     "error": "错误", "book_id": "书 ID", "phase": "阶段", "world_building": "世界观",
     "cmd": "命令", "__ui_command__": "命令", "book": "书", "chapter": "章节", "age": "年龄",
     "death_year": "去世年份", "gender": "性别", "mode": "模式", "category": "分类",
-    "keyword": "关键词", "plot": "桥段", "plots": "桥段", "structure": "结构", "structures": "模板",
+    "keyword": "关键词", "plot": "桥段", "plots": "桥段", "structure": "情节弧", "structures": "情节弧库",
     "gag": "梗", "gags": "梗", "count": "数量", "total": "总计", "storyline": "时间线",
-    "outlines": "大纲", "timeline": "时间线", "archetype_id": "原型", "source": "来源",
-    "id": "ID", "tweak": "微调", "pen": "笔名", "outline": "大纲",
+    "outlines": "弧", "timeline": "时间线", "archetype_id": "原型", "source": "来源",
+    "id": "ID", "tweak": "微调", "pen": "笔名", "outline": "弧",
     "url": "地址", "words": "字数", "word_count": "字数", "target_words": "目标字数",
     "passed": "通过", "score": "评分", "message": "消息", "recent_n": "最近章数",
-    "chapter_num": "章节号", "max_outlines": "大纲数", "struct": "结构",
+    "chapter_num": "章节号", "max_outlines": "弧数", "struct": "结构",
 }
 
 

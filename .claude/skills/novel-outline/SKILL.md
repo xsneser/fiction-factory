@@ -1,27 +1,27 @@
 ---
 name: novel-outline
 description: >-
-  大纲阶段。Use when the user wants to 生成大纲/排故事线/选桥段/一键完整大纲/续写/扩写/规划剧情
+  弧阶段。Use when the user wants to 生成弧/排故事线/选桥段/一键完整弧/续写/扩写/规划剧情
   (plan the storyline, generate outline arcs and plot beats, extend the book)。
-  流程：确认世界观/主角 → **agent 自主生成大纲弧 + 桥段**（保持上下文连续）→ save_outlines 落盘
+  流程：确认世界观/主角 → **agent 自主生成弧 + 桥段**（保持上下文连续）→ save_outlines 落盘
   → fill_gags 挂内涵到 ready。前置：phase=config 且 basic_info 充实。退出：phase=ready。不做正文（那是 novel-write）。
 ---
-# 大纲阶段（novel-outline）— agent 自主生成
+# 弧阶段（novel-outline）— agent 自主生成
 
-> **核心原则**：大纲/桥段由你（agent）**自主生成**——你带着世界观/主角设定/题材，自己规划故事弧、
+> **核心原则**：弧/桥段由你（agent）**自主生成**——你带着世界观/主角设定/题材，自己规划故事弧、
 > 章节区间、桥段列表，然后调用**薄工具** `save_outlines` 落盘。**不要**调用内部跑 LLM 的旧工具
 > （generate_full_outline / generate_outlines mode=ai，已废弃留档）。
 
 ## 前置检查（必做）
 1. `mcp__novel-engine__get_book_detail` 看 `phase`：
    - `config` 且世界观/主角充实（`confirm_world` 过）→ 可生成。
-   - `outlines/plots` → 已有大纲，问用户：重做 / 续写 / 直接去写作。
+   - `outlines/plots` → 已有弧，问用户：重做 / 续写 / 直接去写作。
    - `ready` → 已就绪，问续写还是去写作。
 2. 无书 → 提示先跑 `novel-build`。设定不充实 → 先跑 `novel-build` 补。
 
 ## 上下文组装
 1. `get_book_detail(book_id)` → 世界观、主角、基调、目标读者、题材。
-2. `get_storyline(book_id)` → 已有大纲（续写时读末尾弧）。
+2. `get_storyline(book_id)` → 已有弧（续写时读末尾弧）。
 
 ## 决策点（选材，让用户参与）
 1. `mcp__novel-engine__outline_material_candidates(book_id)` → `{templates, plots}` 候选池。
@@ -30,7 +30,7 @@ description: >-
 
 ## 生成 → 落盘
 1. **你自主生成**（你的 LLM 直接产出，上下文连续）：
-   - `outlines`：大纲弧列表，每项 `{name, start_chapter, end_chapter, stages:[{name,min_ch,max_ch,events}], predecessor?, successor?, transition_type}`。
+   - `outlines`：弧列表，每项 `{name, start_chapter, end_chapter, stages:[{name,min_ch,max_ch,events}], predecessor?, successor?, transition_type}`。
    - `plots`：桥段列表，每项 `{name, outline_id, stage_index, order, category, thread_id, resolves_plot_id?, roles?}`。
    - `threads`：叙事线程 `[{id,name,desc}]`；`themes`：内涵 `[str]`。
 2. 调用 `mcp__novel-engine__save_outlines(book_id, outlines=..., plots=..., threads=..., themes=..., mode="replace")` 落盘（返回 outlines/plots 计数，phase=plots）。

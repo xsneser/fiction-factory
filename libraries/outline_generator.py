@@ -1,9 +1,9 @@
 """
-大纲生成引擎（Outline Generator）
+弧生成引擎（Outline Generator）
 6 阶段 LLM 管线：故事分析 → 故事线规划 → 桥段编排 → 线程与呼应 → 内涵挂载 → 一致性验证
 
 输入: 题材方向/题材细分/自定义描述 + 四大库（候选池） + 笔名档案
-输出: BookStoryline JSON（多大纲+桥段+内涵+吸睛；笑点完全涌现、不写入大纲）
+输出: BookStoryline JSON（多弧+桥段+内涵+吸睛；笑点完全涌现、不写入弧）
 
 用法:
     gen = OutlineGenerator(llm, structure_lib, plot_lib, gag_lib)
@@ -55,7 +55,7 @@ def normalize_plot_picks(picks):
         语义 = 全书出现优先级；每个阶段消费队首第一个命中候选池的未消费预选作锚点，
         其余槽位规则回填，随后阶段继续按序消费；用尽即回退 AI/规则。
       - 兼容（旧契约，已弃用）：{"<outline_id>": ["plot_id", ...]}。
-        outline_id 在选材阶段尚不存在（大纲在 generate 内生成），无法按弧映射，
+        outline_id 在选材阶段尚不存在（弧在 generate 内生成），无法按弧映射，
         故按 dict 值序展开成扁平列表处理。
     去重后返回扁平 id 列表；无预选返回 []。
     """
@@ -82,7 +82,7 @@ def normalize_plot_picks(picks):
 
 class OutlineGenerator:
     """
-    大纲生成引擎 — 从用户想法到 BookStoryline JSON 的完整 LLM 管线。
+    弧生成引擎 — 从用户想法到 BookStoryline JSON 的完整 LLM 管线。
 
     6 个阶段，每个阶段 yield SSE 事件，UI 实时显示进度。
     """
@@ -152,10 +152,10 @@ class OutlineGenerator:
           ("thinking", kind, {"stream": str})  — LLM 流式思考片段
                   kind ∈ analyze/outline_choice/plot_choice/theme_review/validate
           ("decision", kind, {...})            — 决策完成（候选→选中→理由），
-                  让用户看到"确定了哪个大纲/桥段/内涵"及 AI 的理由
+                  让用户看到"确定了哪个弧/桥段/内涵"及 AI 的理由
 
         storyline: 传入现有 BookStoryline 则原地累加（供逐步落盘）；None 则新建。
-        on_save:  每阶段完成后回调 on_save(tl)，用于把大纲/桥段/内涵"挨个步骤写进配置文件"。
+        on_save:  每阶段完成后回调 on_save(tl)，用于把弧/桥段/内涵"挨个步骤写进配置文件"。
         agent_picks: 决策点预选（可选）。{"templates": [structure_id, ...],
             "plots": [plot_id, ...]}——plots 为扁平优先序列表（normalize_plot_picks 归一化），
             语义=全书出现优先级，跨 outline/跨阶段按序消费；兼容旧 dict 形态（按值序展开，已弃用）。
@@ -207,14 +207,14 @@ class OutlineGenerator:
                    "desc": f"从情节弧库选择 {max_outlines} 个模板，排布故事线..."})
             yield ("progress", "分析情节弧库候选...", {})
 
-            tl.outlines = []  # 原地累加：每条大纲确定后立即写入，供实时刷新
+            tl.outlines = []  # 原地累加：每条弧确定后立即写入，供实时刷新
             outlines = yield from self._plan_storyline(
                 genre, sub_genre, custom_context, tl, max_outlines,
                 agent_picks=agent_picks)
             if not tl.outlines and outlines:
                 tl.outlines = outlines
 
-            yield ("phase_done", f"故事线规划完成 — {len(outlines)} 条大纲", {
+            yield ("phase_done", f"故事线规划完成 — {len(outlines)} 条弧", {
                 "phase": 2,
                 "data": {
                     "count": len(outlines),
@@ -317,10 +317,10 @@ class OutlineGenerator:
             if on_save:
                 # 关键：把 phase=ready 持久化。此前 ready 只在内存置位后直接 yield done，
                 # MCP 路径（agent_tools.generate_full_outline）消费完从磁盘重读仍是 config，
-                # 导致已完成大纲的书永久停在 config → 写作门控拒写、大纲被反复重跑清空。
+                # 导致已完成弧的书永久停在 config → 写作门控拒写、弧被反复重跑清空。
                 on_save(tl)
 
-            yield ("done", "大纲生成完成", {
+            yield ("done", "弧生成完成", {
                 "timeline": tl.to_dict(),
                 "stats": {
                     "outlines": len(tl.outlines),
@@ -477,7 +477,7 @@ class OutlineGenerator:
         """从情节弧库选模板 → AI 排布故事线 → 展开阶段。
 
         生成器：AI 模式下 yield thinking/decision 事件，最终 return list[OutlineSlot]。
-        每条大纲确定后立即写入 tl.outlines 并 yield outline_added，供前端实时刷新。
+        每条弧确定后立即写入 tl.outlines 并 yield outline_added，供前端实时刷新。
         决策点 A：agent_picks["templates"] 为外部预选模板 id（优先使用，失败回退原逻辑）。
         """
         if not self.structures:
@@ -511,7 +511,7 @@ class OutlineGenerator:
     def _rule_sequence(
         self, candidates: list, max_outlines: int, tl: BookStoryline,
     ):
-        """规则模式：顺序选取大纲模板（生成器，每条确定后写入 tl 并 yield outline_added）"""
+        """规则模式：顺序选取弧模板（生成器，每条确定后写入 tl 并 yield outline_added）"""
         outlines = []
         ch = 1
         for i, tmpl in enumerate(candidates[:max_outlines]):
@@ -588,7 +588,7 @@ class OutlineGenerator:
     ):
         """AI 辅助排布故事线。
 
-        生成器：yield thinking（LLM 流式 token）+ decision（每确定一条大纲），
+        生成器：yield thinking（LLM 流式 token）+ decision（每确定一条弧），
         return list[OutlineSlot]。
         """
 
@@ -620,13 +620,13 @@ class OutlineGenerator:
 【用户想法】
 {custom_context or '标准开局'}
 
-【候选大纲模板（请从中选择 2-{max_outlines} 个）】
+【候选弧模板（请从中选择 2-{max_outlines} 个）】
 {cand_text}
 
 要求：
 1. 从候选模板中选择最适合的 2-{max_outlines} 个，按故事线串联
-2. 大纲之间可以重叠 2-5 章（transition_type="overlap"），过渡更自然
-3. 为每条大纲定义过渡类型：sequential（顺序接续）、overlap（重叠过渡）、merge（融合）
+2. 弧之间可以重叠 2-5 章（transition_type="overlap"），过渡更自然
+3. 为每条弧定义过渡类型：sequential（顺序接续）、overlap（重叠过渡）、merge（融合）
 4. 排版应体现"开局爽 → 中段稳 → 高潮燃"的节奏
 
 返回 JSON：
@@ -647,7 +647,7 @@ class OutlineGenerator:
 
         # 流式调用：先把候选放上桌，再逐 token 展示 AI 怎么选
         yield ("decision", "outline_choice", {
-            "step": "候选大纲模板",
+            "step": "候选弧模板",
             "candidates": cand_list,
             "chosen": {},
             "reason": "以下模板来自情节弧库，AI 将从其中挑选并排布故事线",
@@ -698,7 +698,7 @@ class OutlineGenerator:
 
             outline = OutlineSlot(
                 id=oid, template_id=tid,
-                name=od.get("name", f"大纲{len(outlines)+1}"),
+                name=od.get("name", f"弧{len(outlines)+1}"),
                 start_chapter=start, end_chapter=max(start + 5, end),
                 stages=stages,
                 predecessor=prev_id,
@@ -711,7 +711,7 @@ class OutlineGenerator:
                     outline.overlaps_with.append(outlines[-1].id)
             outlines.append(outline)
             prev_id = oid
-            # 原地累加：每条大纲确定后立即写入 tl，供前端实时刷新左侧故事线
+            # 原地累加：每条弧确定后立即写入 tl，供前端实时刷新左侧故事线
             tl.outlines.append(outline)
             yield ("outline_added", outline.name, {
                 "outline_id": oid, "name": outline.name,
@@ -719,7 +719,7 @@ class OutlineGenerator:
             })
 
             yield ("decision", "outline_choice", {
-                "step": f"确定第 {i+1} 条大纲",
+                "step": f"确定第 {i+1} 条弧",
                 "candidates": cand_list,
                 "chosen": {"id": oid, "template_id": tid, "name": outline.name},
                 "reason": od.get("reason", ""),
@@ -751,7 +751,7 @@ class OutlineGenerator:
         cand_text = "\n".join(f"- {t.id}: {t.name}（{t.total_chapters}章）"
                               for t in candidates[:12])
         protag = get_mc(tl.basic_info)
-        prompt = f"""你是资深网文策划编辑。复查下面这条故事线的大纲模板选序是否契合主角设定与前提节奏。
+        prompt = f"""你是资深网文策划编辑。复查下面这条故事线的弧模板选序是否契合主角设定与前提节奏。
 
 【主角】{protag.get('name', '')}（{protag.get('identity', '')}）金手指 {protag.get('golden_finger', '')}
 【前提】{custom_context or '标准开局'}
@@ -813,7 +813,7 @@ class OutlineGenerator:
         self, outline: OutlineSlot, tl: BookStoryline, genre: str,
         picks_state: Optional[dict] = None,
     ):
-        """为一个大纲的每个阶段匹配桥段（AI 选择，避免跨阶段重复与类型错配）。
+        """为一个弧的每个阶段匹配桥段（AI 选择，避免跨阶段重复与类型错配）。
 
         生成器：yield thinking/decision/plot_added 事件，最终 return list[PlotSlot]。
         决策点 B：picks_state["queue"] 为外部预选桥段的扁平优先序（normalize_plot_picks
@@ -833,7 +833,7 @@ class OutlineGenerator:
         pri = {pid: i for i, pid in enumerate(queue)}   # 优先序索引（候选池保序≠优先序）
 
         new_plots = []
-        used_ids = set()   # 本大纲内已用桥段模板 id，避免跨阶段重复
+        used_ids = set()   # 本弧内已用桥段模板 id，避免跨阶段重复
         for si, stage in enumerate(outline.stages):
             stage_name = stage.get("name", "")
             events = stage.get("events", [])
@@ -967,7 +967,7 @@ class OutlineGenerator:
 
         bible_block = self.harness.render_outline_context("select_plots") if self.harness else ""
 
-        prompt = f"""{bible_block}在大纲「{outline.name}」的「{stage_name}」阶段选择合适的桥段。
+        prompt = f"""{bible_block}在弧「{outline.name}」的「{stage_name}」阶段选择合适的桥段。
 
 【阶段事件】
 {'、'.join(events) if events else '按题材惯例推进'}
@@ -1189,10 +1189,10 @@ class OutlineGenerator:
         bible_block = self.harness.render_outline_context("thread_split", tl) if self.harness else ""
         prompt = f"""{bible_block}为以下{genre}小说的故事线规划「叙事线程」和「桥段拆分设局→收局」。
 
-【大纲】
+【弧】
 {json.dumps(outlines_view, ensure_ascii=False)}
 
-【全部桥段（按大纲顺序）】
+【全部桥段（按弧顺序）】
 {json.dumps(plots_snapshot, ensure_ascii=False)}
 
 【叙事线程】
@@ -1203,7 +1203,7 @@ class OutlineGenerator:
 
 【桥段拆分】
 - 选中适合"设局→收局"的桥段（阴谋/悬疑/智斗/成长转折），生成一个"收局"槽位，
-  放回同一大纲的后几个 stage（payoff_after_stage≥2），中间被其他线程/桥段穿插，早埋钩子晚回收。
+  放回同一弧的后几个 stage（payoff_after_stage≥2），中间被其他线程/桥段穿插，早埋钩子晚回收。
 - 纯即时爽点（打脸/战斗/开篇）不要拆。
 
 返回 JSON：
@@ -1320,7 +1320,7 @@ class OutlineGenerator:
         # 1. 章节连续性
         for i, o in enumerate(tl.outlines):
             if o.end_chapter < o.start_chapter:
-                issues.append(f"大纲「{o.name}」结束章节({o.end_chapter})小于起始({o.start_chapter})")
+                issues.append(f"弧「{o.name}」结束章节({o.end_chapter})小于起始({o.start_chapter})")
 
         # 2. 重叠区合理性
         for i in range(1, len(tl.outlines)):
@@ -1329,7 +1329,7 @@ class OutlineGenerator:
             gap = curr.start_chapter - prev.end_chapter
             if gap > 5:
                 issues.append(
-                    f"大纲「{prev.name}」结束于第{prev.end_chapter}章，"
+                    f"弧「{prev.name}」结束于第{prev.end_chapter}章，"
                     f"「{curr.name}」开始于第{curr.start_chapter}章，间隔{gap}章过大")
 
         # 3. 桥段覆盖率
@@ -1337,7 +1337,7 @@ class OutlineGenerator:
             o_plots = [p for p in tl.plots if p.outline_id == o.id]
             stage_count = len(o.stages)
             if stage_count > 0 and len(o_plots) < stage_count:
-                issues.append(f"大纲「{o.name}」有{stage_count}个阶段但只有{len(o_plots)}个桥段，建议补全")
+                issues.append(f"弧「{o.name}」有{stage_count}个阶段但只有{len(o_plots)}个桥段，建议补全")
 
         # 4. 内涵覆盖率（内涵跟随桥段，建议性，不强求）
         total_plots = len(tl.plots)
@@ -1349,7 +1349,7 @@ class OutlineGenerator:
         if tl.outlines:
             max_ch = max(o.end_chapter for o in tl.outlines)
             if max_ch < 10:
-                issues.append(f"全书仅{max_ch}章，建议扩展大纲覆盖范围")
+                issues.append(f"全书仅{max_ch}章，建议扩展弧覆盖范围")
             elif max_ch > 500:
                 issues.append(f"全书{max_ch}章，建议拆分或精简")
 
@@ -1372,7 +1372,7 @@ class OutlineGenerator:
         } for o in tl.outlines[:10]]
 
         prompt = f"""请审查下面这本小说故事线的合理性：
-大纲：{json.dumps(outlines_view, ensure_ascii=False, indent=1)}
+弧：{json.dumps(outlines_view, ensure_ascii=False, indent=1)}
 桥段总数：{len(tl.plots)}；内涵已按桥段挂载。
 
 请检查：故事线重叠/间隔是否合理、桥段覆盖是否均匀、有无明显漏洞。

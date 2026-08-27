@@ -3,11 +3,11 @@
 
 统一出口：
   · 书级设定卡（Book Bible）：主角/世界观/配角/基调/内涵/风格 压缩成紧凑 bullet，
-    在全书开始前确立统一的写作风格与世界观，注入所有写作与大纲决策。
+    在全书开始前确立统一的写作风格与世界观，注入所有写作与弧决策。
   · render_bridge_prompt   ：桥段写作（取代 storyline_writer._group_prompt 的内联拼装）
-  · render_detector_prompt ：笑点探测器（gag_injector 用；笑点完全涌现，不写入大纲）
+  · render_detector_prompt ：笑点探测器（gag_injector 用；笑点完全涌现，不写入弧）
   · render_summary_prompt  ：章节语义摘要（长程记忆）
-  · render_outline_context ：大纲各 phase 前置设定卡
+  · render_outline_context ：弧各 phase 前置设定卡
   · prescreen_gag_pool     ：候选笑点模式池免费规则预筛
 
 约定：保持 deepseek-v4-flash；不新增"写完质量重写"型后处理；
@@ -19,7 +19,7 @@ from .storyline import BookStoryline, get_characters, get_mc, relation_to_mc
 from .promise_ledger import promise_op
 
 
-# 桥段 category → 适合的笑点 fit_scene 关键词（免费规则，不写进大纲）
+# 桥段 category → 适合的笑点 fit_scene 关键词（免费规则，不写进弧）
 CATEGORY_GAG_SCENES = {
     "爽文": ["打脸后", "身份揭示", "多人场景"],
     "开篇": ["身份揭示", "日常对话"],
@@ -242,7 +242,7 @@ class PromptHarness:
         return "\n".join(parts)
 
     def _tags_block(self) -> str:
-        """【题材标签（硬约束）】块 —— 已选 tags 时注入世界/大纲/写作 prompt。"""
+        """【题材标签（硬约束）】块 —— 已选 tags 时注入世界/弧/写作 prompt。"""
         tl = self.storyline
         if not tl:
             return ""
@@ -604,9 +604,9 @@ class PromptHarness:
         authority_block = AUTHORITY_CANON + "\n\n"
         return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个句子。
 
-{authority_block}{bible_block}{opening_block}{consistency_block}{platform_block}{review_block}{pov_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
+{authority_block}{bible_block}{opening_block}{consistency_block}{platform_block}{review_block}{pov_block}【所属弧】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
 【当前阶段】{stage_name}
-【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按大纲自然推进'}
+【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按弧自然推进'}
 【桥段骨架】{structure}
 【变量槽位】{slots_text or '跟随上下文自由发挥'}
 {diag_block}
@@ -883,12 +883,12 @@ class PromptHarness:
         }
 
     # ═══════════════════════════════════════════
-    # 场景 A：大纲各 phase 前置设定卡
+    # 场景 A：弧各 phase 前置设定卡
     # ═══════════════════════════════════════════
 
     def render_outline_context(self, phase_kind: str,
                                storyline: Optional[BookStoryline] = None) -> str:
-        """返回要拼到大纲 prompt 开头的上下文块（空字符串表示无需前置）。
+        """返回要拼到弧 prompt 开头的上下文块（空字符串表示无需前置）。
 
         phase_kind ∈ analyze/sequence/select_plots/theme_review/validate
         """
@@ -910,7 +910,7 @@ class PromptHarness:
             self.storyline = prev_storyline
 
     # ═══════════════════════════════════════════
-    # 候选笑点模式池预筛（免费规则，不写进大纲）
+    # 候选笑点模式池预筛（免费规则，不写进弧）
     # ═══════════════════════════════════════════
 
     def prescreen_gag_pool(self, plot, book_id: str = "") -> list:
@@ -1053,7 +1053,7 @@ class PromptHarness:
 
         题材标签在向导步 1 选择、书名由步 2 选中候选带入步 3；角色从原型库挑选
         archetype_id 并适配到本书，输出统一字段（姓名/身份/性格/口癖/重要度/金手指(主角)/关系(其他)）。
-        可带已定核心矛盾/势力/开篇大纲桥段上下文（分阶段构建的 ①③② 阶段产出），让角色与之自洽。
+        可带已定核心矛盾/势力/开篇弧桥段上下文（分阶段构建的 ①③② 阶段产出），让角色与之自洽。
         """
         tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
         parts = [
@@ -1074,7 +1074,7 @@ class PromptHarness:
             if _fl:
                 parts.append("【已定势力】" + "、".join(_fl))
         if outline_preview:
-            parts.append(f"【已选开篇大纲与桥段】{outline_preview}")
+            parts.append(f"【已选开篇弧与桥段】{outline_preview}")
         if archetypes:
             lines = []
             for a in archetypes[:10]:
@@ -1134,7 +1134,7 @@ class PromptHarness:
     def render_factions_prompt(self, idea: str, core_conflict: str = "",
                                genre: str = "", sub_genre: str = "",
                                tags=None, outline_preview: str = "") -> str:
-        """分阶段构建③：基于一句话设定 + 核心矛盾 + 题材标签 + 已定大纲桥段，发散世界里的主要势力派系。
+        """分阶段构建③：基于一句话设定 + 核心矛盾 + 题材标签 + 已定弧桥段，发散世界里的主要势力派系。
 
         返回 JSON list，供 generate_factions 使用。
         """
@@ -1145,7 +1145,7 @@ class PromptHarness:
             f"【题材标签】{'、'.join(tags) if tags else '（未选）'}（硬约束，必须契合）",
         ]
         if outline_preview:
-            parts.append(f"【已定大纲与桥段】\n{outline_preview}")
+            parts.append(f"【已定弧与桥段】\n{outline_preview}")
         parts += [
             "【任务】你是网文世界观架构师。思考这个世界应该存在哪些势力/派系（2-4 个），"
             "它们围绕【核心矛盾】各自持什么立场、追求什么，彼此冲突或结盟。每个势力给出："

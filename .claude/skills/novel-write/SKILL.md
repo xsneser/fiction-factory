@@ -16,7 +16,7 @@ description: >-
 ## 前置检查（必做）
 1. `mcp__novel-engine__get_book_state(book_id)`：`phase != ready` → 提示先跑 `novel-outline`；
    看 `current_chapter` 与进行中草稿（draft）定位续写点。
-2. `mcp__novel-engine__get_storyline(book_id)` → 当前大纲弧、下一个待写桥段（plot_id/名称/写在哪章）。
+2. `mcp__novel-engine__get_storyline(book_id)` → 当前弧、下一个待写桥段（plot_id/名称/写在哪章）。
 
 ## 上下文组装（渐进式披露 — **单次读取**，不要把整本书灌进上下文）
 1. **一次** `mcp__novel-engine__get_writing_context(book_id)` → 返回 `{book(含 tags), storyline 全量, outline, chapters(最近摘要), draft, synopsis, protagonist, next_bridge}`——含角色/世界观/基调/pov/下一个待写桥段，一次拿全。
