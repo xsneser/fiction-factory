@@ -379,6 +379,8 @@ _KEY_ZH = {
     "gaps": "叙事空白", "violations": "叶弧违例", "leading_gap": "开头空白",
     "top_arc_count": "顶层弧数", "leaf_arc_count": "叶弧数", "plot_count": "桥段数",
     "issue_count": "问题数", "suggestions": "建议", "gap_words": "空白字数",
+    "validate_world": "校验世界观", "arc_fill": "弧内填充", "orphan_characters": "孤儿人物",
+    "duplicates": "重复势力", "without_characters": "无人物势力",
 }
 
 

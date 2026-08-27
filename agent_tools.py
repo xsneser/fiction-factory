@@ -1128,17 +1128,58 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
                           "outline_name": _oname, "reason": "非最底层弧"})
     _leaf_passed = not _leaf_issues
 
+    # ③ 弧内覆盖：顶层弧跨度 vs 其叶弧后代桥段 planned_words 之和（warning 级，不计硬失败）
+    def _pw_of(p):
+        beats = 4
+        beats = int(p.get("cover_beats") or 4) if isinstance(p, dict) else int(getattr(p, "cover_beats", 4) or 4)
+        beats = max(beats, 2)
+        return min(beats * 200, 1200)
+
+    def _collect_leaves(arc_id):
+        leaves = set()
+        for a in _arcs:
+            if (getattr(a, "parent_arc_id", "") or "") == arc_id:
+                aid = getattr(a, "id", "")
+                if aid in parents:
+                    leaves |= _collect_leaves(aid)   # 递归：子弧还有子弧
+                else:
+                    leaves.add(aid)
+        return leaves
+
+    _pw_by_oid = {}
+    for p in _plots:
+        oid = getattr(p, "outline_id", "") if not isinstance(p, dict) else p.get("outline_id") or ""
+        _pw_by_oid[oid] = _pw_by_oid.get(oid, 0) + _pw_of(p)
+    _fill_issues = []
+    _fill_arcs = []
+    for a in top_sorted:
+        span = (a.end_word or 0) - (a.start_word or 0)
+        leaves = _collect_leaves(getattr(a, "id", ""))
+        content = sum(_pw_by_oid.get(l, 0) for l in leaves)
+        if not leaves:
+            content = _pw_by_oid.get(getattr(a, "id", ""), 0)   # 顶层弧自身即叶弧时挂桥段
+        gap_words = max(span - content, 0)
+        ratio = (span / content) if content > 0 else 999.0
+        _fill_arcs.append({"id": getattr(a, "id", ""), "name": a.name, "span": span,
+                           "planned_words": content, "gap_words": gap_words,
+                           "ratio": round(ratio, 1)})
+        if gap_words > wpc and ratio > 3:
+            _fill_issues.append(f"顶层弧「{a.name}」跨度 {span} 字、桥段 planned 仅 {content} 字，约 {gap_words} 字空白（ratio {ratio:.1f}），建议拆子弧/缩弧跨度/补桥段")
+    _fill_passed = not _fill_issues
+
     passed = _cov_passed and _leaf_passed
     parts = []
     if _cov_issues:
         parts.append(f"弧树覆盖 {len(_cov_issues)} 处问题（{len(_gaps)} 处叙事空白）")
     if _leaf_issues:
         parts.append(f"桥段叶弧 {len(_leaf_issues)} 处问题")
+    if _fill_issues:
+        parts.append(f"弧内空白 {len(_fill_issues)} 处（跨度远超桥段内容）")
     if not parts:
-        parts.append("弧树覆盖与桥段叶弧均通过")
+        parts.append("弧树覆盖、桥段叶弧与弧内填充均通过")
     decision_points = [{"check": "storyline", "severity": "warning",
                         "description": str(s)[:60], "location": "", "suggestion": ""}
-                       for s in (_cov_issues + _leaf_issues)[:20]]
+                       for s in (_cov_issues + _leaf_issues + _fill_issues)[:20]]
     suggestions = []
     if leading_gap:
         suggestions.append("在故事线开头补一个从 0 字开始的顶层弧，或把首个顶层弧 start_word 调到 0")
@@ -1146,9 +1187,12 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
         suggestions.append(f"在「{g['before']}」与「{g['after']}」之间补弧或扩展前者 end_word 消除 {g['gap_words']} 字空白")
     for v in _viol[:5]:
         suggestions.append(f"把桥段「{v['plot_name']}」移到其所属弧的最底层子弧，或把「{v['outline_name']}」拆出子弧")
+    for f in _fill_arcs[:5]:
+        if f["gap_words"] > wpc and f["ratio"] > 3:
+            suggestions.append(f"顶层弧「{f['name']}」跨度 {f['span']} 字但桥段仅 {f['planned_words']} 字，拆出足够子弧/桥段填满，或把 end_word 缩到与内容匹配")
     return {
         "ok": True, "book_id": book_id, "passed": passed,
-        "issue_count": len(_cov_issues) + len(_leaf_issues),
+        "issue_count": len(_cov_issues) + len(_leaf_issues) + len(_fill_issues),
         "summary": "；".join(parts), "total_words": total,
         "top_arc_count": len(top),
         "leaf_arc_count": len([a for a in _arcs if (getattr(a, "id", "") or "") not in parents]),
@@ -1156,8 +1200,76 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
         "coverage": {"passed": _cov_passed, "total_words": total, "leading_gap": leading_gap,
                      "gaps": _gaps, "issues": _cov_issues},
         "leaf_arcs": {"passed": _leaf_passed, "violations": _viol, "issues": _leaf_issues},
+        "arc_fill": {"passed": _fill_passed, "arcs": _fill_arcs, "issues": _fill_issues},
         "decision_points": decision_points,
         "suggestions": suggestions,
+    }
+
+
+def validate_world(book_id: str = "", basic_info: dict | None = None) -> dict:
+    """世界观校验（规则层，零成本）：检查势力/人物一致性——①势力名唯一（剥离括号描述后去重）、
+    ②每个势力至少 1 个对应人物、③人物 faction 归属某个势力（无孤儿人物）。只报告不修复。
+
+    双模式：传 book_id 读已落盘书 basic_info；或步3 未建书时传 basic_info dict
+    （set_world 的 world_building + set_characters 的 characters 合并 payload）。"""
+    if book_id:
+        tl = book_mgr.load_storyline(book_id)
+        if tl is None:
+            raise RuntimeError(f"书 {book_id} 无故事线")
+        bi = tl.basic_info or {}
+    else:
+        bi = basic_info or {}
+    wb = bi.get("world_building") or {}
+    factions_raw = wb.get("factions") or []
+    chars = [c for c in (bi.get("characters") or []) if isinstance(c, dict)]
+
+    def _norm(name):
+        """剥离括号描述取规范名：『联邦远征军（人类主战力量）』→『联邦远征军』。"""
+        s = str(name or "").strip()
+        for open_c, close_c in (("（", "）"), ("(", ")")):
+            if open_c in s and close_c in s:
+                s = s[:s.index(open_c)].strip()
+        return s
+
+    f_norm = []
+    for f in factions_raw:
+        fname = f if isinstance(f, str) else (f or {}).get("name") or ""
+        f_norm.append(_norm(fname))
+
+    seen = {}
+    duplicates = []
+    for fn in f_norm:
+        if fn in seen and fn and fn not in duplicates:
+            duplicates.append(fn)
+        else:
+            seen[fn] = True
+
+    char_factions = [_norm((c or {}).get("faction") or "") for c in chars]
+    without_char = [fn for fn in f_norm if fn and fn not in char_factions]
+
+    orphan = []
+    for c in chars:
+        cf = _norm((c or {}).get("faction") or "")
+        if cf and cf not in f_norm:
+            orphan.append({"name": (c or {}).get("name") or "", "faction": (c or {}).get("faction") or ""})
+
+    issues = []
+    for d in duplicates:
+        issues.append(f"势力重复：{d}")
+    for w in without_char:
+        issues.append(f"势力「{w}」无对应人物")
+    for o in orphan:
+        issues.append(f"人物「{o['name']}」的势力「{o['faction']}」不属于任何势力")
+    passed = not issues
+    return {
+        "ok": True, "book_id": book_id, "passed": passed, "issue_count": len(issues),
+        "summary": "；".join(issues) if issues else "势力与人物一致性通过",
+        "factions": {"count": len(f_norm), "duplicates": duplicates, "without_characters": without_char},
+        "orphan_characters": orphan,
+        "decision_points": [{"check": "world", "severity": "warning",
+                             "description": str(s)[:60], "location": "", "suggestion": ""}
+                            for s in issues[:20]],
+        "suggestions": [],
     }
 
 
@@ -1585,7 +1697,7 @@ def _build_registry():
         review_text, deai_text, extract_style_asset,
         diagnose_retention, tag_punch_points,
         diagnose_promises, diagnose_continuity,
-        chapter_quality_gate, validate_storyline,
+        chapter_quality_gate, validate_storyline, validate_world,
         # 快照 / diff / 回滚（决策点 commit 语义）
         preview_diff, rollback_book, list_snapshots,
         # 抓取 / 侦察 / 提取入库（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示）
