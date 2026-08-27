@@ -255,6 +255,13 @@ _v_fill = validate_storyline(outlines=[
 ])
 assert_ok("校验-弧内空白", _v_fill["arc_fill"]["passed"] is False
           and len(_v_fill["arc_fill"]["issues"]) == 1)
+# 收紧阈值：弧跨度 24k、桥段 16k（ratio 1.5，旧阈值放过）→ 弧内空白超一章即硬失败
+_v_fill2 = validate_storyline(outlines=[
+    {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 24000},
+    {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 24000},
+], plots=[{"id": "p%d" % i, "name": "桥%d" % i, "outline_id": "a1b", "cover_beats": 8} for i in range(10)])
+assert_ok("校验-跨度远超内容硬失败", _v_fill2["passed"] is False
+          and len(_v_fill2["arc_fill"]["issues"]) == 1)
 
 # 世界观校验（validate_world：势力重复/每势力配人物/孤儿人物）
 _v_world = validate_world(basic_info={

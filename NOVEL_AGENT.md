@@ -44,10 +44,12 @@
 - **顶层弧须覆盖故事线全纵轴**（0 到总字数，任意一点都有顶层弧占据；出现叙事空白必须补弧或扩弧）。
 - **桥段仅挂最底层弧**（不包含其他弧的弧）；桥段在弧内按 `planned_words`（cover_beats × 200，封顶 1200）累计定位。
 - **弧字数跨度应与该弧桥段 `planned_words` 之和大致匹配**（跨度远超内容时拆子弧/缩弧跨度/补桥段，避免弧内大片空白）。
+- **全书规模口径**：建书默认全书 **30~60 章 ≈ 9万~18万字**；每个顶层弧建议 ≤10 章 / ≤3 万字。
+- **先按桥段内容设计弧字数跨度**（跨度 ≈ 该弧桥段 `planned_words` 之和），**不要先拍全书总字数再让桥段去够**；给桥段设 `cover_beats`（决定 `planned_words` = cover_beats×200 封顶 1200），避免默认 4 节拍导致内容被低估。
 - **生成/修改后必须校验**：调 `validate_storyline`（book_id 或内联 outlines/plots，含 arc_fill 弧内空白）+ `validate_world`（book_id 或内联 basic_info，势力/人物一致性），按 `decision_points` 反复修正直到通过或如实说明。
 
 ### drive_ui 命令（驱动「启动新书」向导；建书必须走向导，不能绕路直建）
-- `set_field`：`{field, value}`，field ∈ idea/pen/title/words/borrow_source/borrow_tweak。
+- `set_field`：`{field, value}`，field ∈ idea/pen/title/words/borrow_source/borrow_tweak。**`words` = 每章字数（words_per_chapter，默认 3000），不是全书总字数**；全书总字数由弧的 `end_word` 决定，无需单独填。
 - `set_candidates` / `add_candidate`：`{title, one_liner?, world_brief?}`——**title 必填**，否则浏览器拒收；add 为增量追加 1 张候选卡。
 - `pick_candidate`：`{candidate:{title, world_brief, one_liner}}` 或 `{idx}`（至少其一）。
 - `set_world`：**顶层键必须叫 `world_building`**（写 `world` 会被拒收）；`tone`/`target_audience`/`pov`/`era_language`

@@ -254,7 +254,8 @@ def get_build_status() -> dict:
 
 
 def query_arc_library(keyword: str = "", tags: str = "") -> dict:
-    """查情节弧库：按标签/关键词（名称）返回模板清单（标签逗号/空格分隔，任一命中）。"""
+    """查情节弧库：按标签/关键词（名称）返回模板清单（标签逗号/空格分隔，任一命中）。
+    注意 total_chapters 为模板参考章节数（非强制弧跨度），不要直接 × 每章字数当弧的 start_word/end_word。"""
     kw = (keyword or "").strip()
     tag_list = [x.strip() for x in (tags or "").replace("，", " ").replace(",", " ").split() if x.strip()]
     rows = struct_lib.search(tags=tag_list)
@@ -1163,11 +1164,11 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
         _fill_arcs.append({"id": getattr(a, "id", ""), "name": a.name, "span": span,
                            "planned_words": content, "gap_words": gap_words,
                            "ratio": round(ratio, 1)})
-        if gap_words > wpc and ratio > 3:
+        if gap_words > wpc:   # 弧内空白超一章即报（收紧：去掉 ratio>3 宽松条件）
             _fill_issues.append(f"顶层弧「{a.name}」跨度 {span} 字、桥段 planned 仅 {content} 字，约 {gap_words} 字空白（ratio {ratio:.1f}），建议拆子弧/缩弧跨度/补桥段")
     _fill_passed = not _fill_issues
 
-    passed = _cov_passed and _leaf_passed
+    passed = _cov_passed and _leaf_passed and _fill_passed
     parts = []
     if _cov_issues:
         parts.append(f"弧树覆盖 {len(_cov_issues)} 处问题（{len(_gaps)} 处叙事空白）")
@@ -1188,7 +1189,7 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
     for v in _viol[:5]:
         suggestions.append(f"把桥段「{v['plot_name']}」移到其所属弧的最底层子弧，或把「{v['outline_name']}」拆出子弧")
     for f in _fill_arcs[:5]:
-        if f["gap_words"] > wpc and f["ratio"] > 3:
+        if f["gap_words"] > wpc:
             suggestions.append(f"顶层弧「{f['name']}」跨度 {f['span']} 字但桥段仅 {f['planned_words']} 字，拆出足够子弧/桥段填满，或把 end_word 缩到与内容匹配")
     return {
         "ok": True, "book_id": book_id, "passed": passed,
