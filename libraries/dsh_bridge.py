@@ -375,6 +375,10 @@ _KEY_ZH = {
     "url": "地址", "words": "字数", "word_count": "字数", "target_words": "目标字数",
     "passed": "通过", "score": "评分", "message": "消息", "recent_n": "最近章数",
     "chapter_num": "章节号", "max_outlines": "弧数", "struct": "结构",
+    "validate_storyline": "校验故事线", "coverage": "弧覆盖", "leaf_arcs": "桥段叶弧",
+    "gaps": "叙事空白", "violations": "叶弧违例", "leading_gap": "开头空白",
+    "top_arc_count": "顶层弧数", "leaf_arc_count": "叶弧数", "plot_count": "桥段数",
+    "issue_count": "问题数", "suggestions": "建议", "gap_words": "空白字数",
 }
 
 

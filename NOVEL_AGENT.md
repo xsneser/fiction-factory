@@ -43,6 +43,7 @@
 - 弧用 `start_word/end_word` 标 **0 基字数跨度**（start 含 / end 不含，落盘权威）；可同时传 `start_chapter/end_chapter` 兼容，缺字坐标时系统按每章字数换算。
 - **顶层弧须覆盖故事线全纵轴**（0 到总字数，任意一点都有顶层弧占据；出现叙事空白必须补弧或扩弧）。
 - **桥段仅挂最底层弧**（不包含其他弧的弧）；桥段在弧内按 `planned_words`（cover_beats × 200，封顶 1200）累计定位。
+- **生成/修改后必须调 `validate_storyline` 校验上述两条硬规则**（book_id 或内联 outlines/plots），按 `decision_points` 反复修正直到通过或如实说明。
 
 ### drive_ui 命令（驱动「启动新书」向导；建书必须走向导，不能绕路直建）
 - `set_field`：`{field, value}`，field ∈ idea/pen/title/words/borrow_source/borrow_tweak。
@@ -108,26 +109,21 @@
 
 ### 步 3 内容构建工作台（分阶段构建，随提交落库）
 已选候选 / 补全世界观 / 继续建书：自主生成步 3 内容，`drive_ui(set_world/set_outline/set_characters)` 落表单 →
-**停下，向用户汇报设定概要（书名/世界观/势力/人物/弧+桥段数），等用户确认后再 `drive_ui(submit)` 建书**
-（建书即创建书目、直接进书详情页，属于不可轻易撤销的操作；submit 会等真实结果：成功返回 `book_id`、
-失败抛「建书失败：<原因>」；返回 `pending` 时用 `get_build_status` 看 `submit_error` 并如实汇报，不要重复 submit）。
+**向用户汇报设定概要（书名/世界观/势力/人物/弧+桥段数），让用户自行提交表单建书**
+（汇报前需要确保生成完整）。
 
-**步 3 分阶段流程 ↔ 命令对照**（按顺序推进，每步落对应表单）：
-1. **设计弧树** → `query_arc_library`/`arc_material_candidates` 选最匹配模板作参考；按 1.1 拆弧（树状多层嵌套、
-   字数跨度由剧情定），**确保顶层弧覆盖故事线全纵轴、无叙事空白**。
-2. **核心矛盾** → `set_world({world_building:{core_conflict}})`。
-3. **创建势力** → `set_world({world_building:{factions}})`。
-4. **弧+桥段** → `set_outline`（outlines 弧树嵌套按字数跨度 + plots 随附、**仅挂最底层弧**，不必单独 `set_picks`）。
-5. **人物适配** → `set_characters`。
-6. **补全其余维度** → `set_world`（world_building 各维 + 顶层基调）。
-7. **评判自查** → submit 前 `get_book_detail`/`get_storyline` 自查（弧树是否完整覆盖纵轴、桥段是否都在最底层弧），
-   发现问题补 `set_world`/`set_characters`/`set_outline` 修正；**全部落定后停下，向用户汇报设定概要并等确认，确认后再 submit**。
+**步 3 思考与迭代**（**不是固定顺序流程**：可反复思考、任意顺序修改设定与故事线，每改一版落对应表单）：
+- 围绕「核心矛盾 → 势力 → 弧+桥段 → 人物 → 其余维度」反复推演：先想清楚故事线（全文大纲）与世界观，再落 `set_world`/`set_outline`/`set_characters`，改到什么程度自己判断。
+- **弧+桥段**：outlines 弧树嵌套按字数跨度（`start_word/end_word`）、plots **仅挂最底层弧**；用 `set_outline` 落表。
+- **校验（两条硬规则走工具，不靠肉眼）**：生成/修改 outlines/plots 后、提交前调 `validate_storyline(outlines=..., plots=..., words_per_chapter=...)`（内联模式，步3 书未创建时用；已建书用 `validate_storyline(book_id=...)`），按 `decision_points` 反复补弧/移桥段直到 `passed=true`，或如实向用户说明残留问题。
+- **反复反思**：从剧情吸引力、设定一致性、阅读节奏出发反复审视，发现问题继续改，直到满意为止。
+- **全部落定后停下**，向用户汇报设定概要并让用户**自行点击按钮提交**（agent 不调 submit）。
 
 ## 2.2 弧（生成弧 / 排故事线 / 续写扩写）
 - 自主生成 outlines/plots/threads/themes → `save_outlines` 落盘 → `fill_gags` 到 ready。
 - 弧（定义见 1.1）：每弧有明确方向/目标（写进 `notes` 或 `narrative_target`），用 `start_word/end_word` 标**字数跨度**
   （0 基，start 含/end 不含），不设固定章数；可 `parent_arc_id` 套子弧；**桥段仅挂最底层弧**（不包含其他弧的弧）。
-- **顶层弧覆盖**：故事线纵轴任意点都要有顶层弧占据；续写/扩写追加弧时，上一弧的 `end_word` 应接续到新弧的 `start_word`（除非有意留白并说明）。
+- **顶层弧覆盖**：故事线纵轴任意点都要有顶层弧占据；续写/扩写追加弧时，上一弧的 `end_word` 应接续到新弧的 `start_word`（除非有意留白并说明）；**生成后调 `validate_storyline` 校验，不要靠肉眼读 get_storyline 检查**。
 - 跨弧贯穿的线索用 `threads`（主线/副线/伏笔线）；设局桥段让收局桥段 `resolves_plot_id` 指向设局槽位形成收局。
 
 ## 2.3 写作（开始写 / 写正文 / 写下一章）
@@ -159,4 +155,4 @@
 - 工具被 phase 门控拒绝或抛 `BookBusyError` 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即循环，应停止并如实汇报。
 - 预算/额度触发 `budget_paused` 时停下，向用户如实汇报，不继续烧额度。
 - 薄工具（`save_outlines` / `save_chapter_text`）可能阻塞数分钟属正常，等待结果，不要反复同参重查。
-- **故事线完整性**：故事线纵轴不允许叙事空白（顶层弧须覆盖 0 到总字数）；桥段仅挂最底层弧；发现不合规的存量数据如实汇报，不要静默硬写。
+- **故事线完整性**：用 `validate_storyline(book_id)` 校验「顶层弧覆盖故事线纵轴（无叙事空白）」与「桥段仅挂最底层弧」两条硬规则；发现不合规如实汇报，不要静默硬写。

@@ -1043,6 +1043,124 @@ def chapter_quality_gate(book_id: str, chapter_num: int = 0, recent_n: int = 5) 
     }
 
 
+def validate_storyline(book_id: str = "", outlines: list | None = None,
+                       plots: list | None = None, words_per_chapter: int = 3000) -> dict:
+    """故事线校验（规则层，零成本）：检查两条硬规则——①顶层弧完整覆盖故事线纵轴（无叙事空白）、
+    ②桥段仅挂最底层弧（不包含其他弧的弧）。只报告不修复，问题作 decision_points 由 agent/用户补弧或移桥段。
+
+    双模式：传 book_id 校验已落盘书；或步3 未建书时传 outlines/plots dict（内联模式，agent 提交前自查用，
+    因为步3 时 book 尚未创建、get_book_detail/get_storyline 不可用）。返回 compact 报告：
+    passed/issue_count/summary 置前 + coverage/leaf_arcs 明细 + decision_points。"""
+    from libraries.storyline import OutlineSlot, PlotSlot, reconcile_outline
+
+    # 数据源解析：book_id 模式从落盘读（字段已 reconcile）；内联模式用传入 dict
+    if book_id:
+        tl = book_mgr.load_storyline(book_id)
+        if tl is None:
+            raise RuntimeError(f"书 {book_id} 无故事线")
+        _arcs = list(tl.outlines or [])
+        _plots = list(tl.plots or [])
+        wpc = int((tl.words_per_chapter or 0) or words_per_chapter or 3000)
+    else:
+        _arcs = []
+        wpc = int(words_per_chapter or 3000)
+        for o in (outlines or []):
+            _sw = o.get("start_word"); _ew = o.get("end_word")
+            _sc = o.get("start_chapter"); _ec = o.get("end_chapter")
+            slot = OutlineSlot(
+                id=o.get("id") or "", template_id=o.get("template_id") or "",
+                name=o.get("name") or "",
+                start_chapter=int(_sc) if _sc is not None else None,
+                end_chapter=int(_ec) if _ec is not None else None,
+                start_word=int(_sw) if _sw is not None else None,
+                end_word=int(_ew) if _ew is not None else None,
+                parent_arc_id=o.get("parent_arc_id") or "",
+                stages=o.get("stages") or [],
+            )
+            reconcile_outline(slot, wpc)
+            _arcs.append(slot)
+        _plots = plots or []
+
+    if not _arcs and not _plots:
+        return {"ok": True, "book_id": book_id, "passed": True, "issue_count": 0,
+                "summary": "无弧/桥段，无需校验", "total_words": 0,
+                "top_arc_count": 0, "leaf_arc_count": 0, "plot_count": 0,
+                "coverage": {"passed": True, "total_words": 0, "leading_gap": False, "gaps": [], "issues": []},
+                "leaf_arcs": {"passed": True, "violations": [], "issues": []},
+                "decision_points": [], "suggestions": []}
+
+    # ① 覆盖：顶层弧按 start_word 排序；total = max(end_word)；报 leading_gap 与中间 gaps（重叠允许）
+    _cov_issues = []
+    _gaps = []
+    top = [a for a in _arcs if not (getattr(a, "parent_arc_id", "") or "")]
+    top_sorted = sorted(top, key=lambda a: (getattr(a, "start_word", 0) or 0))
+    total = max([(getattr(a, "end_word", 0) or 0) for a in _arcs] or [0])
+    leading_gap = bool(top_sorted and (top_sorted[0].start_word or 0) > 0)
+    if leading_gap:
+        _cov_issues.append(f"顶层弧「{top_sorted[0].name}」从 {top_sorted[0].start_word} 字才开始，开头 {top_sorted[0].start_word} 字为叙事空白")
+    if not top_sorted:
+        _cov_issues.append("没有顶层弧，故事线纵轴完全空白")
+    for i in range(1, len(top_sorted)):
+        prev, nxt = top_sorted[i - 1], top_sorted[i]
+        if (nxt.start_word or 0) > (prev.end_word or 0):
+            _gaps.append({"start_word": prev.end_word, "end_word": nxt.start_word,
+                          "gap_words": (nxt.start_word or 0) - (prev.end_word or 0),
+                          "before": prev.name, "after": nxt.name})
+            _cov_issues.append(f"顶层弧「{prev.name}」结束于 {prev.end_word}，「{nxt.name}」始于 {nxt.start_word}，间隔 {(nxt.start_word or 0) - (prev.end_word or 0)} 字叙事空白")
+    _cov_passed = not _cov_issues
+
+    # ② 叶弧：parents = 有子弧的弧 id；桥段 outline_id 须存在且非 parents
+    _leaf_issues = []
+    _viol = []
+    parents = {getattr(a, "parent_arc_id", "") for a in _arcs if getattr(a, "parent_arc_id", "")}
+    _by_id = {getattr(a, "id", ""): a for a in _arcs}
+    for p in _plots:
+        pid = getattr(p, "id", None) if not isinstance(p, dict) else p.get("id")
+        pname = getattr(p, "name", "") if not isinstance(p, dict) else p.get("name") or ""
+        oid = getattr(p, "outline_id", "") if not isinstance(p, dict) else p.get("outline_id") or ""
+        _oname = getattr(_by_id.get(oid), "name", "") if oid in _by_id else ""
+        if not oid or oid not in _by_id:
+            _leaf_issues.append(f"桥段「{pname or pid}」的 outline_id={oid or '空'} 悬空，不属于任何弧")
+            _viol.append({"plot_id": pid, "plot_name": pname, "outline_id": oid, "outline_name": "", "reason": "悬空"})
+        elif oid in parents:
+            _leaf_issues.append(f"桥段「{pname or pid}」挂在非最底层弧「{_oname}」({oid})——仅最底层弧可拥有桥段")
+            _viol.append({"plot_id": pid, "plot_name": pname, "outline_id": oid,
+                          "outline_name": _oname, "reason": "非最底层弧"})
+    _leaf_passed = not _leaf_issues
+
+    passed = _cov_passed and _leaf_passed
+    parts = []
+    if _cov_issues:
+        parts.append(f"弧树覆盖 {len(_cov_issues)} 处问题（{len(_gaps)} 处叙事空白）")
+    if _leaf_issues:
+        parts.append(f"桥段叶弧 {len(_leaf_issues)} 处问题")
+    if not parts:
+        parts.append("弧树覆盖与桥段叶弧均通过")
+    decision_points = [{"check": "storyline", "severity": "warning",
+                        "description": str(s)[:60], "location": "", "suggestion": ""}
+                       for s in (_cov_issues + _leaf_issues)[:20]]
+    suggestions = []
+    if leading_gap:
+        suggestions.append("在故事线开头补一个从 0 字开始的顶层弧，或把首个顶层弧 start_word 调到 0")
+    for g in _gaps[:5]:
+        suggestions.append(f"在「{g['before']}」与「{g['after']}」之间补弧或扩展前者 end_word 消除 {g['gap_words']} 字空白")
+    for v in _viol[:5]:
+        suggestions.append(f"把桥段「{v['plot_name']}」移到其所属弧的最底层子弧，或把「{v['outline_name']}」拆出子弧")
+    return {
+        "ok": True, "book_id": book_id, "passed": passed,
+        "issue_count": len(_cov_issues) + len(_leaf_issues),
+        "summary": "；".join(parts), "total_words": total,
+        "top_arc_count": len(top),
+        "leaf_arc_count": len([a for a in _arcs if (getattr(a, "id", "") or "") not in parents]),
+        "plot_count": len(_plots),
+        "coverage": {"passed": _cov_passed, "total_words": total, "leading_gap": leading_gap,
+                     "gaps": _gaps, "issues": _cov_issues},
+        "leaf_arcs": {"passed": _leaf_passed, "violations": _viol, "issues": _leaf_issues},
+        "decision_points": decision_points,
+        "suggestions": suggestions,
+    }
+
+
 # ═══════════════════════════════════════════════════
 # 导航 / 建书向导驱动（navigate 返回 {"__navigate__": url}，MCP 适配层据此落意图队列）
 # ═══════════════════════════════════════════════════
@@ -1467,7 +1585,7 @@ def _build_registry():
         review_text, deai_text, extract_style_asset,
         diagnose_retention, tag_punch_points,
         diagnose_promises, diagnose_continuity,
-        chapter_quality_gate,
+        chapter_quality_gate, validate_storyline,
         # 快照 / diff / 回滚（决策点 commit 语义）
         preview_diff, rollback_book, list_snapshots,
         # 抓取 / 侦察 / 提取入库（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示）
