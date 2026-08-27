@@ -113,6 +113,7 @@
 （汇报前需要确保生成完整）。
 
 **步 3 思考与迭代**（**不是固定顺序流程**：可反复思考、任意顺序修改设定与故事线，每改一版落对应表单）：
+- **先搜索两个库取素材**：`query_arc_library`/`arc_material_candidates` 查**情节弧库**模板、`query_plots` 查**桥段库**（需要时再 `query_gags`/`query_characters` 查笑点/角色）作故事设计与弧树/桥段的参考，再动手设计。
 - 围绕「核心矛盾 → 势力 → 弧+桥段 → 人物 → 其余维度」反复推演：先想清楚故事线（全文大纲）与世界观，再落 `set_world`/`set_outline`/`set_characters`，改到什么程度自己判断。
 - **弧+桥段**：outlines 弧树嵌套按字数跨度（`start_word/end_word`）、plots **仅挂最底层弧**；用 `set_outline` 落表。
 - **校验（两条硬规则走工具，不靠肉眼）**：生成/修改 outlines/plots 后、提交前调 `validate_storyline(outlines=..., plots=..., words_per_chapter=...)`（内联模式，步3 书未创建时用；已建书用 `validate_storyline(book_id=...)`），按 `decision_points` 反复补弧/移桥段直到 `passed=true`，或如实向用户说明残留问题。
