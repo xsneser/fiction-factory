@@ -124,6 +124,10 @@ try:
         arc1Top: (function(){var b=document.querySelector('#upgrade-mock-mount .sl-bar-outline[data-oid="arc1"]');return b?b.style.top:null;})(),
         arc1H: (function(){var b=document.querySelector('#upgrade-mock-mount .sl-bar-outline[data-oid="arc1"]');return b?b.style.height:null;})(),
         childH: (function(){var b=document.querySelector('#upgrade-mock-mount .sl-bar-outline.level-1');return b?b.style.height:null;})(),
+        hasCombinedLane: !!document.querySelector('#upgrade-mock-mount-cb'),
+        hasThreadLane: !!document.querySelector('#upgrade-mock-mount-tb'),
+        arcBands: document.querySelectorAll('#upgrade-mock-mount .sl-arc-band').length,
+        arcBandPointer: (function(){var b=document.querySelector('#upgrade-mock-mount .sl-arc-band');return b?(getComputedStyle(b).pointerEvents||''):null;})(),
       };
     """ % json.dumps(MOCK, ensure_ascii=False))
     if "error" in js_out:
@@ -147,6 +151,12 @@ try:
               f"child={js_out.get('childH')} parent={js_out.get('arc1H')}")
         check("mock_header_total_chapters", "总章节数" in (js_out.get("headerMeta") or ""),
               f"meta={js_out.get('headerMeta')}")
+        # 弧=容器带：2 泳道、弧带存在、弧带 pointer-events:none
+        check("mock_two_lanes", js_out.get("hasCombinedLane") and js_out.get("hasThreadLane"),
+              f"cb={js_out.get('hasCombinedLane')} tb={js_out.get('hasThreadLane')}")
+        check("mock_arc_bands", (js_out.get("arcBands") or 0) == 3, f"arcBands={js_out.get('arcBands')}")
+        check("mock_arc_band_pointer_none", (js_out.get("arcBandPointer") or "") == "none",
+              f"pointer={js_out.get('arcBandPointer')}")
     errs = page_errors("mock")
     check("mock_no_console_errors", len(errs) == 0, "; ".join(errs[:3]))
     driver.execute_script("document.getElementById('upgrade-mock-mount').scrollIntoView({block:'start'});")
