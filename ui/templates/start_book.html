@@ -518,13 +518,28 @@ var WZ = {
         WZ.refreshFactionSelects();
         WZ.syncFactionMembers();
     },
+    /* 势力名括号归一：『联邦远征军（人类主战力量）』→『联邦远征军』（防同名势力卡重复） */
+    _factionNorm: function(label) {
+        var t = String(label || '').trim();
+        ['（', '('].forEach(function(open) {
+            var i = t.indexOf(open);
+            if (i > 0) t = t.slice(0, i).trim();
+        });
+        return t;
+    },
     renderFactions: function(fs) {
         var wrap = this.el('wz-wb-factions');
         if (!wrap) return;
         wrap.innerHTML = '';
         var list = (fs && fs.length) ? fs : [null];
         list.forEach(function(f) {
-            if (typeof f === 'string') f = { name: f };
+            if (typeof f === 'string') {
+                var nm = WZ._factionNorm(f);
+                var desc = '';
+                var rest = f.slice(nm.length).trim();
+                if (rest) desc = rest.replace(/^[（(]/,'').replace(/[）)]$/,'').trim();
+                f = { name: nm, desc: desc };
+            }
             WZ.appendFactionRow(f || {});
         });
     },
@@ -623,12 +638,14 @@ var WZ = {
             wrap.appendChild(sel);
         });
     },
-    /* 定位某势力卡的成员 body（.f-char-body）；未归属缺失时自动补未分组卡。label 为空 = 未归属 */
+    /* 定位某势力卡的成员 body（.f-char-body）；未归属缺失时自动补未分组卡。label 为空 = 未归属。
+       比对前做括号归一，避免「长名卡（带描述）」与「短名人物」误判为不同势力而自动建重复卡 */
     findFactionBody: function(label) {
         var group = String(label || '').trim() || '（未归属）';
+        var gNorm = WZ._factionNorm(group);
         var found = null;
         document.querySelectorAll('#wz-wb-factions .faction-card').forEach(function(card) {
-            if (card.dataset.faction === group) found = card.querySelector('.f-char-body');
+            if (WZ._factionNorm(card.dataset.faction) === gNorm) found = card.querySelector('.f-char-body');
         });
         if (found) return found;
         if (group === '（未归属）') {

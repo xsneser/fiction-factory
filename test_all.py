@@ -227,7 +227,7 @@ _wtl3 = BookStoryline.from_dict(BookStoryline.from_dict({"words_per_chapter": 30
 assert_ok("字轴-往返无损", _wtl3.outlines[0].start_word == 500 and _wtl3.outlines[0].end_word == 1200)
 
 # 故事线校验工具 validate_storyline（弧树覆盖纵轴 + 桥段仅最底层弧）
-from agent_tools import validate_storyline
+from agent_tools import validate_storyline, validate_world
 _v_invalid = validate_storyline(outlines=[
     {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 10000},
     {"id": "a2", "name": "弧2", "parent_arc_id": "", "start_word": 12000, "end_word": 20000},
@@ -236,14 +236,38 @@ _v_invalid = validate_storyline(outlines=[
     {"id": "p1", "name": "桥1", "outline_id": "a1"},
     {"id": "p2", "name": "桥2", "outline_id": "a1b"},
 ])
-assert_ok("校验-叙事空白+非叶弧", _v_invalid["passed"] is False and _v_invalid["issue_count"] == 2
+assert_ok("校验-叙事空白+非叶弧", _v_invalid["passed"] is False
           and len(_v_invalid["coverage"]["gaps"]) == 1
           and len(_v_invalid["leaf_arcs"]["violations"]) == 1)
 _v_valid = validate_storyline(outlines=[
-    {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 10000},
-    {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 10000},
+    {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 1000},
+    {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 1000},
 ], plots=[{"id": "p1", "name": "桥1", "outline_id": "a1b"}])
 assert_ok("校验-合法通过", _v_valid["passed"] is True and _v_valid["issue_count"] == 0)
+
+# 弧内空白（arc_fill：跨度远超桥段 planned_words）
+_v_fill = validate_storyline(outlines=[
+    {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 80000},
+    {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 80000},
+], plots=[
+    {"id": "p1", "name": "桥1", "outline_id": "a1b"},
+    {"id": "p2", "name": "桥2", "outline_id": "a1b"},
+])
+assert_ok("校验-弧内空白", _v_fill["arc_fill"]["passed"] is False
+          and len(_v_fill["arc_fill"]["issues"]) == 1)
+
+# 世界观校验（validate_world：势力重复/每势力配人物/孤儿人物）
+_v_world = validate_world(basic_info={
+    "world_building": {"factions": ["联邦远征军（人类主战力量）", "晨星财团（通敌）", "联邦议会（绥靖）"]},
+    "characters": [{"name": "林澈", "faction": "联邦远征军"}, {"name": "洛云深", "faction": "晨星财团"}],
+})
+assert_ok("校验-势力无人物", _v_world["passed"] is False
+          and "联邦议会" in _v_world["factions"]["without_characters"])
+_v_world_ok = validate_world(basic_info={
+    "world_building": {"factions": ["联邦远征军", "晨星财团"]},
+    "characters": [{"name": "林澈", "faction": "联邦远征军"}, {"name": "洛云深", "faction": "晨星财团"}],
+})
+assert_ok("校验-世界合法", _v_world_ok["passed"] is True and _v_world_ok["issue_count"] == 0)
 
 # ══════════════════════════════════════════════
 #  Phase 3.6: 叙事纪律 + 角色档案（无 LLM）

@@ -43,7 +43,8 @@
 - 弧用 `start_word/end_word` 标 **0 基字数跨度**（start 含 / end 不含，落盘权威）；可同时传 `start_chapter/end_chapter` 兼容，缺字坐标时系统按每章字数换算。
 - **顶层弧须覆盖故事线全纵轴**（0 到总字数，任意一点都有顶层弧占据；出现叙事空白必须补弧或扩弧）。
 - **桥段仅挂最底层弧**（不包含其他弧的弧）；桥段在弧内按 `planned_words`（cover_beats × 200，封顶 1200）累计定位。
-- **生成/修改后必须调 `validate_storyline` 校验上述两条硬规则**（book_id 或内联 outlines/plots），按 `decision_points` 反复修正直到通过或如实说明。
+- **弧字数跨度应与该弧桥段 `planned_words` 之和大致匹配**（跨度远超内容时拆子弧/缩弧跨度/补桥段，避免弧内大片空白）。
+- **生成/修改后必须校验**：调 `validate_storyline`（book_id 或内联 outlines/plots，含 arc_fill 弧内空白）+ `validate_world`（book_id 或内联 basic_info，势力/人物一致性），按 `decision_points` 反复修正直到通过或如实说明。
 
 ### drive_ui 命令（驱动「启动新书」向导；建书必须走向导，不能绕路直建）
 - `set_field`：`{field, value}`，field ∈ idea/pen/title/words/borrow_source/borrow_tweak。
@@ -53,6 +54,7 @@
   放**顶层**参数（不要塞进 world_building，也不要使用 `setting`/`target_reader` 等非标准键）；
   `world_building` 内用标准键 era/power_system/geography/culture/history/social_structure/core_conflict/rules/world_summary/factions；
   **`rules` 必须数组**（传字符串会被忽略）。
+  - `factions` 用 `[{name, stance, desc}]`：**`name` 不含括号描述**（描述放 `desc`）、**`name` 全书唯一**。
 - `set_outline`：需同时给 `outlines`（非空列表）与 `plots`（列表）两个键。
   - **outlines 每项 `{id, name, start_word, end_word, parent_arc_id?, notes, stages?}`**——`id` 唯一必填、
     备注用 `notes`（**不要用 `description`**，会被丢弃）；`start_word/end_word` 为 **0 基字数坐标**
@@ -68,6 +70,8 @@
   - **`role` 只取 `主角/配角/反派/其他` 四选一**（自由文本如「女主/宿敌/幕后黑手」会被前端归为配角并导致主角识别错）；
   - **`importance` 必传**（主角=1，其余≥2）；尽量补 identity/personality/golden_finger/brief/catchphrase；
   - **`relations` 必须 `[{name, relation}]` 对象数组**（传字符串会让前端渲染中断、后续角色全部丢失）。
+  - 每项含 **`faction`（所属势力名，必须与 `set_world` 的 `factions[].name` 逐字一致，不要带括号描述）**；
+    **每个势力至少 1 个对应人物**（无人物归属的势力不要创建）。
 - `submit`：**建书即创建书目并跳书详情页**，调用前必须先向用户汇报设定概要并取得确认（不确认不建书）。
 
 ### 落盘薄工具（agent 自主生成后调用，内部不调 LLM）
@@ -116,7 +120,7 @@
 - **先搜索两个库取素材**：`query_arc_library`/`arc_material_candidates` 查**情节弧库**模板、`query_plots` 查**桥段库**（需要时再 `query_gags`/`query_characters` 查笑点/角色）作故事设计与弧树/桥段的参考，再动手设计。
 - 围绕「核心矛盾 → 势力 → 弧+桥段 → 人物 → 其余维度」反复推演：先想清楚故事线（全文大纲）与世界观，再落 `set_world`/`set_outline`/`set_characters`，改到什么程度自己判断。
 - **弧+桥段**：outlines 弧树嵌套按字数跨度（`start_word/end_word`）、plots **仅挂最底层弧**；用 `set_outline` 落表。
-- **校验（两条硬规则走工具，不靠肉眼）**：生成/修改 outlines/plots 后、提交前调 `validate_storyline(outlines=..., plots=..., words_per_chapter=...)`（内联模式，步3 书未创建时用；已建书用 `validate_storyline(book_id=...)`），按 `decision_points` 反复补弧/移桥段直到 `passed=true`，或如实向用户说明残留问题。
+- **校验（走工具，不靠肉眼）**：生成/修改后、提交前调 `validate_storyline(outlines=..., plots=..., words_per_chapter=...)`（内联模式，步3 书未创建时用；已建书用 `validate_storyline(book_id=...)`，含 **arc_fill 弧内空白**）+ `validate_world(basic_info={world_building:{factions:...}, characters:[...]})`（势力/人物一致性），按 `decision_points` 反复补弧/移桥段/缩弧跨度/补人物直到 `passed=true`，或如实向用户说明残留问题。
 - **反复反思**：从剧情吸引力、设定一致性、阅读节奏出发反复审视，发现问题继续改，直到满意为止。
 - **全部落定后停下**，向用户汇报设定概要并让用户**自行点击按钮提交**（agent 不调 submit）。
 

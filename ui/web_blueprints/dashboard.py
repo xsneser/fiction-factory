@@ -146,6 +146,27 @@ def start_new_book():
         if storyline_hint:
             basic_info["storyline_hint"] = storyline_hint
 
+        # 势力名归一去重兜底（防 agent 把描述塞进括号/同名势力重复）：剥离括号、保留规范名首个
+        _factions = (basic_info.get("world_building") or {}).get("factions") or []
+        if _factions:
+            _norm_seen = {}
+            _clean = []
+            for _f in _factions:
+                _fn = _f if isinstance(_f, str) else (_f or {}).get("name") or ""
+                _norm = _fn
+                for _o in ("（", "("):
+                    _i = _norm.find(_o)
+                    if _i > 0:
+                        _norm = _norm[:_i].strip()
+                if not _norm or _norm in _norm_seen:
+                    continue
+                _norm_seen[_norm] = True
+                if isinstance(_f, str):
+                    _clean.append(_norm)
+                else:
+                    _clean.append({**_f, "name": _norm})
+            basic_info.setdefault("world_building", {})["factions"] = _clean
+
         # 创建故事线配置（BookStoryline 是 @dataclass，无 genre/sub_genre 字段——已随流派移除删除）
         storyline = BookStoryline(
             book_title=src.get("title", ""),
