@@ -550,6 +550,9 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 predecessor=o.get("predecessor", ""),
                 successor=o.get("successor", ""),
                 transition_type=o.get("transition_type", "sequential"),
+                parent_arc_id=o.get("parent_arc_id", ""),
+                narrative=o.get("narrative", "chronological"),
+                narrative_target=o.get("narrative_target", ""),
             ))
     if plots:
         base = len(tl.plots)
@@ -1091,9 +1094,10 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
       **rules 必须数组**（传字符串会被忽略）
     - set_picks: {templates: [id|{id,name}]} 或 {plots: [id|{id,name}]}（任一非空）
     - set_outline: {outlines: [非空列表], plots: [list], threads?, themes?}   步3②大纲+桥段，submit 随书落库
-      outlines 每项 {id, name, start_chapter, end_chapter, notes, stages?}（id 唯一必填、备注用 notes 非 description）；
+      outlines 每项 {id, name, start_chapter, end_chapter, parent_arc_id?, notes, stages?}（id 唯一必填、备注用 notes 非
+      description、parent_arc_id 指向父弧 id 支持弧树嵌套）；大纲=情节弧（约 5-15 章，有方向/目标），不是卷；
       plots 每项 {id, name, outline_id, order, category?, thread_id?, roles?, template_structure?}
-      （id 唯一必填、outline_id 必填指向所属大纲 id、order 卷内序号）——缺 id/outline_id 故事线桥段不显示
+      （id 唯一必填、outline_id 必填指向所属大纲 id、order 弧内序号）——缺 id/outline_id 故事线桥段不显示
     - submit: {}  **⚠️ 建书即创建书目并跳书详情页，调用前必须先向用户汇报设定概要并取得确认**
     - next / prev / reset / load_candidates / skip_candidates / fill_world: {} 无必填
     """
