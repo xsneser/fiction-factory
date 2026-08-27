@@ -53,6 +53,13 @@ def page_errors(page):
         pass
     return errs
 
+def _pct(v):
+    """解析 '40%' → 40；非法 → 0"""
+    try:
+        return float(str(v).rstrip("%"))
+    except (TypeError, ValueError):
+        return 0
+
 # mock：弧级大纲（arc1 含子弧 arc1a、interleaved + narrative_target）+ 2 对设局→收局 + 3 线程
 MOCK = {
     "book_title": "《弧树测试》",
@@ -112,6 +119,11 @@ try:
         arcBars: document.querySelectorAll('#upgrade-mock-mount .sl-bar-outline').length,
         plotBars: document.querySelectorAll('#upgrade-mock-mount .sl-bar-plot').length,
         threadBands: document.querySelectorAll('#upgrade-mock-mount .sl-bar-thread').length,
+        axisLabels: Array.from(document.querySelectorAll('#upgrade-mock-mount .sl-tick-label')).map(function(n){return n.textContent;}).slice(0, 8),
+        headerMeta: (function(){var m=document.querySelector('#upgrade-mock-mount .sl-meta');return m?m.textContent:'';})(),
+        arc1Top: (function(){var b=document.querySelector('#upgrade-mock-mount .sl-bar-outline[data-oid="arc1"]');return b?b.style.top:null;})(),
+        arc1H: (function(){var b=document.querySelector('#upgrade-mock-mount .sl-bar-outline[data-oid="arc1"]');return b?b.style.height:null;})(),
+        childH: (function(){var b=document.querySelector('#upgrade-mock-mount .sl-bar-outline.level-1');return b?b.style.height:null;})(),
       };
     """ % json.dumps(MOCK, ensure_ascii=False))
     if "error" in js_out:
@@ -127,6 +139,14 @@ try:
         check("mock_thread_point_payoff", (js_out.get("threadPointPayoff") or 0) >= 2, f"payoff={js_out.get('threadPointPayoff')}")
         check("mock_target_marks", (js_out.get("targetMarks") or 0) >= 1, f"targetMarks={js_out.get('targetMarks')}")
         check("mock_legend_setup", "设局" in (js_out.get("legend") or ""), f"legend={js_out.get('legend')!r}"[:120])
+        # 章节轴断言：第 N 章刻度、弧按真实跨度定位、子弧垂直落在父弧内、header 总章节数
+        check("mock_axis_chapter_ticks", any("章" in (x or "") for x in (js_out.get("axisLabels") or [])),
+              f"labels={js_out.get('axisLabels')}")
+        check("mock_arc1_top_0", (js_out.get("arc1Top") or "") == "0%", f"arc1Top={js_out.get('arc1Top')}")
+        check("mock_child_inside_parent", 0 < _pct(js_out.get("childH")) < _pct(js_out.get("arc1H")),
+              f"child={js_out.get('childH')} parent={js_out.get('arc1H')}")
+        check("mock_header_total_chapters", "总章节数" in (js_out.get("headerMeta") or ""),
+              f"meta={js_out.get('headerMeta')}")
     errs = page_errors("mock")
     check("mock_no_console_errors", len(errs) == 0, "; ".join(errs[:3]))
     driver.execute_script("document.getElementById('upgrade-mock-mount').scrollIntoView({block:'start'});")
