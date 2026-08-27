@@ -139,13 +139,13 @@ try:
         check("mock_thread_point_payoff", (js_out.get("threadPointPayoff") or 0) >= 2, f"payoff={js_out.get('threadPointPayoff')}")
         check("mock_target_marks", (js_out.get("targetMarks") or 0) >= 1, f"targetMarks={js_out.get('targetMarks')}")
         check("mock_legend_setup", "设局" in (js_out.get("legend") or ""), f"legend={js_out.get('legend')!r}"[:120])
-        # 章节轴断言：第 N 章刻度、弧按真实跨度定位、子弧垂直落在父弧内、header 总章节数
-        check("mock_axis_chapter_ticks", any("章" in (x or "") for x in (js_out.get("axisLabels") or [])),
+        # 字数轴断言：Xk字 刻度、弧按真实字数跨度定位、子弧垂直落在父弧内、header 总字数
+        check("mock_axis_word_ticks", any("字" in (x or "") for x in (js_out.get("axisLabels") or [])),
               f"labels={js_out.get('axisLabels')}")
         check("mock_arc1_top_0", (js_out.get("arc1Top") or "") == "0%", f"arc1Top={js_out.get('arc1Top')}")
         check("mock_child_inside_parent", 0 < _pct(js_out.get("childH")) < _pct(js_out.get("arc1H")),
               f"child={js_out.get('childH')} parent={js_out.get('arc1H')}")
-        check("mock_header_total_chapters", "总章节数" in (js_out.get("headerMeta") or ""),
+        check("mock_header_total_words", "总字数" in (js_out.get("headerMeta") or ""),
               f"meta={js_out.get('headerMeta')}")
     errs = page_errors("mock")
     check("mock_no_console_errors", len(errs) == 0, "; ".join(errs[:3]))
