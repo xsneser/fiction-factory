@@ -12,6 +12,7 @@
   var WPC = 3000;
   var outlines = [], plots = [], threads = [];
   var promises = [], promiseByPlot = {};   // 读者承诺台账：桥段id → [{kind:setup/payoff, pr}]
+  var setupIds = {};                       // 设局桥段 id 集合（被 resolves_plot_id 引用的桥段）
   var PALETTE = ['#f97583', '#79c0ff', '#56d364', '#e3b341', '#d2a8ff', '#ffa657', '#c084fc', '#7ee787'];
   var THREAD_PALETTE = ['#ffa657', '#79c0ff', '#d2a8ff', '#56d364', '#e3b341', '#ff7b72', '#7ee787'];
 
@@ -48,30 +49,70 @@
     return '#ffa657';
   }
 
-  /* ─── 数据适配：BookStoryline → 平铺数组（桥段按真实规划字数定位，预计=实际） ─── */
+  /* 线程稳定色：按 id 字符 hash 取色（跨编辑/派生线程顺序变化时同一线程恒色，不再按序循环） */
+  function threadPalette(tid) {
+    var s = String(tid || '主线');
+    var h = 0;
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return THREAD_PALETTE[h % THREAD_PALETTE.length];
+  }
+
+  /* ─── 数据适配：BookStoryline → 平铺数组（桥段按真实规划字数定位，预计=实际） ───
+     legacy 书 outline/plot/thread 缺 id：在此合成稳定 id + 建 raw→syn 映射，
+     保证泳道/连线/徽标/高亮全自洽，前端不崩。 */
   function adapt(bt) {
     bt = bt || {};
     WPC = bt.words_per_chapter || 3000;
+    setupIds = {};
 
-    // 桥段按所属大纲分组
+    // Pass 1：outline 合成 id + raw→syn 映射（先于 plots 分组，供 outline_id 解析）
+    var rawOutlineToSyn = {}, rawPlotToSyn = {};
+    var rawOutlines = (bt.outlines || []);
+    var rawPlots = (bt.plots || []);
+    var outlineSynAt = [];
+    rawOutlines.forEach(function (o, i) {
+      var syn = o.id ? String(o.id) : '__outline_' + (i + 1);
+      outlineSynAt[i] = syn;
+      if (o.id) rawOutlineToSyn[String(o.id)] = syn;
+    });
+
+    // Pass 2：桥段按所属大纲分组（syn outline id 作键；空/dangling outline_id 按位置均分保序）
     var byOutline = {};
-    (bt.plots || []).forEach(function (p) {
-      var key = p.outline_id || '';
-      (byOutline[key] = byOutline[key] || []).push(p);
+    rawPlots.forEach(function (p, i) {
+      var synPid = p.id ? String(p.id) : '__plot_' + (i + 1);
+      if (p.id) rawPlotToSyn[String(p.id)] = synPid;
+      var oid;
+      if (p.outline_id && rawOutlineToSyn[String(p.outline_id)]) {
+        oid = rawOutlineToSyn[String(p.outline_id)];
+      } else {
+        var n = Math.max(rawOutlines.length, 1);
+        var bucket = rawOutlines.length ? Math.min(Math.floor(i * n / Math.max(rawPlots.length, 1)), n - 1) : 0;
+        oid = outlineSynAt[bucket] || '__outline_1';
+      }
+      (byOutline[oid] = byOutline[oid] || []).push({ p: p, synPid: synPid });
     });
     function sortPlots(a, b) {
-      return ((a.stage_index || 0) - (b.stage_index || 0)) || ((a.order || 0) - (b.order || 0));
+      return ((a.p.stage_index || 0) - (b.p.stage_index || 0)) || ((a.p.order || 0) - (b.p.order || 0));
+    }
+    // raw plot id → syn id（未知引用保留原文；空 → null）
+    function resolvePlotId(rawId) {
+      if (!rawId) return null;
+      var s = String(rawId);
+      return rawPlotToSyn[s] || s;
     }
 
     // 大纲 → 按顺序纵向排列，宽度=其桥段规划字数总和（不再按章节范围均分/假大空）
-    outlines = (bt.outlines || []).map(function (o, i) {
+    outlines = rawOutlines.map(function (o, i) {
+      var syn = outlineSynAt[i];
       var ow = 0;
-      (byOutline[o.id] || []).slice().sort(sortPlots).forEach(function (p) { ow += plannedWords(p); });
+      (byOutline[syn] || []).slice().sort(sortPlots).forEach(function (x) { ow += plannedWords(x.p); });
       return {
-        id: o.id, name: o.name, ow: ow,
+        id: syn, name: o.name, ow: ow,
         color: PALETTE[i % PALETTE.length],
         narrative: o.narrative || 'chronological',
         narrative_target: o.narrative_target || '',
+        parent: (o.parent_arc_id && rawOutlineToSyn[String(o.parent_arc_id)])
+          ? rawOutlineToSyn[String(o.parent_arc_id)] : null,
       };
     });
     var cursor = 0;
@@ -94,18 +135,22 @@
       if (!o) return;
       var rootColor = outlineColorById[key] || '#79c0ff';
       var cum = 0;
-      list.forEach(function (p) {
+      list.forEach(function (x) {
+        var p = x.p;
         var pw = plannedWords(p);
+        var parentSyn = resolvePlotId(p.parent_plot_id);
+        var resolvesSyn = resolvePlotId(p.resolves_plot_id);
+        if (resolvesSyn) setupIds[resolvesSyn] = true;   // 设局桥段登记（供设局徽标/设局→收局线）
         plots.push({
-          id: p.id, name: p.name,
-          oid: p.outline_id || '',
+          id: x.synPid, name: p.name,
+          oid: key,
           start: o.start + cum,
           end: o.start + cum + pw,
-          parent: p.parent_plot_id || null,
-          color: p.parent_plot_id ? '#a5d6ff' : rootColor,
+          parent: parentSyn,
+          color: parentSyn ? '#a5d6ff' : rootColor,
           category: p.category || '',
           thread: p.thread_id || '主线',
-          resolves: p.resolves_plot_id || '',
+          resolves: resolvesSyn || '',
           resolves_name: p.resolves_name || '',
           roles: p.roles || [],
         });
@@ -113,37 +158,43 @@
       });
     });
 
-    // 叙事线程 → 横带区间（书级 threads 定义 + 桥段 thread_id 推导，多线重叠=穿插可视）
+    // 叙事线程 → 横带区间（id/name 双表匹配，解决存量「thread_id 与 threads 列表不闭合」；
+    // 每线程收集 members 供泳道 tooltip 与设局/收局点）
     threads = [];
-    var tIdx = {};
-    (bt.threads || []).forEach(function (t) {
-      tIdx[t.id] = threads.length;
-      threads.push({ id: t.id, name: t.name || t.id, desc: t.desc || '', start: Infinity, end: -Infinity, color: THREAD_PALETTE[threads.length % THREAD_PALETTE.length] });
+    var threadById = {}, threadByName = {};
+    (bt.threads || []).forEach(function (t, i) {
+      var id = t.id ? String(t.id) : (t.name || '__thread_' + (i + 1));
+      if (!(id in threadById)) {
+        threadById[id] = threads.length;
+        if (t.name) threadByName[t.name] = threads.length;
+        threads.push({ id: id, name: t.name || id, desc: t.desc || '', start: Infinity, end: -Infinity, color: threadPalette(id), members: [] });
+      }
     });
     plots.forEach(function (fp) {
       var tid = fp.thread || '主线';
-      if (!(tid in tIdx)) {
-        tIdx[tid] = threads.length;
-        threads.push({ id: tid, name: tid, desc: '', start: Infinity, end: -Infinity, color: THREAD_PALETTE[threads.length % THREAD_PALETTE.length] });
+      var idx = (tid in threadById) ? threadById[tid] : ((tid in threadByName) ? threadByName[tid] : -1);
+      if (idx < 0) {
+        idx = threads.length;
+        threadById[tid] = idx;
+        threads.push({ id: tid, name: tid, desc: '', start: Infinity, end: -Infinity, color: threadPalette(tid), members: [] });
       }
-      var idx = tIdx[tid];
-      if (fp.start < threads[idx].start) threads[idx].start = fp.start;
-      if (fp.end > threads[idx].end) threads[idx].end = fp.end;
+      var t = threads[idx];
+      if (fp.start < t.start) t.start = fp.start;
+      if (fp.end > t.end) t.end = fp.end;
+      t.members.push({ id: fp.id, name: fp.name, start: fp.start, end: fp.end, resolves: !!fp.resolves, setup: !!setupIds[fp.id] });
     });
     threads.forEach(function (t) {
       if (t.start === Infinity) { t.start = 0; t.end = Math.max(t.end, WPC); }
     });
 
-    // 读者承诺台账：设局桥段→⏳待兑现，收局桥段→✅已兑现；映射到对应桥段条
+    // 读者承诺台账：设局桥段→⏳待兑现，收局桥段→✅已兑现；按 syn id 映射（legacy 书不错位）
     promises = (bt.promises || []);
     promiseByPlot = {};
     promises.forEach(function (pr) {
-      if (pr.setup_plot_id) {
-        (promiseByPlot[pr.setup_plot_id] = promiseByPlot[pr.setup_plot_id] || []).push({ kind: 'setup', pr: pr });
-      }
-      if (pr.payoff_plot_id) {
-        (promiseByPlot[pr.payoff_plot_id] = promiseByPlot[pr.payoff_plot_id] || []).push({ kind: 'payoff', pr: pr });
-      }
+      var su = resolvePlotId(pr.setup_plot_id);
+      var po = resolvePlotId(pr.payoff_plot_id);
+      if (su) (promiseByPlot[su] = promiseByPlot[su] || []).push({ kind: 'setup', pr: pr });
+      if (po) (promiseByPlot[po] = promiseByPlot[po] || []).push({ kind: 'payoff', pr: pr });
     });
   }
 
@@ -176,27 +227,61 @@
     }
   }
 
-  /* ─── 渲染：大纲 ─── */
+  /* ─── 渲染：大纲（弧树嵌套：parent_arc_id 层级缩进 + 父子弧连线 + narrative_target 目标） ─── */
   function renderOutlines(outlineBody, tooltip, showTooltip, moveTooltip, hideTooltip) {
     outlineBody.innerHTML = '';
-    var h = outlineBody.clientHeight;
-    if (!h || h < 40) h = 400;
-    var res = assignLanes(outlines);
-    outlines.forEach(function (o, i) {
-      var lane = res.assignments[i];
+    var bodyW = outlineBody.clientWidth, bodyH = outlineBody.clientHeight;
+    if (!bodyH || bodyH < 40) bodyH = 400;
+
+    // 弧树层级：沿 parent（parent_arc_id）递归，父缺失→0 防环
+    function getArcLevel(o, cache) {
+      if (cache[o.id] !== undefined) return cache[o.id];
+      if (!o.parent) return (cache[o.id] = 0);
+      var parent = null;
+      for (var i = 0; i < outlines.length; i++) { if (outlines[i].id === o.parent) { parent = outlines[i]; break; } }
+      cache[o.id] = parent ? getArcLevel(parent, cache) + 1 : 0;
+      return cache[o.id];
+    }
+    var levels = {};
+    outlines.forEach(function (o) { getArcLevel(o, levels); });
+    var maxLevel = 0;
+    outlines.forEach(function (o) { if (levels[o.id] > maxLevel) maxLevel = levels[o.id]; });
+
+    var byLevel = {};
+    outlines.forEach(function (o) {
+      var lv = levels[o.id];
+      (byLevel[lv] = byLevel[lv] || []).push({ id: o.id, start: o.start, end: o.end });
+    });
+    var laneInfo = {};
+    Object.keys(byLevel).forEach(function (lv) {
+      var res = assignLanes(byLevel[lv]);
+      byLevel[lv].forEach(function (it, idx) {
+        laneInfo[it.id] = { lane: res.assignments[idx], totalLanes: res.totalLanes };
+      });
+    });
+    var levelBlockW = 100 / (maxLevel + 1);
+    var gap = 3;
+
+    outlines.forEach(function (o) {
+      var level = levels[o.id];
+      var li = laneInfo[o.id] || { lane: 0, totalLanes: 1 };
       var top = wordToPercent(o.start);
       var height = wordToPercent(o.end - o.start);
-      var laneW = 100 / res.totalLanes;
-      var gap = 3;
+      var blockLeft = level * levelBlockW;
+      var laneW = 100 / li.totalLanes;
+      var innerLeft = li.lane * laneW;
+      var barLeft = blockLeft + innerLeft * (levelBlockW / 100);
+      var barW = levelBlockW / li.totalLanes - gap;
+
       var bar = document.createElement('div');
-      bar.className = 'sl-bar sl-bar-outline';
+      bar.className = 'sl-bar sl-bar-outline level-' + level;
       bar.dataset.oid = o.id;
       bar.style.top = top + '%';
       bar.style.height = Math.max(height, 0.5) + '%';
-      bar.style.left = 'calc(' + (lane * laneW) + '% + ' + (lane * gap) + 'px)';
-      bar.style.width = 'calc(' + laneW + '% - ' + (res.totalLanes * gap) + 'px)';
+      bar.style.left = barLeft + '%';
+      bar.style.width = 'calc(' + barW + '% - ' + (li.totalLanes * gap) + 'px)';
       bar.style.right = 'auto';
-      bar.style.zIndex = 10;
+      bar.style.zIndex = 10 + level;
       if (o.narrative === 'flashback') {
         bar.style.background = 'linear-gradient(135deg,#d29922,#d29922cc)';
         bar.classList.add('sl-flashback');
@@ -207,12 +292,19 @@
         bar.style.background = 'linear-gradient(135deg,' + o.color + ',' + o.color + 'cc)';
       }
       var narration = o.narrative === 'flashback' ? '（倒叙）' : (o.narrative === 'interleaved' ? '（插叙）' : '');
+      // 父弧名（供 tooltip）
+      var parentName = '';
+      if (o.parent) {
+        for (var pi = 0; pi < outlines.length; pi++) { if (outlines[pi].id === o.parent) { parentName = outlines[pi].name; break; } }
+      }
       bar.dataset.tooltip = JSON.stringify({
         title: o.name,
         rows: [
-          ['字数', (o.start).toLocaleString() + ' — ' + o.end.toLocaleString()],
+          ['字数', (o.start).toLocaleString() + ' — ' + (o.end).toLocaleString()],
           ['手法', o.narrative === 'chronological' ? '顺叙' : (o.narrative === 'flashback' ? '倒叙' : '插叙')],
-        ],
+          parentName ? ['父弧', parentName] : null,
+          o.narrative_target ? ['目标', o.narrative_target] : null,
+        ].filter(Boolean),
         tag: '大纲',
       });
       if (height > 1.2) {
@@ -220,6 +312,14 @@
         label.className = 'sl-bar-label';
         label.textContent = o.name + narration;
         bar.appendChild(label);
+      }
+      // 叙事目标标记：倒叙/插叙且有 narrative_target 时在条上标 ◉
+      if (o.narrative_target && o.narrative !== 'chronological') {
+        var mark = document.createElement('span');
+        mark.className = 'sl-target-mark';
+        mark.textContent = '◉';
+        mark.title = '目标：' + o.narrative_target;
+        bar.appendChild(mark);
       }
       bar.addEventListener('mouseenter', showTooltip);
       bar.addEventListener('mousemove', moveTooltip);
@@ -231,6 +331,39 @@
       });
       outlineBody.appendChild(bar);
     });
+
+    // 父子弧连线（SVG 贝塞尔，复用桥段父子线的 px/py/barCenterX 机制）
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
+    svg.style.position = 'absolute'; svg.style.top = '0'; svg.style.left = '0';
+    svg.style.pointerEvents = 'none'; svg.style.zIndex = '0';
+    bodyW = bodyW || outlineBody.clientWidth || 1;
+    function px(x) { return (x / 100) * bodyW; }
+    function py(y) { return (y / 100) * bodyH; }
+    function arcCenterX(level, lane, totalLanes) {
+      var blockL = (level / (maxLevel + 1)) * 100;
+      var laneW = (1 / (maxLevel + 1)) * 100 / totalLanes;
+      return blockL + lane * laneW + laneW / 2;
+    }
+    outlines.forEach(function (o) {
+      if (!o.parent) return;
+      var parent = null;
+      for (var i = 0; i < outlines.length; i++) { if (outlines[i].id === o.parent) { parent = outlines[i]; break; } }
+      if (!parent) return;
+      var parentLI = laneInfo[parent.id], childLI = laneInfo[o.id];
+      if (!parentLI || !childLI) return;
+      var parentMid = py(wordToPercent((parent.start + parent.end) / 2));
+      var childMid = py(wordToPercent((o.start + o.end) / 2));
+      var pcx = px(arcCenterX(levels[parent.id], parentLI.lane, parentLI.totalLanes));
+      var ccx = px(arcCenterX(levels[o.id], childLI.lane, childLI.totalLanes));
+      var midY = (parentMid + childMid) / 2;
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M ' + pcx + ' ' + parentMid + ' C ' + pcx + ' ' + midY + ' ' + ccx + ' ' + midY + ' ' + ccx + ' ' + childMid);
+      path.setAttribute('stroke', 'rgba(255,255,255,0.15)');
+      path.setAttribute('stroke-width', '1'); path.setAttribute('fill', 'none');
+      svg.appendChild(path);
+    });
+    outlineBody.appendChild(svg);
   }
 
   /* ─── 渲染：桥段（嵌套 + 通道 + SVG 连线） ─── */
@@ -238,6 +371,8 @@
     plotBody.innerHTML = '';
     var bodyW = plotBody.clientWidth, bodyH = plotBody.clientHeight;
     if (!bodyH || bodyH < 40) bodyH = 400;
+    var plotById = {};
+    plots.forEach(function (p) { plotById[p.id] = p; });
 
     function getLevel(plot, cache) {
       if (cache[plot.id] !== undefined) return cache[plot.id];
@@ -336,6 +471,14 @@
         pbadge.textContent = '↪ 收局';
         bar.appendChild(pbadge);
       }
+      // 设局徽标：被其他桥段 resolves_plot_id 引用的桥段（top-right，与收局徽标并存）
+      if (setupIds[p.id]) {
+        var sbadge = document.createElement('span');
+        sbadge.className = 'sl-setup-badge';
+        sbadge.textContent = '◉ 设局';
+        sbadge.title = '设局桥段：被后续桥段收束';
+        bar.appendChild(sbadge);
+      }
       // 读者承诺标记：设局⏳(待兑现) / 收局✅(已兑现)，直接画在桥段条上
       pms.forEach(function (pm) {
         var badge = document.createElement('span');
@@ -386,10 +529,40 @@
       path.setAttribute('stroke-width', '1'); path.setAttribute('fill', 'none');
       svg.appendChild(path);
     });
+
+    // 设局→收局连线：resolves_plot_id 指向的设局桥段 → 本收局桥段的语义色虚线（与父子实线区分）
+    plots.forEach(function (p) {
+      if (!p.resolves) return;
+      var target = plotById[p.resolves];
+      if (!target) return;
+      var srcLI = laneInfo[p.id], tgtLI = laneInfo[target.id];
+      if (!srcLI || !tgtLI) return;
+      var srcMid = py(wordToPercent((p.start + p.end) / 2));
+      var tgtMid = py(wordToPercent((target.start + target.end) / 2));
+      function barCenterX(level, lane, totalLanes) {
+        var blockL = (level / (maxLevel + 1)) * 100;
+        var laneW = (1 / (maxLevel + 1)) * 100 / totalLanes;
+        return blockL + lane * laneW + laneW / 2;
+      }
+      var pcx = px(barCenterX(levels[p.id], srcLI.lane, srcLI.totalLanes));
+      var ccx = px(barCenterX(levels[target.id], tgtLI.lane, tgtLI.totalLanes));
+      var midY = (srcMid + tgtMid) / 2;
+      // 跨长距离（连线高度 >60% 面板）衰减透明度，避免长线喧宾夺主
+      var distRatio = Math.abs(srcMid - tgtMid) / Math.max(bodyH, 1);
+      var opacity = distRatio > 0.6 ? 0.35 : 0.7;
+      var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M ' + pcx + ' ' + srcMid + ' C ' + pcx + ' ' + midY + ' ' + ccx + ' ' + midY + ' ' + ccx + ' ' + tgtMid);
+      path.setAttribute('stroke', '#e3b341');
+      path.setAttribute('stroke-width', '1.5');
+      path.setAttribute('stroke-dasharray', '4 3');
+      path.setAttribute('opacity', String(opacity));
+      path.setAttribute('fill', 'none');
+      svg.appendChild(path);
+    });
     plotBody.appendChild(svg);
   }
 
-  /* ─── 渲染：叙事线程横带（多线重叠=穿插可视） ─── */
+  /* ─── 渲染：叙事线程横带（成员列表 tooltip + 设局/收局点，多线重叠=穿插可视） ─── */
   function renderThreads(threadBody, tooltip, showTooltip, moveTooltip, hideTooltip) {
     threadBody.innerHTML = '';
     var h = threadBody.clientHeight;
@@ -411,11 +584,14 @@
       band.style.right = 'auto';
       band.style.background = 'linear-gradient(135deg,' + t.color + '44,' + t.color + '22)';
       band.style.borderLeft = '2px solid ' + t.color;
+      // 成员列表：哪几个桥段构成这条线、哪处设局哪处收局
+      var memberRows = (t.members || []).map(function (m) {
+        var tag = m.setup ? '设局' : (m.resolves ? '收局' : '');
+        return tag ? [m.name, tag] : [m.name, ''];
+      });
       band.dataset.tooltip = JSON.stringify({
         title: '🧵 ' + t.name,
-        rows: [
-          ['范围', (t.start).toLocaleString() + ' — ' + (t.end).toLocaleString() + ' 字'],
-        ],
+        rows: [['范围', (t.start).toLocaleString() + ' — ' + (t.end).toLocaleString() + ' 字']].concat(memberRows),
         desc: t.desc || '',
         tag: '线程',
       });
@@ -427,6 +603,18 @@
         label.style.color = t.color;
         band.appendChild(label);
       }
+      // 设局/收局点：在横带上标出成员桥段位置（设局琥珀 / 收局绿）
+      var bandH = wordToPercent(t.end - t.start);
+      (t.members || []).forEach(function (m) {
+        var point = document.createElement('span');
+        point.className = 'sl-thread-point' + (m.setup ? ' setup' : (m.resolves ? ' payoff' : ''));
+        if (bandH > 0) {
+          var relTop = (wordToPercent(m.start) - wordToPercent(t.start)) / bandH * 100;
+          point.style.top = Math.max(0, Math.min(100, relTop)) + '%';
+        }
+        point.title = m.name + (m.setup ? '（设局）' : (m.resolves ? '（收局）' : ''));
+        band.appendChild(point);
+      });
       band.addEventListener('mouseenter', showTooltip);
       band.addEventListener('mousemove', moveTooltip);
       band.addEventListener('mouseleave', hideTooltip);
@@ -511,6 +699,7 @@
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#79c0ff"></span> 主桥段</div>' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#a5d6ff"></span> 子桥段</div>' +
         threadLegendHtml +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch payoff-line"></span> ◉设局 → ↪收局</div>' +
         (narrCount.flashback ? '<div class="sl-legend-item"><span class="sl-legend-swatch flashback"></span> 倒叙</div>' : '') +
         (narrCount.interleaved ? '<div class="sl-legend-item"><span class="sl-legend-swatch interleaved"></span> 插叙</div>' : '') +
         '</div></div>';

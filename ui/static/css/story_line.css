@@ -106,10 +106,26 @@
 .sl-bar-plot.level-1 { left: 14px; right: 4px; z-index: 4; }
 .sl-bar-plot.level-2 { left: 28px; right: 0; z-index: 5; }
 
-/* ─── 叙事线程横带 + 桥段线程/收局徽标 ─── */
+/* ─── 弧树嵌套层级（JS 内联覆盖，此处兜底） ─── */
+.sl-bar-outline.level-1 { left: 10px; right: 6px; z-index: 11; }
+.sl-bar-outline.level-2 { left: 20px; right: 4px; z-index: 12; }
+
+/* ─── 叙事线程横带 + 桥段线程/收局/设局徽标 ─── */
 .sl-bar-thread { border: 1px solid rgba(255,255,255,.08); }
 .sl-thread-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; pointer-events: none; }
 .sl-payoff-badge { position: absolute; bottom: 2px; right: 3px; font-size: 9px; color: var(--danger-fg); font-weight: 700; pointer-events: none; }
+.sl-setup-badge { position: absolute; top: 2px; right: 3px; font-size: 9px; color: var(--warn); font-weight: 700; pointer-events: none; }
+
+/* ─── 叙事目标标记（倒叙/插叙且有 narrative_target 的大纲条） ─── */
+.sl-target-mark { position: absolute; bottom: 2px; left: 3px; font-size: 9px; color: var(--warn); pointer-events: none; }
+
+/* ─── 线程横带内设局/收局点（琥珀=设局 / 绿=收局 / 灰=普通成员） ─── */
+.sl-thread-point { position: absolute; left: 3px; width: 6px; height: 6px; border-radius: 50%; pointer-events: none; background: var(--fg-muted); }
+.sl-thread-point.setup { background: var(--warn); }
+.sl-thread-point.payoff { background: var(--success-fg); }
+
+/* ─── 图例：设局→收局连线样例（琥珀虚线，与设局线一致） ─── */
+.sl-legend-swatch.payoff-line { background: transparent; border: 1px dashed var(--warn); }
 
 /* ─── 读者承诺标记：设局⏳待兑现(黄) / 收局✅已兑现(绿)，叠在桥段条右下 ─── */
 .sl-promise { position: absolute; bottom: 2px; left: 3px; font-size: 9px; line-height: 1; pointer-events: none; padding: 1px 2px; border-radius: 3px; }
