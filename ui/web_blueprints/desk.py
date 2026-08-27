@@ -51,7 +51,7 @@ def _chapters_from_disk(book_id: str, current_chapter: int):
                 "bridges": ch.get("bridges") or [],
             })
     # 进行中草稿（draft_chapter.json）：bridges 逐桥段 span.m-bridge，刚写完的桥段即时可见
-    dp = os.path.join(_ROOT, "books", book_id, "draft_chapter.json")
+    dp = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
     if os.path.exists(dp):
         try:
             with open(dp, encoding="utf-8") as f:
@@ -78,7 +78,7 @@ def desk_chapters_api(book_id):
     """写作台正文 JSON：从磁盘现读已写章节+草稿（供前端轮询刷新右侧，修「agent 写完不显示」）。"""
     cur = 0
     try:
-        d = json.load(open(os.path.join(_ROOT, "books", book_id, "book.json"), encoding="utf-8"))
+        d = json.load(open(os.path.join(str(book_mgr.dir), book_id, "book.json"), encoding="utf-8"))
         cur = int(d.get("current_chapter") or 0)
     except Exception:
         pass
@@ -98,7 +98,7 @@ def storyline_write_flow(engine_id):
     if book and book.book_id:
         # 跨进程 stale：MCP/dsh 子进程写盘后，用磁盘 book.json 的最新 current_chapter 修正缓存
         try:
-            d = json.load(open(os.path.join(_ROOT, "books", book.book_id, "book.json"), encoding="utf-8"))
+            d = json.load(open(os.path.join(str(book_mgr.dir), book.book_id, "book.json"), encoding="utf-8"))
             cur = int(d.get("current_chapter") or 0)
             if cur > 0:
                 book.current_chapter = cur

@@ -433,10 +433,20 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
         pass
 
     # 5) 故事线 written_chapter 进度（本桥段标记为已写）
+    #    bridge_segments 缺失时回退草稿 bridges（agent 漏传 bridge_segments 也不会卡住 next_bridge）
     try:
         tl = book_mgr.load_storyline(book_id)
         if tl:
             written_plot_ids = {b.get("plot_id") for b in (bridge_segments or []) if b.get("plot_id")}
+            if not written_plot_ids:
+                try:
+                    dp = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
+                    if os.path.exists(dp):
+                        with open(dp, encoding="utf-8") as f:
+                            _d = json.load(f)
+                        written_plot_ids = {b.get("plot_id") for b in (_d.get("bridges") or []) if b.get("plot_id")}
+                except Exception:
+                    pass
             for p in tl.plots:
                 if not (getattr(p, "written_chapter", 0) or 0) and p.id in written_plot_ids:
                     p.written_chapter = n
