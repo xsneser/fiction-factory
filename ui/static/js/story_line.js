@@ -1,6 +1,6 @@
 /*
  * 故事线（Story Line）组件 — 垂直 Gantt
- * 从 BookStoryline dict 渲染：字数轴 + 大纲/桥段/线程通道。
+ * 从 BookStoryline dict 渲染：章节轴 + 大纲/桥段/线程通道。
  * 支持叙事手法视觉区分：顺叙(chronological)/倒叙(flashback)/插叙(interleaved)。
  *
  * 用法：StoryLine.init('mount-id', bookStorylineDict, {currentChapter: N})
@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var TOTAL_WORDS = 0;
+  var TOTAL_CHAPTERS = 0;
   var WPC = 3000;
   var outlines = [], plots = [], threads = [];
   var promises = [], promiseByPlot = {};   // 读者承诺台账：桥段id → [{kind:setup/payoff, pr}]
@@ -33,14 +33,10 @@
     return Math.max(300, Math.min(8000, Math.round((_baseScrollH || 720) * _zoom)));
   }
 
-  function wordToPercent(w) {
-    return (TOTAL_WORDS > 0) ? (w / TOTAL_WORDS) * 100 : 0;
-  }
-
-  /* 桥段预计字数 = cover_beats × 200，封顶 1200（与后端 storyline_writer.planned_words 同一公式） */
-  function plannedWords(p) {
-    var beats = Math.max(parseInt((p && p.cover_beats) || 0, 10) || 0, 2);
-    return Math.min(beats * 200, 1200);
+  /* 章节坐标 → 百分比：第 N 章占槽位 [N-1, N)，chapterToPercent 过原点线性，
+     故 height=chapterToPercent(end-start)、mid=(start+end)/2 公式直接成立 */
+  function chapterToPercent(ch) {
+    return (TOTAL_CHAPTERS > 0) ? (ch / TOTAL_CHAPTERS) * 100 : 0;
   }
 
   /* 线程 id → 颜色 */
@@ -100,14 +96,26 @@
       var s = String(rawId);
       return rawPlotToSyn[s] || s;
     }
+    // 弧章节域归一：缺/非法（undefined/0/NaN/start>end）一律兜底，杜绝 NaN 坐标
+    function arcChapters(o) {
+      var s = parseInt(o && o.start_chapter, 10);
+      var e = parseInt(o && o.end_chapter, 10);
+      var hasS = isFinite(s) && s >= 1;
+      var hasE = isFinite(e) && e >= 1;
+      if (!hasS && !hasE) return { start_ch: 1, end_ch: 30 };   // 全缺 → 后端默认
+      if (!hasS) s = 1;          // 只缺 start → 从第 1 章起
+      if (!hasE) e = s;          // 只缺 end → 最小 1 章
+      if (e < s) e = s;          // start>end / end=0 → 压到 start（单章）
+      return { start_ch: s, end_ch: e };
+    }
 
-    // 大纲 → 按顺序纵向排列，宽度=其桥段规划字数总和（不再按章节范围均分/假大空）
+    // 大纲（情节弧）→ 按真实章节跨度落位（章节轴），弧树嵌套靠 parent
     outlines = rawOutlines.map(function (o, i) {
       var syn = outlineSynAt[i];
-      var ow = 0;
-      (byOutline[syn] || []).slice().sort(sortPlots).forEach(function (x) { ow += plannedWords(x.p); });
+      var ch = arcChapters(o);
       return {
-        id: syn, name: o.name, ow: ow,
+        id: syn, name: o.name,
+        start_ch: ch.start_ch, end_ch: ch.end_ch,
         color: PALETTE[i % PALETTE.length],
         narrative: o.narrative || 'chronological',
         narrative_target: o.narrative_target || '',
@@ -115,15 +123,15 @@
           ? rawOutlineToSyn[String(o.parent_arc_id)] : null,
       };
     });
-    var cursor = 0;
+    // 章节坐标：第 N 章占槽位 [N-1, N)；总章节 = max(end_ch)，至少 1
+    TOTAL_CHAPTERS = 1;
     outlines.forEach(function (o) {
-      o.start = cursor;
-      o.end = cursor + Math.max(o.ow, WPC);   // 无桥段的大纲至少占一章宽度
-      cursor = o.end + WPC * 0.5;             // 弧间留半章空隙
+      o.start = o.start_ch - 1;
+      o.end = o.end_ch;
+      if (o.end > TOTAL_CHAPTERS) TOTAL_CHAPTERS = o.end;
     });
-    TOTAL_WORDS = Math.max(cursor - WPC * 0.5, WPC);
 
-    // 桥段 → 在大纲内按规划字数累计定位（首桥段 0—~1200字，而非 0—13517）
+    // 桥段 → 在弧内按序比例均分章节段（弧 [s,e] 内 n 个桥段均分）
     plots = [];
     var outlineById = {};
     outlines.forEach(function (o) { outlineById[o.id] = o; });
@@ -134,18 +142,19 @@
       var o = outlineById[key];
       if (!o) return;
       var rootColor = outlineColorById[key] || '#79c0ff';
-      var cum = 0;
-      list.forEach(function (x) {
+      var n = list.length;
+      var oStart = o.start;
+      var span = o.end - o.start;   // 弧章节跨度（arcChapters 保证 ≥1）
+      list.forEach(function (x, i) {
         var p = x.p;
-        var pw = plannedWords(p);
         var parentSyn = resolvePlotId(p.parent_plot_id);
         var resolvesSyn = resolvePlotId(p.resolves_plot_id);
         if (resolvesSyn) setupIds[resolvesSyn] = true;   // 设局桥段登记（供设局徽标/设局→收局线）
         plots.push({
           id: x.synPid, name: p.name,
           oid: key,
-          start: o.start + cum,
-          end: o.start + cum + pw,
+          start: oStart + (i / n) * span,
+          end: oStart + ((i + 1) / n) * span,
           parent: parentSyn,
           color: parentSyn ? '#a5d6ff' : rootColor,
           category: p.category || '',
@@ -154,7 +163,6 @@
           resolves_name: p.resolves_name || '',
           roles: p.roles || [],
         });
-        cum += pw;
       });
     });
 
@@ -184,7 +192,7 @@
       t.members.push({ id: fp.id, name: fp.name, start: fp.start, end: fp.end, resolves: !!fp.resolves, setup: !!setupIds[fp.id] });
     });
     threads.forEach(function (t) {
-      if (t.start === Infinity) { t.start = 0; t.end = Math.max(t.end, WPC); }
+      if (t.start === Infinity) { t.start = 0; t.end = Math.max(t.end, 1); }
     });
 
     // 读者承诺台账：设局桥段→⏳待兑现，收局桥段→✅已兑现；按 syn id 映射（legacy 书不错位）
@@ -212,19 +220,22 @@
     return { assignments: assignments, totalLanes: lanes.length };
   }
 
-  /* ─── 渲染：字数轴（故事线不再分章，保留字数刻度作竖向标尺） ─── */
+  /* ─── 渲染：章节轴（第 N 章刻度线 = 该章顶边，与弧 bar 顶边精确对齐） ─── */
   function renderAxis(axisPanel) {
     axisPanel.innerHTML = '<div class="sl-axis-line"></div>';
-    for (var w = 0; w <= TOTAL_WORDS; w += 1000) {
-      var yPct = wordToPercent(w);
+    var step = Math.max(1, Math.ceil(TOTAL_CHAPTERS / 20));   // 75 章 → step=4，≤20 刻度
+    function addTick(ch) {
+      var yPct = chapterToPercent(ch - 1);
       var tick = document.createElement('div');
       tick.className = 'sl-tick'; tick.style.top = yPct + '%';
       axisPanel.appendChild(tick);
       var label = document.createElement('div');
       label.className = 'sl-tick-label'; label.style.top = yPct + '%';
-      label.textContent = (w / 1000) + 'k';
+      label.textContent = '第' + ch + '章';
       axisPanel.appendChild(label);
     }
+    for (var ch = 1; ch <= TOTAL_CHAPTERS; ch += step) addTick(ch);
+    if ((TOTAL_CHAPTERS - 1) % step !== 0) addTick(TOTAL_CHAPTERS);   // 兜底末章刻度
   }
 
   /* ─── 渲染：大纲（弧树嵌套：parent_arc_id 层级缩进 + 父子弧连线 + narrative_target 目标） ─── */
@@ -265,8 +276,8 @@
     outlines.forEach(function (o) {
       var level = levels[o.id];
       var li = laneInfo[o.id] || { lane: 0, totalLanes: 1 };
-      var top = wordToPercent(o.start);
-      var height = wordToPercent(o.end - o.start);
+      var top = chapterToPercent(o.start);
+      var height = chapterToPercent(o.end - o.start);
       var blockLeft = level * levelBlockW;
       var laneW = 100 / li.totalLanes;
       var innerLeft = li.lane * laneW;
@@ -300,7 +311,7 @@
       bar.dataset.tooltip = JSON.stringify({
         title: o.name,
         rows: [
-          ['字数', (o.start).toLocaleString() + ' — ' + (o.end).toLocaleString()],
+          ['章节', '第' + o.start_ch + '—' + o.end_ch + '章'],
           ['手法', o.narrative === 'chronological' ? '顺叙' : (o.narrative === 'flashback' ? '倒叙' : '插叙')],
           parentName ? ['父弧', parentName] : null,
           o.narrative_target ? ['目标', o.narrative_target] : null,
@@ -352,8 +363,8 @@
       if (!parent) return;
       var parentLI = laneInfo[parent.id], childLI = laneInfo[o.id];
       if (!parentLI || !childLI) return;
-      var parentMid = py(wordToPercent((parent.start + parent.end) / 2));
-      var childMid = py(wordToPercent((o.start + o.end) / 2));
+      var parentMid = py(chapterToPercent((parent.start + parent.end) / 2));
+      var childMid = py(chapterToPercent((o.start + o.end) / 2));
       var pcx = px(arcCenterX(levels[parent.id], parentLI.lane, parentLI.totalLanes));
       var ccx = px(arcCenterX(levels[o.id], childLI.lane, childLI.totalLanes));
       var midY = (parentMid + childMid) / 2;
@@ -406,8 +417,8 @@
     plots.forEach(function (p) {
       var level = levels[p.id];
       var li = laneInfo[p.id] || { lane: 0, totalLanes: 1 };
-      var top = wordToPercent(p.start);
-      var height = wordToPercent(p.end - p.start);
+      var top = chapterToPercent(p.start);
+      var height = chapterToPercent(p.end - p.start);
       var blockLeft = level * levelBlockW;
       var laneW = 100 / li.totalLanes;
       var innerLeft = li.lane * laneW;
@@ -446,7 +457,7 @@
         title: p.name,
         rows: [
           ['层级', level === 0 ? '主桥段' : '子桥段 L' + level],
-          ['范围', (p.start).toLocaleString() + ' — ' + p.end.toLocaleString() + ' 字'],
+          ['章节', '第' + Math.round(p.start + 1) + '—' + Math.round(p.end) + '章'],
           ['线程', p.thread || '主线'],
           p.resolves ? ['收局', '解决「' + p.resolves_name + '」'] : null,
           (p.roles && p.roles.length) ? ['出场', p.roles.join('、')] : null,
@@ -513,8 +524,8 @@
       if (!parent) return;
       var parentLI = laneInfo[parent.id], childLI = laneInfo[p.id];
       if (!parentLI || !childLI) return;
-      var parentMid = py(wordToPercent((parent.start + parent.end) / 2));
-      var childMid = py(wordToPercent((p.start + p.end) / 2));
+      var parentMid = py(chapterToPercent((parent.start + parent.end) / 2));
+      var childMid = py(chapterToPercent((p.start + p.end) / 2));
       function barCenterX(level, lane, totalLanes) {
         var blockL = (level / (maxLevel + 1)) * 100;
         var laneW = (1 / (maxLevel + 1)) * 100 / totalLanes;
@@ -537,8 +548,8 @@
       if (!target) return;
       var srcLI = laneInfo[p.id], tgtLI = laneInfo[target.id];
       if (!srcLI || !tgtLI) return;
-      var srcMid = py(wordToPercent((p.start + p.end) / 2));
-      var tgtMid = py(wordToPercent((target.start + target.end) / 2));
+      var srcMid = py(chapterToPercent((p.start + p.end) / 2));
+      var tgtMid = py(chapterToPercent((target.start + target.end) / 2));
       function barCenterX(level, lane, totalLanes) {
         var blockL = (level / (maxLevel + 1)) * 100;
         var laneW = (1 / (maxLevel + 1)) * 100 / totalLanes;
@@ -570,8 +581,8 @@
     var res = assignLanes(threads);
     threads.forEach(function (t, i) {
       var lane = res.assignments[i];
-      var top = wordToPercent(t.start);
-      var height = wordToPercent(t.end - t.start);
+      var top = chapterToPercent(t.start);
+      var height = chapterToPercent(t.end - t.start);
       var laneW = 100 / res.totalLanes;
       var gap = 3;
       var band = document.createElement('div');
@@ -591,7 +602,7 @@
       });
       band.dataset.tooltip = JSON.stringify({
         title: '🧵 ' + t.name,
-        rows: [['范围', (t.start).toLocaleString() + ' — ' + (t.end).toLocaleString() + ' 字']].concat(memberRows),
+        rows: [['章节', '第' + Math.round(t.start + 1) + '—' + Math.round(t.end) + '章']].concat(memberRows),
         desc: t.desc || '',
         tag: '线程',
       });
@@ -604,12 +615,12 @@
         band.appendChild(label);
       }
       // 设局/收局点：在横带上标出成员桥段位置（设局琥珀 / 收局绿）
-      var bandH = wordToPercent(t.end - t.start);
+      var bandH = chapterToPercent(t.end - t.start);
       (t.members || []).forEach(function (m) {
         var point = document.createElement('span');
         point.className = 'sl-thread-point' + (m.setup ? ' setup' : (m.resolves ? ' payoff' : ''));
         if (bandH > 0) {
-          var relTop = (wordToPercent(m.start) - wordToPercent(t.start)) / bandH * 100;
+          var relTop = (chapterToPercent(m.start) - chapterToPercent(t.start)) / bandH * 100;
           point.style.top = Math.max(0, Math.min(100, relTop)) + '%';
         }
         point.title = m.name + (m.setup ? '（设局）' : (m.resolves ? '（收局）' : ''));
@@ -625,7 +636,8 @@
   /* ─── 渲染：进度光标 ─── */
   function renderCursor(contentArea, currentChapter) {
     if (!currentChapter || currentChapter <= 0) return;
-    var y = wordToPercent(Math.min(currentChapter, TOTAL_WORDS / WPC) * WPC);
+    var ch = Math.min(Math.max(1, currentChapter), TOTAL_CHAPTERS);   // 钳制越界
+    var y = chapterToPercent(ch - 1);
     var cursor = document.createElement('div');
     cursor.className = 'sl-cursor';
     cursor.style.top = y + '%';
@@ -661,7 +673,7 @@
       // 仅在调用方显式传 scrollable 时生效，避免影响 continue_flow 等「填满容器高度」的用法。
       var scrollH = 0;
       if (opts.scrollable) {
-        var totalCh = Math.max(1, Math.round(TOTAL_WORDS / WPC));
+        var totalCh = Math.max(1, TOTAL_CHAPTERS);
         _baseScrollH = Math.min(2400, Math.max(720, totalCh * 18));
         scrollH = zoomHeight();
         mount.style.height = '100%';
@@ -686,7 +698,7 @@
         '<div class="sl-root">' +
         '<div class="sl-header"><h1><span class="dot"></span>故事线</h1>' +
         '<div class="sl-header-right">' + zoomHtml +
-        '<div class="sl-meta">总字数 <span>' + (TOTAL_WORDS).toLocaleString() + '</span> · 大纲 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
+        '<div class="sl-meta">总章节数 <span>' + TOTAL_CHAPTERS + '</span> · 每章约 <span>' + WPC + '</span> 字 · 大纲 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
         '<div class="sl-main">' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
         '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
