@@ -11,6 +11,8 @@
 <script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
 <script>window.__STORYLINE_ID__ = "{{ state.book_id }}";</script>
 <script>window.__ENGINE_ID__ = "{{ engine_id }}";</script>
+<script>window.__BOOK_CURRENT_CHAPTER__ = {{ (book.current_chapter if book else 0) or 0 }};</script>
+<script>window.__BOOK_PEN_NAME__ = "{{ (book.pen_name if book else '') }}";</script>
 <div class="tle-layout">
 <h1>✍️ 写作台</h1>
 {{ info_bar(
@@ -160,8 +162,58 @@ function runWritingTask() {
     if (window.switchAgentTab) window.switchAgentTab('chat');   // 保证侧栏对话页签可见
     var bid = window.__STORYLINE_ID__ || '';
     var title = (window.__BOOK_STORYLINE__ && window.__BOOK_STORYLINE__.book_title) || '';
-    var task = '请继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：写下一章正文，章末跑 chapter_quality_gate 门禁汇报。';
-    if (task && window.agentSendTask) window.agentSendTask(task, { card: true, cardLabel: '📝 写作任务' });
+    // 该写第几章：进行中草稿章号优先，否则 current_chapter + 1（跨进程 stale 由 desk API 兜底，此处用注入值）
+    var nextCh = (window.__BOOK_CURRENT_CHAPTER__ || 0) + 1;
+    var pen = window.__BOOK_PEN_NAME__ || '';
+    var task = '请继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：写下一章（第' + nextCh + '章）正文，'
+        + '写正文前先 get_writing_context 读风格规则（style_rules）并严格遵守，章末跑 chapter_quality_gate 门禁汇报。';
+    if (task && window.agentSendTask) window.agentSendTask(task, { card: true, cardLabel: '📝 写作任务 · 第' + nextCh + '章' });
 }
+
+/* ─── 正文实时刷新：轮询 /api/desk/chapters/<bid>，agent 写完桥段/章节即重渲染右侧（修「写完不显示」） ─── */
+function _ms_esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+}
+function renderManuscript(chapters) {
+    var el = document.getElementById('wf-manuscript');
+    if (!el) return;
+    var html = '';
+    (chapters || []).forEach(function (c, idx) {
+        if (idx > 0) html += '<div class="m-chapter-divider">────────</div>';
+        html += '<div class="m-chapter-title">第' + _ms_esc(c.num) + '章 ' + _ms_esc(c.title)
+            + (c.draft ? '<span class="m-draft-tag">草稿</span>' : '') + '</div>';
+        if (c.bridges && c.bridges.length) {
+            c.bridges.forEach(function (b, i) {
+                if (i > 0) html += '\n\n';
+                html += '<span class="m-bridge" data-bridge="' + _ms_esc(b.plot_id)
+                    + '" data-bridge-name="' + _ms_esc(b.plot_name) + '">' + _ms_esc(b.text) + '</span>';
+            });
+        } else {
+            html += _ms_esc(c.content);
+        }
+    });
+    el.innerHTML = html;
+}
+(function pollManuscript() {
+    var bid = window.__STORYLINE_ID__ || '';
+    if (!bid) return;
+    var lastFp = '';
+    setInterval(function () {
+        fetch('/api/desk/chapters/' + encodeURIComponent(bid))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                var fp = ((d.chapters || []).map(function (c) {
+                    return c.num + ':' + (c.content || '').length + ':' + (c.bridges || []).length;
+                })).join('|');
+                if (fp !== lastFp) {
+                    lastFp = fp;
+                    renderManuscript(d.chapters || []);
+                }
+            })
+            .catch(function () {});
+    }, 3000);
+})();
 </script>
 {% endblock %}

@@ -172,6 +172,18 @@ def get_writing_context(book_id: str) -> dict:
                 }
                 break
     payload["next_bridge"] = next_bridge
+    # next_chapter：进行中草稿的章号优先，否则 current_chapter + 1（供写作任务卡显示「该写第几章」）
+    book = payload.get("book") or {}
+    draft = payload.get("draft")
+    if draft and draft.get("chapter_num"):
+        next_chapter = draft["chapter_num"]
+    else:
+        next_chapter = (book.get("current_chapter") or 0) + 1
+    payload["next_chapter"] = next_chapter
+    # pen_name + style_rules：注入笔名风格规则（dsh/MCP 写作流此前缺失，agent 每轮读本工具即可见）
+    payload["pen_name"] = (tl.pen_name if tl else "") or book.get("pen_name") or ""
+    profile = _profile_for(tl) if tl else None
+    payload["style_rules"] = profile.build_style_prompt() if profile else ""
     return payload
 
 

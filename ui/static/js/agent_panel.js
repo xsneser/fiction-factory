@@ -23,6 +23,7 @@ console.log('[agent-panel] v26 events-stream');
     var currentToolRun = null;                  // 当前工具卡引用
     var toolPollTimer = null;                   // 工具日志轮询定时器
     var toolCards = {};                         // callId → 工具卡（事件流配对）
+    var _buildCards = [];                       // 任务卡（建书/写作）列表：done 时移除其停止按钮
     var toolCardOrder = [];                     // 工具卡创建顺序（上限裁剪用）
     var TOOL_CARD_LIMIT = 20;                   // 对话页签工具卡上限（防 DOM 膨胀）
     var llmCards = [];                          // LLM 调用调试卡 DOM 顺序（上限裁剪用）
@@ -159,6 +160,14 @@ console.log('[agent-panel] v26 events-stream');
         head.title = '点击展开/收起参数';
         var label = el('span', 'agent-tool-head-label', '🔧 ' + escapeHtml(toolLabel(tool, args)));
         var meta = el('span', 'agent-tool-head-meta', '');   // 第一行右侧：⏱ 运行时长 · token 用量
+        // 卡片内停止按钮：打断当前 Agent 任务（复用全局 cancel 通道），工具完成/会话结束自动移除
+        var stop = el('button', 'agent-tool-stop', '⏹ 停止');
+        stop.type = 'button';
+        stop.title = '打断当前 Agent 任务';
+        stop.addEventListener('click', function () {
+            stop.disabled = true; stop.textContent = '停止中…';
+            fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function () {});
+        });
         var detail = el('div', 'agent-tool-detail', '');
         detail.style.display = 'none';
         if (args && typeof args === 'object' && Object.keys(args).length) {
@@ -169,6 +178,7 @@ console.log('[agent-panel] v26 events-stream');
             };
         }
         head.appendChild(label);
+        head.appendChild(stop);
         head.appendChild(meta);
         var status = el('div', 'agent-tool-status', '运行中…');
         card.appendChild(head);
@@ -176,7 +186,7 @@ console.log('[agent-panel] v26 events-stream');
         card.appendChild(status);
         chat.appendChild(card);
         scrollBottom();
-        var run = { card: card, status: status, meta: meta, t0: performance.now(), ts0: null, tool: tool, args: args, timer: null };
+        var run = { card: card, status: status, meta: meta, stopBtn: stop, t0: performance.now(), ts0: null, tool: tool, args: args, timer: null };
         // 运行中实时计时：活跃卡用 performance 基；刷新重建卡 run.ts0=事件 ts，用 Date.now 基算真实已用时长。
         // 运行中只显示 ⏱（token 是决策那轮已消耗的固定值，工具完成时才与最终时长一起显示，避免「token 已出现却仍运行中」误解）。
         run.timer = setInterval(function() {
@@ -298,6 +308,8 @@ console.log('[agent-panel] v26 events-stream');
     function finishToolCard(run, text, durMs) {
         if (!run || !run.status) return;
         if (run.timer) { clearInterval(run.timer); run.timer = null; }
+        // 工具完成/会话结束：移除卡片内停止按钮
+        if (run.stopBtn) { try { if (run.stopBtn.parentNode) run.stopBtn.parentNode.removeChild(run.stopBtn); } catch (e) {} run.stopBtn = null; }
         var durStr = '';
         if (durMs !== undefined && durMs !== null) {
             durStr = '⏱ ' + formatDur(durMs);
@@ -493,6 +505,11 @@ console.log('[agent-panel] v26 events-stream');
             if (currentToolRun) finishToolCard(currentToolRun, '❌ 失败');
         } else if (t === 'done') {
             if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }   // 会话结束清实时行
+            // 任务结束：移除任务卡（建书/写作）上的停止按钮
+            for (var bi = 0; bi < _buildCards.length; bi++) {
+                try { if (_buildCards[bi].stop && _buildCards[bi].stop.parentNode) _buildCards[bi].stop.parentNode.removeChild(_buildCards[bi].stop); } catch (e) {}
+            }
+            _buildCards = [];
             // C3：收尾所有未 resolve 的工具卡（result 缺失/滞后时兜底），清空映射
             Object.keys(toolCards).forEach(function(id) {
                 finishToolCard(toolCards[id], '⚠️ 会话结束未收尾');
@@ -605,12 +622,23 @@ console.log('[agent-panel] v26 events-stream');
     // 任务卡（「让 Agent 构建」/ 写作台技能卡触发时替代用户气泡展示，任务文本仍进 history 供 SSE 取）
     function addBuildCard(text, label) {
         var card = el('div', 'agent-tool-card');
-        card.appendChild(el('div', 'agent-tool-head', label || '🚀 建书任务'));
+        var head = el('div', 'agent-tool-head');
+        head.appendChild(el('span', 'agent-tool-head-label', label || '🚀 建书任务'));
+        var stop = el('button', 'agent-tool-stop', '⏹ 停止');
+        stop.type = 'button';
+        stop.title = '打断当前 Agent 任务';
+        stop.addEventListener('click', function () {
+            stop.disabled = true; stop.textContent = '停止中…';
+            fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function () {});
+        });
+        head.appendChild(stop);
+        card.appendChild(head);
         var body = el('div', 'agent-tool-detail', text || '');
         body.style.display = 'block';
         card.appendChild(body);
         chat.appendChild(card);
         scrollBottom();
+        _buildCards.push({ card: card, stop: stop });
         return card;
     }
     // 渲染任务卡/气泡（由 agentSendTask 或 done 接力调用；busy 排队时等上一个任务被打断才渲染）

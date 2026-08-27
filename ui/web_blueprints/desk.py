@@ -35,6 +35,57 @@ def _compat_api_storyline_engine(rest):
     return redirect("/api/storyline-engine/" + rest, 307)
 
 
+def _chapters_from_disk(book_id: str, current_chapter: int):
+    """从磁盘构造「已写章节 + 进行中草稿」列表（跨进程 stale 免疫：MCP/dsh 子进程写盘后可见）。
+
+    MCP 是独立进程，save_chapter_text/save_bridge_draft 只写磁盘 book.json/chapters/、draft_chapter.json；
+    Web 进程缓存的 engine.book.current_chapter 可能滞后。这里全部从磁盘现读。"""
+    chapters = []
+    for n in range(1, current_chapter + 1):
+        ch = book_mgr.load_chapter(book_id, n)
+        if ch and ch.get("content"):
+            chapters.append({
+                "num": n,
+                "title": ch.get("title") or f"第{n}章",
+                "content": ch.get("content") or "",
+                "bridges": ch.get("bridges") or [],
+            })
+    # 进行中草稿（draft_chapter.json）：bridges 逐桥段 span.m-bridge，刚写完的桥段即时可见
+    dp = os.path.join(_ROOT, "books", book_id, "draft_chapter.json")
+    if os.path.exists(dp):
+        try:
+            with open(dp, encoding="utf-8") as f:
+                draft = json.load(f)
+            bridges = draft.get("bridges") or []
+            buffer = draft.get("buffer") or []
+            dn = int(draft.get("chapter_num") or 0)
+            if dn > current_chapter and (bridges or buffer):
+                chapters.append({
+                    "num": dn,
+                    "title": "（写作中）",
+                    "content": "\n\n".join((b.get("text") or "") for b in bridges) if bridges
+                               else "\n\n".join(buffer),
+                    "bridges": bridges,
+                    "draft": True,
+                })
+        except Exception as e:
+            logging.getLogger(__name__).warning("加载进行中草稿失败: %s", e)
+    return chapters
+
+
+@bp.route("/api/desk/chapters/<book_id>")
+def desk_chapters_api(book_id):
+    """写作台正文 JSON：从磁盘现读已写章节+草稿（供前端轮询刷新右侧，修「agent 写完不显示」）。"""
+    cur = 0
+    try:
+        d = json.load(open(os.path.join(_ROOT, "books", book_id, "book.json"), encoding="utf-8"))
+        cur = int(d.get("current_chapter") or 0)
+    except Exception:
+        pass
+    return jsonify({"book_id": book_id, "current_chapter": cur,
+                    "chapters": _chapters_from_disk(book_id, cur)})
+
+
 @bp.route("/books/storyline/write/<engine_id>")
 def storyline_write_flow(engine_id):
     """蓝图式写作流程页（新核心）"""
@@ -44,6 +95,15 @@ def storyline_write_flow(engine_id):
     # 已写章节（供中栏「章节正文」预载，作为书目内容连续展示）
     chapters = []
     book = getattr(engine, "book", None)
+    if book and book.book_id:
+        # 跨进程 stale：MCP/dsh 子进程写盘后，用磁盘 book.json 的最新 current_chapter 修正缓存
+        try:
+            d = json.load(open(os.path.join(_ROOT, "books", book.book_id, "book.json"), encoding="utf-8"))
+            cur = int(d.get("current_chapter") or 0)
+            if cur > 0:
+                book.current_chapter = cur
+        except Exception:
+            pass
     if book and (book.current_chapter or 0) >= 1:
         try:
             for n in range(1, book.current_chapter + 1):
