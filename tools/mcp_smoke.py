@@ -129,6 +129,10 @@ async def main():
                       detail.get("title") == "MCP冒烟"
                       and (detail.get("protagonist") or {}).get("name") == "王小明",
                       f"phase={detail.get('phase')}")
+                ctx = await call_json(session, "get_writing_context", {"book_id": bid})
+                sr = (ctx.get("style_rules") or "")
+                check("get_writing_context style_rules 非空（无笔名也注入全局基线）",
+                      isinstance(sr, str) and len(sr) > 50, f"{len(sr)} 字符")
 
                 # drive_ui 步校验的宽松阀：写默认 build_status（updated_at 空 = 无真实向导状态），
                 # 使 set_outline 等步敏感命令的步校验跳过，测试不依赖 live 向导状态。

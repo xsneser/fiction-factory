@@ -88,6 +88,15 @@ assert_ok("档案-预设笔名", len(pm.list_all()) >= 3)
 profile = pm.get_by_name("枫落")
 assert_ok("档案-查找笔名", profile is not None, "枫落")
 assert_ok("档案-风格约束", len(profile.build_style_prompt()) > 100)
+assert_ok("档案-语言默认中文", profile.language == "zh", profile.language)
+from libraries.profiles import PenNameProfile as _PNP
+_en = _PNP(id="t_en", pen_name="t", language="en")
+_zh_hint = profile.build_language_hints()
+assert_ok("档案-语言提示中英不同", _en.build_language_hints() != _zh_hint
+          and _zh_hint.startswith("- 中文") and _en.build_language_hints().startswith("- 英文"))
+_wp = profile.build_writing_prompt()
+assert_ok("档案-生成前强注入", len(_wp) > 200 and "全局基线" in _wp and "通用写作纪律" in _wp,
+          f"{len(_wp)} 字符")
 
 bm = BookManager("books")
 # 清理残留：只删本测试曾创建的《系统修仙录》（title 唯一标识），绝不碰真实书
@@ -374,6 +383,25 @@ assert_ok("去AI-结果不同", result.processed != sample, "文本已变化")
 # 注入约束
 snippet = de_ai.build_deai_prompt_snippet()
 assert_ok("去AI-约束注入", len(snippet) > 100)
+
+# 风格规则库按笔名分：profile_id 归属 + 聚合 + 兜底只走全局
+from libraries.style_rules import StyleRuleLibrary as _SRL, StyleRule as _SR
+from libraries.de_ai import apply_word_replacements as _awr
+_s = _SRL()
+assert_ok("风格规则-全局基线", len(_s.get_bans()) == 9 and len(_s.get_word_map()) == 23,
+          f"{len(_s.get_bans())} 禁句/{len(_s.get_word_map())} 词")
+_s.rules.append(_SR(id="t_ban_1", kind="ban", profile_id="profile_001", pattern="测试禁句", desc="笔名禁句"))
+_s.rules.append(_SR(id="t_word_1", kind="word", profile_id="profile_001", pattern="测试专属词", replacements=["替换"]))
+_s.rules.append(_SR(id="t_prefer_1", kind="prefer", profile_id="profile_001", pattern="爱用（）做注释"))
+assert_ok("风格规则-笔名禁句聚合", len(_s.get_bans("profile_001")) == 10, f"{len(_s.get_bans('profile_001'))} 禁句")  # 9 全局 + 1 笔名
+assert_ok("风格规则-笔名词聚合", "测试专属词" in _s.get_word_map("profile_001"))
+assert_ok("风格规则-兜底只走全局", "测试专属词" not in _s.get_word_map() and len(_s.get_word_map()) == 23)
+_blk = _s.build_rules_block("profile_001")
+assert_ok("风格规则-注入块含偏好", "爱用（）做注释" in _blk and "本笔名" in _blk)
+_p = _SR.from_dict({"id": "x", "kind": "ban", "pattern": "p"})
+assert_ok("风格规则-旧条目归全局", _p.profile_id == "")  # 老 jsonl 无 profile_id 兼容
+_rt, _rc = _awr("这是一个测试专属词。")
+assert_ok("风格规则-兜底回归专属词不替换", "测试专属词" in _rt and _rc == 0, f"替换{_rc}处")
 
 # ══════════════════════════════════════════════
 #  Phase 7: 角色状态机
