@@ -393,8 +393,21 @@ function stopWritingTask(e) {
         else if (e.key === '[') prevChapter();
     });
 
-    // 右栏宽度变化（拖拽分隔条/窗口缩放）→ 重排页码
+    // 滚轮翻页：鼠标在正文容器内时，滚轮向下=下一页、向上=上一页（累积阈值触发，阻止默认页面滚动）
     var vp = Reader.el('reader-viewport');
+    if (vp) {
+        var wheelAcc = 0, WHEEL_PAGE = 80;
+        vp.addEventListener('wheel', function (e) {
+            e.preventDefault();
+            wheelAcc += e.deltaY;
+            if (Math.abs(wheelAcc) >= WHEEL_PAGE) {
+                if (wheelAcc > 0) nextPage(); else prevPage();
+                wheelAcc = 0;
+            }
+        }, { passive: false });
+    }
+
+    // 右栏宽度变化（拖拽分隔条/窗口缩放）→ 重排页码
     if (window.ResizeObserver && vp) new ResizeObserver(function () { paginate(); }).observe(vp);
 })();
 
