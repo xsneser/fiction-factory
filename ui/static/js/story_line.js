@@ -25,7 +25,8 @@
   }
 
   /* ─── 纵向缩放：调整内容高度 → 百分比映射更多像素 → 条间距更大/更紧凑 ─── */
-  var _zoom = 1;            // 缩放倍率（0.4x ~ 4x，步进 0.25）
+  var _DEFAULT_ZOOM = 4;    // 默认缩放倍率 400%（重置按钮目标）
+  var _zoom = _DEFAULT_ZOOM; // 当前缩放倍率（0.4x ~ 4x，步进 0.25）
   var _baseScrollH = 720;   // scrollable 模式下未缩放的基准内容高度
   var _panels = [];         // 需随缩放改高度的面板（轴/内容区）
   var _scrollableMode = false;
@@ -245,7 +246,7 @@
       axisPanel.appendChild(tick);
       var label = document.createElement('div');
       label.className = 'sl-tick-label'; label.style.top = yPct + '%';
-      label.textContent = fmtW(w) + '字';
+      label.textContent = fmtW(w);
       axisPanel.appendChild(label);
     }
     for (var w = 0; w < TOTAL_WORDS; w += step) addTick(w);
@@ -325,7 +326,7 @@
       bar.dataset.tooltip = JSON.stringify({
         title: o.name,
         rows: [
-          ['字数', fmtW(o.start_w) + '—' + fmtW(o.end_w) + '字'],
+          ['字数', fmtW(o.start_w) + '—' + fmtW(o.end_w)],
           ['约第', o.start_ch + '—' + o.end_ch + '章'],
           ['手法', o.narrative === 'chronological' ? '顺叙' : (o.narrative === 'flashback' ? '倒叙' : '插叙')],
           parentName ? ['父弧', parentName] : null,
@@ -472,7 +473,7 @@
         title: p.name,
         rows: [
           ['层级', level === 0 ? '主桥段' : '子桥段 L' + level],
-          ['字数', fmtW(p.start) + '—' + fmtW(p.end) + '字'],
+          ['字数', fmtW(p.start) + '—' + fmtW(p.end)],
           ['线程', p.thread || '主线'],
           p.resolves ? ['收局', '解决「' + p.resolves_name + '」'] : null,
           (p.roles && p.roles.length) ? ['出场', p.roles.join('、')] : null,
@@ -617,7 +618,7 @@
       });
       band.dataset.tooltip = JSON.stringify({
         title: '🧵 ' + t.name,
-        rows: [['字数', fmtW(t.start) + '—' + fmtW(t.end) + '字']].concat(memberRows),
+        rows: [['字数', fmtW(t.start) + '—' + fmtW(t.end)]].concat(memberRows),
         desc: t.desc || '',
         tag: '线程',
       });
@@ -709,7 +710,7 @@
           '<button type="button" class="sl-zoom-btn" data-zoom="-1" title="缩小">−</button>' +
           '<span class="sl-zoom-label">' + Math.round(_zoom * 100) + '%</span>' +
           '<button type="button" class="sl-zoom-btn" data-zoom="1" title="放大">+</button>' +
-          '<button type="button" class="sl-zoom-btn" data-zoom="0" title="重置 100%">1x</button>' +
+          '<button type="button" class="sl-zoom-btn" data-zoom="0" title="重置默认">默认</button>' +
           '</div>'
         : '';
       var html =
@@ -755,7 +756,7 @@
         (function (btn) {
           btn.addEventListener('click', function () {
             var d = parseFloat(btn.getAttribute('data-zoom') || '0');
-            window.StoryLine.setZoom(d === 0 ? 1 : (_zoom + d * 0.25));
+            window.StoryLine.setZoom(d === 0 ? _DEFAULT_ZOOM : (_zoom + d * 0.25));
           });
         })(zoomBtns[zb]);
       }
