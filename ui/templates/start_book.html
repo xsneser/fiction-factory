@@ -167,11 +167,11 @@
 main { overflow-y:auto; }   /* 页面可上下滚动：workspace.css 的 main{overflow:hidden} 会裁掉步1/2 长表单，这里恢复 */
 .wz-panels { max-width:800px; }
 .wz-panels.wide { max-width:none; }   /* 步3 两栏（故事线+世界观表单）放宽，自适应主区宽度 */
-#panel-3 .editor-mid { overflow-y:auto; }   /* 步3 中间栏可滚动（长世界观表单不被截断） */
-/* 步3 两栏高度固定（写作台式）：split 高度由视口界定 → 左右两栏等高；
-   故事线内容(scrollH×缩放)只在 .sl-main 内滚动，不再把整行/整页撑高。
-   .editor-mid 已是 overflow-y:auto（长表单内部滚动）。 */
-#panel-3 .editor-split { display:flex; height:520px; height:max(520px, calc(100vh - 200px)); min-height:0; }
+/* 步3 右栏不再内置滚动框：表单随内容自然增高，由页面 main 外部滚动展示（用户要求 2026-08-28） */
+#panel-3 .editor-mid { overflow:visible; }
+/* 步3 两栏高度由内容驱动（不再视口定高）：split 高度=两栏中较高者，左栏经 align-items:stretch
+   跟随右栏高度变动；故事线内容只在 .sl-main 内滚动，不把整行/整页撑高。 */
+#panel-3 .editor-split { display:flex; min-height:0; }
 .wz-panel fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
 .wz-panel legend { color:#58a6ff; font-weight:600; padding:0 8px; }
 /* 步3 复用书详情页 .world-edit 视觉：fieldset 间距与书详情页一致 */
