@@ -46,16 +46,15 @@
         <div class="reader-viewport" id="reader-viewport">
             <div class="reader-pages" id="reader-pages"></div>
         </div>
-        {# ─── 底部导航栏：目录 / 章节切换 / 页内翻页 ───#}
+        {# ─── 底部导航栏：目录 / 章节 / 页内翻页（下一页在章末自动续到下一章） ───#}
         <div class="reader-toolbar">
             <button type="button" class="rt-btn" id="rt-toc" title="目录">📑 目录</button>
             <button type="button" class="rt-btn" id="rt-prev" title="上一章（[）">⬅ 上一章</button>
             <span class="rt-chapter" id="rt-chapter">第 1 / 1 章</span>
-            <button type="button" class="rt-btn" id="rt-next" title="下一章（]）">下一章 ➡</button>
             <span class="rt-sep"></span>
             <button type="button" class="rt-btn" id="rt-prev-page" title="上一页（←）">⬅ 上一页</button>
             <span class="rt-page" id="rt-page">第 1 / 1 页</span>
-            <button type="button" class="rt-btn" id="rt-next-page" title="下一页（→）">下一页 ➡</button>
+            <button type="button" class="rt-btn" id="rt-next-page" title="下一页（→，章末自动进下一章）">下一页 ➡</button>
         </div>
         {# ─── 目录抽屉：右栏内部右侧滑出（.editor-mid relative + overflow:hidden 裁剪） ───#}
         <div class="toc-backdrop" id="toc-backdrop" hidden></div>
@@ -137,14 +136,14 @@ function showPage(i) {
     pages.style.transform = 'translateX(' + (-Reader.page * (colW + GAP)) + 'px)';
     var rt = Reader.el('rt-page');
     if (rt) rt.textContent = '第 ' + (Reader.page + 1) + ' / ' + Reader.totalPages + ' 页';
+    // 翻页按钮按「全书边界」禁用：仅首章第1页禁上一页、末章末页禁下一页（其余情况下一页自动续章/上一页回上章末页）
     var pp = Reader.el('rt-prev-page'), np = Reader.el('rt-next-page');
-    if (pp) pp.disabled = Reader.page <= 0;
-    if (np) np.disabled = Reader.page >= Reader.totalPages - 1;
+    if (pp) pp.disabled = (Reader.page <= 0) && (Reader.idx <= 0);
+    if (np) np.disabled = (Reader.page >= Reader.totalPages - 1) && (Reader.idx >= Reader.chapters.length - 1);
 }
 function _updateNavState() {
-    var prev = Reader.el('rt-prev'), next = Reader.el('rt-next'), rt = Reader.el('rt-chapter');
+    var prev = Reader.el('rt-prev'), rt = Reader.el('rt-chapter');
     if (prev) prev.disabled = Reader.idx <= 0;
-    if (next) next.disabled = Reader.idx >= Reader.chapters.length - 1;
     if (rt) rt.textContent = '第 ' + (Reader.idx + 1) + ' / ' + Reader.chapters.length + ' 章';
 }
 function goToChapter(i, opts) {
@@ -160,6 +159,15 @@ function goToChapter(i, opts) {
 }
 function nextChapter() { if (Reader.idx < Reader.chapters.length - 1) goToChapter(Reader.idx + 1); }
 function prevChapter() { if (Reader.idx > 0) goToChapter(Reader.idx - 1); }
+/* 翻页（章节内 + 跨章连续）：下一页在章末自动进下一章第1页；上一页在第1页回上一章末页 */
+function nextPage() {
+    if (Reader.page < Reader.totalPages - 1) showPage(Reader.page + 1);
+    else if (Reader.idx < Reader.chapters.length - 1) goToChapter(Reader.idx + 1, { page: 0 });
+}
+function prevPage() {
+    if (Reader.page > 0) showPage(Reader.page - 1);
+    else if (Reader.idx > 0) { goToChapter(Reader.idx - 1, { page: 0 }); showPage(Reader.totalPages - 1); }
+}
 
 /* ─── 目录抽屉 ─── */
 function renderToc() {
@@ -366,9 +374,8 @@ function stopWritingTask(e) {
     var bind = function (id, fn) { var el = Reader.el(id); if (el) el.addEventListener('click', fn); };
     bind('rt-toc', openToc);
     bind('rt-prev', prevChapter);
-    bind('rt-next', nextChapter);
-    bind('rt-prev-page', function () { showPage(Reader.page - 1); });
-    bind('rt-next-page', function () { showPage(Reader.page + 1); });
+    bind('rt-prev-page', prevPage);
+    bind('rt-next-page', nextPage);
     bind('toc-close', closeToc);
     var bd = Reader.el('toc-backdrop');
     if (bd) bd.addEventListener('click', closeToc);
@@ -378,11 +385,11 @@ function stopWritingTask(e) {
         if (item) { goToChapter(+item.getAttribute('data-idx'), { page: 0 }); closeToc(); }
     });
 
-    // 键盘：←/→ 翻页，[/] 切章（输入框内不响应）
+    // 键盘：←/→ 翻页（章末自动续章），[/] 切章（输入框内不响应）
     document.addEventListener('keydown', function (e) {
         if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
-        if (e.key === 'ArrowRight') showPage(Reader.page + 1);
-        else if (e.key === 'ArrowLeft') showPage(Reader.page - 1);
+        if (e.key === 'ArrowRight') nextPage();
+        else if (e.key === 'ArrowLeft') prevPage();
         else if (e.key === ']') nextChapter();
         else if (e.key === '[') prevChapter();
     });
