@@ -688,12 +688,12 @@
       opts = opts || {};
       adapt(bt);
       // 可选：按章节数拉长内容（仍是百分比渲染 → 每个百分比映射更多像素 → 条间距更大、可上下滚动）。
-      // mount 填满外层容器，长卷内容由内部 .sl-main 滚动——整块只出现这一条滚动条。
-      // 仅在调用方显式传 scrollable 时生效，避免影响 continue_flow 等「填满容器高度」的用法。
+      // 内容条用 min-height（非 height）：内容短于容器 → flex stretch 填满容器、无滚动条（空故事线=干净固定容器）；
+      // 内容长于容器 → 内部 .sl-main 滚动，画布随内容增长（无限长）。仅 scrollable 调用方生效。
       var scrollH = 0;
       if (opts.scrollable) {
         var totalCh = Math.max(1, Math.round(TOTAL_WORDS / Math.max(WPC, 1)));   // 预计章数（字数轴）
-        _baseScrollH = Math.min(2400, Math.max(720, totalCh * 18));
+        _baseScrollH = Math.min(2400, totalCh * 18);
         scrollH = zoomHeight();
         mount.style.height = '100%';
         mount.style.minHeight = '0px';
@@ -701,7 +701,7 @@
       var narrCount = { flashback: 0, interleaved: 0 };
       outlines.forEach(function (o) { if (o.narrative !== 'chronological') narrCount[o.narrative] = (narrCount[o.narrative] || 0) + 1; });
 
-      var hstyle = scrollH ? (' style="height:' + scrollH + 'px"') : '';
+      var hstyle = scrollH ? (' style="min-height:' + scrollH + 'px"') : '';
       var threadLegendHtml = threads.map(function (t) {
         return '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:' + t.color + '"></span> ' + t.name + '</div>';
       }).join('');
@@ -822,7 +822,7 @@
       _zoom = Math.max(0.4, Math.min(4, factor));
       var h = zoomHeight();
       for (var i = 0; i < _panels.length; i++) {
-        if (_panels[i]) _panels[i].style.height = h + 'px';
+        if (_panels[i]) _panels[i].style.minHeight = h + 'px';
       }
       var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
       var label = mount ? mount.querySelector('.sl-zoom-label') : null;
