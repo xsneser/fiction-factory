@@ -25,6 +25,9 @@ console.log('[agent-panel] v26 events-stream');
     var toolCards = {};                         // callId → 工具卡（事件流配对）
     var _buildCards = [];                       // 任务卡（建书/写作）列表：done 时移除其停止按钮
     var toolCardOrder = [];                     // 工具卡创建顺序（上限裁剪用）
+    var taskStartedAt = 0;                      // 当前任务起始时间（unix 秒）：SSE 断线后补渲染 task_events 的 since
+    var renderedCallIds = {};                   // 已渲染过的工具卡 callId：断线补渲染防重
+    var recovering = false;                     // SSE 断线自愈进行中（防并发触发）
     var TOOL_CARD_LIMIT = 20;                   // 对话页签工具卡上限（防 DOM 膨胀）
     var llmCards = [];                          // LLM 调用调试卡 DOM 顺序（上限裁剪用）
     var LLM_CARD_LIMIT = 10;                    // 调试卡上限（体积大，比工具卡更保守）
@@ -290,7 +293,7 @@ console.log('[agent-panel] v26 events-stream');
     function addToolCardFor(name, args, callId, usage) {
         var run = addToolCard(name, args);
         run.usage = usage || null;   // dsh agent 该工具调用的真实 token 用量
-        if (callId) toolCards[callId] = run;
+        if (callId) { toolCards[callId] = run; renderedCallIds[callId] = true; }   // 断线补渲染防重
         toolCardOrder.push(callId || ('#' + toolCardOrder.length));
         if (toolCardOrder.length > TOOL_CARD_LIMIT) {
             var old = toolCardOrder.shift();
@@ -323,6 +326,28 @@ console.log('[agent-panel] v26 events-stream');
     // ─── LLM 调用调试卡（调试模式：每次 LLM 调用的提示词 / MCP 工具 / 返回 JSON 原文）───
     // 对应 events-runner emit 的 llm/call → bridge llm_call → handleEvent。三段独立折叠，
     // 内容一律 textContent 写入（防 HTML 注入）；体积大，上限比工具卡更保守。
+    // 载荷在 events-runner 已服务端裁剪，这里再兜底一层（含刷新重建旧持久化事件），
+    // 防止大上下文（含巨大工具结果）事件把浏览器 DOM/主线程撑死。
+    function capText(s, n) {
+        if (typeof s !== 'string') return s;
+        return s.length <= n ? s : s.slice(0, n) + '\n…[已截断 +' + (s.length - n) + ' 字符]';
+    }
+    function capDeep(v, n) {
+        if (Array.isArray(v)) return v.map(function(x) { return capDeep(x, n); });
+        if (v && typeof v === 'object') {
+            var out = {};
+            for (var k in v) if (Object.prototype.hasOwnProperty.call(v, k)) out[k] = capDeep(v[k], n);
+            return out;
+        }
+        return capText(v, n);
+    }
+    function capToolsLite(tools) {
+        if (!Array.isArray(tools)) return tools;
+        return tools.map(function(t) {
+            if (!t || typeof t !== 'object') return t;
+            return { name: t.name, description: capText(t.description, 300) };
+        });
+    }
     function addLlmCallCard(evt) {
         var req = evt.request || {};
         var msgs = req.messages || [];
@@ -333,9 +358,10 @@ console.log('[agent-panel] v26 events-stream');
         head.appendChild(el('span', 'agent-llm-head-meta', evt.usage ? '⚡ ' + formatTokens(evt.usage) : ''));
         card.appendChild(head);
         var sections = [
-            ['💬 提示词（system + ' + msgs.length + ' 条消息）', { system: req.system || '', messages: msgs }],
-            ['🧰 MCP 工具（' + tools.length + ' 个）', tools],
-            ['📦 返回 JSON', evt.response !== undefined ? evt.response : null]
+            ['💬 提示词（system + ' + msgs.length + ' 条消息）',
+             { system: capDeep(req.system, 2000) || '', messages: capDeep(msgs.slice(-12), 600) }],
+            ['🧰 MCP 工具（' + tools.length + ' 个）', capToolsLite(tools)],
+            ['📦 返回 JSON', evt.response !== undefined ? capDeep(evt.response, 1500) : null]
         ];
         for (var i = 0; i < sections.length; i++) {
             var det = el('details', 'agent-llm-section');
@@ -441,7 +467,11 @@ console.log('[agent-panel] v26 events-stream');
     window.clearToolLog = clearToolLog;
 
     // ─── SSE 消费（fetch + getReader 手写解析，项目现有模式）───
+    // 断线自愈：reader 结束/读错误但从未收到 done 事件（activeSse 仍 true）时，
+    // 服务器侧 dsh 任务大概率还在跑（run_dsh_task 断连不杀子进程），前端从
+    // task_events 补渲染已落盘卡片 + 查 status 恢复 busy——避免永久卡在「LLM 生成中」。
     function consumeSSE(body) {
+        var readerStarted = false;
         return fetch('/api/agent/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -450,11 +480,16 @@ console.log('[agent-panel] v26 events-stream');
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.body.getReader();
         }).then(function(reader) {
+            readerStarted = true;
             var decoder = new TextDecoder();
             var buf = '';
             function pump() {
                 return reader.read().then(function(res) {
-                    if (res.done) return;
+                    if (res.done) {
+                        // 正常结束时 handleEvent 的 done 已把 activeSse 置 false；仍 true = 提前断开
+                        if (activeSse) recoverAfterDrop();
+                        return;
+                    }
                     buf += decoder.decode(res.value, { stream: true });
                     var lines = buf.split('\n');
                     buf = lines.pop();
@@ -469,7 +504,69 @@ console.log('[agent-panel] v26 events-stream');
                 });
             }
             return pump();
+        }).catch(function(err) {
+            // 流中途读错误（连接异常重置）：自愈；初始 fetch 失败：抛给外层显示「请求失败」
+            if (readerStarted && activeSse) { recoverAfterDrop(); return; }
+            throw err;
         });
+    }
+
+    // ─── SSE 断线自愈：补渲染已落盘工具卡 + 按运行态恢复 busy ───
+    // 1) 从 /api/agent/task-events 拉当前任务落盘事件，补齐断线后丢失的卡片（防重）；
+    // 2) 有排队任务则接力（与 done 分支一致）；否则查 status：在跑保留停止按钮，否则复位。
+    function recoverAfterDrop() {
+        if (recovering) return;
+        recovering = true;
+        var p = fetch('/api/agent/task-events?since=' + (taskStartedAt || 0))
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                var cards = (d && d.ok && d.events) ? d.events : [];
+                cards.forEach(function(e) {
+                    if (e.type === 'tool_call') {
+                        if (e.callId && renderedCallIds[e.callId]) return;
+                        var run = addToolCardFor(e.name, e.args, e.callId, e.usage);
+                        if (run) run.ts0 = e.ts;
+                    } else if (e.type === 'tool_result') {
+                        var run = toolCards[e.callId] ? toolCards[e.callId] : null;
+                        if (e.callId) delete toolCards[e.callId];
+                        if (run) {
+                            var durMs = (run.ts0 != null) ? (e.ts - run.ts0) * 1000 : undefined;
+                            finishToolCard(run, (e.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, e.summary), durMs);
+                        }
+                    } else if (e.type === 'llm_call') {
+                        addLlmCallCard(e);
+                    }
+                });
+                scrollBottom();
+            })
+            .catch(function() {});
+        p.then(function() {
+            if (pendingTask) {
+                var pt = pendingTask; pendingTask = null;
+                renderTaskStart(pt.text, pt.opts || {});
+                startTask(pt.text);
+                return undefined;
+            }
+            return fetch('/api/agent/chat/status').then(function(r) { return r.json(); }).catch(function() { return {}; });
+        }).then(function(d) {
+            if (d === undefined) return;   // 已接力排队任务
+            if (d && d.ok && d.running) {
+                busy = true;
+                setSendEnabled(false);
+                addMsg('assistant', '⚠️ SSE 连接已断开，任务仍在后台运行。可点「⏹ 停止」中断，或刷新页面同步状态。');
+            } else {
+                activeSse = false;
+                busy = false;
+                setSendEnabled(true);
+                settleInFlightCards();
+                addMsg('assistant', '⚠️ SSE 连接已断开，任务已结束。以上为服务器最近记录。');
+            }
+        }).catch(function() {
+            // 兜底：绝不把 UI 永久卡在 busy
+            activeSse = false;
+            busy = false;
+            setSendEnabled(true);
+        }).then(function() { recovering = false; });
     }
 
     function handleEvent(evt) {
@@ -602,6 +699,7 @@ console.log('[agent-panel] v26 events-stream');
         busy = true;
         resetTokenFlow();                    // 新任务：token 流量归零
         activeSse = true;                    // 活跃 SSE 会话开始
+        taskStartedAt = Date.now() / 1000 - 3;   // 略提前：task_events 的 ts 是服务端 time.time()，本地同机对齐
         setSendEnabled(false);
         removeRunningBanner();   // 新任务接管：清掉恢复期的「后台运行中」卡（SSE 实时流展示）
         consumeSSE({ messages: history, debug: isDebugOn() }).catch(function(err) {
@@ -693,6 +791,7 @@ console.log('[agent-panel] v26 events-stream');
         history = [];
         saveHistory(history);
         chat.innerHTML = '';
+        renderedCallIds = {};
         resetTokenFlow();
         fetch('/api/agent/task-events/clear', { method: 'POST' }).catch(function() {});   // 清服务器事件存储，防清空后旧工具卡回显
         addMsg('assistant', '对话已清空。有什么可以帮你？');
@@ -722,6 +821,7 @@ console.log('[agent-panel] v26 events-stream');
     // 消息 ts 在 agentSendTask / reply 时写入历史；卡片 ts 为服务器 time.time()（localhost 与浏览器同源对齐）。
     function renderConversation() {
         chat.innerHTML = '';
+        renderedCallIds = {};   // 全量重建：清掉断线补渲染用的防重记录
         addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个桥段」\n· 「打开书库看看」');
         fetch('/api/agent/task-events').then(function(r) { return r.json(); }).then(function(ld) {
             var cards = (ld && ld.ok && ld.events) ? ld.events : [];

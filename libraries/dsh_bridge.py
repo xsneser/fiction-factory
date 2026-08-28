@@ -22,12 +22,15 @@ Claude Code 经 MCP 调用的总览）。
 本模块零新增 Python 依赖（subprocess + 标准库 + core.json_store.read_json）。
 """
 import json
+import logging
 import os
 import queue
 import shutil
 import subprocess
 import threading
 import time
+
+_log = logging.getLogger("novel-engine")
 
 from libraries.token_proxy import ensure_proxy   # 拉起本地 token 检测代理（dsh 走它计 token）
 
@@ -510,6 +513,7 @@ def run_dsh_task(task: str, history: list | None = None,
     proc = None
     saw_any = False
     saw_done_event = False
+    _log.info("dsh task start: %s…", (task or "").strip()[:80])
     try:
         try:
             ensure_proxy()   # 保证本地 token 代理(58082)已监听，dsh 的 LLM 调用才能走它计 token
@@ -543,6 +547,7 @@ def run_dsh_task(task: str, history: list | None = None,
                     q.put(("line", line))
                 q.put(("eof", None))
             except Exception as e:  # pragma: no cover
+                _log.error("dsh stdout reader failed: %s", e)
                 q.put(("read_error", e))
 
         def _stderr_reader():
@@ -563,6 +568,7 @@ def run_dsh_task(task: str, history: list | None = None,
             except queue.Empty:
                 # 子进程退出后 stdout 关闭，reader 必发 eof；此处只做超时兜底
                 if time.time() - started > timeout_s:
+                    _log.warning("dsh task timeout after %ss", timeout_s)
                     proc.kill()
                     yield {"type": "error",
                            "message": f"dsh 任务超时（>{timeout_s}s），请拆分任务或稍后重试"}
@@ -576,8 +582,10 @@ def run_dsh_task(task: str, history: list | None = None,
                 try:
                     evt = json.loads(line)
                 except json.JSONDecodeError:
+                    _log.warning("dsh bad json line (%d bytes): %.160s", len(line), line)
                     continue
                 saw_any = True
+                _log.debug("dsh event %s (%d bytes)", evt.get("type", ""), len(line))
                 for sse in _map_dsh_event(evt, pending):
                     # 持久化所有可渲染卡片（工具卡 + 调试模式 LLM 调用卡），供刷新后重建卡片流
                     if sse.get("type") in ("tool_call", "tool_result", "llm_call"):
@@ -586,13 +594,18 @@ def run_dsh_task(task: str, history: list | None = None,
                         saw_done_event = True
                     yield sse
             elif kind == "eof":
+                _log.debug("dsh stdout EOF")
                 break
             else:
+                _log.warning("dsh reader error kind=%s", kind)
                 break
 
         exit_code = proc.wait()
+        _log.info("dsh task end: exit=%s saw_done=%s saw_any=%s elapsed=%.1fs",
+                  exit_code, saw_done_event, saw_any, time.time() - started)
         # 未以 done 收尾且退出非 0：判为被打断 / 崩溃（events-runner 正常结束必有 done 事件）
         if exit_code != 0 and not saw_done_event:
+            _log.warning("dsh abnormal end (stderr tail): %s", "".join(stderr_buf)[-500:])
             if _last_interrupted_pid == proc.pid:
                 yield {"type": "error", "message": "任务已被打断"}
             elif not saw_any:

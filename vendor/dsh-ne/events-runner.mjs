@@ -39,6 +39,33 @@ function emit(io, payload) {
 	io.stdout.write(JSON.stringify(payload) + "\n");
 }
 
+/**
+ * 调试卡载荷裁剪（防巨大 SSE 事件拖垮管线）：把任意 JSON 里的字符串按预算截断，
+ * 保留结构（模型名/工具名/最近消息/响应最终文本），裁掉长内容。长写作任务里
+ * llm/call 的 request.messages 含 50KB+ 的工具结果，不裁会撑爆 stdout 管道 / SSE / 浏览器 DOM。
+ */
+function capText(s, n) {
+	if (typeof s !== "string") return s;
+	return s.length <= n ? s : s.slice(0, n) + `…[+${s.length - n} chars]`;
+}
+function capDeep(v, n) {
+	if (Array.isArray(v)) return v.map((x) => capDeep(x, n));
+	if (v && typeof v === "object") {
+		const out = {};
+		for (const k in v) if (Object.prototype.hasOwnProperty.call(v, k)) out[k] = capDeep(v[k], n);
+		return out;
+	}
+	return capText(v, n);
+}
+/** 工具 schema 精简：只留 name + description（参数 schema 每轮不变、体积大，调试卡不需要）。 */
+function capTools(tools) {
+	if (!Array.isArray(tools)) return tools;
+	return tools.map((t) => t && typeof t === "object" ? {
+		name: t.name,
+		description: capText(t.description, 300)
+	} : t);
+}
+
 /** 收尾：沿用 headless 的 summarize —— 最后一个非空 assistant/message 文本 + turn 结束原因。 */
 function summarize(events, firstSeq) {
 	let started = false;
@@ -132,7 +159,9 @@ async function run(ctx, task, io) {
 		}
 		// 调试模式：assistant/message 是 LLM 回合终点，配对 llm/stream 快照 emit llm/call
 		//（response = 组装后的完整 assistant 消息，含 tool-call 块与 arguments，即「返回 JSON 原文」）。
+		// 载荷做有界裁剪（capDeep/capTools）：保留结构、裁长内容，防大上下文下事件体积失控。
 		if (DEBUG && event.type === "assistant/message" && pendingLlm) {
+			const msgs = Array.isArray(pendingLlm.messages) ? pendingLlm.messages.slice(-12) : pendingLlm.messages;
 			emit(io, { type: "llm/call", data: {
 				seq: pendingLlm.seq,
 				turn: event.data.turn,
@@ -140,11 +169,11 @@ async function run(ctx, task, io) {
 				request: {
 					provider: pendingLlm.provider,
 					model: pendingLlm.model,
-					system: pendingLlm.system,
-					messages: pendingLlm.messages,
-					tools: pendingLlm.tools
+					system: capDeep(pendingLlm.system, 2000),
+					messages: capDeep(msgs, 600),
+					tools: capTools(pendingLlm.tools)
 				},
-				response: event.data.message,
+				response: capDeep(event.data.message, 1500),
 				usage: lastUsage
 			}});
 			pendingLlm = null;

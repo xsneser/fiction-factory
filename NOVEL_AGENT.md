@@ -102,6 +102,7 @@
 - 工具被 phase 门控拒绝或抛 `BookBusyError` 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即循环，应停止并如实汇报。
 - 预算/额度触发 `budget_paused` 时停下，向用户如实汇报，不继续烧额度。
 - 薄工具（`save_outlines` / `save_chapter_text`）可能阻塞数分钟属正常，等待结果，不要反复同参重查。
+- 工具结果可能被 dsh 裁剪（如 `get_writing_context` 等大载荷 >8KB 只保留头尾）：信息不足时用 `get_writing_context` / `get_book_state` 复读或按桥段增量推进，**不要臆测「spill 文件」**（本环境禁用了文件工具，不存在可读的 spill 文件）。
 - **故事线完整性**：用 `validate_storyline(book_id)` 校验「顶层弧覆盖故事线纵轴（无叙事空白）」与「桥段仅挂最底层弧」两条硬规则；发现不合规如实汇报，不要静默硬写。
 - **「删书」无 skill**——`navigate('/books')` 让用户手动点删除（直删工具不在工具面）。
 - 拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」，不跨阶段硬做。
