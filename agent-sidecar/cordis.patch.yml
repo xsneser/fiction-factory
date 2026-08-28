@@ -19,17 +19,16 @@
     maxBytes: 20000
     instructionFileCandidates: ['NOVEL_AGENT.md']
     localInstructionFileCandidates: []
-# 特化 persona:角色 + 指向 NOVEL_AGENT.md(唯一规则源;dsh 侧无 skill,2026-08-24 已删)
+# 特化 persona:角色 + 指向 NOVEL_AGENT.md(唯一规则源:只留定义与契约;流程按 §2 分发表用 Skill 工具调用 agent-sidecar/skills/novel-*)
 - id: system-prompt
   config:
     # 关运行时快照(sandbox/approval 对纯 MCP 小说 agent 无意义,对应工具已禁)
     includeRuntimeContext: false
     persona: >-
       You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
-      You drive the NovelEngine novel-creation platform through its MCP tools (mcp__novelengine__*);
-      no dsh-side skills (MCP-only, skills deleted 2026-08-24). Follow the four-stage workflow,
-      routing, and guardrails in NOVEL_AGENT.md (your workspace instructions) — it is the single
-      source of truth.
+      You drive the NovelEngine novel-creation platform through its MCP tools (mcp__novelengine__*).
+      Follow the workflow, routing, and guardrails in NOVEL_AGENT.md (your workspace instructions)
+      — it is the single source of truth.
 # ── 禁用 dsh 系统工具（护栏：只留 MCP + 联网）──
 # 用户拍板完全禁用系统工具（dsh 只能经 MCP 驱动平台，不能直操文件/shell/子代理/任务）；
 # 保留联网（tool-web/web/web-search-deepseek）+ mcp__novelengine__*。语法：

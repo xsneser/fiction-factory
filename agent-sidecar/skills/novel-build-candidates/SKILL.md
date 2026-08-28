@@ -1,0 +1,26 @@
+---
+name: novel-build-candidates
+description: 建书 步1-2。开新书/建书/写设定/构思世界观/生成候选。流程:navigate /books/start 步1 表单(预填 idea/tags,笔名策略 query_profiles) → 步2 自主生成 3~5 候选 add_candidate 逐张呈现 → 停在步2 等用户挑选,不自动选/跳步。
+---
+
+# 建书 步1-2：表单 + 候选呈现（novel-build-candidates）
+
+> 护栏：建书只能 `drive_ui` 驱动浏览器向导（`navigate('/books/start')`），直建工具不在工具面。
+> 本 skill 只到步 2：生成候选并**呈现**到步 2，**停在交互点等用户挑选，不自动选/跳步**；用户选完点「已挑选完毕」后，页面自动触发 `novel-build`（步 3 建书）。
+
+## 步 1 表单
+- 先 `navigate('/books/start')` 翻到步 1 表单；idea/tags 已给全就预填。
+- **笔名**：用户指定→用指定笔名；用户未指定→`query_profiles()`（返回 profiles 列表，含 `pen_name`/`registered_platforms`/`style`）
+  挑最匹配的补填 `drive_ui(set_field pen)`——优先已注册平台、其次题材/描述匹配；无可用笔名→留空交用户选并说明。
+
+## 步 2 候选
+- 用户点「🚀 让 Agent 构建」后：**先 `get_build_status()` 确认当前步**（应在步 2、未建书；不符则 `navigate('/books/start')` 对齐），
+  再自主生成 **3~5 个候选**，逐个 `drive_ui(add_candidate)` 填入步 2（契约见 NOVEL_AGENT.md 1.2）。
+- **停在步 2 等用户挑选，不自动选/跳步**。
+
+## 退出状态
+- 候选已呈现，停在步 2。用户挑选完毕 → 页面触发 `novel-build`（步 3）。
+
+## 失败处置
+- `drive_ui` 后浏览器没反应 → `navigate('/books/start')` 再试。
+- 候选卡 title 缺失被浏览器拒收 → 保证 `{title, one_liner?, world_brief?}`，**title 必填**。
