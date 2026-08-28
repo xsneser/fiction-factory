@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v27 events-stream');
+console.log('[agent-panel] v28 events-stream');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -116,9 +116,9 @@ console.log('[agent-panel] v27 events-stream');
         if (!summary) return '';
         try {
             var obj = JSON.parse(summary);
-            if (obj && typeof obj === 'object') return JSON.stringify(zhKeys(obj), null, 1).slice(0, 600);
+            if (obj && typeof obj === 'object') return capText(JSON.stringify(zhKeys(obj), null, 1), 600);
         } catch (e) {}
-        return summary;
+        return capText(summary, 400);
     }
 
     // ─── 渲染 ───
@@ -175,7 +175,8 @@ console.log('[agent-panel] v27 events-stream');
             head.onclick = function() {
                 var show = detail.style.display === 'none';
                 detail.style.display = show ? 'block' : 'none';
-                if (show) detail.textContent = JSON.stringify(zhKeys(args), null, 2);
+                // 过长参数裁切展示（类似 CLI 缩略）：保留结构与头部内容，标注截断字数
+                if (show) detail.textContent = capText(JSON.stringify(zhKeys(args), null, 2), 2000);
             };
         }
         head.appendChild(label);
@@ -553,12 +554,14 @@ console.log('[agent-panel] v27 events-stream');
             if (d && d.ok && d.running) {
                 busy = true;
                 setSendEnabled(false);
+                emitAgentState();
                 addMsg('assistant', '⚠️ SSE 连接已断开，任务仍在后台运行。可点「⏹ 停止」中断，或刷新页面同步状态。');
             } else {
                 activeSse = false;
                 busy = false;
                 setSendEnabled(true);
                 settleInFlightCards();
+                emitAgentState();
                 addMsg('assistant', '⚠️ SSE 连接已断开，任务已结束。以上为服务器最近记录。');
             }
         }).catch(function() {
@@ -566,6 +569,7 @@ console.log('[agent-panel] v27 events-stream');
             activeSse = false;
             busy = false;
             setSendEnabled(true);
+            emitAgentState();
         }).then(function() { recovering = false; });
     }
 
@@ -625,6 +629,7 @@ console.log('[agent-panel] v27 events-stream');
             } else {
                 busy = false;
                 setSendEnabled(true);
+                emitAgentState();   // 页面（写作台）感知空闲
             }
         }
     }
@@ -701,6 +706,7 @@ console.log('[agent-panel] v27 events-stream');
         activeSse = true;                    // 活跃 SSE 会话开始
         taskStartedAt = Date.now() / 1000 - 3;   // 略提前：task_events 的 ts 是服务端 time.time()，本地同机对齐
         setSendEnabled(false);
+        emitAgentState();                    // 页面（写作台）感知运行态
         removeRunningBanner();   // 新任务接管：清掉恢复期的「后台运行中」卡（SSE 实时流展示）
         consumeSSE({ messages: history, debug: isDebugOn() }).catch(function(err) {
             addMsg('assistant', '⚠️ 请求失败：' + err.message);
@@ -712,6 +718,7 @@ console.log('[agent-panel] v27 events-stream');
                 activeSse = false;
                 busy = false;
                 setSendEnabled(true);
+                emitAgentState();
             }
         });
     }
@@ -763,6 +770,14 @@ console.log('[agent-panel] v27 events-stream');
     }
     // 供向导「让 Agent 构建」按钮 / 侧栏统一调用
     window.agentSendTask = agentSendTask;
+    // 供页面（写作台等）感知/打断全局 agent 任务：busy 变化派发 ne:agent-state 事件
+    window.agentIsBusy = function() { return busy; };
+    window.agentStopTask = function() {
+        fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
+    };
+    function emitAgentState() {
+        window.dispatchEvent(new CustomEvent('ne:agent-state', { detail: { busy: !!busy } }));
+    }
 
     function send() {
         var text = (input.value || '').trim();
@@ -900,8 +915,8 @@ console.log('[agent-panel] v27 events-stream');
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d || !d.ok) return;
-                if (d.running) { busy = true; setSendEnabled(false); }   // →「⏹ 停止」显现
-                else { busy = false; setSendEnabled(true); settleInFlightCards(); }
+                if (d.running) { busy = true; setSendEnabled(false); emitAgentState(); }   // →「⏹ 停止」显现
+                else { busy = false; setSendEnabled(true); settleInFlightCards(); emitAgentState(); }
             })
             .catch(function() {});
     }

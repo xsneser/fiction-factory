@@ -34,10 +34,12 @@
 
     <div class="editor-mid">
         {# ─── 写作任务卡：点击 → 侧栏渲染「📝 写作任务」卡，Agent 在侧栏执行续写 ───#}
+        {# 运行态：agent_panel 全局 busy 时卡片变红框 spinner + 停止按钮，防二次误触 ───#}
         <div class="wf-skill-cards">
-            <div class="wf-skill-card" onclick="runWritingTask()">
+            <div class="wf-skill-card" id="wf-continue-card" onclick="runWritingTask()">
                 <div class="wsc-title">✍️ 继续写正文</div>
                 <div class="wsc-sub">侧栏 Agent 逐桥段续写本章，实时汇报进度/字数/切章</div>
+                <button type="button" class="wf-stop-btn" id="wf-stop-btn" style="display:none" onclick="stopWritingTask(event)">⏹ 停止</button>
             </div>
         </div>
         {# ─── 正文视图：连续章节文本（桥段包 span.m-bridge 供点击高亮） ───#}
@@ -68,6 +70,17 @@
 .wf-skill-card:hover { border-color:#58a6ff; }
 .wf-skill-card .wsc-title { color:#58a6ff; font-weight:600; font-size:13px; margin-bottom:4px; }
 .wf-skill-card .wsc-sub { color:#8b949e; font-size:11px; line-height:1.6; }
+/* 运行态：红框 + 禁点 + 标题前 spinner + 停止按钮 */
+.wf-skill-card.running { opacity:.7; cursor:not-allowed; border-color:#f85149; }
+.wf-skill-card.running .wsc-title { color:#f85149; }
+.wf-skill-card.running .wsc-title::before { content:''; display:inline-block; width:11px; height:11px;
+    border:2px solid #f85149; border-top-color:transparent; border-radius:50%;
+    animation:wf-spin .8s linear infinite; margin-right:6px; vertical-align:-1px; }
+@keyframes wf-spin { to { transform: rotate(360deg); } }
+.wf-stop-btn { margin-top:8px; background:#21262d; border:1px solid #f85149; color:#f85149;
+    border-radius:6px; padding:4px 12px; font-size:12px; cursor:pointer; transition:all .15s; }
+.wf-stop-btn:hover { background:#f85149; color:#0d1117; }
+.wf-stop-btn:disabled { opacity:.5; cursor:default; }
 </style>
 
 <script src="/static/js/story_line.js?v=4"></script>
@@ -157,8 +170,33 @@ function _centerManuscript(el) {
 })();
 </script>
 <script>
-/* ─── 写作任务卡：构造详细任务文本发给侧栏 Agent（dsh），侧栏渲染「📝 写作任务」卡 ─── */
+/* ─── 写作任务卡：运行态 + 停止 + 防二次误触；构造任务文本发给侧栏 Agent（dsh）─── */
+function _wfSetRunning(running) {
+    var card = document.getElementById('wf-continue-card');
+    var stop = document.getElementById('wf-stop-btn');
+    if (card) card.classList.toggle('running', !!running);
+    if (stop) {
+        stop.style.display = running ? '' : 'none';
+        stop.disabled = false;
+        stop.textContent = '⏹ 停止';
+    }
+    if (card) {
+        var t = card.querySelector('.wsc-title');
+        if (t) t.textContent = running ? '⏳ 续写运行中…' : '✍️ 继续写正文';
+    }
+}
+window.addEventListener('ne:agent-state', function(e) {
+    _wfSetRunning(!!(e.detail && e.detail.busy));
+});
+// 页面加载恢复：agent_panel 的首次 ne:agent-state 可能在本监听注册前已发出，这里补查一次
+if (window.agentIsBusy && window.agentIsBusy()) _wfSetRunning(true);
+
 function runWritingTask() {
+    // 防二次误触：Agent 已在运行（本卡触发或侧栏触发）→ 忽略，不打断、不排队
+    if (window.agentIsBusy && window.agentIsBusy()) {
+        if (window.showToast) showToast('Agent 正在运行，请先停止当前任务再继续', 'error');
+        return;
+    }
     if (window.switchAgentTab) window.switchAgentTab('chat');   // 保证侧栏对话页签可见
     var bid = window.__STORYLINE_ID__ || '';
     var title = (window.__BOOK_STORYLINE__ && window.__BOOK_STORYLINE__.book_title) || '';
@@ -167,7 +205,16 @@ function runWritingTask() {
     var pen = window.__BOOK_PEN_NAME__ || '';
     var task = '请继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：写下一章（第' + nextCh + '章）正文，'
         + '写正文前先 get_writing_context 读风格规则（style_rules）并严格遵守，章末跑 chapter_quality_gate 门禁汇报。';
-    if (task && window.agentSendTask) window.agentSendTask(task, { card: true, cardLabel: '📝 写作任务 · 第' + nextCh + '章' });
+    if (task && window.agentSendTask) {
+        window.agentSendTask(task, { card: true, cardLabel: '📝 写作任务 · 第' + nextCh + '章' });
+        _wfSetRunning(true);   // 立即置运行态（ne:agent-state 事件同步兜底）
+    }
+}
+function stopWritingTask(e) {
+    if (e && e.stopPropagation) e.stopPropagation();   // 阻止冒泡到卡片 onclick
+    var stop = document.getElementById('wf-stop-btn');
+    if (stop) { stop.disabled = true; stop.textContent = '停止中…'; }
+    if (window.agentStopTask) window.agentStopTask();
 }
 
 /* ─── 正文实时刷新：轮询 /api/desk/chapters/<bid>，agent 写完桥段/章节即重渲染右侧（修「写完不显示」） ─── */
