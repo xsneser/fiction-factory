@@ -628,6 +628,15 @@
         label.textContent = t.name;
         label.style.fontSize = '10px';
         label.style.color = t.color;
+        // 长线程名称跟随滚动显示：align-self 顶置 + sticky 钉在通道表头下方(24px)，
+        // 滚动经过整条线程区间时名称始终可见；短线程无滚动时静置线程顶部。
+        label.style.alignSelf = 'flex-start';
+        label.style.position = 'sticky';
+        label.style.top = '24px';
+        label.style.zIndex = '30';
+        label.style.background = 'rgba(13, 17, 23, 0.82)';
+        label.style.padding = '1px 4px';
+        label.style.borderRadius = '3px';
         band.appendChild(label);
       }
       // 设局/收局点：在横带上标出成员桥段位置（设局琥珀 / 收局绿）
