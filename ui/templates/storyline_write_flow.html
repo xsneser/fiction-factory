@@ -34,22 +34,28 @@
     <div class="editor-divider" id="editor-divider" title="拖动调整故事线宽度"></div>
 
     <div class="editor-mid">
-        {# ─── 阅读器工具栏：目录 / 上下一章 / 页码（续写入口挪到下方底部操作条） ───#}
-        <div class="reader-toolbar">
-            <button type="button" class="rt-btn" id="rt-toc" title="目录">📑 目录</button>
-            <button type="button" class="rt-btn" id="rt-prev" title="上一章（[）">⬅ 上一章</button>
-            <span class="rt-chapter" id="rt-chapter">第 1 / 1 章</span>
-            <button type="button" class="rt-btn" id="rt-next" title="下一章（]）">下一章 ➡</button>
-            <span class="rt-page" id="rt-page">第 1 / 1 页</span>
+        {# ─── 顶部：继续写正文（原样式大卡，运行态+停止） ───#}
+        <div class="wf-skill-cards">
+            <div class="wf-skill-card" id="wf-continue-card" onclick="runWritingTask()">
+                <div class="wsc-title">✍️ 继续写正文</div>
+                <div class="wsc-sub">侧栏 Agent 逐桥段续写本章，实时汇报进度/字数/切章</div>
+                <button type="button" class="wf-stop-btn" id="wf-stop-btn" style="display:none" onclick="stopWritingTask(event)">⏹ 停止</button>
+            </div>
         </div>
         {# ─── 正文：当前章单章渲染，CSS columns 分页，桥段包 span.m-bridge 供点击高亮 ───#}
         <div class="reader-viewport" id="reader-viewport">
             <div class="reader-pages" id="reader-pages"></div>
         </div>
-        {# ─── 底部操作条：续写 / 停止（不占工具栏位置） ───#}
-        <div class="reader-footer">
-            <button type="button" class="rt-btn rt-btn-write" id="rt-write" title="让 Agent 续写下一章正文">✍️ 继续写正文</button>
-            <button type="button" class="rt-btn rt-btn-stop" id="rt-stop" title="停止当前任务" style="display:none">⏹ 停止</button>
+        {# ─── 底部导航栏：目录 / 章节切换 / 页内翻页 ───#}
+        <div class="reader-toolbar">
+            <button type="button" class="rt-btn" id="rt-toc" title="目录">📑 目录</button>
+            <button type="button" class="rt-btn" id="rt-prev" title="上一章（[）">⬅ 上一章</button>
+            <span class="rt-chapter" id="rt-chapter">第 1 / 1 章</span>
+            <button type="button" class="rt-btn" id="rt-next" title="下一章（]）">下一章 ➡</button>
+            <span class="rt-sep"></span>
+            <button type="button" class="rt-btn" id="rt-prev-page" title="上一页（←）">⬅ 上一页</button>
+            <span class="rt-page" id="rt-page">第 1 / 1 页</span>
+            <button type="button" class="rt-btn" id="rt-next-page" title="下一页（→）">下一页 ➡</button>
         </div>
         {# ─── 目录抽屉：右栏内部右侧滑出（.editor-mid relative + overflow:hidden 裁剪） ───#}
         <div class="toc-backdrop" id="toc-backdrop" hidden></div>
@@ -131,6 +137,9 @@ function showPage(i) {
     pages.style.transform = 'translateX(' + (-Reader.page * (colW + GAP)) + 'px)';
     var rt = Reader.el('rt-page');
     if (rt) rt.textContent = '第 ' + (Reader.page + 1) + ' / ' + Reader.totalPages + ' 页';
+    var pp = Reader.el('rt-prev-page'), np = Reader.el('rt-next-page');
+    if (pp) pp.disabled = Reader.page <= 0;
+    if (np) np.disabled = Reader.page >= Reader.totalPages - 1;
 }
 function _updateNavState() {
     var prev = Reader.el('rt-prev'), next = Reader.el('rt-next'), rt = Reader.el('rt-chapter');
@@ -303,14 +312,18 @@ function refreshStoryline(sl) {
 <script>
 /* ═══ 续写任务：运行态 + 停止 + 防二次误触；构造任务文本发给侧栏 Agent（dsh）═══ */
 function _wfSetRunning(running) {
-    var write = document.getElementById('rt-write');
-    var stop = document.getElementById('rt-stop');
-    if (write) {
-        write.classList.toggle('running', !!running);
-        write.textContent = running ? '⏳ 续写运行中…' : '✍️ 继续写正文';
-        write.disabled = !!running;
+    var card = document.getElementById('wf-continue-card');
+    var stop = document.getElementById('wf-stop-btn');
+    if (card) card.classList.toggle('running', !!running);
+    if (stop) {
+        stop.style.display = running ? '' : 'none';
+        stop.disabled = false;
+        stop.textContent = '⏹ 停止';
     }
-    if (stop) { stop.style.display = running ? '' : 'none'; stop.disabled = false; stop.textContent = '⏹ 停止'; }
+    if (card) {
+        var t = card.querySelector('.wsc-title');
+        if (t) t.textContent = running ? '⏳ 续写运行中…' : '✍️ 继续写正文';
+    }
 }
 window.addEventListener('ne:agent-state', function(e) {
     _wfSetRunning(!!(e.detail && e.detail.busy));
@@ -339,7 +352,7 @@ function runWritingTask() {
 }
 function stopWritingTask(e) {
     if (e && e.stopPropagation) e.stopPropagation();
-    var stop = document.getElementById('rt-stop');
+    var stop = document.getElementById('wf-stop-btn');
     if (stop) { stop.disabled = true; stop.textContent = '停止中…'; }
     if (window.agentStopTask) window.agentStopTask();
 }
@@ -354,8 +367,8 @@ function stopWritingTask(e) {
     bind('rt-toc', openToc);
     bind('rt-prev', prevChapter);
     bind('rt-next', nextChapter);
-    bind('rt-write', function () { runWritingTask(); });
-    bind('rt-stop', function (e) { stopWritingTask(e); });
+    bind('rt-prev-page', function () { showPage(Reader.page - 1); });
+    bind('rt-next-page', function () { showPage(Reader.page + 1); });
     bind('toc-close', closeToc);
     var bd = Reader.el('toc-backdrop');
     if (bd) bd.addEventListener('click', closeToc);

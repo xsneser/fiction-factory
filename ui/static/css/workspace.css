@@ -49,25 +49,35 @@ main { overflow: hidden; }
 .gf-item.action-gag { border-left-color:var(--success-fg); color:var(--fg-strong); }
 
 /* ─── 写作台阅读器（按章 CSS-columns 书式分页 + 目录抽屉；类名 reader-* 隔离） ─── */
+/* 顶部：继续写正文大卡（原样式，右栏顶部） */
+.wf-skill-cards { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
+.wf-skill-card { background:#0d1117; border:1px solid #21262d; border-radius:8px;
+    padding:10px 12px; cursor:pointer; transition:all .2s; }
+.wf-skill-card:hover { border-color:#58a6ff; }
+.wf-skill-card .wsc-title { color:#58a6ff; font-weight:600; font-size:13px; margin-bottom:4px; }
+.wf-skill-card .wsc-sub { color:#8b949e; font-size:11px; line-height:1.6; }
+.wf-skill-card.running { opacity:.7; cursor:not-allowed; border-color:#f85149; }
+.wf-skill-card.running .wsc-title { color:#f85149; }
+.wf-skill-card.running .wsc-title::before { content:''; display:inline-block; width:11px; height:11px;
+    border:2px solid #f85149; border-top-color:transparent; border-radius:50%;
+    animation:wf-spin .8s linear infinite; margin-right:6px; vertical-align:-1px; }
+@keyframes wf-spin { to { transform: rotate(360deg); } }
+.wf-stop-btn { margin-top:8px; background:#21262d; border:1px solid #f85149; color:#f85149;
+    border-radius:6px; padding:4px 12px; font-size:12px; cursor:pointer; transition:all .15s; }
+.wf-stop-btn:hover { background:#f85149; color:#0d1117; }
+.wf-stop-btn:disabled { opacity:.5; cursor:default; }
+/* 底部导航栏：目录 / 章节切换 / 页内翻页 */
 .reader-toolbar { display:flex; align-items:center; gap:8px; padding:8px 10px;
     border:1px solid var(--border-soft); border-radius:var(--radius);
-    background:var(--bg-elev); margin-bottom:8px; flex-wrap:wrap; }
-/* 底部操作条：续写/停止（不占工具栏位置） */
-.reader-footer { display:flex; gap:8px; align-items:center; padding:8px 10px; margin-top:8px;
-    border:1px solid var(--border-soft); border-radius:var(--radius); background:var(--bg-elev); }
-.reader-toolbar .rt-btn, .reader-footer .rt-btn { background:var(--bg-inset); border:1px solid var(--border);
+    background:var(--bg-elev); margin-top:8px; flex-wrap:wrap; }
+.reader-toolbar .rt-btn { background:var(--bg-inset); border:1px solid var(--border);
     color:var(--fg-muted); border-radius:var(--radius-sm); padding:4px 10px;
     font-size:12px; cursor:pointer; transition:all .15s; }
-.reader-toolbar .rt-btn:hover, .reader-footer .rt-btn:hover { border-color:var(--accent); color:var(--fg-strong); }
-.reader-toolbar .rt-btn:disabled, .reader-footer .rt-btn:disabled { opacity:.4; cursor:default; }
-.reader-toolbar .rt-btn-write, .reader-footer .rt-btn-write { background:#238636; color:#fff; border-color:#238636; }
-.reader-toolbar .rt-btn-write:hover, .reader-footer .rt-btn-write:hover { background:#2ea043; color:#fff; border-color:#2ea043; }
-.reader-toolbar .rt-btn-write.running, .reader-footer .rt-btn-write.running { background:#21262d; color:#f85149; border-color:#f85149; cursor:not-allowed; }
-.reader-toolbar .rt-btn-write.running:hover, .reader-footer .rt-btn-write.running:hover { background:#21262d; color:#f85149; }
-.reader-toolbar .rt-btn-stop, .reader-footer .rt-btn-stop { background:#21262d; border-color:#f85149; color:#f85149; }
-.reader-toolbar .rt-btn-stop:hover, .reader-footer .rt-btn-stop:hover { background:#f85149; color:#0d1117; }
+.reader-toolbar .rt-btn:hover { border-color:var(--accent); color:var(--fg-strong); }
+.reader-toolbar .rt-btn:disabled { opacity:.4; cursor:default; }
 .rt-chapter { font-size:12px; color:var(--fg-muted); }
-.rt-page { margin-left:auto; font-size:12px; color:var(--fg-dim); white-space:nowrap; }
+.rt-sep { flex:1; }
+.rt-page { font-size:12px; color:var(--fg-dim); white-space:nowrap; }
 .reader-viewport { flex:1; min-height:0; overflow:hidden; position:relative;
     border:1px solid var(--border-soft); border-radius:var(--radius); background:var(--bg-inset); }
 .reader-pages { height:100%; white-space:pre-wrap; word-break:break-word;
