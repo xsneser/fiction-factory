@@ -40,8 +40,7 @@ console.log('[agent-panel] v26 events-stream');
 
     // ─── 工具卡中文化：工具名 → 中文动作；drive_ui cmd → 中文效果；JSON 键 → 中文 ───
     var TOOL_ZH = {
-        borrow_preview: '预览借鉴设定', confirm_outlines: '确认大纲', confirm_world: '确认世界观',
-        deai_text: '去 AI 味', diagnose_retention: '追读诊断', drive_ui: '驱动建书向导',
+        drive_ui: '驱动建书向导',
         export_book: '导出投稿包', extend_outline: '续写故事线', fill_gags: '挂载笑点',
         fill_plots: '填充桥段', generate_book_meta: '生成书名+简介', generate_characters: '生成角色',
         generate_core_conflict: '生成核心矛盾', generate_factions: '生成势力', generate_full_outline: '生成完整大纲',
@@ -51,16 +50,15 @@ console.log('[agent-panel] v26 events-stream');
         mark_finished: '标记完本', navigate: '页面跳转', outline_agent: '大纲助手',
         arc_material_candidates: '取选材候选', publish_book: '上架', publish_check: '上架检查',
         query_characters: '查角色原型', query_gags: '查笑点库', query_plots: '查桥段库',
-        query_profiles: '查笔名档案', query_arc_library: '查情节弧库', review_text: '审查文本',
-        save_basic_info: '保存基础设定', tag_punch_points: '标注爽点', world_candidates: '生成世界观候选',
+        query_profiles: '查笔名档案', query_arc_library: '查情节弧库',
+        save_basic_info: '保存基础设定', world_candidates: '生成世界观候选',
         write_chapter: '写章节', write_next_bridge: '写下一桥段',
         save_bridge_draft: '保存桥段', save_chapter_text: '保存整章',
         save_outlines: '保存大纲', save_book_meta: '保存书名简介',
-        skill: '技能', chapter_quality_gate: '章节质量门禁', diagnose_continuity: '连续性扫描',
-        diagnose_promises: '伏笔扫描', discover_hot: '侦察热榜', fetch_novel: '抓取小说',
+        skill: '技能', chapter_quality_gate: '章节质量门禁',
+        discover_hot: '侦察热榜', fetch_novel: '抓取小说',
         list_crawled_novels: '已抓取书库', read_crawled_novel: '读抓取书', ingest_library_assets: '提取入库',
-        get_writing_context: '读取写作上下文', list_snapshots: '列出快照', preview_diff: '预览快照差异',
-        rollback_book: '回滚书'
+        get_writing_context: '读取写作上下文'
     };
     var CMD_ZH = {
         set_world: '写入世界观', set_characters: '写入角色', set_candidates: '填入候选',

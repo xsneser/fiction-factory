@@ -8,11 +8,11 @@
 建书走系统向导 UI（drive_ui 驱动），删书走书库页手动。因此：
   - setup/teardown 用 BookManager 直建直删临时书（文件级，不走 MCP）
   - MCP 面断言 create_book/delete_book **不存在**（护栏验收）
-  - 往返测 save_basic_info → generate_outlines(rule) → confirm_outlines → fill_gags → get_book_detail
+  - 往返测 save_basic_info → save_outlines → fill_gags → get_book_detail
   - drive_ui 命令桥意图断言
 
 断言：
-  1) MCP 工具数 = EXPECT_MCP_TOOLS；navigate/drive_ui/query_plots/diagnose_retention/query_profiles 在列；
+  1) MCP 工具数 = EXPECT_MCP_TOOLS；navigate/drive_ui/query_plots/query_profiles 在列；
      create_book/delete_book 不存在（护栏）
   2) 对临时书 save_basic_info → rule 大纲 → confirm → fill_gags → get_book_detail 全往返成功
   3) navigate 与 drive_ui 分别写入 storage/nav_intent.json（kind=navigate / kind=ui_command）
@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 43
+EXPECT_MCP_TOOLS = 32
 PASS, FAIL = [], []
 
 
@@ -100,7 +100,7 @@ async def main():
                 check("delete_book 工具不存在（护栏：删书走书库页手动）", "delete_book" not in names)
                 check("drive_ui 在列（建书向导命令桥）", "drive_ui" in names)
                 check("navigate 在列（外部经意图桥驱动浏览器）", "navigate" in names)
-                for t in ("query_plots", "diagnose_retention", "query_profiles",
+                for t in ("query_plots", "query_profiles",
                           "query_characters", "chapter_quality_gate",
                           "fetch_novel", "discover_hot",
                           "list_crawled_novels", "read_crawled_novel", "ingest_library_assets",

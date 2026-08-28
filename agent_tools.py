@@ -1683,24 +1683,17 @@ def _build_registry():
         # 导航 / 建书向导驱动（用户高频意图，必须前置）
         navigate, drive_ui,
         # 只读摸底
-        list_books, get_book_state, get_writing_context, get_storyline, borrow_preview,
+        list_books, get_book_state, get_writing_context, get_storyline,
         get_book_detail, get_build_status, query_arc_library, query_plots, query_gags, query_profiles, query_characters,
         # 规划（薄工具：agent 生成后落盘；旧工具内 LLM 生成已由 agent 自主生成接管）
         save_basic_info,
         save_outlines, save_book_meta,
-        confirm_outlines, fill_gags,
-        arc_material_candidates,
-        confirm_world,
+        fill_gags, arc_material_candidates,
         # 写作 / 元数据（薄工具：agent 生成后落盘）
         save_bridge_draft, save_chapter_text,
-        # 上架 / 审查 / 去AI / 质量分析
+        # 上架 / 质量门禁 / 校验
         publish_check, mark_finished, publish_book, export_book,
-        review_text, deai_text, extract_style_asset,
-        diagnose_retention, tag_punch_points,
-        diagnose_promises, diagnose_continuity,
         chapter_quality_gate, validate_storyline, validate_world,
-        # 快照 / diff / 回滚（决策点 commit 语义）
-        preview_diff, rollback_book, list_snapshots,
         # 抓取 / 侦察 / 提取入库（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示）
         fetch_novel, discover_hot, list_crawled_novels, read_crawled_novel,
         ingest_library_assets,

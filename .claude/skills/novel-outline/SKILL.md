@@ -14,7 +14,7 @@ description: >-
 
 ## 前置检查（必做）
 1. `mcp__novel-engine__get_book_detail` 看 `phase`：
-   - `config` 且世界观/主角充实（`confirm_world` 过）→ 可生成。
+   - `config` 且世界观/主角充实 → 可生成。
    - `outlines/plots` → 已有弧，问用户：重做 / 续写 / 直接去写作。
    - `ready` → 已就绪，问续写还是去写作。
 2. 无书 → 提示先跑 `novel-build`。设定不充实 → 先跑 `novel-build` 补。

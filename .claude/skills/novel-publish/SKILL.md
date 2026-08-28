@@ -17,7 +17,7 @@ description: >-
 ## 决策点
 - `publish_check` 报告出来后：全部通过 → 直接 `publish_book`；有不过项 → **问用户**「force 强发 or 先修问题」——**不擅自 force**（force 需用户显式确认）。
 - 用户想完本 → `mark_finished`；想导出投稿包 → `export_book`。
-- 可选打磨：`review_text` 审单章、`deai_text` 去 AI 味、`diagnose_retention` 看追读。
+- 可选打磨：`chapter_quality_gate` 审最近一章（五项门禁，只报告不修复）。
 
 ## 批处理
 1. **agent 自主生成书名+简介**（缺 synopsis 时）：读 `get_book_detail` / 第 1 章正文，你自己提炼书名（3-5 个候选选最佳）与 100-200 字简介 → `mcp__novel-engine__save_book_meta(book_id, title=..., synopsis=...)`（落 `book.json` / `storyline.json` / `outline.json`，无 LLM）。

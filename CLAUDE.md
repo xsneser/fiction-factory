@@ -1,6 +1,6 @@
 # NovelEngine — Claude Code 工作台
 
-NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 43 个工具，Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
+NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平台」。本仓库经 MCP server `novel-engine` 暴露 32 个工具，Claude Code 经 `mcp__novel-engine__*` 驱动整本书创作。创作分四阶段，每阶段一个分 skill，由主 skill `novel-master` 统一调度：
 
 > **当前驱动形态**：侧栏聊天大脑 = **dsh**（内置 agent `plugins/agent_loop.py` 已删除，无 builtin 可切回）。`libraries/dsh_bridge.py` 转发 vendored `vendor/dsh-ne/`（精简核心，改名防冲突）headless 子进程，经 MCP 驱动平台；`vendor/dsh-ne/events-runner.mjs` 把 dsh 的每个工具调用/结果实时推成 SSE（tool_call/tool_result/navigate/ui_command），侧栏实时工具卡、导航零延迟；护栏：phase 门控 `tool_policy.py` / MCP 循环熔断 `loop_guard.py` / 建书 reset。agent 架构见 `docs/架构文档-内置agent-dsh.md`，上手交接见 `docs/交接文档-2026-08-25-建书链路Agent修复.md`（2026-08-25 建书链路修复）与 `docs/交接文档-2026-08-25-小说抓取入库.md`。
 > **架构速览**（系统分层/工具注册表/双通道驱动/各阶段入口/常见坑）：`docs/架构总览.md`——交接/上手先读它，不必重新探索。设计权威仍为 `docs/设计文档-总览-claude.md`。
@@ -8,8 +8,8 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 
 | 阶段 | 分 skill | 前置 phase | 出口 | 主要工具 |
 |---|---|---|---|---|
-| 建书 | `novel-build-candidates` + `novel-build` | 无书 / phase=config | `ready`（拆分：`novel-build-candidates` 生成候选并**呈现**（`set_candidates`），停在步 2 等用户挑选；用户点「已挑选完毕」后页面自动触发 `novel-build`——步 3「内容构建工作台」分阶段构建（core_conflict→弧+桥段→势力→人物→其余维度）并随提交落库，**书创建即带弧 phase=ready**，直接进写作台） | drive_ui（驱动建书向导，含 set_candidates/set_outline）/ query_arc_library / arc_material_candidates / query_plots / query_characters / save_basic_info / confirm_world（旧 world_candidates / generate_core_conflict / generate_outline_preview / generate_factions / generate_characters / generate_rest_world / generate_full_outline / generate_world 工具**已删除**（2026-08-24 大清理，无兜底），步 3 内容全由 agent 自主生成经 set_outline / set_world / set_characters 落表） |
-| 弧+写作 | `novel-story` | `config` 且 basic_info 充实（先排弧）→ `ready`（写作） | 章节/桥段写完 | **agent 自主生成 → `save_outlines`** / arc_material_candidates / confirm_outlines / fill_gags / **`save_bridge_draft` / `save_chapter_text`** / save_book_meta / chapter_quality_gate（完整章节质量门禁）/ review_text / deai_text / diagnose_retention / tag_punch_points（旧 write_next_bridge 等已废弃留档） |
+| 建书 | `novel-build-candidates` + `novel-build` | 无书 / phase=config | `ready`（拆分：`novel-build-candidates` 生成候选并**呈现**（`set_candidates`），停在步 2 等用户挑选；用户点「已挑选完毕」后页面自动触发 `novel-build`——步 3「内容构建工作台」分阶段构建（core_conflict→弧+桥段→势力→人物→其余维度）并随提交落库，**书创建即带弧 phase=ready**，直接进写作台） | drive_ui（驱动建书向导，含 set_candidates/set_outline）/ query_arc_library / arc_material_candidates / query_plots / query_characters / save_basic_info（旧 world_candidates / generate_core_conflict / generate_outline_preview / generate_factions / generate_characters / generate_rest_world / generate_full_outline / generate_world / confirm_world / confirm_outlines 工具**已删除**（2026-08-24/08-28 大清理，无兜底），步 3 内容全由 agent 自主生成经 set_outline / set_world / set_characters 落表） |
+| 弧+写作 | `novel-story` | `config` 且 basic_info 充实（先排弧）→ `ready`（写作） | 章节/桥段写完 | **agent 自主生成 → `save_outlines`** / arc_material_candidates / fill_gags / **`save_bridge_draft` / `save_chapter_text`** / save_book_meta / chapter_quality_gate（完整章节质量门禁）（旧 write_next_bridge 等已废弃留档） |
 | 上架 | `novel-publish` | 已有第 1 章正文 | `published` / `finished` | publish_check / publish_book / mark_finished / export_book |
 
 ## 发现与编排规则

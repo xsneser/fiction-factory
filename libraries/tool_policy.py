@@ -14,10 +14,6 @@ from typing import Optional
 # 工具名 → 允许调用时的 storyline.phase 集合（未收录 = 不门控）
 PHASE_GATES = {
     # 质量 / 诊断 —— 需大纲就绪（phase=ready）
-    "tag_punch_points": {"ready"},
-    "diagnose_retention": {"ready"},
-    "diagnose_promises": {"ready"},
-    "diagnose_continuity": {"ready"},
     "chapter_quality_gate": {"ready"},
     # 薄工具（agent 生成后落盘；无 LLM）
     "save_outlines": {"config", "outlines", "plots", "ready"},
@@ -25,11 +21,9 @@ PHASE_GATES = {
     "save_bridge_draft": {"ready"},
     "save_chapter_text": {"ready"},
     # 大纲链 —— config/outlines/plots 阶段推进用；ready 放行（新流程书创建即 ready，重跑走 regenerate=True）
-    "confirm_outlines": {"config", "outlines"},
     "fill_gags": {"plots"},
     # 建书规划 —— 仅 config 阶段（未建大纲前）
     "save_basic_info": {"config"},
-    "confirm_world": {"config"},
     # 上架 —— 需已有正文
     "publish_check": {"ready"},
     "publish_book": {"ready"},

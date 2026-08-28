@@ -44,7 +44,7 @@ description: >-
   `mcp__novel-engine__save_chapter_text(book_id, chapter_num=N, text=完整正文, title=「第N章」,
    summary=你生成的摘要, bridge_segments=[{plot_id, plot_name, text}, ...])`
   ——它负责规则去AI味/审查/角色状态/承诺台账/书进度并落盘（内部不调 LLM）。
-- `save_chapter_text` 返回 `word_count`/`review`；有问题可用 `review_text`/`deai_text` 单段处理。
+- `save_chapter_text` 返回 `word_count`/`review`；有问题可用 `chapter_quality_gate` 复核（只报告不修复）。
 
 ## 完整章节构建流水线（一键写完整章 / 完整章节构建）
 1. **写**：逐桥段「你生成正文 → save_bridge_draft」直到本满章 → save_chapter_text。
