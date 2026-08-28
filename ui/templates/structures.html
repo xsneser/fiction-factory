@@ -4,7 +4,7 @@
   {% for s in stages %}
     {% set node_path = path_prefix + (loop.index0 | string) %}
     <div style="margin:6px 0;border-left:{% if path_prefix %}2px solid #30363d{% else %}none{% endif %};padding-left:{% if path_prefix %}10px{% else %}0{% endif %}">
-      <span class="tag" title="{{ s.description }}" style="max-width:100%;white-space:normal">{{ s.name }} ({{ s.min_chapters }}-{{ s.max_chapters }}章){% if s.children %} · {{ s.children|length }} 子弧{% endif %}</span>
+      <span class="tag" title="{{ s.description }}" style="max-width:100%;white-space:normal">{{ s.name }} ({{ s.min_words }}-{{ s.max_words }}字){% if s.children %} · {{ s.children|length }} 子弧{% endif %}</span>
       {% if s.themes %}
       <details class="stage-themes" style="margin:4px 0;font-size:12px">
         <summary style="cursor:pointer;color:#8b949e">🎭 {{ s.name }} 内涵{% if s.themes %}<span class="tag yellow" style="margin-left:6px">{{ s.themes|length }}</span>{% endif %}</summary>
@@ -36,7 +36,7 @@
         {% if not t.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
     </div>
     <p style="font-size:13px;margin:8px 0">{{ t.description }}</p>
-    <p style="font-size:12px;color:#8b949e">总章节: {{ t.total_chapters }} · 子弧数: {{ t.stages|length }}</p>
+    <p style="font-size:12px;color:#8b949e">总字数: {{ t.total_words }} · 子弧数: {{ t.stages|length }}</p>
     <div style="margin-top:12px">
         {{ render_stage_node(t.stages, '', t.id) }}
     </div>

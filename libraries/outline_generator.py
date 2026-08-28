@@ -520,7 +520,7 @@ class OutlineGenerator:
                 id=oid, template_id=tmpl.id,
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(candidates) > 1 else ''}",
                 start_chapter=ch,
-                end_chapter=ch + min(tmpl.total_chapters, 50) - 1,
+                end_chapter=ch + min(max(1, tmpl.total_words // 3000), 50) - 1,
                 stages=structure_to_stages(tmpl),
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
@@ -560,7 +560,7 @@ class OutlineGenerator:
                 id=oid, template_id=tmpl.id,
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(templates) > 1 else ''}",
                 start_chapter=ch,
-                end_chapter=ch + min(tmpl.total_chapters, 50) - 1,
+                end_chapter=ch + min(max(1, tmpl.total_words // 3000), 50) - 1,
                 stages=structure_to_stages(tmpl),
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
@@ -594,7 +594,7 @@ class OutlineGenerator:
 
         # 构建候选模板描述
         cand_text = "\n".join(
-            f"- {t.id}: {t.name}（{t.total_chapters}章）"
+            f"- {t.id}: {t.name}（{t.total_words}字）"
             f" | 阶段: {' → '.join(s.name for s in t.stages[:5])}"
             for t in candidates
         )
@@ -690,7 +690,7 @@ class OutlineGenerator:
                 stages = structure_to_stages(tmpl)
 
             start = od.get("start_chapter", outlines[-1].end_chapter - 2 if outlines else 1)
-            end = od.get("end_chapter", start + (tmpl.total_chapters if tmpl else 30) - 1)
+            end = od.get("end_chapter", start + (max(1, tmpl.total_words // 3000) if tmpl else 30) - 1)
 
             # 智能调整重叠
             if outlines and od.get("transition_type") == "overlap":
@@ -748,7 +748,7 @@ class OutlineGenerator:
             "chapters": f"第{o.start_chapter}-{o.end_chapter}章",
             "transition": o.transition_type,
         } for i, o in enumerate(outlines)]
-        cand_text = "\n".join(f"- {t.id}: {t.name}（{t.total_chapters}章）"
+        cand_text = "\n".join(f"- {t.id}: {t.name}（{t.total_words}字）"
                               for t in candidates[:12])
         protag = get_mc(tl.basic_info)
         prompt = f"""你是资深网文策划编辑。复查下面这条故事线的弧模板选序是否契合主角设定与前提节奏。
@@ -787,7 +787,7 @@ class OutlineGenerator:
                 o.name = f"{tmpl.name}(复查修正)"
                 o.stages = structure_to_stages(tmpl)
                 o.end_chapter = max(
-                    o.end_chapter, o.start_chapter + min(tmpl.total_chapters, 50) - 1)
+                    o.end_chapter, o.start_chapter + min(max(1, tmpl.total_words // 3000), 50) - 1)
                 applied += 1
             yield ("decision", "outline_review", {
                 "step": "选材复查（稳定性）",

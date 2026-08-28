@@ -208,7 +208,7 @@ assert_ok("弧-旧数据兼容", BookStoryline.from_dict(
     {"outlines": [{"id": "a3", "template_id": "t", "name": "旧数据"}]}).outlines[0].parent_arc_id == "")
 from libraries.structure import StageNode
 _stgTmpl = type("StubTmpl", (), {"stages": [
-    StageNode(name="阶段1", description="阶段描述", min_chapters=5, max_chapters=15,
+    StageNode(name="阶段1", description="阶段描述", min_words=15000, max_words=45000,
               key_events=["事件A", "事件B"], foreshadow_opportunities=["坑1"], themes=[])
 ]})()
 _stgDict = structure_to_stages(_stgTmpl)[0]

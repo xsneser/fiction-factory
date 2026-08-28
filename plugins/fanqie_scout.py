@@ -640,7 +640,7 @@ class NovelAnalyzer:
 
 每个弧都要拆成**多层的弧树**（大弧 → 子弧 → 阶段）：深度与各层分支数按书里真实结构定，
 **不要均匀**——有的弧只有一层（直接平铺几个阶段），有的弧两层，有的子弧内还要再拆到三层。
-子弧/阶段的 min_chapters/max_chapters 按它在书里实际占用的章节区间填。
+子弧/阶段的 min_words/max_words 按它在书里实际占用的**字数区间**填（如 3000~6000 字，按每章约 3000 字估算）。
 
 【小说内容样本】
 {text}
@@ -648,16 +648,16 @@ class NovelAnalyzer:
 返回 JSON：
 {{"structures": [
   {{"name":"弧名（如 重生复仇弧）",
-   "total_chapters":{ch_count},
+   "total_words":{ch_count * 3000},
    "tags":["题材标签","可复用场景"],
    "description":"这个弧做什么、适合什么情境",
    "stages":[
      {{"name":"子弧名","description":"这个子弧做什么",
-       "min_chapters":10,"max_chapters":20,
+       "min_words":30000,"max_words":60000,
        "key_events":["事件1","事件2"],
        "children":[
          {{"name":"孙弧/阶段名","description":"...",
-           "min_chapters":3,"max_chapters":8,
+           "min_words":9000,"max_words":24000,
            "key_events":["事件1","事件2"]}}
        ]}}
    ]}}
@@ -789,8 +789,9 @@ class LibraryIngestor:
                 return StageNode(name=s, description="")
             return StageNode(
                 name=s.get("name",""), description=s.get("description",""),
-                min_chapters=s.get("min_chapters",10),
-                max_chapters=s.get("max_chapters",20),
+                # 兼容旧数据 min_chapters/max_chapters → ×3000
+                min_words=s.get("min_words", s.get("min_chapters", 10) * 3000),
+                max_words=s.get("max_words", s.get("max_chapters", 20) * 3000),
                 key_events=s.get("key_events",[]),
                 foreshadow_opportunities=s.get("foreshadow_opportunities",[]),
                 themes=s.get("themes",[]),

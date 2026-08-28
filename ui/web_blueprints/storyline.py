@@ -68,7 +68,7 @@ def _build_next_arc(builder, tl, mode="rule"):
     tmpl = structs[idx]
     max_end = max((o.end_chapter for o in tl.outlines), default=0)
     start = max_end + 1
-    span = min(tmpl.total_chapters, 60)
+    span = min(max(1, tmpl.total_words // 3000), 60)
     from libraries.storyline import OutlineSlot
     arc = OutlineSlot(
         id=builder._next_id("outline"),
@@ -77,7 +77,8 @@ def _build_next_arc(builder, tl, mode="rule"):
         start_chapter=start,
         end_chapter=start + span - 1,
         stages=[
-            {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
+            {"name": s.name,
+             "min_ch": max(1, s.min_words // 3000), "max_ch": max(1, s.max_words // 3000),
              "events": s.key_events[:5],
              "description": getattr(s, "description", ""),
              "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or [])}

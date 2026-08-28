@@ -456,10 +456,14 @@ class BookStoryline:
 # 故事线生成器
 # ═══════════════════════════════════════════
 
-def structure_to_stages(tmpl) -> list[dict]:
-    """把结构模板的阶段展开为 stage dict（name/min_ch/max_ch/events/description/foreshadow_opportunities/themes）——多实现共用防漂移。"""
+def structure_to_stages(tmpl, words_per_chapter: int = 3000) -> list[dict]:
+    """把结构模板的阶段展开为 stage dict（name/min_ch/max_ch/events/description/foreshadow_opportunities/themes）——多实现共用防漂移。
+    模板只表述字数（min_words/max_words），此处按每章字数换算成章数（book 侧 stage 兼容视图）。"""
+    wpc = max(1, words_per_chapter or 3000)
     return [
-        {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
+        {"name": s.name,
+         "min_ch": max(1, s.min_words // wpc),
+         "max_ch": max(1, s.max_words // wpc),
          "events": s.key_events[:5],
          "description": getattr(s, "description", ""),
          "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or []),
@@ -570,7 +574,7 @@ class StorylineBuilder:
                 template_id=tid,
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(template_ids)>1 else ''}",
                 start_chapter=ch,
-                end_chapter=ch + tmpl.total_chapters - 1,
+                end_chapter=ch + max(1, tmpl.total_words // 3000) - 1,
                 stages=structure_to_stages(tmpl),
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
@@ -588,7 +592,7 @@ class StorylineBuilder:
         if self.structures:
             templates = self.structures.templates[:20]  # 最多 20 个候选
             available = "\n".join(
-                f"- {t.id}: {t.name} ({t.total_chapters}章) | 阶段: {'→'.join(s.name for s in t.stages[:5])}"
+                f"- {t.id}: {t.name} ({t.total_words}字) | 阶段: {'→'.join(s.name for s in t.stages[:5])}"
                 for t in templates
             )
 

@@ -254,12 +254,12 @@ def get_build_status() -> dict:
 
 
 def _stage_tree(s):
-    """把弧模板的 StageNode（可 children 嵌套）压成紧凑 dict 树供 agent 参考（单弧可多层）。"""
+    """把弧模板的 StageNode（可 children 嵌套）压成紧凑 dict 树供 agent 参考（单弧可多层，字数表述）"""
     node = {
         "name": s.name,
         "description": (s.description or "")[:120],
-        "min_chapters": s.min_chapters,
-        "max_chapters": s.max_chapters,
+        "min_words": s.min_words,
+        "max_words": s.max_words,
         "key_events": (s.key_events or [])[:4],
     }
     if s.children:
@@ -278,7 +278,7 @@ def query_arc_library(keyword: str = "", tags: str = "") -> dict:
         rows = [t for t in rows if kw in (t.name or "")]
     return {"templates": [{
         "id": t.id, "name": t.name, "tags": t.tags,
-        "total_chapters": t.total_chapters,
+        "total_words": t.total_words,
         "stages": [_stage_tree(s) for s in (t.stages or [])[:8]],
     } for t in rows[:20]]}
 
@@ -663,7 +663,7 @@ def arc_material_candidates(book_id: str) -> dict:
     if not candidates:
         candidates = struct_lib.templates[:5]
     templates = [{
-        "id": t.id, "name": t.name, "total_chapters": t.total_chapters,
+        "id": t.id, "name": t.name, "total_words": t.total_words,
         "stages": [_stage_tree(s) for s in (t.stages or [])[:8]],
     } for t in (candidates or [])[:10]]
     plots = [{
@@ -1675,10 +1675,10 @@ def ingest_library_assets(plots: list | None = None, structures: list | None = N
 
     纯规则落盘、无 LLM（复用 FanqieScoutAgent.ingest_selected，角色走新增
     _add_character）。字段格式——plot {name, category, sub_category, structure,
-    slots[{name, options}], notes, word_range}；structure {name, total_chapters,
-    tags?, description?, stages[{name, description, min_chapters, max_chapters,
+    slots[{name, options}], notes, word_range}；structure {name, total_words,
+    tags?, description?, stages[{name, description, min_words, max_words,
     key_events, children?[{…}]}]}（弧模板=单弧，stages 为子弧，可 children 嵌套多层，
-    深度/分支按书里真实结构定、不要求均匀）；gag {name, category,
+    深度/分支按书里真实结构定、不要求均匀；只表述字数，不含章数）；gag {name, category,
     pattern_description, fit_scenes, examples}；character {name, personality,
     description, archetypes, examples, catchphrases, tags, fit_tags}。
     返回 {ok, source, plots, structures, gags, characters}。
