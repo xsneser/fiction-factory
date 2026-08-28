@@ -180,10 +180,15 @@ def get_writing_context(book_id: str) -> dict:
     else:
         next_chapter = (book.get("current_chapter") or 0) + 1
     payload["next_chapter"] = next_chapter
-    # pen_name + style_rules：注入笔名风格规则（dsh/MCP 写作流此前缺失，agent 每轮读本工具即可见）
+    # pen_name + style_rules：注入笔名风格约束（生成前强注入，dsh/MCP 写作 agent 每轮必读必遵）
     payload["pen_name"] = (tl.pen_name if tl else "") or book.get("pen_name") or ""
     profile = _profile_for(tl) if tl else None
-    payload["style_rules"] = profile.build_style_prompt() if profile else ""
+    if profile:
+        payload["style_rules"] = profile.build_writing_prompt()
+    else:
+        # 无笔名档案也注入全局基线兜底（禁句式/词表对所有书生效）
+        from libraries.style_rules import StyleRuleLibrary
+        payload["style_rules"] = StyleRuleLibrary().build_rules_block()
     return payload
 
 
@@ -326,6 +331,7 @@ def query_profiles(keyword: str = "") -> dict:
         "platform_accounts": p.platform_accounts or {},
         "registered_platforms": p.registered_platforms(),
         "style": {
+            "language": (p.language or "zh"),
             "sentence_length": (p.style_fingerprint or {}).get("sentence_length", ""),
             "dialogue_ratio": (p.style_fingerprint or {}).get("dialogue_ratio", 0),
             "paragraph_style": (p.style_fingerprint or {}).get("paragraph_style", ""),
