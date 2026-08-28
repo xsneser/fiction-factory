@@ -4,7 +4,7 @@
 {% endblock %}
 {% block content %}
 {% from "_flow_stepper.html" import status_badge %}
-<link rel="stylesheet" href="/static/css/story_line.css?v=3">
+<link rel="stylesheet" href="/static/css/story_line.css?v=4">
 <h1 id="book-title" style="cursor:pointer" title="点击编辑书名">📖 {{ book.title or '(待定)' }}</h1>
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
@@ -78,7 +78,7 @@ var storylineId = "{{ book.book_id }}";
 <div class="empty"><div class="icon">✍️</div><p>还没有生成章节</p></div>
 {% endif %}
 <script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
-<script src="/static/js/story_line.js?v=3"></script>
+<script src="/static/js/story_line.js?v=4"></script>
 <script>
 /* 故事线区块默认折叠：Gantt 在隐藏态容器高度为 0，改为首次展开 #sl-toggle 时再初始化 */
 var _slInited = false;

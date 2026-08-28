@@ -4,7 +4,7 @@
 <div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <a href="/books/{{ state.book_id }}">{{ state.title or '(待定)' }}</a> <span class="sep">›</span> <span class="cur">写作台</span></div>
 {% endblock %}
 {% block content %}
-<link rel="stylesheet" href="/static/css/story_line.css?v=3">
+<link rel="stylesheet" href="/static/css/story_line.css?v=4">
 <link rel="stylesheet" href="/static/css/workspace.css">
 {% from "_flow_stepper.html" import status_badge %}
 {% from "_info_bar.html" import info_bar %}
@@ -70,7 +70,7 @@
 .wf-skill-card .wsc-sub { color:#8b949e; font-size:11px; line-height:1.6; }
 </style>
 
-<script src="/static/js/story_line.js?v=3"></script>
+<script src="/static/js/story_line.js?v=4"></script>
 <script>
 /* ─── 初始化故事线 ─── */
 function refreshStoryline(sl) {

@@ -452,14 +452,15 @@
       bar.style.width = 'calc(' + barW + '% - ' + (li.totalLanes * gap) + 'px)';
       bar.style.right = 'auto';
       bar.style.zIndex = 5 + level;
+      var barColor = threadColor(p.thread);   // 桥段条颜色 = 所属线程色（去右上角色点后，条本身颜色即线程标识）
       if (level === 0) {
-        bar.style.background = 'linear-gradient(135deg,' + p.color + ',' + p.color + 'cc)';
+        bar.style.background = 'linear-gradient(135deg,' + barColor + ',' + barColor + 'cc)';
         bar.style.border = '1px solid rgba(255,255,255,.2)';
       } else if (level === 1) {
-        bar.style.background = 'linear-gradient(135deg,' + p.color + '99,' + p.color + '88)';
+        bar.style.background = 'linear-gradient(135deg,' + barColor + '99,' + barColor + '88)';
         bar.style.borderLeft = '2px solid rgba(255,255,255,.3)';
       } else {
-        bar.style.background = 'linear-gradient(135deg,' + p.color + '77,' + p.color + '55)';
+        bar.style.background = 'linear-gradient(135deg,' + barColor + '77,' + barColor + '55)';
         bar.style.borderLeft = '2px solid rgba(255,255,255,.2)';
       }
       var pms = promiseByPlot[p.id] || [];
@@ -485,14 +486,9 @@
         var label = document.createElement('span');
         label.className = 'sl-bar-label';
         label.textContent = p.name;
-        label.style.fontSize = Math.min(10, Math.max(8, height * 0.3)) + 'px';
+        label.style.fontSize = Math.min(13, Math.max(11, height * 0.4)) + 'px';
         bar.appendChild(label);
       }
-      var tdot = document.createElement('span');
-      tdot.className = 'sl-thread-dot';
-      tdot.style.background = threadColor(p.thread);
-      tdot.title = '线程：' + (p.thread || '主线');
-      bar.appendChild(tdot);
       if (p.resolves) {
         var pbadge = document.createElement('span');
         pbadge.className = 'sl-payoff-badge';
