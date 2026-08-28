@@ -167,4 +167,4 @@
 .sl-legend-swatch.interleaved { background: transparent; border: 1px dashed var(--success-fg); }
 
 /* ─── 书详情页故事线展示框：高度固定，边框/圆角由 .sl-root 提供（避免双边框） ─── */
-.sl-frame { height: 520px; overflow: hidden; margin-bottom: 20px; }
+.sl-frame { height: clamp(600px, 75vh, 960px); overflow: hidden; margin-bottom: 20px; }

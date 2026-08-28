@@ -398,6 +398,7 @@
     plotBody.innerHTML = '';
     var bodyW = plotBody.clientWidth, bodyH = plotBody.clientHeight;
     if (!bodyH || bodyH < 40) bodyH = 400;
+    var contentH = zoomHeight();   // 可滚动内容区高度：桥段条实际像素高 = height% × contentH / 100（标签阈值按像素判断）
     var plotById = {};
     plots.forEach(function (p) { plotById[p.id] = p; });
 
@@ -480,7 +481,7 @@
         ].filter(Boolean).concat(promiseRows),
         tag: '桥段',
       });
-      if (height > 1.0) {
+      if ((height / 100) * contentH >= 12) {   // 实际像素高 ≥12px 才显示名称：默认4x缩放下 1%≈28px 可显示；缩小到薄条时自动隐藏避免重叠
         var label = document.createElement('span');
         label.className = 'sl-bar-label';
         label.textContent = p.name;
