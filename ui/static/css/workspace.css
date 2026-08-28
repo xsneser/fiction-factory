@@ -47,3 +47,56 @@ main { overflow: hidden; }
 .gf-item.action-outline { border-left-color:#f97583; color:var(--fg-strong); }
 .gf-item.action-plot { border-left-color:#79c0ff; color:var(--fg-strong); }
 .gf-item.action-gag { border-left-color:var(--success-fg); color:var(--fg-strong); }
+
+/* ─── 写作台阅读器（按章 CSS-columns 书式分页 + 目录抽屉；类名 reader-* 隔离） ─── */
+.reader-toolbar { display:flex; align-items:center; gap:8px; padding:8px 10px;
+    border:1px solid var(--border-soft); border-radius:var(--radius);
+    background:var(--bg-elev); margin-bottom:8px; flex-wrap:wrap; }
+.reader-toolbar .rt-btn { background:var(--bg-inset); border:1px solid var(--border);
+    color:var(--fg-muted); border-radius:var(--radius-sm); padding:4px 10px;
+    font-size:12px; cursor:pointer; transition:all .15s; }
+.reader-toolbar .rt-btn:hover { border-color:var(--accent); color:var(--fg-strong); }
+.reader-toolbar .rt-btn:disabled { opacity:.4; cursor:default; }
+.reader-toolbar .rt-btn-write { background:#238636; color:#fff; border-color:#238636; }
+.reader-toolbar .rt-btn-write:hover { background:#2ea043; color:#fff; border-color:#2ea043; }
+.reader-toolbar .rt-btn-write.running { background:#21262d; color:#f85149; border-color:#f85149; cursor:not-allowed; }
+.reader-toolbar .rt-btn-write.running:hover { background:#21262d; color:#f85149; }
+.reader-toolbar .rt-btn-stop { background:#21262d; border-color:#f85149; color:#f85149; }
+.reader-toolbar .rt-btn-stop:hover { background:#f85149; color:#0d1117; }
+.rt-chapter { font-size:12px; color:var(--fg-muted); }
+.rt-page { margin-left:auto; font-size:12px; color:var(--fg-dim); white-space:nowrap; }
+.reader-viewport { flex:1; min-height:0; overflow:hidden; position:relative;
+    border:1px solid var(--border-soft); border-radius:var(--radius); background:var(--bg-inset); }
+.reader-pages { height:100%; white-space:pre-wrap; word-break:break-word;
+    column-fill:auto; transition:transform .22s ease; will-change:transform;
+    padding:24px 0; box-sizing:border-box; }   /* 仅上下留白：列宽=视口宽保证翻页对齐（水平 padding 会致列窄于视口、翻页错位） */
+.reader-pages .m-chapter-title { font-size:18px; font-weight:700; color:var(--fg-strong); margin:0 0 14px; }
+.reader-pages .m-bridge { break-inside:avoid-column; }
+/* 草稿徽标（原 .manuscript .m-draft-tag 作用域不适用阅读器，这里补 badge 视觉） */
+.reader-pages .m-draft-tag { display:inline-block; vertical-align:middle; margin-left:10px;
+    padding:1px 8px; font-size:12px; font-weight:600; color:#8b949e;
+    border:1px dashed #30363d; border-radius:999px; }
+/* 目录抽屉（fixed，右侧滑出 + 半透明遮罩） */
+.toc-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:40; }
+.toc-drawer { position:fixed; top:0; right:0; bottom:0; width:min(320px,80vw);
+    background:var(--bg-elev); border-left:1px solid var(--border-soft);
+    transform:translateX(100%); transition:transform .25s ease; z-index:41;
+    display:flex; flex-direction:column; }
+.toc-drawer.open { transform:translateX(0); }
+.toc-head { display:flex; justify-content:space-between; align-items:center;
+    padding:12px 14px; border-bottom:1px solid var(--border-soft); font-weight:600; }
+.toc-head .toc-close { background:none; border:none; color:var(--fg-muted); font-size:18px;
+    cursor:pointer; line-height:1; padding:2px 6px; }
+.toc-head .toc-close:hover { color:var(--danger-fg); }
+.toc-list { flex:1; overflow-y:auto; padding:8px; }
+.toc-item { display:flex; gap:8px; align-items:baseline; width:100%; text-align:left;
+    background:none; border:none; padding:8px 10px; border-radius:6px;
+    color:var(--fg-muted); cursor:pointer; font-size:13px; }
+.toc-item:hover { background:var(--bg-hover); }
+.toc-item.is-current { background:rgba(88,166,255,.15); color:var(--fg-strong); }
+.toc-item .toc-num { color:var(--fg-dim); font-size:11px; flex-shrink:0; }
+.toc-item.is-current .toc-num { color:var(--accent); font-weight:600; }
+.toc-item .toc-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.toc-item .toc-meta { font-size:11px; color:var(--fg-dim); white-space:nowrap; flex-shrink:0; }
+.toc-item .m-draft-tag { display:inline-block; margin-left:4px; padding:0 6px;
+    font-size:11px; color:#8b949e; border:1px dashed #30363d; border-radius:999px; flex-shrink:0; }
