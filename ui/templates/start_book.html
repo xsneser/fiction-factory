@@ -168,9 +168,10 @@ main { overflow-y:auto; }   /* 页面可上下滚动：workspace.css 的 main{ov
 .wz-panels { max-width:800px; }
 .wz-panels.wide { max-width:none; }   /* 步3 两栏（故事线+世界观表单）放宽，自适应主区宽度 */
 #panel-3 .editor-mid { overflow-y:auto; }   /* 步3 中间栏可滚动（长世界观表单不被截断） */
-/* 步3 两栏保持可见高度（写作台式）：故事线为空时左栏也是可见空白竖栏，min-height 兜底（无装饰）；
-   display:flex 强制两栏横排（不依赖 workspace.css 是否已加载）；min-height 520px 兜底不支持 max() 的浏览器 */
-#panel-3 .editor-split { display:flex; min-height:520px; min-height: max(520px, calc(100vh - 200px)); }
+/* 步3 两栏高度固定（写作台式）：split 高度由视口界定 → 左右两栏等高；
+   故事线内容(scrollH×缩放)只在 .sl-main 内滚动，不再把整行/整页撑高。
+   .editor-mid 已是 overflow-y:auto（长表单内部滚动）。 */
+#panel-3 .editor-split { display:flex; height:520px; height:max(520px, calc(100vh - 200px)); min-height:0; }
 .wz-panel fieldset { border:1px solid #30363d; border-radius:8px; padding:20px; margin-bottom:20px; }
 .wz-panel legend { color:#58a6ff; font-weight:600; padding:0 8px; }
 /* 步3 复用书详情页 .world-edit 视觉：fieldset 间距与书详情页一致 */
