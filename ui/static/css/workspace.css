@@ -75,9 +75,8 @@ main { overflow: hidden; }
     font-size:12px; cursor:pointer; transition:all .15s; }
 .reader-toolbar .rt-btn:hover { border-color:var(--accent); color:var(--fg-strong); }
 .reader-toolbar .rt-btn:disabled { opacity:.4; cursor:default; }
-.rt-chapter { font-size:12px; color:var(--fg-muted); }
 .rt-sep { flex:1; }
-.rt-page { font-size:12px; color:var(--fg-dim); white-space:nowrap; }
+.rt-pos { font-size:12px; color:var(--fg-muted); white-space:nowrap; }
 .reader-viewport { flex:1; min-height:0; overflow:hidden; position:relative;
     border:1px solid var(--border-soft); border-radius:var(--radius); background:var(--bg-inset); }
 .reader-pages { height:100%; white-space:pre-wrap; word-break:break-word;

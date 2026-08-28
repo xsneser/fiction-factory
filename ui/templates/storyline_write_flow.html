@@ -46,14 +46,12 @@
         <div class="reader-viewport" id="reader-viewport">
             <div class="reader-pages" id="reader-pages"></div>
         </div>
-        {# ─── 底部导航栏：目录 / 章节 / 页内翻页（下一页在章末自动续到下一章） ───#}
+        {# ─── 底部导航栏：目录 + 上一页/下一页（章末自动续到下一章）；章节/页码合并为单个进度指示 ───#}
         <div class="reader-toolbar">
             <button type="button" class="rt-btn" id="rt-toc" title="目录">📑 目录</button>
-            <button type="button" class="rt-btn" id="rt-prev" title="上一章（[）">⬅ 上一章</button>
-            <span class="rt-chapter" id="rt-chapter">第 1 / 1 章</span>
             <span class="rt-sep"></span>
             <button type="button" class="rt-btn" id="rt-prev-page" title="上一页（←）">⬅ 上一页</button>
-            <span class="rt-page" id="rt-page">第 1 / 1 页</span>
+            <span class="rt-pos" id="rt-pos">第 1 / 1 章 · 第 1 / 1 页</span>
             <button type="button" class="rt-btn" id="rt-next-page" title="下一页（→，章末自动进下一章）">下一页 ➡</button>
         </div>
         {# ─── 目录抽屉：右栏内部右侧滑出（.editor-mid relative + overflow:hidden 裁剪） ───#}
@@ -134,17 +132,19 @@ function showPage(i) {
     var GAP = Reader.PAGE_GAP, colW = _colW();
     Reader.page = Math.max(0, Math.min(i, Reader.totalPages - 1));
     pages.style.transform = 'translateX(' + (-Reader.page * (colW + GAP)) + 'px)';
-    var rt = Reader.el('rt-page');
-    if (rt) rt.textContent = '第 ' + (Reader.page + 1) + ' / ' + Reader.totalPages + ' 页';
+    _updatePosition();
     // 翻页按钮按「全书边界」禁用：仅首章第1页禁上一页、末章末页禁下一页（其余情况下一页自动续章/上一页回上章末页）
     var pp = Reader.el('rt-prev-page'), np = Reader.el('rt-next-page');
     if (pp) pp.disabled = (Reader.page <= 0) && (Reader.idx <= 0);
     if (np) np.disabled = (Reader.page >= Reader.totalPages - 1) && (Reader.idx >= Reader.chapters.length - 1);
 }
+/* 合并进度指示：第 N / M 章 · 第 X / Y 页（章节切换与翻页都会调用） */
+function _updatePosition() {
+    var rt = Reader.el('rt-pos');
+    if (rt) rt.textContent = '第 ' + (Reader.idx + 1) + ' / ' + Reader.chapters.length + ' 章 · 第 ' + (Reader.page + 1) + ' / ' + Reader.totalPages + ' 页';
+}
 function _updateNavState() {
-    var prev = Reader.el('rt-prev'), rt = Reader.el('rt-chapter');
-    if (prev) prev.disabled = Reader.idx <= 0;
-    if (rt) rt.textContent = '第 ' + (Reader.idx + 1) + ' / ' + Reader.chapters.length + ' 章';
+    _updatePosition();
 }
 function goToChapter(i, opts) {
     if (!Reader.chapters.length) return;
@@ -373,7 +373,6 @@ function stopWritingTask(e) {
 
     var bind = function (id, fn) { var el = Reader.el(id); if (el) el.addEventListener('click', fn); };
     bind('rt-toc', openToc);
-    bind('rt-prev', prevChapter);
     bind('rt-prev-page', prevPage);
     bind('rt-next-page', nextPage);
     bind('toc-close', closeToc);
