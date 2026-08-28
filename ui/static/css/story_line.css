@@ -60,10 +60,10 @@
 }
 
 /* ─── 轴线 ─── */
-.sl-axis-panel { width: 14px; position: relative; flex-shrink: 0; }
-.sl-axis-panel .sl-axis-line { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: linear-gradient(to bottom, var(--border), var(--border-soft) 20%, var(--border-soft) 80%, var(--border)); transform: translateX(-50%); }
-.sl-axis-panel .sl-tick { position: absolute; left: 50%; transform: translate(-50%, -50%); width: 8px; height: 1px; background: var(--border); }
-.sl-axis-panel .sl-tick-label { position: absolute; right: 4px; transform: translateY(-50%); font-size: 9px; color: var(--fg-dim); white-space: nowrap; }
+.sl-axis-panel { width: 34px; position: relative; flex-shrink: 0; }
+.sl-axis-panel .sl-axis-line { position: absolute; left: 4px; top: 0; bottom: 0; width: 2px; background: linear-gradient(to bottom, var(--border), var(--border-soft) 20%, var(--border-soft) 80%, var(--border)); transform: translateX(-50%); }
+.sl-axis-panel .sl-tick { position: absolute; left: 4px; transform: translate(-50%, -50%); width: 8px; height: 1px; background: var(--border); }
+.sl-axis-panel .sl-tick-label { position: absolute; left: 10px; transform: translateY(-50%); font-size: 9px; color: var(--fg-dim); white-space: nowrap; }
 
 /* ─── 内容区 + 通道 ─── */
 .sl-content-area { flex: 1; display: flex; position: relative; overflow: hidden; }
