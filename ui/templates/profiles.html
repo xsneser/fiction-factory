@@ -1,35 +1,53 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>👤 笔名档案 <a href="/profiles/new" class="btn" style="float:right">+ 新笔名</a></h1>
-{% if profiles %}
-<div class="cards">
-{% for p in profiles %}
-<div class="card">
-    <div class="title">{{ p.pen_name }} <span class="tag {{ 'green' if p.language == 'zh' else 'purple' }}">{{ '中文' if p.language == 'zh' else '英文' }}笔名</span></div>
-    <p style="font-size:13px;color:#8b949e">{{ p.description }}</p>
-    <div style="margin-top:8px">
-        <span class="tag">{{ p.style_fingerprint.get('humor_style','') }}</span>
-        <span class="tag blue">{{ p.style_fingerprint.get('sentence_length','') }}句</span>
-    </div>
-    {% if p.word_print.get('common_words') %}
-    <p style="font-size:11px;margin-top:8px;color:#484f58">常用词: {{ p.word_print.common_words|join(', ') }}</p>
-    {% endif %}
-    {% set sa = p.style_assets %}
-    {% if sa %}
-    <p style="font-size:11px;margin-top:8px;color:#484f58">写法资产: {% set en = sa.get('enabled', {}) %}{% for f in ['common_words','avoid_words','sentence_starters','action_beats'] %}{% if sa.get(f) and en.get(f, True) %}{{ f }} · {% endif %}{% endfor %}{% for k, v in en.items() %}{% if not v %}<span class="tag red">✕ {{ k }}</span>{% endif %}{% endfor %}</p>
-    {% endif %}
-    <p style="font-size:11px;color:#484f58">关联: {{ p.assigned_books|length }} 本书</p>
-    <div style="margin-top:8px;font-size:12px">
-        {% set regs = p.registered_platforms() %}
-        {% if regs %}
-        <span style="color:#3fb950">✓ 已注册：{% for r in regs %}{{ platform_labels.get(r, r) }}{% if not loop.last %}、{% endif %}{% endfor %}</span>
-        {% else %}
-        <span style="color:#484f58">未登记平台账号</span>
+<div class="md">
+    <!-- 左：笔名列表（全局基线置顶 + 中英文分组） -->
+    <aside class="md-side">
+        <div class="md-actions">
+            <strong style="color:#f0f6fc">笔名</strong>
+            <a href="/profiles?scope=new" class="btn small" style="float:right">+ 新建</a>
+        </div>
+        <a class="md-item {{ 'active' if current_scope == '' }}" href="/profiles?scope=">🌐 全局基线</a>
+        {% for lang, group in profiles|groupby('language') %}
+        <div class="md-group">{{ '🇨🇳 中文笔名' if lang == 'zh' else '🇬🇧 英文笔名' }}</div>
+        {% for p in group %}
+        <a class="md-item {{ 'active' if current_scope == p.id }}" href="/profiles?scope={{ p.id }}">{{ p.pen_name }}</a>
+        {% endfor %}
+        {% endfor %}
+        {% if not profiles %}
+        <div class="md-empty">暂无笔名<br>点右上「+ 新建」创建</div>
         {% endif %}
-    </div>
-    <p style="margin-top:8px"><a href="/profiles/{{ p.id }}/edit" class="btn btn-secondary" style="text-decoration:none">✏️ 编辑档案</a></p>
+    </aside>
+
+    <!-- 右：选中项的编辑面 -->
+    <section class="md-main">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px">
+            <h1 style="margin:0">👤 笔名档案 · 风格规则 <span style="font-size:14px;color:#8b949e">— {{ scope_label }}</span></h1>
+            {% if selected %}
+            <form method="POST" action="/profiles/{{ selected.id }}/delete" style="margin:0"
+                  onsubmit="return confirm('删除笔名「{{ selected.pen_name }}」？其专属风格规则将一并清除。');">
+                <button type="submit" class="small danger">🗑 删除笔名</button>
+            </form>
+            {% endif %}
+        </div>
+        {% if is_new %}
+        <p class="hint">创建笔名：填好档案字段点「创建笔名」。笔名的专属风格规则（禁句/AI词/偏好）在创建后编辑。</p>
+        {% with form_action='/profiles/new', form_submit='创建笔名', profile=None %}
+        {% include "_profile_form.html" %}
+        {% endwith %}
+        {% with render_cards=False %}
+        {% include "_style_rules_cards.html" %}
+        {% endwith %}
+        {% elif selected %}
+        <p class="hint">编辑「{{ selected.pen_name }}」的档案字段（保存走下方「保存修改」）；专属风格规则在档案下方逐条编辑，保存即生效。</p>
+        {% with form_action='/profiles/' ~ selected.id ~ '/edit', form_submit='保存修改', profile=selected %}
+        {% include "_profile_form.html" %}
+        {% endwith %}
+        {% include "_style_rules_cards.html" %}
+        {% else %}
+        <p class="hint">全局基线 = 所有笔名通用的反 AI 味底线（禁句/AI词/偏好），生成前注入所有书、生成后去 AI 味兜底只走此基线。笔名专属规则在此基础上额外叠加。</p>
+        {% include "_style_rules_cards.html" %}
+        {% endif %}
+    </section>
 </div>
-{% endfor %}
-</div>
-{% else %}<div class="empty"><p>暂无笔名</p></div>{% endif %}
 {% endblock %}

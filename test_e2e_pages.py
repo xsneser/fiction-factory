@@ -145,7 +145,7 @@ def run_tests():
         ("Gags", "/gags", ["笑点库", "gag"]),
         ("Characters", "/characters", ["角色原型库", "char"]),
         ("Profiles", "/profiles", ["笔名档案", "profile"]),
-        ("New Profile", "/profiles/new", ["创建笔名", "form"]),
+        ("Style Rules Redirect", "/style-rules", ["笔名档案"]),  # 风格规则已并入笔名页，302→200
         ("Settings", "/settings", ["设置", "api"]),
         ("Extract", "/extract", ["内容提取", "extract"]),
         ("DeAI Test", "/deai", ["去AI", "测试"]),
@@ -200,7 +200,7 @@ def run_tests():
         ("/structures", "情节弧库"),
         ("/gags", "笑点库"),
         ("/characters", "角色原型库"),
-        ("/profiles", "笔名档案"),
+        ("/profiles", "笔名与风格"),
         ("/settings", "设置"),
         ("/scout", "小说抓取"),
         ("/extract", "内容提取"),

@@ -1,27 +1,10 @@
-{% extends "base.html" %}
-{% block content %}
-<h1>🧬 风格规则库 <span style="font-size:14px;color:#8b949e">（{{ scope_label }}：禁句式 {{ bans|length }} · AI 词表 {{ words|length }} · 偏好 {{ prefers|length }}）</span></h1>
-<p style="color:#8b949e;font-size:13px">按笔名分库：每笔名一套禁句/词表/偏好，生成前强注入写作 prompt 让 AI 仿写；全局基线所有笔名通用，生成后去AI味兜底只走全局基线。</p>
+{# 风格规则三卡 partial（禁句式 / AI词 / 偏好）+ 继承全局基线只读 + JS。
+   需要上下文：current_scope、scope_label、bans、words、prefers、gbl_*。
+   render_cards 默认 True：scope=new 时传 False（只显示继承块预览，避免 currentScope='new' 污染全局）。
+   三卡内部保留内联样式（.sr-row 无 CSS 类，靠 data-hook 驱动 JS）。 #}
+{% set render_cards = render_cards|default(True) %}
 
-<!-- 作用域切换：全局基线 + 各笔名（按语言分组） -->
-<div class="card" style="margin-bottom:16px">
-    <div class="title">🎯 作用域</div>
-    <select id="scope-select" onchange="window.location.href='/style-rules?profile=' + this.value"
-            style="padding:6px 10px;min-width:220px">
-        <option value="">🌐 全局基线（所有笔名通用）</option>
-        {% for lang, group in profiles|groupby('language') %}
-        <optgroup label="{{ '中文笔名' if lang == 'zh' else '英文笔名' }}">
-        {% for p in group %}
-            <option value="{{ p.id }}" {{ 'selected' if p.id == current_scope }}>{{ p.pen_name }}</option>
-        {% endfor %}
-        </optgroup>
-        {% endfor %}
-    </select>
-    {% if current_scope %}
-    <span style="margin-left:12px;color:#8b949e;font-size:13px">当前编辑：<b>{{ scope_label }}</b> 的专属规则（继承全局基线，生成前自动叠加）</span>
-    {% endif %}
-</div>
-
+{% if render_cards %}
 <div class="card" style="margin-bottom:16px">
     <div class="title">⛔ 硬禁句式 <span style="font-size:12px;color:#8b949e">（生成时禁 + 审查检测）</span></div>
     <div style="margin-top:8px">
@@ -73,9 +56,10 @@
     <button type="button" class="small" onclick="addRow('prefer')">➕ 偏好/习惯</button>
     </div>
 </div>
+{% endif %}
 
 {% if current_scope %}
-<!-- 继承的全局基线（只读） -->
+<!-- 继承的全局基线（只读；scope=new 新建模式也显示预览） -->
 <div class="card" style="margin-bottom:16px;opacity:.85">
     <div class="title">🌐 继承的全局基线 <span style="font-size:12px;color:#8b949e">（所有笔名通用，生成前注入自动叠加，此处只读）</span></div>
     <div style="margin-top:8px;font-size:13px;line-height:1.7">
@@ -95,6 +79,7 @@
 </div>
 {% endif %}
 
+{% if render_cards %}
 <script>
 var currentScope = "{{ current_scope }}";
 async function saveRow(btn) {
@@ -130,4 +115,4 @@ async function addRow(kind) {
     else showToast('添加失败: ' + (d.error||''), 'error');
 }
 </script>
-{% endblock %}
+{% endif %}

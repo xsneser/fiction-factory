@@ -266,6 +266,19 @@
         .card .meta { font-size:12px; color:#8b949e; margin-bottom:6px; }
         .card .stat { font-size:32px; font-weight:bold; color:#f0f6fc; }
         .card .label { font-size:11px; color:#8b949e; }
+        /* Master-detail（笔名档案 × 风格规则合并页） */
+        .md { display:flex; gap:20px; align-items:flex-start; }
+        .md-side { flex:0 0 240px; position:sticky; top:0; max-height:calc(100vh - 90px); overflow-y:auto;
+            background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px; }
+        .md-side .md-actions { margin-bottom:12px; }
+        .md-item { display:block; padding:8px 10px; border-radius:6px; color:#8b949e; text-decoration:none; font-size:13px; margin-bottom:2px; }
+        .md-item:hover { background:#1f2937; color:#f0f6fc; }
+        .md-item.active { background:rgba(31,111,235,.15); color:#58a6ff; border:1px solid rgba(31,111,235,.35); }
+        .md-group { font-size:11px; color:#6e7681; padding:10px 10px 4px; }
+        .md-empty { padding:16px 10px; color:#6e7681; font-size:13px; text-align:center; line-height:1.7; }
+        .md-main { flex:1; min-width:0; }
+        .hint { color:#8b949e; font-size:13px; margin-bottom:12px; }
+        @media (max-width:900px){ .md { flex-direction:column; } .md-side { position:static; max-height:none; flex:1 1 auto; } }
         /* 仪表盘「已有书目」紧凑横条（每书一条：书名/元信息左，状态徽标右） */
         .book-strip-list { display:flex; flex-direction:column; gap:8px; margin-bottom:24px; }
         .book-strip { display:flex; align-items:center; gap:16px;

@@ -186,21 +186,9 @@ def characters_api():
 
 @bp.route("/style-rules")
 def style_rules_page():
-    """风格规则库页：?profile=<id> 切换作用域（空=全局基线，非空=某笔名专属）。"""
-    scope = (request.args.get("profile", "") or "").strip()
-    all_profiles = profiles.list_all()
-    own = style_rules.rules_for(scope)
-    return render_template("style_rules.html",
-        bans=[r for r in own if r.kind == "ban"],
-        words=[r for r in own if r.kind == "word"],
-        prefers=[r for r in own if r.kind == "prefer"],
-        gbl_bans=[r for r in style_rules.rules_for("") if r.kind == "ban"],
-        gbl_words=[r for r in style_rules.rules_for("") if r.kind == "word"],
-        gbl_prefers=[r for r in style_rules.rules_for("") if r.kind == "prefer"],
-        profiles=all_profiles,
-        current_scope=scope,
-        scope_label=("全局基线" if not scope else
-                     next((p.pen_name for p in all_profiles if p.id == scope), scope)))
+    """风格规则已并入笔名档案页：302 重定向到 /profiles（兼容 ?profile= → ?scope=）。"""
+    scope = (request.args.get("profile") or request.args.get("scope") or "").strip()
+    return redirect(url_for("libraries.profile_list", scope=scope))
 
 
 def _next_rule_id(kind: str) -> str:
@@ -274,8 +262,55 @@ def gags():
 
 @bp.route("/profiles")
 def profile_list():
-    return render_template("profiles.html", profiles=profiles.list_all(),
-                           platform_labels=PLATFORM_LABELS)
+    """笔名档案 + 风格规则库合并页（master-detail）：?scope= 切换编辑面。
+    空/缺失=全局基线（只规则三卡）；'new'=空档案表单；<id>=该笔名档案+专属规则+继承全局基线。
+    """
+    # Jinja groupby 不排序：handler 里先排序（zh 在前，组内按笔名），保证中英文分组有序
+    all_profiles = sorted(profiles.list_all(), key=lambda p: (p.language == "en", p.pen_name))
+    raw = (request.args.get("scope") or request.args.get("profile") or "").strip()
+    is_new = raw == "new"
+    selected = None
+    if is_new:
+        current_scope = "new"
+    elif raw:
+        selected = profiles.get(raw)
+        current_scope = raw if selected else ""      # 不存在的 id 兜底回全局
+    else:
+        current_scope = ""
+
+    gbl = style_rules.rules_for("")
+    if current_scope == "":
+        own = gbl                                    # 全局基线卡 = 全局规则
+    elif is_new:
+        own = []                                     # 新建无专属规则
+    else:
+        own = style_rules.rules_for(current_scope)   # 笔名专属规则
+
+    scope_label = ("全局基线" if not current_scope else
+                   ("新建笔名" if is_new else
+                    next((p.pen_name for p in all_profiles if p.id == current_scope), current_scope)))
+    return render_template("profiles.html",
+        profiles=all_profiles, selected=selected, is_new=is_new,
+        current_scope=current_scope, scope_label=scope_label,
+        bans=[r for r in own if r.kind == "ban"],
+        words=[r for r in own if r.kind == "word"],
+        prefers=[r for r in own if r.kind == "prefer"],
+        gbl_bans=[r for r in gbl if r.kind == "ban"],
+        gbl_words=[r for r in gbl if r.kind == "word"],
+        gbl_prefers=[r for r in gbl if r.kind == "prefer"],
+        platform_labels=PLATFORM_LABELS)
+
+
+@bp.route("/profiles/<profile_id>/delete", methods=["POST"])
+def delete_profile(profile_id):
+    """删除笔名档案 + 清理其专属风格规则（孤儿）。防空 rules 落盘覆盖内置种子。"""
+    profiles.delete(profile_id)
+    orphaned = [r for r in style_rules.rules if (r.profile_id or "").strip() == profile_id]
+    if orphaned:
+        style_rules.rules = [r for r in style_rules.rules
+                             if (r.profile_id or "").strip() != profile_id]
+        style_rules._save()
+    return redirect(url_for("libraries.profile_list"))
 
 
 @bp.route("/profiles/new", methods=["GET","POST"])
@@ -301,8 +336,9 @@ def new_profile():
         if sa:
             new_p.style_assets = sa
             profiles.update(new_p)
-        return redirect(url_for("libraries.profile_list"))
-    return render_template("new_profile.html", profile=None, platform_labels=PLATFORM_LABELS)
+        return redirect(url_for("libraries.profile_list", scope=new_p.id))  # 新建后自动选中
+    # GET：独立页已并入 /profiles，302 到合并页新建模式（旧书签/外链不 404）
+    return redirect(url_for("libraries.profile_list", scope="new"))
 
 
 @bp.route("/profiles/<profile_id>/edit", methods=["GET","POST"])
@@ -326,7 +362,8 @@ def edit_profile(profile_id):
         p.platform_accounts = _parse_platform_accounts(request.form)
         p.style_assets = _parse_style_assets(request.form)   # 写法资产特征池 + 开关
         profiles.update(p)
-        return redirect(url_for("libraries.profile_list"))
-    return render_template("edit_profile.html", profile=p, platform_labels=PLATFORM_LABELS)
+        return redirect(url_for("libraries.profile_list", scope=profile_id))  # 保存后保持选中
+    # GET：独立页已并入 /profiles，302 到合并页该笔名（旧书签/外链不 404）
+    return redirect(url_for("libraries.profile_list", scope=profile_id))
 
 
