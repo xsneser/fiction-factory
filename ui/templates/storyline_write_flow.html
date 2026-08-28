@@ -34,29 +34,30 @@
     <div class="editor-divider" id="editor-divider" title="拖动调整故事线宽度"></div>
 
     <div class="editor-mid">
-        {# ─── 阅读器工具栏：目录 / 上下一章 / 页码 / 续写入口 + 停止 ───#}
+        {# ─── 阅读器工具栏：目录 / 上下一章 / 页码（续写入口挪到下方底部操作条） ───#}
         <div class="reader-toolbar">
             <button type="button" class="rt-btn" id="rt-toc" title="目录">📑 目录</button>
             <button type="button" class="rt-btn" id="rt-prev" title="上一章（[）">⬅ 上一章</button>
             <span class="rt-chapter" id="rt-chapter">第 1 / 1 章</span>
             <button type="button" class="rt-btn" id="rt-next" title="下一章（]）">下一章 ➡</button>
             <span class="rt-page" id="rt-page">第 1 / 1 页</span>
-            <button type="button" class="rt-btn rt-btn-write" id="rt-write" title="让 Agent 续写下一章正文">✍️ 继续写正文</button>
-            <button type="button" class="rt-btn rt-btn-stop" id="rt-stop" title="停止当前任务" style="display:none">⏹ 停止</button>
         </div>
         {# ─── 正文：当前章单章渲染，CSS columns 分页，桥段包 span.m-bridge 供点击高亮 ───#}
         <div class="reader-viewport" id="reader-viewport">
             <div class="reader-pages" id="reader-pages"></div>
         </div>
+        {# ─── 底部操作条：续写 / 停止（不占工具栏位置） ───#}
+        <div class="reader-footer">
+            <button type="button" class="rt-btn rt-btn-write" id="rt-write" title="让 Agent 续写下一章正文">✍️ 继续写正文</button>
+            <button type="button" class="rt-btn rt-btn-stop" id="rt-stop" title="停止当前任务" style="display:none">⏹ 停止</button>
+        </div>
+        {# ─── 目录抽屉：右栏内部右侧滑出（.editor-mid relative + overflow:hidden 裁剪） ───#}
+        <div class="toc-backdrop" id="toc-backdrop" hidden></div>
+        <aside class="toc-drawer" id="toc-drawer" aria-hidden="true">
+            <div class="toc-head">📑 目录 <button type="button" class="toc-close" id="toc-close" title="关闭">×</button></div>
+            <div class="toc-list" id="toc-list"></div>
+        </aside>
     </div>
-</div>
-
-{# ─── 目录抽屉（fixed，右侧滑出 + 半透明遮罩） ───#}
-<div class="toc-backdrop" id="toc-backdrop" hidden></div>
-<aside class="toc-drawer" id="toc-drawer" aria-hidden="true">
-    <div class="toc-head">📑 目录 <button type="button" class="toc-close" id="toc-close" title="关闭">×</button></div>
-    <div class="toc-list" id="toc-list"></div>
-</aside>
 </div>
 
 <script src="/static/js/story_line.js?v=4"></script>

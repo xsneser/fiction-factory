@@ -9,7 +9,7 @@ main { overflow: hidden; }
 .editor-left { width:50%; min-width:320px; max-width:70%; flex-shrink:0; display:flex; flex-direction:column; min-height:0; }
 .editor-scroll { flex:1; min-height:0; overflow:hidden; }
 .editor-storyline { height:100%; min-height:0; overflow:hidden; }
-.editor-mid { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding-right:4px; }
+.editor-mid { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding-right:4px; position:relative; }   /* relative：目录抽屉绝对定位在右栏内部 */
 /* 可拖拽分栏分隔条（拖拽调整故事线宽度，JS 持久化 localStorage） */
 .editor-divider { flex:0 0 4px; width:4px; cursor:col-resize; background:var(--border-soft); border-radius:2px; align-self:stretch; }
 .editor-divider:hover { background:#58a6ff; }
@@ -52,17 +52,20 @@ main { overflow: hidden; }
 .reader-toolbar { display:flex; align-items:center; gap:8px; padding:8px 10px;
     border:1px solid var(--border-soft); border-radius:var(--radius);
     background:var(--bg-elev); margin-bottom:8px; flex-wrap:wrap; }
-.reader-toolbar .rt-btn { background:var(--bg-inset); border:1px solid var(--border);
+/* 底部操作条：续写/停止（不占工具栏位置） */
+.reader-footer { display:flex; gap:8px; align-items:center; padding:8px 10px; margin-top:8px;
+    border:1px solid var(--border-soft); border-radius:var(--radius); background:var(--bg-elev); }
+.reader-toolbar .rt-btn, .reader-footer .rt-btn { background:var(--bg-inset); border:1px solid var(--border);
     color:var(--fg-muted); border-radius:var(--radius-sm); padding:4px 10px;
     font-size:12px; cursor:pointer; transition:all .15s; }
-.reader-toolbar .rt-btn:hover { border-color:var(--accent); color:var(--fg-strong); }
-.reader-toolbar .rt-btn:disabled { opacity:.4; cursor:default; }
-.reader-toolbar .rt-btn-write { background:#238636; color:#fff; border-color:#238636; }
-.reader-toolbar .rt-btn-write:hover { background:#2ea043; color:#fff; border-color:#2ea043; }
-.reader-toolbar .rt-btn-write.running { background:#21262d; color:#f85149; border-color:#f85149; cursor:not-allowed; }
-.reader-toolbar .rt-btn-write.running:hover { background:#21262d; color:#f85149; }
-.reader-toolbar .rt-btn-stop { background:#21262d; border-color:#f85149; color:#f85149; }
-.reader-toolbar .rt-btn-stop:hover { background:#f85149; color:#0d1117; }
+.reader-toolbar .rt-btn:hover, .reader-footer .rt-btn:hover { border-color:var(--accent); color:var(--fg-strong); }
+.reader-toolbar .rt-btn:disabled, .reader-footer .rt-btn:disabled { opacity:.4; cursor:default; }
+.reader-toolbar .rt-btn-write, .reader-footer .rt-btn-write { background:#238636; color:#fff; border-color:#238636; }
+.reader-toolbar .rt-btn-write:hover, .reader-footer .rt-btn-write:hover { background:#2ea043; color:#fff; border-color:#2ea043; }
+.reader-toolbar .rt-btn-write.running, .reader-footer .rt-btn-write.running { background:#21262d; color:#f85149; border-color:#f85149; cursor:not-allowed; }
+.reader-toolbar .rt-btn-write.running:hover, .reader-footer .rt-btn-write.running:hover { background:#21262d; color:#f85149; }
+.reader-toolbar .rt-btn-stop, .reader-footer .rt-btn-stop { background:#21262d; border-color:#f85149; color:#f85149; }
+.reader-toolbar .rt-btn-stop:hover, .reader-footer .rt-btn-stop:hover { background:#f85149; color:#0d1117; }
 .rt-chapter { font-size:12px; color:var(--fg-muted); }
 .rt-page { margin-left:auto; font-size:12px; color:var(--fg-dim); white-space:nowrap; }
 .reader-viewport { flex:1; min-height:0; overflow:hidden; position:relative;
@@ -76,9 +79,9 @@ main { overflow: hidden; }
 .reader-pages .m-draft-tag { display:inline-block; vertical-align:middle; margin-left:10px;
     padding:1px 8px; font-size:12px; font-weight:600; color:#8b949e;
     border:1px dashed #30363d; border-radius:999px; }
-/* 目录抽屉（fixed，右侧滑出 + 半透明遮罩） */
-.toc-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:40; }
-.toc-drawer { position:fixed; top:0; right:0; bottom:0; width:min(320px,80vw);
+/* 目录抽屉：绝对定位于右栏内部（.editor-mid position:relative + overflow:hidden 裁剪），非全屏 */
+.toc-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.4); z-index:40; }
+.toc-drawer { position:absolute; top:0; right:0; bottom:0; width:min(320px,100%);
     background:var(--bg-elev); border-left:1px solid var(--border-soft);
     transform:translateX(100%); transition:transform .25s ease; z-index:41;
     display:flex; flex-direction:column; }
