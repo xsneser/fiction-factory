@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-{% macro render_stage_node(stages, path_prefix) %}
+{% macro render_stage_node(stages, path_prefix, tpl_id) %}
   {% for s in stages %}
     {% set node_path = path_prefix + (loop.index0 | string) %}
     <div style="margin:6px 0;border-left:{% if path_prefix %}2px solid #30363d{% else %}none{% endif %};padding-left:{% if path_prefix %}10px{% else %}0{% endif %}">
@@ -8,7 +8,7 @@
       {% if s.themes %}
       <details class="stage-themes" style="margin:4px 0;font-size:12px">
         <summary style="cursor:pointer;color:#8b949e">🎭 {{ s.name }} 内涵{% if s.themes %}<span class="tag yellow" style="margin-left:6px">{{ s.themes|length }}</span>{% endif %}</summary>
-        <div class="stage-theme-editor" data-id="{{ t.id }}" data-path="{{ node_path }}" style="padding:6px 0 2px 12px">
+        <div class="stage-theme-editor" data-id="{{ tpl_id }}" data-path="{{ node_path }}" style="padding:6px 0 2px 12px">
           {% for m in (s.themes or []) %}
           <div class="st-row" style="display:flex;gap:6px;margin:4px 0;align-items:center">
             <input class="st-name" placeholder="内涵名（如：复仇（Revenge））" value="{{ m.name }}" style="flex:1;min-width:0">
@@ -38,7 +38,7 @@
     <p style="font-size:13px;margin:8px 0">{{ t.description }}</p>
     <p style="font-size:12px;color:#8b949e">总章节: {{ t.total_chapters }} · 子弧数: {{ t.stages|length }}</p>
     <div style="margin-top:12px">
-        {{ render_stage_node(t.stages, '') }}
+        {{ render_stage_node(t.stages, '', t.id) }}
     </div>
     {% if t.tags %}<p style="margin-top:8px">{% for tag in t.tags %}<span class="tag green">{{ tag }}</span>{% endfor %}</p>{% endif %}
     <p style="color:#484f58;font-size:11px;margin-top:8px">
