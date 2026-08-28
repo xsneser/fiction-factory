@@ -5,7 +5,7 @@
 <div class="cards">
 {% for p in profiles %}
 <div class="card">
-    <div class="title">{{ p.pen_name }}</div>
+    <div class="title">{{ p.pen_name }} <span class="tag {{ 'green' if p.language == 'zh' else 'purple' }}">{{ '中文' if p.language == 'zh' else '英文' }}笔名</span></div>
     <p style="font-size:13px;color:#8b949e">{{ p.description }}</p>
     <div style="margin-top:8px">
         <span class="tag">{{ p.style_fingerprint.get('humor_style','') }}</span>

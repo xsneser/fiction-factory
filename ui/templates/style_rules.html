@@ -1,7 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>🧬 风格规则库 <span style="font-size:14px;color:#8b949e">（禁句式 {{ bans|length }} · AI 词表 {{ words|length }}）</span></h1>
-<p style="color:#8b949e;font-size:13px">竞品移植：AI-NWA promptWorkbench 简化——硬禁句式/去AI词表可增删改，写作 prompt 与审查实时生效（`style_rules.jsonl` 持久化）。</p>
+<h1>🧬 风格规则库 <span style="font-size:14px;color:#8b949e">（{{ scope_label }}：禁句式 {{ bans|length }} · AI 词表 {{ words|length }} · 偏好 {{ prefers|length }}）</span></h1>
+<p style="color:#8b949e;font-size:13px">按笔名分库：每笔名一套禁句/词表/偏好，生成前强注入写作 prompt 让 AI 仿写；全局基线所有笔名通用，生成后去AI味兜底只走全局基线。</p>
+
+<!-- 作用域切换：全局基线 + 各笔名（按语言分组） -->
+<div class="card" style="margin-bottom:16px">
+    <div class="title">🎯 作用域</div>
+    <select id="scope-select" onchange="window.location.href='/style-rules?profile=' + this.value"
+            style="padding:6px 10px;min-width:220px">
+        <option value="">🌐 全局基线（所有笔名通用）</option>
+        {% for lang, group in profiles|groupby('language') %}
+        <optgroup label="{{ '中文笔名' if lang == 'zh' else '英文笔名' }}">
+        {% for p in group %}
+            <option value="{{ p.id }}" {{ 'selected' if p.id == current_scope }}>{{ p.pen_name }}</option>
+        {% endfor %}
+        </optgroup>
+        {% endfor %}
+    </select>
+    {% if current_scope %}
+    <span style="margin-left:12px;color:#8b949e;font-size:13px">当前编辑：<b>{{ scope_label }}</b> 的专属规则（继承全局基线，生成前自动叠加）</span>
+    {% endif %}
+</div>
 
 <div class="card" style="margin-bottom:16px">
     <div class="title">⛔ 硬禁句式 <span style="font-size:12px;color:#8b949e">（生成时禁 + 审查检测）</span></div>
@@ -40,15 +59,52 @@
     </div>
 </div>
 
+<div class="card" style="margin-bottom:16px">
+    <div class="title">💫 偏好 / 习惯 <span style="font-size:12px;color:#8b949e">（正向模仿：生成前给 AI 仿写，如「爱用（）注释」「喜欢写刀人」）</span></div>
+    <div style="margin-top:8px">
+    {% for r in prefers %}
+    <div class="sr-row" data-id="{{ r.id }}" data-kind="prefer" style="display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap">
+        <input class="sr-pattern" value="{{ r.pattern }}" title="习惯/偏好描述" style="flex:2;min-width:280px">
+        <label style="font-size:12px"><input type="checkbox" class="sr-enabled" {{ 'checked' if r.enabled }}> 启用</label>
+        <button type="button" class="small" onclick="saveRow(this)">💾 保存</button>
+        <button type="button" class="small danger" onclick="delRow('{{ r.id }}')">🗑</button>
+    </div>
+    {% endfor %}
+    <button type="button" class="small" onclick="addRow('prefer')">➕ 偏好/习惯</button>
+    </div>
+</div>
+
+{% if current_scope %}
+<!-- 继承的全局基线（只读） -->
+<div class="card" style="margin-bottom:16px;opacity:.85">
+    <div class="title">🌐 继承的全局基线 <span style="font-size:12px;color:#8b949e">（所有笔名通用，生成前注入自动叠加，此处只读）</span></div>
+    <div style="margin-top:8px;font-size:13px;line-height:1.7">
+    {% if gbl_prefers %}
+        <div><b>偏好/习惯：</b>{{ gbl_prefers|map(attribute='pattern')|join('；') }}</div>
+    {% endif %}
+    {% if gbl_bans %}
+        <div><b>禁句式：</b>{{ gbl_bans|map(attribute='desc')|join('、') }}</div>
+    {% endif %}
+    {% if gbl_words %}
+        <div><b>AI 高频词：</b>{% for r in gbl_words %}「{{ r.pattern }}」{% if not loop.last %}、{% endif %}{% endfor %}</div>
+    {% endif %}
+    {% if not gbl_prefers and not gbl_bans and not gbl_words %}
+        <div style="color:#8b949e">（全局基线暂无规则）</div>
+    {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <script>
+var currentScope = "{{ current_scope }}";
 async function saveRow(btn) {
     var row = btn.closest('.sr-row');
     var kind = row.dataset.kind;
-    var payload = {kind: kind, pattern: row.querySelector('.sr-pattern').value.trim(),
-                   desc: row.querySelector('.sr-desc').value.trim(),
+    var payload = {kind: kind, profile_id: currentScope, pattern: row.querySelector('.sr-pattern').value.trim(),
+                   desc: row.querySelector('.sr-desc') ? row.querySelector('.sr-desc').value.trim() : '',
                    enabled: row.querySelector('.sr-enabled').checked};
     if (kind === 'ban') payload.severity = row.querySelector('.sr-severity').value;
-    else payload.replacements = (row.querySelector('.sr-repl').value||'').split(/[、,]/).map(function(s){return s.trim();}).filter(Boolean);
+    else if (kind === 'word') payload.replacements = (row.querySelector('.sr-repl').value||'').split(/[、,]/).map(function(s){return s.trim();}).filter(Boolean);
     const r = await fetch('/api/style-rules/' + row.dataset.id, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const d = await r.json();
     if (d.ok) showToast('✅ 已保存', 'success');
@@ -62,10 +118,12 @@ async function delRow(id) {
     else showToast('删除失败: ' + (d.error||''), 'error');
 }
 async function addRow(kind) {
-    var label = kind === 'ban' ? '正则表达式（如：更重要的是）' : 'AI 高频词（如：仿佛）';
+    var label = kind === 'ban' ? '正则表达式（如：更重要的是）'
+              : kind === 'word' ? 'AI 高频词（如：仿佛）'
+              : '偏好/习惯描述（如：爱用全角括号（）做注释）';
     var pattern = prompt(label);
     if (!pattern || !pattern.trim()) return;
-    var payload = {kind: kind, pattern: pattern.trim(), desc: '', enabled: true};
+    var payload = {kind: kind, profile_id: currentScope, pattern: pattern.trim(), desc: '', enabled: true};
     const r = await fetch('/api/style-rules', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const d = await r.json();
     if (d.ok) location.reload();

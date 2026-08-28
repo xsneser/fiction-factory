@@ -186,9 +186,21 @@ def characters_api():
 
 @bp.route("/style-rules")
 def style_rules_page():
-    bans = [r for r in style_rules.rules if r.kind == "ban"]
-    words = [r for r in style_rules.rules if r.kind == "word"]
-    return render_template("style_rules.html", bans=bans, words=words)
+    """风格规则库页：?profile=<id> 切换作用域（空=全局基线，非空=某笔名专属）。"""
+    scope = (request.args.get("profile", "") or "").strip()
+    all_profiles = profiles.list_all()
+    own = style_rules.rules_for(scope)
+    return render_template("style_rules.html",
+        bans=[r for r in own if r.kind == "ban"],
+        words=[r for r in own if r.kind == "word"],
+        prefers=[r for r in own if r.kind == "prefer"],
+        gbl_bans=[r for r in style_rules.rules_for("") if r.kind == "ban"],
+        gbl_words=[r for r in style_rules.rules_for("") if r.kind == "word"],
+        gbl_prefers=[r for r in style_rules.rules_for("") if r.kind == "prefer"],
+        profiles=all_profiles,
+        current_scope=scope,
+        scope_label=("全局基线" if not scope else
+                     next((p.pen_name for p in all_profiles if p.id == scope), scope)))
 
 
 def _next_rule_id(kind: str) -> str:
@@ -201,14 +213,16 @@ def _next_rule_id(kind: str) -> str:
 
 @bp.route("/api/style-rules", methods=["POST"])
 def style_rule_create():
-    """新建禁则/词条：{kind, pattern, desc, severity, replacements}。"""
+    """新建禁则/词条/偏好：{kind, pattern, desc, severity, replacements, profile_id}。"""
     from libraries.style_rules import StyleRule
     d = request.get_json(silent=True) or {}
     kind = str(d.get("kind", "ban"))
     pattern = str(d.get("pattern", "")).strip()
-    if kind not in ("ban", "word") or not pattern:
+    if kind not in ("ban", "word", "prefer") or not pattern:
         return jsonify({"ok": False, "error": "kind/pattern 必填"}), 400
-    rule = StyleRule(id=_next_rule_id(kind), kind=kind, pattern=pattern,
+    rule = StyleRule(id=_next_rule_id(kind), kind=kind,
+                     profile_id=str(d.get("profile_id", "") or "").strip(),
+                     pattern=pattern,
                      desc=str(d.get("desc", "") or "").strip(),
                      severity=str(d.get("severity", "warning")),
                      replacements=[str(x) for x in (d.get("replacements") or []) if str(x).strip()])
@@ -272,6 +286,7 @@ def new_profile():
         if request.form.get("avoid_words"): wp["avoid_words"] = [w.strip() for w in request.form["avoid_words"].split(",")]
         new_p = profiles.create(
             pen_name=request.form["pen_name"],
+            language=str(request.form.get("language") or "zh"),
             description=request.form.get("description",""),
             style_fingerprint={
                 "humor_style": request.form.get("humor_style",""),
@@ -301,6 +316,7 @@ def edit_profile(profile_id):
         if request.form.get("common_words"): wp["common_words"] = [w.strip() for w in request.form["common_words"].split(",")]
         if request.form.get("avoid_words"): wp["avoid_words"] = [w.strip() for w in request.form["avoid_words"].split(",")]
         p.description = request.form.get("description","")
+        p.language = str(request.form.get("language") or "zh")
         p.style_fingerprint = {
             "humor_style": request.form.get("humor_style",""),
             "action_style": request.form.get("action_style",""),

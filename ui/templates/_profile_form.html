@@ -12,6 +12,13 @@
             {% endif %}
         </div>
         <div class="form-group"><label>描述</label><input name="description" value="{{ profile.description if profile else '' }}" placeholder="如：都市爽文专业户"></div>
+        <div class="form-group"><label>笔名语言</label>
+            <select name="language">
+                {% set lang = profile.language if profile else 'zh' %}
+                <option value="zh" {{ 'selected' if lang=='zh' }}>中文笔名</option>
+                <option value="en" {{ 'selected' if lang=='en' }}>英文笔名</option>
+            </select>
+        </div>
     </div>
     <div class="form-row-3">
         <div class="form-group"><label>幽默风格</label>
