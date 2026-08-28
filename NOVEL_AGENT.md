@@ -51,7 +51,9 @@
 
 ### drive_ui 命令（驱动「启动新书」向导；建书必须走向导，不能绕路直建）
 - `set_field`：`{field, value}`，field ∈ idea/pen/title/words/borrow_source/borrow_tweak。**`words` = 每章字数（words_per_chapter，默认 3000），不是全书总字数**；全书总字数由弧的 `end_word` 决定，无需单独填。
-- `set_candidates` / `add_candidate`：`{title, one_liner?, world_brief?}`——**title 必填**，否则浏览器拒收；add 为增量追加 1 张候选卡。
+- `set_candidates` / `add_candidate`：`{title, one_liner?, world_brief?}`——**title 必填**，否则浏览器拒收；
+  **`world_brief` 写 150~250 字详细世界观设定**（覆盖 ①时代/世界背景 ②主角身份与处境 ③金手指/核心矛盾 ④题材卖点与开篇钩子），
+  `one_liner` 一句话；add 为增量追加 1 张候选卡。
 - `pick_candidate`：`{candidate:{title, world_brief, one_liner}}` 或 `{idx}`（至少其一）。
 - `set_world`：**顶层键必须叫 `world_building`**（写 `world` 会被拒收）；`tone`/`target_audience`/`pov`/`era_language`
   放**顶层**参数（不要塞进 world_building，也不要使用 `setting`/`target_reader` 等非标准键）；
@@ -77,7 +79,7 @@
     **每个势力至少 1 个对应人物**（无人物归属的势力不要创建）。
 - `submit`：**建书即创建书目并跳书详情页**，调用前必须先向用户汇报设定概要并取得确认（不确认不建书）。
 
-### 落盘薄工具（agent 自主生成后调用，内部不调 LLM）
+### 落盘工具
 - `save_outlines`：保存 outlines/plots/threads/themes → 落盘 → `fill_gags` 到 ready（弧的字数跨度、桥段叶弧规则见 1.2 故事线数据规则）。
 - `save_bridge_draft`：逐桥段落盘进行中草稿（断点续写保底）。
 - `save_chapter_text`：整章落盘（summary 由你生成；内部做规则去 AI 味/审查/角色状态/承诺台账并清草稿）。
