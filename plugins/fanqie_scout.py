@@ -630,31 +630,37 @@ class NovelAnalyzer:
             return []
 
     def extract_structure(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
-        """提取大纲结构模式"""
+        """提取大纲结构模式（多层弧树：每模板 = 单个可复用弧，stages 可嵌套 children）"""
         text = self._build_sample_text(samples, 2000)
         ch_count = novel.chapter_count or len(samples) * 10
 
         prompt = f"""分析番茄小说《{novel.title}》（{novel.genre}，约{ch_count}章）的章节结构，
-提取出该流派的大纲骨架模式。
+从书中识别出**若干个典型的、可复用的叙事弧**（每个弧是一个有明确目标/方向的剧情单元，
+如 重生复仇弧、试炼扬名弧、误会和解弧）。
 
-大纲骨架应包含：
-1. 卷（Volume）划分：全书分几个大卷，每卷的核心任务
-2. 弧（Arc）划分：每卷内的叙事弧线
-3. 每段的关键事件列表
+每个弧都要拆成**多层的弧树**（大弧 → 子弧 → 阶段）：深度与各层分支数按书里真实结构定，
+**不要均匀**——有的弧只有一层（直接平铺几个阶段），有的弧两层，有的子弧内还要再拆到三层。
+子弧/阶段的 min_chapters/max_chapters 按它在书里实际占用的章节区间填。
 
 【小说内容样本】
 {text}
 
 返回 JSON：
 {{"structures": [
-  {{"name":"{novel.genre}标准结构",
+  {{"name":"弧名（如 重生复仇弧）",
    "total_chapters":{ch_count},
+   "tags":["题材标签","可复用场景"],
+   "description":"这个弧做什么、适合什么情境",
    "stages":[
-     {{"name":"阶段名","description":"这个阶段做什么",
+     {{"name":"子弧名","description":"这个子弧做什么",
        "min_chapters":10,"max_chapters":20,
-       "key_events":["事件1","事件2"]}}
-   ]
-  }}
+       "key_events":["事件1","事件2"],
+       "children":[
+         {{"name":"孙弧/阶段名","description":"...",
+           "min_chapters":3,"max_chapters":8,
+           "key_events":["事件1","事件2"]}}
+       ]}}
+   ]}}
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的小说结构分析师。只返回JSON。",
@@ -778,21 +784,27 @@ class LibraryIngestor:
             if t.id == sid:
                 return
 
-        stages = []
-        for s in data.get("stages", []):
+        def _node(s) -> StageNode:
             if isinstance(s, str):
-                stages.append(StageNode(name=s, description=""))
-            else:
-                stages.append(StageNode(
-                    name=s.get("name",""), description=s.get("description",""),
-                    min_chapters=s.get("min_chapters",10),
-                    max_chapters=s.get("max_chapters",20),
-                    key_events=s.get("key_events",[]),
-                ))
+                return StageNode(name=s, description="")
+            return StageNode(
+                name=s.get("name",""), description=s.get("description",""),
+                min_chapters=s.get("min_chapters",10),
+                max_chapters=s.get("max_chapters",20),
+                key_events=s.get("key_events",[]),
+                foreshadow_opportunities=s.get("foreshadow_opportunities",[]),
+                themes=s.get("themes",[]),
+                children=[_node(c) for c in s.get("children", [])],
+            )
+
         template = StructureTemplate(
             id=sid, name=data.get("name",""),
+            description=data.get("description",""),
             total_chapters=data.get("total_chapters",500),
-            stages=stages,
+            stages=[_node(s) for s in data.get("stages", [])],
+            tags=data.get("tags", []),
+            source=source,
+            created_at=data.get("created_at", ""),
         )
         self.struct_lib.templates.append(template)
 

@@ -253,8 +253,23 @@ def get_build_status() -> dict:
     return _read()
 
 
+def _stage_tree(s):
+    """把弧模板的 StageNode（可 children 嵌套）压成紧凑 dict 树供 agent 参考（单弧可多层）。"""
+    node = {
+        "name": s.name,
+        "description": (s.description or "")[:120],
+        "min_chapters": s.min_chapters,
+        "max_chapters": s.max_chapters,
+        "key_events": (s.key_events or [])[:4],
+    }
+    if s.children:
+        node["children"] = [_stage_tree(c) for c in s.children]
+    return node
+
+
 def query_arc_library(keyword: str = "", tags: str = "") -> dict:
     """查情节弧库：按标签/关键词（名称）返回模板清单（标签逗号/空格分隔，任一命中）。
+    模板=单弧可多层：stages 即其子弧（可 children 嵌套，深度/分支按书定、不要求均匀）。
     注意 total_chapters 为模板参考章节数（非强制弧跨度），不要直接 × 每章字数当弧的 start_word/end_word。"""
     kw = (keyword or "").strip()
     tag_list = [x.strip() for x in (tags or "").replace("，", " ").replace(",", " ").split() if x.strip()]
@@ -264,7 +279,7 @@ def query_arc_library(keyword: str = "", tags: str = "") -> dict:
     return {"templates": [{
         "id": t.id, "name": t.name, "tags": t.tags,
         "total_chapters": t.total_chapters,
-        "stages": [s.name for s in (t.stages or [])[:5]],
+        "stages": [_stage_tree(s) for s in (t.stages or [])[:8]],
     } for t in rows[:20]]}
 
 
@@ -640,7 +655,7 @@ def save_book_meta(book_id: str, title: str = "", synopsis: str = "") -> dict:
 def arc_material_candidates(book_id: str) -> dict:
     """选材决策点候选池：情节弧库模板 + 桥段库（供外部 agent 预选弧模板作参考，再在自身上下文生成弧+桥段）。
 
-    返回 {templates, plots}：templates 为弧级模板清单（{id,name,total_chapters,stages[:5]}），
+    返回 {templates, plots}：templates 为弧级模板清单（单弧可多层，stages 含 children 层级），
     plots 为桥段库候选（{id,name,category,sub_category}）。"""
     tl = _require_tl(book_id)
     _tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
@@ -649,7 +664,7 @@ def arc_material_candidates(book_id: str) -> dict:
         candidates = struct_lib.templates[:5]
     templates = [{
         "id": t.id, "name": t.name, "total_chapters": t.total_chapters,
-        "stages": [s.name for s in (t.stages or [])[:5]],
+        "stages": [_stage_tree(s) for s in (t.stages or [])[:8]],
     } for t in (candidates or [])[:10]]
     plots = [{
         "id": t.id, "name": t.name, "category": t.category,
@@ -1661,9 +1676,11 @@ def ingest_library_assets(plots: list | None = None, structures: list | None = N
     纯规则落盘、无 LLM（复用 FanqieScoutAgent.ingest_selected，角色走新增
     _add_character）。字段格式——plot {name, category, sub_category, structure,
     slots[{name, options}], notes, word_range}；structure {name, total_chapters,
-    stages[{name, description, min_chapters, max_chapters, key_events}]}；gag
-    {name, category, pattern_description, fit_scenes, examples}；character {name,
-    personality, description, archetypes, examples, catchphrases, tags, fit_tags}。
+    tags?, description?, stages[{name, description, min_chapters, max_chapters,
+    key_events, children?[{…}]}]}（弧模板=单弧，stages 为子弧，可 children 嵌套多层，
+    深度/分支按书里真实结构定、不要求均匀）；gag {name, category,
+    pattern_description, fit_scenes, examples}；character {name, personality,
+    description, archetypes, examples, catchphrases, tags, fit_tags}。
     返回 {ok, source, plots, structures, gags, characters}。
     """
     if not any([plots, structures, gags, characters]):

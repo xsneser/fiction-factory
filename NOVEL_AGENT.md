@@ -86,9 +86,10 @@
 - `save_book_meta`：保存书名+简介。
 
 ### 其他工具
-- `query_arc_library` / `arc_material_candidates`：从情节弧库选弧模板作参考（tags/关键词命中）。
+- `query_arc_library` / `arc_material_candidates`：从情节弧库选弧模板作参考（tags/关键词命中；**模板=单弧可多层**，返回嵌套 stages 含 `children` 层级）。
 - `ingest_library_assets`：读参考书后自主提炼资产入库四库（纯规则）——plot `{name,category,sub_category,structure,slots[{name,options}],notes,word_range}`；
-  structure `{name,total_chapters,stages[{name,description,min_chapters,max_chapters,key_events}]}`；gag `{name,category,pattern_description,fit_scenes,examples}`；
+  structure `{name,total_chapters,tags?,description?,stages[{name,description,min_chapters,max_chapters,key_events,children?[{…}]}]}`——**弧模板=单弧**，stages 即其子弧，子弧可再 `children` 多层嵌套，深度/分支按书里真实结构定、**不要求均匀**；
+  gag `{name,category,pattern_description,fit_scenes,examples}`；
   character `{name,personality,description,archetypes,examples,catchphrases,tags,fit_tags}`。
 - `discover_hot` / `fetch_novel` / `list_crawled_novels` / `read_crawled_novel`：侦察热榜 / 抓取下载 / 读已抓书库 / 读章节目录或正文（供借鉴设定/写法，不改书）。
 - `publish_check` / `publish_book` / `mark_finished` / `export_book`：上架检查 / 发布 / 完本 / 导出投稿包。

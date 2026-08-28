@@ -8,14 +8,40 @@ from .base_library import JsonLibrary
 
 @dataclass
 class StageNode:
-    """情节弧阶段节点"""
-    name: str            # 阶段名，如 "入门"
+    """情节弧/阶段节点（树形：有 children = 中间弧，描述其下可挂的子弧；无 = 叶弧/阶段）"""
+    name: str            # 阶段/子弧名，如 "先发布局"
     description: str     # 描述
     min_chapters: int = 3
     max_chapters: int = 10
     key_events: list[str] = field(default_factory=list)
     foreshadow_opportunities: list[str] = field(default_factory=list)  # 埋坑机会
-    themes: list = field(default_factory=list)   # 阶段级内涵 [{name, position, how}]，含插入位置
+    themes: list = field(default_factory=list)   # 节点级内涵 [{name, position, how}]，含插入位置
+    children: list["StageNode"] = field(default_factory=list)   # 子弧（多层嵌套；无 = 叶）
+
+    def to_dict(self) -> dict:
+        d = {
+            "name": self.name, "description": self.description,
+            "min_chapters": self.min_chapters, "max_chapters": self.max_chapters,
+            "key_events": self.key_events,
+            "foreshadow_opportunities": self.foreshadow_opportunities,
+            "themes": self.themes,
+        }
+        if self.children:
+            d["children"] = [c.to_dict() for c in self.children]
+        return d
+
+    @classmethod
+    def from_dict(cls, s) -> "StageNode":
+        if isinstance(s, str):
+            return cls(name=s, description="")
+        return cls(
+            name=s.get("name", ""), description=s.get("description", ""),
+            min_chapters=s.get("min_chapters", 3), max_chapters=s.get("max_chapters", 10),
+            key_events=s.get("key_events", []),
+            foreshadow_opportunities=s.get("foreshadow_opportunities", []),
+            themes=s.get("themes", []),
+            children=[cls.from_dict(c) for c in s.get("children", [])],
+        )
 
 
 @dataclass
@@ -38,12 +64,7 @@ class StructureTemplate:
             "id": self.id, "name": self.name,
             "description": self.description,
             "total_chapters": self.total_chapters,
-            "stages": [{"name": s.name, "description": s.description,
-                        "min_chapters": s.min_chapters, "max_chapters": s.max_chapters,
-                        "key_events": s.key_events,
-                        "foreshadow_opportunities": s.foreshadow_opportunities,
-                        "themes": s.themes}
-                       for s in self.stages],
+            "stages": [s.to_dict() for s in self.stages],
             "opening_patterns": self.opening_patterns,
             "climax_patterns": self.climax_patterns,
             "tags": self.tags,
@@ -59,7 +80,7 @@ class StructureTemplate:
             id=d["id"], name=d.get("name", ""),
             description=d.get("description", ""),
             total_chapters=d.get("total_chapters", 500),
-            stages=[StageNode(**s) for s in d.get("stages", [])],
+            stages=[StageNode.from_dict(s) for s in d.get("stages", [])],
             opening_patterns=d.get("opening_patterns", []),
             climax_patterns=d.get("climax_patterns", []),
             tags=d.get("tags", []),
@@ -120,7 +141,12 @@ BUILTIN_STRUCTURES = [
             StageNode("先发布局", "抢在未来关键节点前埋下棋子、避开前世雷区",
                       3, 5,
                       ["提前获取关键资源", "拉拢关键人物", "避开前世踩过的坑"],
-                      ["蝴蝶效应引发的新变量"]),
+                      ["蝴蝶效应引发的新变量"],
+                      children=[
+                          StageNode("提前埋子", "在关键节点前布下棋子", 1, 2, ["占住资源位", "提前示好关键人"]),
+                          StageNode("拉拢关键人物", "收编前世可用的盟友", 1, 2, ["救下前世恩人", "结盟军需官"]),
+                          StageNode("避开雷区", "绕开前世踩过的坑", 1, 1, ["识破前世陷阱", "改变致命选择"]),
+                      ]),
             StageNode("第一次碾压", "用先发优势正面碾压第一个前世仇人/竞争者",
                       2, 4,
                       ["打脸第一个敌人", "身份地位突变", "被多方关注"],
@@ -155,7 +181,11 @@ BUILTIN_STRUCTURES = [
                       ["试炼开启", "与种子选手硬碰硬", "夺魁/达成目标"],
                       ["试炼背后更大的图谋"],
                       [{"name": "成长的代价（Cost of Growth）", "position": "结尾",
-                        "how": "付出代价换取的胜利，在夺魁时刻点题成长"}]),
+                        "how": "付出代价换取的胜利，在夺魁时刻点题成长"}],
+                      children=[
+                          StageNode("试炼开启", "入场、立规则、初见强敌", 1, 2, ["抽签/分组", "种子选手亮相"]),
+                          StageNode("硬碰强敌", "与劲敌正面交锋", 1, 2, ["越级硬刚", "压箱底底牌"]),
+                      ]),
         ],
         opening_patterns=["plot_dating_012"],
         climax_patterns=["plot_dating_007", "plot_dating_010"],
@@ -178,7 +208,11 @@ BUILTIN_STRUCTURES = [
             StageNode("正面打脸", "在公开场合碾压此前羞辱者、彻底翻盘",
                       2, 4,
                       ["约战/对赌/竞争", "当众反杀", "靠山出手又被反制"],
-                      ["更大的对手记恨上主角"]),
+                      ["更大的对手记恨上主角"],
+                      children=[
+                          StageNode("约战对赌", "当众立约、把事闹大", 1, 2, ["立下赌约", "围观起哄"]),
+                          StageNode("当众反杀", "在众目睽睽下翻盘", 1, 2, ["绝境反转", "当众打脸"]),
+                      ]),
             StageNode("立足声名", "逆袭后的余波：收获人脉、露出更大的舞台",
                       2, 3,
                       ["声名传开", "新势力抛来橄榄枝", "埋下下一段冲突"],
@@ -201,7 +235,11 @@ BUILTIN_STRUCTURES = [
             StageNode("线索排查", "走访/调查，拼凑碎片、遭遇阻力",
                       3, 5,
                       ["收集线索", "关键证人/物证", "调查方向被误导"],
-                      ["每个线索都指向更大阴谋"]),
+                      ["每个线索都指向更大阴谋"],
+                      children=[
+                          StageNode("走访收集", "逐点取证、拼图", 1, 2, ["目击者访谈", "现场勘验"]),
+                          StageNode("方向被误导", "假线索引偏调查", 1, 2, ["伪证出现", "追查落空"]),
+                      ]),
             StageNode("设局反杀", "识破误导、反将一军、逼近核心",
                       2, 4,
                       ["识破谎言", "设局引蛇出洞", "当面揭穿伪证"],
@@ -232,7 +270,11 @@ BUILTIN_STRUCTURES = [
             StageNode("误会波折", "小误会或外部压力让关系跌入冰点",
                       2, 4,
                       ["误会产生", "一方受伤/遇险", "第三方搅局"],
-                      ["误会的真正来源"]),
+                      ["误会的真正来源"],
+                      children=[
+                          StageNode("误会产生", "一句话/一个误会引爆", 1, 2, ["被撞见暧昧", "旧事被翻出"]),
+                          StageNode("第三方搅局", "外人加剧误会", 1, 1, ["绿茶/情敌挑拨", "家人反对"]),
+                      ]),
             StageNode("和解确认", "误会解开、关系正式确认/升级",
                       1, 3,
                       ["真相大白", "告白/和解", "关系升温定格"],
@@ -255,11 +297,23 @@ BUILTIN_STRUCTURES = [
             StageNode("求存囤积", "搜集物资、加固据点、为活下去积累底牌",
                       3, 5,
                       ["搜集物资", "加固据点", "与第一批幸存者结盟"],
-                      ["幸存者中混入异类"]),
+                      ["幸存者中混入异类"],
+                      children=[
+                          StageNode("搜集物资", "搜刮补给、装备", 1, 2, ["超市/军械库搜刮", "抢到第一辆车"]),
+                          StageNode("加固据点", "把落脚点改造成堡垒", 1, 2, ["选址封堵", "囤粮储水"]),
+                      ]),
             StageNode("冲突突围", "遭遇强敌/人性之恶，杀出重围",
                       2, 4,
                       ["被掠夺者围困", "背水一战", "付出代价换生存"],
-                      ["更深层的阴谋浮出"]),
+                      ["更深层的阴谋浮出"],
+                      children=[
+                          StageNode("被掠夺者围困", "恶徒围攻据点", 1, 1, ["围城", "人质要挟"]),
+                          StageNode("背水一战", "绝境反击杀出血路",
+                                    1, 2, ["突破包围", "火并头目"],
+                                    children=[
+                                        StageNode("绝境反击", "绝处逢生的反杀", 1, 1, ["引爆弹药库", "斩首头目"]),
+                                    ]),
+                      ]),
             StageNode("秩序重建", "短暂的喘息与新秩序的萌芽（可续接下一弧）",
                       2, 4,
                       ["重建小秩序", "收容更多幸存者", "灾变真相露出一角"],

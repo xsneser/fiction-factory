@@ -13,6 +13,7 @@ description: 建书 步3。已选候选/补全世界观/继续建书。流程:�
 - **先搜索两个库取素材**：`query_arc_library`/`arc_material_candidates` 查**情节弧库**模板、`query_plots` 查**桥段库**（需要时再 `query_gags`/`query_characters` 查笑点/角色）作故事设计与弧树/桥段的参考，再动手设计。
 - 围绕「核心矛盾 → 势力 → 弧+桥段 → 人物 → 其余维度」反复推演：先想清楚故事线（全文大纲）与世界观，再落 `set_world`/`set_outline`/`set_characters`，改到什么程度自己判断。
 - **弧+桥段**：outlines 弧树嵌套按字数跨度（`start_word/end_word`）、plots **仅挂最底层弧**；用 `set_outline` 落表。
+- **弧树层级自主定**：弧库模板（`query_arc_library`/`arc_material_candidates`）是**单弧参考、可含多层子弧**（stages 可 children 嵌套）；生成故事线时**自主思考层级**——各弧子弧数/深度按剧情定，**不必照抄模板、不必均匀**（有的顶层弧一层不拆、有的两层、有的子弧内再拆到三层）。
 - **校验（走工具，不靠肉眼）**：生成/修改后、提交前调 `validate_storyline(outlines=..., plots=..., words_per_chapter=...)`（内联模式，步3 书未创建时用；已建书用 `validate_storyline(book_id=...)`，含 **arc_fill 弧内空白**）+ `validate_world(basic_info={world_building:{factions:...}, characters:[...]})`（势力/人物一致性），按 `decision_points` 反复补弧/移桥段/缩弧跨度/补人物直到 `passed=true`，或如实向用户说明残留问题。
 - **反复反思**：从剧情吸引力、设定一致性、阅读节奏出发反复审视，发现问题继续改，直到满意为止。
 - **全部落定后停下**，向用户汇报设定概要（书名/世界观/势力/人物/弧+桥段数），让用户**自行点击按钮提交**（agent 不调 submit）。

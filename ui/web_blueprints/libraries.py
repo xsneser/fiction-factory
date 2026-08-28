@@ -116,14 +116,24 @@ def struct_toggle(struct_id): return _lib_toggle("structures", struct_id)
 def struct_delete(struct_id): return _lib_delete("structures", struct_id)
 
 
-@bp.route("/api/structures/<struct_id>/stages/<int:idx>/themes", methods=["POST"])
-def struct_stage_themes(struct_id, idx):
-    """编辑某个阶段的阶段级内涵 [{name, position, how}]（含插入位置+表达手法）。"""
+@bp.route("/api/structures/<struct_id>/node/themes", methods=["POST"])
+def struct_stage_themes(struct_id):
+    """编辑某个弧/阶段节点的节点级内涵 [{name, position, how}]（含插入位置+表达手法）。
+    path 为沿 stages→children 的索引列表（如 [0,2] = 顶层第0个子弧的第2个孙弧），支持多层嵌套。"""
     t = struct_lib.get_by_id(struct_id)
     if not t:
         return jsonify({"ok": False, "error": "not found"}), 404
-    if not (0 <= idx < len(t.stages)):
-        return jsonify({"ok": False, "error": "stage index out of range"}), 400
+    path = (request.json or {}).get("path")
+    if not isinstance(path, list) or not path:
+        return jsonify({"ok": False, "error": "path must be non-empty list"}), 400
+    # 沿 stages→children 递归寻址目标节点
+    nodes = t.stages
+    node = None
+    for p in path:
+        if not isinstance(p, int) or not (0 <= p < len(nodes)):
+            return jsonify({"ok": False, "error": "path out of range"}), 400
+        node = nodes[p]
+        nodes = node.children
     themes = (request.json or {}).get("themes")
     if not isinstance(themes, list):
         return jsonify({"ok": False, "error": "themes must be list"}), 400
@@ -134,7 +144,7 @@ def struct_stage_themes(struct_id, idx):
         clean.append({"name": str(m["name"]).strip(),
                       "position": str(m.get("position", "") or "").strip(),
                       "how": str(m.get("how", "") or "").strip()})
-    t.stages[idx].themes = clean
+    node.themes = clean
     struct_lib._save()
     return jsonify({"ok": True, "themes": clean})
 
