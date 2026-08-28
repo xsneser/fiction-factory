@@ -22,6 +22,7 @@ class PenNameProfile:
     """笔名风格档案"""
     id: str
     pen_name: str                    # 笔名
+    language: str = "zh"             # zh 中文笔名 / en 英文笔名（不同语言笔名分开）
     # 风格指纹
     style_fingerprint: dict = field(default_factory=dict)
     """
@@ -99,7 +100,7 @@ class PenNameProfile:
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "pen_name": self.pen_name,
+            "id": self.id, "pen_name": self.pen_name, "language": self.language,
             "style_fingerprint": self.style_fingerprint,
             "word_print": self.word_print, "tropes": self.tropes,
             "style_assets": self.style_assets,
@@ -113,6 +114,7 @@ class PenNameProfile:
     def from_dict(cls, d: dict) -> "PenNameProfile":
         return PenNameProfile(
             id=d.get("id", ""), pen_name=d.get("pen_name", ""),
+            language=d.get("language", "zh"),
             style_fingerprint=d.get("style_fingerprint", {}),
             word_print=d.get("word_print", {}),
             tropes=d.get("tropes", {}),
@@ -175,6 +177,41 @@ class PenNameProfile:
         if tr.get("scene_pacing"):
             parts.append(f"- 场景节奏：{tr['scene_pacing']}")
 
+        parts.append(self.build_language_hints())
+        return "\n".join(parts) + "\n"
+
+    def build_language_hints(self) -> str:
+        """按笔名语言给出写作习惯提示（中文/英文笔名分开；注入到风格约束尾部）。"""
+        lang = (self.language or "zh").lower()
+        if lang == "en":
+            return ("- 英文笔名风格：句式长短交错，时态/主谓一致，缩写与口语自然；"
+                    "避免过度从句嵌套，对话标签多用常见词（said/asked 等）。")
+        return ("- 中文写作习惯：标点用全角，善用四字词/成语/惯用语，句末语气词适度；"
+                "避免欧化长句与翻译腔，偶尔留半截话/省略，行文口语化。")
+
+    def build_writing_prompt(self) -> str:
+        """生成前强注入全文本（get_writing_context 使用）：
+        本笔名风格 + 语言习惯 + 笔名专属规则 + 全局基线规则 + 通用写作纪律。
+        目标 <1.5KB 防 dsh 工具结果裁剪（style_rules 位于 payload 尾部可幸存）。"""
+        from .style_rules import StyleRuleLibrary
+        parts = ["【本笔名的写作风格约束——动笔前必读，必须严格遵守】"]
+        body = self.build_style_prompt()
+        lines = [l for l in body.splitlines() if l.strip()]
+        if lines and lines[0].startswith("【"):
+            lines = lines[1:]           # 剥重复标题行
+        if lines:
+            parts.append("\n".join(lines))
+        rb = StyleRuleLibrary().build_rules_block(self.id)
+        if rb:
+            parts.append(rb)
+        parts.append(
+            "【通用写作纪律】"
+            "\n- 对话用日常语气，不要文绉绉"
+            "\n- 每段 2-3 句，不要大段堆砌描写"
+            "\n- 内心独白可口语化（如：靠、淦、这TM...）"
+            "\n- 偶尔留半截话，不要所有句子主谓宾完整"
+            "\n- 动作描写不要每句都带修饰副词"
+        )
         return "\n".join(parts) + "\n"
 
 
@@ -209,12 +246,13 @@ class ProfileManager:
         return None
 
     def create(self, pen_name: str, description: str = "",
+               language: str = "zh",
                style_fingerprint: dict = None, word_print: dict = None,
                tropes: dict = None, platform_accounts: dict = None) -> PenNameProfile:
         from datetime import datetime
         profile_id = f"profile_{len(self._cache) + 1:03d}"
         profile = PenNameProfile(
-            id=profile_id, pen_name=pen_name,
+            id=profile_id, pen_name=pen_name, language=language,
             description=description,
             style_fingerprint=style_fingerprint or {},
             word_print=word_print or {},
