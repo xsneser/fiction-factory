@@ -9,29 +9,6 @@ from libraries.profiles import KNOWN_PLATFORMS, PLATFORM_LABELS  # noqa: E402
 bp = Blueprint("libraries", __name__)
 
 
-def _parse_style_assets(form):
-    """从表单解析 style_assets（写法资产特征池 + enabled 开关）。
-
-    7 类特征：4 个列表（常用词/禁用词/句首/动作节拍，逗号分隔）+ 3 个标量
-    （句长/对话比/段落风格）。无值且全启用 → 返回 {}（不写）。
-    """
-    from libraries.style_assets import STYLE_ASSET_FEATURES
-    LIST_KEYS = ("common_words", "avoid_words", "sentence_starters", "action_beats")
-    sa, enabled = {}, {}
-    for k in STYLE_ASSET_FEATURES:
-        enabled[k] = form.get(f"sa_{k}_enabled") == "on"
-        v = (form.get(f"sa_{k}", "") or "").strip()
-        if k in LIST_KEYS:
-            items = [x.strip() for x in v.split(",") if x.strip()]
-            if items:
-                sa[k] = items
-        elif v:
-            sa[k] = v
-    if sa or any(not e for e in enabled.values()):
-        sa["enabled"] = enabled
-    return sa
-
-
 def _parse_platform_accounts(form):
     """从表单解析 platform_accounts：每个已知平台 {registered, site_id, author_url, notes, last_published_at}。
 
@@ -206,8 +183,8 @@ def style_rule_create():
     d = request.get_json(silent=True) or {}
     kind = str(d.get("kind", "ban"))
     pattern = str(d.get("pattern", "")).strip()
-    if kind not in ("ban", "word", "prefer") or not pattern:
-        return jsonify({"ok": False, "error": "kind/pattern 必填"}), 400
+    if kind not in ("ban", "prefer") or not pattern:
+        return jsonify({"ok": False, "error": "kind/pattern 必填（ban=禁止内容，prefer=句式风格）"}), 400
     rule = StyleRule(id=_next_rule_id(kind), kind=kind,
                      profile_id=str(d.get("profile_id", "") or "").strip(),
                      pattern=pattern,
@@ -286,9 +263,8 @@ def profile_list():
     return render_template("profiles.html",
         profiles=all_profiles, selected=selected, is_new=is_new,
         current_scope=current_scope, scope_label=scope_label,
-        bans=[r for r in own if r.kind == "ban"],
-        words=[r for r in own if r.kind == "word"],
         prefers=[r for r in own if r.kind == "prefer"],
+        bans=[r for r in own if r.kind == "ban"],
         platform_labels=PLATFORM_LABELS)
 
 
@@ -307,9 +283,6 @@ def delete_profile(profile_id):
 @bp.route("/profiles/new", methods=["GET","POST"])
 def new_profile():
     if request.method == "POST":
-        wp = {}
-        if request.form.get("common_words"): wp["common_words"] = [w.strip() for w in request.form["common_words"].split(",")]
-        if request.form.get("avoid_words"): wp["avoid_words"] = [w.strip() for w in request.form["avoid_words"].split(",")]
         new_p = profiles.create(
             pen_name=request.form["pen_name"],
             language=str(request.form.get("language") or "zh"),
@@ -317,16 +290,9 @@ def new_profile():
             style_fingerprint={
                 "humor_style": request.form.get("humor_style",""),
                 "action_style": request.form.get("action_style",""),
-                "sentence_length": request.form.get("sentence_length","medium"),
             },
-            word_print=wp,
             platform_accounts=_parse_platform_accounts(request.form),
         )
-        # 写法资产（特征池 + 开关）——create 无此参数，落盘后回写
-        sa = _parse_style_assets(request.form)
-        if sa:
-            new_p.style_assets = sa
-            profiles.update(new_p)
         return redirect(url_for("libraries.profile_list", scope=new_p.id))  # 新建后自动选中
     # GET：独立页已并入 /profiles，302 到合并页新建模式（旧书签/外链不 404）
     return redirect(url_for("libraries.profile_list", scope="new"))
@@ -339,19 +305,13 @@ def edit_profile(profile_id):
     if not p:
         abort(404)
     if request.method == "POST":
-        wp = {}
-        if request.form.get("common_words"): wp["common_words"] = [w.strip() for w in request.form["common_words"].split(",")]
-        if request.form.get("avoid_words"): wp["avoid_words"] = [w.strip() for w in request.form["avoid_words"].split(",")]
         p.description = request.form.get("description","")
         p.language = str(request.form.get("language") or "zh")
         p.style_fingerprint = {
             "humor_style": request.form.get("humor_style",""),
             "action_style": request.form.get("action_style",""),
-            "sentence_length": request.form.get("sentence_length","medium"),
         }
-        p.word_print = wp
         p.platform_accounts = _parse_platform_accounts(request.form)
-        p.style_assets = _parse_style_assets(request.form)   # 写法资产特征池 + 开关
         profiles.update(p)
         return redirect(url_for("libraries.profile_list", scope=profile_id))  # 保存后保持选中
     # GET：独立页已并入 /profiles，302 到合并页该笔名（旧书签/外链不 404）

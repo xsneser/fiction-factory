@@ -59,12 +59,12 @@ WORD_SEED = {
 @dataclass
 class StyleRule:
     id: str
-    kind: str              # "ban" 禁句式 | "word" AI 词 | "prefer" 偏好/习惯（正向模仿）
+    kind: str              # "prefer" 句式风格（正向指令） | "ban" 禁止内容（词或句式）
     profile_id: str = ""   # 归属笔名 id；空 = 无主（不注入，见 rules_for）
-    pattern: str = ""      # ban=正则串；word=词本身；prefer=指令文本
+    pattern: str = ""      # ban=词或正则串；prefer=指令文本
     desc: str = ""
     severity: str = "warning"   # ban: warning/info
-    replacements: list = field(default_factory=list)  # word 的替换候选
+    replacements: list = field(default_factory=list)  # ban 的替换候选：有=AI高频词(自动替换)，空=硬禁句式(检测)
     enabled: bool = True
 
     def to_dict(self):
@@ -94,7 +94,9 @@ class StyleRuleLibrary(JsonLibrary):
         return StyleRule.from_dict(d)
 
     def _builtin(self):
-        """内置反 AI 规则种子，归属默认笔名（DEFAULT_PROFILE_ID），不再有全局基线。"""
+        """内置反 AI 规则种子，归属默认笔名（DEFAULT_PROFILE_ID），不再有全局基线。
+
+        kind 合一：AI 高频词（带替换候选）与硬禁句式（无替换）同为 ban 禁止内容。"""
         n = 0
         for pat, desc, sev in BAN_SEED:
             n += 1
@@ -102,7 +104,7 @@ class StyleRuleLibrary(JsonLibrary):
                             pattern=pat, desc=desc, severity=sev)
         for w, reps in WORD_SEED.items():
             n += 1
-            yield StyleRule(id=f"word_{n}", kind="word", profile_id=DEFAULT_PROFILE_ID,
+            yield StyleRule(id=f"ban_{n}", kind="ban", profile_id=DEFAULT_PROFILE_ID,
                             pattern=w, desc=f"「{w}」AI 高频词", replacements=list(reps))
 
     def rules_for(self, profile_id: str = "") -> list:
@@ -115,11 +117,12 @@ class StyleRuleLibrary(JsonLibrary):
         return (profile_id or "").strip() or DEFAULT_PROFILE_ID
 
     def get_bans(self, profile_id: str = ""):
-        """enabled 禁则 [(compiled_regex, desc, severity)]；未编辑=默认笔名内置种子。
-        profile_id 空 = 默认笔名（枫落）的规则；非空 = 仅该笔名自己的规则。"""
+        """硬禁句式（无替换候选的 ban）[(compiled_regex, desc, severity)]；未编辑=默认笔名内置种子。
+        profile_id 空 = 默认笔名（枫落）的规则；非空 = 仅该笔名自己的规则。
+        AI 高频词（有替换）不在此列——它们走 get_word_map 自动替换，避免审查噪声。"""
         out = []
         for r in self.rules_for(self._scope_id(profile_id)):
-            if r.kind != "ban" or not r.enabled or not r.pattern:
+            if r.kind != "ban" or r.replacements or not r.enabled or not r.pattern:
                 continue
             try:
                 out.append((re.compile(r.pattern), r.desc, r.severity))
@@ -128,27 +131,31 @@ class StyleRuleLibrary(JsonLibrary):
         return out
 
     def get_word_map(self, profile_id: str = ""):
-        """enabled 词表 {词: [替换候选]}；未编辑=默认笔名内置种子。
-        profile_id 空 = 默认笔名（枫落）的词表；非空 = 仅该笔名自己的词表。"""
+        """AI 高频词表 {词: [替换候选]}（带替换候选的 ban）；未编辑=默认笔名内置种子。
+        profile_id 空 = 默认笔名（枫落）的词表；非空 = 仅该笔名自己的词表。
+        兼容旧 `word` kind：kind 合一前落盘的 word 规则仍按词处理。"""
         word_map = {}
         for r in self.rules_for(self._scope_id(profile_id)):
-            if r.kind == "word" and r.enabled and r.pattern:
-                word_map[r.pattern] = list(r.replacements or [])
+            if r.kind not in ("ban", "word") or not r.replacements or not r.enabled or not r.pattern:
+                continue
+            word_map[r.pattern] = list(r.replacements or [])
         return word_map
 
     def build_rules_block(self, profile_id: str = "") -> str:
-        """生成前注入的规则段文本（仅该笔名的规则；profile_id 空 = 默认笔名；含 prefer 习惯）。"""
+        """生成前注入的规则段文本（仅该笔名的规则；profile_id 空 = 默认笔名）。
+        三段：句式风格（prefer 正向）+ 禁止内容·硬禁句式 + 禁止内容·AI 高频词。"""
         def _word_line(r):
             return f"「{r.pattern}」→{'、'.join(r.replacements) if r.replacements else '改写'}"
         own = [r for r in self.rules_for(self._scope_id(profile_id)) if r.enabled and r.pattern]
         parts = []
-        prefer = [r.pattern for r in own if r.kind == "prefer"]
-        bans = [r.desc or r.pattern for r in own if r.kind == "ban" and r.severity == "warning"]
-        words = [_word_line(r) for r in own if r.kind == "word"]
-        if prefer:
-            parts.append("【本笔名习惯偏好】" + "；".join(prefer))
-        if bans:
-            parts.append("【本笔名专属禁句式（必禁用）】" + "、".join(bans))
+        prefers = [r.pattern for r in own if r.kind == "prefer"]
+        if prefers:
+            parts.append("【句式风格（本笔名怎么写的正向偏好）】" + "；".join(prefers))
+        patterns = [r.desc or r.pattern for r in own
+                    if r.kind == "ban" and not r.replacements and r.severity == "warning"]
+        if patterns:
+            parts.append("【禁止内容·硬禁句式（必禁用）】" + "、".join(patterns))
+        words = [_word_line(r) for r in own if r.kind in ("ban", "word") and r.replacements]
         if words:
-            parts.append("【本笔名专属替换词表】" + "；".join(words))
+            parts.append("【禁止内容·AI 高频词（见词即替换）】" + "；".join(words))
         return "\n".join(parts)

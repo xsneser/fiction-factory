@@ -386,20 +386,22 @@ assert_ok("去AI-结果不同", result.processed != sample, "文本已变化")
 snippet = de_ai.build_deai_prompt_snippet()
 assert_ok("去AI-约束注入", len(snippet) > 100)
 
-# 风格规则库按笔名分：profile_id 归属 + 空参兜底默认笔名（无全局基线）
+# 风格规则库按笔名分：kind 合一（prefer=句式风格 / ban=禁止内容，词带替换=AI高频词）+ 空参兜底默认笔名
 from libraries.style_rules import StyleRuleLibrary as _SRL, StyleRule as _SR
 from libraries.de_ai import apply_word_replacements as _awr
 _s = _SRL()
 assert_ok("风格规则-默认笔名禁句/词表", len(_s.get_bans()) == 9 and len(_s.get_word_map()) == 23,
           f"{len(_s.get_bans())} 禁句/{len(_s.get_word_map())} 词")
+assert_ok("风格规则-默认笔名句式规则", len([r for r in _s.rules_for("profile_001") if r.kind == "prefer"]) >= 6,
+          "枫落句式风格规则")
 _s.rules.append(_SR(id="t_ban_1", kind="ban", profile_id="profile_001", pattern="测试禁句", desc="笔名禁句"))
-_s.rules.append(_SR(id="t_word_1", kind="word", profile_id="profile_001", pattern="测试专属词", replacements=["替换"]))
+_s.rules.append(_SR(id="t_word_1", kind="ban", profile_id="profile_001", pattern="测试专属词", replacements=["替换"]))
 _s.rules.append(_SR(id="t_prefer_1", kind="prefer", profile_id="profile_001", pattern="爱用（）做注释"))
-assert_ok("风格规则-笔名禁句", len(_s.get_bans("profile_001")) == 10, f"{len(_s.get_bans('profile_001'))} 禁句")  # 9 种子 + 1 笔名
+assert_ok("风格规则-笔名禁句", len(_s.get_bans("profile_001")) == 10, f"{len(_s.get_bans('profile_001'))} 禁句")  # 9 句式 + 1 笔名（带替换的词不计入禁句）
 assert_ok("风格规则-笔名词", "测试专属词" in _s.get_word_map("profile_001"))
 assert_ok("风格规则-空参兜底默认笔名", "测试专属词" in _s.get_word_map() and len(_s.get_word_map()) == 24)  # 默认笔名=profile_001
 _blk = _s.build_rules_block("profile_001")
-assert_ok("风格规则-注入块含偏好", "爱用（）做注释" in _blk and "本笔名" in _blk)
+assert_ok("风格规则-注入块句式+禁止", "句式风格" in _blk and "禁止内容" in _blk and "爱用（）做注释" in _blk)
 _p = _SR.from_dict({"id": "x", "kind": "ban", "pattern": "p"})
 assert_ok("风格规则-旧条目无主", _p.profile_id == "")  # 老 jsonl 无 profile_id 兼容
 _rt, _rc = _awr("这是一个测试专属词。")

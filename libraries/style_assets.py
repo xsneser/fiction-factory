@@ -1,17 +1,27 @@
-"""写法资产化 — 从文本提取风格特征，可保存/组合/绑定笔名（规则层，零 LLM）。
+"""写法资产化 — 从文本提取风格特征 → 转成句式风格规则（规则层，零 LLM）。
 
 竞品借鉴：AI-NWA 写法引擎 / creative-writing-skills style-creator（最小可用版）。
-特征池：extract_style_features 提取 7 类特征 → 落 profile.style_assets（每类带 enabled
-开关）；build_style_prompt / build_deai_prompt_snippet 按启用集重编译（特征池组合）。
+特征池：extract_style_features 提取 7 类特征 → features_to_rules 转成 prefer/ban 规则
+写入 style_rules（kind 合一后句式风格=prefer 规则、禁止内容=ban 规则，profile.style_assets 已废弃）。
 """
 import re
 from collections import Counter
 
-# 写法资产特征池（7 类）：extract_style_features 输出与 profile.style_assets.enabled 键一致
+from .style_rules import StyleRule, StyleRuleLibrary, WORD_SEED
+
+# 写法资产特征池（7 类）：extract_style_features 输出（每类带 enabled 开关）
 STYLE_ASSET_FEATURES = (
     "sentence_length", "dialogue_ratio", "paragraph_style",
     "common_words", "avoid_words", "sentence_starters", "action_beats",
 )
+
+# 特征 → 句式风格 prefer 文本
+_SL_MAP = {"short": "句长偏短（多用短句，每句8-15字）",
+           "medium": "句长中等（句中偏长，15-25字为主）",
+           "long": "句长偏长（可用长句铺陈，25字以上）"}
+_PS_MAP = {"chatty": "段落偏短促（chatty，对话多）",
+           "compact": "段落紧凑（compact）",
+           "literary": "段落铺陈（literary）"}
 
 
 def default_enabled() -> dict:
@@ -101,3 +111,48 @@ def extract_style_features(text: str) -> dict:
         "sentence_starters": _top_sentence_starters(sentences),
         "action_beats": _detect_action_beats(text),
     }
+
+
+def features_to_rules(features: dict, profile_id: str) -> list:
+    """写法资产特征 → 句式风格规则（kind 合一：正向→prefer，禁用词→ban）。
+
+    按 enabled 开关逐项转换（关闭的特征不生成规则）；avoid_words 已在内置 AI 词表
+    （默认禁止内容）里的跳过，避免重复。返回新增 StyleRule 列表（未落盘）。
+    """
+    srl = StyleRuleLibrary()
+    existing = {r.id for r in srl.rules}
+    def _nid(kind: str) -> str:
+        i = 1
+        while f"{kind}_{i}" in existing:
+            i += 1
+        existing.add(f"{kind}_{i}")
+        return f"{kind}_{i}"
+    def _on(key: str) -> bool:
+        return bool((features.get("enabled") or {}).get(key, True))
+
+    rules = []
+    if _on("sentence_length") and features.get("sentence_length") in _SL_MAP:
+        rules.append(StyleRule(id=_nid("prefer"), kind="prefer", profile_id=profile_id,
+                               pattern=_SL_MAP[features["sentence_length"]]))
+    if _on("dialogue_ratio") and features.get("dialogue_ratio"):
+        rules.append(StyleRule(id=_nid("prefer"), kind="prefer", profile_id=profile_id,
+                               pattern=f"对话占比约{int(features['dialogue_ratio']*100)}%"))
+    if _on("paragraph_style") and features.get("paragraph_style") in _PS_MAP:
+        rules.append(StyleRule(id=_nid("prefer"), kind="prefer", profile_id=profile_id,
+                               pattern=_PS_MAP[features["paragraph_style"]]))
+    if _on("common_words") and features.get("common_words"):
+        rules.append(StyleRule(id=_nid("prefer"), kind="prefer", profile_id=profile_id,
+                               pattern="常用词：" + "、".join(features["common_words"])))
+    if _on("sentence_starters") and features.get("sentence_starters"):
+        rules.append(StyleRule(id=_nid("prefer"), kind="prefer", profile_id=profile_id,
+                               pattern="句首偏好：" + "、".join(features["sentence_starters"])))
+    if _on("action_beats") and features.get("action_beats"):
+        rules.append(StyleRule(id=_nid("prefer"), kind="prefer", profile_id=profile_id,
+                               pattern="动作节拍：" + "、".join(features["action_beats"])))
+    # 禁用词：不在内置 AI 词表的才转 ban（内置词表=默认禁止内容已覆盖）
+    if _on("avoid_words"):
+        for w in (features.get("avoid_words") or []):
+            if w and w not in WORD_SEED:
+                rules.append(StyleRule(id=_nid("ban"), kind="ban", profile_id=profile_id,
+                                       pattern=w, desc=f"「{w}」笔名禁用词"))
+    return rules

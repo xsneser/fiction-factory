@@ -797,11 +797,12 @@ def deai_text(text: str, style: str = "chatty") -> dict:
 
 
 def extract_style_asset(text: str, pen_name: str = "", enabled: dict = None) -> dict:
-    """从文本提取写法资产（规则层：句长/对话比/段落风格/高频词/禁用词/句首/动作节拍），
-    可选写入笔名档案 style_assets（AI-NWA 写法引擎最小可用版）。
-    enabled：特征池逐项开关 {feature: bool}（缺省全启用），供「按启用集重编译」。"""
+    """从文本提取句式风格（规则层：句长/对话比/段落风格/高频词/禁用词/句首/动作节拍），
+    转成 prefer/ban 规则写入该笔名 style_rules（kind 合一：句式风格=规则列表，不再写 profile.style_assets）。
+    enabled：特征池逐项开关 {feature: bool}（缺省全启用）。"""
     from libraries.style_assets import (extract_style_features, default_enabled,
-                                        STYLE_ASSET_FEATURES)
+                                        STYLE_ASSET_FEATURES, features_to_rules)
+    from libraries.style_rules import StyleRuleLibrary
     features = extract_style_features(text)
     if not pen_name:
         return {"features": features, "saved": False, "message": "未指定笔名，仅返回特征"}
@@ -813,9 +814,13 @@ def extract_style_asset(text: str, pen_name: str = "", enabled: dict = None) -> 
         for k, v in enabled.items():
             if k in STYLE_ASSET_FEATURES:
                 features["enabled"][k] = bool(v)
-    profile.style_assets = features
-    profiles.update(profile)
-    return {"features": features, "saved": True, "profile": pen_name}
+    srl = StyleRuleLibrary()
+    new_rules = features_to_rules(features, profile.id)
+    if new_rules:
+        srl.rules.extend(new_rules)
+        srl._save()
+    return {"features": features, "saved": bool(new_rules), "rules_added": len(new_rules),
+            "profile": pen_name}
 
 
 def diagnose_retention(book_id: str, recent_n: int = 5) -> dict:

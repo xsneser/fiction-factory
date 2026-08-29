@@ -38,7 +38,7 @@
         {% include "_style_rules_cards.html" %}
         {% endwith %}
         {% elif selected %}
-        <p class="hint">每个笔名自成体系：① 表单（身份与调性）→ ② 句式风格（写法资产 + 偏好/习惯）→ ③ 禁止的内容（硬禁句式 + AI 高频词）。</p>
+        <p class="hint">每个笔名自成体系：① 表单（身份与调性）→ ② 句式风格（正向：怎么写）→ ③ 禁止的内容（负向：不能写）。</p>
         {% with form_action='/profiles/' ~ selected.id ~ '/edit', form_submit='保存修改', profile=selected %}
         {% include "_profile_form.html" %}
         {% endwith %}

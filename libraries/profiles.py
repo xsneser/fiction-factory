@@ -126,67 +126,29 @@ class PenNameProfile:
             updated_at=d.get("updated_at", ""),
         )
 
-    @staticmethod
-    def _sa_enabled(sa: dict, key: str) -> bool:
-        """写法资产特征池开关：style_assets['enabled'][key]；缺省=启用（向后兼容）。"""
-        return bool((sa.get("enabled") or {}).get(key, True))
-
-    def _asset_value(self, key: str):
-        """写法资产取值：启用且非空才返回；否则 None（由旧字段兜底）。"""
-        sa = self.style_assets
-        if sa and self._sa_enabled(sa, key) and sa.get(key):
-            return sa[key]
-        return None
-
     def build_style_prompt(self) -> str:
-        """生成注入写作 prompt 的风格约束文本（按特征池启用集重编译）。
+        """生成注入写作 prompt 的风格约束文本。
 
-        写法资产（style_assets）是句式风格的唯一来源：启用时优先于 style_fingerprint /
-        word_print 的同名字段（不再重复注入）；旧档案无写法资产时回退旧字段。
-        """
+        句式风格 = prefer 规则 + 禁止内容 = ban 规则（经 build_rules_block 注入）。
+        表单只读身份/调性字段（幽默/动作/描写密度）+ 套路（章末钩子/场景节奏）。
+        style_assets / word_print 已废弃不再编译（迁移期已转成规则）。"""
+        from .style_rules import StyleRuleLibrary
         parts = ["【本笔名的风格约束——必须严格遵守】"]
         fp = self.style_fingerprint
-        wp = self.word_print
         tr = self.tropes
-
-        # 句长 / 对话比 / 段落风格：写法资产优先，旧 style_fingerprint 兜底
-        sl = self._asset_value("sentence_length") or fp.get("sentence_length")
-        if sl:
-            sl_map = {"short": "多用短句，每句8-15字", "medium": "句中偏长，15-25字为主",
-                      "long": "可用长句铺陈，25字以上"}
-            parts.append(f"- 句子长度：{sl_map.get(sl, sl)}")
-        dr = self._asset_value("dialogue_ratio") or fp.get("dialogue_ratio")
-        if dr:
-            parts.append(f"- 对话占比：约{int(dr*100)}%")
-        ps = self._asset_value("paragraph_style") or fp.get("paragraph_style")
-        if ps:
-            parts.append(f"- 段落节奏：{ps}")
         if fp.get("humor_style"):
             parts.append(f"- 幽默风格：{fp['humor_style']}")
         if fp.get("action_style"):
             parts.append(f"- 动作描写：{fp['action_style']}")
-
-        # 用词 / 句首 / 动作节拍：写法资产优先，旧 word_print 兜底
-        cw = self._asset_value("common_words") or wp.get("common_words")
-        if cw:
-            parts.append(f"- 常用词汇：{', '.join(cw)}")
-        aw = self._asset_value("avoid_words") or wp.get("avoid_words")
-        if aw:
-            parts.append(f"- 绝对禁用词：{', '.join(aw)}")
-        if wp.get("dialogue_tags"):
-            parts.append(f"- 对话标签偏好：{', '.join(wp['dialogue_tags'])}")
-        ss = self._asset_value("sentence_starters") or wp.get("sentence_starters")
-        if ss:
-            parts.append(f"- 句首偏好：{', '.join(ss)}")
-        ab = self._asset_value("action_beats") or wp.get("action_beats")
-        if ab:
-            parts.append(f"- 动作节拍偏好：{', '.join(ab)}")
-
+        if fp.get("description_density"):
+            parts.append(f"- 描写密度：{fp['description_density']}")
         if tr.get("chapter_hook_style"):
             parts.append(f"- 章末钩子风格：{tr['chapter_hook_style']}")
         if tr.get("scene_pacing"):
             parts.append(f"- 场景节奏：{tr['scene_pacing']}")
-
+        rb = StyleRuleLibrary().build_rules_block(self.id)
+        if rb:
+            parts.append(rb)
         parts.append(self.build_language_hints())
         return "\n".join(parts) + "\n"
 
@@ -201,9 +163,8 @@ class PenNameProfile:
 
     def build_writing_prompt(self) -> str:
         """生成前强注入全文本（get_writing_context 使用）：
-        本笔名风格 + 语言习惯 + 笔名专属规则（含反 AI 禁句/词表）+ 通用写作纪律。
+        本笔名风格（含句式风格/禁止内容规则）+ 语言习惯 + 通用写作纪律。
         目标 <1.5KB 防 dsh 工具结果裁剪（style_rules 位于 payload 尾部可幸存）。"""
-        from .style_rules import StyleRuleLibrary
         parts = ["【本笔名的写作风格约束——动笔前必读，必须严格遵守】"]
         body = self.build_style_prompt()
         lines = [l for l in body.splitlines() if l.strip()]
@@ -211,9 +172,6 @@ class PenNameProfile:
             lines = lines[1:]           # 剥重复标题行
         if lines:
             parts.append("\n".join(lines))
-        rb = StyleRuleLibrary().build_rules_block(self.id)
-        if rb:
-            parts.append(rb)
         parts.append(
             "【通用写作纪律】"
             "\n- 对话用日常语气，不要文绉绉"

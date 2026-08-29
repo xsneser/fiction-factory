@@ -127,21 +127,9 @@ class DeAIEngine:
         return result
 
     def build_deai_prompt_snippet(self, profile=None) -> str:
-        """生成可注入写作 prompt 的去 AI 味约束（按特征池启用集重编译）。
-
-        profile 提供 style_assets 时，把启用的 avoid_words 并入禁词行（enabled=False 跳过）。
-        """
-        extra_ban = []
-        if profile is not None:
-            try:
-                sa = getattr(profile, "style_assets", None) or {}
-                if (sa.get("enabled") or {}).get("avoid_words", True):
-                    extra_ban = list(sa.get("avoid_words") or [])[:8]
-            except Exception:
-                extra_ban = []
+        """生成可注入写作 prompt 的去 AI 味约束。
+        （禁止内容规则——禁句/AI 词——已并入本笔名 build_writing_prompt，这里只留通用纪律。）"""
         ban_line = "- 禁止使用：仿佛、似乎、不禁、不由得、只见、但见、缓缓、顿时、竟然"
-        if extra_ban:
-            ban_line += "、" + "、".join(extra_ban)
         return (
             "\n【去AI味约束——写作时必须遵守】\n"
             + ban_line + "\n"
