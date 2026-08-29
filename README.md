@@ -225,7 +225,8 @@ D:\NovelEngine/
 │       ├── storyline_write_flow.html # 写作台（两栏：故事线+正文/规划）
 │       ├── publish.html / publish_index.html # 上架 / 导出
 │       ├── scout.html # 侦察·提取合并页（agent 下载分析→候选确认入库五库；原 extract.html 已并入）
-│       ├── novels.html # 外部书库页（已下载小说，分析并呈现 / 删除）
+│       ├── novels.html # 外部书库页（已下载小说，阅读 / 去侦察页分析 / 删除）
+│       ├── novel_reader.html # 外部书库单本阅读器（reader.css/js，章节懒加载）
 │       ├── settings.html / profiles.html / new_profile.html
 │       ├── plots.html / structures.html / gags.html / characters.html  # 四大库页
 │       ├── review_test.html / deai.html # 调试工具

@@ -152,6 +152,7 @@ def run_tests():
         ("Review Test", "/review-test", ["审查", "测试"]),
         ("Scout", "/scout", ["侦察", "提取"]),  # 侦察/提取合并页
         ("Novels", "/novels", ["外部书库", "novels"]),  # 外部书库独立页
+        ("Novels Read Redirect", "/novels/read", ["外部书库"]),  # 无 folder → 302→/novels
         ("Publish", "/publish", ["上架管理"]),
     ]
 
