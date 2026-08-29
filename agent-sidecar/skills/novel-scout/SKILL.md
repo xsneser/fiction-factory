@@ -20,7 +20,7 @@ description: 侦察/抓取/提取阶段（建书可选前置）。侦察热榜/�
    - **写作风格(style_rules)**：读若干章正文后提炼该书的句式风格/用词特点，转成规则列表
      `[{kind, pattern, desc?, severity?, replacements?}]`——`kind=prefer` 句式风格正向指令（如「句长偏短」）|
      `ban` 禁止内容（`replacements` 有值=AI 高频词自动去 AI 味替换、空=硬禁句式检测）；
-     **归属用户所选笔名**（任务文案里带的笔名，落 `profile_id`）。
+     **归属用户所选笔名**（任务文案里带的笔名，落 `profile_id`；未指定时归默认笔名「枫落」）。
    - 调 `drive_ui(set_review)` 把五类候选呈现到侦察页审查区：
      payload `{title, platform?, folder?, downloaded_chapters?, profile_id?, profile_name?,
      plots?, structures?, gags?, characters?, style_rules?}`（title 必填、五类至少一类非空）。

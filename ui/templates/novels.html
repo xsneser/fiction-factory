@@ -1,19 +1,11 @@
 {% extends "base.html" %}
-{% block title %}已下载书库 — NovelEngine{% endblock %}
+{% block title %}外部书库 — NovelEngine{% endblock %}
 {% block content %}
-<h1>📚 已下载书库 <span style="font-size:14px;color:#8b949e">已抓取的小说 → 交给 agent 分析提炼五库素材（确认入库在 <a href="/scout">侦察 · 提取</a> 页）</span></h1>
+<h1>📚 外部书库</h1>
 
-<div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0">
-    <div class="form-row-inline">
-        <label style="font-size:13px;color:#8b949e">风格规则归属笔名</label>
-        <select id="novels-pen">
-            {% for p in profiles %}<option value="{{ p.id }}" data-name="{{ p.pen_name }}">{{ p.pen_name }}</option>{% endfor %}
-        </select>
-    </div>
-    <div style="display:flex;gap:8px">
-        <a class="btn" href="/scout" style="text-decoration:none">🔍 去侦察/抓取新书</a>
-        <button class="btn" onclick="loadNovels()">🔄 刷新</button>
-    </div>
+<div style="display:flex;justify-content:flex-end;gap:8px;margin:16px 0">
+    <a class="btn" href="/scout" style="text-decoration:none">🔍 去侦察/抓取新书</a>
+    <button class="btn" onclick="loadNovels()">🔄 刷新</button>
 </div>
 
 <div id="novels-list" style="margin-top:8px">
@@ -21,25 +13,15 @@
 </div>
 
 <style>
-.form-row-inline { display: flex; align-items: center; gap: 10px; }
-.form-row-inline select { min-width: 120px; }
 .novel-actions { display:flex;gap:8px;align-items:center;margin-top:8px; }
 </style>
 
 <script>
-var currentPenName = '';
-(function(){
-    var sel = document.getElementById('novels-pen');
-    if (sel && sel.options.length) currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name');
-    if (sel) sel.addEventListener('change', function(){
-        currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name');
-    });
-    loadNovels();
-})();
+(function(){ loadNovels(); })();
 
-function buildAnalyzeTask(folder, chapters, penName) {
+function buildAnalyzeTask(folder, chapters) {
     return '分析已下载小说「' + folder + '」（' + chapters + ' 章，平台 fanqie），'
-         + '读正文自主提炼桥段/情节弧/笑点/角色/写作风格五类候选，风格规则归属笔名「' + penName + '」，'
+         + '读正文自主提炼桥段/情节弧/笑点/角色/写作风格五类候选，风格规则归属默认笔名（枫落），'
          + '用 drive_ui set_review 把候选呈现到侦察页审查区，不要直接入库，等我在页面勾选确认。';
 }
 
@@ -82,7 +64,7 @@ function analyzeFrom(btn) {
     if (!folder) return showToast('缺少小说信息', 'warning');
     // 跳侦察页等候选呈现，再发任务
     if (typeof navigateTo === 'function') navigateTo('/scout');
-    window.agentSendTask(buildAnalyzeTask(folder, n, currentPenName));
+    window.agentSendTask(buildAnalyzeTask(folder, n));
     showToast('🤖 已交给 Agent 分析，候选将在侦察页审查区呈现', 'info');
 }
 

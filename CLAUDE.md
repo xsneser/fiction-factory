@@ -46,7 +46,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 | 去AI味 | `/deai` | 否 | — |
 | 审阅测试 | `/review-test` | 否 | — |
 | 侦察·提取 | `/scout`（原 `/extract` 已合并，302→`/scout`） | 否 | — |
-| 已下载书库 | `/novels` | 否 | — |
+| 外部书库 | `/novels`（已下载小说，分析并呈现 / 删除） | 否 | — |
 | 设置 | `/settings` | 否 | — |
 
 （旧/内部路由 `/desk`、`/timeline/<id>/edit`、`/storyline/<id>/edit` 等为引擎内部页，agent 一般不用。）
