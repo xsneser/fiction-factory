@@ -41,16 +41,7 @@
     <div id="cp-msg" style="font-size:12px;color:#8b949e;margin-top:6px"></div>
 </div>
 
-{# ─── 区 3：已下载书库 ─── #}
-<div style="display:flex;justify-content:space-between;align-items:center;margin-top:24px">
-    <h2 style="font-size:16px;margin:0">📚 已下载书库</h2>
-    <button class="small" onclick="loadNovels()">🔄 刷新</button>
-</div>
-<div id="novels-list" style="margin-top:12px">
-    <div class="empty"><p style="color:#484f58">加载中...</p></div>
-</div>
-
-{# ─── 区 4：结果审查区（agent set_review 呈现候选） ─── #}
+{# ─── 区 3：结果审查区（agent set_review 呈现候选；已下载书库已独立到 /novels 页） ─── #}
 <div id="review-area" style="display:none;margin-top:20px"></div>
 
 <style>
@@ -80,7 +71,7 @@ var currentPenName = '';
         currentPenId = sel.value;
         currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name');
     });
-    loadNovels();
+    pollPendingReview();   // 回页恢复：agent 已呈现但未渲染的候选
 })();
 
 // 书名/book_id 两个输入框互斥：聚焦一个时清空另一个
@@ -94,11 +85,6 @@ function buildScoutTask(title, directId, chapters, penName) {
     var target = directId ? ('book_id ' + directId) : ('《' + title + '》');
     return '抓取并分析小说入库：' + target + '，下载 ' + chapters + ' 章，风格规则归属笔名「' + penName + '」。'
          + '下载后读正文自主提炼桥段/情节弧/笑点/角色/写作风格五类候选，'
-         + '用 drive_ui set_review 把候选呈现到侦察页审查区，不要直接入库，等我在页面勾选确认。';
-}
-function buildAnalyzeTask(folder, chapters, penName) {
-    return '分析已下载小说「' + folder + '」（' + chapters + ' 章，平台 fanqie），'
-         + '读正文自主提炼桥段/情节弧/笑点/角色/写作风格五类候选，风格规则归属笔名「' + penName + '」，'
          + '用 drive_ui set_review 把候选呈现到侦察页审查区，不要直接入库，等我在页面勾选确认。';
 }
 
@@ -115,48 +101,7 @@ function sendScoutTask() {
     showToast('🤖 已交给 Agent，下载/分析进度请看下方与侧栏', 'info');
 }
 
-/* ─── 区 3：已下载书库 ─── */
-function loadNovels() {
-    var el = document.getElementById('novels-list');
-    fetch('/api/scout/novels')
-        .then(function(r) { return r.json(); })
-        .then(function(novels) {
-            if (!novels || novels.length === 0) {
-                el.innerHTML = '<div class="empty" style="padding:40px"><div class="icon" style="font-size:36px">📂</div>'
-                    + '<p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p>'
-                    + '<p style="color:#484f58;font-size:12px;margin-top:6px">在上方给 agent 一个书名或 book_id，自动下载并分析</p></div>';
-                return;
-            }
-            var html = '';
-            novels.forEach(function(n) {
-                var analyzed = !!n.analyzed;
-                html += '<div class="card" style="margin-bottom:12px">';
-                html += '<div style="display:flex;justify-content:space-between;align-items:center">';
-                html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span></div>';
-                html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章</span>';
-                html += '</div>';
-                html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + escapeHtml(n.platform||'') + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
-                html += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">';
-                if (analyzed) html += '<span class="tag green">✅ 已提取</span>';
-                html += '<button class="small" style="background:#1f6feb" data-f="' + escapeHtml(n.folder) + '" data-n="' + (n.saved_chapters||0) + '" onclick="sendAnalyzeTaskFrom(this)">'
-                      + (analyzed ? '🔄 重新分析并呈现' : '🗂️ 分析并呈现') + '</button>';
-                html += '</div></div>';
-            });
-            el.innerHTML = html;
-        })
-        .catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
-}
-
-function sendAnalyzeTaskFrom(btn) {
-    if (typeof window.agentSendTask !== 'function') return showToast('侧栏 Agent 未就绪，请刷新页面', 'error');
-    var folder = btn.getAttribute('data-f') || '';
-    var n = parseInt(btn.getAttribute('data-n')) || 0;
-    if (!folder) return showToast('缺少小说信息', 'warning');
-    window.agentSendTask(buildAnalyzeTask(folder, n, currentPenName));
-    showToast('🤖 已交给 Agent 重新分析，候选将呈现到下方审查区', 'info');
-}
-
-/* ─── 区 4：set_review 命令 → 渲染审查卡 ─── */
+/* ─── 区 3：set_review 命令 → 渲染审查卡（SSE 实时路径） ─── */
 window.onnecommand = function(e) {
     var d = e && e.detail;
     if (!d || d.cmd !== 'set_review' || !d.args) return;
@@ -165,10 +110,28 @@ window.onnecommand = function(e) {
     if (area) area.scrollIntoView({behavior:'smooth', block:'start'});
 };
 
-/* 入库成功后：刷新书库 + 保留审查区（卡片已勾选完成） */
+/* 入库成功后（library_review.js 回调）：候选已消费，快照由服务端清空，页面保留已勾选卡片 */
 function refreshScoutUI() {
-    loadNovels();
+    // 无书库列表可刷新；卡片保留供查看。回页时 pending 已清不会重放。
 }
+
+/* ─── 候选持久化恢复：pending-review 轮询（SSE 渲染失败/页面不在场时兜底） ─── */
+function pollPendingReview() {
+    fetch('/api/scout/pending-review')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d || !d.ok) return;
+            var review = d.review || {};
+            if (!review.title) return;
+            // 只在此前未渲染过时渲染，避免覆盖用户已勾选的实时卡片
+            if (window._lastReviewData) return;
+            renderReviewCards(review, 'review-area');
+            var area = document.getElementById('review-area');
+            if (area) area.scrollIntoView({behavior:'smooth', block:'start'});
+        })
+        .catch(function() {});
+}
+setInterval(pollPendingReview, 4000);
 
 /* ─── 区 2：实时进度（crawl-progress 轮询 + agent busy 指示） ─── */
 function pollCrawlProgress() {
