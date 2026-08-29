@@ -3,7 +3,7 @@
 破解自定义字体防爬机制：PUA码点 → 真实汉字。
 
 番茄把正文汉字替换为 Unicode PUA 私用区码点，靠 @font-face 自定义字体在浏览器渲染成正常汉字。
-解码用维护好的字体映射表 storage/font_charset.json（源自开源项目 ckenkuo/fanqie-cdp-downloader 的
+解码用维护好的字体映射表 plugins/font_charset.json（源自开源项目 ckenkuo/fanqie-cdp-downloader 的
 charset.json，实测《十日终焉》1496 章 329 万字还原率 100%）。两套字体映射（mode0/mode1）对应
 私用区 [0xE3E8,0xE55B] / [0xE3E9,0xE55C]，解码时双试取残留最少者。
 
@@ -73,10 +73,16 @@ class FanqieDecoder:
     def _load_charset(self):
         if self._charset is None:
             base = Path(__file__).resolve().parent.parent
-            path = base / "storage" / "font_charset.json"
-            try:
-                self._charset = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
+            # 仓库内随代码分发（plugins/font_charset.json）；storage 可覆盖（更新版）
+            for cand in (Path(__file__).resolve().parent / "font_charset.json",
+                         base / "storage" / "font_charset.json"):
+                try:
+                    if cand.exists():
+                        self._charset = json.loads(cand.read_text(encoding="utf-8"))
+                        break
+                except Exception:
+                    pass
+            if self._charset is None:
                 self._charset = []
         return self._charset
 
