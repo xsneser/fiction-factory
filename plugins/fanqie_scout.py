@@ -103,16 +103,8 @@ class FanqieCrawler:
 
     def _init_decoder(self):
         if self._decoder is None:
-            from plugins.font_decoder import FanqieDecoder, load_mapping
+            from plugins.font_decoder import FanqieDecoder
             self._decoder = FanqieDecoder(verify=self.session.verify)
-            self._cached_mapping = {}
-            # 加载预生成的映射表（可能有多个字体），锚定项目根避免依赖 CWD
-            storage_dir = Path(__file__).resolve().parent.parent / "storage"
-            for mp in storage_dir.glob("font_mapping*.json"):
-                try:
-                    self._cached_mapping.update(load_mapping(str(mp)))
-                except Exception:
-                    pass
 
     def discover_hot(self, genre_id: int = 0, count: int = 10) -> list[NovelInfo]:
         """发现热榜小说"""
@@ -515,16 +507,11 @@ class FanqieCrawler:
                 content = re.sub(r'<[^>]+>', '', content)
                 content = re.sub(r'\n{3,}', '\n\n', content)
 
-                # PUA 字体解码
+                # PUA 字体解码：全局映射表还原（storage/font_charset.json，源自开源项目
+                # ckenkuo/fanqie-cdp-downloader，双 mode 取残留最少）
                 self._init_decoder()
                 if any(0xE000 <= ord(c) <= 0xF8FF for c in content[:100]):
-                    if self._cached_mapping:
-                        content = font_decoder.decode_with_mapping(
-                            content, self._cached_mapping)
-                    else:
-                        content = self._decoder.decode_page(r.text)
-                        # 剔除 HTML 标签（解码后可能残留）
-                        content = re.sub(r'<[^>]+>', '', content)
+                    content = self._decoder.decode_content(content)
 
                 if content.strip():
                     cache_file.write_text(content, encoding="utf-8")
