@@ -1666,15 +1666,24 @@ def list_snapshots(book_id: str) -> dict:
 
 
 def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
+                start_chapter: int = 1, end_chapter: int = 0,
                 download_delay: float = 1.0) -> dict:
-    """抓取番茄小说：按书名或 book_id 搜索→下载指定章数→保存到 storage/novels/fanqie/。
+    """抓取番茄小说：按书名或 book_id 搜索→下载指定章区间→保存到 storage/novels/fanqie/。
 
+    章节区间按**真实章号**：start_chapter=100, end_chapter=130 下载第 100~130 章
+    （存为 0100..0130.json）；只给 chapters 时默认从 start_chapter(缺省 1) 起 N 章。
     纯抓取、无需 LLM（复用 FanqieCrawler + novel_storage.save_novel）。进度实时写入
     storage/crawl_progress.json（/scout 页轮询展示）。返回 {ok, title, author,
     saved_chapters, folder, platform}。
     """
     if not title and not book_id:
         raise RuntimeError("请提供书名 title 或 book_id")
+    start_chapter = max(1, int(start_chapter or 1))
+    effective_end = int(end_chapter or 0)
+    if effective_end <= 0:
+        effective_end = start_chapter + int(chapters or 0) - 1
+    if effective_end < start_chapter:
+        raise RuntimeError(f"结束章 {effective_end} 小于起始章 {start_chapter}")
     from libraries.crawl_progress import write_crawl_progress
     from plugins.fanqie_scout import FanqieCrawler
     import re as _re
@@ -1691,7 +1700,12 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
             raise RuntimeError(f"未找到：{title or book_id}")
         on_progress("search", 1, 1, f"找到: {novel.title}")
 
-        chapter_list = crawler.get_chapter_list(novel.book_id, chapters)
+        # 目录拉到 effective_end，再按真实章号过滤出 [start_chapter, effective_end]
+        catalog = crawler.get_chapter_list(novel.book_id, effective_end)
+        chapter_list = [c for c in catalog
+                        if start_chapter <= int(c.get("index") or 0) <= effective_end]
+        if not chapter_list:
+            raise RuntimeError(f"起始章 {start_chapter} 超出该书可下载范围（目录 {len(catalog)} 章）")
         total_ch = len(chapter_list)
         downloaded = []
         for i, ch in enumerate(chapter_list):
