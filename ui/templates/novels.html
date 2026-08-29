@@ -19,12 +19,6 @@
 <script>
 (function(){ loadNovels(); })();
 
-function buildAnalyzeTask(folder, chapters) {
-    return '分析已下载小说「' + folder + '」（' + chapters + ' 章，平台 fanqie），'
-         + '读正文自主提炼桥段/情节弧/笑点/角色/写作风格五类候选，风格规则归属默认笔名（枫落），'
-         + '用 drive_ui set_review 把候选呈现到侦察页审查区，不要直接入库，等我在页面勾选确认。';
-}
-
 function loadNovels() {
     var el = document.getElementById('novels-list');
     fetch('/api/scout/novels')
@@ -38,18 +32,17 @@ function loadNovels() {
             }
             var html = '';
             novels.forEach(function(n) {
-                var analyzed = !!n.analyzed;
+                var p = n.platform || 'fanqie';
                 html += '<div class="card" style="margin-bottom:12px">';
                 html += '<div style="display:flex;justify-content:space-between;align-items:center">';
                 html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span></div>';
                 html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章</span>';
                 html += '</div>';
-                html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + escapeHtml(n.platform||'') + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
+                html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + escapeHtml(p) + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
                 html += '<div class="novel-actions">';
-                if (analyzed) html += '<span class="tag green">✅ 已提取</span>';
-                html += '<button class="small" style="background:#1f6feb" data-f="' + escapeHtml(n.folder) + '" data-n="' + (n.saved_chapters||0) + '" onclick="analyzeFrom(this)">'
-                      + (analyzed ? '🔄 重新分析并呈现' : '🗂️ 分析并呈现') + '</button>';
-                html += '<button class="small" style="background:#21262d;color:#f85149" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(n.platform||'fanqie') + '" onclick="deleteFrom(this)">🗑 删除</button>';
+                html += '<button class="small" style="background:#238636" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="readFrom(this)">📖 阅读</button>';
+                html += '<button class="small" style="background:#1f6feb" data-t="' + escapeHtml(n.title) + '" onclick="goScoutFrom(this)">🔍 去侦察页分析</button>';
+                html += '<button class="small" style="background:#21262d;color:#f85149" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="deleteFrom(this)">🗑 删除</button>';
                 html += '</div></div>';
             });
             el.innerHTML = html;
@@ -57,15 +50,21 @@ function loadNovels() {
         .catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
 }
 
-function analyzeFrom(btn) {
-    if (typeof window.agentSendTask !== 'function') return showToast('侧栏 Agent 未就绪，请刷新页面', 'error');
+/* 阅读：跳到独立阅读页（懒加载章节正文） */
+function readFrom(btn) {
     var folder = btn.getAttribute('data-f') || '';
-    var n = parseInt(btn.getAttribute('data-n')) || 0;
+    var platform = btn.getAttribute('data-p') || 'fanqie';
     if (!folder) return showToast('缺少小说信息', 'warning');
-    // 跳侦察页等候选呈现，再发任务
-    if (typeof navigateTo === 'function') navigateTo('/scout');
-    window.agentSendTask(buildAnalyzeTask(folder, n));
-    showToast('🤖 已交给 Agent 分析，候选将在侦察页审查区呈现', 'info');
+    if (typeof navigateTo === 'function') navigateTo('/novels/read?platform=' + encodeURIComponent(platform) + '&folder=' + encodeURIComponent(folder));
+    else window.location.href = '/novels/read?platform=' + encodeURIComponent(platform) + '&folder=' + encodeURIComponent(folder);
+}
+
+/* 去侦察页分析：跳 /scout 并预填书名，用户点「交给 Agent」执行（不再直接发任务） */
+function goScoutFrom(btn) {
+    var title = btn.getAttribute('data-t') || '';
+    if (!title) return showToast('缺少书名', 'warning');
+    if (typeof navigateTo === 'function') navigateTo('/scout?book=' + encodeURIComponent(title));
+    else window.location.href = '/scout?book=' + encodeURIComponent(title);
 }
 
 function deleteFrom(btn) {
