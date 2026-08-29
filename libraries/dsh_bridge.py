@@ -427,7 +427,7 @@ def _zh_tool_summary(name, args, msg):
             return json.dumps(_zh_keys(obj), ensure_ascii=False, separators=(",", ":")).strip()
     except (json.JSONDecodeError, TypeError, ValueError):
         pass
-    return text[:200].strip()
+    return text.strip()
 
 
 def _map_dsh_event(evt: dict, pending: dict):

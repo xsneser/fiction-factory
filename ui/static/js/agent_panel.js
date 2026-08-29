@@ -116,9 +116,9 @@ console.log('[agent-panel] v28 events-stream');
         if (!summary) return '';
         try {
             var obj = JSON.parse(summary);
-            if (obj && typeof obj === 'object') return capText(JSON.stringify(zhKeys(obj), null, 1), 600);
+            if (obj && typeof obj === 'object') return JSON.stringify(zhKeys(obj), null, 1);
         } catch (e) {}
-        return capText(summary, 400);
+        return summary;
     }
 
     // ─── 渲染 ───
@@ -175,8 +175,8 @@ console.log('[agent-panel] v28 events-stream');
             head.onclick = function() {
                 var show = detail.style.display === 'none';
                 detail.style.display = show ? 'block' : 'none';
-                // 过长参数裁切展示（类似 CLI 缩略）：保留结构与头部内容，标注截断字数
-                if (show) detail.textContent = capText(JSON.stringify(zhKeys(args), null, 2), 2000);
+                // 参数全量展示（.agent-tool-detail 有 max-height + overflow 滚动容器，长内容可滚动查看不截断）
+                if (show) detail.textContent = JSON.stringify(zhKeys(args), null, 2);
             };
         }
         head.appendChild(label);
