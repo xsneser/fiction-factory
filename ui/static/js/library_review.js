@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════
-// 库审查卡片 + 入库 公共逻辑（scout.html 侦察/提取合并页 / extract 旧页共用）
+// 库审查卡片 + 入库 公共逻辑（scout.html 侦察/提取合并页 / novels.html 共用）
 // 依赖：escapeHtml（base.html <head> 提供）
 // 数据源：window._lastReviewData = agent set_review 的 args
 //   { title, platform, folder, downloaded_chapters, profile_id, profile_name,
@@ -16,12 +16,14 @@ var REVIEW_CATS = [
     { key: 'style',      label: '✍️ 风格',   field: 'style_rules', src: function(d){ return d.style_rules || d.style_details || []; } },
 ];
 
-// 渲染审查卡片到指定区域（areaId）
+// 数组字段防御：LLM 可能把单值发成字符串/对象，join 前必须 Array.isArray 守卫（否则 .join 抛异常）
+function _arr(v) { return Array.isArray(v) ? v : []; }
+function _join(v, sep) { var a = _arr(v); return a.length ? a.join(sep) : ''; }
+
+// 渲染审查卡片到指定区域（areaId）。防御式：任何单项渲染失败只降级该卡，不中断整批。
 function renderReviewCards(d, areaId) {
     var area = document.getElementById(areaId);
     if (!area) return;
-    area.style.display = 'block';
-    window._lastReviewData = d;
 
     var html = '<div class="card" style="margin-bottom:16px">';
     html += '<div style="display:flex;justify-content:space-between;align-items:center">';
@@ -48,42 +50,58 @@ function renderReviewCards(d, areaId) {
             html += '<div class="empty" style="padding:30px"><p style="color:#484f58">无提取结果</p></div>';
         } else {
             items.forEach(function(item, idx) {
-                html += '<label class="review-item">';
-                html += '<input type="checkbox" class="review-cb" data-cat="' + c.key + '" data-idx="' + idx + '" checked>';
-                html += '<div class="review-content">';
-                if (c.key === 'plot') {
-                    html += '<div><code>' + escapeHtml(item.category||'') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.description||'').slice(0,120) + '</div>';
-                    if (item.structure) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">结构: ' + escapeHtml(item.structure).slice(0,100) + '</div>';
-                } else if (c.key === 'structure') {
-                    html += '<div><strong>' + escapeHtml(item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.description||'').slice(0,120) + '</div>';
-                    // stages 是对象数组（StageNode），逐层取 name 而非整对象 join（防 [object Object]）
-                    if (item.stages && item.stages.length) {
-                        var stageNames = item.stages.map(function(s){ return (s && s.name) ? s.name : String(s); });
-                        html += '<div style="font-size:12px;color:#484f58;margin-top:2px">阶段: ' + escapeHtml(stageNames.join(' → ')).slice(0,100) + '</div>';
+                var itemHtml = '';
+                try {
+                    itemHtml += '<label class="review-item">';
+                    itemHtml += '<input type="checkbox" class="review-cb" data-cat="' + c.key + '" data-idx="' + idx + '" checked>';
+                    itemHtml += '<div class="review-content">';
+                    if (c.key === 'plot') {
+                        itemHtml += '<div><code>' + escapeHtml(item.category||'') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></div>';
+                        itemHtml += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.description||'').slice(0,120) + '</div>';
+                        if (item.structure) itemHtml += '<div style="font-size:12px;color:#484f58;margin-top:2px">结构: ' + escapeHtml(item.structure).slice(0,100) + '</div>';
+                    } else if (c.key === 'structure') {
+                        itemHtml += '<div><strong>' + escapeHtml(item.name||'') + '</strong></div>';
+                        itemHtml += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.description||'').slice(0,120) + '</div>';
+                        // stages 是对象数组（StageNode），逐层取 name 而非整对象 join（防 [object Object]）
+                        var stageArr = _arr(item.stages);
+                        if (stageArr.length) {
+                            var stageNames = stageArr.map(function(s){ return (s && s.name) ? s.name : String(s); });
+                            itemHtml += '<div style="font-size:12px;color:#484f58;margin-top:2px">阶段: ' + escapeHtml(stageNames.join(' → ')).slice(0,100) + '</div>';
+                        }
+                    } else if (c.key === 'gag') {
+                        itemHtml += '<div><code>' + escapeHtml(item.category||'') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></div>';
+                        itemHtml += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.pattern_description||item.description||'').slice(0,120) + '</div>';
+                    } else if (c.key === 'character') {
+                        var arch = _join(item.archetypes, ' / ');
+                        var tag0 = _arr(item.tags)[0] || '';
+                        itemHtml += '<div><code>' + escapeHtml(arch || tag0) + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></div>';
+                        itemHtml += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.personality||item.description||'').slice(0,120) + '</div>';
+                        var cps = _join(item.catchphrases, '、');
+                        if (cps) itemHtml += '<div style="font-size:12px;color:#484f58;margin-top:2px">口癖: ' + escapeHtml(cps).slice(0,80) + '</div>';
+                    } else if (c.key === 'style') {
+                        var kindTag = item.kind === 'prefer' ? '<code style="background:#1f6feb">句式风格</code>' : '<code style="background:#a371f7">禁止内容</code>';
+                        itemHtml += '<div>' + kindTag + ' <strong>' + escapeHtml(item.pattern||'') + '</strong></div>';
+                        if (item.desc) itemHtml += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.desc).slice(0,120) + '</div>';
+                        var reps = _join(item.replacements, '、');
+                        if (reps) itemHtml += '<div style="font-size:12px;color:#484f58;margin-top:2px">替换: ' + escapeHtml(reps).slice(0,80) + '</div>';
                     }
-                } else if (c.key === 'gag') {
-                    html += '<div><code>' + escapeHtml(item.category||'') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.pattern_description||item.description||'').slice(0,120) + '</div>';
-                } else if (c.key === 'character') {
-                    var arch = (item.archetypes && item.archetypes.length) ? item.archetypes.join(' / ') : '';
-                    html += '<div><code>' + escapeHtml(arch||item.tags&&item.tags[0]||'') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></div>';
-                    html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.personality||item.description||'').slice(0,120) + '</div>';
-                    if (item.catchphrases && item.catchphrases.length) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">口癖: ' + escapeHtml(item.catchphrases.join('、')).slice(0,80) + '</div>';
-                } else if (c.key === 'style') {
-                    var kindTag = item.kind === 'prefer' ? '<code style="background:#1f6feb">句式风格</code>' : '<code style="background:#a371f7">禁止内容</code>';
-                    html += '<div>' + kindTag + ' <strong>' + escapeHtml(item.pattern||'') + '</strong></div>';
-                    if (item.desc) html += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.desc).slice(0,120) + '</div>';
-                    if (item.replacements && item.replacements.length) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">替换: ' + escapeHtml(item.replacements.join('、')).slice(0,80) + '</div>';
+                    itemHtml += '</div></label>';
+                } catch (err) {
+                    if (window.console) console.error('审查卡渲染失败', c.key, item, err);
+                    itemHtml = '<div class="review-item"><div class="review-content">'
+                        + '<div style="color:#d29922">⚠️ 该项解析失败'
+                        + (item && item.name ? '：' + escapeHtml(String(item.name)) : '') + '</div></div></div>';
                 }
-                html += '</div></label>';
+                html += itemHtml;
             });
         }
         html += '</div>';
     });
 
+    area.style.display = 'block';
     area.innerHTML = html;
+    // 渲染成功后才记为已渲染：抛错时 _lastReviewData 保持 null，pending 轮询可重试
+    window._lastReviewData = d;
 }
 
 // 切换审查分类页签

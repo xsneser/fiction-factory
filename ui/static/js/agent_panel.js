@@ -499,7 +499,8 @@ console.log('[agent-panel] v28 events-stream');
                         if (line.indexOf('data:') !== 0) continue;
                         var data = line.slice(5).trim();
                         if (!data) continue;
-                        try { handleEvent(JSON.parse(data)); } catch (e) {}
+                        try { handleEvent(JSON.parse(data)); }
+                        catch (e) { if (window.console) console.error('SSE 事件处理失败', e, data); }
                     }
                     return pump();
                 });
