@@ -85,6 +85,8 @@ var Reader = {
     PAGE_GAP: 24,   // 页间距（列宽=视口宽，翻页位移=列宽+间距，保证每页正好一屏对齐）
     bid: window.__STORYLINE_ID__ || '',
     _activePid: '',            // 当前高亮桥段（轮询重渲染后恢复）
+    _flipToken: 0,             // 跨章动画守卫：每次新导航自增，使在途 setTimeout 过期失效
+    FLIP_MS: 240,              // 跨章滑出动画时长（须 ≥ workspace.css .reader-pages 的 .22s）
     el: function (id) { return document.getElementById(id); }
 };
 
@@ -146,27 +148,65 @@ function _updatePosition() {
 function _updateNavState() {
     _updatePosition();
 }
-function goToChapter(i, opts) {
+/* ─── 瞬时切章辅助：换内容/定位时禁用 transform 过渡（防旧 transform 残留触发大幅位移动画） ─── */
+function _swapContentInstant(fn) {
+    var pages = Reader.el('reader-pages');
+    if (!pages) { fn(); return; }
+    pages.style.transition = 'none';
+    fn();
+    void pages.offsetWidth;   // 强制 reflow，让禁用的 transition 生效
+    pages.style.transition = '';
+}
+function _readTransform(pages) {
+    var m = /translateX\((-?[\d.]+)px\)/.exec(pages.style.transform || '');
+    return m ? parseFloat(m[1]) : 0;
+}
+/* 内部换章：渲染目标章并定位（不触发动效守卫，供 goToChapter / crossChapterFlip 复用） */
+function _applyChapter(i, opts) {
     if (!Reader.chapters.length) return;
     opts = opts || {};
     Reader.idx = Math.max(0, Math.min(i, Reader.chapters.length - 1));
     renderChapter(Reader.chapters[Reader.idx]);
     Reader.page = (opts.page != null) ? opts.page : 0;
     paginate();
+    if (opts.atEnd) showPage(Reader.totalPages - 1);   // 目标章末页（上一页跨章用）
     renderToc();
     _updateNavState();
     persist();
 }
+/* 公开切章（目录/高亮/初始化/[] 等「跳跃定位」语义）：瞬时切换，不做跨章滑动动画 */
+function goToChapter(i, opts) {
+    Reader._flipToken++;   // 使在途跨章动画失效
+    _swapContentInstant(function () { _applyChapter(i, opts); });
+}
 function nextChapter() { if (Reader.idx < Reader.chapters.length - 1) goToChapter(Reader.idx + 1); }
 function prevChapter() { if (Reader.idx > 0) goToChapter(Reader.idx - 1); }
-/* 翻页（章节内 + 跨章连续）：下一页在章末自动进下一章第1页；上一页在第1页回上一章末页 */
+/* 跨章翻页动画：旧内容平滑滑出一页宽（方向与章内一致）→ 在空白处硬切新章目标页。
+   一次只滑动一页宽，杜绝「内容已换、transform 大幅跳变」的突兀横滑。 */
+function crossChapterFlip(dir, targetIdx, opts) {
+    var pages = Reader.el('reader-pages');
+    if (!pages) { _applyChapter(targetIdx, opts); return; }
+    var token = ++Reader._flipToken;                   // 使旧的在途动画失效
+    var k = (Reader.PAGE_GAP + _colW()) || Reader.PAGE_GAP;
+    var step = dir > 0 ? -k : k;                       // 下一页：向左滑出；上一页：向右滑出
+    var oldT = _readTransform(pages);
+    // 拍1：归一化到当前页 → 平滑滑出一页宽（滑到空白处）
+    _swapContentInstant(function () { pages.style.transform = 'translateX(' + oldT + 'px)'; });
+    pages.style.transform = 'translateX(' + (oldT + step) + 'px)';
+    // 拍2：滑出结束后在空白处硬切新章目标页（无动画）。FLIP_MS 须 ≥ workspace.css .22s
+    setTimeout(function () {
+        if (token !== Reader._flipToken) return;       // 期间被新导航取代 → 丢弃
+        _swapContentInstant(function () { _applyChapter(targetIdx, opts); });
+    }, Reader.FLIP_MS);
+}
+/* 翻页（章节内 + 跨章连续）：下一页在章末平滑滑出进下一章第1页；上一页在第1页回上一章末页 */
 function nextPage() {
-    if (Reader.page < Reader.totalPages - 1) showPage(Reader.page + 1);
-    else if (Reader.idx < Reader.chapters.length - 1) goToChapter(Reader.idx + 1, { page: 0 });
+    if (Reader.page < Reader.totalPages - 1) { Reader._flipToken++; showPage(Reader.page + 1); }
+    else if (Reader.idx < Reader.chapters.length - 1) crossChapterFlip(1, Reader.idx + 1, { page: 0 });
 }
 function prevPage() {
-    if (Reader.page > 0) showPage(Reader.page - 1);
-    else if (Reader.idx > 0) { goToChapter(Reader.idx - 1, { page: 0 }); showPage(Reader.totalPages - 1); }
+    if (Reader.page > 0) { Reader._flipToken++; showPage(Reader.page - 1); }
+    else if (Reader.idx > 0) crossChapterFlip(-1, Reader.idx - 1, { atEnd: true });
 }
 
 /* ─── 目录抽屉 ─── */
@@ -187,7 +227,14 @@ function openToc() {
     if (d) d.classList.add('open');
     if (b) b.hidden = false;
     var list = Reader.el('toc-list');
-    if (list) { var cur = list.querySelector('.toc-item.is-current'); if (cur) cur.scrollIntoView({ block: 'nearest' }); }
+    if (list) {
+        var cur = list.querySelector('.toc-item.is-current');
+        if (cur) {
+            // 只滚目录列表自身、居中当前章；勿用 scrollIntoView——它会把 overflow:hidden 的 .editor-mid 当滚动容器横向滚动，导致阅读器左右漂移
+            var lr = list.getBoundingClientRect(), cr = cur.getBoundingClientRect();
+            list.scrollTop = Math.max(0, list.scrollTop + (cr.top - lr.top) - (lr.height - cr.height) / 2);
+        }
+    }
 }
 function closeToc() {
     var d = Reader.el('toc-drawer'), b = Reader.el('toc-backdrop');
@@ -426,6 +473,7 @@ function stopWritingTask(e) {
                 }).join('|');
                 if (fp === lastFp) return;
                 lastFp = fp;
+                Reader._flipToken++;   // 使在途跨章动画失效（轮询刷新瞬时落位，不产生动画、不打断翻页）
                 var prevNum = (Reader.chapters[Reader.idx] || {}).num;
                 Reader.chapters = chs;
                 if (!chs.length) { Reader.idx = 0; renderChapter(null); return; }
@@ -433,21 +481,23 @@ function stopWritingTask(e) {
                 for (var i = 0; i < chs.length; i++) { if (chs[i].num === prevNum) { ni = i; break; } }
                 if (ni < 0) ni = Math.min(Reader.idx, chs.length - 1);
                 var wasPage = Reader.page;
-                Reader.idx = ni;
-                renderChapter(chs[ni]);
-                Reader.page = wasPage;
-                paginate();
-                renderToc();
-                _updateNavState();
-                // 重渲染后恢复高亮桥段（仍在本章则重新高亮并跳到对应页）
-                if (Reader._activePid) {
-                    var el = document.querySelector('.m-bridge[data-bridge="' + Reader._activePid + '"]');
-                    if (el) {
-                        _clearBridgeActive();
-                        document.querySelectorAll('.m-bridge[data-bridge="' + Reader._activePid + '"]').forEach(function (x) { x.classList.add('m-bridge-active'); });
-                        _jumpTo(el);
+                _swapContentInstant(function () {
+                    Reader.idx = ni;
+                    renderChapter(chs[ni]);
+                    Reader.page = wasPage;
+                    paginate();
+                    renderToc();
+                    _updateNavState();
+                    // 重渲染后恢复高亮桥段（仍在本章则重新高亮并跳到对应页）
+                    if (Reader._activePid) {
+                        var el = document.querySelector('.m-bridge[data-bridge="' + Reader._activePid + '"]');
+                        if (el) {
+                            _clearBridgeActive();
+                            document.querySelectorAll('.m-bridge[data-bridge="' + Reader._activePid + '"]').forEach(function (x) { x.classList.add('m-bridge-active'); });
+                            _jumpTo(el);
+                        }
                     }
-                }
+                });
             })
             .catch(function () {});
     }, 3000);
