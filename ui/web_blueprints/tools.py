@@ -63,6 +63,8 @@ def scout_run():
     data = request.json or {}
     title = data.get("title", "").strip()
     chapters = int(data.get("chapters", 30))
+    start_chapter = int(data.get("start_chapter", 1) or 1)
+    end_chapter = int(data.get("end_chapter", 0) or 0)
     direct_id = data.get("book_id", "").strip()
 
     if not title and not direct_id:
@@ -140,7 +142,9 @@ def scout_run():
 
         def worker():
             try:
-                novel_info, dl_info = scout.fetch_novel(novel.title, chapters, on_progress=on_progress)
+                novel_info, dl_info = scout.fetch_novel(
+                    novel.title, chapters, start_chapter=start_chapter,
+                    end_chapter=end_chapter, on_progress=on_progress)
                 # 如果没有被取消才标记完成
                 if not task_manager.is_cancelled(task_id):
                     task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")

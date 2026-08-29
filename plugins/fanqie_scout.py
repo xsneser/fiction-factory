@@ -936,9 +936,19 @@ class FanqieScoutAgent:
         return result
 
     def fetch_novel(self, title: str, chapters: int = 50,
+                    start_chapter: int = 1, end_chapter: int = 0,
                     on_progress=None, download_delay: float = 1.0) -> tuple:
-        """仅下载（不分析不入库），返回 (NovelInfo, downloaded_chapters)"""
+        """仅下载（不分析不入库），返回 (NovelInfo, downloaded_chapters)。
+
+        支持真实章号区间：start_chapter=100, end_chapter=130 下载 100~130 章；
+        只给 chapters 时默认从 start_chapter(缺省 1) 起 N 章。
+        """
         result = ScoutResult()
+
+        start_chapter = max(1, int(start_chapter or 1))
+        effective_end = int(end_chapter or 0)
+        if effective_end <= 0:
+            effective_end = start_chapter + int(chapters or 0) - 1
 
         if on_progress:
             on_progress("search", 0, 1, f"搜索: {title}")
@@ -949,7 +959,9 @@ class FanqieScoutAgent:
         if on_progress:
             on_progress("search", 1, 1, f"找到: {novel.title}")
 
-        chapter_list = self.crawler.get_chapter_list(novel.book_id, chapters)
+        catalog = self.crawler.get_chapter_list(novel.book_id, effective_end)
+        chapter_list = [c for c in catalog
+                        if start_chapter <= int(c.get("index") or 0) <= effective_end]
         total_ch = len(chapter_list)
 
         if on_progress:
