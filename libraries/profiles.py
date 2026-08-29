@@ -182,6 +182,31 @@ class PenNameProfile:
         )
         return "\n".join(parts) + "\n"
 
+    def build_style_card(self) -> str:
+        """精简风格卡（~220 字，一行）：每桥段注入 get_writing_context 的 style_card 提醒。
+        只取身份/调性 + 前 3 句式 + 前 5 禁词 + 前 3 禁句式，防 dsh 尾部裁剪、防风格漂移；
+        完整规则用 get_pen_style 取 build_writing_prompt。"""
+        from .style_rules import StyleRuleLibrary
+        lang_label = "中文" if (self.language or "zh").lower() != "en" else "英文"
+        parts = [f"笔名：{self.pen_name}（{lang_label}）"]
+        fp = self.style_fingerprint
+        if fp.get("humor_style"):
+            parts.append(f"幽默：{fp['humor_style']}")
+        if fp.get("action_style"):
+            parts.append(f"动作：{fp['action_style']}")
+        own = [r for r in StyleRuleLibrary().rules_for(self.id) if r.enabled and r.pattern]
+        prefers = [r.pattern for r in own if r.kind == "prefer"][:3]
+        if prefers:
+            parts.append("句式：" + "；".join(prefers))
+        words = [r.pattern for r in own if r.kind in ("ban", "word") and r.replacements][:5]
+        if words:
+            parts.append("禁词：" + "、".join(w + "→改写" for w in words))
+        patterns = [r.desc or r.pattern for r in own
+                    if r.kind == "ban" and not r.replacements and r.severity == "warning"][:3]
+        if patterns:
+            parts.append("禁句式：" + "、".join(patterns))
+        return "｜".join(parts)[:220]
+
 
 class ProfileManager:
     """笔名档案管理器"""

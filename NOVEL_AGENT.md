@@ -102,8 +102,8 @@
 - 工具被 phase 门控拒绝或抛 `BookBusyError` 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即循环，应停止并如实汇报。
 - 预算/额度触发 `budget_paused` 时停下，向用户如实汇报，不继续烧额度。
 - 薄工具（`save_outlines` / `save_chapter_text`）可能阻塞数分钟属正常，等待结果，不要反复同参重查。
-- **笔名风格强约束**：写作/续写前先读 `get_writing_context` 返回的 `style_rules`（本笔名风格 + 语言习惯 + 笔名专属规则——禁句/高频词/偏好），动笔必须逐条遵守，不得以任何理由绕过；未读到该字段不得写正文（被裁剪时重读并定位 payload 尾部）。
-- 工具结果可能被 dsh 裁剪（如 `get_writing_context` 等大载荷 >8KB 只保留头尾）：信息不足时用 `get_writing_context` / `get_book_state` 复读或按桥段增量推进，**不要臆测「spill 文件」**（本环境禁用了文件工具，不存在可读的 spill 文件）。
+- **笔名风格强约束**：写作/续写前先 `get_pen_style(book_id)` 读该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），动笔必须逐条遵守，不得以任何理由绕过；每轮 `get_writing_context` 的 `style_card` 是精简提醒（必读，防风格漂移）。未拿到风格不得写正文。可 `add_style_rule` / `delete_style_rule` 维护该笔名风格（发现 AI 味词或想调整句式时）。
+- 工具结果可能被 dsh 裁剪（>8KB 只保留头尾）：`style_card` 位于 payload 尾部结构性幸存；信息不足时用 `get_pen_style` / `get_writing_context` / `get_book_state` 复读或按桥段增量推进，**不要臆测「spill 文件」**（本环境禁用了文件工具，不存在可读的 spill 文件）。
 - **故事线完整性**：用 `validate_storyline(book_id)` 校验「顶层弧覆盖故事线纵轴（无叙事空白）」与「桥段仅挂最底层弧」两条硬规则；发现不合规如实汇报，不要静默硬写。
 - **「删书」无 skill**——`navigate('/books')` 让用户手动点删除（直删工具不在工具面）。
 - 拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」，不跨阶段硬做。

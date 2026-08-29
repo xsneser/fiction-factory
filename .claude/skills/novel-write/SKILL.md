@@ -19,15 +19,15 @@ description: >-
 2. `mcp__novel-engine__get_storyline(book_id)` → 当前弧、下一个待写桥段（plot_id/名称/写在哪章）。
 
 ## 上下文组装（渐进式披露 — **单次读取**，不要把整本书灌进上下文）
-1. **一次** `mcp__novel-engine__get_writing_context(book_id)` → 返回 `{book(含 tags), storyline 全量, outline, chapters(最近摘要), draft, synopsis, protagonist, next_bridge}`——含角色/世界观/基调/pov/下一个待写桥段，一次拿全。
+1. **一次** `mcp__novel-engine__get_writing_context(book_id)` → 返回 `{book(含 tags), storyline 全量, outline, chapters(最近摘要), draft, synopsis, protagonist, next_bridge, style_card}`——含角色/世界观/基调/pov/下一个待写桥段/精简风格卡，一次拿全。
 2. 整理成「写哪个桥段（next_bridge）+ 出场角色 + 风格要求 + 前文语气」，然后**自己生成正文**。
 3. **逐桥段循环里每轮只重取一次 `get_writing_context`**（draft/written_chapter 会变）；**不要**再单独调 `get_book_detail` / `get_storyline`（它们是 get_writing_context 的子集/重叠）。
 
 ## 写作规则（生成时内嵌到你的思考）
-- **笔名风格强约束（必读必遵）**：`get_writing_context` 返回的 `style_rules` 字段是**动笔前必读、必须逐条遵守**的写作约束——本笔名风格 + 语言习惯 + 笔名专属规则（禁句/高频词/偏好）。**未读到该字段不得写正文**；若输出被 dsh 裁剪未见该字段，用 `get_writing_context` 重读并定位 payload 尾部。
+- **笔名风格强约束（必读必遵）**：动笔前先 `mcp__novel-engine__get_pen_style(book_id)` 拿该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），逐条遵守；每轮 `get_writing_context` 返回的 `style_card` 是**精简风格提醒（必读，防风格漂移）**。**未拿到风格不得写正文**；被裁剪/信息不足时用 `get_pen_style` 重读（独立薄工具，不纠缠全量上下文）。
 - **一致性铁律**：人名/系统绑定/数值/设定不得与已写冲突；前后呼应伏笔。
 - **视角铁律**：全书统一（默认第三人称），不漂移。
-- **语言纪律**：禁 AI 味句式（仿佛/似乎/不禁/只见 堆叠），少用破折号，对话占比自然——以 `style_rules` 注入的笔名规则为准。
+- **语言纪律**：禁 AI 味句式（仿佛/似乎/不禁/只见 堆叠），少用破折号，对话占比自然——以 `get_pen_style` 拿到的笔名规则（句式风格/禁止内容）为准。
 - **前三章开篇钩子**（第 1-3 章）：首句强钩子、三章内出第一个爽点、章末留钩。
 - **每章字数**：约 `words_per_chapter`（get_book_state 看）；一桥段 800-2500 字。
 - **章末钩子**：每章最后一句留悬念/反转/爽点，保追读。

@@ -406,6 +406,27 @@ _p = _SR.from_dict({"id": "x", "kind": "ban", "pattern": "p"})
 assert_ok("风格规则-旧条目无主", _p.profile_id == "")  # 老 jsonl 无 profile_id 兼容
 _rt, _rc = _awr("这是一个测试专属词。")
 assert_ok("风格规则-空参替换默认笔名词", "测试专属词" not in _rt and _rc >= 1, f"替换{_rc}处")
+# 清理：移除测试追加的规则，避免泄漏进后续 add_style_rule 的 _save()（会持久化全量 rules）
+_s.rules = [r for r in _s.rules if not r.id.startswith("t_")]
+
+# ── agent 传递层：get_pen_style（两路解析 + 结构化）+ add/delete_style_rule 往返 ──
+from agent_tools import (get_pen_style as _gps, add_style_rule as _asr,
+                         delete_style_rule as _dsr)
+_gp = _gps(profile_id="profile_001")
+assert_ok("传递-get_pen_style 结构化", _gp["pen_name"] == "枫落"
+          and any("句长偏短" in s for s in _gp["style"])
+          and any(w["word"] == "仿佛" for w in _gp["forbidden"]["words"])
+          and any("不是" in p["pattern"] for p in _gp["forbidden"]["patterns"])
+          and "句式风格" in _gp["style_rules"], f"{len(_gp['style_rules'])} 字 style_rules")
+assert_ok("传递-get_pen_style 英文笔名", _gps(profile_id="profile_006")["language"] == "en")
+_ad = _asr("profile_006", "prefer", "多用反问收尾")
+assert_ok("传递-add_style_rule 落库", _ad["ok"]
+          and "多用反问收尾" in _gps(profile_id="profile_006")["style"])
+assert_ok("传递-delete_style_rule 删除", _dsr(_ad["rule"]["id"])["ok"]
+          and "多用反问收尾" not in _gps(profile_id="profile_006")["style"])
+from libraries.profiles import ProfileManager as _PM
+_c = _PM("profiles").get_by_name("枫落").build_style_card()
+assert_ok("传递-style_card 精简", 50 <= len(_c) <= 220 and "笔名" in _c, f"{len(_c)} 字符")
 
 # ══════════════════════════════════════════════
 #  Phase 7: 角色状态机

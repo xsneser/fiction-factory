@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 32
+EXPECT_MCP_TOOLS = 35
 PASS, FAIL = [], []
 
 
@@ -105,7 +105,7 @@ async def main():
                           "fetch_novel", "discover_hot",
                           "list_crawled_novels", "read_crawled_novel", "ingest_library_assets",
                           "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
-                          "get_writing_context"):
+                          "get_writing_context", "get_pen_style", "add_style_rule", "delete_style_rule"):
                     check(f"工具 {t} 在列", t in names)
 
                 # ── 2. 对临时书做 MCP 往返 ──
@@ -130,9 +130,13 @@ async def main():
                       and (detail.get("protagonist") or {}).get("name") == "王小明",
                       f"phase={detail.get('phase')}")
                 ctx = await call_json(session, "get_writing_context", {"book_id": bid})
-                sr = (ctx.get("style_rules") or "")
-                check("get_writing_context style_rules 非空（无笔名也注入默认笔名规则）",
-                      isinstance(sr, str) and len(sr) > 50, f"{len(sr)} 字符")
+                sc = (ctx.get("style_card") or "")
+                check("get_writing_context style_card 非空（无笔名也注入默认笔名精简卡）",
+                      isinstance(sc, str) and len(sc) > 20 and "笔名" in sc, f"{len(sc)} 字符")
+                ps = await call_json(session, "get_pen_style", {"book_id": bid})
+                check("get_pen_style 返回风格权威（style_rules/forbidden 非空）",
+                      bool((ps.get("style_rules") or "")) and bool(ps.get("forbidden")),
+                      f"{ps.get('pen_name')} style_rules {len(ps.get('style_rules') or '')} 字符")
 
                 # drive_ui 步校验的宽松阀：写默认 build_status（updated_at 空 = 无真实向导状态），
                 # 使 set_outline 等步敏感命令的步校验跳过，测试不依赖 live 向导状态。

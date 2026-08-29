@@ -79,6 +79,13 @@ def _profile_for(tl):
     return None
 
 
+def _default_style_card() -> str:
+    """无笔名档案时的默认风格卡（默认笔名 枫落 的规则兜底）。"""
+    from libraries.style_rules import DEFAULT_PROFILE_ID
+    p = profiles.get(DEFAULT_PROFILE_ID)
+    return p.build_style_card() if p else "笔名：默认（中文）"
+
+
 # ═══════════════════════════════════════════════════
 # 只读 / 建书类（无 LLM，供上下文供给与测试）
 # ═══════════════════════════════════════════════════
@@ -150,6 +157,8 @@ def get_writing_context(book_id: str) -> dict:
     追加就地提取的扁平字段：synopsis（outline）、protagonist（get_mc）、
     next_bridge（第一个未写桥段 written_chapter==0，含 plot_id/name/roles/outline_id）。
     agent 逐桥段循环每轮只调本工具一次，避免重复读上下文。
+    style_card = 本笔名精简风格提醒（位于 payload 尾部，必读，防风格漂移）；
+    完整风格用 get_pen_style 按需取。
     """
     payload = get_book_state(book_id)
     tl = book_mgr.load_storyline(book_id)
@@ -180,15 +189,10 @@ def get_writing_context(book_id: str) -> dict:
     else:
         next_chapter = (book.get("current_chapter") or 0) + 1
     payload["next_chapter"] = next_chapter
-    # pen_name + style_rules：注入笔名风格约束（生成前强注入，dsh/MCP 写作 agent 每轮必读必遵）
+    # pen_name + style_card：注入精简风格卡（每轮提醒防漂移；完整规则走 get_pen_style）
     payload["pen_name"] = (tl.pen_name if tl else "") or book.get("pen_name") or ""
     profile = _profile_for(tl) if tl else None
-    if profile:
-        payload["style_rules"] = profile.build_writing_prompt()
-    else:
-        # 无笔名档案也注入默认笔名规则兜底（禁句式/词表对所有书生效）
-        from libraries.style_rules import StyleRuleLibrary
-        payload["style_rules"] = StyleRuleLibrary().build_rules_block()
+    payload["style_card"] = profile.build_style_card() if profile else _default_style_card()
     return payload
 
 
@@ -316,15 +320,17 @@ def query_gags(category: str = "", scene: str = "", keyword: str = "") -> dict:
 
 
 def query_profiles(keyword: str = "") -> dict:
-    """查笔名档案：返回现有笔名（预设 + 用户自建，含风格指纹摘要 + 平台注册状态），供外部 agent 选笔名/写作风格参考。
+    """查笔名档案：返回现有笔名（含风格摘要 + 平台注册状态），供外部 agent 选笔名/写作风格参考。
 
-    platform_accounts 为每平台注册信息（registered/site_id/author_url/notes/last_published_at），
-    由用户在 UI 登记（agent 只读）；registered_platforms 为已注册平台列表。
+    style 从规则库统计（句式风格/禁止内容条数）+ build_style_card 精简摘要；sentence_length 等
+    结构化字段已随写法资产废弃，不再返回。platform_accounts 为每平台注册信息（agent 只读）。
     """
+    from libraries.style_rules import StyleRuleLibrary
     kw = (keyword or "").strip()
     rows = profiles.list_all()
     if kw:
         rows = [p for p in rows if kw in (p.pen_name or "") or kw in (p.description or "")]
+    srl = StyleRuleLibrary()
     return {"profiles": [{
         "id": p.id, "pen_name": p.pen_name, "description": p.description,
         "assigned_books": list(p.assigned_books or [])[:10],
@@ -332,15 +338,92 @@ def query_profiles(keyword: str = "") -> dict:
         "registered_platforms": p.registered_platforms(),
         "style": {
             "language": (p.language or "zh"),
-            "sentence_length": (p.style_fingerprint or {}).get("sentence_length", ""),
-            "dialogue_ratio": (p.style_fingerprint or {}).get("dialogue_ratio", 0),
-            "paragraph_style": (p.style_fingerprint or {}).get("paragraph_style", ""),
             "humor_style": (p.style_fingerprint or {}).get("humor_style", ""),
             "action_style": (p.style_fingerprint or {}).get("action_style", ""),
-            "scene_pacing": (p.tropes or {}).get("scene_pacing", ""),
-            "chapter_hook_style": (p.tropes or {}).get("chapter_hook_style", ""),
+            "style_rules_count": sum(1 for r in srl.rules_for(p.id)
+                                     if r.kind == "prefer" and r.enabled),
+            "forbidden_count": sum(1 for r in srl.rules_for(p.id)
+                                   if r.kind == "ban" and r.enabled),
+            "summary": p.build_style_card(),
         },
     } for p in rows[:30]]}
+
+
+def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
+    """读一个笔名的完整写作风格（句式风格+禁止内容+语言习惯+通用纪律），写作 agent 动笔前必读。
+
+    book_id 与 profile_id 至少其一：book_id 优先按书绑定的笔名解析；否则按 profile_id；
+    都无则默认笔名（枫落）。返回 prose style_rules（权威）+ 结构化 style/forbidden 列表，
+    供逐条遵守/精确引用。被 dsh 裁剪/信息不足时优先用本工具重读（独立薄工具，不纠缠全量上下文）。
+    """
+    from libraries.style_rules import StyleRuleLibrary, DEFAULT_PROFILE_ID
+    profile = None
+    if book_id:
+        try:
+            tl = book_mgr.load_storyline(book_id)
+            profile = _profile_for(tl) if tl else None
+        except Exception:
+            profile = None
+    if profile is None and profile_id:
+        profile = profiles.get(profile_id)
+    if profile is None:
+        profile = profiles.get(DEFAULT_PROFILE_ID)
+    if profile is None:
+        raise RuntimeError("没有可用的笔名档案")
+    rules = [r for r in StyleRuleLibrary().rules_for(profile.id) if r.enabled]
+    return {
+        "pen_name": profile.pen_name,
+        "language": profile.language or "zh",
+        "profile_id": profile.id,
+        "style_rules": profile.build_writing_prompt(),
+        "style": [r.pattern for r in rules if r.kind == "prefer" and r.pattern],
+        "forbidden": {
+            "words": [{"word": r.pattern, "replacement": "、".join(r.replacements or []), "desc": r.desc}
+                      for r in rules if r.kind in ("ban", "word") and r.replacements and r.pattern],
+            "patterns": [{"pattern": r.pattern, "desc": r.desc, "severity": r.severity}
+                         for r in rules if r.kind == "ban" and not r.replacements and r.pattern],
+        },
+        "language_hint": profile.build_language_hints(),
+        "discipline": "【通用写作纪律】对话用日常语气，不要文绉绉；每段 2-3 句，不大段堆砌描写；"
+                     "内心独白可口语化；偶尔留半截话，不要所有句子主谓宾完整；动作描写不要每句都带修饰副词。",
+    }
+
+
+def add_style_rule(profile_id: str, kind: str, pattern: str, desc: str = "",
+                   replacements: list = None, severity: str = "warning") -> dict:
+    """给笔名加一条风格规则：kind=prefer 句式风格（正向指令，如「句长偏短」）| ban 禁止内容
+    （replacements 有值=AI高频词自动去AI味替换，空=硬禁句式审查检测）。供 agent 写完发现
+    AI 味词或想调整句式时自行维护该笔名风格。"""
+    from libraries.style_rules import StyleRule, StyleRuleLibrary
+    kind = (kind or "").strip()
+    pattern = (pattern or "").strip()
+    if kind not in ("ban", "prefer") or not pattern:
+        raise RuntimeError("kind 必须是 prefer/ban，pattern 必填")
+    if not profiles.get(profile_id):
+        raise RuntimeError(f"笔名 {profile_id} 不存在")
+    srl = StyleRuleLibrary()
+    n = 1
+    existing = {r.id for r in srl.rules}
+    while f"{kind}_{n}" in existing:
+        n += 1
+    rule = StyleRule(id=f"{kind}_{n}", kind=kind, profile_id=profile_id,
+                     pattern=pattern, desc=desc, severity=severity,
+                     replacements=[str(x) for x in (replacements or []) if str(x).strip()])
+    srl.rules.append(rule)
+    srl._save()
+    return {"ok": True, "rule": rule.to_dict()}
+
+
+def delete_style_rule(rule_id: str) -> dict:
+    """删除一条笔名风格规则（按规则 id）。"""
+    from libraries.style_rules import StyleRuleLibrary
+    srl = StyleRuleLibrary()
+    before = len(srl.rules)
+    srl.rules = [r for r in srl.rules if r.id != rule_id]
+    if len(srl.rules) == before:
+        return {"ok": False, "error": f"规则 {rule_id} 不存在"}
+    srl._save()
+    return {"ok": True, "deleted": rule_id}
 
 
 def query_characters(keyword: str = "", tag: str = "") -> dict:
@@ -1713,12 +1796,14 @@ def _build_registry():
         # 只读摸底
         list_books, get_book_state, get_writing_context, get_storyline,
         get_book_detail, get_build_status, query_arc_library, query_plots, query_gags, query_profiles, query_characters,
+        get_pen_style,
         # 规划（薄工具：agent 生成后落盘；旧工具内 LLM 生成已由 agent 自主生成接管）
         save_basic_info,
         save_outlines, save_book_meta,
         fill_gags, arc_material_candidates,
         # 写作 / 元数据（薄工具：agent 生成后落盘）
         save_bridge_draft, save_chapter_text,
+        add_style_rule, delete_style_rule,
         # 上架 / 质量门禁 / 校验
         publish_check, mark_finished, publish_book, export_book,
         chapter_quality_gate, validate_storyline, validate_world,

@@ -22,9 +22,9 @@ description: 弧+写作阶段。生成弧/排故事线/选桥段/续写扩写/�
 
 ## 阶段二：写作（写正文 / 写下一章 / 写桥段）
 ### 上下文组装（单次读取）
-- **一次** `get_writing_context(book_id)` → 书(tags)+故事线+弧+章节摘要+draft+next_bridge，一次拿全。
+- **一次** `get_writing_context(book_id)` → 书(tags)+故事线+弧+章节摘要+draft+next_bridge+style_card，一次拿全。
 - 整理成「写 next_bridge + 出场角色 + 风格 + 前文语气」，**自己生成正文**。逐桥段循环每轮只重取一次；**不要**再单独调 get_book_detail/get_storyline。
-- **笔名风格强约束（必读必遵）**：`get_writing_context` 返回的 `style_rules` 字段是**动笔前必读、必须逐条遵守**的写作约束（本笔名风格 + 语言习惯 + 笔名专属规则——禁句/高频词/偏好）。**未读到该字段不得写正文**；被 dsh 裁剪未见该字段时重读并定位 payload 尾部。
+- **笔名风格强约束（必读必遵）**：动笔前先 `get_pen_style(book_id)` 拿该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），逐条遵守；每轮 `get_writing_context` 的 `style_card` 是**精简风格提醒（必读，防风格漂移）**。**未拿到风格不得写正文**；被裁剪/信息不足时用 `get_pen_style` 重读（独立薄工具，不纠缠全量上下文）。
 
 ### 生成 → 落盘（逐桥段）
 - 用 next_bridge（第一个未写桥段）→ **你自主生成正文** → `save_bridge_draft(book_id, chapter_num=N, plot_id, plot_name, text)` 落草稿。
