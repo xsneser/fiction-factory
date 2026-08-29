@@ -801,7 +801,8 @@ class LibraryIngestor:
         template = StructureTemplate(
             id=sid, name=data.get("name",""),
             description=data.get("description",""),
-            total_chapters=data.get("total_chapters",500),
+            # 兼容旧 total_chapters（×3000 估字数，与 structure.py from_dict 口径一致）
+            total_words=data.get("total_words", data.get("total_chapters", 500) * 3000),
             stages=[_node(s) for s in data.get("stages", [])],
             tags=data.get("tags", []),
             source=source,
