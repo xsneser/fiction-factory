@@ -312,7 +312,7 @@
 
         /* 笔名抽屉：屏幕左侧滑出（position:fixed，translateX(-100%)→0） */
         .prof-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:1040; }
-        .prof-drawer { position:fixed; top:0; bottom:0; left:0; width:min(320px,100%);
+        .prof-drawer { position:fixed; top:0; bottom:0; left:180px; width:min(320px, calc(100vw - 180px));
                        background:var(--bg-elev); border-right:1px solid var(--border-soft);
                        transform:translateX(-100%); z-index:1041;
                        display:flex; flex-direction:column; box-shadow:8px 0 24px rgba(0,0,0,.3);
@@ -333,9 +333,9 @@
                             font-size:11px; color:var(--fg-muted); line-height:1.7; }
 
         .prof-group { font-size:11px; color:var(--fg-dim); padding:10px 10px 4px; }
-        .prof-item { display:block; padding:8px 10px; border-radius:6px; color:var(--fg-muted);
-                     text-decoration:none; font-size:13px; margin-bottom:2px; }
-        .prof-item:hover { background:var(--bg-hover); color:var(--fg-strong); }
+        .prof-item { display:block; padding:8px 10px; border-radius:6px; background:#1f2937;
+                     border:1px solid transparent; color:#9aa4b0; text-decoration:none; font-size:13px; margin-bottom:4px; }
+        .prof-item:hover { background:#2b3644; color:var(--fg-strong); }
         .prof-item.active { background:rgba(31,111,235,.15); color:var(--accent); border:1px solid rgba(31,111,235,.35); }
         .prof-empty { padding:16px 10px; color:var(--fg-dim); font-size:13px; text-align:center; line-height:1.7; }
         .prof-new { display:block; margin-top:10px; padding:9px 10px; border:1px dashed var(--border);
