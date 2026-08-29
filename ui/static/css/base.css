@@ -266,11 +266,24 @@
         .card .meta { font-size:12px; color:#8b949e; margin-bottom:6px; }
         .card .stat { font-size:32px; font-weight:bold; color:#f0f6fc; }
         .card .label { font-size:11px; color:#8b949e; }
-        /* ─── 笔名与风格页（/profiles）：顶部工具条 + 双标签 + 右侧滑出笔名抽屉 ─── */
-        .prof-topbar { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
-        .prof-title  { margin:0; font-size:20px; color:#f0f6fc; }
-        .prof-scope  { font-size:13px; color:var(--fg-muted); font-weight:normal; }
-        .prof-topbar form { margin:0; padding:0; border:0; background:none; }
+        /* ─── 笔名与风格页（/profiles）：左笔名栏 + 双标签主区 + 从笔名栏右侧滑出的抽屉 ─── */
+        .prof-layout { display:flex; align-items:flex-start; gap:20px; position:relative; }
+        .prof-rail { flex:0 0 200px; position:sticky; top:0; background:var(--bg-elev);
+                     border:1px solid var(--border); border-radius:8px; padding:12px; }
+        .prof-rail-btn { display:flex; align-items:center; gap:8px; width:100%; padding:10px 8px;
+                         background:rgba(31,111,235,.12); border:1px solid rgba(31,111,235,.35); border-radius:8px;
+                         color:var(--fg-strong); cursor:pointer; }
+        .prof-rail-btn:hover { background:rgba(31,111,235,.22); }
+        .prof-rail-avatar { flex:0 0 auto; width:34px; height:34px; border-radius:50%;
+                            background:var(--accent); color:#0d1117; font-weight:700; font-size:16px;
+                            display:flex; align-items:center; justify-content:center; }
+        .prof-rail-name { flex:1; min-width:0; font-size:15px; font-weight:600; text-align:left;
+                          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .prof-rail-caret { color:var(--fg-muted); font-size:12px; }
+        .prof-rail-hint { margin-top:8px; font-size:11px; color:var(--fg-dim); text-align:center; }
+        .prof-rail-del { margin:10px -4px -4px; padding:0; border:0; background:none; }
+        .prof-rail-del button { width:100%; }
+        .prof-main { flex:1; min-width:0; }
 
         .prof-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:16px; }
         .prof-tab  { padding:8px 16px; color:var(--fg-muted); font-size:13px; cursor:pointer;
@@ -303,19 +316,33 @@
         .prof-plat-body { padding:0 14px 14px; border-top:1px solid var(--border-soft); }
         .prof-plat-body .plat-reg { display:flex; align-items:center; gap:6px; margin:12px 0 10px; }
 
-        /* 笔名抽屉：参考写作台阅读器目录抽屉动画（translateX），position:fixed 全屏 overlay */
-        .prof-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:1040; }
-        .prof-drawer { position:fixed; top:0; right:0; bottom:0; width:min(320px,100%);
+        /* 笔名抽屉：从笔名栏右侧滑出（绝对定位于 .prof-layout 内，translateX(-100%)→0） */
+        .prof-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.4); z-index:1040; }
+        .prof-drawer { position:absolute; top:0; bottom:0; left:220px; width:min(320px, calc(100% - 220px));
                        background:var(--bg-elev); border-left:1px solid var(--border-soft);
-                       transform:translateX(100%); transition:transform .25s ease; z-index:1041;
-                       display:flex; flex-direction:column; box-shadow:-8px 0 24px rgba(0,0,0,.3); }
-        .prof-drawer.open { transform:translateX(0); }
+                       transform:translateX(-100%); z-index:1041;
+                       display:flex; flex-direction:column; box-shadow:-8px 0 24px rgba(0,0,0,.3);
+                       visibility:hidden; transition:transform .25s ease, visibility 0s linear .25s; }
+        .prof-drawer.open { transform:translateX(0); visibility:visible;
+                            transition:transform .25s ease, visibility 0s linear 0s; }
         .prof-drawer-head { display:flex; justify-content:space-between; align-items:center;
                             padding:12px 14px; border-bottom:1px solid var(--border-soft); font-weight:600; color:var(--fg-strong); }
         .prof-drawer-close { background:none; border:none; color:var(--fg-muted); font-size:18px;
                              cursor:pointer; line-height:1; padding:2px 6px; }
         .prof-drawer-close:hover { color:var(--danger-fg); }
         .prof-drawer-body { flex:1; overflow-y:auto; padding:8px; }
+
+        /* 抽屉内当前笔名风格摘要（句式 + 禁词概览） */
+        .prof-summary { background:var(--bg-inset); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+        .prof-sum-title { font-size:13px; font-weight:600; color:var(--fg-strong); margin-bottom:2px; }
+        .prof-sum-pen { font-size:11px; color:var(--fg-dim); margin-bottom:6px; }
+        .prof-sum-sec { font-size:11px; color:var(--fg-dim); margin:8px 0 4px; display:flex; justify-content:space-between; align-items:center; }
+        .prof-sum-count { color:var(--fg-muted); font-weight:600; }
+        .prof-sum-list { margin:0 0 4px; padding-left:16px; font-size:12px; color:var(--fg-muted); }
+        .prof-sum-list li { margin:2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .prof-sum-edit { display:block; margin-top:8px; font-size:12px; color:var(--accent); text-decoration:none; }
+        .prof-sum-edit:hover { text-decoration:underline; }
+
         .prof-group { font-size:11px; color:var(--fg-dim); padding:10px 10px 4px; }
         .prof-item { display:block; padding:8px 10px; border-radius:6px; color:var(--fg-muted);
                      text-decoration:none; font-size:13px; margin-bottom:2px; }
