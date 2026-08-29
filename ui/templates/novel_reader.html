@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.title }} · 阅读 — NovelEngine{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/reader.css') }}">
+{% endblock %}
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <h1 style="font-size:18px;margin:0">📖 {{ meta.title }}</h1>
+    <a class="btn" href="/novels" style="text-decoration:none">← 外部书库</a>
+</div>
+
+<div class="reader-layout">
+    <div class="reader-toolbar">
+        <button type="button" class="rt-btn" id="rt-toc">📑 目录</button>
+        <span class="rt-sep"></span>
+        <button type="button" class="rt-btn" id="rt-prev-page">⬅ 上一页</button>
+        <span class="rt-pos" id="rt-pos">…</span>
+        <button type="button" class="rt-btn" id="rt-next-page">下一页 ➡</button>
+    </div>
+    <div class="reader-viewport" id="reader-viewport">
+        <div class="reader-pages" id="reader-pages"></div>
+    </div>
+    <div class="toc-backdrop" id="toc-backdrop" hidden></div>
+    <aside class="toc-drawer" id="toc-drawer" aria-hidden="true">
+        <div class="toc-head">📑 目录 <button type="button" class="toc-close" id="toc-close">×</button></div>
+        <div class="toc-list" id="toc-list"></div>
+    </aside>
+</div>
+
+<script src="/static/js/reader.js"></script>
+<script>
+window.initNovelReader(
+    {{ meta | tojson }},
+    {{ chapter_list | tojson }}
+);
+</script>
+{% endblock %}
