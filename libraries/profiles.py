@@ -131,46 +131,56 @@ class PenNameProfile:
         """写法资产特征池开关：style_assets['enabled'][key]；缺省=启用（向后兼容）。"""
         return bool((sa.get("enabled") or {}).get(key, True))
 
+    def _asset_value(self, key: str):
+        """写法资产取值：启用且非空才返回；否则 None（由旧字段兜底）。"""
+        sa = self.style_assets
+        if sa and self._sa_enabled(sa, key) and sa.get(key):
+            return sa[key]
+        return None
+
     def build_style_prompt(self) -> str:
-        """生成注入写作 prompt 的风格约束文本（按特征池启用集重编译）"""
+        """生成注入写作 prompt 的风格约束文本（按特征池启用集重编译）。
+
+        写法资产（style_assets）是句式风格的唯一来源：启用时优先于 style_fingerprint /
+        word_print 的同名字段（不再重复注入）；旧档案无写法资产时回退旧字段。
+        """
         parts = ["【本笔名的风格约束——必须严格遵守】"]
         fp = self.style_fingerprint
         wp = self.word_print
         tr = self.tropes
 
-        if fp.get("sentence_length"):
+        # 句长 / 对话比 / 段落风格：写法资产优先，旧 style_fingerprint 兜底
+        sl = self._asset_value("sentence_length") or fp.get("sentence_length")
+        if sl:
             sl_map = {"short": "多用短句，每句8-15字", "medium": "句中偏长，15-25字为主",
                       "long": "可用长句铺陈，25字以上"}
-            parts.append(f"- 句子长度：{sl_map.get(fp['sentence_length'], fp['sentence_length'])}")
-        if fp.get("dialogue_ratio"):
-            parts.append(f"- 对话占比：约{int(fp['dialogue_ratio']*100)}%")
-        if fp.get("paragraph_style"):
-            parts.append(f"- 段落节奏：{fp['paragraph_style']}")
+            parts.append(f"- 句子长度：{sl_map.get(sl, sl)}")
+        dr = self._asset_value("dialogue_ratio") or fp.get("dialogue_ratio")
+        if dr:
+            parts.append(f"- 对话占比：约{int(dr*100)}%")
+        ps = self._asset_value("paragraph_style") or fp.get("paragraph_style")
+        if ps:
+            parts.append(f"- 段落节奏：{ps}")
         if fp.get("humor_style"):
             parts.append(f"- 幽默风格：{fp['humor_style']}")
         if fp.get("action_style"):
             parts.append(f"- 动作描写：{fp['action_style']}")
 
-        if wp.get("common_words"):
-            parts.append(f"- 常用词汇：{', '.join(wp['common_words'])}")
-        if wp.get("avoid_words"):
-            parts.append(f"- 绝对禁用词：{', '.join(wp['avoid_words'])}")
+        # 用词 / 句首 / 动作节拍：写法资产优先，旧 word_print 兜底
+        cw = self._asset_value("common_words") or wp.get("common_words")
+        if cw:
+            parts.append(f"- 常用词汇：{', '.join(cw)}")
+        aw = self._asset_value("avoid_words") or wp.get("avoid_words")
+        if aw:
+            parts.append(f"- 绝对禁用词：{', '.join(aw)}")
         if wp.get("dialogue_tags"):
             parts.append(f"- 对话标签偏好：{', '.join(wp['dialogue_tags'])}")
-        if wp.get("action_beats"):
-            parts.append(f"- 动作节拍偏好：{', '.join(wp['action_beats'])}")
-
-        # 写法资产（从文本提取的风格特征；按特征池 enabled 逐项编译）
-        sa = self.style_assets
-        if sa:
-            if sa.get("common_words") and self._sa_enabled(sa, "common_words"):
-                parts.append(f"- 写法资产·常用词：{', '.join(sa['common_words'])}")
-            if sa.get("avoid_words") and self._sa_enabled(sa, "avoid_words"):
-                parts.append(f"- 写法资产·需避免：{', '.join(sa['avoid_words'])}")
-            if sa.get("sentence_starters") and self._sa_enabled(sa, "sentence_starters"):
-                parts.append(f"- 写法资产·句首偏好：{', '.join(sa['sentence_starters'])}")
-            if sa.get("action_beats") and self._sa_enabled(sa, "action_beats"):
-                parts.append(f"- 写法资产·动作节拍：{', '.join(sa['action_beats'])}")
+        ss = self._asset_value("sentence_starters") or wp.get("sentence_starters")
+        if ss:
+            parts.append(f"- 句首偏好：{', '.join(ss)}")
+        ab = self._asset_value("action_beats") or wp.get("action_beats")
+        if ab:
+            parts.append(f"- 动作节拍偏好：{', '.join(ab)}")
 
         if tr.get("chapter_hook_style"):
             parts.append(f"- 章末钩子风格：{tr['chapter_hook_style']}")
@@ -191,7 +201,7 @@ class PenNameProfile:
 
     def build_writing_prompt(self) -> str:
         """生成前强注入全文本（get_writing_context 使用）：
-        本笔名风格 + 语言习惯 + 笔名专属规则 + 全局基线规则 + 通用写作纪律。
+        本笔名风格 + 语言习惯 + 笔名专属规则（含反 AI 禁句/词表）+ 通用写作纪律。
         目标 <1.5KB 防 dsh 工具结果裁剪（style_rules 位于 payload 尾部可幸存）。"""
         from .style_rules import StyleRuleLibrary
         parts = ["【本笔名的写作风格约束——动笔前必读，必须严格遵守】"]
@@ -314,51 +324,14 @@ PRESET_PROFILES = [
         },
     },
     {
-        "pen_name": "夜雨",
-        "description": "玄幻修仙流，正剧向，偏厚重",
+        "pen_name": "Lunaris",
+        "description": "默认英文笔名（English default）",
         "style_fingerprint": {
             "sentence_length": "medium",
-            "dialogue_ratio": 0.25,
-            "paragraph_style": "literary",
-            "humor_style": "冷幽默",
-            "action_style": "画面感强",
-            "description_density": "medium",
+            "dialogue_ratio": 0.35,
+            "paragraph_style": "compact",
         },
-        "word_print": {
-            "common_words": ["天地", "道", "意境", "流转"],
-            "avoid_words": ["卧槽", "淦", "牛逼"],
-            "dialogue_tags": ["道", "冷声", "沉吟", "淡淡道"],
-            "action_beats": ["抬手", "目光微凝", "沉默片刻"],
-        },
-        "tropes": {
-            "preferred_plots": ["plot_dating_003", "plot_dating_004", "plot_dating_007", "plot_dating_010"],
-            "preferred_gags": ["gag_003", "gag_009"],
-            "chapter_hook_style": "以意境或悬念收尾",
-            "scene_pacing": "稳扎稳打，有不疾不徐的节奏感",
-        },
-    },
-    {
-        "pen_name": "青衫",
-        "description": "言情甜文写手，擅长日常互动与情感描写",
-        "style_fingerprint": {
-            "sentence_length": "medium",
-            "dialogue_ratio": 0.45,
-            "paragraph_style": "chatty",
-            "humor_style": "无厘头",
-            "action_style": "简洁利落",
-            "description_density": "low",
-        },
-        "word_print": {
-            "common_words": ["心里", "突然", "忍不住", "悄悄"],
-            "avoid_words": ["仿佛", "似乎"],
-            "dialogue_tags": ["说", "笑", "问", "轻声道", "小声说"],
-            "action_beats": ["耳根微红", "别过脸去", "唇角微扬"],
-        },
-        "tropes": {
-            "preferred_plots": ["plot_dating_006", "plot_dating_009"],
-            "preferred_gags": ["gag_007", "gag_008"],
-            "chapter_hook_style": "以情感转折或甜蜜互动收尾",
-            "scene_pacing": "轻松舒畅，对话自然",
-        },
+        "word_print": {},
+        "tropes": {},
     },
 ]

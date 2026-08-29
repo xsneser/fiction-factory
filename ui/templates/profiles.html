@@ -1,13 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="md">
-    <!-- 左：笔名列表（全局基线置顶 + 中英文分组） -->
+    <!-- 左：笔名列表（中英文分组；规则一律归属笔名，无全局作用域） -->
     <aside class="md-side">
         <div class="md-actions">
             <strong style="color:#f0f6fc">笔名</strong>
             <a href="/profiles?scope=new" class="btn small" style="float:right">+ 新建</a>
         </div>
-        <a class="md-item {{ 'active' if current_scope == '' }}" href="/profiles?scope=">🌐 全局基线</a>
         {% for lang, group in profiles|groupby('language') %}
         <div class="md-group">{{ '🇨🇳 中文笔名' if lang == 'zh' else '🇬🇧 英文笔名' }}</div>
         {% for p in group %}
@@ -19,10 +18,10 @@
         {% endif %}
     </aside>
 
-    <!-- 右：选中项的编辑面 -->
+    <!-- 右：选中项的编辑面（① 表单 → ② 句式风格 → ③ 禁止的内容） -->
     <section class="md-main">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px">
-            <h1 style="margin:0">👤 笔名档案 · 风格规则 <span style="font-size:14px;color:#8b949e">— {{ scope_label }}</span></h1>
+            <h1 style="margin:0">👤 笔名档案 · 风格 <span style="font-size:14px;color:#8b949e">— {{ scope_label }}</span></h1>
             {% if selected %}
             <form method="POST" action="/profiles/{{ selected.id }}/delete" style="margin:0"
                   onsubmit="return confirm('删除笔名「{{ selected.pen_name }}」？其专属风格规则将一并清除。');">
@@ -31,7 +30,7 @@
             {% endif %}
         </div>
         {% if is_new %}
-        <p class="hint">创建笔名：填好档案字段点「创建笔名」。笔名的专属风格规则（禁句/AI词/偏好）在创建后编辑。</p>
+        <p class="hint">创建笔名：填好档案字段点「创建笔名」。句式风格与禁止的内容在创建后编辑。</p>
         {% with form_action='/profiles/new', form_submit='创建笔名', profile=None %}
         {% include "_profile_form.html" %}
         {% endwith %}
@@ -39,14 +38,13 @@
         {% include "_style_rules_cards.html" %}
         {% endwith %}
         {% elif selected %}
-        <p class="hint">编辑「{{ selected.pen_name }}」的档案字段（保存走下方「保存修改」）；专属风格规则在档案下方逐条编辑，保存即生效。</p>
+        <p class="hint">每个笔名自成体系：① 表单（身份与调性）→ ② 句式风格（写法资产 + 偏好/习惯）→ ③ 禁止的内容（硬禁句式 + AI 高频词）。</p>
         {% with form_action='/profiles/' ~ selected.id ~ '/edit', form_submit='保存修改', profile=selected %}
         {% include "_profile_form.html" %}
         {% endwith %}
         {% include "_style_rules_cards.html" %}
         {% else %}
-        <p class="hint">全局基线 = 所有笔名通用的反 AI 味底线（禁句/AI词/偏好），生成前注入所有书、生成后去 AI 味兜底只走此基线。笔名专属规则在此基础上额外叠加。</p>
-        {% include "_style_rules_cards.html" %}
+        <p class="hint">暂无笔名，点右上「+ 新建」创建。</p>
         {% endif %}
     </section>
 </div>

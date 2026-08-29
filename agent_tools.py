@@ -186,7 +186,7 @@ def get_writing_context(book_id: str) -> dict:
     if profile:
         payload["style_rules"] = profile.build_writing_prompt()
     else:
-        # 无笔名档案也注入全局基线兜底（禁句式/词表对所有书生效）
+        # 无笔名档案也注入默认笔名规则兜底（禁句式/词表对所有书生效）
         from libraries.style_rules import StyleRuleLibrary
         payload["style_rules"] = StyleRuleLibrary().build_rules_block()
     return payload

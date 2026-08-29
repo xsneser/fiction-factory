@@ -131,7 +131,7 @@ async def main():
                       f"phase={detail.get('phase')}")
                 ctx = await call_json(session, "get_writing_context", {"book_id": bid})
                 sr = (ctx.get("style_rules") or "")
-                check("get_writing_context style_rules 非空（无笔名也注入全局基线）",
+                check("get_writing_context style_rules 非空（无笔名也注入默认笔名规则）",
                       isinstance(sr, str) and len(sr) > 50, f"{len(sr)} 字符")
 
                 # drive_ui 步校验的宽松阀：写默认 build_status（updated_at 空 = 无真实向导状态），

@@ -1,7 +1,8 @@
-{# 笔名档案表单（新建/编辑共用）：风格字段 + 平台账号注册（仅 UI 人工登记）。
+{# 笔名档案表单（新建/编辑共用）—— ① 表单（身份+调性）+ ② 句式风格·写法资产 + 平台账号注册。
    需要上下文：profile（PenNameProfile 或 None）、platform_labels（dict）、
    form_action（提交 URL）、form_submit（按钮文案）。 #}
 <form method="POST" action="{{ form_action }}">
+    <h2 style="margin:0 0 10px">① 表单</h2>
     <div class="form-row">
         <div class="form-group">
             <label>笔名 *</label>
@@ -20,7 +21,7 @@
             </select>
         </div>
     </div>
-    <div class="form-row-3">
+    <div class="form-row">
         <div class="form-group"><label>幽默风格</label>
             <select name="humor_style">
                 {% set hs = profile.style_fingerprint.get('humor_style','') if profile else '' %}
@@ -33,44 +34,34 @@
                 <option value="">默认</option>
                 {% for v in ['简洁利落','画面感强','华丽铺陈'] %}<option {{ 'selected' if as_==v }}>{{ v }}</option>{% endfor %}
             </select></div>
-        <div class="form-group"><label>句子长度</label>
-            <select name="sentence_length">
-                {% set sl = profile.style_fingerprint.get('sentence_length','medium') if profile else 'medium' %}
-                <option value="short" {{ 'selected' if sl=='short' }}>短句(8-15字)</option>
-                <option value="medium" {{ 'selected' if sl=='medium' }}>中句(15-25字)</option>
-                <option value="long" {{ 'selected' if sl=='long' }}>长句(25+字)</option>
-            </select></div>
     </div>
-    <div class="form-group"><label>常用词汇（逗号分隔）</label><input name="common_words" value="{{ (profile.word_print.get('common_words') or [])|join(', ') if profile else '' }}" placeholder="如：卧槽, 淦, 牛逼"></div>
-    <div class="form-group"><label>禁用词汇（逗号分隔）</label><input name="avoid_words" value="{{ (profile.word_print.get('avoid_words') or [])|join(', ') if profile else '' }}" placeholder="如：仿佛, 似乎, 不禁"></div>
 
-    <fieldset style="margin-top:16px">
-        <legend>🧬 写法资产（从文本提取；可逐项开关，关闭后不注入写作 prompt）</legend>
-        {% set sa = profile.style_assets if profile else {} %}
-        {% set sa_en = sa.get('enabled', {}) if sa else {} %}
-        {% macro sa_cb(k) %}{{ 'checked' if (sa_en.get(k, True) if sa else True) }}{% endmacro %}
-        <div class="form-row">
-            <div class="form-group"><label><input type="checkbox" name="sa_common_words_enabled" {{ sa_cb('common_words') }}> 常用词</label>
-                <input name="sa_common_words" value="{{ (sa.get('common_words') or [])|join(', ') if sa else '' }}" placeholder="逗号分隔"></div>
-            <div class="form-group"><label><input type="checkbox" name="sa_avoid_words_enabled" {{ sa_cb('avoid_words') }}> 禁用词</label>
-                <input name="sa_avoid_words" value="{{ (sa.get('avoid_words') or [])|join(', ') if sa else '' }}" placeholder="逗号分隔"></div>
-        </div>
-        <div class="form-row">
-            <div class="form-group"><label><input type="checkbox" name="sa_sentence_starters_enabled" {{ sa_cb('sentence_starters') }}> 句首偏好</label>
-                <input name="sa_sentence_starters" value="{{ (sa.get('sentence_starters') or [])|join(', ') if sa else '' }}" placeholder="逗号分隔"></div>
-            <div class="form-group"><label><input type="checkbox" name="sa_action_beats_enabled" {{ sa_cb('action_beats') }}> 动作节拍</label>
-                <input name="sa_action_beats" value="{{ (sa.get('action_beats') or [])|join(', ') if sa else '' }}" placeholder="逗号分隔"></div>
-        </div>
-        <div class="form-row-3">
-            <div class="form-group"><label><input type="checkbox" name="sa_sentence_length_enabled" {{ sa_cb('sentence_length') }}> 句长</label>
-                <input name="sa_sentence_length" value="{{ sa.get('sentence_length','') if sa else '' }}" placeholder="short/medium/long"></div>
-            <div class="form-group"><label><input type="checkbox" name="sa_dialogue_ratio_enabled" {{ sa_cb('dialogue_ratio') }}> 对话比</label>
-                <input name="sa_dialogue_ratio" value="{{ sa.get('dialogue_ratio','') if sa else '' }}" placeholder="0-1"></div>
-            <div class="form-group"><label><input type="checkbox" name="sa_paragraph_style_enabled" {{ sa_cb('paragraph_style') }}> 段落风格</label>
-                <input name="sa_paragraph_style" value="{{ sa.get('paragraph_style','') if sa else '' }}" placeholder="chatty/compact/literary"></div>
-        </div>
-    </fieldset>
-    <fieldset style="margin-top:16px">
+    <h2 style="margin:18px 0 10px">② 句式风格 · 写法资产 <span style="font-size:12px;color:#8b949e;font-weight:normal">（从文本提取；可逐项开关，关闭后不注入写作 prompt）</span></h2>
+    {% set sa = profile.style_assets if profile else {} %}
+    {% set sa_en = sa.get('enabled', {}) if sa else {} %}
+    {% macro sa_cb(k) %}{{ 'checked' if (sa_en.get(k, True) if sa else True) }}{% endmacro %}
+    <div class="form-row">
+        <div class="form-group"><label><input type="checkbox" name="sa_common_words_enabled" {{ sa_cb('common_words') }}> 常用词</label>
+            <input name="sa_common_words" value="{{ (sa.get('common_words') or [])|join(', ') if sa else '' }}" placeholder="逗号分隔"></div>
+        <div class="form-group"><label><input type="checkbox" name="sa_avoid_words_enabled" {{ sa_cb('avoid_words') }}> 禁用词</label>
+            <input name="sa_avoid_words" value="{{ (sa.get('avoid_words') or [])|join(', ') if sa else '' }}" placeholder="逗号分隔"></div>
+    </div>
+    <div class="form-row">
+        <div class="form-group"><label><input type="checkbox" name="sa_sentence_starters_enabled" {{ sa_cb('sentence_starters') }}> 句首偏好</label>
+            <input name="sa_sentence_starters" value="{{ (sa.get('sentence_starters') or [])|join(', ') if sa else '' }}" placeholder="逗号分隔"></div>
+        <div class="form-group"><label><input type="checkbox" name="sa_action_beats_enabled" {{ sa_cb('action_beats') }}> 动作节拍</label>
+            <input name="sa_action_beats" value="{{ (sa.get('action_beats') or [])|join(', ') if sa else '' }}" placeholder="逗号分隔"></div>
+    </div>
+    <div class="form-row-3">
+        <div class="form-group"><label><input type="checkbox" name="sa_sentence_length_enabled" {{ sa_cb('sentence_length') }}> 句长</label>
+            <input name="sa_sentence_length" value="{{ sa.get('sentence_length','') if sa else '' }}" placeholder="short/medium/long"></div>
+        <div class="form-group"><label><input type="checkbox" name="sa_dialogue_ratio_enabled" {{ sa_cb('dialogue_ratio') }}> 对话比</label>
+            <input name="sa_dialogue_ratio" value="{{ sa.get('dialogue_ratio','') if sa else '' }}" placeholder="0-1"></div>
+        <div class="form-group"><label><input type="checkbox" name="sa_paragraph_style_enabled" {{ sa_cb('paragraph_style') }}> 段落风格</label>
+            <input name="sa_paragraph_style" value="{{ sa.get('paragraph_style','') if sa else '' }}" placeholder="chatty/compact/literary"></div>
+    </div>
+
+    <fieldset style="margin-top:18px">
         <legend>🌐 平台账号注册（人工登记；正式上架前需在对应平台注册同名账号）</legend>
         {% set pa = profile.platform_accounts if profile else {} %}
         {% for pl, label in platform_labels.items() %}

@@ -263,7 +263,7 @@ def gags():
 @bp.route("/profiles")
 def profile_list():
     """笔名档案 + 风格规则库合并页（master-detail）：?scope= 切换编辑面。
-    空/缺失=全局基线（只规则三卡）；'new'=空档案表单；<id>=该笔名档案+专属规则+继承全局基线。
+    'new'=空档案表单；<id>=该笔名档案+专属规则；空/缺失=默认选中首个笔名（不再有全局基线）。
     """
     # Jinja groupby 不排序：handler 里先排序（zh 在前，组内按笔名），保证中英文分组有序
     all_profiles = sorted(profiles.list_all(), key=lambda p: (p.language == "en", p.pen_name))
@@ -272,32 +272,23 @@ def profile_list():
     selected = None
     if is_new:
         current_scope = "new"
-    elif raw:
+    elif raw and profiles.get(raw):
         selected = profiles.get(raw)
-        current_scope = raw if selected else ""      # 不存在的 id 兜底回全局
+        current_scope = raw
     else:
-        current_scope = ""
+        # 无 scope / 笔名不存在 → 默认选中首个笔名（枫落），不再有全局基线
+        selected = all_profiles[0] if all_profiles else None
+        current_scope = selected.id if selected else "new"
 
-    gbl = style_rules.rules_for("")
-    if current_scope == "":
-        own = gbl                                    # 全局基线卡 = 全局规则
-    elif is_new:
-        own = []                                     # 新建无专属规则
-    else:
-        own = style_rules.rules_for(current_scope)   # 笔名专属规则
-
-    scope_label = ("全局基线" if not current_scope else
-                   ("新建笔名" if is_new else
-                    next((p.pen_name for p in all_profiles if p.id == current_scope), current_scope)))
+    own = [] if is_new else (style_rules.rules_for(current_scope) if selected else [])
+    scope_label = ("新建笔名" if is_new else
+                   (selected.pen_name if selected else "新建笔名"))
     return render_template("profiles.html",
         profiles=all_profiles, selected=selected, is_new=is_new,
         current_scope=current_scope, scope_label=scope_label,
         bans=[r for r in own if r.kind == "ban"],
         words=[r for r in own if r.kind == "word"],
         prefers=[r for r in own if r.kind == "prefer"],
-        gbl_bans=[r for r in gbl if r.kind == "ban"],
-        gbl_words=[r for r in gbl if r.kind == "word"],
-        gbl_prefers=[r for r in gbl if r.kind == "prefer"],
         platform_labels=PLATFORM_LABELS)
 
 
