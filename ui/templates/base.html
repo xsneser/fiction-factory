@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}NovelEngine — 小说工厂{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v9">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v13">
     <script src="{{ url_for('static', filename='js/base.js') }}?v1"></script>
     {% block head %}{% endblock %}
 </head>
@@ -26,6 +26,7 @@
         <a href="/settings" class="{{ 'active' if request.path == '/settings' else '' }}">⚙️ 设置</a>
         <div class="section">工具</div>
         <a href="/scout" class="{{ 'active' if request.path == '/scout' else '' }}">🔍 侦察 · 提取</a>
+        <a href="/novels" class="{{ 'active' if request.path == '/novels' else '' }}">📚 已下载书库</a>
         <details class="nav-debug">
             <summary>🧪 调试工具</summary>
             <a href="/deai">🔄 去AI测试</a>

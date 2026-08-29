@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}已下载书库 — NovelEngine{% endblock %}
+{% block content %}
+<h1>📚 已下载书库 <span style="font-size:14px;color:#8b949e">已抓取的小说 → 交给 agent 分析提炼五库素材（确认入库在 <a href="/scout">侦察 · 提取</a> 页）</span></h1>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0">
+    <div class="form-row-inline">
+        <label style="font-size:13px;color:#8b949e">风格规则归属笔名</label>
+        <select id="novels-pen">
+            {% for p in profiles %}<option value="{{ p.id }}" data-name="{{ p.pen_name }}">{{ p.pen_name }}</option>{% endfor %}
+        </select>
+    </div>
+    <div style="display:flex;gap:8px">
+        <a class="btn" href="/scout" style="text-decoration:none">🔍 去侦察/抓取新书</a>
+        <button class="btn" onclick="loadNovels()">🔄 刷新</button>
+    </div>
+</div>
+
+<div id="novels-list" style="margin-top:8px">
+    <div class="empty"><p style="color:#484f58">加载中...</p></div>
+</div>
+
+<style>
+.form-row-inline { display: flex; align-items: center; gap: 10px; }
+.form-row-inline select { min-width: 120px; }
+.novel-actions { display:flex;gap:8px;align-items:center;margin-top:8px; }
+</style>
+
+<script>
+var currentPenName = '';
+(function(){
+    var sel = document.getElementById('novels-pen');
+    if (sel && sel.options.length) currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name');
+    if (sel) sel.addEventListener('change', function(){
+        currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name');
+    });
+    loadNovels();
+})();
+
+function buildAnalyzeTask(folder, chapters, penName) {
+    return '分析已下载小说「' + folder + '」（' + chapters + ' 章，平台 fanqie），'
+         + '读正文自主提炼桥段/情节弧/笑点/角色/写作风格五类候选，风格规则归属笔名「' + penName + '」，'
+         + '用 drive_ui set_review 把候选呈现到侦察页审查区，不要直接入库，等我在页面勾选确认。';
+}
+
+function loadNovels() {
+    var el = document.getElementById('novels-list');
+    fetch('/api/scout/novels')
+        .then(function(r) { return r.json(); })
+        .then(function(novels) {
+            if (!novels || novels.length === 0) {
+                el.innerHTML = '<div class="empty" style="padding:40px"><div class="icon" style="font-size:36px">📂</div>'
+                    + '<p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p>'
+                    + '<p style="color:#484f58;font-size:12px;margin-top:6px">去 <a href="/scout">侦察 · 提取</a> 页给 agent 一个书名或 book_id，自动下载并分析</p></div>';
+                return;
+            }
+            var html = '';
+            novels.forEach(function(n) {
+                var analyzed = !!n.analyzed;
+                html += '<div class="card" style="margin-bottom:12px">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+                html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span></div>';
+                html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章</span>';
+                html += '</div>';
+                html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + escapeHtml(n.platform||'') + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
+                html += '<div class="novel-actions">';
+                if (analyzed) html += '<span class="tag green">✅ 已提取</span>';
+                html += '<button class="small" style="background:#1f6feb" data-f="' + escapeHtml(n.folder) + '" data-n="' + (n.saved_chapters||0) + '" onclick="analyzeFrom(this)">'
+                      + (analyzed ? '🔄 重新分析并呈现' : '🗂️ 分析并呈现') + '</button>';
+                html += '<button class="small" style="background:#21262d;color:#f85149" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(n.platform||'fanqie') + '" onclick="deleteFrom(this)">🗑 删除</button>';
+                html += '</div></div>';
+            });
+            el.innerHTML = html;
+        })
+        .catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
+}
+
+function analyzeFrom(btn) {
+    if (typeof window.agentSendTask !== 'function') return showToast('侧栏 Agent 未就绪，请刷新页面', 'error');
+    var folder = btn.getAttribute('data-f') || '';
+    var n = parseInt(btn.getAttribute('data-n')) || 0;
+    if (!folder) return showToast('缺少小说信息', 'warning');
+    // 跳侦察页等候选呈现，再发任务
+    if (typeof navigateTo === 'function') navigateTo('/scout');
+    window.agentSendTask(buildAnalyzeTask(folder, n, currentPenName));
+    showToast('🤖 已交给 Agent 分析，候选将在侦察页审查区呈现', 'info');
+}
+
+function deleteFrom(btn) {
+    var folder = btn.getAttribute('data-f') || '';
+    var platform = btn.getAttribute('data-p') || 'fanqie';
+    if (!folder) return;
+    if (!confirm('确定删除已下载小说「' + folder + '」？删除后无法恢复（不影响已入库的五库素材）。')) return;
+    fetch('/api/scout/novels/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({platform: platform, folder: folder}),
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+          if (d.ok) { showToast('🗑 已删除', 'success'); loadNovels(); }
+          else showToast('❌ 删除失败: ' + (d.error||''), 'error');
+      })
+      .catch(function(e) { showToast('❌ 删除失败: ' + e.message, 'error'); });
+}
+</script>
+{% endblock %}
