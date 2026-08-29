@@ -671,20 +671,33 @@ console.log('[agent-panel] v28 events-stream');
     window.addEventListener('ne:command', function(e) {
         if (typeof window.onnecommand === 'function') window.onnecommand(e);
     });
-    // 建书向导命令桥：等「向导 DOM 就绪」后 dispatch（≤10s，给 SPA navigate 加载留余量）。
-    // 就绪信号用 #wz-idea 存在而非 __neWizardReady__ 标志——SPA navigate 不触发 unload，
-    // 标志会在离开向导页后残留，导致在别的页误派发。
+    // 页面命令桥：优先分发给当前页的 window.onnecommand（侦察/提取页等非向导页），
+    // 否则退回建书向导路径（等 #wz-idea 就绪，≤10s）。
+    // 守卫：__nePageReceiver 表示「当前页声明接收页面命令」；#wz-idea 存在表示「当前是建书向导」。
+    // 两者都判——SPA navigate 不触发 unload，离开向导后 window.onnecommand 仍可能是向导处理器，
+    // 用 #wz-idea 存在与否区分目标页，避免 set_review 等命令被向导守卫静默吞掉。
     function dispatchCommand(it) {
+        var cmd = (it && it.cmd) || '';
+        var args = (it && it.args) || {};
+        var onWizard = !!document.getElementById('wz-idea');
+        if (window.__nePageReceiver && !onWizard
+                && typeof window.onnecommand === 'function') {
+            window.dispatchEvent(new CustomEvent('ne:command', {detail: {cmd: cmd, args: args}}));
+            return;
+        }
         var tries = 0;
         (function poll() {
             if (window.WZ && document.getElementById('wz-idea')) {
                 window.dispatchEvent(new CustomEvent('ne:command', {
-                    detail: { cmd: it.cmd, args: it.args || {} } }));
+                    detail: { cmd: cmd, args: args } }));
+            } else if (window.__nePageReceiver && !document.getElementById('wz-idea')
+                    && typeof window.onnecommand === 'function') {
+                window.dispatchEvent(new CustomEvent('ne:command', {detail: {cmd: cmd, args: args}}));
             } else if (++tries <= 100) {
                 setTimeout(poll, 100);
             } else {
                 if (typeof showToast === 'function')
-                    showToast('建书向导未就绪（请确认已打开 /books/start 后重试）', 'error');
+                    showToast('页面命令接收器未就绪（请确认已打开对应页面后重试）', 'error');
             }
         })();
     }
