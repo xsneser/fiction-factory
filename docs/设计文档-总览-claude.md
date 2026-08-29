@@ -477,7 +477,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 | `libraries.py` | `/plots` `/structures` `/gags` `/profiles` `/profiles/new` + 启禁删除 API | 12 |
 | `publish.py` | `/publish` 发布索引、`/books/<id>/publish` 上架页 + check/mark-finished/export API | 7 |
 | `settings.py` | `/settings`（API Key/模型/预算/context_budget 配置 + 测试连接）、任务状态 API | 6 |
-| `tools.py` | `/scout` 番茄侦察兵（实时进度 `/api/crawl/progress`，web 表单 / MCP `fetch_novel` 共用 `storage/crawl_progress.json`）、`/extract` 提取、`/review-test`、`/deai`、`/write` 兼容跳转 | 10 |
+| `tools.py` | `/scout` 侦察·提取合并页（agent 驱动：下载进度 `/api/crawl/progress`、MCP `fetch_novel` 共用 `storage/crawl_progress.json`；`/api/scout/ingest` 五库入库；原 `/extract` 302→`/scout`）、`/review-test`、`/deai`、`/write` 兼容跳转 | 10 |
 | `world_builder.py` | `/books/<id>/world` 世界观设定卡 + generate/candidates/borrow-preview/confirm | 5 |
 | `ctx.py` | 共享：全局服务、get_llm、引擎缓存、故事线统一存取、`sse_stream_response` | — |
 

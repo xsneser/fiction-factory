@@ -147,10 +147,10 @@ def run_tests():
         ("Profiles", "/profiles", ["笔名档案", "profile"]),
         ("Style Rules Redirect", "/style-rules", ["笔名档案"]),  # 风格规则已并入笔名页，302→200
         ("Settings", "/settings", ["设置", "api"]),
-        ("Extract", "/extract", ["内容提取", "extract"]),
+        ("Extract Redirect", "/extract", ["侦察", "提取"]),  # /extract 已并入 /scout（302 重定向）
         ("DeAI Test", "/deai", ["去AI", "测试"]),
         ("Review Test", "/review-test", ["审查", "测试"]),
-        ("Scout", "/scout", ["抓取", "scout"]),
+        ("Scout", "/scout", ["侦察", "提取"]),  # 侦察/提取合并页
         ("Publish", "/publish", ["上架管理"]),
     ]
 
@@ -202,8 +202,7 @@ def run_tests():
         ("/characters", "角色原型库"),
         ("/profiles", "笔名与风格"),
         ("/settings", "设置"),
-        ("/scout", "小说抓取"),
-        ("/extract", "内容提取"),
+        ("/scout", "侦察 · 提取"),
         ("/deai", "去AI测试"),
         ("/review-test", "审查测试"),
     ]

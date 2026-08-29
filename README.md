@@ -224,7 +224,7 @@ D:\NovelEngine/
 │       ├── start_book.html # 新书启动 3 步向导
 │       ├── storyline_write_flow.html # 写作台（两栏：故事线+正文/规划）
 │       ├── publish.html / publish_index.html # 上架 / 导出
-│       ├── extract.html / scout.html # 内容提取 / 番茄侦察兵
+│       ├── scout.html # 侦察·提取合并页（agent 下载分析→候选确认入库五库；原 extract.html 已并入）
 │       ├── settings.html / profiles.html / new_profile.html
 │       ├── plots.html / structures.html / gags.html / characters.html  # 四大库页
 │       ├── review_test.html / deai.html # 调试工具

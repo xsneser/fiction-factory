@@ -34,19 +34,19 @@ def review_test():
 
 
 # ═══════════════════════════════════════
-# 🔍 番茄侦察兵
-@bp.route("/extract")
+# 🔍 侦察 · 提取（合并页：agent 驱动下载→分析→呈现候选→确认入库五库）
 # ═══════════════════════════════════════
 
+@bp.route("/extract")
 def extract_page():
-    """内容提取页"""
-    return render_template("extract.html")
+    """内容提取已并入侦察页"""
+    return redirect(url_for("tools.scout_page"))
 
 
 @bp.route("/scout")
 def scout_page():
-    """侦察兵页面"""
-    return render_template("scout.html")
+    """侦察/提取合并页：给 agent 小说 id → 自动下载分析 → 呈现候选 → 确认入库"""
+    return render_template("scout.html", profiles=profiles.list_all())
 
 
 @bp.route("/api/scout/run", methods=["POST"])
@@ -349,7 +349,7 @@ def scout_analyze():
     task_manager.ensure_single("内容分析")
     task_id = f"analyze_{title}_{int(time.time())}"
     task_manager.start(task_id, name="内容分析", title=title,
-                       total=50, phase="准备中", url="/extract")
+                       total=50, phase="准备中", url="/scout")
     task_manager.register_cancel(task_id)
     task_manager.log(task_id, f"开始分析: {title} ({len(chapters)}章)", "info")
 
