@@ -1541,6 +1541,11 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
                     "请先 get_build_status 确认当前步，或 drive_ui(next/prev) 对齐后再操作")
     if cmd == "reset":
         _clear_wizard_candidates()   # 新会话清空候选持久化，防跨会话残留
+    if cmd == "set_review":
+        # 候选持久化快照：SSE 实时渲染之外再落盘一份，页面不在场/渲染失败时
+        # /scout 轮询 pending-review 可恢复（用户确认入库后由 ingest 清空）
+        from libraries.scout_review import write_pending_review
+        write_pending_review(args)
     from libraries.nav_intent import push_ui_command
     # submit 半同步：推送前快照 submit_error，只对「新错误」反应，规避陈旧错误误判
     _read_st = None
