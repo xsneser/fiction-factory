@@ -154,6 +154,22 @@ async def main():
                 dui2 = await call_json(session, "drive_ui", {"cmd": "set_outline",
                     "args": {"outlines": [{"id": "outline_0001", "name": "测试大纲"}], "plots": []}})
                 check("drive_ui set_outline 返回 __ui_command__", dui2.get("__ui_command__") == "set_outline")
+                # set_review（侦察/提取页呈现五库候选）：title 必填、五类至少一类非空
+                dui3 = await call_json(session, "drive_ui", {"cmd": "set_review",
+                    "args": {"title": "冒烟测试书", "platform": "fanqie", "folder": "冒烟测试书",
+                             "plots": [{"name": "测试桥段", "category": "测试", "structure": "测试"}],
+                             "style_rules": [{"kind": "prefer", "pattern": "句长偏短"}]}})
+                check("drive_ui set_review 返回 __ui_command__", dui3.get("__ui_command__") == "set_review")
+                # 负例：缺 title 应被拒（工具抛错或返回错误文本都算拒绝）
+                _bad_review = True
+                try:
+                    _r = await session.call_tool("drive_ui",
+                                                 {"cmd": "set_review", "args": {"title": ""}})
+                    if "__ui_command__" in call_text(_r):
+                        _bad_review = False
+                except Exception:
+                    pass
+                check("drive_ui set_review 缺 title/五类被拒", _bad_review)
                 intent_file = os.path.join(_ROOT, "storage", "nav_intent.json")
                 intents = []
                 if os.path.exists(intent_file):
@@ -168,6 +184,8 @@ async def main():
                       any(i.get("kind") == "ui_command" and i.get("cmd") == "next" for i in intents))
                 check("drive_ui set_outline 已写入意图队列（kind=ui_command cmd=set_outline）",
                       any(i.get("kind") == "ui_command" and i.get("cmd") == "set_outline" for i in intents))
+                check("drive_ui set_review 已写入意图队列（kind=ui_command cmd=set_review）",
+                      any(i.get("kind") == "ui_command" and i.get("cmd") == "set_review" for i in intents))
 
                 # ── 4. tool-log source=mcp 断言 ──
                 log_file = os.path.join(_ROOT, "storage", "tool_log.jsonl")
