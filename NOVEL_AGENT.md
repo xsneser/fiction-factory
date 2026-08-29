@@ -78,6 +78,11 @@
   - 每项含 **`faction`（所属势力名，必须与 `set_world` 的 `factions[].name` 逐字一致，不要带括号描述）**；
     **每个势力至少 1 个对应人物**（无人物归属的势力不要创建）。
 - `submit`：**建书即创建书目并跳书详情页**，调用前必须先向用户汇报设定概要并取得确认（不确认不建书）。
+- `set_review`（侦察/提取合并页命令，非建书命令）：把五库候选呈现成**可勾选审查卡**，**停在页面等用户确认，不直接入库**。
+  payload：`{title, platform?, folder?, downloaded_chapters?, profile_id?, profile_name?, plots?, structures?, gags?, characters?, style_rules?}`——
+  **title 必填、五类至少一类非空**；plots/structures/gags/characters 字段对齐 `ingest_library_assets`（见下）；
+  style_rules 每项 `{kind(prefer|ban), pattern, desc?, severity?, replacements?}`（风格规则归属 `profile_id` 笔名）。
+  确认后由**页面** POST `/api/scout/ingest` 落库，agent **不要**再自行 `ingest_library_assets` 重复入库。
 
 ### 落盘工具
 - `save_outlines`：保存 outlines/plots/threads/themes → 落盘 → `fill_gags` 到 ready（弧的字数跨度、桥段叶弧规则见 1.2 故事线数据规则）。
@@ -92,6 +97,7 @@
   gag `{name,category,pattern_description,fit_scenes,examples}`；
   character `{name,personality,description,archetypes,examples,catchphrases,tags,fit_tags}`。
 - `discover_hot` / `fetch_novel` / `list_crawled_novels` / `read_crawled_novel`：侦察热榜 / 抓取下载 / 读已抓书库 / 读章节目录或正文（供借鉴设定/写法，不改书）。
+- 侦察/提取默认走 `novel-scout` skill：给小说 id/书名 → `fetch_novel` → 读正文 → 自主提炼五类资产（桥段/弧/笑点/角色 + 写作风格规则，风格归属用户所选笔名）→ `drive_ui(set_review)` 呈现候选 → **停页面等用户确认后由页面入库**（不直接 ingest）。
 - `publish_check` / `publish_book` / `mark_finished` / `export_book`：上架检查 / 发布 / 完本 / 导出投稿包。
 
 ---
