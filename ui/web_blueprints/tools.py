@@ -207,43 +207,90 @@ def crawl_progress():
 
 @bp.route("/api/scout/ingest", methods=["POST"])
 def scout_ingest():
-    """入库选中的分析结果"""
+    """入库选中的分析结果（五库：桥段/弧/笑点/角色 + 风格规则按笔名）。
+
+    纯规则落盘、不强制 LLM；agent 驱动链路上由 dsh 分析后经 set_review 呈现、
+    用户在本页确认后 POST 到此端点落库。
+    """
     from plugins.fanqie_scout import FanqieScoutAgent
     from plugins import task_manager
+    from plugins.novel_storage import NOVELS_DIR
+    from libraries.style_rules import StyleRule, StyleRuleLibrary
     data = request.json or {}
     title = data.get("title", "")
     plots = data.get("plots", [])
     structures = data.get("structures", [])
     gags = data.get("gags", [])
+    characters = data.get("characters", [])
+    style_rules_in = data.get("style_rules", [])
+    profile_id = data.get("profile_id", "")   # 风格规则归属笔名（空则落默认笔名）
+    platform = data.get("platform") or "fanqie"
+    folder = data.get("folder", "")           # 落盘成功后可标记该小说 .analyzed
 
-    if not title and not any([plots, structures, gags]):
+    if not any([plots, structures, gags, characters, style_rules_in]):
         return jsonify({"ok": False, "error": "参数为空"}), 400
 
-    llm = get_llm()
-    if not llm:
-        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+    llm = get_llm() or None   # 入库是纯规则副作用，不强制 LLM 配置
 
     # 单任务互斥：资产入库同一时间只允许一个
     task_manager.ensure_single("资产入库")
     task_id = f"ingest_{title}_{int(time.time())}"
     task_manager.start(task_id, name="资产入库", title=title,
-                       total=1, phase="入库中...", url="/extract")
-    task_manager.log(task_id, f"入库: {len(plots)}桥段 {len(structures)}大纲 {len(gags)}笑点", "info")
+                       total=1, phase="入库中...", url="/scout")
 
-    scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib)
-    stats = scout.ingest_selected(
-        plots=plots, structures=structures,
-        gags=gags, source="fanqie",
-    )
+    stats = {"plots": 0, "structures": 0, "gags": 0, "characters": 0, "style_rules": 0}
+
+    # 四库：经 FanqieScoutAgent.ingest_selected（纯规则，含 char_lib）
+    if any([plots, structures, gags, characters]):
+        scout = FanqieScoutAgent(llm_client=llm, plot_lib=plot_lib, struct_lib=struct_lib,
+                                 gag_lib=gag_lib, char_lib=char_lib)
+        four = scout.ingest_selected(plots=plots, structures=structures, gags=gags,
+                                     characters=characters, source="fanqie")
+        stats.update(four)
+
+    # 风格规则：按笔名直写 StyleRuleLibrary（复用 add_style_rule 范式，按 profile_id+kind+pattern 去重）
+    if style_rules_in:
+        srl = StyleRuleLibrary()
+        existing = {r.id for r in srl.rules}
+        pairs = {(r.profile_id, r.kind, r.pattern) for r in srl.rules}
+        n = 1
+        for sr in style_rules_in:
+            kind = str(sr.get("kind", "")).strip()
+            pattern = str(sr.get("pattern", "")).strip()
+            if kind not in ("ban", "prefer") or not pattern:
+                continue
+            pid = profile_id or sr.get("profile_id") or ""
+            if (pid, kind, pattern) in pairs:
+                continue
+            while f"{kind}_{n}" in existing:
+                n += 1
+            rule = StyleRule(id=f"{kind}_{n}", kind=kind, profile_id=pid,
+                             pattern=pattern, desc=str(sr.get("desc", "")),
+                             severity=str(sr.get("severity", "warning")),
+                             replacements=[str(x) for x in (sr.get("replacements") or []) if str(x).strip()])
+            srl.rules.append(rule)
+            existing.add(rule.id)
+            pairs.add((pid, kind, pattern))
+            stats["style_rules"] += 1
+        srl._save()
+
+    # 落盘成功后标记该小说已提取（folder 对应 storage/novels/fanqie/<folder>/）
+    if folder and any(stats.values()):
+        novel_dir = NOVELS_DIR / platform / folder
+        if novel_dir.is_dir():
+            (novel_dir / ".analyzed").touch()
 
     task_manager.done(task_id, message=f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲")
-    task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 +{stats['gags']}笑点", "success")
+    task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
+                              f"+{stats['gags']}笑点 +{stats['characters']}角色 "
+                              f"+{stats['style_rules']}风格规则", "success")
 
     return jsonify({
         "ok": True,
         "stats": stats,
-        "message": f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
-                   f"+{stats['gags']}笑点",
+        "message": (f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
+                    f"+{stats['gags']}笑点 +{stats['characters']}角色 "
+                    f"+{stats['style_rules']}风格规则"),
     })
 
 
