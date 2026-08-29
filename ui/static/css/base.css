@@ -268,7 +268,6 @@
         .card .label { font-size:11px; color:#8b949e; }
         /* ─── 笔名与风格页（/profiles）：单栏——顶部笔名切换按钮 + 双标签主区 + 屏幕左侧滑出抽屉 ─── */
         .prof-toprow { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
-        .prof-toprow form { margin:0; padding:0; border:0; background:none; }
         .prof-pen-btn { display:flex; align-items:center; gap:10px; padding:10px 16px;
                         background:rgba(31,111,235,.12); border:1px solid rgba(31,111,235,.35); border-radius:8px;
                         color:var(--fg-strong); cursor:pointer; }
@@ -310,15 +309,17 @@
         .prof-plat-body { padding:0 14px 14px; border-top:1px solid var(--border-soft); }
         .prof-plat-body .plat-reg { display:flex; align-items:center; gap:6px; margin:12px 0 10px; }
 
-        /* 笔名抽屉：屏幕左侧滑出（position:fixed，translateX(-100%)→0） */
-        .prof-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:1040; }
-        .prof-drawer { position:fixed; top:0; bottom:0; left:180px; width:min(320px, calc(100vw - 180px));
+        /* 笔名抽屉：紧贴全局左侧导航(180px)右缘、向右展开（宽度动画，不遮住导航） */
+        .prof-backdrop { position:fixed; top:0; bottom:0; left:180px; right:0; background:rgba(0,0,0,.4); z-index:1040; }
+        .prof-drawer { position:fixed; top:0; bottom:0; left:180px; width:0; max-width:min(320px, calc(100vw - 180px));
                        background:var(--bg-elev); border-right:1px solid var(--border-soft);
-                       transform:translateX(-100%); z-index:1041;
-                       display:flex; flex-direction:column; box-shadow:8px 0 24px rgba(0,0,0,.3);
-                       visibility:hidden; transition:transform .25s ease, visibility 0s linear .25s; }
-        .prof-drawer.open { transform:translateX(0); visibility:visible;
-                            transition:transform .25s ease, visibility 0s linear 0s; }
+                       z-index:1041; overflow:hidden; box-shadow:8px 0 24px rgba(0,0,0,.3);
+                       visibility:hidden; transition:width .25s ease, visibility 0s linear .25s; }
+        .prof-drawer.open { width:min(320px, calc(100vw - 180px)); visibility:visible;
+                            transition:width .25s ease, visibility 0s linear 0s; }
+        .prof-drawer-inner { width:min(320px, calc(100vw - 180px)); height:100%; display:flex; flex-direction:column; }
+        .prof-del { margin:6px 10px 10px; padding:0; border:0; background:none; }
+        .prof-del button { width:100%; }
         .prof-drawer-head { display:flex; justify-content:space-between; align-items:center;
                             padding:12px 14px; border-bottom:1px solid var(--border-soft); font-weight:600; color:var(--fg-strong); }
         .prof-drawer-close { background:none; border:none; color:var(--fg-muted); font-size:18px;

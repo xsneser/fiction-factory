@@ -1,18 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
-<!-- ═══ 顶部：显眼笔名切换按钮 + 删除（单栏布局） ═══ -->
+<!-- ═══ 顶部：显眼笔名切换按钮（删除操作移入抽屉底部） ═══ -->
 <div class="prof-toprow">
     <button type="button" class="prof-pen-btn" id="prof-open-drawer" title="点击切换笔名">
         <span class="prof-pen-avatar">{{ scope_label[0] }}</span>
         <span class="prof-pen-name">{{ scope_label }}</span>
         <span class="prof-pen-caret">▾</span>
     </button>
-    {% if selected %}
-    <form class="prof-toprow-del" method="POST" action="/profiles/{{ selected.id }}/delete"
-          onsubmit="return confirm('删除笔名「{{ selected.pen_name }}」？其专属风格规则将一并清除。');">
-        <button type="submit" class="small danger">🗑 删除笔名</button>
-    </form>
-    {% endif %}
 </div>
 
 <!-- ═══ 双标签主区 ═══ -->
@@ -52,6 +46,7 @@
 <!-- ═══ 抽屉（屏幕左侧滑出）：每个笔名下方带其专属风格摘要 ═══ -->
 <div class="prof-backdrop" id="prof-backdrop" hidden></div>
 <aside class="prof-drawer" id="prof-drawer" aria-hidden="true">
+    <div class="prof-drawer-inner">
     <div class="prof-drawer-head">✍️ 选择笔名
         <button type="button" class="prof-drawer-close" id="prof-drawer-close" title="关闭">×</button>
     </div>
@@ -75,6 +70,13 @@
         <div class="prof-empty">暂无笔名<br>点下方「+ 新建笔名」创建</div>
         {% endif %}
         <a class="prof-new" href="/profiles?scope=new">➕ 新建笔名</a>
+    </div>
+    {% if selected %}
+    <form class="prof-del" method="POST" action="/profiles/{{ selected.id }}/delete"
+          onsubmit="return confirm('删除笔名「{{ selected.pen_name }}」？其专属风格规则将一并清除。');">
+        <button type="submit" class="small danger">🗑 删除「{{ selected.pen_name }}」</button>
+    </form>
+    {% endif %}
     </div>
 </aside>
 
