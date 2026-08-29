@@ -1420,6 +1420,7 @@ _WIZARD_CMDS = {
     "fill_world": (),   # 步骤③世界观重新补全（Agent 兜底/重试）
     "reset": (),   # 清空向导 state（除 pen_name/库表外字段）——建书前先 reset，防残留干扰保真度
     "submit": (),
+    "set_review": ("title",),   # 侦察/提取合并页：呈现五库候选审查卡（非建书命令，不入步门控）
 }
 
 # 步敏感命令 → 需求向导步（步 2 候选 / 步 3 内容构建）。
@@ -1468,6 +1469,11 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
       字数跨度由剧情结构决定、不设固定章数；仅最底层弧可拥有桥段；
       plots 每项 {id, name, outline_id, order, category?, thread_id?, roles?, template_structure?}
       （id 唯一必填、outline_id 必填指向所属弧 id（须为最底层弧）、order 弧内序号）——缺 id/outline_id 故事线桥段不显示
+    - set_review: {title, platform?, folder?, downloaded_chapters?, profile_id?, profile_name?,
+      plots?, structures?, gags?, characters?, style_rules?}   **侦察/提取合并页**：把 agent 提炼的五库候选
+      呈现成可勾选审查卡（drive_ui 命令，非建书命令，不套步门控）。至少一类非空才可提交；
+      style_rules 每项 {kind(prefer|ban), pattern, desc?, severity?, replacements?}。
+      审查数据字段对齐 NOVEL_AGENT.md 1.2，用户确认后由页面 POST /api/scout/ingest 落库。
     - submit: {}  **⚠️ 建书即创建书目并跳书详情页，调用前必须先向用户汇报设定概要并取得确认**
     - next / prev / reset / load_candidates / skip_candidates / fill_world: {} 无必填
     """
@@ -1498,6 +1504,18 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
         has_idx = isinstance(args.get("idx"), int)
         if not (has_candidate or has_idx):
             raise RuntimeError(f"命令 {cmd} 需 candidate 对象或 idx 至少其一（candidate={{title, world_brief, one_liner}}）")
+    elif cmd == "set_review":   # 侦察/提取合并页：呈现五库候选审查卡（title 必填、至少一类非空、数组类型校验）
+        if not (args.get("title") or "").strip():
+            raise RuntimeError(f"命令 {cmd} 需 title 必填")
+        if not args.get("platform"):
+            args["platform"] = "fanqie"
+        five = ["plots", "structures", "gags", "characters", "style_rules"]
+        for k in five:
+            v = args.get(k)
+            if v is not None and not isinstance(v, list):
+                raise RuntimeError(f"命令 {cmd} 需 {k} 为数组")
+        if not any(args.get(k) for k in five):
+            raise RuntimeError(f"命令 {cmd} 需 plots/structures/gags/characters/style_rules 至少一类非空")
     else:
         for k in _WIZARD_CMDS[cmd]:
             if not args.get(k):
