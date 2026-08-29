@@ -56,7 +56,13 @@
         {% for p in group %}
         {% set sum = summaries.get(p.id) if summaries else None %}
         <div class="prof-pen">
-            <a class="prof-item {{ 'active' if current_scope == p.id }}" href="/profiles?scope={{ p.id }}">{{ p.pen_name }}</a>
+            <div class="prof-item-row">
+                <a class="prof-item {{ 'active' if current_scope == p.id }}" href="/profiles?scope={{ p.id }}">{{ p.pen_name }}</a>
+                <form class="prof-del" method="POST" action="/profiles/{{ p.id }}/delete"
+                      onsubmit="return confirm('删除笔名「{{ p.pen_name }}」？其专属风格规则将一并清除。');">
+                    <button type="submit" class="small danger" title="删除笔名「{{ p.pen_name }}」">🗑</button>
+                </form>
+            </div>
             {% if sum %}
             <div class="prof-pen-summary">
                 <div>✍️ {{ sum.prefers_joined if sum.prefers_joined else '未设定句式' }}</div>
@@ -71,12 +77,6 @@
         {% endif %}
         <a class="prof-new" href="/profiles?scope=new">➕ 新建笔名</a>
     </div>
-    {% if selected %}
-    <form class="prof-del" method="POST" action="/profiles/{{ selected.id }}/delete"
-          onsubmit="return confirm('删除笔名「{{ selected.pen_name }}」？其专属风格规则将一并清除。');">
-        <button type="submit" class="small danger">🗑 删除「{{ selected.pen_name }}」</button>
-    </form>
-    {% endif %}
     </div>
 </aside>
 
