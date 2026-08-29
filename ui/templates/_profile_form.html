@@ -1,51 +1,65 @@
-{# 笔名档案表单（新建/编辑共用）—— ① 表单：身份/调性 + 平台账号注册。
-   句式风格与禁止内容在下方 _style_rules_cards.html 里维护（规则列表）。
+{# 笔名档案表单（新建/编辑共用）—— 标签1「平台账号」：可折叠档案区 + 各平台可展开注册卡。
+   句式风格与禁止内容在标签2 _style_rules_cards.html 里维护（规则列表）。
    需要上下文：profile（PenNameProfile 或 None）、platform_labels（dict）、
    form_action（提交 URL）、form_submit（按钮文案）。 #}
 <form method="POST" action="{{ form_action }}">
-    <h2 style="margin:0 0 10px">① 表单</h2>
-    <div class="form-row">
-        <div class="form-group">
-            <label>笔名 *</label>
-            {% if profile and profile.pen_name %}
-            <input name="pen_name" value="{{ profile.pen_name }}" readonly style="opacity:.6">
-            {% else %}
-            <input name="pen_name" required>
-            {% endif %}
+    {# ── 可折叠「笔名档案」区（身份与调性；默认展开） ── #}
+    <details class="prof-fold" open>
+        <summary>👤 笔名档案 <span style="font-size:12px;color:#8b949e;font-weight:normal">（身份与调性）</span></summary>
+        <div class="prof-fold-body">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>笔名 *</label>
+                    {% if profile and profile.pen_name %}
+                    <input name="pen_name" value="{{ profile.pen_name }}" readonly style="opacity:.6">
+                    {% else %}
+                    <input name="pen_name" required>
+                    {% endif %}
+                </div>
+                <div class="form-group"><label>描述</label><input name="description" value="{{ profile.description if profile else '' }}" placeholder="如：都市爽文专业户"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>笔名语言</label>
+                    <select name="language">
+                        {% set lang = profile.language if profile else 'zh' %}
+                        <option value="zh" {{ 'selected' if lang=='zh' }}>中文笔名</option>
+                        <option value="en" {{ 'selected' if lang=='en' }}>英文笔名</option>
+                    </select>
+                </div>
+                <div class="form-group"><label>幽默风格</label>
+                    <select name="humor_style">
+                        {% set hs = profile.style_fingerprint.get('humor_style','') if profile else '' %}
+                        <option value="">无</option>
+                        {% for v in ['吐槽型','冷幽默','无厘头'] %}<option {{ 'selected' if hs==v }}>{{ v }}</option>{% endfor %}
+                    </select></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>动作风格</label>
+                    <select name="action_style">
+                        {% set as_ = profile.style_fingerprint.get('action_style','') if profile else '' %}
+                        <option value="">默认</option>
+                        {% for v in ['简洁利落','画面感强','华丽铺陈'] %}<option {{ 'selected' if as_==v }}>{{ v }}</option>{% endfor %}
+                    </select></div>
+            </div>
         </div>
-        <div class="form-group"><label>描述</label><input name="description" value="{{ profile.description if profile else '' }}" placeholder="如：都市爽文专业户"></div>
-        <div class="form-group"><label>笔名语言</label>
-            <select name="language">
-                {% set lang = profile.language if profile else 'zh' %}
-                <option value="zh" {{ 'selected' if lang=='zh' }}>中文笔名</option>
-                <option value="en" {{ 'selected' if lang=='en' }}>英文笔名</option>
-            </select>
-        </div>
-    </div>
-    <div class="form-row">
-        <div class="form-group"><label>幽默风格</label>
-            <select name="humor_style">
-                {% set hs = profile.style_fingerprint.get('humor_style','') if profile else '' %}
-                <option value="">无</option>
-                {% for v in ['吐槽型','冷幽默','无厘头'] %}<option {{ 'selected' if hs==v }}>{{ v }}</option>{% endfor %}
-            </select></div>
-        <div class="form-group"><label>动作风格</label>
-            <select name="action_style">
-                {% set as_ = profile.style_fingerprint.get('action_style','') if profile else '' %}
-                <option value="">默认</option>
-                {% for v in ['简洁利落','画面感强','华丽铺陈'] %}<option {{ 'selected' if as_==v }}>{{ v }}</option>{% endfor %}
-            </select></div>
-    </div>
+    </details>
 
-    <fieldset style="margin-top:18px">
-        <legend>🌐 平台账号注册（人工登记；正式上架前需在对应平台注册同名账号）</legend>
-        {% set pa = profile.platform_accounts if profile else {} %}
-        {% for pl, label in platform_labels.items() %}
-        {% set acc = pa.get(pl, {}) %}
-        <div style="border:1px solid #30363d;border-radius:8px;padding:10px;margin-bottom:10px">
-            <label style="display:inline-flex;align-items:center;gap:6px;font-weight:bold">
-                <input type="checkbox" name="{{ pl }}_registered" {{ 'checked' if acc.get('registered') }}>
-                {{ label }} — 已注册账号
+    {# ── 各平台可展开注册卡（折叠态只显平台名+状态；展开态可编辑，人工登记） ── #}
+    {% set pa = profile.platform_accounts if profile else {} %}
+    {% for pl, label in platform_labels.items() %}
+    {% set acc = pa.get(pl, {}) %}
+    <details class="prof-plat">
+        <summary>
+            <span class="prof-plat-label">{{ label }}</span>
+            {% if acc.get('registered') %}
+            <span class="prof-status reg">✅ 已注册</span>
+            {% else %}
+            <span class="prof-status unreg">未注册</span>
+            {% endif %}
+        </summary>
+        <div class="prof-plat-body">
+            <label class="plat-reg" style="font-weight:normal">
+                <input type="checkbox" name="{{ pl }}_registered" {{ 'checked' if acc.get('registered') }}> 已注册账号
             </label>
             <div class="form-row">
                 <div class="form-group"><label>站点ID / 作者号</label><input name="{{ pl }}_site_id" value="{{ acc.get('site_id','') }}"></div>
@@ -56,7 +70,7 @@
                 <div class="form-group"><label>备注</label><input name="{{ pl }}_notes" value="{{ acc.get('notes','') }}"></div>
             </div>
         </div>
-        {% endfor %}
-    </fieldset>
+    </details>
+    {% endfor %}
     <button type="submit" style="margin-top:12px">{{ form_submit }}</button>
 </form>

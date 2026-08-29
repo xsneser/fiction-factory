@@ -266,19 +266,66 @@
         .card .meta { font-size:12px; color:#8b949e; margin-bottom:6px; }
         .card .stat { font-size:32px; font-weight:bold; color:#f0f6fc; }
         .card .label { font-size:11px; color:#8b949e; }
-        /* Master-detail（笔名档案 × 风格规则合并页） */
-        .md { display:flex; gap:20px; align-items:flex-start; }
-        .md-side { flex:0 0 240px; position:sticky; top:0; max-height:calc(100vh - 90px); overflow-y:auto;
-            background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px; }
-        .md-side .md-actions { margin-bottom:12px; }
-        .md-item { display:block; padding:8px 10px; border-radius:6px; color:#8b949e; text-decoration:none; font-size:13px; margin-bottom:2px; }
-        .md-item:hover { background:#1f2937; color:#f0f6fc; }
-        .md-item.active { background:rgba(31,111,235,.15); color:#58a6ff; border:1px solid rgba(31,111,235,.35); }
-        .md-group { font-size:11px; color:#6e7681; padding:10px 10px 4px; }
-        .md-empty { padding:16px 10px; color:#6e7681; font-size:13px; text-align:center; line-height:1.7; }
-        .md-main { flex:1; min-width:0; }
+        /* ─── 笔名与风格页（/profiles）：顶部工具条 + 双标签 + 右侧滑出笔名抽屉 ─── */
+        .prof-topbar { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+        .prof-title  { margin:0; font-size:20px; color:#f0f6fc; }
+        .prof-scope  { font-size:13px; color:var(--fg-muted); font-weight:normal; }
+        .prof-topbar form { margin:0; padding:0; border:0; background:none; }
+
+        .prof-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:16px; }
+        .prof-tab  { padding:8px 16px; color:var(--fg-muted); font-size:13px; cursor:pointer;
+                     background:none; border:0; border-bottom:2px solid transparent; border-radius:0; }
+        .prof-tab:hover { color:var(--fg-strong); }
+        .prof-tab.active { color:var(--fg-strong); border-bottom-color:var(--accent); }
+        .prof-pane { display:none; }
+        .prof-pane.active { display:block; }
+
+        /* 折叠壳（身份档案 / 平台卡共用 details） */
+        .prof-fold { background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; margin-bottom:14px; }
+        .prof-fold > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:8px;
+                               padding:12px 16px; font-weight:600; color:var(--fg-strong); user-select:none; }
+        .prof-fold > summary::-webkit-details-marker { display:none; }
+        .prof-fold > summary::before { content:'▸'; color:var(--fg-dim); transition:transform .15s; }
+        .prof-fold[open] > summary::before { transform:rotate(90deg); }
+        .prof-fold-body { padding:0 16px 16px; }
+
+        .prof-plat { background:var(--bg-inset); border:1px solid var(--border); border-radius:8px; margin-bottom:10px; overflow:hidden; }
+        .prof-plat > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:10px;
+                               padding:10px 14px; font-weight:600; color:var(--fg-strong); user-select:none; }
+        .prof-plat > summary::-webkit-details-marker { display:none; }
+        .prof-plat > summary::before { content:'▸'; color:var(--fg-dim); transition:transform .15s; }
+        .prof-plat[open] > summary::before { transform:rotate(90deg); }
+        .prof-plat[open] { border-color:var(--accent); }
+        .prof-plat-label { flex:1; }
+        .prof-status { font-size:11px; padding:1px 8px; border-radius:10px; white-space:nowrap; }
+        .prof-status.reg  { background:#0d3322; color:var(--success-fg); }
+        .prof-status.unreg{ background:#21262d; color:var(--fg-dim); }
+        .prof-plat-body { padding:0 14px 14px; border-top:1px solid var(--border-soft); }
+        .prof-plat-body .plat-reg { display:flex; align-items:center; gap:6px; margin:12px 0 10px; }
+
+        /* 笔名抽屉：参考写作台阅读器目录抽屉动画（translateX），position:fixed 全屏 overlay */
+        .prof-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:1040; }
+        .prof-drawer { position:fixed; top:0; right:0; bottom:0; width:min(320px,100%);
+                       background:var(--bg-elev); border-left:1px solid var(--border-soft);
+                       transform:translateX(100%); transition:transform .25s ease; z-index:1041;
+                       display:flex; flex-direction:column; box-shadow:-8px 0 24px rgba(0,0,0,.3); }
+        .prof-drawer.open { transform:translateX(0); }
+        .prof-drawer-head { display:flex; justify-content:space-between; align-items:center;
+                            padding:12px 14px; border-bottom:1px solid var(--border-soft); font-weight:600; color:var(--fg-strong); }
+        .prof-drawer-close { background:none; border:none; color:var(--fg-muted); font-size:18px;
+                             cursor:pointer; line-height:1; padding:2px 6px; }
+        .prof-drawer-close:hover { color:var(--danger-fg); }
+        .prof-drawer-body { flex:1; overflow-y:auto; padding:8px; }
+        .prof-group { font-size:11px; color:var(--fg-dim); padding:10px 10px 4px; }
+        .prof-item { display:block; padding:8px 10px; border-radius:6px; color:var(--fg-muted);
+                     text-decoration:none; font-size:13px; margin-bottom:2px; }
+        .prof-item:hover { background:var(--bg-hover); color:var(--fg-strong); }
+        .prof-item.active { background:rgba(31,111,235,.15); color:var(--accent); border:1px solid rgba(31,111,235,.35); }
+        .prof-empty { padding:16px 10px; color:var(--fg-dim); font-size:13px; text-align:center; line-height:1.7; }
+        .prof-new { display:block; margin-top:10px; padding:9px 10px; border:1px dashed var(--border);
+                    border-radius:6px; color:var(--accent); text-decoration:none; text-align:center; font-size:13px; }
+        .prof-new:hover { border-color:var(--accent); background:rgba(31,111,235,.08); }
         .hint { color:#8b949e; font-size:13px; margin-bottom:12px; }
-        @media (max-width:900px){ .md { flex-direction:column; } .md-side { position:static; max-height:none; flex:1 1 auto; } }
         /* 仪表盘「已有书目」紧凑横条（每书一条：书名/元信息左，状态徽标右） */
         .book-strip-list { display:flex; flex-direction:column; gap:8px; margin-bottom:24px; }
         .book-strip { display:flex; align-items:center; gap:16px;

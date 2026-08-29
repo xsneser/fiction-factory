@@ -6,7 +6,7 @@
 
 {% if render_cards %}
 <!-- ② 句式风格（正向：怎么写——一条条规则） -->
-<h2 style="margin:0 0 10px">② 句式风格 <span style="font-size:12px;color:#8b949e;font-weight:normal">（正向：本笔名怎么写，如「句长偏短」「爱用（）做注释」）</span></h2>
+<h2 style="margin:0 0 10px">✍️ 仿写句式 <span style="font-size:12px;color:#8b949e;font-weight:normal">（正向：本笔名怎么写，如「句长偏短」「爱用（）做注释」）</span></h2>
 <div class="card" style="margin-bottom:16px">
     <div style="margin-top:8px">
     {% for r in prefers %}
@@ -22,7 +22,7 @@
 </div>
 
 <!-- ③ 禁止的内容（负向：不能写——带替换候选的自动去AI味，无替换的审查检测，统一一张卡） -->
-<h2 style="margin:0 0 10px">③ 禁止的内容 <span style="font-size:12px;color:#8b949e;font-weight:normal">（负向：不能写——带替换候选的自动去AI味，无替换的审查检测）</span></h2>
+<h2 style="margin:0 0 10px">🚫 禁止的词语句式 <span style="font-size:12px;color:#8b949e;font-weight:normal">（负向：不能写——带替换候选的自动去AI味，无替换的审查检测）</span></h2>
 <div class="card" style="margin-bottom:16px">
     <div style="margin-top:8px">
     {% for r in bans %}
