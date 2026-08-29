@@ -504,13 +504,16 @@ class FanqieCrawler:
                         break
 
             if content:
+                # 1) 去掉图片块（<img>...</img>，内含 {{image_domain}} 模板占位，无实际图）
+                content = re.sub(r'<img[^>]*>.*?</img>', '', content, flags=re.DOTALL)
+                content = re.sub(r'<img[^>]*>', '', content)
+                # 2) 段落/换行标签 → 换行（<p></p><br><div> 都转，否则剥掉后整章挤成一段）
+                content = re.sub(r'</?p[^>]*>|<br\s*/?>|</?div[^>]*>', '\n', content)
                 content = re.sub(r'<[^>]+>', '', content)
                 content = re.sub(r'\n{3,}', '\n\n', content)
-
-                # PUA 字体解码：全局映射表还原（storage/font_charset.json，源自开源项目
-                # ckenkuo/fanqie-cdp-downloader，双 mode 取残留最少）
+                # 3) PUA 字体解码（全量检查——开头可能被长 <img> 模板占位挤出前 100 字）
                 self._init_decoder()
-                if any(0xE000 <= ord(c) <= 0xF8FF for c in content[:100]):
+                if any(0xE000 <= ord(c) <= 0xF8FF for c in content):
                     content = self._decoder.decode_content(content)
 
                 if content.strip():
