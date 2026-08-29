@@ -112,6 +112,15 @@ def load_novel(platform: str, novel_folder: str) -> Optional[dict]:
     return {"info": info, "chapters": chapters}
 
 
+def read_chapter(platform: str, novel_folder: str, index: int) -> Optional[dict]:
+    """读单章（chapters/{index:04d}.json，真实章号），不整本重读。"""
+    ch_file = NOVELS_DIR / platform / novel_folder / "chapters" / f"{int(index):04d}.json"
+    if not ch_file.exists():
+        return None
+    with open(ch_file, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def delete_novel(platform: str, novel_folder: str) -> bool:
     """删除一部小说"""
     novel_dir = NOVELS_DIR / platform / novel_folder
