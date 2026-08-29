@@ -65,10 +65,10 @@ def step_scout(page, book_title, chapters=8):
 
 
 def step_extract(page):
-    """② 提取已并入 /scout：验证已下载书库列表渲染（分析由 agent 完成后经 set_review 呈现候选，用户确认入库）"""
-    log("═══ 步骤2: 提取（并入 /scout） ═══")
-    page.goto(BASE + "/scout")
-    shot(page, "04_extract_initial")
+    """② 已下载书库独立页 /novels：验证列表渲染（分析由 agent 完成后经 set_review 在 /scout 呈现候选，用户确认入库）"""
+    log("═══ 步骤2: 已下载书库 /novels ═══")
+    page.goto(BASE + "/novels")
+    shot(page, "04_novels_initial")
 
     # 等待已下载小说列表
     wait_for(page, "#novels-list .card", 20000)
@@ -78,8 +78,8 @@ def step_extract(page):
         log("无可提取小说，跳过提取", "skip")
         return False
 
-    log("提取为 agent 分析 + 页面确认入库（set_review 候选卡），不在浏览器自动化范围", "skip")
-    shot(page, "06_extract_list")
+    log("提取为 agent 分析 + /scout 页确认入库（set_review 候选卡），不在浏览器自动化范围", "skip")
+    shot(page, "06_novels_list")
     return True
 
 

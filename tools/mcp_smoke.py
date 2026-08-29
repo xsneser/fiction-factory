@@ -186,6 +186,17 @@ async def main():
                       any(i.get("kind") == "ui_command" and i.get("cmd") == "set_outline" for i in intents))
                 check("drive_ui set_review 已写入意图队列（kind=ui_command cmd=set_review）",
                       any(i.get("kind") == "ui_command" and i.get("cmd") == "set_review" for i in intents))
+                # set_review 持久化快照（/scout 轮询恢复用）
+                _review_path = os.path.join(_ROOT, "storage", "review_pending.json")
+                _review_ok = False
+                if os.path.exists(_review_path):
+                    try:
+                        with open(_review_path, encoding="utf-8") as f:
+                            _review_data = json.load(f)
+                        _review_ok = _review_data.get("title") == "冒烟测试书"
+                    except Exception:
+                        _review_ok = False
+                check("set_review 已落 review_pending.json 快照（title 匹配）", _review_ok)
 
                 # ── 4. tool-log source=mcp 断言 ──
                 log_file = os.path.join(_ROOT, "storage", "tool_log.jsonl")
@@ -212,6 +223,10 @@ async def main():
             pass
         try:
             os.remove(os.path.join(_ROOT, "storage", "nav_intent.json"))
+        except Exception:
+            pass
+        try:
+            os.remove(os.path.join(_ROOT, "storage", "review_pending.json"))
         except Exception:
             pass
 

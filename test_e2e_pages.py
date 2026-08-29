@@ -151,6 +151,7 @@ def run_tests():
         ("DeAI Test", "/deai", ["去AI", "测试"]),
         ("Review Test", "/review-test", ["审查", "测试"]),
         ("Scout", "/scout", ["侦察", "提取"]),  # 侦察/提取合并页
+        ("Novels", "/novels", ["已下载书库", "novels"]),  # 已下载书库独立页
         ("Publish", "/publish", ["上架管理"]),
     ]
 
@@ -203,6 +204,7 @@ def run_tests():
         ("/profiles", "笔名与风格"),
         ("/settings", "设置"),
         ("/scout", "侦察 · 提取"),
+        ("/novels", "已下载书库"),
         ("/deai", "去AI测试"),
         ("/review-test", "审查测试"),
     ]
