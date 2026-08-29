@@ -49,6 +49,12 @@ def scout_page():
     return render_template("scout.html", profiles=profiles.list_all())
 
 
+@bp.route("/novels")
+def novels_page():
+    """已下载书库独立页：列出已抓小说，提供分析并呈现 / 删除"""
+    return render_template("novels.html", profiles=profiles.list_all())
+
+
 @bp.route("/api/scout/run", methods=["POST"])
 def scout_run():
     """启动侦察任务"""
@@ -279,6 +285,9 @@ def scout_ingest():
         novel_dir = NOVELS_DIR / platform / folder
         if novel_dir.is_dir():
             (novel_dir / ".analyzed").touch()
+    # 候选已消费：清空 review_pending 快照，防止回 /scout 重放陈旧候选
+    from libraries.scout_review import clear_pending_review
+    clear_pending_review()
 
     task_manager.done(task_id, message=f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲")
     task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
@@ -312,6 +321,30 @@ def scout_novels():
         analyzed_file = Path(n["path"]) / ".analyzed"
         n["analyzed"] = analyzed_file.exists()
     return jsonify(novels)
+
+
+# ─── 候选审查快照（agent set_review 持久化，/scout 轮询恢复） ───
+
+@bp.route("/api/scout/pending-review")
+def scout_pending_review():
+    """读候选审查快照（非消费：重复读不删，用户确认入库后由 ingest 清空）。"""
+    from libraries.scout_review import read_pending_review
+    return jsonify({"ok": True, "review": read_pending_review()})
+
+
+@bp.route("/api/scout/novels/delete", methods=["POST"])
+def scout_novels_delete():
+    """删除已下载小说（storage/novels/<platform>/<folder>/）。"""
+    from plugins.novel_storage import delete_novel
+    data = request.json or {}
+    platform = data.get("platform") or "fanqie"
+    folder = data.get("folder", "")
+    if not folder:
+        return jsonify({"ok": False, "error": "缺少 folder"}), 400
+    ok = delete_novel(platform, folder)
+    if not ok:
+        return jsonify({"ok": False, "error": "未找到该小说"}), 404
+    return jsonify({"ok": True, "deleted": folder})
 
 
 # ─── 分析已下载的小说（提取库条目+写作风格） ───
