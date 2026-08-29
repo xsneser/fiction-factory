@@ -4,14 +4,19 @@
 <script>window.__nePageReceiver = true; /* 声明本页可接收 agent 页面命令（set_review 等） */</script>
 <h1>🔍 侦察 · 提取 <span style="font-size:14px;color:#8b949e">给 agent 一个小说 id → 自动下载分析 → 候选确认入库五库</span></h1>
 
-{# ─── 区 1：Agent 任务条 ─── #}
+{# ─── 区 1：Agent 任务条（单输入：模糊书名 agent 搜索 / book_id 直抓 + 平台选择） ─── #}
 <div class="scout-form">
     <div class="input-row">
-        <input type="text" id="book-title" placeholder="输入书名，如：十日终焉" onfocus="clearOther('book-id')">
-        <span class="or-divider">或</span>
-        <input type="text" id="book-id" placeholder="直接输入 book_id 或 URL" onfocus="clearOther('book-title')">
+        <input type="text" id="book-input" placeholder="输入书名（模糊书名 agent 自动搜索）或 book_id / URL">
     </div>
     <div class="form-row-inline">
+        <label>平台</label>
+        <select id="scout-platform">
+            <option value="fanqie" selected>🍅 番茄小说</option>
+            <option value="web" disabled>🌐 网页抓取（即将推出）</option>
+            <option value="qidian" disabled>📖 起点中文（即将推出）</option>
+            <option value="jinjiang" disabled>🌸 晋江文学城（即将推出）</option>
+        </select>
         <label>下载章节数</label>
         <input type="number" id="chapters" value="30" min="5" max="100">
         <label>风格规则归属笔名</label>
@@ -20,10 +25,6 @@
         </select>
     </div>
     <button id="btn-scout" class="btn-primary" onclick="sendScoutTask()">🚀 交给 Agent</button>
-    <p style="font-size:12px;color:#8b949e;margin-top:10px">
-        Agent 会自动下载小说 → 读正文提炼<b>桥段 / 情节弧 / 笑点 / 角色 / 写作风格</b>五类候选 →
-        呈现到下方审查区，<b>勾选确认后</b>才写入五大库。下载进度看下方实时条，agent 每一步工具调用在侧栏工具卡可见。
-    </p>
 </div>
 
 {# ─── 区 2：实时进度 ─── #}
@@ -74,30 +75,25 @@ var currentPenName = '';
     pollPendingReview();   // 回页恢复：agent 已呈现但未渲染的候选
 })();
 
-// 书名/book_id 两个输入框互斥：聚焦一个时清空另一个
-function clearOther(otherId) {
-    var el = document.getElementById(otherId);
-    if (el) el.value = '';
-}
-
 /* ─── 任务文案 ─── */
-function buildScoutTask(title, directId, chapters, penName) {
-    var target = directId ? ('book_id ' + directId) : ('《' + title + '》');
-    return '抓取并分析小说入库：' + target + '，下载 ' + chapters + ' 章，风格规则归属笔名「' + penName + '」。'
+function buildScoutTask(target, chapters, penName, platform) {
+    return '从' + platform + '抓取并分析小说入库：' + target + '，下载 ' + chapters + ' 章，风格规则归属笔名「' + penName + '」。'
          + '下载后读正文自主提炼桥段/情节弧/笑点/角色/写作风格五类候选，'
          + '用 drive_ui set_review 把候选呈现到侦察页审查区，不要直接入库，等我在页面勾选确认。';
 }
 
-/* ─── 区 1：交给 Agent（未下载 → 下载+分析） ─── */
+/* ─── 区 1：交给 Agent（未下载 → 下载+分析）。单输入：模糊书名 agent 搜索 / book_id 直抓 ─── */
 function sendScoutTask() {
     if (typeof window.agentSendTask !== 'function') return showToast('侧栏 Agent 未就绪，请刷新页面', 'error');
-    var title = document.getElementById('book-title').value.trim();
-    var bookId = document.getElementById('book-id').value.trim();
+    var input = document.getElementById('book-input').value.trim();
+    if (!input) return showToast('请输入书名或 book_id', 'warning');
     var chapters = parseInt(document.getElementById('chapters').value) || 30;
-    var directId = '';
-    if (bookId) { var m = bookId.match(/(\d{15,})/); directId = m ? m[1] : bookId; }
-    if (!title && !directId) return showToast('请输入书名或 book_id', 'warning');
-    window.agentSendTask(buildScoutTask(title, directId, chapters, currentPenName));
+    var platformSel = document.getElementById('scout-platform');
+    var platformLabel = (platformSel && platformSel.selectedOptions.length)
+        ? platformSel.selectedOptions[0].text : '番茄小说';
+    var m = input.match(/(\d{15,})/);
+    var target = m ? ('book_id ' + m[1]) : ('《' + input + '》');
+    window.agentSendTask(buildScoutTask(target, chapters, currentPenName, platformLabel));
     showToast('🤖 已交给 Agent，下载/分析进度请看下方与侧栏', 'info');
 }
 
@@ -133,7 +129,9 @@ function pollPendingReview() {
 }
 setInterval(pollPendingReview, 4000);
 
-/* ─── 区 2：实时进度（crawl-progress 轮询 + agent busy 指示） ─── */
+/* ─── 区 2：实时进度（crawl-progress 轮询 + agent busy 指示）。
+   只该框在抓取中显示；done/error 显示几秒后自动消失，旧残留(ts>30s)不重放。 ─── */
+var _crawlHideTimer = null;
 function pollCrawlProgress() {
     fetch('/api/crawl/progress')
         .then(function(r) { return r.json(); })
@@ -144,25 +142,32 @@ function pollCrawlProgress() {
             var countEl = document.getElementById('cp-count');
             var fillEl = document.getElementById('cp-fill');
             var msgEl = document.getElementById('cp-msg');
+            var now = Date.now() / 1000;
+            var stale = (d.ts || 0) > 0 && (now - d.ts) > 30;
+            function hide() { box.style.display = 'none'; }
+            function clearHide() { if (_crawlHideTimer) { clearTimeout(_crawlHideTimer); _crawlHideTimer = null; } }
             if (d.state === 'running') {
+                clearHide();
                 box.style.display = '';
                 var pct = d.total > 0 ? Math.round(d.current / d.total * 100) : 0;
                 if (fillEl) fillEl.style.width = pct + '%';
                 if (phaseEl) phaseEl.textContent = d.phase || '';
                 if (countEl) countEl.textContent = d.total > 0 ? (d.current + ' / ' + d.total) : '';
                 if (msgEl) msgEl.textContent = d.message || '';
-            } else if (d.state === 'done') {
+            } else if ((d.state === 'done' || d.state === 'error') && !stale) {
+                clearHide();
                 box.style.display = '';
-                if (fillEl) fillEl.style.width = '100%';
-                if (phaseEl) phaseEl.textContent = '✅ 完成';
+                var isErr = d.state === 'error';
+                if (fillEl) fillEl.style.width = isErr ? '0%' : '100%';
+                if (phaseEl) phaseEl.textContent = isErr ? '❌ 失败' : '✅ 完成';
                 if (countEl) countEl.textContent = '';
                 if (msgEl) msgEl.textContent = d.message || '';
-            } else if (d.state === 'error') {
-                box.style.display = '';
-                if (fillEl) fillEl.style.width = '0%';
-                if (phaseEl) phaseEl.textContent = '❌ 失败';
-                if (countEl) countEl.textContent = '';
-                if (msgEl) msgEl.textContent = d.message || '';
+                // 显示完成/失败几秒后自动消失
+                _crawlHideTimer = setTimeout(function() { hide(); _crawlHideTimer = null; }, isErr ? 6000 : 4000);
+            } else {
+                // 无进行中抓取（idle/空/旧残留）→ 隐藏
+                clearHide();
+                hide();
             }
         })
         .catch(function() {});
