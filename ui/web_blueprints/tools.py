@@ -51,8 +51,26 @@ def scout_page():
 
 @bp.route("/novels")
 def novels_page():
-    """已下载书库独立页：列出已抓小说，提供分析并呈现 / 删除"""
+    """外部书库独立页：列出已抓小说，提供阅读 / 去侦察页分析 / 删除"""
     return render_template("novels.html", profiles=profiles.list_all())
+
+
+@bp.route("/novels/read")
+def novel_reader_page():
+    """外部书库阅读器：只注入章节列表（index/title/字数），正文按章懒加载。"""
+    from plugins.novel_storage import load_novel
+    folder = request.args.get("folder", "").strip()
+    platform = (request.args.get("platform", "") or "fanqie").strip()
+    if not folder:
+        return redirect(url_for("tools.novels_page"))
+    data = load_novel(platform, folder)
+    if not data:
+        return redirect(url_for("tools.novels_page"))
+    info = data["info"]
+    chapter_list = [{"index": c.get("index"), "title": c.get("title", ""),
+                     "word_count": c.get("word_count", 0)} for c in data["chapters"]]
+    meta = {"platform": platform, "folder": folder, "title": info.get("title", folder)}
+    return render_template("novel_reader.html", meta=meta, chapter_list=chapter_list)
 
 
 @bp.route("/api/scout/run", methods=["POST"])
@@ -349,6 +367,24 @@ def scout_novels_delete():
     if not ok:
         return jsonify({"ok": False, "error": "未找到该小说"}), 404
     return jsonify({"ok": True, "deleted": folder})
+
+
+@bp.route("/api/scout/novels/chapter")
+def scout_novel_chapter():
+    """读已下载小说单章正文（按真实章号 index，供阅读器懒加载）。"""
+    from plugins.novel_storage import read_chapter
+    folder = request.args.get("folder", "").strip()
+    platform = (request.args.get("platform", "") or "fanqie").strip()
+    try:
+        chapter = int(request.args.get("chapter", 0))
+    except (TypeError, ValueError):
+        chapter = 0
+    if not folder or chapter <= 0:
+        return jsonify({"ok": False, "error": "缺 folder 或 chapter"}), 400
+    ch = read_chapter(platform, folder, chapter)
+    if not ch:
+        return jsonify({"ok": False, "error": f"第 {chapter} 章不存在"}), 404
+    return jsonify({"ok": True, "chapter": ch})
 
 
 # ─── 分析已下载的小说（提取库条目+写作风格） ───
