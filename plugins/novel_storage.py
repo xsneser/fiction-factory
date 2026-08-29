@@ -54,13 +54,15 @@ def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
     with open(novel_dir / "info.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
-    # 保存章节
+    # 保存章节：文件名与 index 用真实章号（ch["index"]），支持区间下载（如 100..130 → 0100..0130.json）；
+    # 全量从第 1 章下载时 idx==i+1，与旧行为一致。
     for i, ch in enumerate(chapters):
-        ch_file = ch_dir / f"{i+1:04d}.json"
+        idx = int(ch.get("index") or (i + 1))
+        ch_file = ch_dir / f"{idx:04d}.json"
         with open(ch_file, "w", encoding="utf-8") as f:
             json.dump({
-                "index": i + 1,
-                "title": ch.get("title", f"第{i+1}章"),
+                "index": idx,
+                "title": ch.get("title", f"第{idx}章"),
                 "content": ch.get("content", ""),
                 "word_count": ch.get("word_count", 0),
             }, f, ensure_ascii=False, indent=2)
