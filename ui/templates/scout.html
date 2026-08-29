@@ -74,6 +74,11 @@ var currentPenName = '';
         currentPenId = sel.value;
         currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name');
     });
+    // 从外部书库「去侦察页分析」跳入：预填书名，用户调范围/笔名后点「交给 Agent」
+    try {
+        var book = new URLSearchParams(window.location.search).get('book');
+        if (book) document.getElementById('book-input').value = book;
+    } catch(e) {}
     pollPendingReview();   // 回页恢复：agent 已呈现但未渲染的候选
 })();
 
