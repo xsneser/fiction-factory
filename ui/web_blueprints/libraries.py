@@ -260,11 +260,23 @@ def profile_list():
     own = [] if is_new else (style_rules.rules_for(current_scope) if selected else [])
     scope_label = ("新建笔名" if is_new else
                    (selected.pen_name if selected else "新建笔名"))
+    # 抽屉内每个笔名下方展示其专属风格摘要（仅 enabled，精简单行）
+    summaries = {}
+    for p in all_profiles:
+        own_p = style_rules.rules_for(p.id)
+        pr = [r for r in own_p if r.kind == "prefer" and r.enabled]
+        bn = [r for r in own_p if r.kind == "ban" and r.enabled]
+        summaries[p.id] = {
+            "prefers_joined": (" · ".join(r.pattern for r in pr[:3]) + ("…" if len(pr) > 3 else "")) if pr else "",
+            "ban_count": len(bn),
+            "bans_first": "、".join(r.pattern for r in bn[:3]) if bn else "",
+        }
     return render_template("profiles.html",
         profiles=all_profiles, selected=selected, is_new=is_new,
         current_scope=current_scope, scope_label=scope_label,
         prefers=[r for r in own if r.kind == "prefer"],
         bans=[r for r in own if r.kind == "ban"],
+        summaries=summaries,
         platform_labels=PLATFORM_LABELS)
 
 

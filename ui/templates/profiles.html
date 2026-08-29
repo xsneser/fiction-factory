@@ -1,97 +1,86 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="prof-layout">
-    <!-- ═══ 左：常驻笔名栏（显眼显示当前笔名，点击右侧滑出抽屉切换） ═══ -->
-    <aside class="prof-rail">
-        <button type="button" class="prof-rail-btn" id="prof-open-drawer" title="点击切换笔名">
-            <span class="prof-rail-avatar">{{ scope_label[0] }}</span>
-            <span class="prof-rail-name">{{ scope_label }}</span>
-            <span class="prof-rail-caret">▾</span>
-        </button>
-        <div class="prof-rail-hint">点击切换笔名</div>
-        {% if selected %}
-        <form class="prof-rail-del" method="POST" action="/profiles/{{ selected.id }}/delete"
-              onsubmit="return confirm('删除笔名「{{ selected.pen_name }}」？其专属风格规则将一并清除。');">
-            <button type="submit" class="small danger">🗑 删除笔名</button>
-        </form>
-        {% endif %}
-    </aside>
+<!-- ═══ 顶部：显眼笔名切换按钮 + 删除（单栏布局） ═══ -->
+<div class="prof-toprow">
+    <button type="button" class="prof-pen-btn" id="prof-open-drawer" title="点击切换笔名">
+        <span class="prof-pen-avatar">{{ scope_label[0] }}</span>
+        <span class="prof-pen-name">{{ scope_label }}</span>
+        <span class="prof-pen-caret">▾</span>
+    </button>
+    {% if selected %}
+    <form class="prof-toprow-del" method="POST" action="/profiles/{{ selected.id }}/delete"
+          onsubmit="return confirm('删除笔名「{{ selected.pen_name }}」？其专属风格规则将一并清除。');">
+        <button type="submit" class="small danger">🗑 删除笔名</button>
+    </form>
+    {% endif %}
+</div>
 
-    <!-- ═══ 右：双标签主区 ═══ -->
-    <div class="prof-main">
-        <div class="prof-tabs">
-            <button type="button" class="prof-tab active" data-tab="accounts">🌐 平台账号</button>
-            <button type="button" class="prof-tab" data-tab="style">✍️ 写作风格</button>
-        </div>
+<!-- ═══ 双标签主区 ═══ -->
+<div class="prof-tabs">
+    <button type="button" class="prof-tab active" data-tab="accounts">🌐 平台账号</button>
+    <button type="button" class="prof-tab" data-tab="style">✍️ 写作风格</button>
+</div>
 
-        <!-- 标签1：平台账号（身份档案折叠区 + 各平台可展开注册卡，单一表单） -->
-        <section class="prof-pane active" id="pane-accounts">
-            {% if is_new %}
-            <p class="hint">创建笔名：填好档案字段与平台账号点「创建笔名」。写作风格在创建后编辑。</p>
-            {% with form_action='/profiles/new', form_submit='创建笔名', profile=None %}
-            {% include "_profile_form.html" %}
-            {% endwith %}
-            {% elif selected %}
-            <p class="hint">平台账号为人工登记；正式上架前需在对应平台注册同名账号。</p>
-            {% with form_action='/profiles/' ~ selected.id ~ '/edit', form_submit='保存修改', profile=selected %}
-            {% include "_profile_form.html" %}
-            {% endwith %}
-            {% else %}
-            <p class="hint">暂无笔名，点左侧笔名栏 → 抽屉底部「+ 新建笔名」创建。</p>
-            {% endif %}
-        </section>
+<!-- 标签1：平台账号（身份档案折叠区 + 各平台可展开注册卡，单一表单） -->
+<section class="prof-pane active" id="pane-accounts">
+    {% if is_new %}
+    <p class="hint">创建笔名：填好档案字段与平台账号点「创建笔名」。写作风格在创建后编辑。</p>
+    {% with form_action='/profiles/new', form_submit='创建笔名', profile=None %}
+    {% include "_profile_form.html" %}
+    {% endwith %}
+    {% elif selected %}
+    <p class="hint">平台账号为人工登记；正式上架前需在对应平台注册同名账号。</p>
+    {% with form_action='/profiles/' ~ selected.id ~ '/edit', form_submit='保存修改', profile=selected %}
+    {% include "_profile_form.html" %}
+    {% endwith %}
+    {% else %}
+    <p class="hint">暂无笔名，点上方笔名按钮 → 抽屉底部「+ 新建笔名」创建。</p>
+    {% endif %}
+</section>
 
-        <!-- 标签2：写作风格（仿写句式 prefer 在上 + 禁止的词语句式 ban 在下） -->
-        <section class="prof-pane" id="pane-style">
-            {% if is_new %}
-            <p class="hint">写作风格（仿写句式 / 禁止的词语句式）在笔名创建后编辑。请先在「平台账号」标签完成创建。</p>
-            {% elif selected %}
-            {% include "_style_rules_cards.html" %}
-            {% else %}
-            <p class="hint">暂无笔名，创建后才能编辑写作风格。</p>
-            {% endif %}
-        </section>
+<!-- 标签2：写作风格（仿写句式 prefer 在上 + 禁止的词语句式 ban 在下） -->
+<section class="prof-pane" id="pane-style">
+    {% if is_new %}
+    <p class="hint">写作风格（仿写句式 / 禁止的词语句式）在笔名创建后编辑。请先在「平台账号」标签完成创建。</p>
+    {% elif selected %}
+    {% include "_style_rules_cards.html" %}
+    {% else %}
+    <p class="hint">暂无笔名，创建后才能编辑写作风格。</p>
+    {% endif %}
+</section>
+
+<!-- ═══ 抽屉（屏幕左侧滑出）：每个笔名下方带其专属风格摘要 ═══ -->
+<div class="prof-backdrop" id="prof-backdrop" hidden></div>
+<aside class="prof-drawer" id="prof-drawer" aria-hidden="true">
+    <div class="prof-drawer-head">✍️ 选择笔名
+        <button type="button" class="prof-drawer-close" id="prof-drawer-close" title="关闭">×</button>
     </div>
-
-    <!-- ═══ 抽屉（从笔名栏右侧滑出）：当前笔名风格摘要 + 中/英分组列表 + 新建 ═══ -->
-    <div class="prof-backdrop" id="prof-backdrop" hidden></div>
-    <aside class="prof-drawer" id="prof-drawer" aria-hidden="true">
-        <div class="prof-drawer-head">✍️ 选择笔名
-            <button type="button" class="prof-drawer-close" id="prof-drawer-close" title="关闭">×</button>
-        </div>
-        <div class="prof-drawer-body">
-            {% if selected %}
-            <div class="prof-summary">
-                <div class="prof-sum-title">📝 风格摘要</div>
-                <div class="prof-sum-pen">当前笔名：{{ selected.pen_name }}</div>
-                {% if prefers %}
-                <div class="prof-sum-sec">✍️ 句式风格</div>
-                <ul class="prof-sum-list">{% for r in prefers[:5] %}<li>{{ r.pattern }}</li>{% endfor %}</ul>
-                {% endif %}
-                <div class="prof-sum-sec">🚫 禁止的词语句式 <span class="prof-sum-count">{{ bans|length }} 条</span></div>
-                {% if bans %}
-                <ul class="prof-sum-list">{% for r in bans[:3] %}<li>{{ r.pattern }}{% if r.replacements %} → {{ r.replacements|join('、') }}{% endif %}</li>{% endfor %}</ul>
-                {% endif %}
-                <a class="prof-sum-edit" href="#" id="prof-edit-style">去编辑写作风格 →</a>
+    <div class="prof-drawer-body">
+        {% for lang, group in profiles|groupby('language') %}
+        <div class="prof-group">{{ '🇨🇳 中文笔名' if lang == 'zh' else '🇬🇧 英文笔名' }}</div>
+        {% for p in group %}
+        {% set sum = summaries.get(p.id) if summaries else None %}
+        <div class="prof-pen">
+            <a class="prof-item {{ 'active' if current_scope == p.id }}" href="/profiles?scope={{ p.id }}">{{ p.pen_name }}</a>
+            {% if sum %}
+            <div class="prof-pen-summary">
+                <div>✍️ {{ sum.prefers_joined if sum.prefers_joined else '未设定句式' }}</div>
+                <div>🚫 {{ sum.ban_count }} 条{% if sum.bans_first %} · {{ sum.bans_first }}{% endif %}</div>
             </div>
             {% endif %}
-            {% for lang, group in profiles|groupby('language') %}
-            <div class="prof-group">{{ '🇨🇳 中文笔名' if lang == 'zh' else '🇬🇧 英文笔名' }}</div>
-            {% for p in group %}
-            <a class="prof-item {{ 'active' if current_scope == p.id }}" href="/profiles?scope={{ p.id }}">{{ p.pen_name }}</a>
-            {% endfor %}
-            {% endfor %}
-            {% if not profiles %}
-            <div class="prof-empty">暂无笔名<br>点下方「+ 新建笔名」创建</div>
-            {% endif %}
-            <a class="prof-new" href="/profiles?scope=new">➕ 新建笔名</a>
         </div>
-    </aside>
-</div>
+        {% endfor %}
+        {% endfor %}
+        {% if not profiles %}
+        <div class="prof-empty">暂无笔名<br>点下方「+ 新建笔名」创建</div>
+        {% endif %}
+        <a class="prof-new" href="/profiles?scope=new">➕ 新建笔名</a>
+    </div>
+</aside>
 
 <script>
 (function () {
-    /* ── 抽屉开/关：点笔名栏打开；点 × / backdrop / Esc 关闭 ── */
+    /* ── 抽屉开/关：点笔名按钮打开；点 × / backdrop / Esc 关闭 ── */
     var drawer = document.getElementById('prof-drawer');
     var backdrop = document.getElementById('prof-backdrop');
     function openDrawer() {
@@ -120,14 +109,6 @@
     }
     tabs.forEach(function (t) {
         t.addEventListener('click', function () { activate(t.dataset.tab); });
-    });
-
-    /* ── 抽屉「去编辑写作风格」：关抽屉 + 切到写作风格标签 ── */
-    var editLink = document.getElementById('prof-edit-style');
-    if (editLink) editLink.addEventListener('click', function (e) {
-        e.preventDefault();
-        closeDrawer();
-        activate('style');
     });
 })();
 </script>
