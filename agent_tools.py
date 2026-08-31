@@ -28,6 +28,7 @@ from ui.web_blueprints.ctx import (  # noqa: E402
     ContentReviewer, DeAIEngine,
 )
 from core.text_utils import count_prose_units  # noqa: E402
+from libraries.reviewer import HARD_MIN_RATIO  # noqa: E402
 from libraries.storyline import OutlineSlot, annotate_plot_roles, \
     get_mc, get_characters, normalize_basic_info  # noqa: E402
 from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
@@ -491,29 +492,46 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     if n < 1:
         raise RuntimeError("chapter_num 需 >= 1")
 
-    # 1) 规则去AI味（词替换+段落节奏，无 LLM）；有桥段则逐段去并保持桥梁结构
+    # 1) 规则去AI味（词替换+段落节奏，无 LLM）；有桥段则逐段去并保持桥梁结构。
+    #    防静默丢字：bridge_segments 必须覆盖 text（总长 ≥ text 70%）。只列了部分桥段时以
+    #    text 为正文源落盘、不挂桥段，并回传 bridge_warning（提示 agent 把每桥段都列入）。
     processed = text
+    bridge_warning = None
     if bridge_segments:
-        segs = []
-        for b in bridge_segments:
-            seg_text = (b.get("text") or "")
-            try:
-                seg_text = DeAIEngine().process_rule_based(seg_text).processed
-            except Exception:
-                pass
-            segs.append({"plot_id": b.get("plot_id"), "plot_name": b.get("plot_name"), "text": seg_text})
-        bridge_segments = segs
-        processed = "\n\n".join(s["text"] for s in segs)
-    else:
+        raw_cover = sum(len((b.get("text") or "")) for b in bridge_segments)
+        if raw_cover < len(text) * 0.7:
+            bridge_warning = (f"bridge_segments 总长 {raw_cover} ＜ 正文 {len(text)}，疑似只列了部分桥段；"
+                              f"已按整章正文落盘、未挂桥段。请把本章每个桥段都列入 bridge_segments")
+            bridge_segments = None
+        else:
+            segs = []
+            by_pid = {}   # 非空 plot_id → 在 segs 中的下标（同 id 重写时原位替换，防重复桥段）
+            for b in bridge_segments:
+                seg_text = (b.get("text") or "")
+                try:
+                    seg_text = DeAIEngine().process_rule_based(seg_text).processed
+                except Exception:
+                    pass
+                seg = {"plot_id": b.get("plot_id"), "plot_name": b.get("plot_name"), "text": seg_text}
+                pid = seg.get("plot_id")
+                if pid and pid in by_pid:
+                    segs[by_pid[pid]] = seg        # 同 plot_id 重写：替换旧条目保持原位置，最后写入胜出
+                else:
+                    if pid:
+                        by_pid[pid] = len(segs)
+                    segs.append(seg)
+            bridge_segments = segs
+            processed = "\n\n".join(s["text"] for s in segs)
+    if bridge_segments is None:
         try:
             processed = DeAIEngine().process_rule_based(text).processed
         except Exception:
             pass
 
     # 2) 规则审查（reviewer，无 LLM）→ 存 review
+    target = int(getattr(book, "words_per_chapter", 0) or 3000)
     review_dict = None
     try:
-        target = int(getattr(book, "words_per_chapter", 0) or 3000)
         r = ContentReviewer().review(processed, chapter_num=n,
                                      chapter_title=title or f"第{n}章", target_words=target)
         review_dict = {"passed": r.passed, "score": r.score, "summary": r.summary,
@@ -522,6 +540,17 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
                                    "suggestion": i.suggestion} for i in (r.issues or [])]}
     except Exception:
         pass
+
+    # 2.5) 硬门禁：正文低于字数下限 → 拒绝落盘（保留进行中草稿），逼 agent 续写满章
+    if review_dict and not review_dict.get("passed"):
+        short = any(i.get("severity") == "error" and i.get("category") == "word_count"
+                    for i in (review_dict.get("issues") or []))
+        if short:
+            raise RuntimeError(
+                f"第 {n} 章正文 {count_prose_units(processed)} 字，低于本章下限 "
+                f"{int(target * HARD_MIN_RATIO)} 字，正文不完整，未落盘。"
+                f"请继续写满本章（逐桥段补全全部未写桥段）后，再调用 save_chapter_text。"
+            )
 
     # 3) 落盘章节
     book_mgr.save_chapter(book_id, n, title or f"第{n}章", processed, summary or "",
@@ -583,7 +612,7 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
         pass
 
     return {"ok": True, "chapter": n, "word_count": count_prose_units(processed),
-            "review": review_dict}
+            "review": review_dict, "bridge_warning": bridge_warning}
 
 
 def _update_promises_ledger_thin(book_id: str, chapter_num: int) -> None:
@@ -638,7 +667,20 @@ def save_bridge_draft(book_id: str, chapter_num: int, plot_id: str,
         # 新章节草稿：重置
         bridges = []
         cur_ch = chapter_num
-    bridges.append({"plot_id": plot_id or "", "plot_name": plot_name or "", "text": text})
+    entry = {"plot_id": plot_id or "", "plot_name": plot_name or "", "text": text}
+    if plot_id:
+        # 同 plot_id 重写：替换旧条目而非追加（防同一桥段被反复生成导致重复渲染/高亮），最后写入胜出
+        replaced = False
+        for i, b in enumerate(bridges):
+            if b.get("plot_id") == plot_id:
+                bridges[i] = entry
+                replaced = True
+                break
+        if not replaced:
+            bridges.append(entry)
+    else:
+        # 空 plot_id 桥段不参与去重（可能代表不同的非故事线内容），直接追加
+        bridges.append(entry)
     buffer = [b.get("text", "") for b in bridges]
     words = sum(count_prose_units(b) for b in buffer)
     try:

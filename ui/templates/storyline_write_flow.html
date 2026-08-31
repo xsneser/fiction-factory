@@ -74,6 +74,10 @@ function _ms_esc(s) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
     });
 }
+/* CSS 选择器转义：data-bridge="<pid>" 的 pid 进 querySelector 前必须转义引号/反斜杠，防特殊字符抛错 */
+function _selEsc(s) {
+    return String(s == null ? '' : s).replace(/["\\]/g, '\\$&');
+}
 function _fmtWords(n) { return n >= 1000 ? (Math.round(n / 1000 * 10) / 10) + 'k' : String(n); }
 function _wordCount(ch) {
     if (ch && ch.bridges && ch.bridges.length) return ch.bridges.reduce(function (n, b) { return n + (b.text || '').length; }, 0);
@@ -346,18 +350,28 @@ function _jumpTo(el) {
     if (el) showPage(_pageOfElement(el));
 }
 function _clearBridgeActive() {
-    var root = Reader.el('reader-pages');
-    (root ? root.querySelectorAll('.m-bridge-active') : []).forEach(function (el) { el.classList.remove('m-bridge-active'); });
+    // 主容器 + 副容器（跨章推入动画中的同 plot_id 残留）一起清，防双份匹配
+    ['reader-pages', 'reader-pages-next'].forEach(function (id) {
+        var root = Reader.el(id);
+        (root ? root.querySelectorAll('.m-bridge-active') : []).forEach(function (el) { el.classList.remove('m-bridge-active'); });
+    });
 }
 function highlightBridgeContent(pid) {
     if (!pid) return;
     var ci = _chapterIdxOfPlot(pid);
-    if (ci < 0) { if (window.StoryLine) window.StoryLine.highlight({ plot_id: pid }); return; }
+    if (ci < 0) {
+        // 未写桥段：阅读器无对应内容，清掉上一处高亮与 activePid（否则旧高亮残留不消失、轮询还会恢复它）
+        if (window.StoryLine) window.StoryLine.highlight({ plot_id: pid });
+        _clearBridgeActive();
+        Reader._activePid = '';
+        return;
+    }
     if (ci !== Reader.idx) goToChapter(ci, { page: 0 });
     var root = Reader.el('reader-pages');   // 只查主容器：防未清理副容器内同 plot_id 桥段被双份匹配/页码算错
-    var el = root ? root.querySelector('.m-bridge[data-bridge="' + pid + '"]') : null;
+    var el = root ? root.querySelector('.m-bridge[data-bridge="' + _selEsc(pid) + '"]') : null;
     _clearBridgeActive();
-    (root ? root.querySelectorAll('.m-bridge[data-bridge="' + pid + '"]') : []).forEach(function (x) { x.classList.add('m-bridge-active'); });
+    // 只高亮第一处匹配：同一 plot_id 重复（重写/修订）不再全文亮起
+    if (el) el.classList.add('m-bridge-active');
     Reader._activePid = pid;
     _jumpTo(el);
     if (window.StoryLine) window.StoryLine.highlight({ plot_id: pid });
@@ -372,7 +386,13 @@ function highlightOutlineContent(oid) {
         var br = Reader.chapters[i].bridges || [];
         for (var j = 0; j < br.length; j++) { if (pids.indexOf(br[j].plot_id) >= 0) { ci = i; break; } }
     }
-    if (ci < 0) { if (window.StoryLine) window.StoryLine.highlight({ outline_id: oid }); return; }
+    if (ci < 0) {
+        // 该弧的桥段都未写：阅读器无对应内容，清掉上一处高亮（防残留）
+        if (window.StoryLine) window.StoryLine.highlight({ outline_id: oid });
+        _clearBridgeActive();
+        Reader._activePid = '';
+        return;
+    }
     if (ci !== Reader.idx) goToChapter(ci, { page: 0 });
     _clearBridgeActive();
     var root = Reader.el('reader-pages');   // 只查主容器，防副容器残留被双份匹配
@@ -461,15 +481,36 @@ function runWritingTask() {
     if (window.switchAgentTab) window.switchAgentTab('chat');   // 保证侧栏对话页签可见
     var bid = window.__STORYLINE_ID__ || '';
     var title = (window.__BOOK_STORYLINE__ && window.__BOOK_STORYLINE__.book_title) || '';
-    // 该写第几章：进行中草稿章号优先，否则 current_chapter + 1（跨进程 stale 由 desk API 兜底，此处用注入值）
-    var nextCh = (window.__BOOK_CURRENT_CHAPTER__ || 0) + 1;
     var pen = window.__BOOK_PEN_NAME__ || '';
-    var task = '请继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：写下一章（第' + nextCh + '章）正文，'
-        + '写正文前先 get_writing_context 读风格规则（style_rules）并严格遵守，章末跑 chapter_quality_gate 门禁汇报。';
-    if (task && window.agentSendTask) {
-        window.agentSendTask(task, { card: true, cardLabel: '📝 写作任务 · 第' + nextCh + '章' });
-        _wfSetRunning(true);   // 立即置运行态（ne:agent-state 事件同步兜底）
-    }
+    _resolveNextChapterAndSend(bid, title, pen);
+}
+// 该写第几章：现查 /api/desk/chapters/<bid> 拿磁盘最新 current_chapter（跨进程写盘后刷新，防陈旧注入值），
+// 进行中草稿（draft:true）章号优先，否则 current_chapter + 1；接口失败回退页面注入值。
+function _resolveNextChapterAndSend(bid, title, pen) {
+    var fallback = (window.__BOOK_CURRENT_CHAPTER__ || 0);
+    var send = function (nextCh) {
+        var wpc = (window.__BOOK_STORYLINE__ && window.__BOOK_STORYLINE__.words_per_chapter) || 3000;
+        var task = '请继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：写下一章（第' + nextCh + '章）正文。'
+            + '本章目标约 ' + wpc + ' 字，未写满会被门禁拦下（save_chapter_text 会拒收短章）。'
+            + '写正文前先 get_writing_context 读风格规则（style_rules）并严格遵守。'
+            + '逐桥段写：每写完一个桥段场景就 save_bridge_draft；写完本章全部未写桥段、累计字数达标后再 save_chapter_text，'
+            + '且 bridge_segments 必须列出本章每个桥段（缺一即正文丢失）。'
+            + '章末跑 chapter_quality_gate 门禁汇报。';
+        if (task && window.agentSendTask) {
+            window.agentSendTask(task, { card: true, cardLabel: '📝 写作任务 · 第' + nextCh + '章' });
+            _wfSetRunning(true);   // 立即置运行态（ne:agent-state 事件同步兜底）
+        }
+    };
+    if (!bid) { send(fallback + 1); return; }
+    fetch('/api/desk/chapters/' + encodeURIComponent(bid))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d || typeof d.current_chapter !== 'number') { send(fallback + 1); return; }
+            window.__BOOK_CURRENT_CHAPTER__ = d.current_chapter;   // 顺带刷新注入值
+            var draft = (d.chapters || []).filter(function (c) { return c.draft; })[0];
+            send(draft ? draft.num : (d.current_chapter + 1));
+        })
+        .catch(function () { send(fallback + 1); });
 }
 function stopWritingTask(e) {
     if (e && e.stopPropagation) e.stopPropagation();
@@ -536,6 +577,10 @@ function stopWritingTask(e) {
         fetch('/api/desk/chapters/' + encodeURIComponent(bid))
             .then(function (r) { return r.json(); })
             .then(function (d) {
+                // 顺带刷新注入的当前章号，让「继续写正文」按钮用上跨进程写盘后的最新值
+                if (d && typeof d.current_chapter === 'number' && d.current_chapter !== window.__BOOK_CURRENT_CHAPTER__) {
+                    window.__BOOK_CURRENT_CHAPTER__ = d.current_chapter;
+                }
                 var chs = d.chapters || [];
                 var fp = chs.map(function (c) {
                     return c.num + ':' + (c.content || '').length + ':' + (c.bridges || []).length;
@@ -548,7 +593,14 @@ function stopWritingTask(e) {
                 Reader.chapters = chs;
                 if (!chs.length) { Reader.idx = 0; renderChapter(null); return; }
                 var ni = -1;
-                for (var i = 0; i < chs.length; i++) { if (chs[i].num === prevNum) { ni = i; break; } }
+                // 目标章节优先按 _activePid 所在章节定位（草稿固化/章号变化后仍对齐，防高亮错位）
+                if (Reader._activePid) {
+                    for (var i = 0; i < chs.length && ni < 0; i++) {
+                        var brs = chs[i].bridges || [];
+                        for (var j = 0; j < brs.length; j++) { if (brs[j].plot_id === Reader._activePid) { ni = i; break; } }
+                    }
+                }
+                if (ni < 0) { for (var i = 0; i < chs.length; i++) { if (chs[i].num === prevNum) { ni = i; break; } } }
                 if (ni < 0) ni = Math.min(Reader.idx, chs.length - 1);
                 var wasPage = Reader.page;
                 _swapContentInstant(function () {
@@ -558,13 +610,14 @@ function stopWritingTask(e) {
                     paginate();
                     renderToc();
                     _updateNavState();
-                    // 重渲染后恢复高亮桥段（仍在本章则重新高亮并跳到对应页）
+                    // 重渲染后恢复高亮桥段（只高亮单处，同 plot_id 重复不再全文亮起）
                     if (Reader._activePid) {
+                        var ap = Reader._activePid;
                         var root = Reader.el('reader-pages');
-                        var el = root ? root.querySelector('.m-bridge[data-bridge="' + Reader._activePid + '"]') : null;
+                        var el = root ? root.querySelector('.m-bridge[data-bridge="' + _selEsc(ap) + '"]') : null;
                         if (el) {
                             _clearBridgeActive();
-                            (root.querySelectorAll('.m-bridge[data-bridge="' + Reader._activePid + '"]') || []).forEach(function (x) { x.classList.add('m-bridge-active'); });
+                            el.classList.add('m-bridge-active');
                             _jumpTo(el);
                         }
                     }
