@@ -84,6 +84,10 @@ main { overflow: hidden; }
     padding:24px 0; box-sizing:border-box; }   /* 仅上下留白：列宽=视口宽保证翻页对齐（水平 padding 会致列窄于视口、翻页错位） */
 .reader-pages .m-chapter-title { font-size:18px; font-weight:700; color:var(--fg-strong); margin:0 0 14px; }
 .reader-pages .m-bridge { break-inside:avoid-column; }
+/* 跨章无缝推入的副分页容器：absolute 叠于主容器上，仅动画期间可见。
+   必须 visibility:hidden（保留布局可测 scrollWidth）而非 display:none；pointer-events:none 防拦截点击 */
+.reader-pages-next { position:absolute; top:0; left:0; right:0;
+    z-index:1; pointer-events:none; visibility:hidden; }
 /* 草稿徽标（原 .manuscript .m-draft-tag 作用域不适用阅读器，这里补 badge 视觉） */
 .reader-pages .m-draft-tag { display:inline-block; vertical-align:middle; margin-left:10px;
     padding:1px 8px; font-size:12px; font-weight:600; color:#8b949e;
