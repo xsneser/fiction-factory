@@ -39,8 +39,8 @@ def review_test():
 
 @bp.route("/extract")
 def extract_page():
-    """内容提取已并入侦察页"""
-    return redirect(url_for("tools.scout_page"))
+    """步骤二·提取到数据库：选择已下载书 → agent 提炼五类候选 → 勾选确认入库五库"""
+    return render_template("extract.html", profiles=profiles.list_all())
 
 
 @bp.route("/scout")
@@ -88,9 +88,8 @@ def scout_run():
     if not title and not direct_id:
         return jsonify({"error": "请输入书名或 book_id"}), 400
 
-    llm = get_llm()
-    if not llm:
-        return jsonify({"error": "LLM 未配置"}), 500
+    # 下载是纯规则操作（FanqieScoutAgent.fetch_novel 仅下载不分析），不强制 LLM 配置
+    llm = get_llm() or None
 
     scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib)
 
@@ -229,6 +228,80 @@ def crawl_progress():
     total, message, ts}。web 表单与 MCP fetch_novel 工具共用 crawl_progress.json。"""
     from libraries.crawl_progress import read_crawl_progress
     return jsonify({"ok": True, **read_crawl_progress()})
+
+
+# ─── 热榜侦察（步骤一）：后台线程拉取 + storage/hot_cache.json 缓存 ───
+_HOT_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "storage", "hot_cache.json")
+_HOT_TTL = 600          # 热榜缓存有效秒数（10 分钟）
+_hot_fetching = {}      # key(题材) -> Thread，防同题材并发重复拉取
+
+
+def _read_hot_cache() -> dict:
+    return read_json(_HOT_CACHE_PATH, {}) or {}
+
+
+def _write_hot_cache(cache: dict) -> None:
+    write_json_atomic(_HOT_CACHE_PATH, cache)
+
+
+def _spawn_hot_fetch(key: str, genre: str, count: int) -> None:
+    """后台拉取热榜写入缓存；同题材已有在跑线程则跳过（单线程 Flask 下不阻塞请求）。"""
+    if _hot_fetching.get(key) and _hot_fetching[key].is_alive():
+        return
+
+    def fetch():
+        try:
+            from plugins.fanqie_scout import FanqieCrawler
+            genre_id = 0
+            if genre:
+                genre_id = {v: k for k, v in FanqieCrawler.GENRE_MAP.items()}.get(genre.strip(), 0)
+            crawler = FanqieCrawler()
+            novels = crawler.discover_hot(genre_id=genre_id, count=count) or []
+            items = [n.__dict__ for n in novels] if novels else []
+            cache = _read_hot_cache()
+            cache[key] = {"ts": time.time(), "novels": items}
+            _write_hot_cache(cache)
+        except Exception as e:
+            logging.getLogger("tools").warning("热榜拉取失败(genre=%s): %s", genre, e)
+        finally:
+            _hot_fetching.pop(key, None)
+
+    t = threading.Thread(target=fetch, daemon=True, name=f"hot-{key}")
+    _hot_fetching[key] = t
+    t.start()
+
+
+@bp.route("/api/scout/hot")
+def scout_hot():
+    """步骤一热榜侦察。genre 为题材中文名（空=全站热榜）；count 默认 10。
+
+    返回 {ok, genre, novels, ts, refreshing|loading}：缓存 TTL 内直接回缓存；
+    过期/缺失立即返回当前状态并起 daemon 线程后台刷新（页面轮询直到 novels 出现）。
+    novels 每项 {book_id,title,author,genre,sub_genre,word_count,chapter_count,
+    hot_score,intro,url}（NovelInfo.__dict__）。
+    """
+    genre = (request.args.get("genre") or "").strip()
+    try:
+        count = min(int(request.args.get("count", 10) or 10), 50)
+    except (TypeError, ValueError):
+        count = 10
+    cache = _read_hot_cache()
+    key = genre or "all"
+    entry = cache.get(key) or {}
+    now = time.time()
+    if entry and now - entry.get("ts", 0) < _HOT_TTL:
+        return jsonify({"ok": True, "genre": genre, "novels": entry.get("novels", []),
+                        "ts": entry.get("ts")})
+    payload = {"ok": True, "genre": genre}
+    if entry:
+        payload.update({"novels": entry.get("novels", []), "ts": entry.get("ts"),
+                        "refreshing": True})
+    else:
+        payload.update({"novels": [], "loading": True})
+    _spawn_hot_fetch(key, genre, count)
+    return jsonify(payload)
 
 
 # ─── 入库（人工筛选后） ───
