@@ -61,7 +61,7 @@
     </div>
     <div id="cp-msg" style="font-size:12px;color:#8b949e;margin-top:6px"></div>
     <div id="cp-next" style="display:none;margin-top:10px">
-        <a class="btn-primary" href="/extract" onclick="if (typeof navigateTo==='function') { navigateTo('/extract'); return false; }">下一步：去步骤二提取到数据库 →</a>
+        <a id="cp-next-link" class="btn-primary" href="/extract" onclick="goNextStep(this); return false;">下一步：去步骤二提取到数据库 →</a>
     </div>
 </div>
 
@@ -203,8 +203,15 @@ function startFetch() {
     showToast('🚀 已开始抓取', 'info');
 }
 
-/* ─── 实时进度（crawl-progress 轮询；done 时显示「去步骤二」入口，旧残留 ts>30s 不重放） ─── */
+/* ─── 实时进度（crawl-progress 轮询；done 时显示「去步骤二」入口并带上刚下载的 folder，旧残留 ts>30s 不重放） ─── */
 var _crawlHideTimer = null;
+
+function goNextStep(a) {
+    var href = (a && a.getAttribute('href')) || '/extract';
+    if (typeof navigateTo === 'function') navigateTo(href);
+    else window.location.href = href;
+}
+
 function pollCrawlProgress() {
     fetch('/api/crawl/progress')
         .then(function(r) { return r.json(); })
@@ -238,7 +245,18 @@ function pollCrawlProgress() {
                 if (countEl) countEl.textContent = '';
                 if (msgEl) msgEl.textContent = d.message || '';
                 if (isErr) { if (nextEl) nextEl.style.display = 'none'; }
-                else { if (nextEl) nextEl.style.display = ''; }
+                else {
+                    if (nextEl) nextEl.style.display = '';
+                    // 下一步直达步骤二并预选刚下载的书（folder 来自 crawl_progress.extra）
+                    var folder = (d.extra && d.extra.folder) || '';
+                    var link = document.getElementById('cp-next-link');
+                    if (link) {
+                        var href = folder
+                            ? '/extract?platform=fanqie&folder=' + encodeURIComponent(folder)
+                            : '/extract';
+                        link.setAttribute('href', href);
+                    }
+                }
                 _crawlHideTimer = setTimeout(function() { hide(); _crawlHideTimer = null; }, isErr ? 6000 : 6000);
             } else {
                 clearHide();

@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════
-// 库审查卡片 + 入库 公共逻辑（scout.html 侦察/提取合并页 / novels.html 共用）
+// 库审查卡片 + 入库 公共逻辑（仅 extract.html 步骤二·提取工作台使用）
 // 依赖：escapeHtml（base.html <head> 提供）
 // 数据源：window._lastReviewData = agent set_review 的 args
 //   { title, platform, folder, downloaded_chapters, profile_id, profile_name,

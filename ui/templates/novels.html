@@ -4,6 +4,7 @@
 <h1>📚 外部书库</h1>
 
 <div style="display:flex;justify-content:flex-end;gap:8px;margin:16px 0">
+    <a class="btn" href="/extract" style="text-decoration:none">🧪 提取入库</a>
     <a class="btn" href="/scout" style="text-decoration:none">🔍 去侦察/抓取新书</a>
     <button class="btn" onclick="loadNovels()">🔄 刷新</button>
 </div>
@@ -41,7 +42,7 @@ function loadNovels() {
                 html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + escapeHtml(p) + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
                 html += '<div class="novel-actions">';
                 html += '<button class="small" style="background:#238636" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="readFrom(this)">📖 阅读</button>';
-                html += '<button class="small" style="background:#1f6feb" data-t="' + escapeHtml(n.title) + '" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">🧪 去提取页分析</button>';
+                html += '<button class="small" style="background:#1f6feb" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">🧪 分析提取</button>';
                 html += '<button class="small" style="background:#21262d;color:#f85149" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="deleteFrom(this)">🗑 删除</button>';
                 html += '</div></div>';
             });
@@ -59,15 +60,13 @@ function readFrom(btn) {
     else window.location.href = '/novels/read?platform=' + encodeURIComponent(platform) + '&folder=' + encodeURIComponent(folder);
 }
 
-/* 去提取页分析：跳 /extract 并预选该书（步骤二列表高亮 + 滚动定位），用户在提取页点「分析提取」 */
+/* 去提取页分析：直达 /extract 并预选该书（folder 命中即自动选中，用户在提取页直接点「分析提取」） */
 function goExtractFrom(btn) {
-    var title = btn.getAttribute('data-t') || '';
     var folder = btn.getAttribute('data-f') || '';
     var platform = btn.getAttribute('data-p') || 'fanqie';
-    if (!title) return showToast('缺少书名', 'warning');
-    var url = '/extract?title=' + encodeURIComponent(title)
-            + '&folder=' + encodeURIComponent(folder)
-            + '&platform=' + encodeURIComponent(platform);
+    if (!folder) return showToast('缺少小说信息', 'warning');
+    var url = '/extract?platform=' + encodeURIComponent(platform)
+            + '&folder=' + encodeURIComponent(folder);
     if (typeof navigateTo === 'function') navigateTo(url);
     else window.location.href = url;
 }

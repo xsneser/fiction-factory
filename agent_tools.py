@@ -1769,7 +1769,8 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
             "genre": novel.genre, "chapter_count": novel.chapter_count,
         }, downloaded)
         write_crawl_progress("done", "download", len(downloaded), len(downloaded),
-                             f"下载完成 {len(downloaded)}章")
+                             f"下载完成 {len(downloaded)}章",
+                             extra={"folder": folder, "platform": "fanqie"})
         return {"ok": True, "title": novel.title, "author": novel.author,
                 "saved_chapters": len(downloaded), "folder": folder,
                 "platform": "fanqie"}

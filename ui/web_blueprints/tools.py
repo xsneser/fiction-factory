@@ -34,24 +34,25 @@ def review_test():
 
 
 # ═══════════════════════════════════════
-# 🔍 侦察 · 提取（合并页：agent 驱动下载→分析→呈现候选→确认入库五库）
+# 🔍 侦察 · 提取（两步两页：/scout 步骤一抓取 → /extract 步骤二提炼入库；/novels 外部书库为列表唯一 owner）
 # ═══════════════════════════════════════
-
-@bp.route("/extract")
-def extract_page():
-    """步骤二·提取到数据库：选择已下载书 → agent 提炼五类候选 → 勾选确认入库五库"""
-    return render_template("extract.html", profiles=profiles.list_all())
-
 
 @bp.route("/scout")
 def scout_page():
-    """侦察/提取合并页：给 agent 小说 id → 自动下载分析 → 呈现候选 → 确认入库"""
+    """步骤一·侦察抓取：热榜侦察 + 按书名/book_id 下载章节到本地书库 + 实时进度"""
     return render_template("scout.html", profiles=profiles.list_all())
+
+
+@bp.route("/extract")
+def extract_page():
+    """步骤二·提取工作台：聚焦一本书（?platform=&folder= 选中或页内下拉），
+    agent 提炼五类候选经 set_review 呈现 → 勾选确认入库五库。书列表唯一归属 /novels。"""
+    return render_template("extract.html", profiles=profiles.list_all())
 
 
 @bp.route("/novels")
 def novels_page():
-    """外部书库独立页：列出已抓小说，提供阅读 / 去侦察页分析 / 删除"""
+    """外部书库：已下载小说列表唯一 owner，提供阅读 / 分析提取(→/extract) / 删除"""
     return render_template("novels.html", profiles=profiles.list_all())
 
 
@@ -166,7 +167,8 @@ def scout_run():
                 if not task_manager.is_cancelled(task_id):
                     task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")
                     write_crawl_progress("done", "download", dl_info["chapters"], dl_info["chapters"],
-                                         f"下载完成 {dl_info['chapters']}章")
+                                         f"下载完成 {dl_info['chapters']}章",
+                                         extra={"folder": dl_info.get("folder", ""), "platform": "fanqie"})
                     evt_queue.put(("fetch_done", {"novel_info": novel_info, "dl_info": dl_info}))
             except Exception as e:
                 import traceback
@@ -398,15 +400,11 @@ def scout_ingest():
     })
 
 
-# ═══════════════════════════════════════
-# ⚙️ 设置页
-@bp.route("/api/scout/novels")
-# ═══════════════════════════════════════
-
 # ─── 已下载小说列表 ───
 
+@bp.route("/api/scout/novels")
 def scout_novels():
-    """列出已下载的小说"""
+    """列出已下载的小说（/novels 列表 + /extract 书下拉共用）"""
     from plugins.novel_storage import list_novels
     platform = request.args.get("platform", "")
     novels = list_novels(platform)
@@ -418,7 +416,7 @@ def scout_novels():
     return jsonify(novels)
 
 
-# ─── 候选审查快照（agent set_review 持久化，/scout 轮询恢复） ───
+# ─── 候选审查快照（agent set_review 持久化，/extract 轮询恢复） ───
 
 @bp.route("/api/scout/pending-review")
 def scout_pending_review():
@@ -458,163 +456,4 @@ def scout_novel_chapter():
     if not ch:
         return jsonify({"ok": False, "error": f"第 {chapter} 章不存在"}), 404
     return jsonify({"ok": True, "chapter": ch})
-
-
-# ─── 分析已下载的小说（提取库条目+写作风格） ───
-
-@bp.route("/api/scout/analyze", methods=["POST"])
-def scout_analyze():
-    """分析已下载的小说（后台线程 + SSE 流式，支持单任务互斥/取消）"""
-    from plugins.novel_storage import load_novel
-    from plugins.style_analyzer import extract_writing_style
-    from plugins.fanqie_scout import NovelAnalyzer
-    from plugins import task_manager
-
-    data = request.json or {}
-    platform = data.get("platform", "")
-    folder = data.get("folder", "")
-    profile_id = data.get("profile_id", "")
-    mode = data.get("mode", "library")  # library | style
-
-    if not platform or not folder:
-        return jsonify({"ok": False, "error": "参数缺失"}), 400
-
-    llm = get_llm()
-    if not llm:
-        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
-
-    novel_data = load_novel(platform, folder)
-    if not novel_data:
-        return jsonify({"ok": False, "error": "小说不存在"}), 404
-
-    info = novel_data["info"]
-    chapters = novel_data["chapters"]
-    title = info.get("title", folder)
-
-    # 单任务互斥：同一工具（内容分析）同时只允许一个任务，新任务替代旧任务
-    task_manager.ensure_single("内容分析")
-    task_id = f"analyze_{title}_{int(time.time())}"
-    task_manager.start(task_id, name="内容分析", title=title,
-                       total=50, phase="准备中", url="/scout")
-    task_manager.register_cancel(task_id)
-    task_manager.log(task_id, f"开始分析: {title} ({len(chapters)}章)", "info")
-
-    from pathlib import Path
-    _cancel_exception = Exception("__CANCELLED__")
-
-    def on_progress(phase, current, total, message):
-        if task_manager.is_cancelled(task_id):
-            raise _cancel_exception
-        task_manager.progress(task_id, current=current, total=total,
-                              phase=message, message=message)
-        task_manager.log(task_id, f"LLM 分析：{message}", "info")
-
-    def generate():
-        import json as _json
-        import queue as _queue
-        import threading as _threading
-
-        def send_event(event, d):
-            return f"data: {_json.dumps({'event': event, **d}, ensure_ascii=False)}\n\n"
-
-        yield send_event("start", {"title": title})
-
-        evt_queue = _queue.Queue()
-
-        def worker():
-            try:
-                analysis = {}
-                if mode == "library":
-                    # Step 1: 分析四大库
-                    analyzer = NovelAnalyzer(llm)
-                    analysis = analyzer.analyze_book(
-                        type("obj", (object,), {
-                            "title": title,
-                            "genre": info.get("genre", ""),
-                            "sub_genre": "",
-                            "chapter_count": len(chapters),
-                        })(),
-                        chapters, on_progress=on_progress,
-                    )
-                    if task_manager.is_cancelled(task_id):
-                        return
-                    task_manager.progress(task_id, current=45, phase="分析完成", message="四大库提取完毕")
-                    task_manager.log(task_id,
-                        f"桥段: {len(analysis.get('plots',[]))}个 大纲: {len(analysis.get('structures',[]))}个 "
-                        f"笑点: {len(analysis.get('gags',[]))}个", "success")
-                else:
-                    # Step 2: 分析写作风格
-                    task_manager.progress(task_id, current=30, phase="LLM 分析写作风格...", message="正在分析写作风格")
-                    task_manager.log(task_id, "LLM 分析：写作风格...", "info")
-                    style = extract_writing_style(llm, title, chapters)
-                    analysis = {"writing_style": style}
-                    if task_manager.is_cancelled(task_id):
-                        return
-
-                # 如果指定了笔名，自动生成风格档案
-                profile_ready = False
-                if profile_id and profiles.get(profile_id):
-                    profile = profiles.get(profile_id)
-                    style_words = (analysis.get("writing_style") or {}).get("common_words", [])
-                    avoid_words = (analysis.get("writing_style") or {}).get("avoid_words", [])
-                    if style_words or avoid_words:
-                        wp = profile.word_print or {}
-                        wp["common_words"] = list(set(wp.get("common_words", []) + style_words))
-                        wp["avoid_words"] = list(set(wp.get("avoid_words", []) + avoid_words))
-                        profile.word_print = wp
-                        profiles.update(profile)
-                        profile_ready = True
-
-                if task_manager.is_cancelled(task_id):
-                    return
-
-                # 标记已分析
-                novel_path = Path(__file__).parent.parent / "storage" / "novels" / platform / folder
-                (novel_path / ".analyzed").touch()
-
-                task_manager.done(task_id, message=f"分析完成: {title}")
-                task_manager.log(task_id, f"✅ 分析完成: {title}", "success")
-                evt_queue.put(("done", {
-                    "title": info.get("title", ""),
-                    "mode": mode,
-                    "plot_details": analysis.get("plots", []),
-                    "structure_details": analysis.get("structures", []),
-                    "gag_details": analysis.get("gags", []),
-                    "writing_style": analysis.get("writing_style"),
-                    "profile_ready": profile_ready,
-                }))
-            except Exception as e:
-                err_msg = str(e)
-                if str(e) == "__CANCELLED__":
-                    return
-                if "NoneType" in err_msg and "subscriptable" in err_msg:
-                    err_msg = "LLM 返回格式异常，请重试"
-                elif "timeout" in err_msg.lower() or "timed out" in err_msg.lower():
-                    err_msg = "LLM 请求超时，请稍后重试"
-                elif "Connection" in err_msg:
-                    err_msg = "网络连接失败，请检查网络"
-                task_manager.fail(task_id, err_msg)
-                evt_queue.put(("error", err_msg))
-
-        t = _threading.Thread(target=worker, daemon=True, name="scout-analyze")
-        t.start()
-
-        # 从队列读取事件，实时 yield
-        while t.is_alive() or not evt_queue.empty():
-            if task_manager.is_cancelled(task_id):
-                yield send_event("cancelled", {"message": "任务已被新任务替代"})
-                break
-            try:
-                item = evt_queue.get(timeout=0.3)
-                kind = item[0]
-                if kind == "done":
-                    yield send_event("done", item[1])
-                elif kind == "error":
-                    yield send_event("error", {"message": item[1]})
-            except _queue.Empty:
-                pass
-
-    resp = sse_stream_response(generate())
-    return resp
-
 
