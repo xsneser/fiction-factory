@@ -315,16 +315,31 @@ function loadNovels() {
                 html += '<div class="card" style="margin-bottom:12px;display:flex;gap:12px;align-items:flex-start">';
                 if (n.cover_url) html += '<img src="' + escapeHtml(n.cover_url) + '" alt="" loading="lazy" style="width:54px;height:72px;object-fit:cover;border-radius:4px;background:#21262d;flex-shrink:0" onerror="this.style.display=\'none\'">';
                 html += '<div style="flex:1;min-width:0">';
-                html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;cursor:pointer" title="点此去提取" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;cursor:pointer" data-f="' + escapeHtml(n.folder) + '" onclick="toggleBookDetail(this)">';
                 html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span></div>';
-                html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章</span>';
+                html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章 <span class="book-detail-caret">▸</span></span>';
                 html += '</div>';
                 var srcTxt = escapeHtml(n.platform || p) + (n.site ? ' · 来源: ' + escapeHtml(n.site) : '');
-                if (n.intro) {
-                    var intro = n.intro.length > 90 ? n.intro.slice(0, 90) + '…' : n.intro;
-                    html += '<p style="font-size:12px;color:#8b949e;margin-top:6px;line-height:1.6">' + escapeHtml(intro) + '</p>';
-                }
                 html += '<p style="font-size:12px;color:#484f58;margin-top:4px">' + srcTxt + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
+                // 折叠详情：简介全文 + 来源（番茄/镜像站 book_id + URL）
+                html += '<div class="book-detail" style="display:none;margin-top:8px;padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:6px">';
+                html += '<p style="font-size:13px;color:#c9d1d9;font-weight:600">📖 简介</p>';
+                html += '<p style="font-size:13px;color:#8b949e;line-height:1.7;white-space:pre-line;margin-top:4px">' + escapeHtml(n.intro || '（无简介）') + '</p>';
+                html += '<p style="font-size:13px;color:#c9d1d9;font-weight:600;margin-top:10px">🔗 来源</p>';
+                html += '<div style="font-size:12px;color:#8b949e;margin-top:4px;line-height:1.9">';
+                var _sf = n.source_fanqie || null;
+                if (_sf && _sf.book_id) {
+                    html += '🍅 番茄：' + escapeHtml(_sf.book_id) + ' · <a href="' + escapeHtml(_sf.url||'') + '" target="_blank" rel="noopener">' + escapeHtml(_sf.url||'') + '</a><br>';
+                } else {
+                    html += '🍅 番茄：无<br>';
+                }
+                var _sw = n.source_web || null;
+                if (_sw && _sw.book_id) {
+                    html += '🌐 镜像站（' + escapeHtml(_sw.site||'') + '）：' + escapeHtml(_sw.book_id) + ' · <a href="' + escapeHtml(_sw.url||'') + '" target="_blank" rel="noopener">' + escapeHtml(_sw.url||'') + '</a>';
+                } else {
+                    html += '🌐 镜像站：无';
+                }
+                html += '</div></div>';
                 html += '<div class="novel-actions">';
                 html += '<button class="small" style="background:#1f6feb" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">🧪 分析提取</button>';
                 html += '<button class="small" style="background:#238636" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="readFrom(this)">📖 阅读</button>';
@@ -334,6 +349,16 @@ function loadNovels() {
             el.innerHTML = html;
         })
         .catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
+}
+
+/* 展开/收起书卡详情（简介全文 + 来源） */
+function toggleBookDetail(head) {
+    var detail = head.parentElement.querySelector('.book-detail');
+    if (!detail) return;
+    var show = detail.style.display !== 'block';
+    detail.style.display = show ? 'block' : 'none';
+    var caret = head.querySelector('.book-detail-caret');
+    if (caret) caret.textContent = show ? '▾' : '▸';
 }
 
 /* 去提取：跳 /extract（书卡带 platform/folder 参数；提取页默认不预选书目） */
