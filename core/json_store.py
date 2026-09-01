@@ -10,6 +10,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -39,6 +40,22 @@ def file_lock(path: str | Path) -> Iterator[None]:
     lock = _lock_for(path)
     with lock:
         yield
+
+
+def _replace_with_retry(src: Path, dst: Path, attempts: int = 6,
+                        delay: float = 0.15) -> None:
+    """os.replace 带瞬态重试：Windows 上目标被其他进程瞬态占用（杀软扫描/并发读）
+    会抛 PermissionError/WinError 5，重试短等可越过；多次仍失败则抛出。"""
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as e:
+            last = e
+            time.sleep(delay * (i + 1))
+    assert last is not None
+    raise last
 
 
 def read_json(path: str | Path, default: Any = None) -> Any:
@@ -72,7 +89,7 @@ def write_json_atomic(path: str | Path, data: Any, *, indent: int = 2) -> None:
                 f.write("\n")
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_path, p)
+            _replace_with_retry(tmp_path, p)
         except Exception:
             try:
                 tmp_path.unlink(missing_ok=True)

@@ -340,16 +340,29 @@ def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
     if on_progress:
         on_progress("search", 1, 1, f"找到: {info['title']}（共{total}章，下载{len(selected)}章）")
 
-    from plugins.novel_storage import save_novel, save_chapter
+    from plugins.novel_storage import save_novel, save_chapter, NOVELS_DIR
     folder = save_novel(platform, {
         "title": info["title"], "author": info["author"],
         "book_id": f"{site}:{info['book_id']}", "url": info["url"],
         "genre": info.get("genre", ""), "chapter_count": total,
         "site": site,
     }, [])
+    # 断点续下：跳过已落盘章节（下载中断后从缺章续抓，避免重下已完成的）
+    ch_dir = NOVELS_DIR / platform / folder / "chapters"
+    existing: set[int] = set()
+    if ch_dir.is_dir():
+        for f in ch_dir.glob("*.json"):
+            try:
+                existing.add(int(f.stem))
+            except ValueError:
+                pass
+    pending = [c for c in selected if c["index"] not in existing]
+    skipped = len(selected) - len(pending)
+    if on_progress and skipped:
+        on_progress("search", 1, 1, f"已下载 {skipped} 章，续下 {len(pending)} 章")
 
     downloaded = 0
-    for i, ch in enumerate(selected):
+    for i, ch in enumerate(pending):
         content = crawler.download_chapter(info["book_id"], ch["chapter_id"])
         if content and content.strip():
             save_chapter(platform, folder, {
@@ -359,14 +372,14 @@ def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
             })
             downloaded += 1
         if on_progress:
-            on_progress("download", i + 1, len(selected), ch["title"][:30])
-        if i < len(selected) - 1:
+            on_progress("download", i + 1, len(pending), ch["title"][:30])
+        if i < len(pending) - 1:
             time.sleep(download_delay)
 
     if on_progress:
-        on_progress("download", len(selected), len(selected),
-                    f"下载完成 {downloaded}章")
-    return info, {"folder": folder, "chapters": downloaded}
+        on_progress("download", len(pending), len(pending),
+                    f"下载完成 {downloaded}章（本次新增）")
+    return info, {"folder": folder, "chapters": downloaded + skipped}
 
 
 def main():
