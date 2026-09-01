@@ -146,6 +146,11 @@ def scout_run():
             # 检查取消：如果被取消了就抛异常，让 worker catch 住
             if task_manager.is_cancelled(task_id):
                 raise _cancel_exception
+            # 暂停：在章节边界等待直到恢复或取消
+            while task_manager.is_paused(task_id):
+                if task_manager.is_cancelled(task_id):
+                    raise _cancel_exception
+                time.sleep(0.5)
             evt_queue.put(("progress", phase, current, total, message))
             # 共享进度文件（/scout 页轮询 /api/crawl/progress，与 MCP fetch_novel 工具同源）
             write_crawl_progress("running", phase, current, total, message)
@@ -232,6 +237,38 @@ def crawl_progress():
     total, message, ts}。web 表单与 MCP fetch_novel 工具共用 crawl_progress.json。"""
     from libraries.crawl_progress import read_crawl_progress
     return jsonify({"ok": True, **read_crawl_progress()})
+
+
+@bp.route("/api/scout/fetch/control", methods=["POST"])
+def scout_fetch_control():
+    """控制当前「小说抓取」任务：pause 暂停 / resume 继续 / cancel 停止。
+    /scout 页「⏸ 暂停 / ▶ 继续 / ⏹ 停止」按钮调此端点，UI 仍由 crawl-progress 轮询接棒。"""
+    from plugins import task_manager
+    from libraries.crawl_progress import write_crawl_progress
+    action = (request.json or {}).get("action", "")
+    if action not in ("pause", "resume", "cancel"):
+        return jsonify({"ok": False, "error": "未知操作"}), 400
+    tid = None
+    for t in task_manager.get_tasks():
+        if t.get("name") == "小说抓取" and t.get("status") == "running":
+            tid = t.get("id")
+            break
+    if not tid:
+        return jsonify({"ok": False, "error": "没有进行中的抓取任务"}), 404
+    t = task_manager.get(tid) or {}
+    cur = t.get("current", 0) or 0
+    total = t.get("total", 0) or 0
+    phase = t.get("phase", "") or ""
+    if action == "pause":
+        task_manager.pause(tid)
+        write_crawl_progress("paused", phase, cur, total, "已暂停")
+    elif action == "resume":
+        task_manager.resume(tid)
+        write_crawl_progress("running", phase, cur, total, "已恢复下载")
+    else:  # cancel
+        task_manager.cancel(tid)
+        write_crawl_progress("cancelled", phase, cur, total, "已停止")
+    return jsonify({"ok": True, "action": action})
 
 
 # ─── 热榜侦察：多平台注册表分发 + 后台线程拉取 + storage/hot_cache.json 缓存 ───

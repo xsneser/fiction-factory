@@ -1092,33 +1092,43 @@ class FanqieScoutAgent:
             on_progress("download", 0, total_ch, f"下载 {total_ch} 章...")
 
         downloaded = []
-        for i, ch in enumerate(chapter_list):
-            content = self.crawler.download_chapter(novel.book_id, ch["id"])
-            if content.strip():
-                imported_re = re
-                downloaded.append({
-                    "index": ch["index"], "title": ch["title"],
-                    "content": content,
-                    "word_count": len(imported_re.findall(r"[\u4e00-\u9fff]", content)),
-                })
-            if on_progress:
-                on_progress("download", i+1, total_ch, ch["title"][:30])
-            if i < total_ch - 1:
-                time.sleep(download_delay)  # 礼貌爬取间隔
+
+        def _save_partial():
+            # 保存到 storage/novels/（真实章号文件名，增量时与既有章节共存；chapter_count 记全书总章数）
+            from plugins.novel_storage import save_novel
+            return save_novel("fanqie", {
+                "title": novel.title, "author": novel.author,
+                "book_id": novel.book_id, "url": novel.url,
+                "genre": novel.genre, "chapter_count": novel.chapter_count,
+                "cover": novel.cover,
+            }, downloaded)
+
+        try:
+            for i, ch in enumerate(chapter_list):
+                content = self.crawler.download_chapter(novel.book_id, ch["id"])
+                if content.strip():
+                    imported_re = re
+                    downloaded.append({
+                        "index": ch["index"], "title": ch["title"],
+                        "content": content,
+                        "word_count": len(imported_re.findall(r"[一-鿿]", content)),
+                    })
+                if on_progress:
+                    on_progress("download", i+1, total_ch, ch["title"][:30])
+                if i < total_ch - 1:
+                    time.sleep(download_delay)  # 礼貌爬取间隔
+        except Exception:
+            # 中途停止/出错：保留已下载的章节（可增量续传），再向上抛
+            if downloaded:
+                _save_partial()
+            raise
 
         if on_progress:
             on_progress("download", total_ch, total_ch, f"下载完成 {len(downloaded)}章")
 
-        # 保存到 storage/novels/（真实章号文件名，增量时与既有章节共存；chapter_count 记全书总章数）
-        from plugins.novel_storage import save_novel
-        folder = save_novel("fanqie", {
-            "title": novel.title, "author": novel.author,
-            "book_id": novel.book_id, "url": novel.url,
-            "genre": novel.genre, "chapter_count": novel.chapter_count,
-            "cover": novel.cover,
-        }, downloaded)
-
+        folder = _save_partial()
         return novel, {"folder": folder, "chapters": len(downloaded)}
+
 
     def _existing_max_chapter(self, title: str) -> int:
         """该书在本地书库已下载的最大章号（0 = 未下载过）。"""

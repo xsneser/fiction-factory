@@ -15,6 +15,8 @@ _lock = threading.Lock()
 _tasks: dict[str, dict] = {}
 # 每个任务关联一个取消事件，worker 线程定期检查
 _cancel_events: dict[str, threading.Event] = {}
+# 每个任务关联一个暂停事件（set=运行，未 set=暂停），worker 在章节边界检查
+_pause_events: dict[str, threading.Event] = {}
 
 
 def _now() -> str:
@@ -64,14 +66,17 @@ def ensure_single(name: str):
                         evt.set()  # 通知旧 worker 线程停止
                 _tasks.pop(tid, None)
                 _cancel_events.pop(tid, None)
+                _pause_events.pop(tid, None)
                 replaced = tid
         return replaced
 
 
 def register_cancel(task_id: str):
-    """注册一个取消事件，供 worker 线程检查"""
+    """注册取消 + 暂停事件，供 worker 线程检查"""
     with _lock:
         _cancel_events[task_id] = threading.Event()
+        _pause_events[task_id] = threading.Event()
+        _pause_events[task_id].set()  # 默认运行态
 
 
 def cancel(task_id: str):
@@ -85,6 +90,7 @@ def cancel(task_id: str):
             t["ended_at"] = _now()
             t["ended_at_ts"] = time.time()
         evt = _cancel_events.get(task_id)
+        _pause_events.pop(task_id, None)   # 取消即终止，不再有暂停状态
     if evt:
         evt.set()  # 通知 worker 线程停止
 
@@ -94,6 +100,35 @@ def is_cancelled(task_id: str) -> bool:
     with _lock:
         evt = _cancel_events.get(task_id)
     return evt is not None and evt.is_set()
+
+
+def pause(task_id: str):
+    """暂停任务：worker 在下一章节边界等待，暂停中仍可取消。"""
+    with _lock:
+        t = _tasks.get(task_id)
+        if t and t["status"] == "running":
+            t["phase_display"] = "⏸ 已暂停"
+        evt = _pause_events.get(task_id)
+    if evt:
+        evt.clear()
+
+
+def resume(task_id: str):
+    """恢复被暂停的任务。"""
+    with _lock:
+        t = _tasks.get(task_id)
+        if t and t["status"] == "running":
+            t["phase_display"] = ""
+        evt = _pause_events.get(task_id)
+    if evt:
+        evt.set()
+
+
+def is_paused(task_id: str) -> bool:
+    """检查任务是否被暂停（worker 线程调用）"""
+    with _lock:
+        evt = _pause_events.get(task_id)
+    return evt is not None and not evt.is_set()
 
 
 def progress(task_id: str, current: int = 0, total: int = 0,
@@ -148,6 +183,7 @@ def done(task_id: str, message: str = "完成"):
         t["current"] = t["total"]
         t["ended_at"] = _now()
         t["ended_at_ts"] = time.time()
+        _pause_events.pop(task_id, None)
 
 
 def fail(task_id: str, message: str = "失败"):
@@ -161,6 +197,7 @@ def fail(task_id: str, message: str = "失败"):
         t["phase_display"] = f"❌ {message}"
         t["ended_at"] = _now()
         t["ended_at_ts"] = time.time()
+        _pause_events.pop(task_id, None)
 
 
 def get_tasks() -> list[dict]:
@@ -197,9 +234,11 @@ def clear_old(keep_seconds: int = 60):
         for tid in to_remove:
             _tasks.pop(tid, None)
             _cancel_events.pop(tid, None)
+            _pause_events.pop(tid, None)
 
 def remove(task_id: str):
     """手动移除指定任务"""
     with _lock:
         _tasks.pop(task_id, None)
         _cancel_events.pop(task_id, None)
+        _pause_events.pop(task_id, None)

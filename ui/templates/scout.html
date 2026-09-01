@@ -53,6 +53,10 @@
         <div id="cp-fill" style="height:100%;width:0%;background:#58a6ff;border-radius:4px;transition:width .3s"></div>
     </div>
     <div id="cp-msg" style="font-size:12px;color:#8b949e;margin-top:6px"></div>
+    <div id="cp-actions" style="display:none;margin-top:10px;gap:8px">
+        <button id="btn-cp-pause" class="small" style="background:#1f6feb" onclick="fetchControl('pause')">⏸ 暂停</button>
+        <button id="btn-cp-stop" class="small" style="background:#da3633" onclick="fetchControl('cancel')">⏹ 停止</button>
+    </div>
 </div>
 
 {# ─── 已下载书库（列表；点书卡 → /extract 提取） ─── #}
@@ -214,7 +218,19 @@ function startFetch() {
     showToast('🚀 已开始抓取（全文）', 'info');
 }
 
-/* ─── 实时进度（crawl-progress 轮询；done 时提示已下载到下方书库，旧残留 ts>30s 不重放） ─── */
+/* 暂停/继续/停止：POST /api/scout/fetch/control，UI 由 crawl-progress 轮询接棒 */
+function fetchControl(action) {
+    fetch('/api/scout/fetch/control', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: action}),
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+          if (!d.ok) showToast(d.error || '操作失败', 'warning');
+      }).catch(function() {});
+}
+
+/* ─── 实时进度（crawl-progress 轮询；done/cancelled 时提示，旧残留 ts>30s 不重放） ─── */
 var _crawlHideTimer = null;
 function pollCrawlProgress() {
     fetch('/api/crawl/progress')
@@ -226,29 +242,44 @@ function pollCrawlProgress() {
             var countEl = document.getElementById('cp-count');
             var fillEl = document.getElementById('cp-fill');
             var msgEl = document.getElementById('cp-msg');
+            var actEl = document.getElementById('cp-actions');
+            var pauseBtn = document.getElementById('btn-cp-pause');
             var now = Date.now() / 1000;
             var stale = (d.ts || 0) > 0 && (now - d.ts) > 30;
             function hide() { box.style.display = 'none'; }
             function clearHide() { if (_crawlHideTimer) { clearTimeout(_crawlHideTimer); _crawlHideTimer = null; } }
-            if (d.state === 'running') {
+            if (d.state === 'running' || d.state === 'paused') {
                 clearHide();
                 box.style.display = '';
                 var pct = d.total > 0 ? Math.round(d.current / d.total * 100) : 0;
                 if (fillEl) fillEl.style.width = pct + '%';
-                if (phaseEl) phaseEl.textContent = d.phase || '';
                 if (countEl) countEl.textContent = d.total > 0 ? (d.current + ' / ' + d.total) : '';
                 if (msgEl) msgEl.textContent = d.message || '';
-            } else if ((d.state === 'done' || d.state === 'error') && !stale) {
+                if (actEl) actEl.style.display = '';
+                if (pauseBtn) {
+                    if (d.state === 'paused') {
+                        pauseBtn.textContent = '▶ 继续';
+                        pauseBtn.setAttribute('onclick', "fetchControl('resume')");
+                        if (phaseEl) phaseEl.textContent = '⏸ ' + (d.phase || '已暂停');
+                    } else {
+                        pauseBtn.textContent = '⏸ 暂停';
+                        pauseBtn.setAttribute('onclick', "fetchControl('pause')");
+                        if (phaseEl) phaseEl.textContent = d.phase || '';
+                    }
+                }
+            } else if ((d.state === 'done' || d.state === 'error' || d.state === 'cancelled') && !stale) {
                 clearHide();
                 box.style.display = '';
+                if (actEl) actEl.style.display = 'none';
                 var isErr = d.state === 'error';
                 if (fillEl) fillEl.style.width = isErr ? '0%' : '100%';
-                if (phaseEl) phaseEl.textContent = isErr ? '❌ 失败' : '✅ 完成';
+                if (phaseEl) phaseEl.textContent = d.state === 'cancelled' ? '⏹ 已停止' : (isErr ? '❌ 失败' : '✅ 完成');
                 if (countEl) countEl.textContent = '';
                 if (msgEl) msgEl.textContent = d.message || '';
                 _crawlHideTimer = setTimeout(function() { hide(); _crawlHideTimer = null; }, 6000);
             } else {
                 clearHide();
+                if (actEl) actEl.style.display = 'none';
                 hide();
             }
         })
@@ -302,13 +333,12 @@ function goExtractFrom(el) {
     else window.location.href = url;
 }
 
-/* 阅读：跳到独立阅读页（懒加载章节正文） */
+/* 阅读：整页跳转到独立阅读页（懒加载章节正文）——阅读器需 reader.css（head）+ reader.js 顺序加载，不能用 SPA navigateTo */
 function readFrom(btn) {
     var folder = btn.getAttribute('data-f') || '';
     var platform = btn.getAttribute('data-p') || 'fanqie';
     if (!folder) return showToast('缺少小说信息', 'warning');
-    if (typeof navigateTo === 'function') navigateTo('/novels/read?platform=' + encodeURIComponent(platform) + '&folder=' + encodeURIComponent(folder));
-    else window.location.href = '/novels/read?platform=' + encodeURIComponent(platform) + '&folder=' + encodeURIComponent(folder);
+    window.location.href = '/novels/read?platform=' + encodeURIComponent(platform) + '&folder=' + encodeURIComponent(folder);
 }
 
 function deleteFrom(btn) {
