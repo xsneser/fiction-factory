@@ -232,6 +232,7 @@ function fetchControl(action) {
 
 /* ─── 实时进度（crawl-progress 轮询；done/cancelled 时提示，旧残留 ts>30s 不重放） ─── */
 var _crawlHideTimer = null;
+var _lastLibraryRefresh = 0;   // 下载中书库节流刷新（≤1次/3s）
 function pollCrawlProgress() {
     fetch('/api/crawl/progress')
         .then(function(r) { return r.json(); })
@@ -256,6 +257,14 @@ function pollCrawlProgress() {
                 if (countEl) countEl.textContent = d.total > 0 ? (d.current + ' / ' + d.total) : '';
                 if (msgEl) msgEl.textContent = d.message || '';
                 if (actEl) actEl.style.display = '';
+                // 下载中：书库实时显示已落盘章节（节流，第一章落盘后即出现）
+                if (d.state === 'running' && d.phase === 'download') {
+                    var _now2 = Date.now();
+                    if (_now2 - _lastLibraryRefresh > 3000) {
+                        _lastLibraryRefresh = _now2;
+                        loadNovels();
+                    }
+                }
                 if (pauseBtn) {
                     if (d.state === 'paused') {
                         pauseBtn.textContent = '▶ 继续';
@@ -271,6 +280,12 @@ function pollCrawlProgress() {
                 clearHide();
                 box.style.display = '';
                 if (actEl) actEl.style.display = 'none';
+                // 下载结束：刷新书库显示最终章节数（节流）
+                var _now3 = Date.now();
+                if (_now3 - _lastLibraryRefresh > 3000) {
+                    _lastLibraryRefresh = _now3;
+                    loadNovels();
+                }
                 var isErr = d.state === 'error';
                 if (fillEl) fillEl.style.width = isErr ? '0%' : '100%';
                 if (phaseEl) phaseEl.textContent = d.state === 'cancelled' ? '⏹ 已停止' : (isErr ? '❌ 失败' : '✅ 完成');

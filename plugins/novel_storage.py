@@ -31,6 +31,8 @@ def _download_cover(novel_dir: Path, cover_url: str) -> bool:
     """尽力下载封面到 novel_dir/cover.jpg（失败不影响存书）。"""
     if not cover_url:
         return False
+    if (novel_dir / "cover.jpg").exists():
+        return True   # 已缓存，避免增量更新重复拉取
     try:
         import requests
         r = requests.get(cover_url, timeout=10, headers={
@@ -91,6 +93,21 @@ def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
             }, f, ensure_ascii=False, indent=2)
 
     return safe_name
+
+
+def save_chapter(platform: str, folder: str, ch: dict) -> None:
+    """增量保存单章到 storage/novels/{platform}/{folder}/chapters/{index}.json
+    （供下载中逐章落盘，书库实时可见；真实章号文件名，区间下载可续写）。"""
+    ch_dir = NOVELS_DIR / platform / folder / "chapters"
+    ch_dir.mkdir(parents=True, exist_ok=True)
+    idx = int(ch.get("index") or 0)
+    with open(ch_dir / f"{idx:04d}.json", "w", encoding="utf-8") as f:
+        json.dump({
+            "index": idx,
+            "title": ch.get("title", f"第{idx}章"),
+            "content": ch.get("content", ""),
+            "word_count": ch.get("word_count", 0),
+        }, f, ensure_ascii=False, indent=2)
 
 
 def list_novels(platform: str = "") -> list[dict]:
