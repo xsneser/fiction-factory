@@ -169,6 +169,7 @@ function renderHot(novels) {
         var intro = n.intro || '';
         if (intro.length > 80) intro = intro.slice(0, 80) + '…';
         html += '<div class="hot-item">';
+        if (n.cover) html += '<img src="' + escapeHtml(n.cover) + '" alt="" loading="lazy" style="width:54px;height:72px;object-fit:cover;border-radius:4px;background:#21262d;flex-shrink:0" onerror="this.style.display=\'none\'">';
         html += '<div style="flex:1;min-width:0">';
         html += '<div><strong>' + escapeHtml(n.title || '') + '</strong> <span class="tag">' + escapeHtml(n.author || '') + '</span>';
         if (n.rank) html += ' <span class="tag" style="background:#238636">第' + n.rank + '名</span>';

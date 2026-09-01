@@ -44,6 +44,7 @@ class NovelInfo:
     hot_score: int = 0
     intro: str = ""
     url: str = ""
+    cover: str = ""
     platform: str = ""
     rank: int = 0
 
@@ -237,6 +238,7 @@ class FanqieCrawler:
             hot_score=int(item.get("read_count", 0) or 0),
             intro=abstract,
             url=f"{self.BASE_URL}/page/{item.get('bookId','')}",
+            cover=item.get("thumbUri", "") or "",
             platform="fanqie",
             rank=int(item.get("currentPos", 0) or 0),
         )
