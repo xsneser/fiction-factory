@@ -147,10 +147,10 @@ def run_tests():
         ("Profiles", "/profiles", ["笔名档案", "profile"]),
         ("Style Rules Redirect", "/style-rules", ["笔名档案"]),  # 风格规则已并入笔名页，302→200
         ("Settings", "/settings", ["设置", "api"]),
-        ("Extract Redirect", "/extract", ["侦察", "提取"]),  # /extract 已并入 /scout（302 重定向）
+        ("Extract", "/extract", ["提取", "入库"]),  # 步骤二·提取到数据库页
         ("DeAI Test", "/deai", ["去AI", "测试"]),
         ("Review Test", "/review-test", ["审查", "测试"]),
-        ("Scout", "/scout", ["侦察", "提取"]),  # 侦察/提取合并页
+        ("Scout", "/scout", ["侦察", "抓取"]),  # 步骤一·侦察抓取页
         ("Novels", "/novels", ["外部书库", "novels"]),  # 外部书库独立页
         ("Novels Read Redirect", "/novels/read", ["外部书库"]),  # 无 folder → 302→/novels
         ("Publish", "/publish", ["上架管理"]),

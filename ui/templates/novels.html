@@ -27,7 +27,7 @@ function loadNovels() {
             if (!novels || novels.length === 0) {
                 el.innerHTML = '<div class="empty" style="padding:40px"><div class="icon" style="font-size:36px">📂</div>'
                     + '<p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p>'
-                    + '<p style="color:#484f58;font-size:12px;margin-top:6px">去 <a href="/scout">侦察 · 提取</a> 页给 agent 一个书名或 book_id，自动下载并分析</p></div>';
+                    + '<p style="color:#484f58;font-size:12px;margin-top:6px">去 <a href="/scout">步骤一·侦察抓取</a> 页下载一本书，再到 <a href="/extract">步骤二·提取入库</a> 提炼素材</p></div>';
                 return;
             }
             var html = '';
@@ -41,7 +41,7 @@ function loadNovels() {
                 html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + escapeHtml(p) + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
                 html += '<div class="novel-actions">';
                 html += '<button class="small" style="background:#238636" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="readFrom(this)">📖 阅读</button>';
-                html += '<button class="small" style="background:#1f6feb" data-t="' + escapeHtml(n.title) + '" onclick="goScoutFrom(this)">🔍 去侦察页分析</button>';
+                html += '<button class="small" style="background:#1f6feb" data-t="' + escapeHtml(n.title) + '" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">🧪 去提取页分析</button>';
                 html += '<button class="small" style="background:#21262d;color:#f85149" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="deleteFrom(this)">🗑 删除</button>';
                 html += '</div></div>';
             });
@@ -59,12 +59,17 @@ function readFrom(btn) {
     else window.location.href = '/novels/read?platform=' + encodeURIComponent(platform) + '&folder=' + encodeURIComponent(folder);
 }
 
-/* 去侦察页分析：跳 /scout 并预填书名，用户点「交给 Agent」执行（不再直接发任务） */
-function goScoutFrom(btn) {
+/* 去提取页分析：跳 /extract 并预选该书（步骤二列表高亮 + 滚动定位），用户在提取页点「分析提取」 */
+function goExtractFrom(btn) {
     var title = btn.getAttribute('data-t') || '';
+    var folder = btn.getAttribute('data-f') || '';
+    var platform = btn.getAttribute('data-p') || 'fanqie';
     if (!title) return showToast('缺少书名', 'warning');
-    if (typeof navigateTo === 'function') navigateTo('/scout?book=' + encodeURIComponent(title));
-    else window.location.href = '/scout?book=' + encodeURIComponent(title);
+    var url = '/extract?title=' + encodeURIComponent(title)
+            + '&folder=' + encodeURIComponent(folder)
+            + '&platform=' + encodeURIComponent(platform);
+    if (typeof navigateTo === 'function') navigateTo(url);
+    else window.location.href = url;
 }
 
 function deleteFrom(btn) {

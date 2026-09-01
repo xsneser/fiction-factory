@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}NovelEngine — 小说工厂{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v13">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v16">
     <script src="{{ url_for('static', filename='js/base.js') }}?v1"></script>
     {% block head %}{% endblock %}
 </head>
@@ -25,7 +25,8 @@
         <a href="/profiles" class="{{ 'active' if request.path == '/profiles' or request.path.startswith('/profiles/') else '' }}">✍️ 笔名与风格</a>
         <a href="/settings" class="{{ 'active' if request.path == '/settings' else '' }}">⚙️ 设置</a>
         <div class="section">工具</div>
-        <a href="/scout" class="{{ 'active' if request.path == '/scout' else '' }}">🔍 侦察 · 提取</a>
+        <a href="/scout" class="{{ 'active' if request.path == '/scout' else '' }}">🔍 侦察·抓取</a>
+        <a href="/extract" class="{{ 'active' if request.path == '/extract' else '' }}">🧪 提取入库</a>
         <a href="/novels" class="{{ 'active' if request.path == '/novels' else '' }}">📚 外部书库</a>
         <details class="nav-debug">
             <summary>🧪 调试工具</summary>
@@ -64,7 +65,7 @@
 
     <div id="toast-root"></div>
     <script src="{{ url_for('static', filename='js/markdown.js') }}?v1"></script>
-    <script src="{{ url_for('static', filename='js/agent_panel.js') }}?v28"></script>
+    <script src="{{ url_for('static', filename='js/agent_panel.js') }}?v31"></script>
 </body>
 </html>
 
