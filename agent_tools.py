@@ -1762,6 +1762,7 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
             "title": novel.title, "author": novel.author,
             "book_id": novel.book_id, "url": novel.url,
             "genre": novel.genre, "chapter_count": novel.chapter_count,
+            "cover": novel.cover,
         }, downloaded)
         write_crawl_progress("done", "download", len(downloaded), len(downloaded),
                              f"下载完成 {len(downloaded)}章",

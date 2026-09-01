@@ -425,7 +425,20 @@ def scout_novels():
     return jsonify(novels)
 
 
-# ─── 候选审查快照（agent set_review 持久化，/extract 轮询恢复） ───
+@bp.route("/api/scout/novels/cover")
+def scout_novel_cover():
+    """已下载小说本地封面（storage/novels/<platform>/<folder>/cover.jpg）。"""
+    from flask import send_file
+    from plugins.novel_storage import NOVELS_DIR
+    platform = (request.args.get("platform", "") or "fanqie").strip()
+    folder = request.args.get("folder", "").strip()
+    if not folder:
+        return ("", 404)
+    cover_file = NOVELS_DIR / platform / folder / "cover.jpg"
+    if not cover_file.is_file():
+        return ("", 404)
+    return send_file(str(cover_file), mimetype="image/jpeg")
+
 
 @bp.route("/api/scout/novels/delete", methods=["POST"])
 def scout_novels_delete():

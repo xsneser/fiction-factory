@@ -27,6 +27,24 @@ def ensure_dirs():
     NOVELS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _download_cover(novel_dir: Path, cover_url: str) -> bool:
+    """尽力下载封面到 novel_dir/cover.jpg（失败不影响存书）。"""
+    if not cover_url:
+        return False
+    try:
+        import requests
+        r = requests.get(cover_url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://fanqienovel.com/",
+        })
+        if r.status_code == 200 and r.content:
+            (novel_dir / "cover.jpg").write_bytes(r.content)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
     """
     保存一部小说到 storage/novels/{platform}/{书名}/
@@ -49,10 +67,15 @@ def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
         "url": info.get("url", ""),
         "genre": info.get("genre", ""),
         "chapter_count": info.get("chapter_count", 0),
+        "cover": info.get("cover", ""),
         "downloaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     with open(novel_dir / "info.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    # 封面本地缓存（尽力而为，失败不影响存书）
+    if info.get("cover"):
+        _download_cover(novel_dir, info["cover"])
 
     # 保存章节：文件名与 index 用真实章号（ch["index"]），支持区间下载（如 100..130 → 0100..0130.json）；
     # 全量从第 1 章下载时 idx==i+1，与旧行为一致。
@@ -89,6 +112,12 @@ def list_novels(platform: str = "") -> list[dict]:
                 chapter_files = sorted(ch_dir.glob("*.json")) if ch_dir.exists() else []
                 info["saved_chapters"] = len(chapter_files)
                 info["folder"] = novel_dir.name
+                if (novel_dir / "cover.jpg").exists():
+                    from urllib.parse import quote
+                    info["cover_url"] = "/api/scout/novels/cover?platform=%s&folder=%s" % (
+                        plat, quote(novel_dir.name))
+                else:
+                    info["cover_url"] = ""
                 novels.append(info)
     return novels
 

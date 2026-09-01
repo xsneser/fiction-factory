@@ -64,6 +64,30 @@ class ScoutResult:
 # 爬虫核心
 # ═══════════════════════════════════════
 
+# 封面提取：SSR/API 页面结构多变，递归找常见封面键（限深度，防误伤大对象）
+_COVER_KEYS = ("thumbUri", "thumb_uri", "coverUrl", "book_cover", "cover")
+
+
+def _find_cover_url(obj, depth=0):
+    """防御式在 dict/list 里找封面 URL：命中 http 开头字符串即返回，未命中返回空串。"""
+    if depth > 4:
+        return ""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in _COVER_KEYS and isinstance(v, str) and v.startswith("http"):
+                return v
+        for v in obj.values():
+            r = _find_cover_url(v, depth + 1)
+            if r:
+                return r
+    elif isinstance(obj, list):
+        for it in obj:
+            r = _find_cover_url(it, depth + 1)
+            if r:
+                return r
+    return ""
+
+
 class FanqieCrawler:
     """番茄小说爬虫"""
 
@@ -462,6 +486,7 @@ class FanqieCrawler:
                 hot_score=page.get("readCount", 0),
                 intro=page.get("abstract", ""),
                 url=f"{self.BASE_URL}/page/{book_id}",
+                cover=_find_cover_url(page),
             )
         except Exception as e:
             logger.warning(f"Page parse failed for {book_id}: {e}")
@@ -479,6 +504,7 @@ class FanqieCrawler:
             hot_score=info.get("read_count", 0),
             intro=info.get("abstract", ""),
             url=f"{self.BASE_URL}/page/{info.get('book_id','')}",
+            cover=_find_cover_url(info),
         )
 
     def get_novel_info(self, book_id: str) -> Optional[NovelInfo]:
@@ -498,6 +524,7 @@ class FanqieCrawler:
                 chapter_count=info.get("all_chapter_count", 0),
                 intro=info.get("abstract", ""),
                 url=f"{self.BASE_URL}/page/{book_id}",
+                cover=_find_cover_url(info),
             )
         except Exception as e:
             logger.warning(f"Failed to get info for {book_id}: {e}")
@@ -1088,6 +1115,7 @@ class FanqieScoutAgent:
             "title": novel.title, "author": novel.author,
             "book_id": novel.book_id, "url": novel.url,
             "genre": novel.genre, "chapter_count": novel.chapter_count,
+            "cover": novel.cover,
         }, downloaded)
 
         return novel, {"folder": folder, "chapters": len(downloaded)}

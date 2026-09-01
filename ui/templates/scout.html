@@ -272,7 +272,9 @@ function loadNovels() {
             var html = '';
             novels.forEach(function(n) {
                 var p = n.platform || 'fanqie';
-                html += '<div class="card" style="margin-bottom:12px">';
+                html += '<div class="card" style="margin-bottom:12px;display:flex;gap:12px;align-items:flex-start">';
+                if (n.cover_url) html += '<img src="' + escapeHtml(n.cover_url) + '" alt="" loading="lazy" style="width:54px;height:72px;object-fit:cover;border-radius:4px;background:#21262d;flex-shrink:0" onerror="this.style.display=\'none\'">';
+                html += '<div style="flex:1;min-width:0">';
                 html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;cursor:pointer" title="点此去提取" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">';
                 html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span></div>';
                 html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章</span>';
@@ -282,7 +284,7 @@ function loadNovels() {
                 html += '<button class="small" style="background:#1f6feb" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">🧪 分析提取</button>';
                 html += '<button class="small" style="background:#238636" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="readFrom(this)">📖 阅读</button>';
                 html += '<button class="small" style="background:#21262d;color:#f85149" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="deleteFrom(this)">🗑 删除</button>';
-                html += '</div></div>';
+                html += '</div></div></div>';
             });
             el.innerHTML = html;
         })
