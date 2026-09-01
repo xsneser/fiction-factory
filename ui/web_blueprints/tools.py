@@ -77,8 +77,10 @@ def novel_reader_page():
 
 @bp.route("/api/scout/run", methods=["POST"])
 def scout_run():
-    """启动侦察任务"""
-    from plugins.fanqie_scout import FanqieScoutAgent
+    """启动侦察任务（后台线程执行，立即返回；进度/状态走 crawl_progress.json 轮询，
+    暂停/继续/停止走 /api/scout/fetch/control）。"""
+    from plugins import task_manager
+    from libraries.crawl_progress import write_crawl_progress
 
     data = request.json or {}
     title = data.get("title", "").strip()
@@ -91,55 +93,18 @@ def scout_run():
     if not title and not direct_id:
         return jsonify({"error": "请输入书名或 book_id"}), 400
 
-    # 下载是纯规则操作（FanqieScoutAgent.fetch_novel 仅下载不分析），不强制 LLM 配置
-    llm = get_llm() or None
+    # 单任务互斥 + 任务前置注册：搜索阶段即可暂停/停止
+    task_manager.ensure_single("小说抓取")
+    task_id = f"fetch_{title or direct_id}"
+    task_manager.start(task_id, name="小说抓取", title=title or direct_id,
+                       total=1, phase="搜索", url="/scout")
+    task_manager.register_cancel(task_id)
+    write_crawl_progress("running", "搜索", 0, 1, "开始搜索...")
 
-    scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib)
-
-    def generate():
-        import json as _json
-        import queue as _queue
-        import threading as _threading
-        from libraries.crawl_progress import write_crawl_progress
-
-        def send_event(event, d):
-            return f"data: {_json.dumps({'event': event, **d}, ensure_ascii=False)}\n\n"
-
-        yield send_event("start", {"title": title or direct_id, "chapters": chapters})
-
-        # 搜索阶段：阻塞执行，但速度很快
-        try:
-            if direct_id:
-                novel = scout.crawler._get_novel_from_page(direct_id)
-                if not novel:
-                    yield send_event("error", {"message": f"book_id={direct_id} not found"})
-                    return
-            else:
-                novel = scout.crawler.search_novel(title)
-                if not novel:
-                    yield send_event("error", {"message": f"not found: {title}"})
-                    return
-        except Exception as e:
-            yield send_event("error", {"message": f"搜索失败: {e}"})
-            return
-
-        yield send_event("found", {
-            "title": novel.title, "author": novel.author,
-            "genre": novel.genre, "chapters": novel.chapter_count,
-            "words": novel.word_count,
-        })
-
-        # 注册到全局任务管理器（跨页面可见）
-        # 单任务互斥：同一工具（小说抓取）同时只允许一个任务，新任务替代旧任务
-        from plugins import task_manager
-        task_manager.ensure_single("小说抓取")
-        task_id = f"fetch_{novel.title}"
-        task_manager.start(task_id, name="小说抓取", title=novel.title,
-                          total=chapters, phase="搜索", url="/scout")
-        task_manager.register_cancel(task_id)
-        task_manager.log(task_id, f"找到: {novel.title}", "success")
-
-        evt_queue = _queue.Queue()
+    def worker():
+        from plugins.fanqie_scout import FanqieScoutAgent
+        llm = get_llm() or None   # 下载是纯规则操作，不强制 LLM 配置
+        scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib)
         _cancel_exception = Exception("__CANCELLED__")
 
         def on_progress(phase, current, total, message):
@@ -151,84 +116,54 @@ def scout_run():
                 if task_manager.is_cancelled(task_id):
                     raise _cancel_exception
                 time.sleep(0.5)
-            evt_queue.put(("progress", phase, current, total, message))
-            # 共享进度文件（/scout 页轮询 /api/crawl/progress，与 MCP fetch_novel 工具同源）
             write_crawl_progress("running", phase, current, total, message)
-            # 同步更新全局任务管理器
             if phase == "search":
                 task_manager.progress(task_id, current, total, "搜索", message)
                 task_manager.log(task_id, message, "info")
             elif phase == "download":
                 task_manager.progress(task_id, current, total, "下载", message)
                 task_manager.log(task_id, message, "info")
-            elif phase == "analysis_done":
-                task_manager.progress(task_id, 0, 1, "完成", "分析完成")
-                task_manager.log(task_id, "分析完成", "success")
 
-        def worker():
-            try:
-                novel_info, dl_info = scout.fetch_novel(
-                    novel.title, chapters, start_chapter=start_chapter,
-                    end_chapter=end_chapter, on_progress=on_progress)
-                # 如果没有被取消才标记完成
-                if not task_manager.is_cancelled(task_id):
-                    task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")
-                    write_crawl_progress("done", "download", dl_info["chapters"], dl_info["chapters"],
-                                         f"下载完成 {dl_info['chapters']}章",
-                                         extra={"folder": dl_info.get("folder", ""), "platform": "fanqie"})
-                    evt_queue.put(("fetch_done", {"novel_info": novel_info, "dl_info": dl_info}))
-            except Exception as e:
-                import traceback
-                err_msg = str(e)
-                # 如果是取消导致的，不报错
-                if str(e) == "__CANCELLED__":
-                    return
-                # 翻译常见异常为用户友好提示
-                if "NoneType" in err_msg and "subscriptable" in err_msg:
-                    err_msg = "页面数据解析失败，番茄页面结构可能已变更，请等待插件更新"
-                elif "timeout" in err_msg.lower() or "timed out" in err_msg.lower():
-                    err_msg = "网络请求超时，请检查网络连接或稍后重试"
-                elif "Connection" in err_msg:
-                    err_msg = "网络连接失败，请检查网络"
-                task_manager.fail(task_id, err_msg)
-                write_crawl_progress("error", "", 0, 0, err_msg)
-                evt_queue.put(("error", err_msg))
+        try:
+            # 搜索阶段
+            if direct_id:
+                novel = scout.crawler._get_novel_from_page(direct_id)
+            else:
+                novel = scout.crawler.search_novel(title)
+            if not novel:
+                task_manager.fail(task_id, "未找到该书")
+                write_crawl_progress("error", "", 0, 0, f"not found: {title or direct_id}")
+                return
+            task_manager.log(task_id, f"找到: {novel.title}", "success")
 
-        t = _threading.Thread(target=worker, daemon=True, name="scout-fetch")
-        t.start()
+            _, dl_info = scout.fetch_novel(
+                novel.title, chapters, start_chapter=start_chapter,
+                end_chapter=end_chapter, on_progress=on_progress)
+            # 如果没有被取消才标记完成
+            if not task_manager.is_cancelled(task_id):
+                task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")
+                write_crawl_progress("done", "download", dl_info["chapters"], dl_info["chapters"],
+                                     f"下载完成 {dl_info['chapters']}章",
+                                     extra={"folder": dl_info.get("folder", ""), "platform": "fanqie"})
+        except Exception as e:
+            err_msg = str(e)
+            # 取消导致的：不报错，写终态后结束（防止 worker 在途 on_progress 覆盖成 running）
+            if err_msg == "__CANCELLED__":
+                task_manager.cancel(task_id)
+                write_crawl_progress("cancelled", "", 0, 0, "已停止")
+                return
+            # 翻译常见异常为用户友好提示
+            if "NoneType" in err_msg and "subscriptable" in err_msg:
+                err_msg = "页面数据解析失败，番茄页面结构可能已变更，请等待插件更新"
+            elif "timeout" in err_msg.lower() or "timed out" in err_msg.lower():
+                err_msg = "网络请求超时，请检查网络连接或稍后重试"
+            elif "Connection" in err_msg:
+                err_msg = "网络连接失败，请检查网络"
+            task_manager.fail(task_id, err_msg)
+            write_crawl_progress("error", "", 0, 0, err_msg)
 
-        # 从队列读取进度事件，实时 yield
-        while t.is_alive() or not evt_queue.empty():
-            # SSE 循环中也检查取消，如果已被取消则提前结束 SSE 流
-            if task_manager.is_cancelled(task_id):
-                yield send_event("cancelled", {"message": "任务已取消"})
-                break
-            try:
-                item = evt_queue.get(timeout=0.3)
-                kind = item[0]
-                if kind == "progress":
-                    _, phase, current, total, message = item
-                    yield send_event("progress", {
-                        "phase": phase, "current": current,
-                        "total": total, "message": message,
-                    })
-                elif kind == "fetch_done":
-                    ni = item[1]["novel_info"]
-                    di = item[1]["dl_info"]
-                    yield send_event("fetch_done", {
-                        "title": ni.title,
-                        "author": ni.author,
-                        "saved_chapters": di["chapters"],
-                        "folder": di["folder"],
-                        "platform": "fanqie",
-                    })
-                elif kind == "error":
-                    yield send_event("error", {"message": item[1]})
-            except _queue.Empty:
-                pass
-
-    resp = sse_stream_response(generate())
-    return resp
+    threading.Thread(target=worker, daemon=True, name="scout-fetch").start()
+    return jsonify({"ok": True, "task_id": task_id})
 
 
 @bp.route("/api/crawl/progress", methods=["GET"])

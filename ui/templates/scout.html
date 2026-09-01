@@ -210,7 +210,7 @@ function startFetch() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body),
     }).then(function(r) {
-        // 200 = SSE 流已开启（body 不消费，浏览器只缓冲少量事件文本，下载由服务端线程落盘 crawl_progress.json）
+        // 后台线程执行：立即返回 JSON，下载由后台线程落盘 crawl_progress.json（前端轮询展示，可暂停/停止）
         if (!r.ok) return r.json().then(function(d) {
             if (st) { st.textContent = '❌ ' + (d.error || '提交失败'); st.style.color = '#f85149'; }
         });
