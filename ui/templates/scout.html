@@ -317,12 +317,13 @@ function loadNovels() {
                 html += '<div style="flex:1;min-width:0">';
                 html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;cursor:pointer" data-f="' + escapeHtml(n.folder) + '" onclick="toggleBookDetail(this)">';
                 html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span></div>';
-                html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章 <span class="book-detail-caret">▸</span></span>';
+                var _isExp = !!_expandedBooks[n.folder];
+                html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章 <span class="book-detail-caret">' + (_isExp ? '▾' : '▸') + '</span></span>';
                 html += '</div>';
                 var srcTxt = escapeHtml(n.platform || p) + (n.site ? ' · 来源: ' + escapeHtml(n.site) : '');
                 html += '<p style="font-size:12px;color:#484f58;margin-top:4px">' + srcTxt + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
-                // 折叠详情：简介全文 + 来源（番茄/镜像站 book_id + URL）
-                html += '<div class="book-detail" style="display:none;margin-top:8px;padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:6px">';
+                // 折叠详情：简介全文 + 来源（番茄/镜像站 book_id + URL）；已展开的书恢复展开态
+                html += '<div class="book-detail" style="' + (_isExp ? 'display:block;' : 'display:none;') + 'margin-top:8px;padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:6px">';
                 html += '<p style="font-size:13px;color:#c9d1d9;font-weight:600">📖 简介</p>';
                 html += '<p style="font-size:13px;color:#8b949e;line-height:1.7;white-space:pre-line;margin-top:4px">' + escapeHtml(n.intro || '（无简介）') + '</p>';
                 html += '<p style="font-size:13px;color:#c9d1d9;font-weight:600;margin-top:10px">🔗 来源</p>';
@@ -351,12 +352,18 @@ function loadNovels() {
         .catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
 }
 
-/* 展开/收起书卡详情（简介全文 + 来源） */
+/* 展开/收起书卡详情（简介全文 + 来源）；记录已展开书，避免下载中整表重渲染时自动闭合 */
+var _expandedBooks = {};
 function toggleBookDetail(head) {
     var detail = head.parentElement.querySelector('.book-detail');
     if (!detail) return;
     var show = detail.style.display !== 'block';
     detail.style.display = show ? 'block' : 'none';
+    var folder = head.getAttribute('data-f') || '';
+    if (folder) {
+        if (show) _expandedBooks[folder] = true;
+        else delete _expandedBooks[folder];
+    }
     var caret = head.querySelector('.book-detail-caret');
     if (caret) caret.textContent = show ? '▾' : '▸';
 }
