@@ -33,7 +33,7 @@ logger = logging.getLogger("fanqie-scout")
 
 @dataclass
 class NovelInfo:
-    """小说基本信息"""
+    """小说基本信息（多平台热榜统一字段；platform/rank 为热榜条目扩展，默认值兼容旧调用）"""
     book_id: str
     title: str
     author: str
@@ -44,6 +44,8 @@ class NovelInfo:
     hot_score: int = 0
     intro: str = ""
     url: str = ""
+    platform: str = ""
+    rank: int = 0
 
 
 @dataclass
@@ -81,11 +83,28 @@ class FanqieCrawler:
         "Referer": "https://fanqienovel.com/",
     }
 
-    # 番茄的品类映射
+    # 番茄的品类映射（旧 book_list 接口的题材 id → 中文名，抓取链路仍在用）
     GENRE_MAP = {
         1: "玄幻", 2: "都市", 3: "历史", 4: "武侠",
         5: "科幻", 6: "悬疑", 7: "游戏", 8: "轻小说",
         9: "短篇", 10: "现实",
+    }
+
+    # 番茄榜单分类映射（榜单页 /rank/{gender}_{rankMold}_{category_id}；UI 题材中文名 → 榜单分类 id）
+    GENRE_CATEGORY = {
+        "玄幻": "258",    # 传统玄幻
+        "都市": "261",    # 都市日常
+        "科幻": "8",      # 科幻末世
+        "历史": "273",    # 历史古代
+        "仙侠": "1140",   # 东方仙侠
+        "西方奇幻": "1141",
+    }
+    # 「全部」聚合使用的头部分类（各取前 N 合并按在读量排序）
+    AGGREGATE_CATEGORIES = ["258", "261", "8", "273", "1140", "1141"]
+    # 分类 id → 中文名（榜单页 rankCategoryTypeList 可动态取全量；此处兜底常用）
+    CATEGORY_NAMES = {
+        "258": "传统玄幻", "261": "都市日常", "8": "科幻末世",
+        "273": "历史古代", "1140": "东方仙侠", "1141": "西方奇幻",
     }
 
     def __init__(self, cache_dir: str = "storage/fanqie_cache", verify: bool = True):
@@ -106,24 +125,139 @@ class FanqieCrawler:
             from plugins.font_decoder import FanqieDecoder
             self._decoder = FanqieDecoder(verify=self.session.verify)
 
-    def discover_hot(self, genre_id: int = 0, count: int = 10) -> list[NovelInfo]:
-        """发现热榜小说"""
-        novels = []
+    def discover_hot(self, key: str = "", count: int = 10, gender: int = 1,
+                     rank_mold: int = 2) -> list[NovelInfo]:
+        """番茄热榜。key：榜单分类 id（如 '258'）或题材中文名（如 '玄幻'）；空/'全部' → 聚合头部分类。
 
-        # 先尝试 API
+        榜单页 /rank/{gender}_{rankMold}_{key} 的 SSR __INITIAL_STATE__.rank.book_list 解析，
+        书名/简介为 PUA 字体加密，经 FanqieDecoder.decode_content 还原为汉字。
+        """
+        key = (key or "").strip()
+        if key and key != "全部":
+            if not key.isdigit():
+                key = self.GENRE_CATEGORY.get(key, "")
+            if key:
+                try:
+                    return self._rank_by_category(key, count, gender, rank_mold) or []
+                except Exception as e:
+                    logger.warning(f"rank hot list failed (key={key}): {e}")
+                    return []
+        # 空/'全部'/未识别的题材 → 聚合头部分类
         try:
-            novels = self._api_hot_list(genre_id, count)
+            return self._rank_aggregate(count, gender, rank_mold) or []
         except Exception as e:
-            logger.warning(f"API hot list failed: {e}")
+            logger.warning(f"aggregate hot list failed: {e}")
+            return []
 
-        # 如果 API 失败，尝试网页抓取
-        if not novels:
+    def _get_decoder(self) -> Optional[font_decoder.FanqieDecoder]:
+        """懒初始化字体解码器（书名/简介/正文统一用它还原 PUA 密文）。"""
+        self._init_decoder()
+        return self._decoder
+
+    def _extract_ssr(self, html: str) -> Optional[dict]:
+        """提取页面 __INITIAL_STATE__ JSON。
+
+        用 raw_decode 精确定位对象结尾（SSR 在 JS 函数里，`};` 后不一定紧跟 </script>）；
+        页面偶发 undefined 字面量（无数据字段）先替换为 null 保证可解析。
+        """
+        i = html.find("window.__INITIAL_STATE__=")
+        if i < 0:
+            return None
+        j = html.find("{", i)
+        if j < 0:
+            return None
+        text = re.sub(r"\bundefined\b", "null", html[j:])
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(text)
+            return obj
+        except Exception as e:
+            logger.warning(f"SSR parse failed: {e}")
+            return None
+
+    def _rank_by_category(self, category_id: str, count: int, gender: int = 1,
+                          rank_mold: int = 2) -> list[NovelInfo]:
+        """拉单个榜单分类页，解析 rank.book_list → NovelInfo（排名/在读量/解码书名简介）。"""
+        url = f"{self.BASE_URL}/rank/{gender}_{rank_mold}_{category_id}"
+        resp = self.session.get(url, timeout=self.DETAIL_TIMEOUT,
+                                headers={"Accept": "text/html,application/xhtml+xml"})
+        if resp.status_code != 200:
+            logger.warning(f"rank page {url} -> {resp.status_code}")
+            return []
+        ssr = self._extract_ssr(resp.text)
+        if not ssr:
+            return []
+        rank = ssr.get("rank") or {}
+        items = rank.get("book_list") or []
+        # 从页面分类清单动态补全 id→name（新分类兜底）
+        names = dict(self.CATEGORY_NAMES)
+        for grp in ((rank.get("rankCategoryTypeList") or {}).get("male") or []) + \
+                   ((rank.get("rankCategoryTypeList") or {}).get("female") or []):
+            if grp.get("id"):
+                names[str(grp["id"])] = grp.get("name", "")
+        return [self._novel_from_rank(item, category_id, names) for item in items[:count]]
+
+    def _rank_aggregate(self, count: int, gender: int = 1, rank_mold: int = 2) -> list[NovelInfo]:
+        """「全部」聚合：头部分类各取前 5，去重后按在读量排序取 count（单分类失败不阻断）。"""
+        merged: list[NovelInfo] = []
+        seen: set[str] = set()
+        for cat in self.AGGREGATE_CATEGORIES:
             try:
-                novels = self._web_hot_list(genre_id, count)
+                for n in self._rank_by_category(cat, 5, gender, rank_mold):
+                    if n.book_id in seen:
+                        continue
+                    seen.add(n.book_id)
+                    merged.append(n)
             except Exception as e:
-                logger.warning(f"Web hot list failed: {e}")
+                logger.warning(f"aggregate category {cat} failed: {e}")
+        merged.sort(key=lambda n: n.hot_score, reverse=True)
+        # 跨分类合并后按在读量重排 rank（各分类内排名在此处无全局意义）
+        for i, n in enumerate(merged[:count]):
+            n.rank = i + 1
+        return merged[:count]
 
-        return novels[:count]
+    def _novel_from_rank(self, item: dict, category_id: str, names: dict) -> NovelInfo:
+        """榜单条目 → NovelInfo：书名/简介字体解码，read_count→hot_score，currentPos→rank。"""
+        dec = self._get_decoder()
+        name = item.get("bookName", "") or ""
+        author = item.get("author", "") or ""
+        abstract = item.get("abstract", "") or ""
+        if dec:
+            # 书名/作者/简介均可能为 PUA 字体加密，统一还原
+            name = dec.decode_content(name)
+            author = dec.decode_content(author)
+            abstract = dec.decode_content(abstract)
+        cat_id = str(item.get("curent_category_id") or category_id or "")
+        return NovelInfo(
+            book_id=str(item.get("bookId", "") or ""),
+            title=name,
+            author=author,
+            genre=names.get(cat_id, item.get("categoryV2") or ""),
+            word_count=int(item.get("wordNumber", 0) or 0),
+            chapter_count=0,
+            hot_score=int(item.get("read_count", 0) or 0),
+            intro=abstract,
+            url=f"{self.BASE_URL}/page/{item.get('bookId','')}",
+            platform="fanqie",
+            rank=int(item.get("currentPos", 0) or 0),
+        )
+
+    def list_rankings(self, gender: str = "male", rank_mold: int = 2) -> list[dict]:
+        """番茄榜单分类清单（男频/女频），来自任一榜单页 SSR rank.rankCategoryTypeList（各页一致）。"""
+        url = f"{self.BASE_URL}/rank/1_{rank_mold}_258"
+        try:
+            resp = self.session.get(url, timeout=self.DETAIL_TIMEOUT,
+                                    headers={"Accept": "text/html,application/xhtml+xml"})
+            if resp.status_code != 200:
+                return []
+            ssr = self._extract_ssr(resp.text)
+            if not ssr:
+                return []
+            rcl = (ssr.get("rank") or {}).get("rankCategoryTypeList") or {}
+            items = rcl.get(gender) or []
+            return [{"id": str(c.get("id")), "name": c.get("name", "")} for c in items]
+        except Exception as e:
+            logger.warning(f"list_rankings failed: {e}")
+            return []
 
     def search_novel(self, title: str) -> Optional[NovelInfo]:
         """按书名搜索——Bing搜索 + 页面解析 + fanqie搜索页兜底"""
@@ -344,56 +478,6 @@ class FanqieCrawler:
             intro=info.get("abstract", ""),
             url=f"{self.BASE_URL}/page/{info.get('book_id','')}",
         )
-
-    def _api_hot_list(self, genre_id: int, count: int) -> list[NovelInfo]:
-        """通过 API 获取热榜"""
-        url = f"{self.API_BASE}/author/library/book_list/v0"
-        params = {
-            "page_index": 0,
-            "page_size": min(count, 30),
-            "filter_type": 3,  # 3 = 热榜
-            "order": 1,        # 1 = 按热度
-        }
-        if genre_id > 0:
-            params["genre_type"] = genre_id
-
-        resp = self.session.get(url, params=params, timeout=self.DETAIL_TIMEOUT)
-        data = resp.json()
-
-        novels = []
-        items = data.get("data", {}).get("book_list", [])
-        for item in items:
-            info = item.get("book_info", item)
-            novels.append(NovelInfo(
-                book_id=str(info.get("book_id", "")),
-                title=info.get("book_name", ""),
-                author=info.get("author", ""),
-                genre=self.GENRE_MAP.get(info.get("genre_type", 0), ""),
-                word_count=info.get("all_word_count", 0),
-                chapter_count=info.get("all_chapter_count", 0),
-                hot_score=info.get("read_count", 0),
-                intro=info.get("abstract", ""),
-                url=f"{self.BASE_URL}/page/{info.get('book_id','')}",
-            ))
-        return novels
-
-    def _web_hot_list(self, genre_id: int, count: int) -> list[NovelInfo]:
-        """网页抓取热榜（备用方案）"""
-        url = f"{self.BASE_URL}/rank/hot"
-        resp = self.session.get(url, timeout=self.DETAIL_TIMEOUT)
-        text = resp.text
-
-        novels = []
-        # 从页面中提取小说信息
-        pattern = r'book_id["\']?\s*[:=]\s*["\']?(\d+)'
-        ids = re.findall(pattern, text)
-
-        for bid in ids[:count]:
-            info = self.get_novel_info(bid)
-            if info:
-                novels.append(info)
-
-        return novels
 
     def get_novel_info(self, book_id: str) -> Optional[NovelInfo]:
         """获取单本书详细信息"""

@@ -171,6 +171,7 @@ function renderHot(novels) {
         html += '<div class="hot-item">';
         html += '<div style="flex:1;min-width:0">';
         html += '<div><strong>' + escapeHtml(n.title || '') + '</strong> <span class="tag">' + escapeHtml(n.author || '') + '</span>';
+        if (n.rank) html += ' <span class="tag" style="background:#238636">第' + n.rank + '名</span>';
         if (n.genre) html += ' <span class="tag" style="background:#21262d">' + escapeHtml(n.genre) + '</span>';
         if (n.hot_score) html += ' <span style="font-size:12px;color:#d29922">🔥 ' + escapeHtml(String(n.hot_score)) + '</span>';
         html += '</div>';

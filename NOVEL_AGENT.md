@@ -96,7 +96,7 @@
   structure `{name,total_words,tags?,description?,stages[{name,description,min_words,max_words,key_events,children?[{…}]}]}`——**弧模板=单弧，只表述字数**（total_words/min_words/max_words），stages 即其子弧，子弧可再 `children` 多层嵌套，深度/分支按书里真实结构定、**不要求均匀**；
   gag `{name,category,pattern_description,fit_scenes,examples}`；
   character `{name,personality,description,archetypes,examples,catchphrases,tags,fit_tags}`。
-- `discover_hot` / `fetch_novel` / `list_crawled_novels` / `read_crawled_novel`：侦察热榜 / 抓取下载（`fetch_novel(title 或 book_id, chapters, start_chapter?, end_chapter?)`——按真实章号区间下载，如 start_chapter=100,end_chapter=130；只给 chapters 时从 start_chapter 缺省 1 起）/ 读已抓书库 / 读章节目录或正文（供借鉴设定/写法，不改书）。
+- `list_rankings` / `discover_hot` / `fetch_novel` / `list_crawled_novels` / `read_crawled_novel`：查榜单/分类清单 / 侦察热榜（`discover_hot(platform, key, count)`——key 为榜单分类 id 或题材中文名，空=聚合综合热榜）/ 抓取下载（`fetch_novel(title 或 book_id, chapters, start_chapter?, end_chapter?)`——按真实章号区间下载，如 start_chapter=100,end_chapter=130；只给 chapters 时从 start_chapter 缺省 1 起）/ 读已抓书库 / 读章节目录或正文（供借鉴设定/写法，不改书）。
 - 侦察/提取默认走 `novel-scout` skill：给小说 id/书名 → `fetch_novel` → 读正文 → 自主提炼五类资产（桥段/弧/笑点/角色 + 写作风格规则，风格归属用户所选笔名）→ `drive_ui(set_review)` 呈现候选 → **停页面等用户确认后由页面入库**（不直接 ingest）。
 - `publish_check` / `publish_book` / `mark_finished` / `export_book`：上架检查 / 发布 / 完本 / 导出投稿包。
 

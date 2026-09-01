@@ -9,7 +9,7 @@ description: 侦察/抓取/提取阶段（建书可选前置）。侦察热榜/�
 > 字段契约见 NOVEL_AGENT.md 1.2。
 
 ## 流程
-1. 「侦察热榜」→ `discover_hot(genre)`（genre 空=全站；返回书名/题材/热度/简介，供挑题材/参考爆款）。
+1. 「侦察热榜」→ `list_rankings(platform, gender)` 查榜单/分类清单 → `discover_hot(platform, key, count)` 拉榜单（key=榜单分类 id 或题材中文名，空=聚合综合热榜；返回排名/书名/题材/在读量/简介，供挑题材/参考爆款）。
 2. 「抓取」→ `fetch_novel(title 或 book_id, chapters, start_chapter?, end_chapter?)`（下载到 `storage/novels/fanqie/<书名>/`，进度写 `crawl_progress.json`，无需 LLM）。
    按**真实章号**下载区间：用户给「第 A 章到第 B 章」→ `fetch_novel(..., start_chapter=A, end_chapter=B)`；只给 `chapters` 时默认从 `start_chapter`（缺省 1）起 N 章。
 3. 「读」→ `list_crawled_novels()` 列已抓书库；`read_crawled_novel(folder, chapter=N)` 读章节目录（默认）或单章正文。
