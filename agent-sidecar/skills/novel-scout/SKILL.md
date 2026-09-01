@@ -13,6 +13,7 @@ description: 侦察/抓取/提取阶段（建书可选前置）。侦察热榜/�
 2. 「抓取」→ `fetch_novel(title 或 book_id, chapters, start_chapter?, end_chapter?)`（下载到 `storage/novels/fanqie/<书名>/`，进度写 `crawl_progress.json`，无需 LLM）。
    按**真实章号**下载区间：用户给「第 A 章到第 B 章」→ `fetch_novel(..., start_chapter=A, end_chapter=B)`；只给 `chapters` 时默认从 `start_chapter`（缺省 1）起 N 章。
 3. 「读」→ `list_crawled_novels()` 列已抓书库；`read_crawled_novel(folder, chapter=N)` 读章节目录（默认）或单章正文。
+   > **书已下载时（任务文案给出 folder/书名）跳过抓取**：提取页「分析提取」任务即此场景——直接 `read_crawled_novel(folder=...)` 读正文 → 第 4 步分析呈现，**不要再 `fetch_novel` 重复下载**。
 4. **「分析并呈现（默认）」** → 读完参考书后，自主提炼**五类资产**：
    - **桥段(plot) / 情节弧(structure) / 笑点(gag) / 角色(character)**：字段契约见 NOVEL_AGENT.md 1.2；
      **弧模板抽多层树**：`read_crawled_novel(chapter=0)` 看章节目录/字数定位各叙事弧的章节边界，再抽样读正文，
