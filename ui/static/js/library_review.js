@@ -25,7 +25,7 @@ function renderReviewCards(d, areaId) {
     var area = document.getElementById(areaId);
     if (!area) return;
 
-    // 书身份（书名/章数/笔名）已在提取页上方已选书卡展示，这里只放入库工具条，避免重复
+    // 书身份（书名/章数/笔名）已在提取页上方工作台展示，这里只放入库工具条，避免重复
     var html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">';
     html += '<button class="btn-primary" onclick="ingestAll()">📦 全部入库</button>';
     html += '<button class="btn" style="background:#30363d;color:#f0f6fc" onclick="ingestSelected()">✅ 入库选中</button>';
