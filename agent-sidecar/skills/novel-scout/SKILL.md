@@ -1,6 +1,6 @@
 ---
 name: novel-scout
-description: 侦察/抓取/提取阶段（建书可选前置）。侦察热榜/抓取下载番茄小说/读已抓取书/借鉴参考书/分析提取入库五库。流程:discover_hot 侦察 → fetch_novel 抓取下载 → list_crawled_novels/read_crawled_novel 读 → 自主提炼五类资产(桥段/弧/笑点/角色/写作风格) → drive_ui(set_review) 呈现候选到侦察页 → 停页面等用户确认后入库。给 agent 一个小说 id/书名即触发「下载→分析→呈现」。
+description: 侦察/抓取/提取阶段（建书可选前置）。侦察热榜/抓取下载番茄小说/读已抓取书/借鉴参考书/分析提取入库五库。流程:discover_hot 侦察 → fetch_novel 抓取下载 → list_crawled_novels/read_crawled_novel 读 → 自主提炼五类资产(桥段/弧/笑点/角色/写作风格) → drive_ui(set_review) 呈现候选到提取页 → 停页面等用户确认后入库。给 agent 一个小说 id/书名即触发「下载→分析→呈现」。
 ---
 
 # 侦察 / 提取（novel-scout）— 建书可选前置
@@ -23,7 +23,7 @@ description: 侦察/抓取/提取阶段（建书可选前置）。侦察热榜/�
      `[{kind, pattern, desc?, severity?, replacements?}]`——`kind=prefer` 句式风格正向指令（如「句长偏短」）|
      `ban` 禁止内容（`replacements` 有值=AI 高频词自动去 AI 味替换、空=硬禁句式检测）；
      **归属用户所选笔名**（任务文案里带的笔名，落 `profile_id`；未指定时归默认笔名「枫落」）。
-   - 调 `drive_ui(set_review)` 把五类候选呈现到侦察页审查区：
+   - 调 `drive_ui(set_review)` 把五类候选呈现到提取页审查区：
      payload `{title, platform?, folder?, downloaded_chapters?, profile_id?, profile_name?,
      plots?, structures?, gags?, characters?, style_rules?}`（title 必填、五类至少一类非空）。
    - **然后停下，等用户确认**：不直接 ingest。汇报「已呈现，请在页面勾选确认入库」。
@@ -41,4 +41,4 @@ description: 侦察/抓取/提取阶段（建书可选前置）。侦察热榜/�
 
 ## 失败处置
 - 抓取失败/超时 → 检查书名或 book_id 是否正确，稍后重试；进度实时看 `storage/crawl_progress.json`。
-- `set_review` 被拒（字段不合规）→ 按报错修正 payload 重试；若页面不在 `/scout` 会提示「命令接收器未就绪」，先 `navigate('/scout')` 再重试。
+- `set_review` 被拒（字段不合规）→ 按报错修正 payload 重试；若页面不在 `/extract` 会提示「命令接收器未就绪」，先 `navigate('/extract')` 再重试。

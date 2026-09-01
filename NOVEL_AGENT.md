@@ -78,7 +78,7 @@
   - 每项含 **`faction`（所属势力名，必须与 `set_world` 的 `factions[].name` 逐字一致，不要带括号描述）**；
     **每个势力至少 1 个对应人物**（无人物归属的势力不要创建）。
 - `submit`：**建书即创建书目并跳书详情页**，调用前必须先向用户汇报设定概要并取得确认（不确认不建书）。
-- `set_review`（侦察/提取合并页命令，非建书命令）：把五库候选呈现成**可勾选审查卡**，**停在页面等用户确认，不直接入库**。
+- `set_review`（提取页命令，非建书命令）：把五库候选呈现成**可勾选审查卡**，**停在页面等用户确认，不直接入库**。
   payload：`{title, platform?, folder?, downloaded_chapters?, profile_id?, profile_name?, plots?, structures?, gags?, characters?, style_rules?}`——
   **title 必填、五类至少一类非空**；plots/structures/gags/characters 字段对齐 `ingest_library_assets`（见下）；
   style_rules 每项 `{kind(prefer|ban), pattern, desc?, severity?, replacements?}`（风格规则归属 `profile_id` 笔名）。

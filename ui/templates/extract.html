@@ -2,10 +2,8 @@
 {% block title %}提取到数据库 — NovelEngine{% endblock %}
 {% block content %}
 <script>window.__nePageReceiver = true; /* 声明本页可接收 agent 页面命令（set_review 等） */</script>
-{% from "_scout_steps.html" import steps %}
-{{ steps(2) }}
 
-<h1>🧪 步骤二 · 提取入库 <span style="font-size:14px;color:#8b949e">选一本已下载书 → 交给 Agent 提炼五类素材 → 勾选确认入库五库</span></h1>
+<h1>🧪 提取入库 <span style="font-size:14px;color:#8b949e">从「侦察 · 书库」选书跳入 → 交给 Agent 提炼五类素材 → 勾选确认入库五库</span></h1>
 
 {# ─── 书工作台：只聚焦一本书（已下载书列表唯一归属 /novels，本页不再全量列书） ─── #}
 <div class="scout-card">
@@ -19,7 +17,7 @@
             {% for p in profiles %}<option value="{{ p.id }}" data-name="{{ p.pen_name }}">{{ p.pen_name }}</option>{% endfor %}
         </select>
         <button class="small" onclick="loadBooks()">🔄 刷新</button>
-        <a class="btn" href="/novels" style="text-decoration:none;margin-left:auto">📚 外部书库（阅读 / 删除）</a>
+        <a class="btn" href="/scout" style="text-decoration:none;margin-left:auto">← 侦察 · 书库</a>
     </div>
     <div id="book-card" style="margin-top:12px">
         <div class="empty"><p style="color:#484f58">选择一本书开始提取…</p></div>
@@ -73,7 +71,7 @@ function loadBooks() {
                 sel.innerHTML = '<option value="">暂无已下载小说</option>';
                 card.innerHTML = '<div class="empty" style="padding:40px"><div class="icon" style="font-size:36px">📂</div>'
                     + '<p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p>'
-                    + '<p style="color:#484f58;font-size:12px;margin-top:6px">先去 <a href="/scout">步骤一·侦察抓取</a> 下载一本书，再到 <a href="/novels">外部书库</a> 浏览</p></div>';
+                    + '<p style="color:#484f58;font-size:12px;margin-top:6px">去 <a href="/scout">侦察 · 书库</a> 抓取下载一本书，再从书库点「分析提取」跳回本页</p></div>';
                 return;
             }
             var html = '';

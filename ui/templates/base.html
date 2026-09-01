@@ -25,9 +25,8 @@
         <a href="/profiles" class="{{ 'active' if request.path == '/profiles' or request.path.startswith('/profiles/') else '' }}">✍️ 笔名与风格</a>
         <a href="/settings" class="{{ 'active' if request.path == '/settings' else '' }}">⚙️ 设置</a>
         <div class="section">工具</div>
-        <a href="/scout" class="{{ 'active' if request.path == '/scout' else '' }}">🔍 侦察·抓取</a>
+        <a href="/scout" class="{{ 'active' if request.path == '/scout' or request.path == '/novels' else '' }}">🔍 侦察 · 外部书库</a>
         <a href="/extract" class="{{ 'active' if request.path == '/extract' else '' }}">🧪 提取入库</a>
-        <a href="/novels" class="{{ 'active' if request.path == '/novels' else '' }}">📚 外部书库</a>
         <details class="nav-debug">
             <summary>🧪 调试工具</summary>
             <a href="/deai">🔄 去AI测试</a>

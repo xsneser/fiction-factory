@@ -1,8 +1,8 @@
 """侦察/提取候选快照 — 跨进程共享状态文件。
 
-agent 调 drive_ui(set_review) 把五库候选呈现到 /scout 审查区时，除实时 SSE 外
+agent 调 drive_ui(set_review) 把五库候选呈现到 /extract 审查区时，除实时 SSE 外
 还落一份持久快照 storage/review_pending.json：页面不在场 / SSE 渲染失败时，
-/scout 页轮询 `GET /api/scout/pending-review` 可恢复。镜像 build_status.json 的
+/extract 页轮询 `GET /api/scout/pending-review` 可恢复。镜像 build_status.json 的
 「非消费快照」协调模式（重复读不消费；用户确认入库后由 /api/scout/ingest 清空）。
 """
 import os

@@ -1462,7 +1462,7 @@ _WIZARD_CMDS = {
     "fill_world": (),   # 步骤③世界观重新补全（Agent 兜底/重试）
     "reset": (),   # 清空向导 state（除 pen_name/库表外字段）——建书前先 reset，防残留干扰保真度
     "submit": (),
-    "set_review": ("title",),   # 侦察/提取合并页：呈现五库候选审查卡（非建书命令，不入步门控）
+    "set_review": ("title",),   # 提取页：呈现五库候选审查卡（非建书命令，不入步门控）
 }
 
 # 步敏感命令 → 需求向导步（步 2 候选 / 步 3 内容构建）。
@@ -1546,7 +1546,7 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
         has_idx = isinstance(args.get("idx"), int)
         if not (has_candidate or has_idx):
             raise RuntimeError(f"命令 {cmd} 需 candidate 对象或 idx 至少其一（candidate={{title, world_brief, one_liner}}）")
-    elif cmd == "set_review":   # 侦察/提取合并页：呈现五库候选审查卡（title 必填、至少一类非空、数组类型校验）
+    elif cmd == "set_review":   # 提取页：呈现五库候选审查卡（title 必填、至少一类非空、数组类型校验）
         if not (args.get("title") or "").strip():
             raise RuntimeError(f"命令 {cmd} 需 title 必填")
         if not args.get("platform"):
@@ -1585,7 +1585,7 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
         _clear_wizard_candidates()   # 新会话清空候选持久化，防跨会话残留
     if cmd == "set_review":
         # 候选持久化快照：SSE 实时渲染之外再落盘一份，页面不在场/渲染失败时
-        # /scout 轮询 pending-review 可恢复（用户确认入库后由 ingest 清空）
+        # /extract 轮询 pending-review 可恢复（用户确认入库后由 ingest 清空）
         from libraries.scout_review import write_pending_review
         write_pending_review(args)
     from libraries.nav_intent import push_ui_command

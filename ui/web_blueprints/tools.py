@@ -34,26 +34,27 @@ def review_test():
 
 
 # ═══════════════════════════════════════
-# 🔍 侦察 · 提取（两步两页：/scout 步骤一抓取 → /extract 步骤二提炼入库；/novels 外部书库为列表唯一 owner）
+# 🔍 侦察 · 提取（合并页 /scout：侦察抓取 + 外部书库；提取工作台 /extract 承接 set_review 与入库）
 # ═══════════════════════════════════════
 
 @bp.route("/scout")
 def scout_page():
-    """步骤一·侦察抓取：热榜侦察 + 按书名/book_id 下载章节到本地书库 + 实时进度"""
+    """合并页·侦察书库：热榜侦察 + 按书名/book_id 下载章节到本地书库 + 实时进度 + 已下载书库
+    （书卡点击 → /extract 提取）"""
     return render_template("scout.html", profiles=profiles.list_all())
 
 
 @bp.route("/extract")
 def extract_page():
-    """步骤二·提取工作台：聚焦一本书（?platform=&folder= 选中或页内下拉），
-    agent 提炼五类候选经 set_review 呈现 → 勾选确认入库五库。书列表唯一归属 /novels。"""
+    """提取工作台：从 /scout 书库点书卡跳入（?platform=&folder= 自动选中或页内下拉），
+    显示该书 + 提取按钮，agent 提炼五类候选经 set_review 呈现 → 勾选确认入库五库"""
     return render_template("extract.html", profiles=profiles.list_all())
 
 
 @bp.route("/novels")
 def novels_page():
-    """外部书库：已下载小说列表唯一 owner，提供阅读 / 分析提取(→/extract) / 删除"""
-    return render_template("novels.html", profiles=profiles.list_all())
+    """外部书库已并入 /scout 合并页；保留路由作兼容别名（阅读器返回链接/书签），302 跳转"""
+    return redirect(url_for("tools.scout_page"))
 
 
 @bp.route("/novels/read")
@@ -232,7 +233,7 @@ def crawl_progress():
     return jsonify({"ok": True, **read_crawl_progress()})
 
 
-# ─── 热榜侦察（步骤一）：后台线程拉取 + storage/hot_cache.json 缓存 ───
+# ─── 热榜侦察：后台线程拉取 + storage/hot_cache.json 缓存 ───
 _HOT_CACHE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "storage", "hot_cache.json")
@@ -277,7 +278,7 @@ def _spawn_hot_fetch(key: str, genre: str, count: int) -> None:
 
 @bp.route("/api/scout/hot")
 def scout_hot():
-    """步骤一热榜侦察。genre 为题材中文名（空=全站热榜）；count 默认 10。
+    """热榜侦察。genre 为题材中文名（空=全站热榜）；count 默认 10。
 
     返回 {ok, genre, novels, ts, refreshing|loading}：缓存 TTL 内直接回缓存；
     过期/缺失立即返回当前状态并起 daemon 线程后台刷新（页面轮询直到 novels 出现）。

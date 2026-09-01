@@ -1,10 +1,7 @@
 {% extends "base.html" %}
-{% block title %}侦察 · 抓取 — NovelEngine{% endblock %}
+{% block title %}侦察 · 书库 — NovelEngine{% endblock %}
 {% block content %}
-{% from "_scout_steps.html" import steps %}
-{{ steps(1) }}
-
-<h1>🔍 步骤一 · 侦察抓取 <span style="font-size:14px;color:#8b949e">热榜侦察 + 按书名/book_id 下载章节到本地书库</span></h1>
+<h1>🔍 侦察 · 书库 <span style="font-size:14px;color:#8b949e">热榜侦察 + 抓取下载 + 已下载书库（点书卡去提取）</span></h1>
 
 {# ─── 热榜侦察（后台线程拉取 + 缓存，/api/scout/hot） ─── #}
 <div class="scout-card">
@@ -60,8 +57,16 @@
         <div id="cp-fill" style="height:100%;width:0%;background:#58a6ff;border-radius:4px;transition:width .3s"></div>
     </div>
     <div id="cp-msg" style="font-size:12px;color:#8b949e;margin-top:6px"></div>
-    <div id="cp-next" style="display:none;margin-top:10px">
-        <a id="cp-next-link" class="btn-primary" href="/extract" onclick="goNextStep(this); return false;">下一步：去步骤二提取到数据库 →</a>
+</div>
+
+{# ─── 外部书库（已下载书列表；点书卡 → /extract 提取） ─── #}
+<div class="scout-card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>📚 外部书库</strong>
+        <button class="small" onclick="loadNovels()">🔄 刷新</button>
+    </div>
+    <div id="novels-list" style="margin-top:12px">
+        <div class="empty"><p style="color:#484f58">加载中...</p></div>
     </div>
 </div>
 
@@ -78,6 +83,7 @@
 .hot-item { display:flex; align-items:flex-start; gap:12px; padding:12px; margin-bottom:8px;
     background:#0d1117; border:1px solid #30363d; border-radius:6px; }
 .hot-item strong { color:#f0f6fc; }
+.novel-actions { display:flex;gap:8px;align-items:center;margin-top:8px; }
 </style>
 
 <script>
@@ -86,6 +92,7 @@ var _hotPollCount = 0;
 
 (function(){
     loadHot();
+    loadNovels();
     // 从外部书库跳入：?book= 预填书名
     try {
         var book = new URLSearchParams(window.location.search).get('book');
@@ -203,15 +210,8 @@ function startFetch() {
     showToast('🚀 已开始抓取', 'info');
 }
 
-/* ─── 实时进度（crawl-progress 轮询；done 时显示「去步骤二」入口并带上刚下载的 folder，旧残留 ts>30s 不重放） ─── */
+/* ─── 实时进度（crawl-progress 轮询；done 时提示已下载到下方书库，旧残留 ts>30s 不重放） ─── */
 var _crawlHideTimer = null;
-
-function goNextStep(a) {
-    var href = (a && a.getAttribute('href')) || '/extract';
-    if (typeof navigateTo === 'function') navigateTo(href);
-    else window.location.href = href;
-}
-
 function pollCrawlProgress() {
     fetch('/api/crawl/progress')
         .then(function(r) { return r.json(); })
@@ -222,7 +222,6 @@ function pollCrawlProgress() {
             var countEl = document.getElementById('cp-count');
             var fillEl = document.getElementById('cp-fill');
             var msgEl = document.getElementById('cp-msg');
-            var nextEl = document.getElementById('cp-next');
             var now = Date.now() / 1000;
             var stale = (d.ts || 0) > 0 && (now - d.ts) > 30;
             function hide() { box.style.display = 'none'; }
@@ -230,7 +229,6 @@ function pollCrawlProgress() {
             if (d.state === 'running') {
                 clearHide();
                 box.style.display = '';
-                if (nextEl) nextEl.style.display = 'none';
                 var pct = d.total > 0 ? Math.round(d.current / d.total * 100) : 0;
                 if (fillEl) fillEl.style.width = pct + '%';
                 if (phaseEl) phaseEl.textContent = d.phase || '';
@@ -244,20 +242,7 @@ function pollCrawlProgress() {
                 if (phaseEl) phaseEl.textContent = isErr ? '❌ 失败' : '✅ 完成';
                 if (countEl) countEl.textContent = '';
                 if (msgEl) msgEl.textContent = d.message || '';
-                if (isErr) { if (nextEl) nextEl.style.display = 'none'; }
-                else {
-                    if (nextEl) nextEl.style.display = '';
-                    // 下一步直达步骤二并预选刚下载的书（folder 来自 crawl_progress.extra）
-                    var folder = (d.extra && d.extra.folder) || '';
-                    var link = document.getElementById('cp-next-link');
-                    if (link) {
-                        var href = folder
-                            ? '/extract?platform=fanqie&folder=' + encodeURIComponent(folder)
-                            : '/extract';
-                        link.setAttribute('href', href);
-                    }
-                }
-                _crawlHideTimer = setTimeout(function() { hide(); _crawlHideTimer = null; }, isErr ? 6000 : 6000);
+                _crawlHideTimer = setTimeout(function() { hide(); _crawlHideTimer = null; }, 6000);
             } else {
                 clearHide();
                 hide();
@@ -266,5 +251,78 @@ function pollCrawlProgress() {
         .catch(function() {});
 }
 setInterval(pollCrawlProgress, 1000);
+
+/* ─── 外部书库列表（已下载书；信息行可点击 → 去提取） ─── */
+function loadNovels() {
+    var el = document.getElementById('novels-list');
+    if (!el) return;
+    fetch('/api/scout/novels')
+        .then(function(r) { return r.json(); })
+        .then(function(novels) {
+            if (!novels || novels.length === 0) {
+                el.innerHTML = '<div class="empty" style="padding:40px"><div class="icon" style="font-size:36px">📂</div>'
+                    + '<p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p>'
+                    + '<p style="color:#484f58;font-size:12px;margin-top:6px">在上方「⬇️ 抓取下载」输入书名下载一本，即会出现在这里</p></div>';
+                return;
+            }
+            var html = '';
+            novels.forEach(function(n) {
+                var p = n.platform || 'fanqie';
+                html += '<div class="card" style="margin-bottom:12px">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;cursor:pointer" title="点此去提取" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">';
+                html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span>';
+                if (n.analyzed) html += ' <span class="tag" style="background:#238636">已提取</span>';
+                else html += ' <span class="tag" style="background:#30363d">未提取</span>';
+                html += '</div>';
+                html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章</span>';
+                html += '</div>';
+                html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + escapeHtml(p) + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
+                html += '<div class="novel-actions">';
+                html += '<button class="small" style="background:#1f6feb" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">🧪 分析提取</button>';
+                html += '<button class="small" style="background:#238636" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="readFrom(this)">📖 阅读</button>';
+                html += '<button class="small" style="background:#21262d;color:#f85149" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="deleteFrom(this)">🗑 删除</button>';
+                html += '</div></div>';
+            });
+            el.innerHTML = html;
+        })
+        .catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
+}
+
+/* 去提取：跳 /extract 并预选该书（folder 命中即自动选中，提取页显示该书 + 提取按钮） */
+function goExtractFrom(el) {
+    var folder = el.getAttribute('data-f') || '';
+    var platform = el.getAttribute('data-p') || 'fanqie';
+    if (!folder) return showToast('缺少小说信息', 'warning');
+    var url = '/extract?platform=' + encodeURIComponent(platform)
+            + '&folder=' + encodeURIComponent(folder);
+    if (typeof navigateTo === 'function') navigateTo(url);
+    else window.location.href = url;
+}
+
+/* 阅读：跳到独立阅读页（懒加载章节正文） */
+function readFrom(btn) {
+    var folder = btn.getAttribute('data-f') || '';
+    var platform = btn.getAttribute('data-p') || 'fanqie';
+    if (!folder) return showToast('缺少小说信息', 'warning');
+    if (typeof navigateTo === 'function') navigateTo('/novels/read?platform=' + encodeURIComponent(platform) + '&folder=' + encodeURIComponent(folder));
+    else window.location.href = '/novels/read?platform=' + encodeURIComponent(platform) + '&folder=' + encodeURIComponent(folder);
+}
+
+function deleteFrom(btn) {
+    var folder = btn.getAttribute('data-f') || '';
+    var platform = btn.getAttribute('data-p') || 'fanqie';
+    if (!folder) return;
+    if (!confirm('确定删除已下载小说「' + folder + '」？删除后无法恢复（不影响已入库的五库素材）。')) return;
+    fetch('/api/scout/novels/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({platform: platform, folder: folder}),
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+          if (d.ok) { showToast('🗑 已删除', 'success'); loadNovels(); }
+          else showToast('❌ 删除失败: ' + (d.error||''), 'error');
+      })
+      .catch(function(e) { showToast('❌ 删除失败: ' + e.message, 'error'); });
+}
 </script>
 {% endblock %}
