@@ -289,10 +289,7 @@ function loadNovels() {
                 var p = n.platform || 'fanqie';
                 html += '<div class="card" style="margin-bottom:12px">';
                 html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;cursor:pointer" title="点此去提取" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">';
-                html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span>';
-                if (n.analyzed) html += ' <span class="tag" style="background:#238636">已提取</span>';
-                else html += ' <span class="tag" style="background:#30363d">未提取</span>';
-                html += '</div>';
+                html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span></div>';
                 html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章</span>';
                 html += '</div>';
                 html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + escapeHtml(p) + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
@@ -307,7 +304,7 @@ function loadNovels() {
         .catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
 }
 
-/* 去提取：跳 /extract 并预选该书（folder 命中即自动选中，提取页显示该书 + 提取按钮） */
+/* 去提取：跳 /extract（书卡带 platform/folder 参数；提取页默认不预选书目） */
 function goExtractFrom(el) {
     var folder = el.getAttribute('data-f') || '';
     var platform = el.getAttribute('data-p') || 'fanqie';

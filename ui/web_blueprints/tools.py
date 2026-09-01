@@ -46,7 +46,7 @@ def scout_page():
 
 @bp.route("/extract")
 def extract_page():
-    """提取工作台：从 /scout 书库点书卡跳入（?platform=&folder= 自动选中或页内下拉），
+    """提取工作台：从 /scout 书库点书卡跳入（?platform=&folder= 直达书目），
     显示该书 + 提取按钮，agent 提炼五类候选经 set_review 呈现 → 勾选确认入库五库"""
     return render_template("extract.html", profiles=profiles.list_all())
 
@@ -342,7 +342,6 @@ def scout_ingest():
     """
     from plugins.fanqie_scout import FanqieScoutAgent
     from plugins import task_manager
-    from plugins.novel_storage import NOVELS_DIR
     from libraries.style_rules import StyleRule, StyleRuleLibrary
     data = request.json or {}
     title = data.get("title", "")
@@ -352,8 +351,6 @@ def scout_ingest():
     characters = data.get("characters", [])
     style_rules_in = data.get("style_rules", [])
     profile_id = data.get("profile_id", "")   # 风格规则归属笔名（空则落默认笔名）
-    platform = data.get("platform") or "fanqie"
-    folder = data.get("folder", "")           # 落盘成功后可标记该小说 .analyzed
 
     if not any([plots, structures, gags, characters, style_rules_in]):
         return jsonify({"ok": False, "error": "参数为空"}), 400
@@ -402,12 +399,6 @@ def scout_ingest():
             stats["style_rules"] += 1
         srl._save()
 
-    # 落盘成功后标记该小说已提取（folder 对应 storage/novels/fanqie/<folder>/）
-    if folder and any(stats.values()):
-        novel_dir = NOVELS_DIR / platform / folder
-        if novel_dir.is_dir():
-            (novel_dir / ".analyzed").touch()
-
     task_manager.done(task_id, message=f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲")
     task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
                               f"+{stats['gags']}笑点 +{stats['characters']}角色 "
@@ -430,11 +421,6 @@ def scout_novels():
     from plugins.novel_storage import list_novels
     platform = request.args.get("platform", "")
     novels = list_novels(platform)
-    # 标记是否已分析
-    for n in novels:
-        from pathlib import Path
-        analyzed_file = Path(n["path"]) / ".analyzed"
-        n["analyzed"] = analyzed_file.exists()
     return jsonify(novels)
 
 
