@@ -1,15 +1,21 @@
 {% extends "base.html" %}
-{% block title %}侦察 · 书库 — NovelEngine{% endblock %}
+{% block title %}外部书库 — NovelEngine{% endblock %}
 {% block content %}
-<h1>🔍 侦察 · 书库 <span style="font-size:14px;color:#8b949e">热榜侦察 + 抓取下载 + 已下载书库（点书卡去提取）</span></h1>
+<h1>📚 外部书库 <span style="font-size:14px;color:#8b949e">热榜侦察 + 抓取下载 + 已下载书库（点书卡去提取）</span></h1>
 
-{# ─── 热榜侦察（后台线程拉取 + 缓存，/api/scout/hot） ─── #}
+{# ─── 热榜侦察（多平台 tab；仅番茄可用，其余即将推出；后台线程拉取 + 缓存 /api/scout/hot） ─── #}
 <div class="scout-card">
     <div style="display:flex;justify-content:space-between;align-items:center">
         <strong>🔥 热榜侦察</strong>
         <button class="small" onclick="loadHot()">🔄 刷新</button>
     </div>
-    <div class="hot-chips" style="margin-top:12px">
+    <div class="hot-tabs" style="margin-top:12px">
+        <button class="chip active" data-platform="fanqie" onclick="switchPlatform(this)">🍅 番茄</button>
+        <button class="chip" data-platform="qidian" onclick="switchPlatform(this)" title="即将推出">📖 起点</button>
+        <button class="chip" data-platform="jinjiang" onclick="switchPlatform(this)" title="即将推出">🌸 晋江</button>
+        <button class="chip" data-platform="web" onclick="switchPlatform(this)" title="即将推出">🌐 网页</button>
+    </div>
+    <div class="hot-chips" style="margin-top:8px">
         <button class="chip active" data-genre="" onclick="switchGenre(this)">全部</button>
         <button class="chip" data-genre="玄幻" onclick="switchGenre(this)">玄幻</button>
         <button class="chip" data-genre="都市" onclick="switchGenre(this)">都市</button>
@@ -22,28 +28,30 @@
     </div>
 </div>
 
-{# ─── 抓取表单（后端直抓：POST /api/scout/run，SSE 事件不消费，进度走 crawl-progress 轮询） ─── #}
-<div class="scout-card">
-    <strong>⬇️ 抓取下载</strong>
-    <div style="margin-top:10px">
-        <input type="text" id="book-input" placeholder="输入书名（自动搜索）或 book_id / URL">
-    </div>
-    <div class="form-row-inline">
-        <label>平台</label>
-        <select id="scout-platform">
-            <option value="fanqie" selected>🍅 番茄小说</option>
-            <option value="web" disabled>🌐 网页抓取（即将推出）</option>
-            <option value="qidian" disabled>📖 起点中文（即将推出）</option>
-            <option value="jinjiang" disabled>🌸 晋江文学城（即将推出）</option>
-        </select>
-        <label>下载范围</label>
-        <input type="number" id="start-chapter" value="1" min="1">
-        <label style="color:#8b949e">—</label>
-        <input type="number" id="end-chapter" value="30" min="1">
-    </div>
-    <div style="display:flex;align-items:center;gap:12px">
-        <button id="btn-scout" class="btn-primary" onclick="startFetch()">🚀 开始抓取</button>
-        <span id="fetch-status" style="font-size:12px;color:#8b949e"></span>
+{# ─── 抓取表单（默认折叠，点 header 展开；后端直抓 POST /api/scout/run，进度走 crawl-progress 轮询） ─── #}
+<div class="accordion" style="margin-top:16px">
+    <div class="accordion-header"><span>⬇️ 抓取下载</span><span style="color:#8b949e;font-size:12px">展开 ▸</span></div>
+    <div class="accordion-body">
+        <div style="padding-top:2px">
+            <input type="text" id="book-input" placeholder="输入书名（自动搜索）或 book_id / URL">
+        </div>
+        <div class="form-row-inline">
+            <label>平台</label>
+            <select id="scout-platform">
+                <option value="fanqie" selected>🍅 番茄小说</option>
+                <option value="web" disabled>🌐 网页抓取（即将推出）</option>
+                <option value="qidian" disabled>📖 起点中文（即将推出）</option>
+                <option value="jinjiang" disabled>🌸 晋江文学城（即将推出）</option>
+            </select>
+            <label>下载范围</label>
+            <input type="number" id="start-chapter" value="1" min="1">
+            <label style="color:#8b949e">—</label>
+            <input type="number" id="end-chapter" value="30" min="1">
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+            <button id="btn-scout" class="btn-primary" onclick="startFetch()">🚀 开始抓取</button>
+            <span id="fetch-status" style="font-size:12px;color:#8b949e"></span>
+        </div>
     </div>
 </div>
 
@@ -59,10 +67,10 @@
     <div id="cp-msg" style="font-size:12px;color:#8b949e;margin-top:6px"></div>
 </div>
 
-{# ─── 外部书库（已下载书列表；点书卡 → /extract 提取） ─── #}
+{# ─── 已下载书库（列表；点书卡 → /extract 提取） ─── #}
 <div class="scout-card">
     <div style="display:flex;justify-content:space-between;align-items:center">
-        <strong>📚 外部书库</strong>
+        <strong>📚 已下载书库</strong>
         <button class="small" onclick="loadNovels()">🔄 刷新</button>
     </div>
     <div id="novels-list" style="margin-top:12px">
@@ -102,6 +110,15 @@ var _hotPollCount = 0;
 })();
 
 /* ─── 热榜侦察 ─── */
+
+/* 平台 tab：仅番茄可用（后端热榜 fanqie-only），起点/晋江/网页为「即将推出」占位 */
+function switchPlatform(btn) {
+    var p = btn.getAttribute('data-platform') || '';
+    if (p !== 'fanqie') { showToast('该平台热榜即将推出', 'info'); return; }
+    document.querySelectorAll('.hot-tabs .chip').forEach(function(c) { c.classList.remove('active'); });
+    btn.classList.add('active');
+}
+
 function switchGenre(btn) {
     _hotGenre = btn.getAttribute('data-genre') || '';
     document.querySelectorAll('.hot-chips .chip').forEach(function(c) { c.classList.remove('active'); });

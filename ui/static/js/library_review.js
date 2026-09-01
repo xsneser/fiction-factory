@@ -25,16 +25,12 @@ function renderReviewCards(d, areaId) {
     var area = document.getElementById(areaId);
     if (!area) return;
 
-    var html = '<div class="card" style="margin-bottom:16px">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center">';
-    html += '<span style="font-size:18px;font-weight:600">📖 ' + escapeHtml(d.title || '') + '</span>';
-    if (d.downloaded_chapters) html += '<span style="color:#8b949e">已下载 ' + escapeHtml(d.downloaded_chapters) + ' 章</span>';
-    html += '</div>';
-    if (d.profile_name) html += '<div style="font-size:12px;color:#8b949e;margin-top:4px">风格规则归属笔名：' + escapeHtml(d.profile_name) + '</div>';
-    html += '<div style="margin-top:16px;display:flex;gap:10px">';
+    // 书身份（书名/章数/笔名）已在提取页上方已选书卡展示，这里只放入库工具条，避免重复
+    var html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">';
     html += '<button class="btn-primary" onclick="ingestAll()">📦 全部入库</button>';
     html += '<button class="btn" style="background:#30363d;color:#f0f6fc" onclick="ingestSelected()">✅ 入库选中</button>';
-    html += '</div></div>';
+    html += '<span style="font-size:12px;color:#8b949e">勾选下方条目后入库</span>';
+    html += '</div>';
 
     html += '<div class="tabs" style="margin-bottom:12px">';
     REVIEW_CATS.forEach(function(c, i) {
