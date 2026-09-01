@@ -70,42 +70,74 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
     except Exception as e:
         logger.warning(f"fanqie resolve failed: {e}")
 
-    # ── 镜像站全文 ──
-    wc = WebnovelCrawler(site=site)
-    w_meta = None
-    try:
-        if mirror_url:
-            w_meta = wc.resolve_book(mirror_url)
-        elif f_meta or query_title:
-            target = (f_meta or {}).get("title") or query_title
-            w_url = wc.search_book_url(target)
-            if w_url:
-                w_meta = wc.resolve_book(w_url)
-    except Exception as e:
-        logger.warning(f"mirror resolve failed: {e}")
+    # ── 多镜像源并行解析（每个源独立 requests.Session，并发 2-3 防封） ──
+    from plugins.webnovel_scraper import MIRROR_SOURCES
+    import concurrent.futures as _cf
+    from urllib.parse import urlparse as _up
+    fanqie_nums = {c["num"] for c in f_catalog if c.get("num") is not None}
+    target_title = (f_meta or {}).get("title") or query_title
+    mirror_host = _up(mirror_url).netloc if mirror_url else ""
+
+    def _resolve_source(sn):
+        try:
+            crawler = MIRROR_SOURCES[sn]()
+            w_meta = None
+            if mirror_host and mirror_host == _up(crawler.cfg["base_url"]).netloc:
+                w_meta = crawler.resolve_book(mirror_url)   # 用户给的该源 URL
+            elif target_title:
+                w_url = crawler.search_book_url(target_title)
+                if w_url:
+                    w_meta = crawler.resolve_book(w_url)
+            if not w_meta:
+                return None
+            w_cat = crawler.get_chapter_list(w_meta["book_id"])
+            main_re = crawler.cfg.get("main_title_re")
+            if main_re:
+                filt = [c for c in w_cat if re.match(main_re, c["title"])]
+                if filt:
+                    w_cat = filt
+            wmap = {c["num"]: c for c in w_cat if c["num"] is not None}
+            coverage = (len(set(wmap) & fanqie_nums) if fanqie_nums else len(wmap))
+            return {"site": sn, "crawler": crawler, "w_meta": w_meta,
+                    "wmap": wmap, "coverage": coverage}
+        except Exception as e:
+            logger.warning(f"mirror {sn} resolve failed: {e}")
+            return None
+
+    sources = {}
+    with _cf.ThreadPoolExecutor(max_workers=min(3, len(MIRROR_SOURCES))) as _ex:
+        for _r in _ex.map(_resolve_source, list(MIRROR_SOURCES)):
+            if _r and _r["wmap"]:
+                sources[_r["site"]] = _r
+                if on_progress:
+                    on_progress("search", 1, 1,
+                                f"镜像源 {_r['site']}: 主书 {len(_r['wmap'])} 章可用")
+
+    # 选主源：coverage（覆盖番茄章节号数）最高
+    primary = max(sources.values(), key=lambda s: s["coverage"]) if sources else None
 
     # ── 给镜像 URL 时反向补番茄元数据（用镜像书名） ──
-    if not f_meta and w_meta and w_meta.get("title"):
+    if not f_meta and primary:
         try:
-            n = fanqie.search_novel(w_meta["title"])
+            n = fanqie.search_novel(primary["w_meta"].get("title", ""))
             if n:
                 _fmeta_from(n)
         except Exception as e:
             logger.warning(f"fanqie backfill by mirror title failed: {e}")
 
-    if not f_meta and not w_meta:
+    if not f_meta and not primary:
         raise RuntimeError(f"未找到该书（番茄与镜像站均解析失败）: {source}")
 
     if f_meta:
-        return _save_merged(f_meta, f_catalog, wc, w_meta, site, chapters,
+        return _save_merged(f_meta, f_catalog, sources, primary, site, chapters,
                             start_chapter, end_chapter, download_delay, on_progress, platform)
-    return _save_mirror_only(wc, w_meta, site, chapters, start_chapter,
+    return _save_mirror_only(primary, site, chapters, start_chapter,
                              end_chapter, download_delay, on_progress)
 
 
-def _save_merged(f_meta, f_catalog, wc, w_meta, site, chapters, start, end,
+def _save_merged(f_meta, f_catalog, sources, primary, site, chapters, start, end,
                  delay, on_progress, platform):
-    """番茄元数据 + 番茄目录权威 + 镜像按章节号补全文。"""
+    """番茄元数据 + 番茄目录权威 + 多镜像源按章节号补全文（主源优先、缺章从其他源补）。"""
     from plugins.novel_storage import save_novel, save_chapter, NOVELS_DIR, _safe_name
     total = len(f_catalog)
     if total == 0:
@@ -121,19 +153,24 @@ def _save_merged(f_meta, f_catalog, wc, w_meta, site, chapters, start, end,
     if not selected:
         raise RuntimeError(f"起始章 {start} 超出番茄目录范围（共 {total} 章）")
 
+    # 主源：primary 优先；无则 site 参数；再回退任一源
+    main_src = primary or (sources.get(site) if sources else None) or \
+        (next(iter(sources.values())) if sources else None)
+    main_site = main_src["site"] if main_src else (site or "wodushu")
     folder = _safe_name(f_meta["title"])
     meta = {
         "title": f_meta["title"], "author": f_meta["author"],
         "platform": platform, "book_id": f"fanqie:{f_meta['book_id']}",
         "url": f_meta["url"], "genre": f_meta.get("genre", ""),
         "chapter_count": total, "cover": f_meta.get("cover", ""),
-        "intro": f_meta.get("intro", ""), "site": site,
+        "intro": f_meta.get("intro", ""), "site": main_site,
         "source_fanqie": {"book_id": f_meta["book_id"], "url": f_meta["url"]},
         "fallback_fanqie": False,
     }
-    if w_meta:
-        meta["source_web"] = {"site": site, "book_id": w_meta.get("book_id", ""),
-                              "url": w_meta.get("url", "")}
+    if main_src:
+        meta["source_web"] = {"site": main_src["site"],
+                              "book_id": main_src["w_meta"].get("book_id", ""),
+                              "url": main_src["w_meta"].get("url", "")}
 
     # 断点续下：只把**有正文**的章节算作已下载（空占位不阻断补全）
     ch_dir = NOVELS_DIR / folder / "chapters"
@@ -155,27 +192,26 @@ def _save_merged(f_meta, f_catalog, wc, w_meta, site, chapters, start, end,
         on_progress("search", 1, 1,
                     f"合并抓取: {f_meta['title']}（番茄目录 {total} 章，本次 {len(pending)} 章）")
 
-    # 镜像 num(第N章号) → chapter_id 映射
-    wmap = {}
-    if w_meta:
-        w_cat = wc.get_chapter_list(w_meta["book_id"])
-        main_re = wc.cfg.get("main_title_re")
-        if main_re:
-            filt = [c for c in w_cat if re.match(main_re, c["title"])]
-            if filt:
-                w_cat = filt
-        wmap = {c["num"]: c for c in w_cat if c["num"] is not None}
+    # 多源顺序：主源在前，其余按 coverage 降序
+    source_order = ([main_src] if main_src else []) + \
+        sorted([s for s in sources.values() if s is not main_src],
+               key=lambda s: s["coverage"], reverse=True)
 
     save_novel(platform, meta, [])   # 先建目录+info.json（/scout 立即显示）
     downloaded = 0
     for i, ch in enumerate(pending):
         idx = ch["index"]
         content = ""
-        # 镜像按标题「第N章」号匹配（番茄目录 index=realChapterOrder ≠ 标题章号）
+        # 镜像按标题「第N章」号匹配（番茄目录 index=realChapterOrder ≠ 标题章号）；多源补缺
         fnum = _parse_chapter_num(ch["title"])
-        mch = wmap.get(fnum) if fnum is not None else None
-        if mch and w_meta:
-            content = wc.download_chapter(w_meta["book_id"], mch["chapter_id"])
+        if fnum is not None:
+            for src in source_order:
+                mch = src["wmap"].get(fnum)
+                if mch:
+                    content = src["crawler"].download_chapter(
+                        src["w_meta"]["book_id"], mch["chapter_id"])
+                    if content:
+                        break
         # 番茄目录权威：镜像无此章（番茄比镜像多/镜像缺号）也落 title-only 占位
         save_chapter(platform, folder, {
             "index": idx, "title": ch["title"], "content": content or "",
@@ -193,11 +229,13 @@ def _save_merged(f_meta, f_catalog, wc, w_meta, site, chapters, start, end,
     return meta, {"folder": folder, "chapters": downloaded, "already": False, "sources": "merged"}
 
 
-def _save_mirror_only(wc, w_meta, site, chapters, start, end, delay, on_progress):
-    """番茄解析失败 → 回退镜像站元数据 + 镜像主书。"""
+def _save_mirror_only(primary, site, chapters, start, end, delay, on_progress):
+    """番茄解析失败 → 回退覆盖最全的镜像源元数据 + 镜像主书。"""
     from plugins.webnovel_scraper import download_webnovel
+    src_site = primary["site"] if primary else (site or "wodushu")
+    w_meta = primary["w_meta"] if primary else {}
     info, dl = download_webnovel(
-        site=site, url=w_meta.get("url", ""), book_id=w_meta.get("book_id", ""),
+        site=src_site, url=w_meta.get("url", ""), book_id=w_meta.get("book_id", ""),
         chapters=chapters, start_chapter=start, end_chapter=end,
         download_delay=delay, on_progress=on_progress, platform="web")
     # 标记番茄回退

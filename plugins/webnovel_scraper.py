@@ -89,6 +89,34 @@ SITES = {
         "main_title_re": MAIN_TITLE_RE,   # 主书过滤（排除番外；阿拉伯/中文数字章号都算）
         "request_delay": 0.5,
     },
+    # 零点看书（笔趣阁克隆）：`/{cat}/{bid}/` 两段数字 URL；正文在 <h1 class="title"> 后（非 div）
+    "bookszw": {
+        "name": "零点看书",
+        "base_url": "http://www.bookszw.com",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        # 两段书号：book_id 存 "cat:bid"；章表分页 /index_{p}.html（p>1），每页 +20 章
+        "book_id_re": r"/(\d+)/(\d+)/",
+        "book_page": lambda b: f"/{b.split(':')[0]}/{b.split(':')[1]}/",
+        "chapter_list_page": lambda b, p: (
+            f"/{b.split(':')[0]}/{b.split(':')[1]}/index_{p}.html"
+            if p > 1 else f"/{b.split(':')[0]}/{b.split(':')[1]}/"),
+        "chapter_url": lambda b, cid, suf: f"/{b.split(':')[0]}/{b.split(':')[1]}/{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/\d+/\d+/(\d+)\.html)"[^>]*>(.*?)</a>', re.S),
+        # 本章续页（正文分页 {cid}_2.html）：{cid} 替换为当前 chapter_id，组1=续页号
+        "extra_page_re": r'href="[^"]*?/{cid}_(\d+)\.html"',
+        "content_mode": "after_title",   # 正文在 h1.title 后
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+}
+
+# ─── 多镜像源注册表（下载时并行尝试） ──────────────────────────────────
+# 只收录 requests 可静态抓的站（正文非 JS）；JS 站（kudushu 等）需浏览器渲染，不在本次。
+MIRROR_SOURCES = {
+    "wodushu": lambda: WebnovelCrawler("wodushu"),
+    "bookszw": lambda: BookszwCrawler(),
 }
 
 
@@ -195,12 +223,14 @@ class WebnovelCrawler:
 
     # ── 书元信息 ──
     def resolve_book(self, url_or_book_id: str) -> dict:
-        """由书 URL 或 book_id 解析书页，取 og:novel:* meta → 元信息 dict。"""
+        """由书 URL 或 book_id 解析书页，取 og:novel:* meta → 元信息 dict。
+
+        book_id_re 多段捕获时（如 bookszw `/{cat}/{bid}/`）用「:」拼接存 book_id。"""
         source = (url_or_book_id or "").strip()
         if not source:
             raise RuntimeError("请提供书籍 URL 或 book_id")
         m = re.search(self.cfg["book_id_re"], source)
-        book_id = m.group(1) if m else source
+        book_id = ":".join(m.groups()) if m else source
         book_url = (source if source.startswith("http")
                     else self.cfg["base_url"] + self.cfg["book_page"](book_id))
         html = self._fetch(book_url)
@@ -300,6 +330,7 @@ class WebnovelCrawler:
         parts: list[str] = []
         suffix = ""
         max_pages = 30   # 安全上限：单章不可能有几十页
+        extra_re = self.cfg["extra_page_re"].format(cid=re.escape(chapter_id))
         for _ in range(max_pages):
             path = self.cfg["chapter_url"](book_id, chapter_id, suffix)
             html = self._fetch(path)
@@ -308,17 +339,46 @@ class WebnovelCrawler:
             text = self._extract_content(html)
             if text:
                 parts.append(text)
-            nxt = re.search(
-                self.cfg["extra_page_re"].format(cid=re.escape(chapter_id)), html)
+            # 只跟随「页码更大」的续页（兼容 bookszw 双向分页：页2 有回 _1 的上一页链接，
+            # 若匹配任意 _N 会在页1↔页2 死循环）
+            cur = int(suffix.lstrip("_")) if suffix else 1
+            nxt = None
+            for m in re.finditer(extra_re, html):
+                if int(m.group(1)) > cur:
+                    nxt = m
+                    break
             if not nxt:
                 break
             suffix = f"_{nxt.group(1)}"
         return self._clean_text("\n".join(parts))
 
     def _extract_content(self, html: str) -> str:
+        if self.cfg.get("content_mode") == "after_title":
+            return self._extract_after_title(html)
         parser = _ContentExtractor(self.cfg["content_div_id"])
         parser.feed(html)
         return parser.text()
+
+    def _extract_after_title(self, html: str) -> str:
+        """bookszw 等：<h1 class="title"> 后紧跟「第N章 标题 (第X/Y页)」+ <br> 分隔正文，
+        直到页脚/上一章下一章/分页容器。正文静态内嵌（非 JS 填充）。"""
+        m = re.search(r'<h1[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</h1>', html, re.S)
+        if not m:
+            return ""
+        seg = html[m.end():]
+        # 截断点用「加入书签」（书签锚点文本，其前标签完整可剥离）；btn-addbs 是属性值会截在标签内留残片
+        cut = re.search(r'(上一章|下一章|加入书签|section-opt'
+                        r'|<div[^>]*id="[^"]*(footer|foot|page)[^"]*"'
+                        r'|<div[^>]*class="[^"]*(page|chapterbar|bottem)[^"]*")', seg)
+        if cut:
+            seg = seg[:cut.start()]
+        seg = re.sub(r'<script.*?</script>', '', seg, flags=re.S)
+        txt = re.sub(r'<br\s*/?>', '\n', seg)
+        txt = re.sub(r'<[^>]+>', '', txt)
+        # 去「第N章 标题 (第X/Y页)」头行 + 「（本章未完…）」分页尾
+        txt = re.sub(r'^\s*第[0-9一二三四五六七八九十百千零两]+章.*?\(第\d+/\d+页\)\s*', '', txt)
+        txt = re.sub(r'[（(]本章未完.*?[）)]', '', txt)
+        return txt
 
     # ── 清洗 ──
     @staticmethod
@@ -360,6 +420,17 @@ class WebnovelCrawler:
             if i < len(selected) - 1:
                 time.sleep(delay)
         return chapters
+
+
+class BookszwCrawler(WebnovelCrawler):
+    """零点看书（笔趣阁克隆）：`/{cat}/{bid}/` 数字两段 URL，正文在 <h1 class="title"> 后。
+
+    配置（SITES["bookszw"]）已覆盖：章表分页 /index_{p}.html、正文分页 {cid}_2.html、
+    content_mode=after_title。此类为 MIRROR_SOURCES 提供独立构造入口，后续如需特化可 override。
+    """
+
+    def __init__(self, verify: bool = True):
+        super().__init__(site="bookszw", verify=verify)
 
 
 def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
