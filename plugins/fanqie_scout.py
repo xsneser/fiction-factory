@@ -15,6 +15,7 @@
   使用本模块产生的任何法律风险由使用者自行承担。
 """
 import json
+import os
 import re
 import time
 import logging
@@ -88,6 +89,20 @@ def _find_cover_url(obj, depth=0):
     return ""
 
 
+def _load_fanqie_cookie() -> str:
+    """读取番茄登录 Cookie（可空）：优先环境变量 FANQIE_COOKIE，其次 storage/fanqie_cookie.txt。
+    带登录 Cookie 请求时，锁定章节（isChapterLock）的 SSR 可能返回全文而非 200 字预览。"""
+    cookie = os.environ.get("FANQIE_COOKIE", "") or ""
+    if not cookie:
+        try:
+            p = Path("storage") / "fanqie_cookie.txt"
+            if p.exists():
+                cookie = p.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    return cookie
+
+
 class FanqieCrawler:
     """番茄小说爬虫"""
 
@@ -141,6 +156,15 @@ class FanqieCrawler:
         if not verify:
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        # 登录 Cookie 注入：带番茄账号 Cookie 时，锁定章节（isChapterLock）SSR 返回全文
+        cookie = _load_fanqie_cookie()
+        if cookie:
+            for part in cookie.split(";"):
+                part = part.strip()
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    self.session.cookies.set(k.strip(), v.strip(), domain=".fanqienovel.com")
+
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._decoder = None  # lazy init
