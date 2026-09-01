@@ -189,6 +189,10 @@ async function doIngest(items) {
             var n = _countItems(items);
             showToast('✅ 已入库 ' + n + ' 条', 'success');
             if (typeof window.refreshScoutUI === 'function') window.refreshScoutUI();
+            // 入库成功：分析信息不残留，清空审查区并复位状态
+            window._lastReviewData = null;
+            var ra = document.getElementById('review-area');
+            if (ra) { ra.style.display = 'none'; ra.innerHTML = ''; }
         } else {
             showToast('❌ 入库失败: ' + (dd.error||''), 'error');
         }

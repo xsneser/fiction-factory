@@ -22,7 +22,6 @@
     <div id="book-meta" style="margin-top:12px;font-size:13px;color:#c9d1d9">请选择一本书开始提取…</div>
     <div id="book-actions" style="display:flex;gap:8px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid #30363d">
         <button id="analyze-btn" class="btn-primary" onclick="analyzeFrom()" disabled>🧪 分析提取</button>
-        <a id="read-link" class="btn" style="display:none">📖 阅读</a>
     </div>
 </div>
 
@@ -58,7 +57,6 @@ var _pre = (function(){
         currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name');
     });
     loadBooks();
-    pollPendingReview();   // 回页恢复：agent 已呈现但未渲染的候选
 })();
 
 /* ─── 书下拉（仅列书名；完整列表/阅读/删除在 /novels） ─── */
@@ -70,7 +68,6 @@ function loadBooks() {
             var sel = document.getElementById('book-select');
             var meta = document.getElementById('book-meta');
             var analyzeBtn = document.getElementById('analyze-btn');
-            var readLink = document.getElementById('read-link');
             if (!sel || !meta) return;
             if (!_books.length) {
                 sel.innerHTML = '<option value="">暂无已下载小说</option>';
@@ -78,7 +75,6 @@ function loadBooks() {
                     + '<p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p>'
                     + '<p style="color:#484f58;font-size:12px;margin-top:6px">去 <a href="/scout">外部书库</a> 抓取下载一本书，再从书库点「分析提取」跳回本页</p></div>';
                 if (analyzeBtn) analyzeBtn.disabled = true;
-                if (readLink) readLink.style.display = 'none';
                 return;
             }
             var html = '';
@@ -104,11 +100,9 @@ function onBookSelect() {
     var n = selectedBook();
     var meta = document.getElementById('book-meta');
     var analyzeBtn = document.getElementById('analyze-btn');
-    var readLink = document.getElementById('read-link');
     if (!n || !meta) {
         if (meta) meta.innerHTML = '请选择一本书开始提取…';
         if (analyzeBtn) analyzeBtn.disabled = true;
-        if (readLink) readLink.style.display = 'none';
         return;
     }
     var p = n.platform || 'fanqie';
@@ -117,17 +111,6 @@ function onBookSelect() {
         + '<span style="color:#8b949e"> · ' + (n.saved_chapters || 0) + ' 章 · 平台: ' + escapeHtml(p)
         + ' · 收录: ' + escapeHtml(n.downloaded_at || '') + '</span>';
     if (analyzeBtn) analyzeBtn.disabled = false;
-    if (readLink) {
-        readLink.style.display = '';
-        readLink.setAttribute('href', '/novels/read?platform=' + encodeURIComponent(p) + '&folder=' + encodeURIComponent(n.folder));
-        readLink.setAttribute('onclick', 'return readVia(this)');
-    }
-}
-
-function readVia(a) {
-    var href = a.getAttribute('href');
-    if (typeof navigateTo === 'function') { navigateTo(href); return false; }
-    return true;
 }
 
 /* 分析提取：交给侧栏 Agent（folder 直达，agent 不再重复下载；契约在 novel-scout skill，此处只传书标识+笔名） */
@@ -156,24 +139,6 @@ window.onnecommand = function(e) {
 function refreshScoutUI() {
     loadBooks();
 }
-
-/* ─── 候选持久化恢复：pending-review 轮询（SSE 渲染失败/页面不在场时兜底） ─── */
-function pollPendingReview() {
-    fetch('/api/scout/pending-review')
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            if (!d || !d.ok) return;
-            var review = d.review || {};
-            if (!review.title) return;
-            // 只在此前未渲染过时渲染，避免覆盖用户已勾选的实时卡片
-            if (window._lastReviewData) return;
-            renderReviewCards(review, 'review-area');
-            var area = document.getElementById('review-area');
-            if (area) area.scrollIntoView({behavior:'smooth', block:'start'});
-        })
-        .catch(function() {});
-}
-setInterval(pollPendingReview, 4000);
 
 // agent 忙碌指示（ne:agent-state 事件，agent_panel.js 派发）
 window.addEventListener('ne:agent-state', function(e) {

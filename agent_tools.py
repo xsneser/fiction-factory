@@ -1583,11 +1583,6 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
                     "请先 get_build_status 确认当前步，或 drive_ui(next/prev) 对齐后再操作")
     if cmd == "reset":
         _clear_wizard_candidates()   # 新会话清空候选持久化，防跨会话残留
-    if cmd == "set_review":
-        # 候选持久化快照：SSE 实时渲染之外再落盘一份，页面不在场/渲染失败时
-        # /extract 轮询 pending-review 可恢复（用户确认入库后由 ingest 清空）
-        from libraries.scout_review import write_pending_review
-        write_pending_review(args)
     from libraries.nav_intent import push_ui_command
     # submit 半同步：推送前快照 submit_error，只对「新错误」反应，规避陈旧错误误判
     _read_st = None
@@ -1779,21 +1774,28 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
         raise
 
 
-def discover_hot(genre: str = "", count: int = 10) -> dict:
-    """侦察番茄小说热榜：返回热门书列表（书名/作者/题材/字数/章数/热度/简介）。
+def discover_hot(platform: str = "fanqie", key: str = "", count: int = 10) -> dict:
+    """侦察小说热榜（多平台）：返回热门书列表（排名/书名/作者/题材/热度/简介）。
 
-    genre 为题材中文名（如"玄幻""都市"，空=全站热榜）；count 默认 10。
-    返回 {"ok", "count", "novels": [{book_id,title,author,genre,sub_genre,
-    word_count,chapter_count,hot_score,intro,url}]}。
+    platform 默认 fanqie（番茄）；key 为榜单分类 id（如 258 传统玄幻）或题材中文名
+    （如"玄幻""都市"，空/'全部'=聚合综合热榜）；count 默认 10。
+    返回 {"ok", "platform", "count", "novels": [{platform, rank, book_id, title,
+    author, category, word_count, chapter_count, hot_score, intro, url}]}。
     """
-    from plugins.fanqie_scout import FanqieCrawler
-    crawler = FanqieCrawler()
-    genre_id = 0
-    if genre:
-        genre_id = {v: k for k, v in FanqieCrawler.GENRE_MAP.items()}.get(genre.strip(), 0)
-    novels = crawler.discover_hot(genre_id=genre_id, count=count)
-    return {"ok": True, "count": len(novels),
-            "novels": [n.__dict__ for n in novels]}
+    from plugins.hot_ranks import discover as hot_discover
+    novels = hot_discover(platform, key=key, count=count) or []
+    return {"ok": True, "platform": platform, "count": len(novels), "novels": novels}
+
+
+def list_rankings(platform: str = "fanqie", gender: str = "male") -> dict:
+    """查平台热榜榜单/分类清单（供挑题材/参考爆款时选榜单）。
+
+    platform 默认 fanqie；gender male/female（男频/女频）。
+    返回 {"ok", "platform", "gender", "rankings": [{id, name}]}。
+    """
+    from plugins.hot_ranks import list_rankings as hr_list_rankings
+    rankings = hr_list_rankings(platform, gender=gender) or []
+    return {"ok": True, "platform": platform, "gender": gender, "rankings": rankings}
 
 
 def list_crawled_novels(platform: str = "fanqie") -> dict:
@@ -1888,7 +1890,7 @@ def _build_registry():
         publish_check, mark_finished, publish_book, export_book,
         chapter_quality_gate, validate_storyline, validate_world,
         # 抓取 / 侦察 / 提取入库（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示）
-        fetch_novel, discover_hot, list_crawled_novels, read_crawled_novel,
+        fetch_novel, discover_hot, list_rankings, list_crawled_novels, read_crawled_novel,
         ingest_library_assets,
     ]
     seen = set()

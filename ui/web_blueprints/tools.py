@@ -233,12 +233,12 @@ def crawl_progress():
     return jsonify({"ok": True, **read_crawl_progress()})
 
 
-# ─── 热榜侦察：后台线程拉取 + storage/hot_cache.json 缓存 ───
+# ─── 热榜侦察：多平台注册表分发 + 后台线程拉取 + storage/hot_cache.json 缓存 ───
 _HOT_CACHE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "storage", "hot_cache.json")
 _HOT_TTL = 600          # 热榜缓存有效秒数（10 分钟）
-_hot_fetching = {}      # key(题材) -> Thread，防同题材并发重复拉取
+_hot_fetching = {}      # cache_key(platform:gender:key) -> Thread，防同键并发重复拉取
 
 
 def _read_hot_cache() -> dict:
@@ -249,62 +249,82 @@ def _write_hot_cache(cache: dict) -> None:
     write_json_atomic(_HOT_CACHE_PATH, cache)
 
 
-def _spawn_hot_fetch(key: str, genre: str, count: int) -> None:
-    """后台拉取热榜写入缓存；同题材已有在跑线程则跳过（单线程 Flask 下不阻塞请求）。"""
-    if _hot_fetching.get(key) and _hot_fetching[key].is_alive():
+def _spawn_hot_fetch(cache_key: str, platform: str, key: str, gender: str, count: int) -> None:
+    """后台拉取热榜写入缓存；同键已有在跑线程则跳过（单线程 Flask 下不阻塞请求）。"""
+    if _hot_fetching.get(cache_key) and _hot_fetching[cache_key].is_alive():
         return
 
     def fetch():
         try:
-            from plugins.fanqie_scout import FanqieCrawler
-            genre_id = 0
-            if genre:
-                genre_id = {v: k for k, v in FanqieCrawler.GENRE_MAP.items()}.get(genre.strip(), 0)
-            crawler = FanqieCrawler()
-            novels = crawler.discover_hot(genre_id=genre_id, count=count) or []
-            items = [n.__dict__ for n in novels] if novels else []
+            from plugins.hot_ranks import discover as hot_discover
+            items = hot_discover(platform, key=key, count=count, gender=gender) or []
             cache = _read_hot_cache()
-            cache[key] = {"ts": time.time(), "novels": items}
+            cache[cache_key] = {"ts": time.time(), "novels": items}
             _write_hot_cache(cache)
         except Exception as e:
-            logging.getLogger("tools").warning("热榜拉取失败(genre=%s): %s", genre, e)
+            logging.getLogger("tools").warning(
+                "热榜拉取失败(platform=%s key=%s): %s", platform, key, e)
         finally:
-            _hot_fetching.pop(key, None)
+            _hot_fetching.pop(cache_key, None)
 
-    t = threading.Thread(target=fetch, daemon=True, name=f"hot-{key}")
-    _hot_fetching[key] = t
+    t = threading.Thread(target=fetch, daemon=True, name=f"hot-{cache_key[:24]}")
+    _hot_fetching[cache_key] = t
     t.start()
 
 
 @bp.route("/api/scout/hot")
 def scout_hot():
-    """热榜侦察。genre 为题材中文名（空=全站热榜）；count 默认 10。
+    """多平台热榜。platform 默认 fanqie；key 为榜单分类 id 或题材中文名（空/'全部'=聚合）；
+    gender male/female；count 默认 10。
 
-    返回 {ok, genre, novels, ts, refreshing|loading}：缓存 TTL 内直接回缓存；
+    返回 {ok, platform, key, novels, ts, refreshing|loading}：缓存 TTL 内直接回缓存；
     过期/缺失立即返回当前状态并起 daemon 线程后台刷新（页面轮询直到 novels 出现）。
-    novels 每项 {book_id,title,author,genre,sub_genre,word_count,chapter_count,
-    hot_score,intro,url}（NovelInfo.__dict__）。
+    novels 每项 {platform, rank, book_id, title, author, category, word_count,
+    chapter_count, hot_score, intro, url}（统一 HotRankItem，见 plugins/hot_ranks.py）。
     """
-    genre = (request.args.get("genre") or "").strip()
+    platform = (request.args.get("platform") or "fanqie").strip()
+    genre = (request.args.get("genre") or "").strip()      # 兼容旧前端：题材中文名
+    key = (request.args.get("key") or genre).strip()       # key 优先，回退 genre
+    gender = (request.args.get("gender") or "male").strip()
     try:
         count = min(int(request.args.get("count", 10) or 10), 50)
     except (TypeError, ValueError):
         count = 10
     cache = _read_hot_cache()
-    key = genre or "all"
-    entry = cache.get(key) or {}
+    cache_key = f"{platform}:{gender}:{key or '__all__'}"
+    entry = cache.get(cache_key) or {}
     now = time.time()
     if entry and now - entry.get("ts", 0) < _HOT_TTL:
-        return jsonify({"ok": True, "genre": genre, "novels": entry.get("novels", []),
-                        "ts": entry.get("ts")})
-    payload = {"ok": True, "genre": genre}
+        return jsonify({"ok": True, "platform": platform, "key": key,
+                        "novels": entry.get("novels", []), "ts": entry.get("ts")})
+    payload = {"ok": True, "platform": platform, "key": key}
     if entry:
         payload.update({"novels": entry.get("novels", []), "ts": entry.get("ts"),
                         "refreshing": True})
     else:
         payload.update({"novels": [], "loading": True})
-    _spawn_hot_fetch(key, genre, count)
+    _spawn_hot_fetch(cache_key, platform, key, gender, count)
     return jsonify(payload)
+
+
+@bp.route("/api/scout/hot/rankings")
+def scout_hot_rankings():
+    """榜单/分类清单（供 UI 下拉 / 未来动态 chips）。platform 默认 fanqie；gender male/female。
+    返回 {ok, platform, gender, rankings: [{id, name}]}（缓存 10min）。"""
+    platform = (request.args.get("platform") or "fanqie").strip()
+    gender = (request.args.get("gender") or "male").strip()
+    cache = _read_hot_cache()
+    cache_key = f"rankings:{platform}:{gender}"
+    entry = cache.get(cache_key) or {}
+    now = time.time()
+    if entry and now - entry.get("ts", 0) < _HOT_TTL:
+        return jsonify({"ok": True, "platform": platform, "gender": gender,
+                        "rankings": entry.get("rankings", [])})
+    from plugins.hot_ranks import list_rankings as hr_list_rankings
+    rankings = hr_list_rankings(platform, gender=gender) or []
+    cache[cache_key] = {"ts": time.time(), "rankings": rankings}
+    _write_hot_cache(cache)
+    return jsonify({"ok": True, "platform": platform, "gender": gender, "rankings": rankings})
 
 
 # ─── 入库（人工筛选后） ───
@@ -383,9 +403,6 @@ def scout_ingest():
         novel_dir = NOVELS_DIR / platform / folder
         if novel_dir.is_dir():
             (novel_dir / ".analyzed").touch()
-    # 候选已消费：清空 review_pending 快照，防止回 /scout 重放陈旧候选
-    from libraries.scout_review import clear_pending_review
-    clear_pending_review()
 
     task_manager.done(task_id, message=f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲")
     task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
@@ -418,13 +435,6 @@ def scout_novels():
 
 
 # ─── 候选审查快照（agent set_review 持久化，/extract 轮询恢复） ───
-
-@bp.route("/api/scout/pending-review")
-def scout_pending_review():
-    """读候选审查快照（非消费：重复读不删，用户确认入库后由 ingest 清空）。"""
-    from libraries.scout_review import read_pending_review
-    return jsonify({"ok": True, "review": read_pending_review()})
-
 
 @bp.route("/api/scout/novels/delete", methods=["POST"])
 def scout_novels_delete():
