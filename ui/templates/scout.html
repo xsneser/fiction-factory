@@ -1,13 +1,35 @@
 {% extends "base.html" %}
-{% block title %}侦察 · 提取 — NovelEngine{% endblock %}
+{% block title %}侦察 · 抓取 — NovelEngine{% endblock %}
 {% block content %}
-<script>window.__nePageReceiver = true; /* 声明本页可接收 agent 页面命令（set_review 等） */</script>
-<h1>🔍 侦察 · 提取 <span style="font-size:14px;color:#8b949e">给 agent 一个小说 id → 自动下载分析 → 候选确认入库五库</span></h1>
+{% from "_scout_steps.html" import steps %}
+{{ steps(1) }}
 
-{# ─── 区 1：Agent 任务条（单输入：模糊书名 agent 搜索 / book_id 直抓 + 平台选择） ─── #}
-<div class="scout-form">
-    <div class="input-row">
-        <input type="text" id="book-input" placeholder="输入书名（模糊书名 agent 自动搜索）或 book_id / URL">
+<h1>🔍 步骤一 · 侦察抓取 <span style="font-size:14px;color:#8b949e">热榜侦察 + 按书名/book_id 下载章节到本地书库</span></h1>
+
+{# ─── 热榜侦察（后台线程拉取 + 缓存，/api/scout/hot） ─── #}
+<div class="scout-card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>🔥 热榜侦察</strong>
+        <button class="small" onclick="loadHot()">🔄 刷新</button>
+    </div>
+    <div class="hot-chips" style="margin-top:12px">
+        <button class="chip active" data-genre="" onclick="switchGenre(this)">全部</button>
+        <button class="chip" data-genre="玄幻" onclick="switchGenre(this)">玄幻</button>
+        <button class="chip" data-genre="都市" onclick="switchGenre(this)">都市</button>
+        <button class="chip" data-genre="科幻" onclick="switchGenre(this)">科幻</button>
+        <button class="chip" data-genre="历史" onclick="switchGenre(this)">历史</button>
+        <button class="chip" data-genre="仙侠" onclick="switchGenre(this)">仙侠</button>
+    </div>
+    <div id="hot-list" style="margin-top:12px">
+        <div class="empty"><p style="color:#484f58">加载中...</p></div>
+    </div>
+</div>
+
+{# ─── 抓取表单（后端直抓：POST /api/scout/run，SSE 事件不消费，进度走 crawl-progress 轮询） ─── #}
+<div class="scout-card">
+    <strong>⬇️ 抓取下载</strong>
+    <div style="margin-top:10px">
+        <input type="text" id="book-input" placeholder="输入书名（自动搜索）或 book_id / URL">
     </div>
     <div class="form-row-inline">
         <label>平台</label>
@@ -21,18 +43,14 @@
         <input type="number" id="start-chapter" value="1" min="1">
         <label style="color:#8b949e">—</label>
         <input type="number" id="end-chapter" value="30" min="1">
-        <label>风格规则归属笔名</label>
-        <select id="scout-pen">
-            {% for p in profiles %}<option value="{{ p.id }}" data-name="{{ p.pen_name }}">{{ p.pen_name }}</option>{% endfor %}
-        </select>
     </div>
-    <button id="btn-scout" class="btn-primary" onclick="sendScoutTask()">🚀 交给 Agent</button>
+    <div style="display:flex;align-items:center;gap:12px">
+        <button id="btn-scout" class="btn-primary" onclick="startFetch()">🚀 开始抓取</button>
+        <span id="fetch-status" style="font-size:12px;color:#8b949e"></span>
+    </div>
 </div>
 
-{# ─── 区 2：实时进度 ─── #}
-<div id="agent-status" style="display:none;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 14px;margin-top:12px">
-    <span>🤖 Agent 处理中…</span>
-</div>
+{# ─── 实时进度 ─── #}
 <div id="crawl-progress" style="display:none;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px;margin-top:12px">
     <div style="display:flex;justify-content:space-between;align-items:center">
         <span id="cp-phase" style="font-size:13px;color:#c9d1d9">…</span>
@@ -42,104 +60,150 @@
         <div id="cp-fill" style="height:100%;width:0%;background:#58a6ff;border-radius:4px;transition:width .3s"></div>
     </div>
     <div id="cp-msg" style="font-size:12px;color:#8b949e;margin-top:6px"></div>
+    <div id="cp-next" style="display:none;margin-top:10px">
+        <a class="btn-primary" href="/extract" onclick="if (typeof navigateTo==='function') { navigateTo('/extract'); return false; }">下一步：去步骤二提取到数据库 →</a>
+    </div>
 </div>
 
-{# ─── 区 3：结果审查区（agent set_review 呈现候选；已下载书库已独立到 /novels 页） ─── #}
-<div id="review-area" style="display:none;margin-top:20px"></div>
-
 <style>
-.scout-form { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-top: 12px; }
-.input-row { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
-.input-row input { flex: 1; }
-.or-divider { color: #484f58; font-size: 12px; white-space: nowrap; }
-.form-row-inline { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
-.form-row-inline label { font-size: 13px; color: #8b949e; }
-.form-row-inline input[type=number] { width: 80px; }
-.form-row-inline select { min-width: 120px; }
-.review-item { display:flex;align-items:flex-start;gap:12px;padding:12px;margin-bottom:8px;background:#161b22;border:1px solid #30363d;border-radius:6px;cursor:pointer;transition:border-color .2s; }
-.review-item:hover { border-color:#58a6ff; }
-.review-item input[type=checkbox] { margin-top:3px;width:16px;height:16px;accent-color:#238636; }
-.review-content { flex:1; }
-.review-panel { margin-top:8px; }
+.scout-card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:20px; margin-top:16px; }
+.form-row-inline { display:flex; align-items:center; gap:10px; margin:14px 0; flex-wrap:wrap; }
+.form-row-inline label { font-size:13px; color:#8b949e; }
+.form-row-inline input[type=number] { width:80px; }
+.form-row-inline select { min-width:120px; }
+.hot-chips { display:flex; gap:8px; flex-wrap:wrap; }
+.chip { padding:4px 14px; border-radius:16px; border:1px solid #30363d; background:#21262d;
+    color:#c9d1d9; font-size:13px; cursor:pointer; }
+.chip.active { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+.hot-item { display:flex; align-items:flex-start; gap:12px; padding:12px; margin-bottom:8px;
+    background:#0d1117; border:1px solid #30363d; border-radius:6px; }
+.hot-item strong { color:#f0f6fc; }
 </style>
 
-<script src="/static/js/library_review.js"></script>
 <script>
-var currentPenId = '';
-var currentPenName = '';
+var _hotGenre = '';
+var _hotPollCount = 0;
+
 (function(){
-    var sel = document.getElementById('scout-pen');
-    if (sel && sel.options.length) { currentPenId = sel.value; currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name'); }
-    if (sel) sel.addEventListener('change', function(){
-        currentPenId = sel.value;
-        currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name');
-    });
-    // 从外部书库「去侦察页分析」跳入：预填书名，用户调范围/笔名后点「交给 Agent」
+    loadHot();
+    // 从外部书库跳入：?book= 预填书名
     try {
         var book = new URLSearchParams(window.location.search).get('book');
         if (book) document.getElementById('book-input').value = book;
     } catch(e) {}
-    pollPendingReview();   // 回页恢复：agent 已呈现但未渲染的候选
+    pollCrawlProgress();   // 立即拉一次，之后定时轮询
 })();
 
-/* ─── 任务文案 ─── */
-function buildScoutTask(target, startCh, endCh, penName, platform) {
-    return '从' + platform + '抓取并分析小说入库：' + target + '，下载第 ' + startCh + ' 章到第 ' + endCh + ' 章，风格规则归属笔名「' + penName + '」。'
-         + '下载后读正文自主提炼桥段/情节弧/笑点/角色/写作风格五类候选，'
-         + '用 drive_ui set_review 把候选呈现到侦察页审查区，不要直接入库，等我在页面勾选确认。';
+/* ─── 热榜侦察 ─── */
+function switchGenre(btn) {
+    _hotGenre = btn.getAttribute('data-genre') || '';
+    document.querySelectorAll('.hot-chips .chip').forEach(function(c) { c.classList.remove('active'); });
+    btn.classList.add('active');
+    loadHot();
 }
 
-/* ─── 区 1：交给 Agent（未下载 → 下载+分析）。单输入：模糊书名 agent 搜索 / book_id 直抓；下载区间按真实章号 ─── */
-function sendScoutTask() {
-    if (typeof window.agentSendTask !== 'function') return showToast('侧栏 Agent 未就绪，请刷新页面', 'error');
+function loadHot() {
+    var el = document.getElementById('hot-list');
+    if (!el) return;
+    _hotPollCount = 0;
+    el.innerHTML = '<div class="empty"><p style="color:#484f58">加载中...</p></div>';
+    fetchHot().then(function(d) {
+        if (!d || !d.ok) { el.innerHTML = '<div class="empty"><p style="color:#f85149">热榜加载失败</p></div>'; return; }
+        if (d.novels && d.novels.length) { renderHot(d.novels); return; }
+        if (d.loading || d.refreshing) { pollHot(); return; }
+        el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据</p></div>';
+    }).catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
+}
+
+function fetchHot() {
+    return fetch('/api/scout/hot?genre=' + encodeURIComponent(_hotGenre) + '&count=10')
+        .then(function(r) { return r.json(); });
+}
+
+function pollHot() {
+    if (_hotPollCount++ > 30) {
+        var el = document.getElementById('hot-list');
+        if (el) el.innerHTML = '<div class="empty"><p style="color:#484f58">热榜拉取超时，请稍后重试</p></div>';
+        return;
+    }
+    setTimeout(function() {
+        fetchHot().then(function(d) {
+            if (d && d.ok && d.novels && d.novels.length) { renderHot(d.novels); return; }
+            if (d && d.ok && (d.loading || d.refreshing)) { pollHot(); return; }
+            var el = document.getElementById('hot-list');
+            if (el) el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据</p></div>';
+        }).catch(function() {});
+    }, 2000);
+}
+
+function renderHot(novels) {
+    var el = document.getElementById('hot-list');
+    if (!el) return;
+    if (!novels || !novels.length) { el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据</p></div>'; return; }
+    var html = '';
+    novels.forEach(function(n) {
+        var intro = n.intro || '';
+        if (intro.length > 80) intro = intro.slice(0, 80) + '…';
+        html += '<div class="hot-item">';
+        html += '<div style="flex:1;min-width:0">';
+        html += '<div><strong>' + escapeHtml(n.title || '') + '</strong> <span class="tag">' + escapeHtml(n.author || '') + '</span>';
+        if (n.genre) html += ' <span class="tag" style="background:#21262d">' + escapeHtml(n.genre) + '</span>';
+        if (n.hot_score) html += ' <span style="font-size:12px;color:#d29922">🔥 ' + escapeHtml(String(n.hot_score)) + '</span>';
+        html += '</div>';
+        if (intro) html += '<div style="font-size:12px;color:#484f58;margin-top:4px">' + escapeHtml(intro) + '</div>';
+        if (n.chapter_count) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">' + n.chapter_count + ' 章 · ' + formatWords(n.word_count) + '</div>';
+        html += '</div>';
+        html += '<button class="small" style="background:#1f6feb;white-space:nowrap" data-title="' + escapeHtml(n.title || '') + '" data-id="' + escapeHtml(n.book_id || '') + '" onclick="grabBook(this)">⚡ 抓取</button>';
+        html += '</div>';
+    });
+    el.innerHTML = html;
+}
+
+function formatWords(n) {
+    n = parseInt(n) || 0;
+    if (n >= 10000) return (n / 10000).toFixed(1) + '万字';
+    if (n >= 1000) return (n / 1000).toFixed(1) + '千字';
+    return n + '字';
+}
+
+/* 热榜书 → 填入抓取表单 */
+function grabBook(btn) {
+    var title = btn.getAttribute('data-title') || '';
+    var id = btn.getAttribute('data-id') || '';
+    var input = document.getElementById('book-input');
+    if (!input) return;
+    input.value = title || id;
+    input.focus();
+    input.scrollIntoView({behavior:'smooth', block:'center'});
+    showToast('已填入「' + (title || id) + '」，点「开始抓取」下载', 'info');
+}
+
+/* ─── 后端直抓：POST /api/scout/run（fire-and-forget，进度靠 crawl-progress 轮询） ─── */
+function startFetch() {
     var input = document.getElementById('book-input').value.trim();
     if (!input) return showToast('请输入书名或 book_id', 'warning');
     var start = parseInt(document.getElementById('start-chapter').value) || 1;
     var end = parseInt(document.getElementById('end-chapter').value) || 30;
     if (start < 1 || end < start) return showToast('下载范围不合法：起始章 ≥1 且 ≤ 结束章', 'warning');
-    var platformSel = document.getElementById('scout-platform');
-    var platformLabel = (platformSel && platformSel.selectedOptions.length)
-        ? platformSel.selectedOptions[0].text : '番茄小说';
     var m = input.match(/(\d{15,})/);
-    var target = m ? ('book_id ' + m[1]) : ('《' + input + '》');
-    window.agentSendTask(buildScoutTask(target, start, end, currentPenName, platformLabel));
-    showToast('🤖 已交给 Agent，下载/分析进度请看下方与侧栏', 'info');
+    var body = { start_chapter: start, end_chapter: end, chapters: end - start + 1 };
+    if (m) body.book_id = m[1]; else body.title = input;
+    var st = document.getElementById('fetch-status');
+    if (st) { st.textContent = '⏳ 已提交，进度见下方…'; st.style.color = '#8b949e'; }
+    fetch('/api/scout/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+    }).then(function(r) {
+        // 200 = SSE 流已开启（body 不消费，浏览器只缓冲少量事件文本，下载由服务端线程落盘 crawl_progress.json）
+        if (!r.ok) return r.json().then(function(d) {
+            if (st) { st.textContent = '❌ ' + (d.error || '提交失败'); st.style.color = '#f85149'; }
+        });
+    }).catch(function() {});
+    showToast('🚀 已开始抓取', 'info');
 }
 
-/* ─── 区 3：set_review 命令 → 渲染审查卡（SSE 实时路径） ─── */
-window.onnecommand = function(e) {
-    var d = e && e.detail;
-    if (!d || d.cmd !== 'set_review' || !d.args) return;
-    renderReviewCards(d.args, 'review-area');
-    var area = document.getElementById('review-area');
-    if (area) area.scrollIntoView({behavior:'smooth', block:'start'});
-};
-
-/* 入库成功后（library_review.js 回调）：候选已消费，快照由服务端清空，页面保留已勾选卡片 */
-function refreshScoutUI() {
-    // 无书库列表可刷新；卡片保留供查看。回页时 pending 已清不会重放。
-}
-
-/* ─── 候选持久化恢复：pending-review 轮询（SSE 渲染失败/页面不在场时兜底） ─── */
-function pollPendingReview() {
-    fetch('/api/scout/pending-review')
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            if (!d || !d.ok) return;
-            var review = d.review || {};
-            if (!review.title) return;
-            // 只在此前未渲染过时渲染，避免覆盖用户已勾选的实时卡片
-            if (window._lastReviewData) return;
-            renderReviewCards(review, 'review-area');
-            var area = document.getElementById('review-area');
-            if (area) area.scrollIntoView({behavior:'smooth', block:'start'});
-        })
-        .catch(function() {});
-}
-setInterval(pollPendingReview, 4000);
-
-/* ─── 区 2：实时进度（crawl-progress 轮询 + agent busy 指示）。
-   只该框在抓取中显示；done/error 显示几秒后自动消失，旧残留(ts>30s)不重放。 ─── */
+/* ─── 实时进度（crawl-progress 轮询；done 时显示「去步骤二」入口，旧残留 ts>30s 不重放） ─── */
 var _crawlHideTimer = null;
 function pollCrawlProgress() {
     fetch('/api/crawl/progress')
@@ -151,6 +215,7 @@ function pollCrawlProgress() {
             var countEl = document.getElementById('cp-count');
             var fillEl = document.getElementById('cp-fill');
             var msgEl = document.getElementById('cp-msg');
+            var nextEl = document.getElementById('cp-next');
             var now = Date.now() / 1000;
             var stale = (d.ts || 0) > 0 && (now - d.ts) > 30;
             function hide() { box.style.display = 'none'; }
@@ -158,6 +223,7 @@ function pollCrawlProgress() {
             if (d.state === 'running') {
                 clearHide();
                 box.style.display = '';
+                if (nextEl) nextEl.style.display = 'none';
                 var pct = d.total > 0 ? Math.round(d.current / d.total * 100) : 0;
                 if (fillEl) fillEl.style.width = pct + '%';
                 if (phaseEl) phaseEl.textContent = d.phase || '';
@@ -171,10 +237,10 @@ function pollCrawlProgress() {
                 if (phaseEl) phaseEl.textContent = isErr ? '❌ 失败' : '✅ 完成';
                 if (countEl) countEl.textContent = '';
                 if (msgEl) msgEl.textContent = d.message || '';
-                // 显示完成/失败几秒后自动消失
-                _crawlHideTimer = setTimeout(function() { hide(); _crawlHideTimer = null; }, isErr ? 6000 : 4000);
+                if (isErr) { if (nextEl) nextEl.style.display = 'none'; }
+                else { if (nextEl) nextEl.style.display = ''; }
+                _crawlHideTimer = setTimeout(function() { hide(); _crawlHideTimer = null; }, isErr ? 6000 : 6000);
             } else {
-                // 无进行中抓取（idle/空/旧残留）→ 隐藏
                 clearHide();
                 hide();
             }
@@ -182,12 +248,5 @@ function pollCrawlProgress() {
         .catch(function() {});
 }
 setInterval(pollCrawlProgress, 1000);
-
-// agent 忙碌指示（ne:agent-state 事件，agent_panel.js 派发）
-window.addEventListener('ne:agent-state', function(e) {
-    var busy = e && e.detail && e.detail.busy;
-    var el = document.getElementById('agent-status');
-    if (el) el.style.display = busy ? '' : 'none';
-});
 </script>
 {% endblock %}
