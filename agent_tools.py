@@ -1799,11 +1799,13 @@ def fetch_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
             site=site, url=url, book_id=book_id, chapters=chapters,
             start_chapter=start_chapter, end_chapter=end_chapter,
             download_delay=download_delay, on_progress=on_progress, platform="web")
-        write_crawl_progress("done", "download", dl["chapters"], dl["chapters"],
-                             f"下载完成 {dl['chapters']}章",
+        n = dl["chapters"]
+        msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")
+               else f"下载完成 {n}章")
+        write_crawl_progress("done", "download", n, n, msg,
                              extra={"folder": dl["folder"], "platform": "web", "site": site})
         return {"ok": True, "title": info["title"], "author": info["author"],
-                "saved_chapters": dl["chapters"], "folder": dl["folder"],
+                "saved_chapters": n, "folder": dl["folder"], "already": dl.get("already", False),
                 "platform": "web", "site": site}
     except Exception as e:
         write_crawl_progress("error", "", 0, 0, str(e))

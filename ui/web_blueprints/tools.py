@@ -143,9 +143,11 @@ def scout_run():
                     start_chapter=start_chapter, end_chapter=end_chapter,
                     download_delay=download_delay, on_progress=on_progress, platform="web")
                 if not task_manager.is_cancelled(task_id):
-                    task_manager.done(task_id, f"下载完成 {dl['chapters']}章")
-                    write_crawl_progress("done", "download", dl["chapters"], dl["chapters"],
-                                         f"下载完成 {dl['chapters']}章",
+                    n = dl["chapters"]
+                    msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")
+                           else f"下载完成 {n}章")
+                    task_manager.done(task_id, msg)
+                    write_crawl_progress("done", "download", n, n, msg,
                                          extra={"folder": dl.get("folder", ""),
                                                 "platform": "web", "site": site})
                 return

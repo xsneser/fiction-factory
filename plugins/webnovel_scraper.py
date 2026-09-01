@@ -35,6 +35,37 @@ _AD_LINE_RE = re.compile(
     r"^https?://\S+$|^www\.\S+$"
 )
 
+# 主书章节标题：第N章（阿拉伯或中文数字都算），番外（如「张丽娟（一）」）不匹配
+MAIN_TITLE_RE = r"^第(?:[0-9一二三四五六七八九十百千零两]+)章"
+_CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_CN_UNITS = {"十": 10, "百": 100, "千": 1000}
+
+
+def _cn_num_to_int(s: str):
+    """中文数字 → int（支持 一~九千九百九十九；非法返回 None）。"""
+    if not s or not re.fullmatch(r"[零一二三四五六七八九十百千两]+", s):
+        return None
+    total = section = num = 0
+    for ch in s:
+        if ch in _CN_DIGITS:
+            num = _CN_DIGITS[ch]
+        elif ch in _CN_UNITS:
+            section += (num or 1) * _CN_UNITS[ch]
+            num = 0
+        else:  # 零
+            num = 0
+    return total + section + num
+
+
+def _parse_chapter_num(title: str):
+    """章节标题 → 编号（第N章，阿拉伯/中文数字均可）；非第N章 → None（番外）。"""
+    m = re.match(r"^第([0-9一二三四五六七八九十百千零两]+)章", title)
+    if not m:
+        return None
+    s = m.group(1)
+    return int(s) if s.isdigit() else _cn_num_to_int(s)
+
 # ─── 站点适配器注册表 ────────────────────────────────────────────────
 # 新增站点：照抄一条，覆盖必要键即可（其余用默认）。{cid}/{bid} 等模板在调用处替换。
 SITES = {
@@ -55,7 +86,7 @@ SITES = {
         # 续页链接（模板，{cid} 替换为当前 chapter_id），组1=续页号
         "extra_page_re": r'href="[^"]*?/read/\d+/{cid}_(\d+)\.html"',
         "content_div_id": "content",
-        "main_title_re": r"^第\d+章",   # 主书过滤（排除番外）；None=全下
+        "main_title_re": MAIN_TITLE_RE,   # 主书过滤（排除番外；阿拉伯/中文数字章号都算）
         "request_delay": 0.5,
     },
 }
@@ -198,7 +229,7 @@ class WebnovelCrawler:
         link_re = self.cfg["chapter_link_re"]
 
         def _num_rank(c):
-            return 0 if re.match(r"^第\d+章", c["title"]) else 1
+            return 0 if _parse_chapter_num(c["title"]) is not None else 1
 
         by_href: dict = {}   # 同 href 去重：页顶「开始阅读」按钮常与真正的「第1章」指向同一章，
         #                    无编号标题排后，重复时替换为带「第N章」编号的那条
@@ -222,10 +253,9 @@ class WebnovelCrawler:
         if not by_href:
             return []
         catalog = list(by_href.values())
-        # 编号解析：第N章 → num；番外 → None。带编号按数字升序，番外排尾。
+        # 编号解析：第N章（阿拉伯/中文数字）→ num；番外 → None。带编号按数字升序，番外排尾。
         for c in catalog:
-            mm = re.match(r"^第(\d+)章", c["title"])
-            c["num"] = int(mm.group(1)) if mm else None
+            c["num"] = _parse_chapter_num(c["title"])
         numbered = sorted([c for c in catalog if c["num"] is not None],
                           key=lambda c: c["num"])
         extras = [c for c in catalog if c["num"] is None]
@@ -309,6 +339,7 @@ def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
     chapters>0 → 按列表序号区间（第1章=1）。先建目录+info.json（/scout 立即显示），
     再逐章 save_chapter 渐进落盘（停止保留已抓）。返回 (info, {"folder", "chapters"})。
     """
+    import json as _json
     import re as _re
     if not url and not book_id:
         raise RuntimeError("请提供书籍 URL 或 book_id")
@@ -317,7 +348,10 @@ def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
     catalog = crawler.get_chapter_list(info["book_id"])
     main_re = crawler.cfg.get("main_title_re")
     if main_re:
-        catalog = [c for c in catalog if _re.match(main_re, c["title"])]
+        filtered = [c for c in catalog if _re.match(main_re, c["title"])]
+        # 过滤回退：主书过滤把全书滤成 0 章（个别书章标题格式不符）→ 禁用过滤保留全部
+        if filtered:
+            catalog = filtered
     total = len(catalog)
     if total == 0:
         raise RuntimeError(f"未解析到章节列表: {info['title']}")
@@ -340,13 +374,28 @@ def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
     if on_progress:
         on_progress("search", 1, 1, f"找到: {info['title']}（共{total}章，下载{len(selected)}章）")
 
-    from plugins.novel_storage import save_novel, save_chapter, NOVELS_DIR
-    folder = save_novel(platform, {
-        "title": info["title"], "author": info["author"],
-        "book_id": f"{site}:{info['book_id']}", "url": info["url"],
-        "genre": info.get("genre", ""), "chapter_count": total,
-        "site": site,
-    }, [])
+    from plugins.novel_storage import save_novel, save_chapter, NOVELS_DIR, _safe_name
+    # 查重：同平台同书名已存在 → 复用目录（保留首见源 info.json，避免 book_id/site 被覆盖），
+    # 只补缺章；不同源同书名也复用目录不产生第二条目。
+    folder = _safe_name(info["title"])
+    existing_info = NOVELS_DIR / platform / folder / "info.json"
+    if existing_info.exists():
+        old_site = "?"
+        try:
+            old_site = _json.loads(existing_info.read_text(encoding="utf-8")).get("site", "?")
+        except Exception:
+            pass
+        if old_site == site and on_progress:
+            on_progress("search", 1, 1, f"已存在: {info['title']}（复用目录，补缺章）")
+        elif old_site != site and on_progress:
+            on_progress("search", 1, 1, f"同书名已存在(来源 {old_site})，复用目录补充缺章")
+    else:
+        save_novel(platform, {
+            "title": info["title"], "author": info["author"],
+            "book_id": f"{site}:{info['book_id']}", "url": info["url"],
+            "genre": info.get("genre", ""), "chapter_count": total,
+            "site": site,
+        }, [])
     # 断点续下：跳过已落盘章节（下载中断后从缺章续抓，避免重下已完成的）
     ch_dir = NOVELS_DIR / platform / folder / "chapters"
     existing: set[int] = set()
@@ -358,6 +407,12 @@ def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
                 pass
     pending = [c for c in selected if c["index"] not in existing]
     skipped = len(selected) - len(pending)
+    if not pending:
+        # 已是最新：无需下载，不产生重复条目
+        if on_progress:
+            on_progress("search", 1, 1, f"已是最新（{len(existing)} 章），无需下载")
+        return info, {"folder": folder, "chapters": 0, "already": True,
+                      "skipped": len(existing)}
     if on_progress and skipped:
         on_progress("search", 1, 1, f"已下载 {skipped} 章，续下 {len(pending)} 章")
 
@@ -379,7 +434,8 @@ def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
     if on_progress:
         on_progress("download", len(pending), len(pending),
                     f"下载完成 {downloaded}章（本次新增）")
-    return info, {"folder": folder, "chapters": downloaded + skipped}
+    return info, {"folder": folder, "chapters": downloaded, "already": False,
+                  "skipped": skipped}
 
 
 def main():
