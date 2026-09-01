@@ -16,7 +16,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 
 > ⚠️ **2026-08-28**：dsh 侧 skill 重写完成（原 2026-08-24 已删、仅 MCP 直驱）：`NOVEL_AGENT.md` **只留定义与契约**，创作流程拆成 **5 个 skill**（`agent-sidecar/skills/novel-*`，同步 `.dsh/skills/` 发现根）——`novel-scout`（侦察抓取）/ `novel-build-candidates`（步1-2）/ `novel-build`（步3）/ `novel-story`（弧+写作合一，原 outline+write 合并）/ `novel-publish`。dsh agent 按 `NOVEL_AGENT.md` §2 分发表用 Skill 工具调用。**Claude Code 侧 `.claude/skills/` 未改动**。
 
-- **意图 → skill 分发表**：「开新书 / 写设定 / 建书 / 构思世界观 / 生成候选」→ dsh 侧 `novel-build-candidates`（生成候选并**呈现**到步 2，**停在交互点等用户挑选，不自动选/跳步**）；**侧栏要求建书先 `navigate("/books/start")` 翻到步 1 表单**（已给全则预填，笔名留用户选），用户填完点「🚀 让 Agent 构建」后按钮路径接管（只生成候选并呈现，停步 2）；「已选候选 / 补全世界观 / 继续建书」→ `novel-build`（步 3 分步建书 + 用户自行提交 + 完整弧）；「生成弧 / 排故事线 / 选桥段 / 一键完整弧 / 续写 / 扩写 / 写正文 / 写下一章 / 继续写 / 写桥段 / 一键写完整章 / 写完整章 / 一键完整章节 / 完整章节构建」→ `novel-story`（弧+写作合一：先 `save_outlines` 排弧 → 逐桥段 `save_bridge_draft` → 章满 `save_chapter_text`；完整章节构建含质量门禁 `chapter_quality_gate`，默认执行、只报告不修复，问题作决策点）；「上架 / 发布 / 完本 / 导出 / 生成书名简介 / 检查能否发书」→ `novel-publish`。「删书」**无 skill**——`navigate("/books")` 让用户手动点删除（直删工具不在工具面）。「抓取 / 下载番茄小说 / 侦察热榜 / 读已抓取 / 借鉴参考书 / 提取入库」→ dsh 侧 `novel-scout`（`fetch_novel` 按书名/book_id 下载章节入库 `storage/novels/fanqie/`，无需 LLM，进度在 `/scout` 页实时显示 / `discover_hot` 热榜 / `list_crawled_novels` 列出已抓书库 / `read_crawled_novel` 读章节目录或单章正文，供借鉴设定/写法 / `ingest_library_assets` 读参考书后自主提炼桥段/弧/笑点/角色入库四库，纯规则无 LLM）。拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」。（**Claude Code 侧为交互式 `novel-build`，与 dsh 侧拆分独立演进、不做镜像**；Claude Code 端也可直接跑 `novel-master` 统一调度，dsh 端 skill 重写见 2026-08-28 注记，按 `NOVEL_AGENT.md` §2 分发表自分发。）
+- **意图 → skill 分发表**：「开新书 / 写设定 / 建书 / 构思世界观 / 生成候选」→ dsh 侧 `novel-build-candidates`（生成候选并**呈现**到步 2，**停在交互点等用户挑选，不自动选/跳步**）；**侧栏要求建书先 `navigate("/books/start")` 翻到步 1 表单**（已给全则预填，笔名留用户选），用户填完点「🚀 让 Agent 构建」后按钮路径接管（只生成候选并呈现，停步 2）；「已选候选 / 补全世界观 / 继续建书」→ `novel-build`（步 3 分步建书 + 用户自行提交 + 完整弧）；「生成弧 / 排故事线 / 选桥段 / 一键完整弧 / 续写 / 扩写 / 写正文 / 写下一章 / 继续写 / 写桥段 / 一键写完整章 / 写完整章 / 一键完整章节 / 完整章节构建」→ `novel-story`（弧+写作合一：先 `save_outlines` 排弧 → 逐桥段 `save_bridge_draft` → 章满 `save_chapter_text`；完整章节构建含质量门禁 `chapter_quality_gate`，默认执行、只报告不修复，问题作决策点）；「上架 / 发布 / 完本 / 导出 / 生成书名简介 / 检查能否发书」→ `novel-publish`。「删书」**无 skill**——`navigate("/books")` 让用户手动点删除（直删工具不在工具面）。「抓取 / 下载番茄小说 / 侦察热榜 / 读已抓取 / 借鉴参考书 / 提取入库」→ dsh 侧 `novel-scout`（`fetch_novel` 按书名/book_id 下载章节入库 `storage/novels/fanqie/`，无需 LLM，进度在 `/scout` 页实时显示（2026-09-01 拆两步两页：`/scout` 步骤一热榜+后端直抓下载 / `/extract` 步骤二选已下载书→agent 提炼 set_review→勾选入库） / `discover_hot` 热榜 / `list_crawled_novels` 列出已抓书库 / `read_crawled_novel` 读章节目录或单章正文，供借鉴设定/写法 / `ingest_library_assets` 读参考书后自主提炼桥段/弧/笑点/角色入库四库，纯规则无 LLM）。拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」。（**Claude Code 侧为交互式 `novel-build`，与 dsh 侧拆分独立演进、不做镜像**；Claude Code 端也可直接跑 `novel-master` 统一调度，dsh 端 skill 重写见 2026-08-28 注记，按 `NOVEL_AGENT.md` §2 分发表自分发。）
 - 每个分 skill 先用 `mcp__novel-engine__get_book_detail` / `get_book_state` 做前置 phase 检查；phase 不满足时引导前一阶段，不要跨阶段硬做。
 - 状态信号：`storyline.phase ∈ config/outlines/plots/ready`；`book.status ∈ planning/writing/reviewing/finished/published/paused`。
 - 写类工具带书级文件锁，冲突抛 `BookBusyError`，稍后重试；`budget_paused` 表示预算/额度触发，停下问用户。
@@ -45,8 +45,9 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 | 写作工具 | `/write` | 否 | 302→`/books` |
 | 去AI味 | `/deai` | 否 | — |
 | 审阅测试 | `/review-test` | 否 | — |
-| 侦察·提取 | `/scout`（原 `/extract` 已合并，302→`/scout`） | 否 | — |
-| 外部书库 | `/novels`（已下载小说，阅读 / 去侦察页分析 / 删除） | 否 | — |
+| 侦察·抓取（步骤一） | `/scout`（热榜侦察 + 后端直抓下载 + 进度；原合并页已拆两步） | 否 | — |
+| 提取到数据库（步骤二） | `/extract`（选已下载书 → agent 提炼 set_review → 勾选入库五库） | 否 | — |
+| 外部书库 | `/novels`（已下载小说，阅读 / 去提取页分析 / 删除） | 否 | — |
 | 外部书库阅读器 | `/novels/read?platform=&folder=`（单本阅读，章节懒加载；无 folder 302→`/novels`） | 否 | — |
 | 设置 | `/settings` | 否 | — |
 
