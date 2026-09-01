@@ -132,40 +132,59 @@ window.ReaderCore = (function () {
         function nextChapter() { if (R.idx < R.chapters.length - 1) goToChapter(R.idx + 1); }
         function prevChapter() { if (R.idx > 0) goToChapter(R.idx - 1); }
 
-        /* ─── 跨章翻页：有 pagesNext → 双容器推入动画（写作台）；否则简单滑出+硬切（外部） ─── */
+        /* ─── 跨章翻页：统一双容器推入动画（写作台同步 / 外部书库懒加载，取到正文后动画）；
+           pagesNext 缺失时兜底滑出动画（旧内容滑出一页宽 → 硬切新章） ─── */
         function crossChapterFlip(dir, targetIdx, opts_) {
-            if (!pagesNext || !pages) { _applyChapter(targetIdx, opts_); return; }
+            if (!pages) { _applyChapter(targetIdx, opts_); return; }
             if (R._anim) return;
             targetIdx = Math.max(0, Math.min(targetIdx, R.chapters.length - 1));
             var targetCh = R.chapters[targetIdx];
             if (!targetCh) { _applyChapter(targetIdx, opts_); return; }
             var token = ++R._flipToken;
-            R._anim = { token: token, targetIdx: targetIdx };
             var colW = _colW(), k = (PAGE_GAP + colW) || PAGE_GAP;
             var oldT = _readTransform();
             var forward = dir > 0;
-            var sec = pagesNext;
-            // ① 预渲染目标章进副容器 + 测总页数（双容器路径假设正文同步可用：写作台注入）
-            renderChapter(targetCh, targetCh.content, sec);
-            var nextTotal = _measurePages(sec);
-            var secStart, secEnd, primEnd, targetPage;
-            if (forward) { targetPage = 0; secStart = +k; secEnd = 0; primEnd = oldT - k; }
-            else { targetPage = nextTotal - 1; secStart = -nextTotal * k; secEnd = -(nextTotal - 1) * k; primEnd = oldT + k; }
-            // ② 拍1：副容器隐藏中无动画就位 → 置可见；主容器归一化当前页
-            sec.style.transition = 'none';
-            sec.style.transform = 'translateX(' + secStart + 'px)';
-            void sec.offsetWidth;
-            sec.style.transition = '';
-            sec.style.visibility = 'visible';
-            _swapContentInstant(function () { pages.style.transform = 'translateX(' + oldT + 'px)'; });
-            // ③ 拍2：双容器同帧动画（.reader-pages 基类 .22s transition 生效）
-            pages.style.transform = 'translateX(' + primEnd + 'px)';
-            sec.style.transform = 'translateX(' + secEnd + 'px)';
-            // ④ 拍3：动画结束 promote（token 守卫）
-            setTimeout(function () {
-                if (token !== R._flipToken) { _abortAnim(); return; }
-                _promoteSecondary(sec, targetIdx, targetPage, token);
-            }, FLIP_MS);
+            function loadContent(cb) {
+                if (typeof opts.getChapterContent === 'function') opts.getChapterContent(targetCh, cb);
+                else cb(targetCh && targetCh.content);
+            }
+            if (!pagesNext) {
+                // 兜底：无副容器 → 旧内容滑出一页宽，然后硬切新章
+                _swapContentInstant(function () { pages.style.transform = 'translateX(' + oldT + 'px)'; });
+                pages.style.transform = 'translateX(' + (oldT + (forward ? -k : k)) + 'px)';
+                setTimeout(function () {
+                    if (token !== R._flipToken) return;
+                    _swapContentInstant(function () { _applyChapter(targetIdx, opts_); });
+                }, FLIP_MS);
+                return;
+            }
+            // 先取目标章正文（写作台同步返回；外部书库懒加载/已预取），再双容器推入动画
+            loadContent(function (content) {
+                if (token !== R._flipToken) return;
+                R._anim = { token: token, targetIdx: targetIdx };
+                var sec = pagesNext;
+                // ① 预渲染目标章进副容器 + 测总页数
+                renderChapter(targetCh, content, sec);
+                var nextTotal = _measurePages(sec);
+                var secStart, secEnd, primEnd, targetPage;
+                if (forward) { targetPage = 0; secStart = +k; secEnd = 0; primEnd = oldT - k; }
+                else { targetPage = nextTotal - 1; secStart = -nextTotal * k; secEnd = -(nextTotal - 1) * k; primEnd = oldT + k; }
+                // ② 拍1：副容器隐藏中无动画就位 → 置可见；主容器归一化当前页
+                sec.style.transition = 'none';
+                sec.style.transform = 'translateX(' + secStart + 'px)';
+                void sec.offsetWidth;
+                sec.style.transition = '';
+                sec.style.visibility = 'visible';
+                _swapContentInstant(function () { pages.style.transform = 'translateX(' + oldT + 'px)'; });
+                // ③ 拍2：双容器同帧动画（.reader-pages 基类 .22s transition 生效）
+                pages.style.transform = 'translateX(' + primEnd + 'px)';
+                sec.style.transform = 'translateX(' + secEnd + 'px)';
+                // ④ 拍3：动画结束 promote（token 守卫）
+                setTimeout(function () {
+                    if (token !== R._flipToken) { _abortAnim(); return; }
+                    _promoteSecondary(sec, targetIdx, targetPage, token);
+                }, FLIP_MS);
+            });
         }
         function _promoteSecondary(sec, targetIdx, targetPage, token) {
             if (token !== R._flipToken) { _abortAnim(); return; }
