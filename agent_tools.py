@@ -1762,7 +1762,7 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
             "title": novel.title, "author": novel.author,
             "book_id": novel.book_id, "url": novel.url,
             "genre": novel.genre, "chapter_count": novel.chapter_count,
-            "cover": novel.cover,
+            "cover": novel.cover, "intro": novel.intro,
         }, downloaded)
         write_crawl_progress("done", "download", len(downloaded), len(downloaded),
                              f"下载完成 {len(downloaded)}章",
@@ -1812,6 +1812,43 @@ def fetch_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
         raise
 
 
+def fetch_book(title: str = "", url: str = "", book_id: str = "", site: str = "wodushu",
+               chapters: int = 0, start_chapter: int = 1, end_chapter: int = 0,
+               download_delay: float = 0.5) -> dict:
+    """综合抓取一本书（番茄元数据+权威目录 + 镜像站全文 → 统一书库一本）。
+
+    输入书名 / 番茄 book_id / 镜像站 URL 任一即可：番茄解析元数据（书名/作者/简介 intro/
+    封面 cover + 章节目录权威，番茄目录为准），镜像站（默认 wodushu 我的书城网）提供全文，
+    按番茄目录合并；番茄比镜像多的章节落空占位。番茄解析不到 → 回退镜像站元数据。
+    chapters<=0（默认）全书；>0 按区间。进度实时写 storage/crawl_progress.json
+    （/scout 页轮询展示）。返回 {ok, title, author, intro, cover, saved_chapters,
+    folder, already, platform, sources}。
+    """
+    from libraries.crawl_progress import write_crawl_progress
+    from plugins.book_fetch import download_book_merged
+
+    def on_progress(phase, current, total, message):
+        write_crawl_progress("running", phase, current, total, message)
+
+    try:
+        meta, dl = download_book_merged(
+            title=title, url=url, book_id=book_id, site=site,
+            chapters=chapters, start_chapter=start_chapter, end_chapter=end_chapter,
+            download_delay=download_delay, on_progress=on_progress)
+        n = dl["chapters"]
+        msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")
+               else f"下载完成 {n}章")
+        write_crawl_progress("done", "download", n, n, msg,
+                             extra={"folder": dl["folder"], "platform": "merged", "site": site})
+        return {"ok": True, "title": meta["title"], "author": meta["author"],
+                "intro": meta.get("intro", ""), "cover": meta.get("cover", ""),
+                "saved_chapters": n, "folder": dl["folder"], "already": dl.get("already", False),
+                "platform": meta.get("platform", "merged"), "sources": dl.get("sources", "merged")}
+    except Exception as e:
+        write_crawl_progress("error", "", 0, 0, str(e))
+        raise
+
+
 def discover_hot(platform: str = "fanqie", key: str = "", count: int = 10) -> dict:
     """侦察小说热榜（多平台）：返回热门书列表（排名/书名/作者/题材/热度/简介）。
 
@@ -1836,24 +1873,25 @@ def list_rankings(platform: str = "fanqie", gender: str = "male") -> dict:
     return {"ok": True, "platform": platform, "gender": gender, "rankings": rankings}
 
 
-def list_crawled_novels(platform: str = "fanqie") -> dict:
-    """列出已抓取/下载的小说库（元数据+已存章数），供 agent 选书借鉴。
+def list_crawled_novels(platform: str = "") -> dict:
+    """列出已下载的小说库（统一书库：每书一个文件夹，platform 为 info 字段）。
 
-    复用 novel_storage.list_novels。返回 {"ok", "count",
-    "novels": [{title, author, platform, book_id, genre, chapter_count,
-    saved_chapters, folder}]}。
+    复用 novel_storage.list_novels；platform 非空时按 info.json 的 platform 字段过滤
+    （fanqie/merged/web...），空=全部。返回 {"ok", "count", "novels": [{title, author,
+    platform, book_id, genre, chapter_count, saved_chapters, folder, intro?}]}。
     """
     from plugins.novel_storage import list_novels
     novels = list_novels(platform)
     return {"ok": True, "count": len(novels), "novels": novels}
 
 
-def read_crawled_novel(platform: str = "fanqie", folder: str = "",
+def read_crawled_novel(platform: str = "", folder: str = "",
                        chapter: int = 0) -> dict:
-    """读已抓取小说的内容：chapter=0 返回元数据+章节目录（标题/字数）；
+    """读已下载小说的内容：chapter=0 返回元数据+章节目录（标题/字数）；
     chapter>0 返回该章正文。供 agent 抓取参考书后借鉴设定/写法。
 
-    复用 novel_storage.load_novel。返回 {ok, title, author, platform, genre,
+    统一书库：folder 为唯一路径 key（platform 参数仅作兼容/过滤）。复用
+    novel_storage.load_novel。返回 {ok, title, author, platform, genre,
     chapter_count, chapters:[{index,title,word_count}], chapter:{...}}。
     """
     from plugins.novel_storage import load_novel
@@ -1861,12 +1899,13 @@ def read_crawled_novel(platform: str = "fanqie", folder: str = "",
         raise RuntimeError("请提供 folder（书名目录，来自 list_crawled_novels）")
     data = load_novel(platform, folder)
     if not data:
-        raise RuntimeError(f"未找到已抓取小说：{platform}/{folder}")
+        raise RuntimeError(f"未找到已下载小说：{folder}")
     info, chapters = data["info"], data["chapters"]
     result = {
         "ok": True,
         "title": info.get("title", ""), "author": info.get("author", ""),
-        "platform": platform, "genre": info.get("genre", ""),
+        "platform": info.get("platform", platform or ""), "genre": info.get("genre", ""),
+        "intro": info.get("intro", ""), "cover": info.get("cover", ""),
         "book_id": info.get("book_id", ""), "chapter_count": len(chapters),
         "chapters": [{"index": c.get("index", i + 1), "title": c.get("title", ""),
                       "word_count": c.get("word_count", 0)}
@@ -1927,9 +1966,10 @@ def _build_registry():
         # 上架 / 质量门禁 / 校验
         publish_check, mark_finished, publish_book, export_book,
         chapter_quality_gate, validate_storyline, validate_world,
-        # 抓取 / 侦察 / 提取入库（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示；
-        # fetch_webnovel = 网页镜像站替代全文源，如 wodushu）
-        fetch_novel, fetch_webnovel, discover_hot, list_rankings, list_crawled_novels, read_crawled_novel,
+        # 抓取 / 侦察 / 提取入库（进度写 crawl_progress.json，/scout 页轮询展示；
+        # fetch_book = 综合抓取（番茄元数据+权威目录 + 镜像站全文，统一书库）；fetch_novel 番茄专用；
+        # fetch_webnovel 镜像站专用）
+        fetch_book, fetch_novel, fetch_webnovel, discover_hot, list_rankings, list_crawled_novels, read_crawled_novel,
         ingest_library_assets,
     ]
     seen = set()

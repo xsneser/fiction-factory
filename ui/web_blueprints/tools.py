@@ -89,8 +89,9 @@ def scout_run():
     start_chapter = int(data.get("start_chapter", 1) or 1)
     end_chapter = int(data.get("end_chapter", 0) or 0)
     direct_id = data.get("book_id", "").strip()
-    # 网页镜像站（platform=web）：按站点+书籍 URL/book_id 下载，替代番茄锁定章需 SVIP 的场景
-    platform = (data.get("platform", "") or "fanqie").strip() or "fanqie"
+    # 综合抓取（默认）：番茄元数据+权威目录 + 镜像站全文，统一书库一本；
+    # 显式 platform=fanqie / web 走单源（高级用）
+    platform = (data.get("platform", "") or "merged").strip() or "merged"
     site = (data.get("site", "") or "wodushu").strip() or "wodushu"
     url = data.get("url", "").strip()
     download_delay = float(data.get("download_delay", 0.5) or 0.5)
@@ -98,13 +99,22 @@ def scout_run():
     if platform == "web":
         if not url and not direct_id:
             return jsonify({"error": "请输入网页书籍 URL 或 book_id"}), 400
-    elif not title and not direct_id:
-        return jsonify({"error": "请输入书名或 book_id"}), 400
+    elif platform == "fanqie":
+        if not title and not direct_id:
+            return jsonify({"error": "请输入书名或 book_id"}), 400
+    else:
+        platform = "merged"
+        if not title and not url and not direct_id:
+            return jsonify({"error": "请输入书名 / 番茄 book_id / 镜像站 URL"}), 400
 
     # 单任务互斥 + 任务前置注册：搜索阶段即可暂停/停止
     task_manager.ensure_single("小说抓取")
-    task_id = (f"web_{site}_{direct_id or url}" if platform == "web"
-               else f"fetch_{title or direct_id}")
+    if platform == "web":
+        task_id = f"web_{site}_{direct_id or url}"
+    elif platform == "merged":
+        task_id = f"merge_{direct_id or url or title}"
+    else:
+        task_id = f"fetch_{title or direct_id}"
     task_manager.start(task_id, name="小说抓取", title=title or direct_id,
                        total=1, phase="搜索", url="/scout")
     task_manager.register_cancel(task_id)
@@ -134,6 +144,22 @@ def scout_run():
                 task_manager.log(task_id, message, "info")
 
         try:
+            if platform == "merged":
+                # 综合抓取（默认）：番茄元数据+权威目录 + 镜像站全文 → 统一书库一本
+                from plugins.book_fetch import download_book_merged
+                info, dl = download_book_merged(
+                    title=title, url=url, book_id=direct_id, site=site,
+                    chapters=chapters, start_chapter=start_chapter, end_chapter=end_chapter,
+                    download_delay=download_delay, on_progress=on_progress)
+                if not task_manager.is_cancelled(task_id):
+                    n = dl["chapters"]
+                    msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")
+                           else f"下载完成 {n}章")
+                    task_manager.done(task_id, msg)
+                    write_crawl_progress("done", "download", n, n, msg,
+                                         extra={"folder": dl.get("folder", ""),
+                                                "platform": "merged", "site": site})
+                return
             if platform == "web":
                 # 网页镜像站（如 wodushu）：download_webnovel 内部已按站点适配器
                 # 解析书→章表→逐章下载落盘；on_progress 在章边界检查暂停/取消
@@ -425,14 +451,13 @@ def scout_novels():
 
 @bp.route("/api/scout/novels/cover")
 def scout_novel_cover():
-    """已下载小说本地封面（storage/novels/<platform>/<folder>/cover.jpg）。"""
+    """已下载小说本地封面（统一书库 storage/novels/<folder>/cover.jpg）。"""
     from flask import send_file
     from plugins.novel_storage import NOVELS_DIR
-    platform = (request.args.get("platform", "") or "fanqie").strip()
     folder = request.args.get("folder", "").strip()
     if not folder:
         return ("", 404)
-    cover_file = NOVELS_DIR / platform / folder / "cover.jpg"
+    cover_file = NOVELS_DIR / folder / "cover.jpg"
     if not cover_file.is_file():
         return ("", 404)
     return send_file(str(cover_file), mimetype="image/jpeg")

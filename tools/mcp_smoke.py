@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 37
+EXPECT_MCP_TOOLS = 38
 PASS, FAIL = [], []
 
 
@@ -102,7 +102,7 @@ async def main():
                 check("navigate 在列（外部经意图桥驱动浏览器）", "navigate" in names)
                 for t in ("query_plots", "query_profiles",
                           "query_characters", "chapter_quality_gate",
-                          "fetch_novel", "fetch_webnovel", "discover_hot", "list_rankings",
+                          "fetch_book", "fetch_novel", "fetch_webnovel", "discover_hot", "list_rankings",
                           "list_crawled_novels", "read_crawled_novel", "ingest_library_assets",
                           "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
                           "get_writing_context", "get_pen_style", "add_style_rule", "delete_style_rule"):

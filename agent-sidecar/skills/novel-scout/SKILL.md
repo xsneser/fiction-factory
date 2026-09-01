@@ -10,10 +10,11 @@ description: 侦察/抓取/提取阶段（建书可选前置）。侦察热榜/�
 
 ## 流程
 1. 「侦察热榜」→ `list_rankings(platform, gender)` 查榜单/分类清单 → `discover_hot(platform, key, count)` 拉榜单（key=榜单分类 id 或题材中文名，空=聚合综合热榜；返回排名/书名/题材/在读量/简介，供挑题材/参考爆款）。
-2. 「抓取」→ `fetch_novel(title 或 book_id, chapters, start_chapter?, end_chapter?)`（下载到 `storage/novels/fanqie/<书名>/`，进度写 `crawl_progress.json`，无需 LLM）。
-   按**真实章号**下载区间：用户给「第 A 章到第 B 章」→ `fetch_novel(..., start_chapter=A, end_chapter=B)`；只给 `chapters` 时默认从 `start_chapter`（缺省 1）起 N 章。
-3. 「读」→ `list_crawled_novels()` 列已抓书库；`read_crawled_novel(folder, chapter=N)` 读章节目录（默认）或单章正文。
-   > **书已下载时（任务文案给出 folder/书名）跳过抓取**：提取页「分析提取」任务即此场景——直接 `read_crawled_novel(folder=...)` 读正文 → 第 4 步分析呈现，**不要再 `fetch_novel` 重复下载**。
+2. 「抓取」→ `fetch_book(title 或 番茄 book_id 或 镜像站 URL, chapters, start_chapter?, end_chapter?)`（**综合抓取**：番茄解析元数据/简介/封面/权威章节目录 + 镜像站全文，合并到统一书库 `storage/novels/<书名>/`，进度写 `crawl_progress.json`，无需 LLM；番茄解析不到回退镜像站元数据）。
+   按**真实章号**下载区间：用户给「第 A 章到第 B 章」→ `fetch_book(..., start_chapter=A, end_chapter=B)`；只给 `chapters` 时默认从 `start_chapter`（缺省 1）起 N 章。
+   （`fetch_novel`=番茄专用、`fetch_webnovel`=镜像站专用，高级用；默认请用 `fetch_book`。）
+3. 「读」→ `list_crawled_novels()` 列已下载书库（统一书库，platform 为 info 字段）；`read_crawled_novel(folder, chapter=N)` 读章节目录（默认）或单章正文（folder 为唯一路径 key）。
+   > **书已下载时（任务文案给出 folder/书名）跳过抓取**：提取页「分析提取」任务即此场景——直接 `read_crawled_novel(folder=...)` 读正文 → 第 4 步分析呈现，**不要再 `fetch_book` 重复下载**。
 4. **「分析并呈现（默认）」** → 读完参考书后，自主提炼**五类资产**：
    - **桥段(plot) / 情节弧(structure) / 笑点(gag) / 角色(character)**：字段契约见 NOVEL_AGENT.md 1.2；
      **弧模板抽多层树**：`read_crawled_novel(chapter=0)` 看章节目录/字数定位各叙事弧的章节边界，再抽样读正文，
@@ -35,7 +36,7 @@ description: 侦察/抓取/提取阶段（建书可选前置）。侦察热榜/�
 - 提取入库完成后 → 进入建书流程（`novel-build-candidates`）。
 
 ## 退出状态
-- 抓取完成：`fetch_novel` 返回 {ok, title, author, saved_chapters, folder, platform}。
+- 抓取完成：`fetch_book` 返回 {ok, title, author, intro, cover, saved_chapters, folder, already, platform, sources}。
 - 呈现完成：`drive_ui(set_review)` 返回 {__ui_command__: "set_review"}，候选已上页，等用户确认。
 - 兜底入库：`ingest_library_assets` 返回 {ok, source, plots, structures, gags, characters}。
 
