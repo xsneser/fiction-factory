@@ -219,6 +219,39 @@ class WebnovelCrawler:
             "site": self.site,
         }
 
+    # ── 书名 → 本站书页 URL（站内无搜索时用 Bing） ──
+    def search_book_url(self, title: str) -> Optional[str]:
+        """Bing 搜「书名 site:本站」→ 该书在本站的书页 URL；失败返回 None（调用方提示贴 URL）。"""
+        import base64
+        from urllib.parse import urlparse
+        if not title:
+            return None
+        netloc = urlparse(self.cfg["base_url"]).netloc
+        try:
+            r = self.session.get("https://cn.bing.com/search",
+                                 params={"q": f'"{title}" site:{netloc}', "form": "QBRE"},
+                                 timeout=12)
+            if r.status_code != 200:
+                return None
+            r.encoding = "utf-8"
+            html = r.text
+            # 1) Bing 跳转参数 u=a1%3a{base64} → base64 解码出真实 URL
+            for m in re.finditer(r"u=a1%3a([A-Za-z0-9+/=]+)", html):
+                try:
+                    u = base64.b64decode(m.group(1)).decode("utf-8", "ignore")
+                    if re.search(self.cfg["book_id_re"], u):
+                        return u
+                except Exception:
+                    continue
+            # 2) 直链
+            for m in re.finditer(r"https?://[^\"'& <]+", html):
+                u = m.group(0)
+                if re.search(self.cfg["book_id_re"], u):
+                    return u
+        except Exception as e:
+            logger.warning(f"search_book_url failed: {title} {e}")
+        return None
+
     # ── 章表 ──
     def get_chapter_list(self, book_id: str, max_pages: int = 200) -> list[dict]:
         """遍历分页章表 → 跨页去重 → 带编号按数字升序、番外排尾。
