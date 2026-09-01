@@ -1011,21 +1011,15 @@ class FanqieScoutAgent:
 
         return result
 
-    def fetch_novel(self, title: str, chapters: int = 50,
+    def fetch_novel(self, title: str, chapters: int = 0,
                     start_chapter: int = 1, end_chapter: int = 0,
                     on_progress=None, download_delay: float = 1.0) -> tuple:
         """仅下载（不分析不入库），返回 (NovelInfo, downloaded_chapters)。
 
-        支持真实章号区间：start_chapter=100, end_chapter=130 下载 100~130 章；
-        只给 chapters 时默认从 start_chapter(缺省 1) 起 N 章。
+        chapters<=0（默认）→ 全文/增量下载：书未下载则从头下全文；已在本地则只补新章节
+        （起始 = 已下载最大章 + 1，结束 = 全书总章数）。chapters>0 时按真实章号区间下载：
+        start_chapter=100, end_chapter=130 下载 100~130 章；只给 chapters 时从 start_chapter(缺省 1) 起 N 章。
         """
-        result = ScoutResult()
-
-        start_chapter = max(1, int(start_chapter or 1))
-        effective_end = int(end_chapter or 0)
-        if effective_end <= 0:
-            effective_end = start_chapter + int(chapters or 0) - 1
-
         if on_progress:
             on_progress("search", 0, 1, f"搜索: {title}")
         novel = self.crawler.search_novel(title)
@@ -1035,10 +1029,37 @@ class FanqieScoutAgent:
         if on_progress:
             on_progress("search", 1, 1, f"找到: {novel.title}")
 
-        catalog = self.crawler.get_chapter_list(novel.book_id, effective_end)
+        full = int(chapters or 0) <= 0
+        if full:
+            # 全文/增量：起始 = 已下载最大章 + 1（无则 1），结束 = 全书总章数
+            existing_max = self._existing_max_chapter(novel.title)
+            total = int(novel.chapter_count or 0)
+            if total <= 0:
+                total = 10000   # 未知总章数兜底：SSR 目录按全部卷返回，此处仅作目录拉取上限
+            start_chapter = existing_max + 1
+            end_chapter = total
+            if existing_max:
+                if on_progress:
+                    on_progress("search", 1, 1,
+                                f"已下载至第 {existing_max} 章，增量更新 {existing_max+1}~{total} 章")
+        else:
+            start_chapter = max(1, int(start_chapter or 1))
+            effective_end = int(end_chapter or 0)
+            if effective_end <= 0:
+                effective_end = start_chapter + int(chapters or 0) - 1
+            end_chapter = effective_end
+
+        catalog = self.crawler.get_chapter_list(novel.book_id, end_chapter)
         chapter_list = [c for c in catalog
-                        if start_chapter <= int(c.get("index") or 0) <= effective_end]
+                        if start_chapter <= int(c.get("index") or 0) <= end_chapter]
         total_ch = len(chapter_list)
+
+        # 已是最新（无需下载）：不重写存储，直接返回现有文件夹
+        if not chapter_list:
+            if on_progress:
+                on_progress("download", 0, 0, "已是最新，无需下载")
+            from plugins.novel_storage import _safe_name
+            return novel, {"folder": _safe_name(novel.title), "chapters": 0}
 
         if on_progress:
             on_progress("download", 0, total_ch, f"下载 {total_ch} 章...")
@@ -1061,7 +1082,7 @@ class FanqieScoutAgent:
         if on_progress:
             on_progress("download", total_ch, total_ch, f"下载完成 {len(downloaded)}章")
 
-        # 保存到 storage/novels/
+        # 保存到 storage/novels/（真实章号文件名，增量时与既有章节共存；chapter_count 记全书总章数）
         from plugins.novel_storage import save_novel
         folder = save_novel("fanqie", {
             "title": novel.title, "author": novel.author,
@@ -1070,6 +1091,20 @@ class FanqieScoutAgent:
         }, downloaded)
 
         return novel, {"folder": folder, "chapters": len(downloaded)}
+
+    def _existing_max_chapter(self, title: str) -> int:
+        """该书在本地书库已下载的最大章号（0 = 未下载过）。"""
+        from plugins.novel_storage import NOVELS_DIR, _safe_name
+        ch_dir = NOVELS_DIR / "fanqie" / _safe_name(title) / "chapters"
+        if not ch_dir.is_dir():
+            return 0
+        idxs = []
+        for f in ch_dir.glob("*.json"):
+            try:
+                idxs.append(int(f.stem))
+            except ValueError:
+                pass
+        return max(idxs) if idxs else 0
 
     def scout_single_book(self, title: str, chapters: int = 50,
                           on_progress=None, download_delay: float = 1.0) -> ScoutResult:

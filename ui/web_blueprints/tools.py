@@ -82,7 +82,8 @@ def scout_run():
 
     data = request.json or {}
     title = data.get("title", "").strip()
-    chapters = int(data.get("chapters", 30))
+    # chapters<=0（默认）= 全文下载；书已下载则只补新章节（增量）。仅传正数时才按章号区间下载。
+    chapters = int(data.get("chapters", 0) or 0)
     start_chapter = int(data.get("start_chapter", 1) or 1)
     end_chapter = int(data.get("end_chapter", 0) or 0)
     direct_id = data.get("book_id", "").strip()
