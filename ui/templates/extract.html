@@ -16,7 +16,6 @@
         <select id="extract-pen">
             {% for p in profiles %}<option value="{{ p.id }}" data-name="{{ p.pen_name }}">{{ p.pen_name }}</option>{% endfor %}
         </select>
-        <button class="small" onclick="loadBooks()">🔄 刷新</button>
         <a class="btn" href="/scout" style="text-decoration:none;margin-left:auto">← 外部书库</a>
     </div>
     <div id="book-meta" style="margin-top:12px;font-size:13px;color:#c9d1d9">请选择一本书开始提取…</div>
@@ -42,12 +41,7 @@
 <script>
 var currentPenId = '';
 var currentPenName = '';
-var _books = [];   // /api/scout/novels 返回的书列表（下拉 + 已选书卡共用）
-var _pre = (function(){
-    try { var p = new URLSearchParams(window.location.search);
-        return { folder: p.get('folder') || '', platform: p.get('platform') || '' }; }
-    catch(e) { return {}; }
-})();
+var _books = [];   // /api/scout/novels 返回的书列表（下拉 + 选中书详情共用）
 
 (function(){
     var sel = document.getElementById('extract-pen');
@@ -77,10 +71,9 @@ function loadBooks() {
                 if (analyzeBtn) analyzeBtn.disabled = true;
                 return;
             }
-            var html = '';
+            var html = '<option value="" selected>选择一本书…</option>';
             _books.forEach(function(n, i) {
-                var isPre = _pre.folder && n.folder === _pre.folder;
-                html += '<option value="' + i + '"' + (isPre ? ' selected' : '') + '>'
+                html += '<option value="' + i + '">'
                     + escapeHtml(n.title) + '（' + (n.saved_chapters || 0) + ' 章）' + '</option>';
             });
             sel.innerHTML = html;
