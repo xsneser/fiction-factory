@@ -6,6 +6,7 @@
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css?v=4">
 <link rel="stylesheet" href="/static/css/workspace.css">
+<link rel="stylesheet" href="/static/css/reader.css">
 {% from "_flow_stepper.html" import status_badge %}
 {% from "_info_bar.html" import info_bar %}
 <script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
@@ -65,10 +66,8 @@
 </div>
 
 <script src="/static/js/story_line.js?v=4"></script>
-<script>
-/* ═══ 阅读器（按章 CSS-columns 分页） ═══
-   右栏不再整本连续滚动：一次只渲染当前章进 #reader-pages，columns 分页 + translateX 翻页；
-   目录抽屉 / 上下一章 / 桥段点击自动切章跳页。轮询保留当前章+页+高亮。 */
+<script src="/static/js/reader_core.js"></script>
+<script>/* ═══ 阅读器（共享分页核心 ReaderCore）+ 写作台专属：桥段渲染/高亮/轮询 ═══ */
 function _ms_esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
@@ -78,253 +77,47 @@ function _ms_esc(s) {
 function _selEsc(s) {
     return String(s == null ? '' : s).replace(/["\\]/g, '\\$&');
 }
-function _fmtWords(n) { return n >= 1000 ? (Math.round(n / 1000 * 10) / 10) + 'k' : String(n); }
+/* 字数：桥段优先（sum text），否则 content */
 function _wordCount(ch) {
     if (ch && ch.bridges && ch.bridges.length) return ch.bridges.reduce(function (n, b) { return n + (b.text || '').length; }, 0);
     return (ch && ch.content) ? ch.content.length : 0;
 }
 
-var Reader = {
-    chapters: window.__BOOK_CHAPTERS__ || [],
-    idx: 0, page: 0, totalPages: 1,
-    PAGE_GAP: 24,   // 页间距（列宽=视口宽，翻页位移=列宽+间距，保证每页正好一屏对齐）
-    bid: window.__STORYLINE_ID__ || '',
-    _activePid: '',            // 当前高亮桥段（轮询重渲染后恢复）
-    _flipToken: 0,             // 跨章动画守卫：每次新导航自增，使在途 setTimeout 过期失效
-    _anim: null,               // 进行中跨章推入动画 { token, targetIdx, targetPage }；无动画=null
-    FLIP_MS: 240,              // 跨章滑出动画时长（须 ≥ workspace.css .reader-pages 的 .22s）
-    el: function (id) { return document.getElementById(id); }
-};
+var _activePid = '';   // 当前高亮桥段（轮询重渲染后恢复）
 
-/* ─── 渲染当前章进 #reader-pages（桥段为 span.m-bridge，data-bridge 保留供高亮） ─── */
-function renderChapter(ch, pagesEl) {
-    var pages = pagesEl || Reader.el('reader-pages');
-    if (!pages) return;
-    if (!ch) { pages.innerHTML = ''; return; }
-    var html = '<div class="m-chapter-title">第' + _ms_esc(ch.num) + '章 ' + _ms_esc(ch.title)
-        + (ch.draft ? '<span class="m-draft-tag">草稿</span>' : '') + '</div>';
-    if (ch.bridges && ch.bridges.length) {
-        ch.bridges.forEach(function (b, i) {
-            if (i > 0) html += '\n\n';
-            html += '<span class="m-bridge" data-bridge="' + _ms_esc(b.plot_id)
-                + '" data-bridge-name="' + _ms_esc(b.plot_name) + '">' + _ms_esc(b.text) + '</span>';
-        });
-    } else {
-        html += _ms_esc(ch.content);
-    }
-    pages.innerHTML = html;
-}
-
-/* ─── CSS columns 分页：列宽=视口宽（无水平 padding），列横向溢出 → scrollWidth 数总页数 ─── */
-function _colW() {
-    var vp = Reader.el('reader-viewport');
-    return vp ? vp.clientWidth : 0;
-}
-/* 纯测量：给任意分页容器设列宽/列高并返回其总页数（只返回，不写 Reader.totalPages/page——
-   测副容器时不污染主容器的当前页状态） */
-function _measurePages(pagesEl) {
-    var vp = Reader.el('reader-viewport');
-    if (!vp || !pagesEl) return 1;
-    var H = vp.clientHeight, GAP = Reader.PAGE_GAP, colW = _colW();
-    if (!H) return 1;
-    pagesEl.style.columnWidth = colW + 'px';
-    pagesEl.style.columnGap = GAP + 'px';
-    pagesEl.style.height = H + 'px';
-    var totalW = pagesEl.scrollWidth;
-    return Math.max(1, Math.round((totalW + GAP) / (colW + GAP)));
-}
-function paginate() {
-    var vp = Reader.el('reader-viewport'), pages = Reader.el('reader-pages');
-    if (!vp || !pages) return;
-    Reader.totalPages = _measurePages(pages);
-    Reader.page = Math.max(0, Math.min(Reader.page, Reader.totalPages - 1));
-    showPage(Reader.page);
-}
-function showPage(i) {
-    var vp = Reader.el('reader-viewport'), pages = Reader.el('reader-pages');
-    if (!vp || !pages) return;
-    var GAP = Reader.PAGE_GAP, colW = _colW();
-    Reader.page = Math.max(0, Math.min(i, Reader.totalPages - 1));
-    pages.style.transform = 'translateX(' + (-Reader.page * (colW + GAP)) + 'px)';
-    _updatePosition();
-    // 翻页按钮按「全书边界」禁用：仅首章第1页禁上一页、末章末页禁下一页（其余情况下一页自动续章/上一页回上章末页）
-    var pp = Reader.el('rt-prev-page'), np = Reader.el('rt-next-page');
-    if (pp) pp.disabled = (Reader.page <= 0) && (Reader.idx <= 0);
-    if (np) np.disabled = (Reader.page >= Reader.totalPages - 1) && (Reader.idx >= Reader.chapters.length - 1);
-}
-/* 合并进度指示：第 N / M 章 · 第 X / Y 页（章节切换与翻页都会调用） */
-function _updatePosition() {
-    var rt = Reader.el('rt-pos');
-    if (rt) rt.textContent = '第 ' + (Reader.idx + 1) + ' / ' + Reader.chapters.length + ' 章 · 第 ' + (Reader.page + 1) + ' / ' + Reader.totalPages + ' 页';
-}
-function _updateNavState() {
-    _updatePosition();
-}
-/* ─── 瞬时切章辅助：换内容/定位时禁用 transform 过渡（防旧 transform 残留触发大幅位移动画） ─── */
-function _swapContentInstant(fn) {
-    var pages = Reader.el('reader-pages');
-    if (!pages) { fn(); return; }
-    pages.style.transition = 'none';
-    fn();
-    void pages.offsetWidth;   // 强制 reflow，让禁用的 transition 生效
-    pages.style.transition = '';
-}
-function _readTransform(pages) {
-    var m = /translateX\((-?[\d.]+)px\)/.exec(pages.style.transform || '');
-    return m ? parseFloat(m[1]) : 0;
-}
-/* ─── 副容器生命周期：清空+隐藏。先关 transition 再清 transform/visibility，防残留动画「飞回原位」；
-   _abortAnim 供一切瞬时切章/轮询/中断路径统一收口（清在途动画 + 副容器） ─── */
-function _clearSecondary(s) {
-    if (!s) return;
-    s.style.transition = 'none';
-    s.style.transform = '';
-    s.style.visibility = 'hidden';
-    s.innerHTML = '';
-}
-function _abortAnim() {
-    Reader._anim = null;
-    _clearSecondary(Reader.el('reader-pages-next'));
-}
-/* 内部换章：渲染目标章并定位（不触发动效守卫，供 goToChapter / crossChapterFlip 复用） */
-function _applyChapter(i, opts) {
-    if (!Reader.chapters.length) return;
-    opts = opts || {};
-    Reader.idx = Math.max(0, Math.min(i, Reader.chapters.length - 1));
-    renderChapter(Reader.chapters[Reader.idx]);
-    Reader.page = (opts.page != null) ? opts.page : 0;
-    paginate();
-    if (opts.atEnd) showPage(Reader.totalPages - 1);   // 目标章末页（上一页跨章用）
-    renderToc();
-    _updateNavState();
-    persist();
-}
-/* 公开切章（目录/高亮/初始化/[] 等「跳跃定位」语义）：瞬时切换，不做跨章滑动动画 */
-function goToChapter(i, opts) {
-    Reader._flipToken++;   // 使在途跨章动画失效
-    _abortAnim();          // 清副容器 + 在途动画（目录/桥段高亮/初始化/[] 等瞬时切章统一收口）
-    _swapContentInstant(function () { _applyChapter(i, opts); });
-}
-function nextChapter() { if (Reader.idx < Reader.chapters.length - 1) goToChapter(Reader.idx + 1); }
-function prevChapter() { if (Reader.idx > 0) goToChapter(Reader.idx - 1); }
-/* 跨章推入动画：目标章预渲染进副容器，旧章滑出一页宽的同时新章从另一侧同速滑入，接缝连续、无空白。
-   前向：下章第1页从右侧推入；后向：上章末页从左侧推入（须先测目标章总页数再算位）。
-   动画结束 promote：把副容器内容复制回主容器瞬时落位（transition:none 下首帧即目标位）。 */
-function crossChapterFlip(dir, targetIdx, opts) {
-    var pages = Reader.el('reader-pages'), sec = Reader.el('reader-pages-next');
-    if (!pages || !sec) { _applyChapter(targetIdx, opts); return; }
-    if (Reader._anim) return;                          // 双启动守卫：动画中忽略新跨章
-    if (targetIdx < 0 || targetIdx >= Reader.chapters.length || !Reader.chapters[targetIdx]) {
-        _applyChapter(targetIdx, opts); return;        // 兜底回退旧行为
-    }
-    var token = ++Reader._flipToken;                   // 使旧的在途动画失效
-    Reader._anim = { token: token, targetIdx: targetIdx };
-    var GAP = Reader.PAGE_GAP, colW = _colW(), k = (GAP + colW) || GAP;
-    var oldT = _readTransform(pages);
-    var forward = dir > 0;
-    // ① 预渲染目标章进副容器 + 测总页数（动画开始前一次性完成，主线程阻塞但无视觉变化）
-    renderChapter(Reader.chapters[targetIdx], sec);
-    var nextTotal = _measurePages(sec);
-    var secStart, secEnd, primEnd, targetPage;
-    if (forward) {                                     // 前向：下章第1页从右侧推入
-        targetPage = 0;
-        secStart = +k;  secEnd = 0;  primEnd = oldT - k;
-    } else {                                           // 后向：上章末页从左侧推入
-        targetPage = nextTotal - 1;
-        secStart = -nextTotal * k;  secEnd = -(nextTotal - 1) * k;  primEnd = oldT + k;
-    }
-    // ② 拍1：副容器隐藏中无动画就位（设 transform + 强制 reflow 提交起始位）→ 置可见；主容器归一化当前页
-    sec.style.transition = 'none';
-    sec.style.transform = 'translateX(' + secStart + 'px)';
-    void sec.offsetWidth;
-    sec.style.transition = '';
-    sec.style.visibility = 'visible';
-    _swapContentInstant(function () { pages.style.transform = 'translateX(' + oldT + 'px)'; });
-    // ③ 拍2：双容器同帧动画（.reader-pages 基类 .22s transition 生效）
-    pages.style.transform = 'translateX(' + primEnd + 'px)';
-    sec.style.transform = 'translateX(' + secEnd + 'px)';
-    // ④ 拍3：动画结束 promote（token 守卫）
-    setTimeout(function () {
-        if (token !== Reader._flipToken) { _abortAnim(); return; }
-        _promoteSecondary(sec, targetIdx, targetPage, token);
-    }, Reader.FLIP_MS);
-}
-/* promote：动画结束把副容器内容复制回主容器并落位（须整体包在 _swapContentInstant 内，transition:none
-   下首帧即目标位；严禁直接 showPage——会带 .22s transition 从旧位回跳）。 */
-function _promoteSecondary(sec, targetIdx, targetPage, token) {
-    var pages = Reader.el('reader-pages');
-    if (token !== Reader._flipToken) { _abortAnim(); return; }
-    Reader._anim = null;
-    _swapContentInstant(function () {
-        pages.innerHTML = sec.innerHTML;               // 复制目标章内容（桥段纯 HTML span + data，无监听器，安全）
-        Reader.idx = targetIdx;
-        Reader.page = targetPage;
-        paginate();                                    // 重算 totalPages + showPage 落位
-        renderToc();
-        _updateNavState();
-        persist();
-    });
-    _clearSecondary(sec);
-}
-/* 翻页（章节内 + 跨章连续）：下一页在章末平滑滑出进下一章第1页；上一页在第1页回上一章末页 */
-function nextPage() {
-    if (Reader.page < Reader.totalPages - 1) { Reader._flipToken++; showPage(Reader.page + 1); }
-    else if (Reader.idx < Reader.chapters.length - 1) crossChapterFlip(1, Reader.idx + 1, { page: 0 });
-}
-function prevPage() {
-    if (Reader.page > 0) { Reader._flipToken++; showPage(Reader.page - 1); }
-    else if (Reader.idx > 0) crossChapterFlip(-1, Reader.idx - 1, { atEnd: true });
-}
-
-/* ─── 目录抽屉 ─── */
-function renderToc() {
-    var list = Reader.el('toc-list');
-    if (!list) return;
-    list.innerHTML = Reader.chapters.map(function (c, i) {
-        return '<button type="button" class="toc-item' + (i === Reader.idx ? ' is-current' : '') + '" data-idx="' + i + '">'
-            + '<span class="toc-num">' + _ms_esc(c.num) + '</span>'
-            + '<span class="toc-title">' + _ms_esc(c.title || ('第' + c.num + '章')) + '</span>'
-            + (c.draft ? '<span class="m-draft-tag">草稿</span>' : '')
-            + '<span class="toc-meta">' + _fmtWords(_wordCount(c)) + '</span>'
-            + '</button>';
-    }).join('');
-}
-function openToc() {
-    var d = Reader.el('toc-drawer'), b = Reader.el('toc-backdrop');
-    if (d) d.classList.add('open');
-    if (b) b.hidden = false;
-    var list = Reader.el('toc-list');
-    if (list) {
-        var cur = list.querySelector('.toc-item.is-current');
-        if (cur) {
-            // 只滚目录列表自身、居中当前章；勿用 scrollIntoView——它会把 overflow:hidden 的 .editor-mid 当滚动容器横向滚动，导致阅读器左右漂移
-            var lr = list.getBoundingClientRect(), cr = cur.getBoundingClientRect();
-            list.scrollTop = Math.max(0, list.scrollTop + (cr.top - lr.top) - (lr.height - cr.height) / 2);
+/* ─── 共享分页核心实例化：写作台章节注入（含桥段），双容器推入动画；目录/持久化/键盘滚轮由核心负责 ─── */
+var __WRITER_CHS = (window.__BOOK_CHAPTERS__ || []).map(function (ch) {
+    if (ch.word_count == null) ch.word_count = _wordCount(ch);
+    return ch;
+});
+var Reader = ReaderCore.create({
+    viewport: 'reader-viewport',
+    pages: 'reader-pages',
+    pagesNext: 'reader-pages-next',        // 双容器推入动画
+    chapters: __WRITER_CHS,
+    persistKey: 'ne_reader_' + (window.__STORYLINE_ID__ || ''),
+    /* 渲染：桥段包 span.m-bridge（data-bridge 供高亮），草稿加徽标 */
+    renderChapter: function (ch, content, container) {
+        if (!container) return;
+        if (!ch) { container.innerHTML = ''; return; }
+        var html = '<div class="m-chapter-title">第' + _ms_esc(ch.num) + '章 ' + _ms_esc(ch.title)
+            + (ch.draft ? '<span class="m-draft-tag">草稿</span>' : '') + '</div>';
+        if (ch.bridges && ch.bridges.length) {
+            ch.bridges.forEach(function (b, i) {
+                if (i > 0) html += '\n\n';
+                html += '<span class="m-bridge" data-bridge="' + _ms_esc(b.plot_id)
+                    + '" data-bridge-name="' + _ms_esc(b.plot_name) + '">' + _ms_esc(b.text) + '</span>';
+            });
+        } else {
+            html += _ms_esc(content == null ? '' : content);
         }
-    }
-}
-function closeToc() {
-    var d = Reader.el('toc-drawer'), b = Reader.el('toc-backdrop');
-    if (d) d.classList.remove('open');
-    if (b) b.hidden = true;
-}
+        container.innerHTML = html;
+    },
+    /* 正文已注入，同步返回 */
+    getChapterContent: function (ch, cb) { cb(ch && ch.content); },
+});
 
-/* ─── 位置持久化 ─── */
-function persist() {
-    try { localStorage.setItem('ne_reader_' + Reader.bid, JSON.stringify({ idx: Reader.idx, page: Reader.page })); } catch (e) {}
-}
-function _restore() {
-    try {
-        var d = JSON.parse(localStorage.getItem('ne_reader_' + Reader.bid) || 'null');
-        if (d && typeof d.idx === 'number') {
-            Reader.idx = Math.max(0, Math.min(d.idx, Reader.chapters.length - 1));
-            Reader.page = (typeof d.page === 'number') ? d.page : 0;
-        }
-    } catch (e) {}
-}
-
-/* ═══ 桥段点击 → 高亮右侧对应正文（切到含该桥段的章 + 翻到对应页） ═══
-   事件来自 story_line.js 的 sl:plot-click / sl:outline-click。 */
+/* ═══ 桥段点击 → 高亮右侧对应正文（事件来自 story_line.js 的 sl:plot-click / sl:outline-click） ═══ */
 (function bindBridgeHighlight() {
     var mount = document.getElementById('editor-storyline');
     if (!mount) return;
@@ -338,23 +131,14 @@ function _chapterIdxOfPlot(pid) {
     }
     return -1;
 }
-/* 元素位于第几列（页）：相对 .reader-pages 的 left，除以 (列宽+间距) */
-function _pageOfElement(el) {
-    var vp = Reader.el('reader-viewport'), pages = Reader.el('reader-pages');
-    if (!vp || !pages || !el) return 0;
-    var GAP = Reader.PAGE_GAP, colW = _colW();
-    var x = el.getBoundingClientRect().left - pages.getBoundingClientRect().left;
-    return Math.max(0, Math.floor(x / (colW + GAP)));
-}
-function _jumpTo(el) {
-    if (el) showPage(_pageOfElement(el));
-}
 function _clearBridgeActive() {
-    // 主容器 + 副容器（跨章推入动画中的同 plot_id 残留）一起清，防双份匹配
     ['reader-pages', 'reader-pages-next'].forEach(function (id) {
-        var root = Reader.el(id);
+        var root = document.getElementById(id);
         (root ? root.querySelectorAll('.m-bridge-active') : []).forEach(function (el) { el.classList.remove('m-bridge-active'); });
     });
+}
+function _jumpTo(el) {
+    if (el) Reader.showPage(Reader.pageOfElement(el));
 }
 function highlightBridgeContent(pid) {
     if (!pid) return;
@@ -363,16 +147,16 @@ function highlightBridgeContent(pid) {
         // 未写桥段：阅读器无对应内容，清掉上一处高亮与 activePid（否则旧高亮残留不消失、轮询还会恢复它）
         if (window.StoryLine) window.StoryLine.highlight({ plot_id: pid });
         _clearBridgeActive();
-        Reader._activePid = '';
+        _activePid = '';
         return;
     }
-    if (ci !== Reader.idx) goToChapter(ci, { page: 0 });
-    var root = Reader.el('reader-pages');   // 只查主容器：防未清理副容器内同 plot_id 桥段被双份匹配/页码算错
+    if (ci !== Reader.idx()) Reader.goToChapter(ci, { page: 0 });
+    var root = document.getElementById('reader-pages');   // 只查主容器：防未清理副容器内同 plot_id 桥段被双份匹配/页码算错
     var el = root ? root.querySelector('.m-bridge[data-bridge="' + _selEsc(pid) + '"]') : null;
     _clearBridgeActive();
     // 只高亮第一处匹配：同一 plot_id 重复（重写/修订）不再全文亮起
     if (el) el.classList.add('m-bridge-active');
-    Reader._activePid = pid;
+    _activePid = pid;
     _jumpTo(el);
     if (window.StoryLine) window.StoryLine.highlight({ plot_id: pid });
 }
@@ -390,12 +174,12 @@ function highlightOutlineContent(oid) {
         // 该弧的桥段都未写：阅读器无对应内容，清掉上一处高亮（防残留）
         if (window.StoryLine) window.StoryLine.highlight({ outline_id: oid });
         _clearBridgeActive();
-        Reader._activePid = '';
+        _activePid = '';
         return;
     }
-    if (ci !== Reader.idx) goToChapter(ci, { page: 0 });
+    if (ci !== Reader.idx()) Reader.goToChapter(ci, { page: 0 });
     _clearBridgeActive();
-    var root = Reader.el('reader-pages');   // 只查主容器，防副容器残留被双份匹配
+    var root = document.getElementById('reader-pages');   // 只查主容器，防副容器残留被双份匹配
     var first = null;
     (root ? root.querySelectorAll('.m-bridge[data-bridge]') : []).forEach(function (el) {
         if (pids.indexOf(el.getAttribute('data-bridge')) >= 0) {
@@ -403,7 +187,7 @@ function highlightOutlineContent(oid) {
             if (!first) first = el;
         }
     });
-    Reader._activePid = '';
+    _activePid = '';
     _jumpTo(first);
     if (window.StoryLine) window.StoryLine.highlight({ outline_id: oid });
 }
@@ -519,58 +303,11 @@ function stopWritingTask(e) {
     if (window.agentStopTask) window.agentStopTask();
 }
 
-/* ═══ 阅读器初始化：恢复位置 → 渲染当前章 → 绑定工具栏/目录/键盘 → ResizeObserver ─── */
-(function initReader() {
-    if (!Reader.el('reader-pages')) return;
-    _restore();
-    goToChapter(Reader.idx, { page: Reader.page });
 
-    var bind = function (id, fn) { var el = Reader.el(id); if (el) el.addEventListener('click', fn); };
-    bind('rt-toc', openToc);
-    bind('rt-prev-page', prevPage);
-    bind('rt-next-page', nextPage);
-    bind('toc-close', closeToc);
-    var bd = Reader.el('toc-backdrop');
-    if (bd) bd.addEventListener('click', closeToc);
-    var tl = Reader.el('toc-list');
-    if (tl) tl.addEventListener('click', function (e) {
-        var item = e.target.closest ? e.target.closest('.toc-item') : null;
-        if (item) { goToChapter(+item.getAttribute('data-idx'), { page: 0 }); closeToc(); }
-    });
-
-    // 键盘：←/→ 翻页（章末自动续章），[/] 切章（输入框内不响应）
-    document.addEventListener('keydown', function (e) {
-        if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
-        if (e.key === 'ArrowRight') nextPage();
-        else if (e.key === 'ArrowLeft') prevPage();
-        else if (e.key === ']') nextChapter();
-        else if (e.key === '[') prevChapter();
-    });
-
-    // 滚轮翻页：鼠标在正文容器内时，滚轮向下=下一页、向上=上一页（累积阈值触发，阻止默认页面滚动）
-    var vp = Reader.el('reader-viewport');
-    if (vp) {
-        var wheelAcc = 0, WHEEL_PAGE = 80;
-        vp.addEventListener('wheel', function (e) {
-            e.preventDefault();
-            wheelAcc += e.deltaY;
-            if (Math.abs(wheelAcc) >= WHEEL_PAGE) {
-                if (wheelAcc > 0) nextPage(); else prevPage();
-                wheelAcc = 0;
-            }
-        }, { passive: false });
-    }
-
-    // 右栏宽度变化（拖拽分隔条/窗口缩放）→ 重排页码；跨章动画中则直接落位到动画目标章（防 transform 回跳/副容器列宽陈旧）
-    if (window.ResizeObserver && vp) new ResizeObserver(function () {
-        if (Reader._anim) { var a = Reader._anim; goToChapter(a.targetIdx, { page: a.targetPage }); }
-        else { paginate(); }
-    }).observe(vp);
-})();
 
 /* ═══ 正文实时刷新：轮询 /api/desk/chapters/<bid>，agent 写完桥段/章节即重渲染（保留当前章/页/高亮） ═══ */
 (function pollReader() {
-    var bid = Reader.bid;
+    var bid = window.__STORYLINE_ID__;
     if (!bid) return;
     var lastFp = '';
     setInterval(function () {
@@ -587,44 +324,36 @@ function stopWritingTask(e) {
                 }).join('|');
                 if (fp === lastFp) return;
                 lastFp = fp;
-                Reader._flipToken++;   // 使在途跨章动画失效（轮询刷新瞬时落位，不产生动画、不打断翻页）
-                _abortAnim();          // 清副容器 + 在途动画：动画中轮询若只 token++ 不清副容器会留「鬼影覆盖」
-                var prevNum = (Reader.chapters[Reader.idx] || {}).num;
-                Reader.chapters = chs;
-                if (!chs.length) { Reader.idx = 0; renderChapter(null); return; }
+                chs.forEach(function (c) { if (c.word_count == null) c.word_count = _wordCount(c); });
+                var prevNum = (Reader.chapters[Reader.idx()] || {}).num;
                 var ni = -1;
                 // 目标章节优先按 _activePid 所在章节定位（草稿固化/章号变化后仍对齐，防高亮错位）
-                if (Reader._activePid) {
+                if (_activePid) {
                     for (var i = 0; i < chs.length && ni < 0; i++) {
                         var brs = chs[i].bridges || [];
-                        for (var j = 0; j < brs.length; j++) { if (brs[j].plot_id === Reader._activePid) { ni = i; break; } }
+                        for (var j = 0; j < brs.length; j++) { if (brs[j].plot_id === _activePid) { ni = i; break; } }
                     }
                 }
                 if (ni < 0) { for (var i = 0; i < chs.length; i++) { if (chs[i].num === prevNum) { ni = i; break; } } }
-                if (ni < 0) ni = Math.min(Reader.idx, chs.length - 1);
-                var wasPage = Reader.page;
-                _swapContentInstant(function () {
-                    Reader.idx = ni;
-                    renderChapter(chs[ni]);
-                    Reader.page = wasPage;
-                    paginate();
-                    renderToc();
-                    _updateNavState();
-                    // 重渲染后恢复高亮桥段（只高亮单处，同 plot_id 重复不再全文亮起）
-                    if (Reader._activePid) {
-                        var ap = Reader._activePid;
-                        var root = Reader.el('reader-pages');
-                        var el = root ? root.querySelector('.m-bridge[data-bridge="' + _selEsc(ap) + '"]') : null;
-                        if (el) {
-                            _clearBridgeActive();
-                            el.classList.add('m-bridge-active');
-                            _jumpTo(el);
-                        }
+                if (ni < 0) ni = Math.min(Reader.idx(), chs.length - 1);
+                var wasPage = Reader.getState().page;
+                // 核心 setChapters：瞬时落位（无动画、不打断翻页）+ 重分页/目录/持久化
+                Reader.setChapters(chs, ni, wasPage);
+                // 重渲染后恢复高亮桥段（只高亮单处，同 plot_id 重复不再全文亮起）
+                if (_activePid) {
+                    var ap = _activePid;
+                    var root = document.getElementById('reader-pages');
+                    var el = root ? root.querySelector('.m-bridge[data-bridge="' + _selEsc(ap) + '"]') : null;
+                    if (el) {
+                        _clearBridgeActive();
+                        el.classList.add('m-bridge-active');
+                        _jumpTo(el);
                     }
-                });
+                }
             })
             .catch(function () {});
     }, 3000);
 })();
+
 </script>
 {% endblock %}
