@@ -111,7 +111,7 @@ function loadHot() {
         if (!d || !d.ok) { el.innerHTML = '<div class="empty"><p style="color:#f85149">热榜加载失败</p></div>'; return; }
         if (d.novels && d.novels.length) { renderHot(d.novels); return; }
         if (d.loading || d.refreshing) { pollHot(); return; }
-        el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据</p></div>';
+        el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据（上游热榜接口暂不可用，可改用抓取表单直接下载）</p></div>';
     }).catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
 }
 
@@ -131,7 +131,7 @@ function pollHot() {
             if (d && d.ok && d.novels && d.novels.length) { renderHot(d.novels); return; }
             if (d && d.ok && (d.loading || d.refreshing)) { pollHot(); return; }
             var el = document.getElementById('hot-list');
-            if (el) el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据</p></div>';
+            if (el) el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据（上游热榜接口暂不可用，可改用抓取表单直接下载）</p></div>';
         }).catch(function() {});
     }, 2000);
 }
@@ -139,7 +139,7 @@ function pollHot() {
 function renderHot(novels) {
     var el = document.getElementById('hot-list');
     if (!el) return;
-    if (!novels || !novels.length) { el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据</p></div>'; return; }
+    if (!novels || !novels.length) { el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据（上游热榜接口暂不可用，可改用抓取表单直接下载）</p></div>'; return; }
     var html = '';
     novels.forEach(function(n) {
         var intro = n.intro || '';
