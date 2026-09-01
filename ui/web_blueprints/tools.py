@@ -238,6 +238,7 @@ _HOT_CACHE_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "storage", "hot_cache.json")
 _HOT_TTL = 600          # 热榜缓存有效秒数（10 分钟）
+_HOT_SCHEMA = 2         # 条目模型版本（1=无 cover，2=含 cover）；旧 schema 缓存视为未命中重拉
 _hot_fetching = {}      # cache_key(platform:gender:key) -> Thread，防同键并发重复拉取
 
 
@@ -259,7 +260,7 @@ def _spawn_hot_fetch(cache_key: str, platform: str, key: str, gender: str, count
             from plugins.hot_ranks import discover as hot_discover
             items = hot_discover(platform, key=key, count=count, gender=gender) or []
             cache = _read_hot_cache()
-            cache[cache_key] = {"ts": time.time(), "novels": items}
+            cache[cache_key] = {"ts": time.time(), "schema": _HOT_SCHEMA, "novels": items}
             _write_hot_cache(cache)
         except Exception as e:
             logging.getLogger("tools").warning(
@@ -294,7 +295,9 @@ def scout_hot():
     cache_key = f"{platform}:{gender}:{key or '__all__'}"
     entry = cache.get(cache_key) or {}
     now = time.time()
-    if entry and now - entry.get("ts", 0) < _HOT_TTL:
+    # schema 不匹配视为未命中：条目模型升级（如加 cover）后旧缓存强制重拉
+    if (entry and now - entry.get("ts", 0) < _HOT_TTL
+            and entry.get("schema") == _HOT_SCHEMA):
         return jsonify({"ok": True, "platform": platform, "key": key,
                         "novels": entry.get("novels", []), "ts": entry.get("ts")})
     payload = {"ok": True, "platform": platform, "key": key}
@@ -317,12 +320,13 @@ def scout_hot_rankings():
     cache_key = f"rankings:{platform}:{gender}"
     entry = cache.get(cache_key) or {}
     now = time.time()
-    if entry and now - entry.get("ts", 0) < _HOT_TTL:
+    if (entry and now - entry.get("ts", 0) < _HOT_TTL
+            and entry.get("schema") == _HOT_SCHEMA):
         return jsonify({"ok": True, "platform": platform, "gender": gender,
                         "rankings": entry.get("rankings", [])})
     from plugins.hot_ranks import list_rankings as hr_list_rankings
     rankings = hr_list_rankings(platform, gender=gender) or []
-    cache[cache_key] = {"ts": time.time(), "rankings": rankings}
+    cache[cache_key] = {"ts": time.time(), "schema": _HOT_SCHEMA, "rankings": rankings}
     _write_hot_cache(cache)
     return jsonify({"ok": True, "platform": platform, "gender": gender, "rankings": rankings})
 
