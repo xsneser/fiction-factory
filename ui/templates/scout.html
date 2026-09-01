@@ -13,7 +13,7 @@
         <button class="chip active" data-platform="fanqie" onclick="switchPlatform(this)">🍅 番茄</button>
         <button class="chip" data-platform="qidian" onclick="switchPlatform(this)" title="即将推出">📖 起点</button>
         <button class="chip" data-platform="jinjiang" onclick="switchPlatform(this)" title="即将推出">🌸 晋江</button>
-        <button class="chip" data-platform="web" onclick="switchPlatform(this)" title="即将推出">🌐 网页</button>
+        <button class="chip" data-platform="web" onclick="switchPlatform(this)">🌐 网页</button>
     </div>
     <div class="hot-chips" style="margin-top:8px">
         <button class="chip active" data-genre="" onclick="switchGenre(this)">全部</button>
@@ -103,12 +103,20 @@ var _hotPollCount = 0;
 
 /* ─── 热榜侦察 ─── */
 
-/* 平台 tab：仅番茄可用（后端热榜 fanqie-only），起点/晋江/网页为「即将推出」占位 */
+/* 平台 tab：番茄/网页可激活（网页镜像站抓取替代番茄锁定章），起点/晋江为「即将推出」占位 */
+var _platform = 'fanqie';
 function switchPlatform(btn) {
     var p = btn.getAttribute('data-platform') || '';
-    if (p !== 'fanqie') { showToast('该平台热榜即将推出', 'info'); return; }
+    if (p !== 'fanqie' && p !== 'web') { showToast('该平台热榜即将推出', 'info'); return; }
+    _platform = p;
     document.querySelectorAll('.hot-tabs .chip').forEach(function(c) { c.classList.remove('active'); });
     btn.classList.add('active');
+    var inp = document.getElementById('book-input');
+    if (inp) {
+        inp.placeholder = (p === 'web')
+            ? '粘贴网页书籍 URL（如 https://www.wodushu.com/book/159403/）'
+            : '输入书名（自动搜索）或 book_id / URL';
+    }
 }
 
 function switchGenre(btn) {
@@ -200,9 +208,16 @@ function grabBook(btn) {
 function startFetch() {
     var input = document.getElementById('book-input').value.trim();
     if (!input) return showToast('请输入书名或 book_id', 'warning');
-    var m = input.match(/(\d{15,})/);
     var body = {};  // 不传范围 → 后端按「全文 / 已有则增量」处理
-    if (m) body.book_id = m[1]; else body.title = input;
+    if (_platform === 'web') {
+        // 网页镜像站：直接按 URL / book_id 下载（站点默认 wodushu，更多站可后续扩展）
+        body.platform = 'web';
+        body.site = 'wodushu';
+        body.url = input;
+    } else {
+        var m = input.match(/(\d{15,})/);
+        if (m) body.book_id = m[1]; else body.title = input;
+    }
     var st = document.getElementById('fetch-status');
     if (st) { st.textContent = '⏳ 已提交，进度见下方…'; st.style.color = '#8b949e'; }
     fetch('/api/scout/run', {
@@ -325,7 +340,7 @@ function loadNovels() {
                 html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span></div>';
                 html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章</span>';
                 html += '</div>';
-                html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + escapeHtml(p) + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
+                html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + escapeHtml(p) + (n.site ? ' · 来源: ' + escapeHtml(n.site) : '') + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
                 html += '<div class="novel-actions">';
                 html += '<button class="small" style="background:#1f6feb" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">🧪 分析提取</button>';
                 html += '<button class="small" style="background:#238636" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="readFrom(this)">📖 阅读</button>';

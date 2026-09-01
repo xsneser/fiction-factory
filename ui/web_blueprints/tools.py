@@ -89,13 +89,22 @@ def scout_run():
     start_chapter = int(data.get("start_chapter", 1) or 1)
     end_chapter = int(data.get("end_chapter", 0) or 0)
     direct_id = data.get("book_id", "").strip()
+    # 网页镜像站（platform=web）：按站点+书籍 URL/book_id 下载，替代番茄锁定章需 SVIP 的场景
+    platform = (data.get("platform", "") or "fanqie").strip() or "fanqie"
+    site = (data.get("site", "") or "wodushu").strip() or "wodushu"
+    url = data.get("url", "").strip()
+    download_delay = float(data.get("download_delay", 0.5) or 0.5)
 
-    if not title and not direct_id:
+    if platform == "web":
+        if not url and not direct_id:
+            return jsonify({"error": "请输入网页书籍 URL 或 book_id"}), 400
+    elif not title and not direct_id:
         return jsonify({"error": "请输入书名或 book_id"}), 400
 
     # 单任务互斥 + 任务前置注册：搜索阶段即可暂停/停止
     task_manager.ensure_single("小说抓取")
-    task_id = f"fetch_{title or direct_id}"
+    task_id = (f"web_{site}_{direct_id or url}" if platform == "web"
+               else f"fetch_{title or direct_id}")
     task_manager.start(task_id, name="小说抓取", title=title or direct_id,
                        total=1, phase="搜索", url="/scout")
     task_manager.register_cancel(task_id)
@@ -125,7 +134,22 @@ def scout_run():
                 task_manager.log(task_id, message, "info")
 
         try:
-            # 搜索阶段
+            if platform == "web":
+                # 网页镜像站（如 wodushu）：download_webnovel 内部已按站点适配器
+                # 解析书→章表→逐章下载落盘；on_progress 在章边界检查暂停/取消
+                from plugins.webnovel_scraper import download_webnovel
+                info, dl = download_webnovel(
+                    site=site, url=url or direct_id, chapters=chapters,
+                    start_chapter=start_chapter, end_chapter=end_chapter,
+                    download_delay=download_delay, on_progress=on_progress, platform="web")
+                if not task_manager.is_cancelled(task_id):
+                    task_manager.done(task_id, f"下载完成 {dl['chapters']}章")
+                    write_crawl_progress("done", "download", dl["chapters"], dl["chapters"],
+                                         f"下载完成 {dl['chapters']}章",
+                                         extra={"folder": dl.get("folder", ""),
+                                                "platform": "web", "site": site})
+                return
+            # 搜索阶段（番茄）
             if direct_id:
                 novel = scout.crawler._get_novel_from_page(direct_id)
             else:

@@ -70,6 +70,7 @@ def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
         "genre": info.get("genre", ""),
         "chapter_count": info.get("chapter_count", 0),
         "cover": info.get("cover", ""),
+        "site": info.get("site", ""),   # 网页镜像站来源（如 wodushu）；fanqie 为空无回归
         "downloaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     with open(novel_dir / "info.json", "w", encoding="utf-8") as f:

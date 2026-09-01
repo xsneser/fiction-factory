@@ -1775,6 +1775,41 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
         raise
 
 
+def fetch_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
+                   chapters: int = 0, start_chapter: int = 1, end_chapter: int = 0,
+                   download_delay: float = 0.5) -> dict:
+    """抓取网页镜像站小说（番茄锁定章需 SVIP 时的替代全文源，如 wodushu 我的书城网）。
+
+    按书籍 URL 或 book_id 下载→保存到 storage/novels/web/。章节按列表序号（第1章=1）；
+    chapters<=0（默认）全文下载（可按站点配置过滤番外）；chapters>0 按区间。
+    纯抓取、无需 LLM（复用 plugins.webnovel_scraper.download_webnovel + novel_storage）。
+    进度实时写入 storage/crawl_progress.json（/scout 页轮询展示）。返回 {ok, title,
+    author, saved_chapters, folder, platform, site}。
+    """
+    if not url and not book_id:
+        raise RuntimeError("请提供书籍 URL 或 book_id")
+    from libraries.crawl_progress import write_crawl_progress
+    from plugins.webnovel_scraper import download_webnovel
+
+    def on_progress(phase, current, total, message):
+        write_crawl_progress("running", phase, current, total, message)
+
+    try:
+        info, dl = download_webnovel(
+            site=site, url=url, book_id=book_id, chapters=chapters,
+            start_chapter=start_chapter, end_chapter=end_chapter,
+            download_delay=download_delay, on_progress=on_progress, platform="web")
+        write_crawl_progress("done", "download", dl["chapters"], dl["chapters"],
+                             f"下载完成 {dl['chapters']}章",
+                             extra={"folder": dl["folder"], "platform": "web", "site": site})
+        return {"ok": True, "title": info["title"], "author": info["author"],
+                "saved_chapters": dl["chapters"], "folder": dl["folder"],
+                "platform": "web", "site": site}
+    except Exception as e:
+        write_crawl_progress("error", "", 0, 0, str(e))
+        raise
+
+
 def discover_hot(platform: str = "fanqie", key: str = "", count: int = 10) -> dict:
     """侦察小说热榜（多平台）：返回热门书列表（排名/书名/作者/题材/热度/简介）。
 
@@ -1890,8 +1925,9 @@ def _build_registry():
         # 上架 / 质量门禁 / 校验
         publish_check, mark_finished, publish_book, export_book,
         chapter_quality_gate, validate_storyline, validate_world,
-        # 抓取 / 侦察 / 提取入库（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示）
-        fetch_novel, discover_hot, list_rankings, list_crawled_novels, read_crawled_novel,
+        # 抓取 / 侦察 / 提取入库（番茄小说；fetch_novel 进度写 crawl_progress.json，/scout 页轮询展示；
+        # fetch_webnovel = 网页镜像站替代全文源，如 wodushu）
+        fetch_novel, fetch_webnovel, discover_hot, list_rankings, list_crawled_novels, read_crawled_novel,
         ingest_library_assets,
     ]
     seen = set()
