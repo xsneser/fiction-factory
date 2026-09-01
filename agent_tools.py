@@ -1726,9 +1726,12 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
     import re as _re
     import time as _time
     crawler = FanqieCrawler()
+    _task_id = f"mcp_fetch_novel_{int(_time.time() * 1000)}"
+    _task_title = title or book_id or "番茄小说"
 
     def on_progress(phase, current, total, message):
-        write_crawl_progress("running", phase, current, total, message)
+        write_crawl_progress("running", phase, current, total, message,
+                             task_id=_task_id, title=_task_title)
 
     try:
         novel = (crawler._get_novel_from_page(book_id) if book_id
@@ -1766,12 +1769,13 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
         }, downloaded)
         write_crawl_progress("done", "download", len(downloaded), len(downloaded),
                              f"下载完成 {len(downloaded)}章",
+                             task_id=_task_id, title=_task_title,
                              extra={"folder": folder, "platform": "fanqie"})
         return {"ok": True, "title": novel.title, "author": novel.author,
                 "saved_chapters": len(downloaded), "folder": folder,
                 "platform": "fanqie"}
     except Exception as e:
-        write_crawl_progress("error", "", 0, 0, str(e))
+        write_crawl_progress("error", "", 0, 0, str(e), task_id=_task_id, title=_task_title)
         raise
 
 
@@ -1788,11 +1792,15 @@ def fetch_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
     """
     if not url and not book_id:
         raise RuntimeError("请提供书籍 URL 或 book_id")
+    import time as _time
     from libraries.crawl_progress import write_crawl_progress
     from plugins.webnovel_scraper import download_webnovel
+    _task_id = f"mcp_fetch_webnovel_{int(_time.time() * 1000)}"
+    _task_title = (url or book_id or "网页镜像站小说")[:40]
 
     def on_progress(phase, current, total, message):
-        write_crawl_progress("running", phase, current, total, message)
+        write_crawl_progress("running", phase, current, total, message,
+                             task_id=_task_id, title=_task_title)
 
     try:
         info, dl = download_webnovel(
@@ -1803,12 +1811,13 @@ def fetch_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
         msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")
                else f"下载完成 {n}章")
         write_crawl_progress("done", "download", n, n, msg,
+                             task_id=_task_id, title=_task_title,
                              extra={"folder": dl["folder"], "platform": "web", "site": site})
         return {"ok": True, "title": info["title"], "author": info["author"],
                 "saved_chapters": n, "folder": dl["folder"], "already": dl.get("already", False),
                 "platform": "web", "site": site}
     except Exception as e:
-        write_crawl_progress("error", "", 0, 0, str(e))
+        write_crawl_progress("error", "", 0, 0, str(e), task_id=_task_id, title=_task_title)
         raise
 
 
@@ -1825,10 +1834,15 @@ def fetch_book(title: str = "", url: str = "", book_id: str = "", site: str = "w
     folder, already, platform, sources}。
     """
     from libraries.crawl_progress import write_crawl_progress
+    import time as _time
+    from libraries.crawl_progress import write_crawl_progress
     from plugins.book_fetch import download_book_merged
+    _task_id = f"mcp_fetch_book_{int(_time.time() * 1000)}"
+    _task_title = (title or url or book_id or "综合抓取")[:40]
 
     def on_progress(phase, current, total, message):
-        write_crawl_progress("running", phase, current, total, message)
+        write_crawl_progress("running", phase, current, total, message,
+                             task_id=_task_id, title=_task_title)
 
     try:
         meta, dl = download_book_merged(
@@ -1839,13 +1853,14 @@ def fetch_book(title: str = "", url: str = "", book_id: str = "", site: str = "w
         msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")
                else f"下载完成 {n}章")
         write_crawl_progress("done", "download", n, n, msg,
+                             task_id=_task_id, title=_task_title,
                              extra={"folder": dl["folder"], "platform": "merged", "site": site})
         return {"ok": True, "title": meta["title"], "author": meta["author"],
                 "intro": meta.get("intro", ""), "cover": meta.get("cover", ""),
                 "saved_chapters": n, "folder": dl["folder"], "already": dl.get("already", False),
                 "platform": meta.get("platform", "merged"), "sources": dl.get("sources", "merged")}
     except Exception as e:
-        write_crawl_progress("error", "", 0, 0, str(e))
+        write_crawl_progress("error", "", 0, 0, str(e), task_id=_task_id, title=_task_title)
         raise
 
 

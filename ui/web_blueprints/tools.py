@@ -118,13 +118,16 @@ def scout_run():
     task_manager.start(task_id, name="小说抓取", title=title or direct_id,
                        total=1, phase="搜索", url="/scout")
     task_manager.register_cancel(task_id)
-    write_crawl_progress("running", "搜索", 0, 1, "开始搜索...")
+    _task_title = (title or direct_id or url) or "抓取任务"
+    write_crawl_progress("running", "搜索", 0, 1, "开始搜索...",
+                         task_id=task_id, title=_task_title, extra={"pausable": True})
 
     def worker():
         from plugins.fanqie_scout import FanqieScoutAgent
         llm = get_llm() or None   # 下载是纯规则操作，不强制 LLM 配置
         scout = FanqieScoutAgent(llm, plot_lib, struct_lib, gag_lib)
         _cancel_exception = Exception("__CANCELLED__")
+        _extra = {"pausable": True}
 
         def on_progress(phase, current, total, message):
             # 检查取消：如果被取消了就抛异常，让 worker catch 住
@@ -135,7 +138,8 @@ def scout_run():
                 if task_manager.is_cancelled(task_id):
                     raise _cancel_exception
                 time.sleep(0.5)
-            write_crawl_progress("running", phase, current, total, message)
+            write_crawl_progress("running", phase, current, total, message,
+                                 task_id=task_id, title=_task_title, extra=_extra)
             if phase == "search":
                 task_manager.progress(task_id, current, total, "搜索", message)
                 task_manager.log(task_id, message, "info")
@@ -157,7 +161,8 @@ def scout_run():
                            else f"下载完成 {n}章")
                     task_manager.done(task_id, msg)
                     write_crawl_progress("done", "download", n, n, msg,
-                                         extra={"folder": dl.get("folder", ""),
+                                         task_id=task_id, title=_task_title,
+                                         extra={**_extra, "folder": dl.get("folder", ""),
                                                 "platform": "merged", "site": site})
                 return
             if platform == "web":
@@ -174,7 +179,8 @@ def scout_run():
                            else f"下载完成 {n}章")
                     task_manager.done(task_id, msg)
                     write_crawl_progress("done", "download", n, n, msg,
-                                         extra={"folder": dl.get("folder", ""),
+                                         task_id=task_id, title=_task_title,
+                                         extra={**_extra, "folder": dl.get("folder", ""),
                                                 "platform": "web", "site": site})
                 return
             # 搜索阶段（番茄）
@@ -184,7 +190,8 @@ def scout_run():
                 novel = scout.crawler.search_novel(title)
             if not novel:
                 task_manager.fail(task_id, "未找到该书")
-                write_crawl_progress("error", "", 0, 0, f"not found: {title or direct_id}")
+                write_crawl_progress("error", "", 0, 0, f"not found: {title or direct_id}",
+                                     task_id=task_id, title=_task_title, extra=_extra)
                 return
             task_manager.log(task_id, f"找到: {novel.title}", "success")
 
@@ -196,13 +203,16 @@ def scout_run():
                 task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")
                 write_crawl_progress("done", "download", dl_info["chapters"], dl_info["chapters"],
                                      f"下载完成 {dl_info['chapters']}章",
-                                     extra={"folder": dl_info.get("folder", ""), "platform": "fanqie"})
+                                     task_id=task_id, title=_task_title,
+                                     extra={**_extra, "folder": dl_info.get("folder", ""),
+                                            "platform": "fanqie"})
         except Exception as e:
             err_msg = str(e)
             # 取消导致的：不报错，写终态后结束（防止 worker 在途 on_progress 覆盖成 running）
             if err_msg == "__CANCELLED__":
                 task_manager.cancel(task_id)
-                write_crawl_progress("cancelled", "", 0, 0, "已停止")
+                write_crawl_progress("cancelled", "", 0, 0, "已停止",
+                                     task_id=task_id, title=_task_title, extra=_extra)
                 return
             # 翻译常见异常为用户友好提示
             if "NoneType" in err_msg and "subscriptable" in err_msg:
@@ -212,7 +222,8 @@ def scout_run():
             elif "Connection" in err_msg:
                 err_msg = "网络连接失败，请检查网络"
             task_manager.fail(task_id, err_msg)
-            write_crawl_progress("error", "", 0, 0, err_msg)
+            write_crawl_progress("error", "", 0, 0, err_msg,
+                                 task_id=task_id, title=_task_title, extra=_extra)
 
     threading.Thread(target=worker, daemon=True, name="scout-fetch").start()
     return jsonify({"ok": True, "task_id": task_id})
@@ -228,33 +239,42 @@ def crawl_progress():
 
 @bp.route("/api/scout/fetch/control", methods=["POST"])
 def scout_fetch_control():
-    """控制当前「小说抓取」任务：pause 暂停 / resume 继续 / cancel 停止。
-    /scout 页「⏸ 暂停 / ▶ 继续 / ⏹ 停止」按钮调此端点，UI 仍由 crawl-progress 轮询接棒。"""
+    """控制「小说抓取」任务（多任务并行）：pause 暂停 / resume 继续 / cancel 停止。
+
+    请求体可带 task_id（前端按进度行传，指定控制哪个任务）；缺省回退「running 的『小说抓取』」。
+    /scout 页每个任务行「⏸ / ▶ / ⏹」按钮调此端点，UI 仍由 crawl-progress 轮询接棒。"""
     from plugins import task_manager
     from libraries.crawl_progress import write_crawl_progress
-    action = (request.json or {}).get("action", "")
+    data = request.json or {}
+    action = data.get("action", "")
     if action not in ("pause", "resume", "cancel"):
         return jsonify({"ok": False, "error": "未知操作"}), 400
-    tid = None
-    for t in task_manager.get_tasks():
-        if t.get("name") == "小说抓取" and t.get("status") == "running":
-            tid = t.get("id")
-            break
+    tid = (data.get("task_id") or "").strip()
+    if not tid:
+        for t in task_manager.get_tasks():
+            if t.get("name") == "小说抓取" and t.get("status") == "running":
+                tid = t.get("id")
+                break
     if not tid:
         return jsonify({"ok": False, "error": "没有进行中的抓取任务"}), 404
     t = task_manager.get(tid) or {}
     cur = t.get("current", 0) or 0
     total = t.get("total", 0) or 0
     phase = t.get("phase", "") or ""
+    _extra = {"pausable": True}
+    _title = t.get("title", "") or tid
     if action == "pause":
         task_manager.pause(tid)
-        write_crawl_progress("paused", phase, cur, total, "已暂停")
+        write_crawl_progress("paused", phase, cur, total, "已暂停",
+                             task_id=tid, title=_title, extra=_extra)
     elif action == "resume":
         task_manager.resume(tid)
-        write_crawl_progress("running", phase, cur, total, "已恢复下载")
+        write_crawl_progress("running", phase, cur, total, "已恢复下载",
+                             task_id=tid, title=_title, extra=_extra)
     else:  # cancel
         task_manager.cancel(tid)
-        write_crawl_progress("cancelled", phase, cur, total, "已停止")
+        write_crawl_progress("cancelled", phase, cur, total, "已停止",
+                             task_id=tid, title=_title, extra=_extra)
     return jsonify({"ok": True, "action": action})
 
 

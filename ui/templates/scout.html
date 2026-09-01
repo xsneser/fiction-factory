@@ -43,20 +43,9 @@
     </div>
 </div>
 
-{# ─── 实时进度 ─── #}
+{# ─── 实时进度（多任务并行：每个下载一行进度条） ─── #}
 <div id="crawl-progress" style="display:none;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px;margin-top:12px">
-    <div style="display:flex;justify-content:space-between;align-items:center">
-        <span id="cp-phase" style="font-size:13px;color:#c9d1d9">…</span>
-        <span id="cp-count" style="font-size:12px;color:#8b949e"></span>
-    </div>
-    <div style="background:#21262d;border-radius:4px;height:8px;margin-top:8px;overflow:hidden">
-        <div id="cp-fill" style="height:100%;width:0%;background:#58a6ff;border-radius:4px;transition:width .3s"></div>
-    </div>
-    <div id="cp-msg" style="font-size:12px;color:#8b949e;margin-top:6px"></div>
-    <div id="cp-actions" style="display:none;margin-top:10px;gap:8px">
-        <button id="btn-cp-pause" class="small" style="background:#1f6feb" onclick="fetchControl('pause')">⏸ 暂停</button>
-        <button id="btn-cp-stop" class="small" style="background:#da3633" onclick="fetchControl('cancel')">⏹ 停止</button>
-    </div>
+    <div id="cp-tasks"></div>
 </div>
 
 {# ─── 已下载书库（列表；点书卡 → /extract 提取） ─── #}
@@ -222,85 +211,86 @@ function startFetch() {
     showToast('🚀 已开始抓取（全文）', 'info');
 }
 
-/* 暂停/继续/停止：POST /api/scout/fetch/control，UI 由 crawl-progress 轮询接棒 */
-function fetchControl(action) {
+/* 暂停/继续/停止：POST /api/scout/fetch/control（可指定 task_id，多任务并行按行控制） */
+function fetchControl(action, taskId) {
+    var body = {action: action};
+    if (taskId) body.task_id = taskId;
     fetch('/api/scout/fetch/control', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action: action}),
+        body: JSON.stringify(body),
     }).then(function(r) { return r.json(); })
       .then(function(d) {
           if (!d.ok) showToast(d.error || '操作失败', 'warning');
       }).catch(function() {});
 }
 
-/* ─── 实时进度（crawl-progress 轮询；done/cancelled 时提示，旧残留 ts>30s 不重放） ─── */
-var _crawlHideTimer = null;
+/* ─── 实时进度（crawl-progress 轮询；多任务并行各自进度行；terminal 展示 6s 后消失） ─── */
 var _lastLibraryRefresh = 0;   // 下载中书库节流刷新（≤1次/3s）
+var _terminalHideTimer = null;
 function pollCrawlProgress() {
     fetch('/api/crawl/progress')
         .then(function(r) { return r.json(); })
         .then(function(d) {
             var box = document.getElementById('crawl-progress');
-            if (!box || !d || !d.ok) return;
-            var phaseEl = document.getElementById('cp-phase');
-            var countEl = document.getElementById('cp-count');
-            var fillEl = document.getElementById('cp-fill');
-            var msgEl = document.getElementById('cp-msg');
-            var actEl = document.getElementById('cp-actions');
-            var pauseBtn = document.getElementById('btn-cp-pause');
+            var tarea = document.getElementById('cp-tasks');
+            if (!box || !tarea || !d || !d.ok) return;
+            var tasks = d.tasks || {};
             var now = Date.now() / 1000;
-            var stale = (d.ts || 0) > 0 && (now - d.ts) > 30;
-            function hide() { box.style.display = 'none'; }
-            function clearHide() { if (_crawlHideTimer) { clearTimeout(_crawlHideTimer); _crawlHideTimer = null; } }
-            if (d.state === 'running' || d.state === 'paused') {
-                clearHide();
-                box.style.display = '';
-                var pct = d.total > 0 ? Math.round(d.current / d.total * 100) : 0;
-                if (fillEl) fillEl.style.width = pct + '%';
-                if (countEl) countEl.textContent = d.total > 0 ? (d.current + ' / ' + d.total) : '';
-                if (msgEl) msgEl.textContent = d.message || '';
-                if (actEl) actEl.style.display = '';
+            var anyVisible = false;
+            var html = '';
+            Object.keys(tasks).forEach(function(tid) {
+                var t = tasks[tid];
+                var state = t.state || '';
+                var stale = (t.ts || 0) > 0 && (now - t.ts) > 30 && (state === 'done' || state === 'error' || state === 'cancelled');
+                if (stale) return;
+                var running = (state === 'running' || state === 'paused');
+                var pct = t.total > 0 ? Math.round((t.current || 0) / t.total * 100) : 0;
+                var title = t.title || tid;
+                var phaseTxt = state === 'paused' ? '⏸ ' + (t.phase || '已暂停')
+                    : state === 'done' ? '✅ 完成'
+                    : state === 'error' ? '❌ 失败'
+                    : state === 'cancelled' ? '⏹ 已停止'
+                    : (t.phase || '');
+                var fillColor = state === 'error' ? '#da3633' : '#58a6ff';
+                var pausable = !!(t.extra && t.extra.pausable);
+                var actions = '';
+                if (running && pausable) {
+                    var pauseLabel = state === 'paused' ? '▶ 继续' : '⏸ 暂停';
+                    var pauseAct = state === 'paused' ? 'resume' : 'pause';
+                    actions = '<div style="margin-top:8px;display:flex;gap:8px">'
+                        + '<button class="small" style="background:#1f6feb" onclick="fetchControl(\'' + pauseAct + '\',\'' + tid + '\')">' + pauseLabel + '</button>'
+                        + '<button class="small" style="background:#da3633" onclick="fetchControl(\'cancel\',\'' + tid + '\')">⏹ 停止</button>'
+                        + '</div>';
+                }
+                html += '<div class="cp-task" style="padding:10px 0;border-bottom:1px solid #21262d">'
+                    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">'
+                    + '<span style="font-size:13px;color:#c9d1d9;font-weight:600">' + escapeHtml(title) + '</span>'
+                    + '<span style="font-size:12px;color:#8b949e">' + phaseTxt
+                    + (t.total > 0 ? ' · ' + (t.current || 0) + ' / ' + t.total : '') + '</span>'
+                    + '</div>'
+                    + '<div style="background:#21262d;border-radius:4px;height:6px;margin-top:6px;overflow:hidden">'
+                    + '<div style="height:100%;width:' + pct + '%;background:' + fillColor + ';border-radius:4px;transition:width .3s"></div>'
+                    + '</div>'
+                    + '<div style="font-size:12px;color:#8b949e;margin-top:5px">' + escapeHtml(t.message || '') + '</div>'
+                    + actions + '</div>';
+                anyVisible = true;
                 // 下载中：书库实时显示已落盘章节（节流，第一章落盘后即出现）
-                if (d.state === 'running' && d.phase === 'download') {
-                    var _now2 = Date.now();
-                    if (_now2 - _lastLibraryRefresh > 3000) {
-                        _lastLibraryRefresh = _now2;
+                if (running && state === 'running' && t.phase === 'download') {
+                    var _n = Date.now();
+                    if (_n - _lastLibraryRefresh > 3000) {
+                        _lastLibraryRefresh = _n;
                         loadNovels();
                     }
                 }
-                if (pauseBtn) {
-                    if (d.state === 'paused') {
-                        pauseBtn.textContent = '▶ 继续';
-                        pauseBtn.setAttribute('onclick', "fetchControl('resume')");
-                        if (phaseEl) phaseEl.textContent = '⏸ ' + (d.phase || '已暂停');
-                    } else {
-                        pauseBtn.textContent = '⏸ 暂停';
-                        pauseBtn.setAttribute('onclick', "fetchControl('pause')");
-                        if (phaseEl) phaseEl.textContent = d.phase || '';
-                    }
-                }
-            } else if ((d.state === 'done' || d.state === 'error' || d.state === 'cancelled') && !stale) {
-                clearHide();
-                box.style.display = '';
-                if (actEl) actEl.style.display = 'none';
-                // 下载结束：刷新书库显示最终章节数（节流）
-                var _now3 = Date.now();
-                if (_now3 - _lastLibraryRefresh > 3000) {
-                    _lastLibraryRefresh = _now3;
-                    loadNovels();
-                }
-                var isErr = d.state === 'error';
-                if (fillEl) fillEl.style.width = isErr ? '0%' : '100%';
-                if (phaseEl) phaseEl.textContent = d.state === 'cancelled' ? '⏹ 已停止' : (isErr ? '❌ 失败' : '✅ 完成');
-                if (countEl) countEl.textContent = '';
-                if (msgEl) msgEl.textContent = d.message || '';
-                _crawlHideTimer = setTimeout(function() { hide(); _crawlHideTimer = null; }, 6000);
-            } else {
-                clearHide();
-                if (actEl) actEl.style.display = 'none';
-                hide();
+            });
+            if (!anyVisible) {
+                box.style.display = 'none';
+                tarea.innerHTML = '';
+                return;
             }
+            box.style.display = '';
+            tarea.innerHTML = html;
         })
         .catch(function() {});
 }
