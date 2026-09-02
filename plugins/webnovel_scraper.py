@@ -186,35 +186,37 @@ SITES = {
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
-    # 飘花阅读(m 站)：章表分页 /piao/{bid}_{p}/；正文静态内嵌容器 #nr；
-    # 长章分页为「路径段式」/piaof/{bid}/{cid}/N.html（非下划线后缀 {cid}_N.html）
+    # 飘花阅读(桌面站 www)：目录单页全量 /piao/{bid}/（无分页）；每章正文一页整章
+    # /piaof/{bid}/{cid}.html 容器 #content —— 不再走 m 移动端的「章拆两页」续页
     "piaofeige": {
         "name": "飘花阅读",
-        "base_url": "http://m.piaofeige.com",
+        "base_url": "http://www.piaofeige.com",
         "encoding": "utf-8",
         "headers": {"User-Agent": DEFAULT_UA},
         "book_id_re": r"/piao/(\d+)/",
         "book_page": lambda b: f"/piao/{b}/",
-        # 站内搜索：GET /s.php?q=（comm.js 里 articlesearch form action=/s.php，input name=q）
-        # 结果链接文本在 <h2> 内（如 <a href="/piao/82425/"><h2>书名</h2></a>），link_re 需放行标签
+        # 站内搜索：GET /s.php?q=（articlesearch form action=/s.php，input name=q）
+        # 桌面站结果结构 <h4 class="bookname"><a href="/piao/N/">书名</a></h4>（非 m 的 <h2>）
         "site_search": {
             "path": "/s.php", "param": "q", "method": "get",
-            "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*><h2>([^<]{2,60})</h2>', re.S),
+            "link_re": re.compile(
+                r'<h4[^>]*class="[^"]*bookname[^"]*"[^>]*>\s*'
+                r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,60})</a>', re.S),
             "exact": True,
         },
-        "chapter_list_page": lambda b, p: (f"/piao/{b}_{p}/" if p > 1 else f"/piao/{b}/"),
-        "chapter_url": lambda b, cid, suf: (
-            f"/piaof/{b}/{cid}.html" if not suf
-            else f"/piaof/{b}/{cid}/{suf.lstrip('_')}.html"),
+        "chapter_list_page": lambda b, p: f"/piao/{b}/",
+        # www 锚点带空格 href ="..." → href 后容错空白
         "chapter_link_re": re.compile(
-            r'<a[^>]*href="(/piaof/\d+/(\d+)\.html)"[^>]*>'
+            r'<a[^>]*href\s*=\s*"(/piaof/\d+/(\d+)\.html)"[^>]*>'
             r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
-        "extra_page_re": r'href="[^"]*?/piaof/\d+/{cid}/(\d+)\.html"',
-        "content_div_id": "nr",
+        # www 无续页（单页整章）
+        "chapter_url": lambda b, cid, suf: f"/piaof/{b}/{cid}.html",
+        "extra_page_re": r"(?!)",
+        "content_div_id": "content",
         "content_render": False,
+        # www 正文尾部广告行（URL 行已被 _AD_LINE_RE 的 ^https?://\S+$ 滤掉）
         "drop_line_re": [
-            r"^第[0-9一二三四五六七八九十百千零两]+章.*?[（(]第\d+/\d+页[)）]$",
-            r"^[（(]第\d+/\d+页[)）]$",
+            r"^请记住本书首发域名.*$",
         ],
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
