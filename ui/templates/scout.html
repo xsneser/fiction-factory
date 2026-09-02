@@ -688,8 +688,8 @@ function pollCrawlProgress() {
                         }
                         var _dispName = _SITE_NAMES[site] || site;
                         // 左栏每源 = 超链接（新标签打开）：后端已携带该源书页 URL（搜到书）
-                        // 或该源主页 URL（未找到）；无 url 时兜底主页 /。
-                        var _href = s.url || '/';
+                        // 或该源主页 URL（解析中/未找到）；后端保证 url 非空，异常兜底 # 不跳内部页。
+                        var _href = s.url || '#';
                         srcsHtml += '<a class="cp-src ' + sCls + '" href="' + _href
                             + '" target="_blank" rel="noopener"'
                             + ' title="' + escapeHtml(_dispName + ' · ' + det + '（点击新标签打开该源页面）') + '">'

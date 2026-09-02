@@ -209,7 +209,8 @@ def _probe_ad_density(crawler, book_id, chapter_id):
             text = crawler._extract_content(html)
             if text:
                 parts.append(text)
-            cur = int(suffix.lstrip("_")) if suffix else 1
+            cur = (int(suffix.lstrip("_")) if suffix
+                   else int(crawler.cfg.get("extra_page_base", 1)))
             nxt = None
             for m in re.finditer(extra_re, html):
                 if int(m.group(1)) > cur:
@@ -419,6 +420,13 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
                     "wmap": {}, "coverage": 0, "total_ch": 0,
                     "page_url": _home, "quick": quick}
 
+    def _home_url(sn):
+        """取该源主页 URL（供解析中/失败步骤作链接兜底；失败返回空）。"""
+        try:
+            return MIRROR_SOURCES[sn]().cfg["base_url"]
+        except Exception:
+            return ""
+
     probe_keys = list(MIRROR_SOURCES)
     if mirrors:
         wanted = [k for k in MIRROR_SOURCES if k in mirrors]
@@ -428,7 +436,8 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
     with _cf.ThreadPoolExecutor(max_workers=min(3, max(1, len(probe_keys)))) as _ex:
         # 每个源先显示「解析中」，再**并发**解析；as_completed → 谁先完成谁先翻结果
         for sn in probe_keys:
-            _step(f"镜像解析:{sn}", "running", "搜索/解析中…")
+            _step(f"镜像解析:{sn}", "running", "搜索/解析中…",
+                  url=_home_url(sn))
         _futs = {_ex.submit(_resolve_source, sn): sn for sn in probe_keys}
         for _fut in _cf.as_completed(_futs):
             sn = _futs[_fut]
