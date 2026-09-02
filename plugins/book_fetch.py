@@ -301,10 +301,10 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
     from plugins.fanqie_scout import FanqieCrawler
     from plugins.webnovel_scraper import WebnovelCrawler
 
-    def _step(label, status="running", detail=""):
+    def _step(label, status="running", detail="", url=""):
         if on_step:
             try:
-                on_step(label, status, detail)
+                on_step(label, status, detail, url)
             except Exception as e:
                 logger.warning(f"on_step failed: {e}")
                 raise
@@ -388,7 +388,10 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
                 if w_url:
                     w_meta = crawler.resolve_book(w_url)
             if not w_meta:
-                return None
+                # 未找到：仍返回主页 URL（左栏点击 → 该源网站主页），wmap 空表示未命中
+                return {"site": sn, "crawler": crawler, "w_meta": None,
+                        "wmap": {}, "coverage": 0, "total_ch": 0,
+                        "page_url": crawler.cfg["base_url"], "quick": quick}
             # 探测阶段 quick：只拉首尾两页确认「书存在 + 总章数」（秒级），
             # 慢源（bookszw/chensiwx 3000+ 章）不再全量拉表阻塞流程；全量由选源后补拉
             w_cat = crawler.get_chapter_list(w_meta["book_id"], quick=quick)
@@ -403,10 +406,18 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
             total_ch = len(wmap) if not quick else _est_total(w_cat)
             return {"site": sn, "crawler": crawler, "w_meta": w_meta,
                     "wmap": wmap, "coverage": coverage,
-                    "total_ch": total_ch, "quick": quick}
+                    "total_ch": total_ch, "quick": quick,
+                    "page_url": w_meta.get("url") or crawler.cfg["base_url"]}
         except Exception as e:
             logger.warning(f"mirror {sn} resolve failed: {e}")
-            return None
+            # 解析异常：回退该源主页 URL
+            try:
+                _home = MIRROR_SOURCES[sn]().cfg["base_url"]
+            except Exception:
+                _home = ""
+            return {"site": sn, "crawler": None, "w_meta": None,
+                    "wmap": {}, "coverage": 0, "total_ch": 0,
+                    "page_url": _home, "quick": quick}
 
     probe_keys = list(MIRROR_SOURCES)
     if mirrors:
@@ -430,12 +441,14 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
                 sources[_r["site"]] = _r
                 # 显示全量章数（quick 下 _est_total 由末页最大章号估算；非分页源即实际章数）
                 _tch = _r["total_ch"] or len(_r["wmap"])
-                _step(f"镜像解析:{_r['site']}", "ok", f"主书 {_tch} 章可候选")
+                _step(f"镜像解析:{_r['site']}", "ok", f"主书 {_tch} 章可候选",
+                      url=_r.get("page_url") or "")
                 if on_progress:
                     on_progress("search", 1, 1,
                                 f"镜像源 {_r['site']}: 主书 {_tch} 章可用")
             else:
-                _step(f"镜像解析:{sn}", "warn", "未找到该书 / 解析失败")
+                _pu = (_r or {}).get("page_url") or ""
+                _step(f"镜像解析:{sn}", "warn", "未找到该书 / 解析失败", url=_pu)
 
     # ── 给镜像 URL 时反向补番茄元数据（用镜像书名；番茄失败但镜像命中的回补） ──
     if not f_meta and sources:
@@ -470,10 +483,10 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     prefer_site：用户显式源优先排主源（偏好；未解析/缺章时回退核对结论并多源补缺）。"""
     from plugins.novel_storage import save_novel, save_chapter, NOVELS_DIR, _safe_name
 
-    def _step(label, status="running", detail=""):
+    def _step(label, status="running", detail="", url=""):
         if on_step:
             try:
-                on_step(label, status, detail)
+                on_step(label, status, detail, url)
             except Exception as e:
                 logger.warning(f"on_step failed: {e}")
                 raise
@@ -817,6 +830,7 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     _dl_cancelled = False
     try:
         _n_src = max(1, len(_dl_srcs))
+        _dl_cnt = {}   # site → 该源已成功下载章节数（左栏「下载中 共N章」）
         _futs = {}
         for _i, ch in enumerate(pending):
             # 轮询分片：章节 i → 负责源 _dl_srcs[i % _n_src]（真正多源并行下载）
@@ -829,9 +843,11 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             except Exception as e:
                 logger.warning(f"dl worker failed {_ch.get('title','')}: {e}")
                 _ok, _us, _fnum = False, None, None
-            # 下载中的源：左栏显示转圈 + 第N章（每章完成后更新该源最新进度）
+            # 下载中的源：左栏显示转圈 + 该源累计已下载章节数（每章完成后更新）
+            if _us and _ok:
+                _dl_cnt[_us] = _dl_cnt.get(_us, 0) + 1
             if _us and _fnum is not None:
-                _step(f"下载:{_us}", "running", f"第{_fnum}章")
+                _step(f"下载:{_us}", "running", f"共{_dl_cnt.get(_us, 1)}章")
             # 进度回调：tools.py 在此检查取消/暂停——取消时抛 __CANCELLED__（下方 finally 释放）
             if on_progress:
                 on_progress("download", _i + 1, len(pending), _ch.get("title", "")[:30])

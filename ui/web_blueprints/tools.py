@@ -172,7 +172,7 @@ def scout_run():
                 task_manager.progress(task_id, current, total, "下载", message)
                 task_manager.log(task_id, message, "info")
 
-        def on_step(label, status="running", detail=""):
+        def on_step(label, status="running", detail="", url=""):
             # 分步清单：写 crawl_progress steps + 侧栏 log（取消/暂停与 on_progress 同检查）
             if task_manager.is_cancelled(task_id):
                 raise _cancel_exception
@@ -185,10 +185,23 @@ def scout_run():
                 _nm = detail.split(" · ")[0].strip()
                 if _nm:
                     _tname["title"] = _nm
+                    try:
+                        from plugins.novel_storage import _safe_name
+                        _tname["folder"] = _safe_name(_nm)
+                    except Exception:
+                        _tname["folder"] = _nm
+            # 源相关步骤（镜像解析:/校对:/下载:）携带该源网页链接（书页/主页，新标签打开）。
+            # book_fetch 传入的 url 优先（镜像源真实书页 URL / 主页）；无则回退书目阅读页。
+            _step_url = url or ""
+            if not _step_url and label[:5] in ("镜像解析", "校对", "下载") and ":" in label:
+                _f = _tname.get("folder") or (
+                    _tname.get("title") if re.search(r"[\u4e00-\u9fff]", _tname.get("title", "")) else "")
+                _step_url = f"/novels/read?platform=merged&folder={_f}" if _f else "/"
             write_crawl_progress("running", _state["phase"], _state["cur"], _state["total"],
                                  detail or label, task_id=task_id, title=_tname["title"],
                                  extra=_extra,
-                                 step={"label": label, "status": status, "detail": detail})
+                                 step={"label": label, "status": status, "detail": detail,
+                                       "url": _step_url})
             task_manager.log(task_id, f"{label} {detail}".strip(), "info")
 
         try:

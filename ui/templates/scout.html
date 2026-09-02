@@ -631,6 +631,7 @@ function pollCrawlProgress() {
                                 srcMap[site].detail = s.detail || '';
                                 srcMap[site].phase = phase;
                             }
+                            if (s.url) srcMap[site].url = s.url;   // 后端已携带书页/主页链接
                         }
                         // 解析/比对/下载 都算「操作」→ 全部进右栏时间线
                         opSteps.push(s);
@@ -669,8 +670,7 @@ function pollCrawlProgress() {
                             det = s.detail ? ('下载中 ' + s.detail) : '下载中…';
                         } else if (dlDone) {
                             sIc = '✓';
-                            det = s.detail ? ('已下载 第' + s.detail.replace('第', '').replace('章', '') + ' 章')
-                                : '已下载';
+                            det = s.detail ? ('已下载 ' + s.detail) : '已下载';
                         } else if (s.phase === '校对') {
                             // 左栏实时显示每个源的比对过程：running 显当前步骤 detail，
                             // 完成显示完整明细（目录/题目/作者/前十章/广告）
@@ -687,10 +687,15 @@ function pollCrawlProgress() {
                             det = s.detail || (st === 'running' ? '解析中…' : '');
                         }
                         var _dispName = _SITE_NAMES[site] || site;
-                        srcsHtml += '<div class="cp-src ' + sCls + '" title="' + escapeHtml(_dispName + ' · ' + det) + '">'
+                        // 左栏每源 = 超链接（新标签打开）：后端已携带该源书页 URL（搜到书）
+                        // 或该源主页 URL（未找到）；无 url 时兜底主页 /。
+                        var _href = s.url || '/';
+                        srcsHtml += '<a class="cp-src ' + sCls + '" href="' + _href
+                            + '" target="_blank" rel="noopener"'
+                            + ' title="' + escapeHtml(_dispName + ' · ' + det + '（点击新标签打开该源页面）') + '">'
                             + '<span class="s-ic">' + sIc + '</span>'
                             + '<span class="s-name">' + escapeHtml(_dispName) + '</span>'
-                            + '<span class="s-det">' + escapeHtml(det) + '</span></div>';
+                            + '<span class="s-det">' + escapeHtml(det) + '</span></a>';
                     });
                     srcsHtml += '</div>';
                 }

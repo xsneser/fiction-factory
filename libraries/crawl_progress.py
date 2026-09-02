@@ -62,6 +62,8 @@ def write_crawl_progress(state: str, phase: str = "", current: int = 0,
                 "detail": step.get("detail", ""),
                 "ts": now,
             }
+            if step.get("url"):
+                st["url"] = step["url"]   # 源相关步骤携带书页/主页链接（左栏渲染为超链接）
             for i, ex in enumerate(steps):
                 if ex.get("label") == st["label"]:
                     steps[i] = st
