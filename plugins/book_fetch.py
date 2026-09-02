@@ -552,9 +552,17 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
 
         def _audit_worker(src):
             _mc = {}
+            _st = src["site"]
+            # 实时分阶段进度：每源独立更新 detail（左栏/右栏实时看到该源比对到哪一步）
+            def _ph(step_detail):
+                try:
+                    _step(f"校对:{_st}", "running", step_detail)
+                except Exception:
+                    pass
             # 并行两个子任务：A=前十章核对（用 quick 前 20 章，秒级） B=全量目录补拉（慢源耗时）
             def _load_full_cov():
                 if src.get("quick") and not src.get("_full"):
+                    _ph("拉取全量目录中…")
                     full = src["crawler"].get_chapter_list(src["w_meta"]["book_id"])
                     main_re = src["crawler"].cfg.get("main_title_re")
                     if main_re:
@@ -565,11 +573,13 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                     src["_full"] = True
                 return _catalog_coverage(f_catalog, src)
             with _cfv.ThreadPoolExecutor(max_workers=2) as _ex2:
+                _ph("前十章正文比对中…")
                 _f_head = _ex2.submit(
                     _head_verify, fanqie_bodies, head_nums, f_by_num, src, _mc)
                 _f_full = _ex2.submit(_load_full_cov)
                 _ver = _f_head.result()      # 秒级：前十章核对先出（不阻塞于慢源全量目录）
                 _cov, _tall = _f_full.result()  # 等全量目录补拉完成
+            _ph(f"目录 {_cov}/{_tall} · 前十章 {_ver['matched']}/{_ver['total']}，题目/作者比对中…")
             # 目录覆盖：全量目录对番茄编号章覆盖率（消息显示 cov/tall；分数=覆盖率×SCORE_DIR）
             src["coverage"] = _cov   # 供 source_order 排序与 meta 展示
             # 题目/作者比对（源 meta vs 番茄 meta；缺失记 ✗）
@@ -586,6 +596,7 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             _align_ok = (_ver["align"]["passed"] / max(1, _ver["align"]["expected"]))
             _body_m, _body_t = _ver["matched"], _ver["total"]
             # 广告检测（抽样前 AD_DENSITY_SAMPLE 个 wmap 章，取最高密度）
+            _ph("广告检测中…")
             _ad = 0.0
             for _ch in list(src["wmap"].values())[:AD_DENSITY_SAMPLE]:
                 _d = _probe_ad_density(src["crawler"], src["w_meta"]["book_id"],

@@ -195,7 +195,7 @@
 .cp-sources .cp-src:hover { background:#21262d; }
 .cp-sources .s-ic { width:16px; text-align:center; flex-shrink:0; }
 .cp-sources .s-ic .spin { display:inline-block; animation:cp-spin 1s linear infinite; }
-.cp-sources .s-name { font-weight:600; color:#c9d1d9; min-width:56px; max-width:88px;
+.cp-sources .s-name { font-weight:600; color:#c9d1d9; min-width:44px; max-width:64px;
     flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cp-sources .s-det { color:#484f58; font-size:11px; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
@@ -672,12 +672,11 @@ function pollCrawlProgress() {
                             det = s.detail ? ('已下载 第' + s.detail.replace('第', '').replace('章', '') + ' 章')
                                 : '已下载';
                         } else if (s.phase === '校对') {
-                            // 左栏精简：校对结果只显通过/未通过 + 章数（明细在右栏操作）
-                            var _covM = /目录\s*(\d+)\/(\d+)/.exec(s.detail || '');
-                            var _covTxt = _covM ? _covM[1] + '/' + _covM[2] + ' 章' : '';
-                            if (st === 'ok') { sIc = '✓'; det = '通过 ' + _covTxt; }
-                            else if (st === 'warn') { sIc = '!'; det = '未通过 ' + _covTxt; }
-                            else if (st === 'running') { sIc = '…'; det = '比对中…'; }
+                            // 左栏实时显示每个源的比对过程：running 显当前步骤 detail，
+                            // 完成显示完整明细（目录/题目/作者/前十章/广告）
+                            if (st === 'running') { sIc = '…'; det = s.detail || '比对中…'; }
+                            else if (st === 'ok') { sIc = '✓'; det = s.detail || '通过'; }
+                            else if (st === 'warn') { sIc = '!'; det = s.detail || '未通过'; }
                             else { sIc = st === 'error' ? '✗' : '·'; det = s.detail || ''; }
                         } else if (s.phase === '镜像解析') {
                             sIc = st === 'ok' ? '✓' : st === 'warn' ? '!' : st === 'running' ? '…' : (st === 'error' ? '✗' : '·');
