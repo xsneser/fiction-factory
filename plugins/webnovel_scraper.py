@@ -157,15 +157,36 @@ SITES = {
         ],
         "request_delay": 0.5,
     },
+    # 互书阁：书页/目录静态可抓（全目录在 /index/{bid}/），正文 <div id="article"> 由 JS 填充 →
+    # content_render 走无头浏览器渲染后按 content_div_id=article 解析
+    "hushuge": {
+        "name": "互书阁",
+        "base_url": "https://www.hushuge.com",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/book/(\d+)/",
+        "book_page": lambda b: f"/book/{b}/",
+        "chapter_list_page": lambda b, p: f"/index/{b}/",
+        "chapter_url": lambda b, cid, suf: f"/read/{b}/{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/read/\d+/(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r'href="[^"]*?/read/\d+/{cid}_(\d+)\.html"',
+        "content_div_id": "article",
+        "content_render": True,
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
 }
 
 # ─── 多镜像源注册表（下载时并行尝试） ──────────────────────────────────
-# 只收录 requests 可静态抓的站（正文非 JS）；JS 站（kudushu 等）需浏览器渲染，不在本次。
+# 静态可抓站收 requests；正文 JS 填充站标 content_render 走浏览器渲染（playwright，见 browser_render）。
 MIRROR_SOURCES = {
     "wodushu": lambda: WebnovelCrawler("wodushu"),
     "bookszw": lambda: BookszwCrawler(),
     "uukan": lambda: WebnovelCrawler("uukan"),
     "chensiwx": lambda: WebnovelCrawler("chensiwx"),
+    "hushuge": lambda: WebnovelCrawler("hushuge"),
 }
 
 
@@ -374,6 +395,18 @@ class WebnovelCrawler:
         return numbered + extras
 
     # ── 单章正文 ──
+    def _page_html(self, path: str) -> Optional[str]:
+        """取一页 HTML：静态站用 requests；content_render 站（正文 JS 填充）用无头浏览器渲染。"""
+        if self.cfg.get("content_render"):
+            try:
+                from plugins.browser_render import render_html
+                url = path if path.startswith("http") else self.cfg["base_url"] + path
+                return render_html(url, wait_sel=self.cfg.get("content_div_id") or "")
+            except Exception as e:
+                logger.warning("render fetch failed: %s (%s)", path, e)
+                return None
+        return self._fetch(path)
+
     def download_chapter(self, book_id: str, chapter_id: str) -> str:
         """抓单章正文：拼接 {cid}.html + 续页 {cid}_N.html（无续页链接即止），清洗返回。"""
         parts: list[str] = []
@@ -382,7 +415,7 @@ class WebnovelCrawler:
         extra_re = self.cfg["extra_page_re"].format(cid=re.escape(chapter_id))
         for _ in range(max_pages):
             path = self.cfg["chapter_url"](book_id, chapter_id, suffix)
-            html = self._fetch(path)
+            html = self._page_html(path)
             if not html:
                 break
             text = self._extract_content(html)
