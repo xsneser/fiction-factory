@@ -695,22 +695,67 @@ function pollCrawlProgress() {
                     srcsHtml += '</div>';
                 }
                 // 右栏：操作消息
+                // 右栏：操作消息——源相关步骤（镜像解析/校对/下载）合并为一条统计，其余逐条
                 var opsHtml = '';
                 if (opSteps.length) {
+                    // 聚合统计
+                    var _agg = {mir: null, aud: null, dl: null};
+                    opSteps.forEach(function(s) {
+                        var _lm = /^(镜像解析|校对|下载):(.+)$/.exec(s.label || '');
+                        if (!_lm) return;
+                        var _ph = _lm[1];
+                        var _slot = _ph === '镜像解析' ? 'mir' : (_ph === '校对' ? 'aud' : 'dl');
+                        if (!_agg[_slot]) _agg[_slot] = {n: 0, ok: 0, running: 0, warn: 0, err: 0, detail: ''};
+                        var _g = _agg[_slot];
+                        _g.n++;
+                        if (s.status === 'ok') _g.ok++;
+                        else if (s.status === 'running') { _g.running++; _g.detail = s.detail || ''; }
+                        else if (s.status === 'warn') _g.warn++;
+                        else if (s.status === 'error') _g.err++;
+                    });
+                    // 合并条目渲染
+                    var _aggStep = function(phase, g, labelTxt) {
+                        if (!g) return '';
+                        var _st = g.err ? 'error' : (g.running ? 'running' : 'ok');
+                        var _sCls = _st === 'ok' ? 's-done' : _st === 'error' ? 's-error' : _st === 'running' ? 's-running' : '';
+                        var _sIc = _st === 'ok' ? '✓' : _st === 'error' ? '✗' : _st === 'running' ? '…' : '·';
+                        var _det = '';
+                        if (phase === 'mir') {
+                            // 解析完毕，共 N 镜像源，有书 X 源
+                            _det = '共 ' + g.n + ' 镜像源，有书 ' + g.ok + ' 源'
+                                + (g.running ? '（解析中）' : '');
+                        } else if (phase === 'aud') {
+                            // 比对完毕，通过 X 源
+                            _det = '通过 ' + g.ok + ' 源' + (g.running ? '（比对中）' : '');
+                        } else { // dl
+                            _det = g.detail ? ('下载中 ' + g.detail) : '下载中…';
+                        }
+                        return '<div class="cp-step ' + _sCls + '"><span class="ic">' + _sIc + '</span>'
+                            + '<span>' + escapeHtml(labelTxt)
+                            + (g.n > 1 ? ' <span class="det">(' + g.n + ' 源)</span>' : '')
+                            + (_det ? '<span class="det">' + escapeHtml(_det) + '</span>' : '')
+                            + '</span></div>';
+                    };
+                    // 按出现顺序合并：先扫一遍确定「镜像解析/校对/下载」首次位置，插入合并条目
+                    var _shown = {mir: false, aud: false, dl: false};
                     opsHtml = '<div class="cp-ops"><div class="cp-ops-title">操作</div><div class="cp-steps">';
                     opSteps.forEach(function(s) {
+                        var _lm = /^(镜像解析|校对|下载):(.+)$/.exec(s.label || '');
+                        if (_lm) {
+                            var _ph = _lm[1];
+                            var _slot = _ph === '镜像解析' ? 'mir' : (_ph === '校对' ? 'aud' : 'dl');
+                            if (_shown[_slot]) return;   // 该阶段已合并显示过，跳过其余逐条
+                            _shown[_slot] = true;
+                            var _lbl = _ph === '镜像解析' ? '解析镜像源' : (_ph === '校对' ? '比对源' : '下载源');
+                            opsHtml += _aggStep(_slot, _agg[_slot], _lbl);
+                            return;
+                        }
+                        // 非源步骤逐条
                         var st = s.status || '';
                         var sCls = st === 'ok' ? 's-done' : st === 'error' ? 's-error' : st === 'warn' ? 's-warn' : st === 'running' ? 's-running' : '';
                         var sIc = st === 'ok' ? '✓' : st === 'error' ? '✗' : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
-                        // 源相关步骤（镜像解析/校对/下载）的 label 里 site key → 中文名
-                        var _lb = s.label || '';
-                        var _lm = /^(镜像解析|校对|下载):(.+)$/.exec(_lb);
-                        if (_lm) {
-                            var _nk = _SITE_NAMES[_lm[2].trim()] || _lm[2].trim();
-                            _lb = _lm[1] + ':' + _nk;
-                        }
                         opsHtml += '<div class="cp-step ' + sCls + '"><span class="ic">' + sIc + '</span>'
-                            + '<span>' + escapeHtml(_lb)
+                            + '<span>' + escapeHtml(s.label || '')
                             + (s.detail ? '<span class="det">' + escapeHtml(s.detail) + '</span>' : '')
                             + '</span></div>';
                     });
