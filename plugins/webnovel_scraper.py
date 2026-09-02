@@ -129,6 +129,12 @@ SITES = {
         "base_url": "https://www.uukan.org",
         "encoding": "utf-8",
         "headers": {"User-Agent": DEFAULT_UA},
+        # 站内搜索 /search?searchkey= 常被 Cloudflare 拦（401）；配置上以便偶发可用，失败自动回退 Bing
+        "site_search": {
+            "path": "/search", "param": "searchkey", "method": "get",
+            "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S),
+            "exact": True,
+        },
         "book_id_re": r"/book/([A-Za-z0-9_-]+)\.html",
         "book_page": lambda b: f"/book/{b}.html",
         "chapter_list_page": lambda b, p: f"/chapter/{b}.html",
@@ -243,6 +249,239 @@ SITES = {
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
+    # 精彩小说网：书页只列近章，全目录 /book/{b}/{p}/（每页近 20 章），正文 /read/{b}/{cid}/ 容器 #novelbody
+    "jcxs": {
+        "name": "精彩小说网",
+        "base_url": "https://www.jcxs.org",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/book/(\d+)/",
+        "book_page": lambda b: f"/book/{b}/",
+        "chapter_list_page": lambda b, p: (f"/book/{b}/{p}/" if p > 1 else f"/book/{b}/"),
+        "chapter_url": lambda b, cid, suf: f"/read/{b}/{cid}{suf}/",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/read/\d+/(\d+)/)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r"(?!)",
+        "content_div_id": "novelbody",
+        # 容器头部导航噪音（字体/护眼/页签/上下章）与底部阅读模式提示过滤
+        "drop_line_re": [
+            r"^字体(大中小|设置).*$",
+            r"^关灯护眼$",
+            r"^第[0-9一二三四五六七八九十百千零两]+章[（(]第\d+/\d+页[)）]$",
+            r"^第[0-9一二三四五六七八九十百千零两]+章[（(]第\d+页[)）]$",
+            r"^[（(]第\d+/\d+页[)）]$",
+            r"^[（(]第\d+页[)）]$",
+            r"^(上一章|下一章|目录|记录|加入书签)$",
+            r"^脑子寄存处.*$",
+            r"^请(关闭浏览器阅读模式|关闭阅读模式|下载APP|安装客户端).*$",
+            r"^如无法翻页.*$",
+        ],
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+    # 迷乐文学：书页全量目录（`/{cat}/{bid}/`），章链接为绝对 URL /{cat}_{bid}/{cid}.html，正文容器 #booktxt 含分页 {cid}_N.html
+    "mele6": {
+        "name": "迷乐文学",
+        "base_url": "https://www.mele6.net",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/(\d+)/(\d+)/",
+        "book_page": lambda b: f"/{b.split(':')[0]}/{b.split(':')[1]}/",
+        "chapter_list_page": lambda b, p: f"/{b.split(':')[0]}/{b.split(':')[1]}/",  # 书页即全量目录
+        "chapter_url": lambda b, cid, suf: f"/{b.split(':')[0]}_{b.split(':')[1]}/{cid}{suf}.html",
+        # 章链接为绝对 URL 或相对路径：`/283_283487/{cid}.html`（书号段 `{cat}_{bid}`）
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(?:https?://[^"/]*)?(/\d+_\d+/(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r'href="[^"]*?/{cid}_(\d+)\.html"',
+        "content_div_id": "booktxt",
+        "drop_line_re": [
+            r"^第[0-9一二三四五六七八九十百千零两]+章.*?（\d+ / \d+）$",
+            r"^（\d+ / \d+）$",
+        ],
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+    # 三六零小说：目录 /mulu/{cat}/{bid}.html（静态 gbk，cat=bid 前3位；书页仅列近章），章 /mulu/{cat}/{bid}-{cid}.html，正文 #read_content
+    "i360xs": {
+        "name": "三六零小说",
+        "base_url": "https://www.i360xs.com",
+        "encoding": "gbk",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/book/(\d+)\.html",
+        "book_page": lambda b: f"/book/{b}.html",
+        "chapter_list_page": lambda b, p: f"/mulu/{b[:3]}/{b}.html",
+        "chapter_url": lambda b, cid, suf: f"/mulu/{b[:3]}/{b}-{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(?:https?://[^"/]*)?(/mulu/[^"]*-(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r"(?!)",
+        "content_div_id": "read_content",
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+    # 甲骨文小说：书页即全量目录（1272 章一页），章 /chapter/{bid}/{n}，正文 class="text"
+    "jgwxs": {
+        "name": "甲骨文小说",
+        "base_url": "https://www.jgwxs.com",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/novel/(\d+)",
+        "book_page": lambda b: f"/novel/{b}",
+        "chapter_list_page": lambda b, p: f"/novel/{b}",
+        "chapter_url": lambda b, cid, suf: f"/chapter/{b}/{cid}{suf}",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/chapter/\d+/(\d+))"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r"(?!)",
+        "content_class": "content",
+        # 头部书名行「《书名》—— 作者」过滤
+        "drop_line_re": [
+            r"^《[^》]+》——\s*$",
+            r"^《[^》]+》—— [^ ]+$",
+        ],
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+    # 苦读书（www）：目录 /html/{cat}/{bid}/index.html 全量，章 /html/{cat}/{bid}/{cid}.html，正文 #content
+    "kudushu": {
+        "name": "苦读书",
+        "base_url": "https://www.kudushu.org",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/html/(\d+)/(\d+)/",
+        "book_page": lambda b: f"/html/{b.split(':')[0]}/{b.split(':')[1]}/index.html",
+        "chapter_list_page": lambda b, p: f"/html/{b.split(':')[0]}/{b.split(':')[1]}/index.html",
+        "chapter_url": lambda b, cid, suf: f"/html/{b.split(':')[0]}/{b.split(':')[1]}/{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="([^"]*/html/\d+/\d+/(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r"(?!)",
+        "content_div_id": "content",
+        # 头部「(苦读书 www.kudushu.org)」站点广告（与正文同段，全局替换）
+        "ad_replace": {
+            r"[（(]苦读书 www\.kudushu\.org[)）]\s*": "",
+            r"[（(]苦读书 www\.kudushu\.org[)）]": "",
+        },
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+    # 苍穹书社：目录 /book/{bid}/ 列近章，章 /read/{bid}/{cid}.html，正文 #chaptercontent（头部有站点广告残留需 drop）
+    "cssqs": {
+        "name": "苍穹书社",
+        "base_url": "https://www.cssqs.com",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/book/(\d+)/",
+        "book_page": lambda b: f"/book/{b}/",
+        "chapter_list_page": lambda b, p: f"/book/{b}/",
+        "chapter_url": lambda b, cid, suf: f"/read/{b}/{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/read/\d+/(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r"(?!)",
+        "content_div_id": "chaptercontent",
+        # 头部站点广告行过滤
+        "drop_line_re": [
+            r"^天才一秒记住.*$",
+            r"^请记住本书首发域名.*$",
+            r"^https?://.*$",
+        ],
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+    # 希冀小说网（m）：目录 /info/{bid}/ 列近章，章 /info/{bid}/{cid}.html，正文 #chaptercontent，分页 {cid}_N.html
+    "xiji": {
+        "name": "希冀小说网",
+        "base_url": "https://m.xi-ji.com",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/info/(\d+)/",
+        "book_page": lambda b: f"/info/{b}/",
+        "chapter_list_page": lambda b, p: f"/info/{b}/",
+        "chapter_url": lambda b, cid, suf: f"/info/{b}/{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/info/\d+/(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r"/{cid}_(\d+)\.html",
+        "content_div_id": "chaptercontent",
+        # 章内页签（第N章 标题 1/4）与尾部本文链接过滤
+        "drop_line_re": [
+            r"^第[0-9一二三四五六七八九十百千零两]+章.*[（(]\d+/\d+[)）]$",
+            r"^[（(]\d+/\d+[)）]$",
+            r"^本文链接:.*$",
+        ],
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+    # 九若小说：目录 /book/{bid}/ 列近章，章 /book/{bid}/{cid}.html，正文 #chaptercontent（正文含全角广告字符，drop 过滤）
+    "9rxs": {
+        "name": "九若小说",
+        "base_url": "https://www.9rxs.com",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/book/(\d+)/",
+        "book_page": lambda b: f"/book/{b}/",
+        "chapter_list_page": lambda b, p: f"/book/{b}/",
+        "chapter_url": lambda b, cid, suf: f"/book/{b}/{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/book/\d+/(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r"(?!)",
+        "content_div_id": "chaptercontent",
+        # 全局广告串替换：站内混淆 URL 广告嵌在正文行内（`ｌ=ａ_ｎｌａｎ`ｗ*ｅｎｘ$ｕ@ｅ.|ｃｏｍ`）
+        "ad_replace": {
+            r"[ｌＬ][＝=][ａＡ]_[ｎＮ][ｌＬ][ａＡ][ｎＮ][`｀][ｗＷ]\*[ｅＥ][ｎＮ][ｘＸ]\$[ｕＵ]@[ｅＥ][．.|。][|｜][ｃＣ][ｏＯ][ｍＭ]": "",
+            r"^第[0-9一二三四五六七八九十百千零两]+章[^\n]{0,40}?(?=[\u4e00-\u9fff])": "",
+        },
+        "drop_line_re": [
+            r"^[『【\[].*(点此报错|加入书签).*[』】\]]$",
+        ],
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+    # 爱下电子书（繁体）：书页列近章，章 /read/{bid}/p{n}.html，正文 class="page-content"
+    "ixdzs": {
+        "name": "爱下电子书",
+        "base_url": "https://ixdzs.hk",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/read/(\d+)/",
+        "book_page": lambda b: f"/read/{b}/",
+        "chapter_list_page": lambda b, p: f"/read/{b}/",
+        "chapter_url": lambda b, cid, suf: f"/read/{b}/p{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/read/\d+/p(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r"(?!)",
+        "content_class": "page-content",
+        # 头部重复章节标题（h3 与正文首行）过滤
+        "drop_line_re": [
+            r"^第[0-9一二三四五六七八九十百千零两]+章.*$",
+        ],
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+    # 土豆小说网：书页 /site/detail?id={bid} 全量目录（1400+ 章），章 /site/chapter?id={cid}（需 Referer），正文 class="entry-content"
+    "spudnovel": {
+        "name": "土豆小说网",
+        "base_url": "https://spudnovel.com",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA,
+                    "Referer": "https://spudnovel.com/"},
+        "book_id_re": r"/site/detail\?id=(\d+)",
+        "book_page": lambda b: f"/site/detail?id={b}",
+        "chapter_list_page": lambda b, p: f"/site/detail?id={b}",
+        "chapter_url": lambda b, cid, suf: f"/site/chapter?id={cid}{suf}",
+        # 书页含全部 site/chapter?id= 链接（标题含缩进换行，放宽长度上限）
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/site/chapter\?id=(\d+))"[^>]*>([^<]{1,120})</a>', re.S),
+        "extra_page_re": r"(?!)",
+        "content_class": "entry-content",
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.6,
+    },
 }
 
 # ─── 多镜像源注册表（下载时并行尝试） ──────────────────────────────────
@@ -255,6 +494,16 @@ MIRROR_SOURCES = {
     "wujixsw": lambda: WebnovelCrawler("wujixsw"),
     "hushuge": lambda: WebnovelCrawler("hushuge"),
     "piaofeige": lambda: WebnovelCrawler("piaofeige"),
+    "jcxs": lambda: WebnovelCrawler("jcxs"),
+    "mele6": lambda: WebnovelCrawler("mele6"),
+    "i360xs": lambda: WebnovelCrawler("i360xs"),
+    "jgwxs": lambda: WebnovelCrawler("jgwxs"),
+    "kudushu": lambda: WebnovelCrawler("kudushu"),
+    "cssqs": lambda: WebnovelCrawler("cssqs"),
+    "xiji": lambda: WebnovelCrawler("xiji"),
+    "9rxs": lambda: WebnovelCrawler("9rxs"),
+    "ixdzs": lambda: WebnovelCrawler("ixdzs"),
+    "spudnovel": lambda: WebnovelCrawler("spudnovel"),
 }
 
 
@@ -263,9 +512,10 @@ class _ContentExtractor(HTMLParser):
 
     _BLOCK_TAGS = {"p", "br", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
 
-    def __init__(self, div_id: str):
+    def __init__(self, div_id: str = None, div_class: str = None):
         super().__init__(convert_charrefs=True)
         self.div_id = div_id
+        self.div_class = div_class
         self.in_target = False
         self.depth = 0
         self.skip = 0
@@ -276,12 +526,21 @@ class _ContentExtractor(HTMLParser):
             self.skip += 1
             return
         d = dict(attrs)
-        if tag == "div" and d.get("id") == self.div_id and not self.in_target:
-            self.in_target = True
-            self.depth = 1
-            return
+        if tag in ("div", "article", "section") and not self.in_target:
+            if self.div_id and d.get("id") == self.div_id:
+                self.in_target = True
+                self.depth = 1
+                return
+            if self.div_class:
+                # 精确 token 匹配；无精确时退回「class 含该前缀 token」（如 jgwxs 的 text-subtitle1 定位正文）
+                toks = (d.get("class") or "").split()
+                if self.div_class in toks or any(
+                        t.startswith(self.div_class) for t in toks):
+                    self.in_target = True
+                    self.depth = 1
+                    return
         if self.in_target:
-            if tag == "div":
+            if tag in ("div", "article", "section"):
                 self.depth += 1
             if tag in self._BLOCK_TAGS:
                 self._nl()
@@ -292,7 +551,7 @@ class _ContentExtractor(HTMLParser):
             return
         if not self.in_target:
             return
-        if tag == "div":
+        if tag in ("div", "article", "section"):
             self.depth -= 1
             if self.depth <= 0:
                 self.in_target = False
@@ -441,17 +700,30 @@ class WebnovelCrawler:
                 try:
                     u = base64.b64decode(m.group(1)).decode("utf-8", "ignore")
                     if re.search(self.cfg["book_id_re"], u):
-                        return u
+                        return self._normalize_url(u)
                 except Exception:
                     continue
             # 2) 直链
             for m in re.finditer(r"https?://[^\"'& <]+", html):
                 u = m.group(0)
                 if re.search(self.cfg["book_id_re"], u):
-                    return u
+                    return self._normalize_url(u)
         except Exception as e:
             logger.warning(f"search_book_url failed: {title} {e}")
         return None
+
+    def _normalize_url(self, url: str) -> str:
+        """将搜索命中的 URL 域名归一化到本 site base_url（Bing 常索引到旧域名/镜像域名，
+        如 uukan 的旧域 sto66.com；book_id 路径一致时替换 netloc 即可直达）。"""
+        try:
+            from urllib.parse import urlparse, urlunparse
+            p = urlparse(url)
+            b = urlparse(self.cfg["base_url"])
+            if p.netloc and b.netloc and p.netloc != b.netloc:
+                return urlunparse((p.scheme or b.scheme, b.netloc, p.path, p.params, p.query, p.fragment))
+        except Exception:
+            pass
+        return url
 
     # ── 章表 ──
     def get_chapter_list(self, book_id: str, max_pages: int = 200) -> list[dict]:
@@ -543,7 +815,10 @@ class WebnovelCrawler:
     def _extract_content(self, html: str) -> str:
         if self.cfg.get("content_mode") == "after_title":
             return self._extract_after_title(html)
-        parser = _ContentExtractor(self.cfg["content_div_id"])
+        parser = _ContentExtractor(
+            self.cfg.get("content_div_id"),
+            self.cfg.get("content_class"),
+        )
         parser.feed(html)
         return parser.text()
 
@@ -569,8 +844,10 @@ class WebnovelCrawler:
         return _html.unescape(txt)
 
     # ── 清洗 ──
-    @staticmethod
-    def _clean_text(text: str) -> str:
+    def _clean_text(self, text: str) -> str:
+        # 站点级全局广告串替换（9rxs 等站广告嵌在行内，逐行过滤无效）
+        for pat, rep in (self.cfg.get("ad_replace") or {}).items():
+            text = re.sub(pat, rep, text)
         lines = []
         for line in text.split("\n"):
             line = line.strip()
