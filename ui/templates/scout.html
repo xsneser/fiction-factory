@@ -195,7 +195,8 @@
 .cp-sources .cp-src:hover { background:#21262d; }
 .cp-sources .s-ic { width:16px; text-align:center; flex-shrink:0; }
 .cp-sources .s-ic .spin { display:inline-block; animation:cp-spin 1s linear infinite; }
-.cp-sources .s-name { font-weight:600; color:#c9d1d9; min-width:60px; flex-shrink:0; }
+.cp-sources .s-name { font-weight:600; color:#c9d1d9; min-width:56px; max-width:88px;
+    flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cp-sources .s-det { color:#484f58; font-size:11px; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
 .cp-sources .cp-src.s-running { background:#1f6feb22; }
@@ -721,18 +722,18 @@ function pollCrawlProgress() {
                         var _sIc = _st === 'ok' ? '✓' : _st === 'error' ? '✗' : _st === 'running' ? '…' : '·';
                         var _det = '';
                         if (phase === 'mir') {
-                            // 解析完毕，共 N 镜像源，有书 X 源
-                            _det = '共 ' + g.n + ' 镜像源，有书 ' + g.ok + ' 源'
+                            // 镜像解析：共 N 个源，命中 X 个
+                            _det = g.n + ' 个源，命中 ' + g.ok + ' 个'
                                 + (g.running ? '（解析中）' : '');
                         } else if (phase === 'aud') {
-                            // 比对完毕，通过 X 源
-                            _det = '通过 ' + g.ok + ' 源' + (g.running ? '（比对中）' : '');
+                            // 正文比对：N 个源，通过 X 个
+                            _det = g.n + ' 个源，通过 ' + g.ok + ' 个'
+                                + (g.running ? '（比对中）' : '');
                         } else { // dl
-                            _det = g.detail ? ('下载中 ' + g.detail) : '下载中…';
+                            _det = g.detail ? ('当前 ' + g.detail) : '进行中…';
                         }
                         return '<div class="cp-step ' + _sCls + '"><span class="ic">' + _sIc + '</span>'
                             + '<span>' + escapeHtml(labelTxt)
-                            + (g.n > 1 ? ' <span class="det">(' + g.n + ' 源)</span>' : '')
                             + (_det ? '<span class="det">' + escapeHtml(_det) + '</span>' : '')
                             + '</span></div>';
                     };
@@ -746,7 +747,7 @@ function pollCrawlProgress() {
                             var _slot = _ph === '镜像解析' ? 'mir' : (_ph === '校对' ? 'aud' : 'dl');
                             if (_shown[_slot]) return;   // 该阶段已合并显示过，跳过其余逐条
                             _shown[_slot] = true;
-                            var _lbl = _ph === '镜像解析' ? '解析镜像源' : (_ph === '校对' ? '比对源' : '下载源');
+                            var _lbl = _ph === '镜像解析' ? '镜像解析' : (_ph === '校对' ? '正文比对' : '下载');
                             opsHtml += _aggStep(_slot, _agg[_slot], _lbl);
                             return;
                         }
