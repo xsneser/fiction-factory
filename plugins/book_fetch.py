@@ -544,12 +544,11 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             _step("取番茄头章", "ok", f"{len(fanqie_bodies)} 章可作正文对照")
 
         # 4b) 每源一个 worker 独立推进全链路（各源互不阻塞，快源先出分）：
-        #     前十章标题/正文核对(标题分+正文分，秒级) **与** 全量目录补拉(目录分) **并行**，
-        #     慢源拉全量目录期间前十章核对已同时完成；随后广告检测(广告扣分) → 总分。
+        #     前十章标题/正文核对 **与** 全量目录补拉 **并行**（慢源拉全量期间前十章秒级完成）；
+        #     随后正文广告检测 → 汇总校对明细（消息只显示明细，不显示分数；分数仅供内部选源）。
         import concurrent.futures as _cfv
 
         def _audit_worker(src):
-            score_subs = {}
             _mc = {}
             # 并行两个子任务：A=前十章核对（用 quick 前 20 章，秒级） B=全量目录补拉（慢源耗时）
             def _load_full_cov():
@@ -569,28 +568,43 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                 _f_full = _ex2.submit(_load_full_cov)
                 _ver = _f_head.result()      # 秒级：前十章核对先出（不阻塞于慢源全量目录）
                 _cov, _tall = _f_full.result()  # 等全量目录补拉完成
-            # 目录分：全量目录对番茄编号章覆盖率
+            # 目录覆盖：全量目录对番茄编号章覆盖率（消息显示 cov/tall；分数=覆盖率×SCORE_DIR）
             src["coverage"] = _cov   # 供 source_order 排序与 meta 展示
-            score_subs["dir"] = round(SCORE_DIR * _cov / max(1, _tall), 1)
-            # 标题分 + 前十章正文分
+            # 题目/作者比对（源 meta vs 番茄 meta；缺失记 ✗）
+            _mtitle = (src["w_meta"].get("title") or "").strip()
+            _mauthor = (src["w_meta"].get("author") or "").strip()
+            _ftitle = (f_meta.get("title") or "").strip()
+            _fauthor = (f_meta.get("author") or "").strip()
+            _t_ok = bool(_ftitle and _mtitle and (
+                _mtitle.split("_")[0].split(" ")[0] in _ftitle
+                or _ftitle in _mtitle or difflib.SequenceMatcher(None, _ftitle, _mtitle).ratio() >= 0.6))
+            _a_ok = bool(_fauthor and _mauthor and (
+                _mauthor == _fauthor or _mauthor in _fauthor or _fauthor in _mauthor))
+            # 前十章标题/正文核对明细
             _align_ok = (_ver["align"]["passed"] / max(1, _ver["align"]["expected"]))
-            score_subs["title"] = round(SCORE_TITLE * _align_ok, 1)
-            if _ver["total"] > 0:
-                score_subs["body"] = round(SCORE_BODY * _ver["matched"] / _ver["total"], 1)
-            else:
-                score_subs["body"] = 0.0   # 无正文可比 → 不给正文分（不盲目信任）
-            # 广告检测（抽样前 AD_DENSITY_SAMPLE 个 wmap 章）
+            _body_m, _body_t = _ver["matched"], _ver["total"]
+            # 广告检测（抽样前 AD_DENSITY_SAMPLE 个 wmap 章，取最高密度）
             _ad = 0.0
             for _ch in list(src["wmap"].values())[:AD_DENSITY_SAMPLE]:
                 _d = _probe_ad_density(src["crawler"], src["w_meta"]["book_id"],
                                        _ch["chapter_id"])
                 _ad = max(_ad, _d)
-            score_subs["ad"] = round(-SCORE_AD_MAX * _ad, 1)
+            # 内部选源总分（不对外显示）：目录 + 标题 + 正文 + 广告扣分
+            score_subs = {
+                "dir": round(SCORE_DIR * _cov / max(1, _tall), 1),
+                "title": round(SCORE_TITLE * _align_ok, 1),
+                "body": round(SCORE_BODY * _body_m / _body_t, 1) if _body_t > 0 else 0.0,
+                "ad": round(-SCORE_AD_MAX * _ad, 1),
+            }
             score_subs["total"] = round(
                 score_subs["dir"] + score_subs["title"] + score_subs["body"]
                 + score_subs["ad"], 1)
             return {"site": src["site"], "ver": _ver, "mc": _mc,
-                    "score": score_subs, "src": src}
+                    "score": score_subs, "src": src,
+                    "audit": {"cov": _cov, "tall": _tall,
+                              "title_ok": _t_ok, "author_ok": _a_ok,
+                              "head_m": _body_m, "head_t": _body_t,
+                              "ad": _ad, "ad_n": AD_DENSITY_SAMPLE}}
 
         done = {}
         with _cfv.ThreadPoolExecutor(max_workers=max(1, min(4, len(cand)))) as _exv:
@@ -606,14 +620,18 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                     _step(f"校对:{src['site']}", "error", f"校对异常（{e}）")
                     continue
                 done[src["site"]] = _r
-                _s = _r["score"]
-                _ad_note = f" 广告-{abs(_s['ad'])}" if _s["ad"] < 0 else ""
+                _a = _r["audit"]
+                _ad_txt = f"广告 {'有' if _a['ad'] > 0.2 else ('少量' if _a['ad'] > 0.05 else '无')}"
+                _t_ok_txt = "✓" if _a["title_ok"] else "✗"
+                _a_ok_txt = "✓" if _a["author_ok"] else "✗"
+                _head_txt = (f"前十章正文 {_a['head_m']}/{_a['head_t']}"
+                             if _a["head_t"] > 0 else "前十章正文 无(锁章)")
                 _step(f"校对:{src['site']}", "ok",
-                      f"总分 {_s['total']}（目录 {_s['dir']} + 标题 {_s['title']}"
-                      f" + 正文 {_s['body']}{_ad_note}）")
+                      f"目录 {_a['cov']}/{_a['tall']} · 题目 {_t_ok_txt}"
+                      f" · 作者 {_a_ok_txt} · {_head_txt} · {_ad_txt}")
 
         # 4c) 选主源：prefer_site 置顶同分优先；否则取总分最高者（多源合并下载时仅决定主源优先序）
-        _step("选择来源", "running", "按总分选主源…")
+        _step("选择来源", "running", "按校对结果选主源…")
         if done:
             _ranked = sorted(done.values(),
                              key=lambda r: (r["site"] == prefer_site, r["score"]["total"]),
@@ -625,8 +643,7 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             head_site = _top["site"]
             head_verified = bool(_top["ver"]["consistent"])
             _step("选择来源", "ok",
-                  f"主源 {main_src['site']}（总分 {_top['score']['total']}"
-                  f"，前十章{'一致' if head_verified else '不一致'}）")
+                  f"主源 {main_src['site']}（前十章{'一致' if head_verified else '不一致'}）")
         else:
             main_src = _best_mirror(sources)
             head_site = main_src["site"] if main_src else ""
