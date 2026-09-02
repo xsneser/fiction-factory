@@ -398,7 +398,8 @@ SITES = {
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
-    # 九若小说：目录 /book/{bid}/ 列近章，章 /book/{bid}/{cid}.html，正文 #chaptercontent（正文含全角广告字符，drop 过滤）
+    # 九若小说：目录 /book/{bid}/ 单页全量（相对 href ="N.html"，带空格等号），章 /book/{bid}/{cid}.html，
+    # 正文 #chaptercontent（正文含全角广告字符，drop 过滤）
     "9rxs": {
         "name": "九若小说",
         "base_url": "https://www.9rxs.com",
@@ -411,10 +412,14 @@ SITES = {
             "path": "/search.html", "param": "searchkey", "method": "get",
             "exact": True,
         },
+        # 目录单页全量：目录链接 /book/{bid}/{cid}.html 与 uukan 通用目录分页形同（{bid}/{N}.html），
+        # 不设 toc_single_page 会被 _probe_pages 误当分页 → 反复重抓同页
+        "toc_single_page": True,
         "chapter_list_page": lambda b, p: f"/book/{b}/",
         "chapter_url": lambda b, cid, suf: f"/book/{b}/{cid}{suf}.html",
+        # 目录锚点 href ="N.html"（相对 + 空格等号）；组1 归一为裸 N.html 使「顶部绝对链接 / 正文卷相对链接」去重
         "chapter_link_re": re.compile(
-            r'<a[^>]*href="(/book/\d+/(\d+)\.html)"[^>]*>'
+            r'<a[^>]*href\s*=\s*"(?:https?://[^"]*?|/book/\d+/)?((\d+)\.html)"[^>]*>'
             r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
         "extra_page_re": r"(?!)",
         "content_div_id": "chaptercontent",
@@ -801,40 +806,43 @@ class WebnovelCrawler:
         if not first:
             return []
         _add_page(first, by_href)
-        # 探测总页数：bookszw/chensiwx 第 1 页含全部分页链接 → 只翻已知页，省去探测性空翻
-        page_nums = _probe_pages(first)
-        if page_nums:
-            total_pages = max(page_nums)
-            if quick:
-                # quick：拉最后一页拿总章数（仅首尾两页）
-                last = self._fetch(self.cfg["chapter_list_page"](book_id, total_pages),
-                                   retries=0)
-                if last:
-                    _add_page(last, by_href)
+        # 单页全量目录（如 9rxs 书页即全目录）：不探测/翻页——其章链接 {bid}/{cid}.html 与
+        # uukan 通用分页形同，探测会把章 cid 误当分页号 → 反复重抓同一页
+        if not self.cfg.get("toc_single_page"):
+            # 探测总页数：bookszw/chensiwx 第 1 页含全部分页链接 → 只翻已知页，省去探测性空翻
+            page_nums = _probe_pages(first)
+            if page_nums:
+                total_pages = max(page_nums)
+                if quick:
+                    # quick：拉最后一页拿总章数（仅首尾两页）
+                    last = self._fetch(self.cfg["chapter_list_page"](book_id, total_pages),
+                                       retries=0)
+                    if last:
+                        _add_page(last, by_href)
+                else:
+                    pages = [p for p in range(2, min(total_pages, max_pages) + 1)]
+                    failed = []
+                    for p in pages:
+                        html = self._fetch(self.cfg["chapter_list_page"](book_id, p), retries=0)
+                        if html:
+                            _add_page(html, by_href)
+                        else:
+                            failed.append(p)
+                    # 失败页统一补拉（带短间隔，避限流）
+                    for p in failed:
+                        html = self._fetch(self.cfg["chapter_list_page"](book_id, p))
+                        if html:
+                            _add_page(html, by_href)
             else:
-                pages = [p for p in range(2, min(total_pages, max_pages) + 1)]
-                failed = []
-                for p in pages:
-                    html = self._fetch(self.cfg["chapter_list_page"](book_id, p), retries=0)
-                    if html:
-                        _add_page(html, by_href)
-                    else:
-                        failed.append(p)
-                # 失败页统一补拉（带短间隔，避限流）
-                for p in failed:
-                    html = self._fetch(self.cfg["chapter_list_page"](book_id, p))
-                    if html:
-                        _add_page(html, by_href)
-        else:
-            # 无分页线索 → 串行翻页（原逻辑，失败页重试一次不中断）
-            for page in range(2, max_pages + 1):
-                html = self._fetch(self.cfg["chapter_list_page"](book_id, page), retries=0)
-                if not html:
-                    html = self._fetch(self.cfg["chapter_list_page"](book_id, page))
-                if not html:
-                    break
-                if _add_page(html, by_href) == 0:
-                    break   # 末页后重复页 → 终止
+                # 无分页线索 → 串行翻页（原逻辑，失败页重试一次不中断）
+                for page in range(2, max_pages + 1):
+                    html = self._fetch(self.cfg["chapter_list_page"](book_id, page), retries=0)
+                    if not html:
+                        html = self._fetch(self.cfg["chapter_list_page"](book_id, page))
+                    if not html:
+                        break
+                    if _add_page(html, by_href) == 0:
+                        break   # 末页后重复页 → 终止
         if not by_href:
             return []
         catalog = list(by_href.values())
