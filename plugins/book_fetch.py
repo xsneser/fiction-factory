@@ -173,9 +173,16 @@ def _head_verify(fanqie_bodies, head_nums, f_by_num, src, mirror_cache):
 
 
 def _est_total(w_cat):
-    """quick 探测目录（仅首尾两页）估算总章数：取最大编号章号（末页多为最后一章）。"""
-    nums = [c["num"] for c in w_cat if c.get("num") is not None]
-    return max(nums) if nums else len(w_cat)
+    """quick 探测目录（仅首尾两页）估算总章数：取最大编号章号（末页多为最后一章）。
+
+    目录异常（quick 只拉到 1-2 条，如站点 JS 渲染/仅收录单章）时 max 章号会虚高
+    （孤立章号 2814 不代表全书 2814 章）→ 回退为实际条数，避免误导。"""
+    numbered = [c for c in w_cat if c.get("num") is not None]
+    if not numbered:
+        return len(w_cat)
+    if len(numbered) <= 2:
+        return len(w_cat)   # 目录残缺/仅收录单章：显示实际可候选章数
+    return max(c["num"] for c in numbered)
 
 
 _AD_FEATURE_RE = re.compile(
@@ -421,10 +428,12 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
                 _r = None
             if _r and _r["wmap"]:
                 sources[_r["site"]] = _r
-                _step(f"镜像解析:{_r['site']}", "ok", f"主书 {len(_r['wmap'])} 章可候选")
+                # 显示全量章数（quick 下 _est_total 由末页最大章号估算；非分页源即实际章数）
+                _tch = _r["total_ch"] or len(_r["wmap"])
+                _step(f"镜像解析:{_r['site']}", "ok", f"主书 {_tch} 章可候选")
                 if on_progress:
                     on_progress("search", 1, 1,
-                                f"镜像源 {_r['site']}: 主书 {len(_r['wmap'])} 章可用")
+                                f"镜像源 {_r['site']}: 主书 {_tch} 章可用")
             else:
                 _step(f"镜像解析:{sn}", "warn", "未找到该书 / 解析失败")
 
