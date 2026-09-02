@@ -97,6 +97,11 @@ def scout_run():
         raw_site = ""
     url = data.get("url", "").strip()
     download_delay = float(data.get("download_delay", 0.5) or 0.5)
+    # mirrors：勾选的下载源（仅综合抓取时限制探测集合；空 = 由服务端自动全部探测）
+    mirrors = data.get("mirrors") or []
+    if not isinstance(mirrors, list):
+        mirrors = []
+    mirrors = [str(m).strip() for m in mirrors if str(m).strip()]
 
     # 区间归一化：前端三模式统一传 start/end 真实章号；番茄路径 chapters<=0 会走全文/增量而非区间，
     # 故当给定 end>=1 且未显式给 chapters 时折算 chapters（merged/web 以 end_chapter 为准，互不影响）。
@@ -163,10 +168,10 @@ def scout_run():
             if platform == "merged":
                 # 综合抓取（默认）：番茄元数据+权威目录 + 镜像站全文 → 统一书库一本
                 from plugins.book_fetch import download_book_merged
-                # prefer_site：用户显式选源时优先该源（空=自动择优，多源按章号补缺兜底）
+                # mirrors：勾选的下载源 → 只探测这些源（缺章在勾选源间补缺）；空列表=全部自动
                 info, dl = download_book_merged(
                     title=title, url=url, book_id=direct_id, site=site,
-                    prefer_site=site,
+                    mirrors=mirrors,
                     chapters=chapters, start_chapter=start_chapter, end_chapter=end_chapter,
                     download_delay=download_delay, on_progress=on_progress)
                 if not task_manager.is_cancelled(task_id):

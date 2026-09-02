@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import time
+from typing import Optional
 
 from plugins.webnovel_scraper import _parse_chapter_num
 
@@ -25,11 +26,14 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
                          site: str = "wodushu", chapters: int = 0,
                          start_chapter: int = 1, end_chapter: int = 0,
                          download_delay: float = 0.5, on_progress=None,
-                         platform: str = "merged", prefer_site: str = ""):
+                         platform: str = "merged", prefer_site: str = "",
+                         mirrors: Optional[list] = None):
     """合并抓取 → storage/novels/{书名}/。返回 (meta, dl)；dl 含 folder/chapters/already/sources。
 
     prefer_site：用户显式下载源（'wodushu'/'bookszw'）时优先该源排主源（仍按章号多源补缺）；
-    空串=自动择优（coverage 最高源）。不影响单源/番茄路径，纯 merged 主源偏好。"""
+    空串=自动择优（coverage 最高源）。不影响单源/番茄路径，纯 merged 主源偏好。
+    mirrors：勾选的下载源清单（如 ['wodushu']）→ 只探测这些源，缺章在勾选源间补；
+    None/空 = 全部 MIRROR_SOURCES 自动探测（与旧行为一致）。"""
     source = url or book_id or title
     if not source:
         raise RuntimeError("请提供书名 / 番茄 book_id / 镜像站 URL")
@@ -107,9 +111,15 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
             logger.warning(f"mirror {sn} resolve failed: {e}")
             return None
 
+    # mirrors 限定探测集合：勾选的下载源才被探索；未给/非法回退全部源（防 0 worker）
+    probe_keys = list(MIRROR_SOURCES)
+    if mirrors:
+        wanted = [k for k in MIRROR_SOURCES if k in mirrors]
+        if wanted:
+            probe_keys = wanted
     sources = {}
-    with _cf.ThreadPoolExecutor(max_workers=min(3, len(MIRROR_SOURCES))) as _ex:
-        for _r in _ex.map(_resolve_source, list(MIRROR_SOURCES)):
+    with _cf.ThreadPoolExecutor(max_workers=min(3, max(1, len(probe_keys)))) as _ex:
+        for _r in _ex.map(_resolve_source, probe_keys):
             if _r and _r["wmap"]:
                 sources[_r["site"]] = _r
                 if on_progress:

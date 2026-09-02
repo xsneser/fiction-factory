@@ -37,17 +37,18 @@
         </div>
         <div id="hot-fanqie-notice" style="display:none;font-size:12px;color:#58a6ff;background:#1f6feb22;border:1px solid #1f6feb66;border-radius:6px;padding:8px 10px;margin-top:10px;line-height:1.6"></div>
         <div class="fetch-opt">
-            <span class="opt-label">抓取方式</span>
-            <label class="opt-choice"><input type="radio" name="fetch-mode" value="merged" checked onchange="onModeChange()"> 综合抓取·番茄为准（目录/封面/简介）</label>
-            <label class="opt-choice"><input type="radio" name="fetch-mode" value="fanqie" onchange="onModeChange()"> 仅番茄</label>
-            <label class="opt-choice"><input type="radio" name="fetch-mode" value="web" onchange="onModeChange()"> 仅镜像站</label>
+            <span class="opt-label">基准（目录/封面/简介为准）</span>
+            <select id="base-source" onchange="onBaselineChange()">
+                <option value="fanqie">🍅 番茄（当前仅此可做基准）</option>
+                <option value="qidian" disabled>📖 起点（即将推出）</option>
+                <option value="jinjiang" disabled>🌸 晋江（即将推出）</option>
+            </select>
+            <span class="opt-note">选基准平台，其目录/封面/简介为权威</span>
         </div>
         <div class="fetch-opt" id="source-row">
-            <span class="opt-label">下载源</span>
-            <select id="fetch-source">
-                <option value="auto">自动择优（覆盖最全）</option>
-            </select>
-            <span class="opt-note">选源优先尝试，无该书则自动择优</span>
+            <span class="opt-label">下载源（勾选即探索）</span>
+            <span id="source-cbs" style="display:flex;gap:14px;flex-wrap:wrap"></span>
+            <span class="opt-note" id="source-note">加载中…</span>
         </div>
         <div class="fetch-opt">
             <span class="opt-label">抓取范围</span>
@@ -64,7 +65,7 @@
             <button id="btn-scout" class="btn-primary" onclick="startFetch()">🚀 开始抓取</button>
             <span id="fetch-status" style="font-size:12px;color:#8b949e"></span>
         </div>
-        <div style="font-size:12px;color:#484f58;margin-top:8px">默认综合抓取全文；已下载过的书自动只更新新章节</div>
+        <div style="font-size:12px;color:#484f58;margin-top:8px">默认基准=番茄、勾选全部下载源、下载全文；全部不勾选下载源 = 仅番茄站内正文；已下载过的书自动只更新新章节</div>
     </div>
 </div>
 
@@ -102,7 +103,8 @@
 .opt-label { font-size:12px;color:#8b949e;flex-shrink:0; }
 .opt-choice { color:#c9d1d9;cursor:pointer;display:inline-flex;align-items:center;gap:3px; }
 .opt-note { font-size:12px;color:#484f58; }
-#fetch-source { min-width:150px; }
+#base-source { min-width:200px; }
+#source-cbs label { cursor:pointer; }
 </style>
 
 <script>
@@ -228,8 +230,8 @@ function grabBook(btn) {
         return;
     }
     _hotCtx = {title: (title || '').trim(), book_id: id || ''};
-    setMode('merged');   // 番茄为准（目录/封面/简介）
-    setSource('auto');
+    setBaseline('fanqie');   // 基准=番茄（目录/封面/简介）
+    checkAllSources();       // 下载源全勾（默认从全部镜像源探索正文）
     setRange('full');
     updateHotNotice();
     // 编程展开折叠框（base.js accordionSet；点 header 可再收起）
@@ -239,31 +241,54 @@ function grabBook(btn) {
     }
     input.focus();
     input.scrollIntoView({behavior:'smooth', block:'center'});
-    showToast('已填入「' + (title || id) + '」：番茄目录/封面/简介为准，镜像源下正文，点「开始抓取」', 'info');
+    showToast('已填入「' + (title || id) + '」：基准=番茄（目录/封面/简介），正文从勾选下载源抓取，点「开始抓取」', 'info');
 }
 
-/* ─── 抓取表单选项联动（抓取方式/下载源/抓取范围；热榜书预置走 setMode/setSource/setRange） ─── */
-function currentMode() {
-    var r = document.querySelector('input[name="fetch-mode"]:checked');
-    return r ? r.value : 'merged';
+/* ─── 抓取表单选项联动（基准平台下拉 / 下载源勾选 / 抓取范围；热榜书预置走 setBaseline/checkAllSources/setRange） ─── */
+function currentBaseline() {
+    var el = document.getElementById('base-source');
+    return el ? el.value : 'fanqie';
 }
-function setMode(m) {
-    var el = document.querySelector('input[name="fetch-mode"][value="' + m + '"]');
-    if (el) { el.checked = true; onModeChange(); }
-}
-function setSource(s) {
-    var el = document.getElementById('fetch-source');
-    if (el) el.value = s;
+function setBaseline(b) {
+    var el = document.getElementById('base-source');
+    if (el) el.value = b;
+    onBaselineChange();
 }
 function setRange(r) {
     var el = document.querySelector('input[name="fetch-range"][value="' + r + '"]');
     if (el) { el.checked = true; onRangeChange(); }
 }
-/* 仅番茄 → 下载源无意义：隐藏 source-row；其余显示 */
-function onModeChange() {
-    var row = document.getElementById('source-row');
-    if (row) row.style.display = (currentMode() === 'fanqie') ? 'none' : '';
+/* 基准平台：当前仅番茄可抓；起点/晋江 disabled，防御拉回番茄 */
+function onBaselineChange() {
+    if (currentBaseline() !== 'fanqie') {
+        var el = document.getElementById('base-source');
+        if (el) el.value = 'fanqie';
+        showToast('该基准平台即将推出，暂只能以番茄为准', 'info');
+    }
     updateHotNotice();
+}
+/* 下载源勾选集合：勾选上的源才会被「探索」（后端只探测这些源） */
+function checkedSources() {
+    var out = [];
+    document.querySelectorAll('input[name="mirror"]:checked').forEach(function(c) { out.push(c.value); });
+    return out;
+}
+/* 下载源行内提示：随勾选数更新；0 勾选 = 仅基准平台站内正文 */
+function refreshSourceNote() {
+    var note = document.getElementById('source-note');
+    if (!note) return;
+    var n = checkedSources().length;
+    note.textContent = n === 0
+        ? '未勾选 → 仅基准平台站内正文（番茄正文，SVIP 锁定章可能空/占位）'
+        : '勾选 ' + n + ' 个源：抓正文只从所选源探测，缺章在勾选源间自动补';
+}
+function onSourceChange() {
+    refreshSourceNote();
+    updateHotNotice();
+}
+function checkAllSources() {
+    document.querySelectorAll('input[name="mirror"]').forEach(function(c) { c.checked = true; });
+    refreshSourceNote();
 }
 /* 指定区间 → 启用起止章输入 */
 function onRangeChange() {
@@ -276,54 +301,77 @@ function onRangeChange() {
     if (rs) rs.disabled = !isRange;
     if (re) re.disabled = !isRange;
 }
-/* 番茄热榜书提示：仅当持有 ctx 且方式为综合抓取（番茄为准）时显示 */
+/* 番茄热榜书提示：基准=番茄且持有 ctx 时显示；正文来源随勾选源数变化 */
 function updateHotNotice() {
     var el = document.getElementById('hot-fanqie-notice');
     if (!el) return;
-    if (_hotCtx && currentMode() === 'merged') {
-        el.textContent = '🍅 番茄热榜书《' + (_hotCtx.title || '') + '》：目录 / 封面 / 简介以番茄为准，正文自下方所选镜像源下载';
+    if (_hotCtx && currentBaseline() === 'fanqie') {
+        var withSrc = checkedSources().length > 0;
+        el.textContent = '🍅 番茄热榜书《' + (_hotCtx.title || '') + '》：目录 / 封面 / 简介以番茄为准，正文'
+            + (withSrc ? '自勾选下载源获取（缺章自动跨源补）' : '以番茄站内为准（未勾选下载源）');
         el.style.display = '';
     } else {
         el.style.display = 'none';
     }
 }
-/* 下载源下拉：静态列出可用镜像站（GET /api/scout/sources），失败时仅剩「自动择优」 */
+/* 下载源勾选框：静态列出可用镜像站（GET /api/scout/sources），默认全勾；失败回退内置清单 */
+var _FALLBACK_SOURCES = [
+    {key: 'wodushu', name: '我的书城网'},
+    {key: 'bookszw', name: '零点看书'}
+];
 function loadSources() {
-    var sel = document.getElementById('fetch-source');
-    if (!sel) return;
+    var wrap = document.getElementById('source-cbs');
+    if (!wrap) return;
+    var fill = function(sources) {
+        wrap.innerHTML = '';
+        (sources || []).forEach(function(s) {
+            var lb = document.createElement('label');
+            lb.className = 'opt-choice';
+            lb.style.display = 'inline-flex';
+            lb.style.alignItems = 'center';
+            lb.style.gap = '3px';
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.name = 'mirror';
+            cb.value = s.key;
+            cb.checked = true;
+            cb.onchange = onSourceChange;
+            lb.appendChild(cb);
+            lb.appendChild(document.createTextNode(s.name + '（' + s.key + '）'));
+            wrap.appendChild(lb);
+        });
+        onSourceChange();
+    };
     fetch('/api/scout/sources').then(function(r) { return r.json(); })
       .then(function(d) {
-          if (!d || !d.ok || !d.sources) return;
-          d.sources.forEach(function(s) {
-              var o = document.createElement('option');
-              o.value = s.key;
-              o.textContent = s.name + '（' + s.key + '）';
-              sel.appendChild(o);
-          });
-      }).catch(function() {});
+          if (d && d.ok && d.sources && d.sources.length) fill(d.sources);
+          else fill(_FALLBACK_SOURCES);
+      }).catch(function() { fill(_FALLBACK_SOURCES); });
 }
 
 /* ─── 后端直抓：POST /api/scout/run（fire-and-forget，进度靠 crawl-progress 轮询；默认全文/增量） ─── */
 function startFetch() {
     var input = document.getElementById('book-input').value.trim();
     if (!input) return showToast('请输入书名 / 番茄 book_id / 镜像站 URL', 'warning');
-    var mode = currentMode();
+    if (currentBaseline() !== 'fanqie') return showToast('该基准平台即将推出，暂只能以番茄为准', 'warning');
+    var checked = checkedSources();
+    var isUrl = /^https?:\/\//i.test(input);
+    // 勾选 ≥1 个下载源 → 综合抓取（基准番茄目录/封面/简介 + 只探测勾选源）；全部不勾 → 仅基准站站内正文
+    var mode = (checked.length > 0) ? 'merged' : 'fanqie';
+    if (isUrl && checked.length === 0) {
+        return showToast('粘贴了 URL 但未勾选任何下载源；请至少勾选一个镜像源，或填书名 / 番茄 book_id 走站内', 'warning');
+    }
     var body = {platform: mode};
+    if (mode === 'merged') body.mirrors = checked;
     // 番茄热榜上下文仍有效（输入未改）→ 直发番茄 book_id；否则维持旧探测
-    var useCtx = !!(mode !== 'web' && _hotCtx && input === (_hotCtx.title || '') && _hotCtx.book_id);
+    var useCtx = !!(_hotCtx && input === (_hotCtx.title || '') && _hotCtx.book_id);
     if (useCtx) {
         body.book_id = _hotCtx.book_id;
-    } else if (/^https?:\/\//i.test(input)) {
-        body.url = input;   // 镜像站或番茄 URL 均可
+    } else if (isUrl) {
+        body.url = input;   // 镜像站或番茄 URL 均可（综合路径按 URL 自动判定）
     } else {
         var m = input.match(/(\d{15,})/);
         if (m) body.book_id = m[1]; else body.title = input;
-    }
-    // 下载源（仅番茄无意义；auto=服务端自动择优）
-    if (mode !== 'fanqie') {
-        var siteEl = document.getElementById('fetch-source');
-        var site = siteEl ? siteEl.value : 'auto';
-        if (site && site !== 'auto') body.site = site;
     }
     // 抓取范围（区间按第N章真实章号；全文/增量=不传 chapters，后端默认）
     var rangeSel = document.querySelector('input[name="fetch-range"]:checked');
@@ -349,7 +397,7 @@ function startFetch() {
             if (st) { st.textContent = '❌ ' + (d.error || '提交失败'); st.style.color = '#f85149'; }
         });
     }).catch(function() {});
-    var modeTxt = mode === 'merged' ? '综合抓取' : (mode === 'fanqie' ? '仅番茄' : '仅镜像站');
+    var modeTxt = mode === 'merged' ? ('综合抓取（源: ' + checked.join('/') + '）') : '仅番茄站内';
     showToast('🚀 已开始抓取（' + modeTxt
         + (isRange ? '，区间 ' + body.start_chapter + '~' + body.end_chapter + ' 章' : '，全文')
         + '）', 'info');
