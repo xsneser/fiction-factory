@@ -445,12 +445,15 @@ var _FALLBACK_SOURCES = [
     {key: 'wodushu', name: '我的书城网'},
     {key: 'bookszw', name: '零点看书'}
 ];
+var _SITE_NAMES = {};   // site key → 中文名（供左栏源状态显示中文名）
 function loadSources() {
     var wrap = document.getElementById('source-cbs');
     if (!wrap) return;
     var fill = function(sources) {
         wrap.innerHTML = '';
+        _SITE_NAMES = {};
         (sources || []).forEach(function(s) {
+            _SITE_NAMES[s.key] = s.name;
             var lb = document.createElement('label');
             lb.className = 'src-chip on';
             lb.title = s.key + (s.js_render ? '（JS 渲染，需浏览器，较慢）' : '');
@@ -627,9 +630,9 @@ function pollCrawlProgress() {
                                 srcMap[site].detail = s.detail || '';
                                 srcMap[site].phase = phase;
                             }
-                        } else {
-                            opSteps.push(s);
                         }
+                        // 解析/比对/下载 都算「操作」→ 全部进右栏时间线
+                        opSteps.push(s);
                     });
                 }
                 // 源排序：下载中(任务running) > 比对通过(校对ok) > 搜索命中(镜像解析ok) >
@@ -667,14 +670,26 @@ function pollCrawlProgress() {
                             sIc = '✓';
                             det = s.detail ? ('已下载 第' + s.detail.replace('第', '').replace('章', '') + ' 章')
                                 : '已下载';
+                        } else if (s.phase === '校对') {
+                            // 左栏精简：校对结果只显通过/未通过 + 章数（明细在右栏操作）
+                            var _covM = /目录\s*(\d+)\/(\d+)/.exec(s.detail || '');
+                            var _covTxt = _covM ? _covM[1] + '/' + _covM[2] + ' 章' : '';
+                            if (st === 'ok') { sIc = '✓'; det = '通过 ' + _covTxt; }
+                            else if (st === 'warn') { sIc = '!'; det = '未通过 ' + _covTxt; }
+                            else if (st === 'running') { sIc = '…'; det = '比对中…'; }
+                            else { sIc = st === 'error' ? '✗' : '·'; det = s.detail || ''; }
+                        } else if (s.phase === '镜像解析') {
+                            sIc = st === 'ok' ? '✓' : st === 'warn' ? '!' : st === 'running' ? '…' : (st === 'error' ? '✗' : '·');
+                            det = s.detail || (st === 'running' ? '解析中…' : '');
                         } else {
                             sIc = st === 'ok' ? '✓' : st === 'error' ? '✗'
                                 : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
                             det = s.detail || (st === 'running' ? '解析中…' : '');
                         }
-                        srcsHtml += '<div class="cp-src ' + sCls + '" title="' + escapeHtml(site + ' · ' + det) + '">'
+                        var _dispName = _SITE_NAMES[site] || site;
+                        srcsHtml += '<div class="cp-src ' + sCls + '" title="' + escapeHtml(_dispName + ' · ' + det) + '">'
                             + '<span class="s-ic">' + sIc + '</span>'
-                            + '<span class="s-name">' + escapeHtml(site) + '</span>'
+                            + '<span class="s-name">' + escapeHtml(_dispName) + '</span>'
                             + '<span class="s-det">' + escapeHtml(det) + '</span></div>';
                     });
                     srcsHtml += '</div>';
@@ -687,8 +702,15 @@ function pollCrawlProgress() {
                         var st = s.status || '';
                         var sCls = st === 'ok' ? 's-done' : st === 'error' ? 's-error' : st === 'warn' ? 's-warn' : st === 'running' ? 's-running' : '';
                         var sIc = st === 'ok' ? '✓' : st === 'error' ? '✗' : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
+                        // 源相关步骤（镜像解析/校对/下载）的 label 里 site key → 中文名
+                        var _lb = s.label || '';
+                        var _lm = /^(镜像解析|校对|下载):(.+)$/.exec(_lb);
+                        if (_lm) {
+                            var _nk = _SITE_NAMES[_lm[2].trim()] || _lm[2].trim();
+                            _lb = _lm[1] + ':' + _nk;
+                        }
                         opsHtml += '<div class="cp-step ' + sCls + '"><span class="ic">' + sIc + '</span>'
-                            + '<span>' + escapeHtml(s.label || '')
+                            + '<span>' + escapeHtml(_lb)
                             + (s.detail ? '<span class="det">' + escapeHtml(s.detail) + '</span>' : '')
                             + '</span></div>';
                     });
