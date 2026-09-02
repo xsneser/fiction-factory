@@ -382,6 +382,16 @@ SITES = {
         "headers": {"User-Agent": DEFAULT_UA},
         "book_id_re": r"/novel/(\d+)",
         "book_page": lambda b: f"/novel/{b}",
+        # 站内搜索：SPA 站，搜索页 JS 异步渲染（底层 API GET /jgw-novel/novel/search 有 TLS 指纹风控，
+        # requests 握手超时）→ 走浏览器渲染。结果书名在 <em> 标签内
+        # （如 <a href="/novel/177039"><em>冰河末世，我囤积了百亿物资</em>（全球…）</a>），
+        # 定制 link_re 提取 <em> 内纯书名 → exact=True 精确命中。
+        "site_search": {
+            "path": "/search", "param": "keyword", "method": "get",
+            "render": True, "wait_sel": "article",
+            "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*><em>([^<]{2,60})</em>', re.S),
+            "exact": True,
+        },
         "chapter_list_page": lambda b, p: f"/novel/{b}",
         "chapter_url": lambda b, cid, suf: f"/chapter/{b}/{cid}{suf}",
         "chapter_link_re": re.compile(
@@ -732,27 +742,52 @@ class WebnovelCrawler:
         ss = self.cfg.get("site_search")
         if ss:
             try:
-                url = self.cfg["base_url"] + ss["path"]
-                if str(ss.get("method", "get")).lower() == "post":
-                    r = self.session.post(url, data={ss["param"]: title}, timeout=12)
+                # render:True → 搜索结果由 JS 异步渲染（SPA/Cloudflare 站，requests 抓不到）走浏览器渲染
+                if ss.get("render"):
+                    from plugins.browser_render import render_html
+                    q = urlencode({ss["param"]: title})
+                    sep = "&" if "?" in ss["path"] else "?"
+                    html = render_html(
+                        self.cfg["base_url"] + ss["path"] + sep + q,
+                        timeout_ms=int(ss.get("render_timeout_ms", 30000)),
+                        wait_sel=ss.get("wait_sel", ""),
+                    )
+                    if html:
+                        link_re = ss.get("link_re")
+                        if link_re is None:
+                            link_re = re.compile(
+                                r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S)
+                        exact = bool(ss.get("exact", True))
+                        for m in link_re.finditer(html):
+                            href, text = m.group(1), (m.group(2) or "").strip()
+                            if exact:
+                                if text == title:
+                                    return href
+                            else:
+                                if title in text:
+                                    return href
                 else:
-                    r = self.session.get(url, params={ss["param"]: title}, timeout=12)
-                if r.status_code == 200:
-                    r.encoding = self.cfg.get("encoding", "utf-8")
-                    html = r.text
-                    link_re = ss.get("link_re")
-                    if link_re is None:
-                        link_re = re.compile(
-                            r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S)
-                    exact = bool(ss.get("exact", True))
-                    for m in link_re.finditer(html):
-                        href, text = m.group(1), (m.group(2) or "").strip()
-                        if exact:
-                            if text == title:
-                                return href
-                        else:
-                            if title in text:
-                                return href
+                    url = self.cfg["base_url"] + ss["path"]
+                    if str(ss.get("method", "get")).lower() == "post":
+                        r = self.session.post(url, data={ss["param"]: title}, timeout=12)
+                    else:
+                        r = self.session.get(url, params={ss["param"]: title}, timeout=12)
+                    if r.status_code == 200:
+                        r.encoding = self.cfg.get("encoding", "utf-8")
+                        html = r.text
+                        link_re = ss.get("link_re")
+                        if link_re is None:
+                            link_re = re.compile(
+                                r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S)
+                        exact = bool(ss.get("exact", True))
+                        for m in link_re.finditer(html):
+                            href, text = m.group(1), (m.group(2) or "").strip()
+                            if exact:
+                                if text == title:
+                                    return href
+                            else:
+                                if title in text:
+                                    return href
             except Exception as e:
                 logger.warning("site_search failed: %s (%s)", self.site, e)
         # 回退：Bing 搜「书名 site:本站」
