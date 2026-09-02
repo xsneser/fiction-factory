@@ -234,6 +234,13 @@ SITES = {
         "headers": {"User-Agent": DEFAULT_UA},
         "book_id_re": r"/piao/(\d+)/",
         "book_page": lambda b: f"/piao/{b}/",
+        # 站内搜索：GET /s.php?q=（comm.js 里 articlesearch form action=/s.php，input name=q）
+        # 结果链接文本在 <h2> 内（如 <a href="/piao/82425/"><h2>书名</h2></a>），link_re 需放行标签
+        "site_search": {
+            "path": "/s.php", "param": "q", "method": "get",
+            "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*><h2>([^<]{2,60})</h2>', re.S),
+            "exact": True,
+        },
         "chapter_list_page": lambda b, p: (f"/piao/{b}_{p}/" if p > 1 else f"/piao/{b}/"),
         "chapter_url": lambda b, cid, suf: f"/piaof/{b}/{cid}{suf}.html",
         "chapter_link_re": re.compile(
@@ -414,6 +421,11 @@ SITES = {
         "headers": {"User-Agent": DEFAULT_UA},
         "book_id_re": r"/book/(\d+)/",
         "book_page": lambda b: f"/book/{b}/",
+        # 站内搜索：GET /search/?searchkey=（首页 form action=/search/ input name=searchkey），结果链接文本=书名
+        "site_search": {
+            "path": "/search/", "param": "searchkey", "method": "get",
+            "exact": True,
+        },
         "chapter_list_page": lambda b, p: f"/book/{b}/",
         "chapter_url": lambda b, cid, suf: f"/read/{b}/{cid}{suf}.html",
         "chapter_link_re": re.compile(
@@ -462,6 +474,11 @@ SITES = {
         "headers": {"User-Agent": DEFAULT_UA},
         "book_id_re": r"/book/(\d+)/",
         "book_page": lambda b: f"/book/{b}/",
+        # 站内搜索：GET /search.html?searchkey=（首页 form action=/search.html input name=searchkey），结果链接文本=书名
+        "site_search": {
+            "path": "/search.html", "param": "searchkey", "method": "get",
+            "exact": True,
+        },
         "chapter_list_page": lambda b, p: f"/book/{b}/",
         "chapter_url": lambda b, cid, suf: f"/book/{b}/{cid}{suf}.html",
         "chapter_link_re": re.compile(
@@ -511,6 +528,12 @@ SITES = {
                     "Referer": "https://spudnovel.com/"},
         "book_id_re": r"/site/detail\?id=(\d+)",
         "book_page": lambda b: f"/site/detail?id={b}",
+        # 站内搜索：GET /site/list?q=（首页 form action=/site/list input name=q）
+        # 结果链接文本为《书名》（带书名号），故 exact=False（书名是文本子串）
+        "site_search": {
+            "path": "/site/list", "param": "q", "method": "get",
+            "exact": False,
+        },
         "chapter_list_page": lambda b, p: f"/site/detail?id={b}",
         "chapter_url": lambda b, cid, suf: f"/site/chapter?id={cid}{suf}",
         # 书页含全部 site/chapter?id= 链接（标题含缩进换行，放宽长度上限）
