@@ -628,7 +628,10 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                 _a_ok_txt = "✓" if _a["author_ok"] else "✗"
                 _head_txt = (f"前十章正文 {_a['head_m']}/{_a['head_t']}"
                              if _a["head_t"] > 0 else "前十章正文 无(锁章)")
-                _step(f"校对:{src['site']}", "ok",
+                # 核对通过判定：前十章正文有**实际匹配**（正文一致=同一本书且可作下载源）才算成功；
+                # 仅搜到书但题目/作者/正文没对上 → warn（不算解析成功，前端黄 ! 而非绿 ✓）
+                _pass = _a["head_m"] > 0
+                _step(f"校对:{src['site']}", "ok" if _pass else "warn",
                       f"目录 {_a['cov']}/{_a['tall']} · 题目 {_t_ok_txt}"
                       f" · 作者 {_a_ok_txt} · {_head_txt} · {_ad_txt}")
 

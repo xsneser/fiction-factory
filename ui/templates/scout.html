@@ -632,15 +632,18 @@ function pollCrawlProgress() {
                         }
                     });
                 }
-                // 源排序：下载中 > 比对成功(校对ok) > 搜索成功(镜像解析ok) > 进行中 > 失败/未找到
+                // 源排序：下载中(任务running) > 比对通过(校对ok) > 搜索命中(镜像解析ok) >
+                //   比对未过(校对warn) > 进行中 > 失败/未找到
                 var srcRank = function(site) {
                     var s = srcMap[site];
                     var st = s.status || '';
-                    if (s.phase === '下载' && st === 'running') return 0;
-                    if (s.phase === '校对' && st === 'ok') return 1;
-                    if (s.phase === '镜像解析' && st === 'ok') return 2;
-                    if (st === 'running') return 3;
-                    return 4;
+                    if (s.phase === '下载' && st === 'running' && state === 'running') return 0;
+                    if (s.phase === '下载' && st === 'running') return 1;   // 任务已结束，下载中→完成
+                    if (s.phase === '校对' && st === 'ok') return 2;
+                    if (s.phase === '镜像解析' && st === 'ok') return 3;
+                    if (s.phase === '校对' && st === 'warn') return 4;
+                    if (st === 'running') return 5;
+                    return 6;
                 };
                 srcOrder.sort(function(a, b) { return srcRank(a) - srcRank(b); });
                 // 左栏：所有源（70%）
@@ -651,14 +654,19 @@ function pollCrawlProgress() {
                         var s = srcMap[site];
                         var st = s.status || '';
                         var dl = (s.phase === '下载' && st === 'running');
-                        var sCls = dl ? 's-dl'
+                        var dlDone = dl && state !== 'running';   // 任务结束：下载中→显示完成 ✓
+                        var sCls = dl && !dlDone ? 's-dl'
                             : st === 'ok' ? 's-ok' : st === 'error' ? 's-error'
                             : st === 'warn' ? 's-warn' : st === 'running' ? 's-running' : '';
-                        // 下载中 → 转圈 icon + 「下载中 第N章」
+                        // 下载中 → 转圈 icon + 「下载中 第N章」；任务结束的下载源 → ✓
                         var sIc, det;
-                        if (dl) {
+                        if (dl && !dlDone) {
                             sIc = '<span class="spin">⏳</span>';
                             det = s.detail ? ('下载中 ' + s.detail) : '下载中…';
+                        } else if (dlDone) {
+                            sIc = '✓';
+                            det = s.detail ? ('已下载 第' + s.detail.replace('第', '').replace('章', '') + ' 章')
+                                : '已下载';
                         } else {
                             sIc = st === 'ok' ? '✓' : st === 'error' ? '✗'
                                 : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
@@ -690,7 +698,7 @@ function pollCrawlProgress() {
                 if (srcsHtml || opsHtml) {
                     bodyHtml = '<div class="cp-body">' + srcsHtml + opsHtml + '</div>';
                 }
-                html += '<div class="cp-task ' + stCls + '">'
+                html += '<div class="cp-task ' + stCls + '" data-tid="' + tid + '">'
                     + '<div class="cp-head">'
                     +   '<div class="cp-title"><span class="cp-ic">' + ic + '</span><span class="ttl">' + escapeHtml(title) + '</span></div>'
                     +   '<div class="cp-num">'
@@ -719,8 +727,30 @@ function pollCrawlProgress() {
                 tarea.innerHTML = '';
                 return;
             }
+            // 重建前保存各任务卡片的滚动容器位置（左栏源列表/右栏操作消息），重建后按 data-tid 恢复，
+            // 避免每秒轮询刷新把滚动框打回最上方
+            var _scSave = {};
+            var _cards0 = document.querySelectorAll('#cp-tasks .cp-task');
+            for (var _ci = 0; _ci < _cards0.length; _ci++) {
+                var _c0 = _cards0[_ci];
+                var _tid0 = _c0.getAttribute('data-tid');
+                if (!_tid0) continue;
+                var _s0 = _c0.querySelector('.cp-sources'), _o0 = _c0.querySelector('.cp-ops');
+                if (_s0 && _s0.scrollTop) { _scSave[_tid0] = _scSave[_tid0] || {}; _scSave[_tid0].src = _s0.scrollTop; }
+                if (_o0 && _o0.scrollTop) { _scSave[_tid0] = _scSave[_tid0] || {}; _scSave[_tid0].ops = _o0.scrollTop; }
+            }
             box.style.display = '';
             tarea.innerHTML = html;
+            // 恢复滚动位置
+            var _cards1 = document.querySelectorAll('#cp-tasks .cp-task');
+            for (var _ci2 = 0; _ci2 < _cards1.length; _ci2++) {
+                var _c1 = _cards1[_ci2];
+                var _tid1 = _c1.getAttribute('data-tid');
+                if (!_tid1 || !_scSave[_tid1]) continue;
+                var _sv = _scSave[_tid1];
+                if (_sv.src) { var _s1 = _c1.querySelector('.cp-sources'); if (_s1) _s1.scrollTop = _sv.src; }
+                if (_sv.ops) { var _o1 = _c1.querySelector('.cp-ops'); if (_o1) _o1.scrollTop = _sv.ops; }
+            }
             // 汇总状态
             var sum = document.getElementById('cp-summary');
             if (sum) {
