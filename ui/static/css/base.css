@@ -189,7 +189,12 @@
         aside#status-bar .agent-tool-card.err { border-left-color:#f85149; }
         aside#status-bar .agent-tool-head { color:#79c0ff; cursor:pointer; font-weight:500;
             display:flex; justify-content:space-between; align-items:center; gap:8px; }
-        aside#status-bar .agent-tool-head-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        aside#status-bar .agent-tool-head::before { content:'▸'; flex-shrink:0; font-size:10px;
+            color:#8b949e; transition:transform .15s; }
+        aside#status-bar .agent-tool-card.open .agent-tool-head::before { transform:rotate(90deg); }
+        /* 任务卡（addBuildCard）头部不可点开，不显示折叠箭头 */
+        aside#status-bar .agent-tool-card.agent-task-card .agent-tool-head::before { content:none; }
+        aside#status-bar .agent-tool-head-label { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         aside#status-bar .agent-tool-head-meta { color:#8b949e; font-weight:400; font-size:10px; white-space:nowrap; flex-shrink:0; }
         aside#status-bar .agent-tool-stop {
             background:transparent; border:1px solid #f85149; color:#f85149;
@@ -200,9 +205,12 @@
         aside#status-bar .agent-tool-detail {
             font-size:10px; color:#8b949e; white-space:pre-wrap; word-break:break-all;
             margin-top:4px; padding:4px; background:#161b22; border-radius:4px; max-height:180px; overflow-y:auto;
+            display:none;   /* 默认折叠：随 .open 展开 */
         }
+        aside#status-bar .agent-tool-card.open .agent-tool-detail { display:block; }
         aside#status-bar .agent-tool-status { color:var(--fg-dim); margin-top:4px; word-break:break-word;
-            white-space:pre-wrap; max-height:30vh; overflow-y:auto; }
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }   /* 折叠态=单行摘要 */
+        aside#status-bar .agent-tool-card.open .agent-tool-status { white-space:pre-wrap; max-height:30vh; overflow-y:auto; }
         aside#status-bar .agent-llm-card {   /* 调试模式「LLM 调用」卡（提示词/工具/返回JSON 三段折叠） */
             font-size:11px; background:#0d1117; border:1px solid #30363d;
             border-left:3px solid #d29922; border-radius:6px; padding:6px 10px;
@@ -215,7 +223,7 @@
             background:#161b22; border:1px solid #21262d; border-radius:4px; }
         aside#status-bar .agent-llm-section summary { cursor:pointer; padding:4px 8px; color:#8b949e; user-select:none; }
         aside#status-bar .agent-llm-section summary:hover { color:#d29922; }
-        aside#status-bar .agent-llm-section pre { margin:0; padding:4px 8px; max-height:200px; overflow:auto;
+        aside#status-bar .agent-llm-section pre { margin:0; padding:4px 8px; max-height:60vh; overflow:auto;
             white-space:pre-wrap; word-break:break-all; font-size:10px;
             font-family:Consolas, Menlo, monospace; color:#c9d1d9; border-top:1px solid #21262d; }
         aside#status-bar .agent-input-actions .debug-toggle { background:none; border:1px solid #30363d;

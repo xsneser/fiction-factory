@@ -11,6 +11,8 @@
  * node_modules/@deepseek-ai/dsh-headless/lib/index.js，仅改输出层。
  */
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import z from "@deepseek-ai/schemastery";
 import { installModelSelection } from "@deepseek-ai/dsh-agent";
 import { createUserMessage, isAgentLoopRequest } from "@deepseek-ai/dsh-llm";
@@ -30,6 +32,8 @@ const internals = { stdout: process.stdout, stderr: process.stderr };
  * 供前端「LLM 调用」调试卡呈现。关闭时不注册监听、不发数据，零开销。
  */
 const DEBUG = process.env.NOVEL_AGENT_DEBUG === "1";
+/** 调试卡完整载荷目录（dsh_bridge 注入，绝对路径）：完整 request/response 写文件、SSE 只发裁剪预览。 */
+const DEBUG_PROMPT_DIR = process.env.DEBUG_PROMPT_DIR || "";
 
 /** 只转发的 session 事件类型（不推模型中间输出，见 docs/架构总览.md §三）。 */
 const FORWARD = new Set(["tool/call", "tool/result"]);
@@ -162,6 +166,15 @@ async function run(ctx, task, io) {
 		// 载荷做有界裁剪（capDeep/capTools）：保留结构、裁长内容，防大上下文下事件体积失控。
 		if (DEBUG && event.type === "assistant/message" && pendingLlm) {
 			const msgs = Array.isArray(pendingLlm.messages) ? pendingLlm.messages.slice(-12) : pendingLlm.messages;
+			// 完整载荷（未裁剪的 request + response）写文件供调试卡按需 fetch，SSE 仍只发裁剪预览，
+			// 避免 50KB+ 工具结果把 stdout 管道 / SSE / 浏览器 DOM 撑爆；写失败则降级为预览。
+			if (DEBUG_PROMPT_DIR) {
+				try {
+					fs.mkdirSync(DEBUG_PROMPT_DIR, { recursive: true });
+					fs.writeFileSync(path.join(DEBUG_PROMPT_DIR, `${pendingLlm.seq}.json`),
+						JSON.stringify({ seq: pendingLlm.seq, request: pendingLlm, response: event.data.message }));
+				} catch (e) { /* 忽略：调试卡退回事件内预览 */ }
+			}
 			emit(io, { type: "llm/call", data: {
 				seq: pendingLlm.seq,
 				turn: event.data.turn,

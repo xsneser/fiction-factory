@@ -96,9 +96,21 @@ SITES = {
         "base_url": "http://www.bookszw.com",
         "encoding": "utf-8",
         "headers": {"User-Agent": DEFAULT_UA},
+        # 站内搜索（search_book_url 优先用，失败回退 Bing）：GET base+path?param=书名，
+        # 结果链接正则组1=书页 href（相对路径，resolve 时拼 base）
+        "site_search": {
+            "path": "/ar.php", "param": "keyWord", "method": "get",
+            "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S),
+            "exact": True,   # 链接文本需与书名完全一致才命中
+        },
         # 两段书号：book_id 存 "cat:bid"；章表分页 /index_{p}.html（p>1），每页 +20 章
         "book_id_re": r"/(\d+)/(\d+)/",
         "book_page": lambda b: f"/{b.split(':')[0]}/{b.split(':')[1]}/",
+        "site_search": {
+            "path": "/ar.php", "param": "keyWord", "method": "get",
+            "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S),
+            "exact": True,
+        },
         "chapter_list_page": lambda b, p: (
             f"/{b.split(':')[0]}/{b.split(':')[1]}/index_{p}.html"
             if p > 1 else f"/{b.split(':')[0]}/{b.split(':')[1]}/"),
@@ -138,6 +150,11 @@ SITES = {
         "headers": {"User-Agent": DEFAULT_UA},
         "book_id_re": r"/(\d+)/(\d+)/",
         "book_page": lambda b: f"/{b.split(':')[0]}/{b.split(':')[1]}/",
+        "site_search": {
+            "path": "/ar.php", "param": "keyWord", "method": "get",
+            "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S),
+            "exact": True,
+        },
         "chapter_list_page": lambda b, p: (
             f"/{b.split(':')[0]}/{b.split(':')[1]}_{p}/" if p > 1
             else f"/{b.split(':')[0]}/{b.split(':')[1]}/"),
@@ -155,6 +172,32 @@ SITES = {
             r"^[（(]第\d+/\d+页[)）]$",
             r"^[（(]本章未完.*?[)）]$",
         ],
+        "request_delay": 0.5,
+    },
+    # 无极小说：书页即全量目录（`/{bid}/`，bid 为 `cat_bid` 下划线格式），正文 <div id="content">
+    # 静态内嵌；站内搜索 /search.html?name=（命中「书名」精确链接）。2026-09 实测《十日终焉》
+    # 书页 1359 章、正文广告行可被 _AD_LINE_RE 过滤。
+    "wujixsw": {
+        "name": "无极小说",
+        "base_url": "https://wujixsw.info",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        # 书号：`151_151404`（下划线两段）；book_page 用 `/{bid}/`
+        "book_id_re": r"/(\d+_\d+)/",
+        "site_search": {
+            "path": "/search.html", "param": "name", "method": "get",
+            "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S),
+            "exact": True,
+        },
+        "book_page": lambda b: f"/{b}/",
+        "chapter_list_page": lambda b, p: f"/{b}/",   # 书页即全量目录，忽略页参
+        "chapter_url": lambda b, cid, suf: f"/{b}/{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/[^"]*?/(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r"(?!)",
+        "content_div_id": "content",
+        "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
     # 互书阁：书页/目录静态可抓（全目录在 /index/{bid}/），正文 <div id="article"> 由 JS 填充 →
@@ -209,6 +252,7 @@ MIRROR_SOURCES = {
     "bookszw": lambda: BookszwCrawler(),
     "uukan": lambda: WebnovelCrawler("uukan"),
     "chensiwx": lambda: WebnovelCrawler("chensiwx"),
+    "wujixsw": lambda: WebnovelCrawler("wujixsw"),
     "hushuge": lambda: WebnovelCrawler("hushuge"),
     "piaofeige": lambda: WebnovelCrawler("piaofeige"),
 }
@@ -343,13 +387,46 @@ class WebnovelCrawler:
             "site": self.site,
         }
 
-    # ── 书名 → 本站书页 URL（站内无搜索时用 Bing） ──
+    # ── 书名 → 本站书页 URL（站内搜索优先；无搜索/搜不到时用 Bing） ──
     def search_book_url(self, title: str) -> Optional[str]:
-        """Bing 搜「书名 site:本站」→ 该书在本站的书页 URL；失败返回 None（调用方提示贴 URL）。"""
-        import base64
-        from urllib.parse import urlparse
+        """按书名定位本站书页 URL。
+
+        优先走站内搜索（SITES[site].site_search 配置：GET base+path?param=书名，
+        link_re 组1=书页 href，exact=True 要求链接文本与书名完全一致）；
+        未配置 / 无命中 → 回退 Bing「书名 site:本站」。
+        返回书页 URL（相对路径或绝对路径均可，resolve_book 都能处理）。"""
+        from urllib.parse import urlencode
         if not title:
             return None
+        ss = self.cfg.get("site_search")
+        if ss:
+            try:
+                url = self.cfg["base_url"] + ss["path"]
+                if str(ss.get("method", "get")).lower() == "post":
+                    r = self.session.post(url, data={ss["param"]: title}, timeout=12)
+                else:
+                    r = self.session.get(url, params={ss["param"]: title}, timeout=12)
+                if r.status_code == 200:
+                    r.encoding = self.cfg.get("encoding", "utf-8")
+                    html = r.text
+                    link_re = ss.get("link_re")
+                    if link_re is None:
+                        link_re = re.compile(
+                            r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S)
+                    exact = bool(ss.get("exact", True))
+                    for m in link_re.finditer(html):
+                        href, text = m.group(1), (m.group(2) or "").strip()
+                        if exact:
+                            if text == title:
+                                return href
+                        else:
+                            if title in text:
+                                return href
+            except Exception as e:
+                logger.warning("site_search failed: %s (%s)", self.site, e)
+        # 回退：Bing 搜「书名 site:本站」
+        import base64
+        from urllib.parse import urlparse
         netloc = urlparse(self.cfg["base_url"]).netloc
         try:
             r = self.session.get("https://cn.bing.com/search",

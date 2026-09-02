@@ -31,6 +31,7 @@ console.log('[agent-panel] v28 events-stream');
     var TOOL_CARD_LIMIT = 20;                   // 对话页签工具卡上限（防 DOM 膨胀）
     var llmCards = [];                          // LLM 调用调试卡 DOM 顺序（上限裁剪用）
     var LLM_CARD_LIMIT = 10;                    // 调试卡上限（体积大，比工具卡更保守）
+    var expandedLog = {};                       // 工具日志页签展开态：按记录 time 为 key（3s 轮询重渲染后保留）
 
     function loadHistory() {
         try { return JSON.parse(sessionStorage.getItem(HISTORY_KEY) || '[]'); }
@@ -59,7 +60,7 @@ console.log('[agent-panel] v28 events-stream');
         save_bridge_draft: '保存桥段', save_chapter_text: '保存整章',
         save_outlines: '保存大纲', save_book_meta: '保存书名简介',
         skill: '技能', chapter_quality_gate: '章节质量门禁',
-        discover_hot: '侦察热榜', fetch_novel: '抓取小说',
+        discover_hot: '侦察热榜', list_rankings: '榜单分类', fetch_novel: '抓取小说',
         list_crawled_novels: '已抓取书库', read_crawled_novel: '读抓取书', ingest_library_assets: '提取入库',
         get_writing_context: '读取写作上下文'
     };
@@ -158,27 +159,28 @@ console.log('[agent-panel] v28 events-stream');
     function addToolCard(tool, args) {
         var card = el('div', 'agent-tool-card');
         var head = el('div', 'agent-tool-head');
-        head.title = '点击展开/收起参数';
+        head.title = '点击展开/收起详情';
         var label = el('span', 'agent-tool-head-label', '🔧 ' + escapeHtml(toolLabel(tool, args)));
         var meta = el('span', 'agent-tool-head-meta', '');   // 第一行右侧：⏱ 运行时长 · token 用量
         // 卡片内停止按钮：打断当前 Agent 任务（复用全局 cancel 通道），工具完成/会话结束自动移除
         var stop = el('button', 'agent-tool-stop', '⏹ 停止');
         stop.type = 'button';
         stop.title = '打断当前 Agent 任务';
-        stop.addEventListener('click', function () {
+        stop.addEventListener('click', function (e) {
+            e && e.stopPropagation();   // 不触发头部展开/折叠
             stop.disabled = true; stop.textContent = '停止中…';
             fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function () {});
         });
         var detail = el('div', 'agent-tool-detail', '');
-        detail.style.display = 'none';
-        if (args && typeof args === 'object' && Object.keys(args).length) {
-            head.onclick = function() {
-                var show = detail.style.display === 'none';
-                detail.style.display = show ? 'block' : 'none';
+        // 默认折叠成两行（头部 + 单行结果摘要，参数默认隐藏）；点击头部展开/收起全部，参数首次展开时懒加载
+        head.onclick = function () {
+            var open = card.classList.toggle('open');
+            if (open && args && typeof args === 'object' && Object.keys(args).length && !detail.dataset.filled) {
+                detail.dataset.filled = '1';
                 // 参数全量展示（.agent-tool-detail 有 max-height + overflow 滚动容器，长内容可滚动查看不截断）
-                if (show) detail.textContent = JSON.stringify(zhKeys(args), null, 2);
-            };
-        }
+                detail.textContent = JSON.stringify(zhKeys(args), null, 2);
+            }
+        };
         head.appendChild(label);
         head.appendChild(stop);
         head.appendChild(meta);
@@ -323,6 +325,11 @@ console.log('[agent-panel] v28 events-stream');
         run.status.textContent = (text || '');
         run.status.className = (text && text.indexOf('✅') === 0)
             ? 'agent-tool-status ok' : 'agent-tool-status err';
+        // 卡片本体也标 ok/err（左边框变色），折叠态也能一眼看出成败；用 classList 保留可能已加的 open
+        if (run.card) {
+            run.card.classList.remove('ok', 'err');
+            run.card.classList.add((text && text.indexOf('✅') === 0) ? 'ok' : 'err');
+        }
     }
     // ─── LLM 调用调试卡（调试模式：每次 LLM 调用的提示词 / MCP 工具 / 返回 JSON 原文）───
     // 对应 events-runner emit 的 llm/call → bridge llm_call → handleEvent。三段独立折叠，
@@ -353,24 +360,53 @@ console.log('[agent-panel] v28 events-stream');
         var req = evt.request || {};
         var msgs = req.messages || [];
         var tools = req.tools || [];
+        var seq = evt.seq;   // 调试卡完整原文按需拉取用（storage/debug-prompts/<seq>.json）
         var card = el('div', 'agent-llm-card');
         var head = el('div', 'agent-llm-head');
         head.appendChild(el('span', 'agent-llm-head-label', '🤖 LLM 调用 · ' + (req.model || '?')));
         head.appendChild(el('span', 'agent-llm-head-meta', evt.usage ? '⚡ ' + formatTokens(evt.usage) : ''));
         card.appendChild(head);
+        // kind：'prompt'/'response' 段支持展开时按需拉完整原文（初始仍是裁剪预览）；null 段只用预览
         var sections = [
             ['💬 提示词（system + ' + msgs.length + ' 条消息）',
-             { system: capDeep(req.system, 2000) || '', messages: capDeep(msgs.slice(-12), 600) }],
-            ['🧰 MCP 工具（' + tools.length + ' 个）', capToolsLite(tools)],
-            ['📦 返回 JSON', evt.response !== undefined ? capDeep(evt.response, 1500) : null]
+             { system: capDeep(req.system, 2000) || '', messages: capDeep(msgs.slice(-12), 600) }, 'prompt'],
+            ['🧰 MCP 工具（' + tools.length + ' 个）', capToolsLite(tools), null],
+            ['📦 返回 JSON', evt.response !== undefined ? capDeep(evt.response, 1500) : null, 'response']
         ];
+        var fullPres = {};   // kind → pre 元素：一次 fetch 后填充所有可加载段
+        var loaded = false;  // 本卡是否已拉过完整原文（成功/失败均只拉一次）
         for (var i = 0; i < sections.length; i++) {
             var det = el('details', 'agent-llm-section');
-            det.appendChild(el('summary', '', sections[i][0]));
+            var title = sections[i][0];
+            if (seq && sections[i][2]) title += ' · 展开加载全文';
+            det.appendChild(el('summary', '', title));
             var pre = el('pre', '', '');
             try { pre.textContent = JSON.stringify(sections[i][1], null, 2); }
             catch (e) { pre.textContent = String(sections[i][1]); }
             det.appendChild(pre);
+            // 首次展开 prompt/response 段 → 按 seq 拉完整原文替换预览（SSE 只发裁剪预览，防撑爆管线）
+            if (seq && sections[i][2]) {
+                fullPres[sections[i][2]] = pre;
+                (function(det) {
+                    det.addEventListener('toggle', function() {
+                        if (!det.open || loaded) return;
+                        loaded = true;
+                        fetch('/api/agent/debug-prompt/' + seq)
+                            .then(function(r) { return r.json(); })
+                            .then(function(d) {
+                                if (!d || !d.ok) return;
+                                if (fullPres.prompt && d.request) {
+                                    fullPres.prompt.textContent = JSON.stringify(
+                                        { system: d.request.system, messages: d.request.messages }, null, 2);
+                                }
+                                if (fullPres.response && d.response !== undefined) {
+                                    fullPres.response.textContent = JSON.stringify(d.response, null, 2);
+                                }
+                            })
+                            .catch(function() {});
+                    });
+                })(det);
+            }
             card.appendChild(det);
         }
         chat.appendChild(card);
@@ -432,12 +468,18 @@ console.log('[agent-panel] v28 events-stream');
                 if (!log.length) {
                     html += '<div style="font-size:12px;color:#8b949e;padding:8px 4px">暂无外部 MCP 调用记录（由 Claude Code 经 MCP 驱动时产生）。</div>';
                 }
+                // 展开态保留条数上限，防止对象无限膨胀
+                var ek = Object.keys(expandedLog);
+                if (ek.length > 200) {
+                    ek.slice(0, ek.length - 200).forEach(function(k) { delete expandedLog[k]; });
+                }
                 show.forEach(function(x) {
-                    html += '<div class="agent-tool-card ' + (x.ok ? 'ok' : 'err') + '">'
+                    var open = expandedLog[x.time] ? ' open' : '';
+                    html += '<div class="agent-tool-card ' + (x.ok ? 'ok' : 'err') + open + '" data-t="' + escapeHtml(x.time || '') + '">'
                         + '<div class="agent-tool-head">' + escapeHtml((x.time || '') + ' ' + (x.ok ? '✅' : '❌') + ' ' + toolLabel(x.tool, x.args))
                         + ' <span style="color:#8b949e;font-weight:normal">' + (x.duration_ms || 0) + 'ms</span></div>';
                     if (x.args && typeof x.args === 'object' && Object.keys(x.args).length) {
-                        html += '<div class="agent-tool-detail" style="display:none">' + escArg(zhKeys(x.args)) + '</div>';
+                        html += '<div class="agent-tool-detail">' + escArg(zhKeys(x.args)) + '</div>';
                     }
                     html += '<div class="agent-tool-status">' + (x.ok ? '' : '❌ ') + escapeHtml(zhSummary(x.tool, x.args, x.summary) || '') + '</div></div>';
                 });
@@ -447,9 +489,10 @@ console.log('[agent-panel] v28 events-stream');
                 else toolsLog.scrollTop = Math.round(ratio * toolsLog.scrollHeight);
                 toolsLog.querySelectorAll('.agent-tool-card').forEach(function(card) {
                     var head = card.querySelector('.agent-tool-head');
-                    var detail = card.querySelector('.agent-tool-detail');
-                    if (head && detail) head.addEventListener('click', function() {
-                        detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+                    if (head) head.addEventListener('click', function() {
+                        var isOpen = card.classList.toggle('open');
+                        var t = card.getAttribute('data-t');
+                        if (t) { if (isOpen) expandedLog[t] = true; else delete expandedLog[t]; }
                     });
                 });
             })
@@ -738,7 +781,7 @@ console.log('[agent-panel] v28 events-stream');
     }
     // 任务卡（「让 Agent 构建」/ 写作台技能卡触发时替代用户气泡展示，任务文本仍进 history 供 SSE 取）
     function addBuildCard(text, label) {
-        var card = el('div', 'agent-tool-card');
+        var card = el('div', 'agent-tool-card agent-task-card');   // 任务卡：body 常显，无折叠（头部箭头需 CSS 隐藏）
         var head = el('div', 'agent-tool-head');
         head.appendChild(el('span', 'agent-tool-head-label', label || '🚀 建书任务'));
         var stop = el('button', 'agent-tool-stop', '⏹ 停止');
@@ -917,6 +960,7 @@ console.log('[agent-panel] v28 events-stream');
                 r.timer = null;
                 r.status.textContent = '⚠️ 结果未保存（任务已结束）';
                 r.status.className = 'agent-tool-status err';
+                if (r.card) { r.card.classList.remove('ok', 'err'); r.card.classList.add('err'); }
             }
         });
     }

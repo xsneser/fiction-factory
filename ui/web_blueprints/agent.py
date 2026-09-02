@@ -16,7 +16,7 @@ from flask import Blueprint, request, jsonify  # noqa: E402
 from .ctx import sse_stream_response  # noqa: E402
 from agent_tools import TOOL_REGISTRY  # noqa: E402
 from libraries.nav_intent import take_nav_intents  # noqa: E402
-from libraries.dsh_bridge import run_dsh_task, interrupt_current_task, get_current_task_status  # noqa: E402
+from libraries.dsh_bridge import run_dsh_task, interrupt_current_task, get_current_task_status, _DEBUG_PROMPT_DIR  # noqa: E402
 from libraries.build_status import set_build_status  # noqa: E402
 from libraries.tool_log import get_tool_log, clear_tool_log  # noqa: E402
 
@@ -144,3 +144,19 @@ def agent_tool_log_clear():
 def agent_nav_intents():
     """navigate 外部驱动桥：浏览器轮询消费外部（MCP）写入的跳转意图（取后即清空）。"""
     return jsonify({"ok": True, "intents": take_nav_intents()})
+
+
+@bp.route("/api/agent/debug-prompt/<seq>", methods=["GET"])
+def agent_debug_prompt(seq):
+    """调试卡「提示词/返回JSON」按需拉完整原文（SSE 事件里只有裁剪预览，完整载荷在 storage/debug-prompts/<seq>.json）。
+
+    seq 数字白名单防路径穿越；文件不存在（新任务已清空/未写入）返回 404，前端保持裁剪预览。
+    """
+    if not seq.isdigit():
+        return jsonify({"ok": False, "error": "bad seq"}), 400
+    try:
+        with open(os.path.join(_DEBUG_PROMPT_DIR, f"{seq}.json"), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return jsonify({"ok": False, "error": "not found"}), 404
+    return jsonify({"ok": True, **data})

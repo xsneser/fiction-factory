@@ -36,6 +36,7 @@ from libraries.token_proxy import ensure_proxy   # 拉起本地 token 检测代�
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _OVERLAY_PATH = os.path.join(_ROOT, "storage", "dsh_runtime.yml")
+_DEBUG_PROMPT_DIR = os.path.join(_ROOT, "storage", "debug-prompts")   # 调试卡完整 prompt 文件（每任务清空）
 
 # ─── 全服务单任务：当前 dsh 子进程 + 打断（kill 整树）───
 _current_proc = None
@@ -519,9 +520,14 @@ def run_dsh_task(task: str, history: list | None = None,
             ensure_proxy()   # 保证本地 token 代理(58082)已监听，dsh 的 LLM 调用才能走它计 token
             env = {**os.environ, "DEEPSEEK_BASE_URL": "http://127.0.0.1:58082"}
             if debug:
-                # 调试模式：通知 events-runner 把每次 LLM 调用的提示词/MCP工具/返回JSON emit 成 llm/call。
+                # 调试模式：通知 events-runner 把每次 LLM 调用的提示词/MCP工具/返回JSON emit 成 llm/call；
+                # 完整载荷写 storage/debug-prompts/<seq>.json（SSE 只发裁剪预览，前端按需 fetch）。
                 # 关闭时不注入 → 子进程不发数据，零开销。
                 env["NOVEL_AGENT_DEBUG"] = "1"
+                env["DEBUG_PROMPT_DIR"] = _DEBUG_PROMPT_DIR
+                # 每任务清空上次残留，防 seq 复用碰撞（顺带回收磁盘）
+                shutil.rmtree(_DEBUG_PROMPT_DIR, ignore_errors=True)
+                os.makedirs(_DEBUG_PROMPT_DIR, exist_ok=True)
             proc = subprocess.Popen(
                 cmd, cwd=_ROOT,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
