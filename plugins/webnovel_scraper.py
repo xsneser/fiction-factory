@@ -755,8 +755,10 @@ class WebnovelCrawler:
 
     # ── 章表 ──
     def get_chapter_list(self, book_id: str, max_pages: int = 200,
-                         quick: bool = False) -> list[dict]:
+                         quick: bool = False, on_page=None) -> list[dict]:
         """遍历分页章表 → 跨页去重 → 带编号按数字升序、番外排尾。
+
+        on_page(done, total) 每翻一页回调（目录拉取实时进度）。
 
         返回 [{chapter_id, title, href, num}]（未赋 index，由 download_webnovel 过滤后编号）。
         终止条件：某页 0 个新 href（实测末页后重复返回 HTTP 200，不 404）。
@@ -822,7 +824,12 @@ class WebnovelCrawler:
                 else:
                     pages = [p for p in range(2, min(total_pages, max_pages) + 1)]
                     failed = []
-                    for p in pages:
+                    for _pi, p in enumerate(pages, 1):
+                        if on_page:
+                            try:
+                                on_page(_pi, len(pages))
+                            except Exception:
+                                pass
                         html = self._fetch(self.cfg["chapter_list_page"](book_id, p), retries=0)
                         if html:
                             _add_page(html, by_href)
@@ -835,7 +842,12 @@ class WebnovelCrawler:
                             _add_page(html, by_href)
             else:
                 # 无分页线索 → 串行翻页（原逻辑，失败页重试一次不中断）
-                for page in range(2, max_pages + 1):
+                for _pi, page in enumerate(range(2, max_pages + 1), 1):
+                    if on_page:
+                        try:
+                            on_page(_pi, max_pages - 1)
+                        except Exception:
+                            pass
                     html = self._fetch(self.cfg["chapter_list_page"](book_id, page), retries=0)
                     if not html:
                         html = self._fetch(self.cfg["chapter_list_page"](book_id, page))

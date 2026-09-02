@@ -199,6 +199,11 @@
     flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cp-sources .s-det { color:#484f58; font-size:11px; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.cp-sources .s-tm { color:#58a6ff99; font-size:10px; flex-shrink:0; margin-left:2px;
+    font-variant-numeric:tabular-nums; }
+.cp-sources .s-ok .s-tm { color:#3fb95088; }
+.cp-sources .s-warn .s-tm { color:#d2992288; }
+.cp-sources .s-dl .s-tm { color:#3fb95099; }
 .cp-sources .cp-src.s-running { background:#1f6feb22; }
 .cp-sources .cp-src.s-running .s-name, .cp-sources .cp-src.s-running .s-ic { color:#58a6ff; }
 .cp-sources .cp-src.s-running .s-det { color:#58a6ffaa; }
@@ -624,6 +629,8 @@ function pollCrawlProgress() {
                             var site = m[2].trim();
                             var phase = m[1];
                             if (!(site in srcMap)) { srcMap[site] = {}; srcOrder.push(site); }
+                            if (!srcMap[site].t0) srcMap[site].t0 = s.ts || 0;   // 该源最早出现时间（镜像解析起点）
+                            srcMap[site].ts = s.ts || srcMap[site].ts || 0;      // 该源最新步骤时间
                             // 同源多次消息：running → ok 覆盖；镜像解析 → 校对 → 下载 逐级覆盖（显示最新阶段）
                             if (!srcMap[site].status || srcMap[site].status !== 'ok'
                                 || s.status === 'running' || phase === '校对' || phase === '下载') {
@@ -687,6 +694,21 @@ function pollCrawlProgress() {
                             det = s.detail || (st === 'running' ? '解析中…' : '');
                         }
                         var _dispName = _SITE_NAMES[site] || site;
+                        // 每源运行时间：进行中 → 该源从镜像解析起点已运行 X（now-t0，避免进度刷新导致 0s）；
+                        // 完成 → 总耗时（ts-t0）。t0 缺失时用 ts 兜底。
+                        var _tm = '';
+                        if ((s.ts || s.t0) && now > 0) {
+                            var _sec = 0;
+                            if (st === 'running' || (st === 'warn' && s.phase === '下载')) {
+                                _sec = (s.t0 ? now - s.t0 : now - s.ts);   // 进行中：该源总已运行时长
+                            } else if (s.t0) {
+                                _sec = s.ts - s.t0;   // 完成：该源总耗时
+                            }
+                            if (_sec >= 0 && _sec < 7200) {
+                                _tm = _sec < 60 ? (' ' + Math.round(_sec) + 's')
+                                    : (' ' + Math.floor(_sec / 60) + 'm' + Math.round(_sec % 60) + 's');
+                            }
+                        }
                         // 左栏每源 = 超链接（新标签打开）：后端已携带该源书页 URL（搜到书）
                         // 或该源主页 URL（解析中/未找到）；后端保证 url 非空，异常兜底 # 不跳内部页。
                         var _href = s.url || '#';
@@ -695,7 +717,9 @@ function pollCrawlProgress() {
                             + ' title="' + escapeHtml(_dispName + ' · ' + det + '（点击新标签打开该源页面）') + '">'
                             + '<span class="s-ic">' + sIc + '</span>'
                             + '<span class="s-name">' + escapeHtml(_dispName) + '</span>'
-                            + '<span class="s-det">' + escapeHtml(det) + '</span></a>';
+                            + '<span class="s-det">' + escapeHtml(det) + '</span>'
+                            + (_tm ? '<span class="s-tm">' + _tm + '</span>' : '')
+                            + '</a>';
                     });
                     srcsHtml += '</div>';
                 }

@@ -128,19 +128,24 @@ def _fetch_full_fanqie(fanqie, rid, f_by_num, head_nums, fanqie_bodies, limit=HE
     return fanqie_bodies
 
 
-def _content_sample(fanqie_bodies, src, mirror_cache):
+def _content_sample(fanqie_bodies, src, mirror_cache, on_progress=None):
     """对「番茄有全文 且 镜像 wmap 有该章号」的头章做正文全量比对（前十章，非抽样）。
 
     total = 番茄头章中镜像覆盖的章数（可比对基数）；matched = 其中正文一致数。
     若某章镜像取不到正文（锁章/抓取失败），total 仍计入（显示如 9/10 = 10 章里对 9 章）。
     镜像正文经 crawler.download_chapter → _clean_text 已做广告行筛查，比对即「筛后一致」。
     相似度 ≥CONTENT_OK_RATIO 计 matched；已比对正文写入 mirror_cache（填充阶段复用，避免重下）。
+    on_progress(done, total) 逐章回调（正文比对实时进度）。
     返回 (matched, total)；total==0（番茄头章也全锁、无法比对正文）由调用方退化为标题对齐信任。"""
     matched = total = fetched = 0
-    for n, f_body in fanqie_bodies.items():
+    _targets = [(n, f_body) for n, f_body in fanqie_bodies.items() if src["wmap"].get(n)]
+    for _i, (n, f_body) in enumerate(_targets, 1):
+        if on_progress:
+            try:
+                on_progress(_i, len(_targets))
+            except Exception:
+                pass
         mch = src["wmap"].get(n)
-        if not mch:
-            continue
         total += 1   # 镜像有该章 → 计入可比对基数（即使正文取不到也显示 9/10 而非 9/9）
         try:
             m_body = src["crawler"].download_chapter(
@@ -158,14 +163,17 @@ def _content_sample(fanqie_bodies, src, mirror_cache):
     return matched, total, fetched
 
 
-def _head_verify(fanqie_bodies, head_nums, f_by_num, src, mirror_cache):
+def _head_verify(fanqie_bodies, head_nums, f_by_num, src, mirror_cache,
+                  on_progress=None):
     """前十章核对单源 → {"site","consistent","align","matched","total"}。
 
     fanqie_bodies 由调用方一次性备好（番茄头章免费全文），本函数只读、不改——
     故可对多个源**并发**调用（每个源独立 crawler，mirror_cache 线程局部）。
-    consistent = 标题对齐 ok 且（无法正文比对则只看标题 / 前十章正文全部通过）。"""
+    consistent = 标题对齐 ok 且（无法正文比对则只看标题 / 前十章正文全部通过）。
+    on_progress(done, total) 透传给 _content_sample（正文比对实时进度）。"""
     align = _title_alignment(head_nums, f_by_num, src["wmap"])
-    matched, total, fetched = _content_sample(fanqie_bodies, src, mirror_cache)
+    matched, total, fetched = _content_sample(
+        fanqie_bodies, src, mirror_cache, on_progress=on_progress)
     # 一致 = 标题对齐 ok 且（无正文可比 → 只信标题 / 所有取到正文的章都一致）
     consistent = align["ok"] and (fetched == 0 or matched == fetched)
     return {"site": src["site"], "consistent": consistent, "align": align,
@@ -593,8 +601,11 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             # 并行两个子任务：A=前十章核对（用 quick 前 20 章，秒级） B=全量目录补拉（慢源耗时）
             def _load_full_cov():
                 if src.get("quick") and not src.get("_full"):
+                    def _toc_prog(done, total):
+                        _ph(f"拉取全量目录中 {done}/{total} 页")
                     _ph("拉取全量目录中…")
-                    full = src["crawler"].get_chapter_list(src["w_meta"]["book_id"])
+                    full = src["crawler"].get_chapter_list(
+                        src["w_meta"]["book_id"], on_page=_toc_prog)
                     main_re = src["crawler"].cfg.get("main_title_re")
                     if main_re:
                         filt = [c for c in full if re.match(main_re, c["title"])]
@@ -605,8 +616,11 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                 return _catalog_coverage(f_catalog, src)
             with _cfv.ThreadPoolExecutor(max_workers=2) as _ex2:
                 _ph("前十章正文比对中…")
+                def _head_prog(done, total):
+                    _ph(f"前十章正文 {done}/{total}")
                 _f_head = _ex2.submit(
-                    _head_verify, fanqie_bodies, head_nums, f_by_num, src, _mc)
+                    _head_verify, fanqie_bodies, head_nums, f_by_num, src, _mc,
+                    on_progress=_head_prog)
                 _f_full = _ex2.submit(_load_full_cov)
                 _ver = _f_head.result()      # 秒级：前十章核对先出（不阻塞于慢源全量目录）
                 _cov, _tall = _f_full.result()  # 等全量目录补拉完成
@@ -616,9 +630,12 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                 from plugins.site_clean_rules import learn_noise_rules, persist_rules, \
                     load_rules, inject_rules
                 _ph("广告检测中…")
+                def _learn_prog(done, total):
+                    _ph(f"剔除规则学习中 {done}/{total}")
                 _learned = learn_noise_rules(
                     fanqie_bodies, src, head_nums, f_by_num,
-                    existing=load_rules(src["site"]), body_cache=_mc)
+                    existing=load_rules(src["site"]), body_cache=_mc,
+                    on_progress=_learn_prog)
                 if _learned:
                     inject_rules(src["crawler"], _learned)   # 本次下载立即生效
                     persist_rules(src["site"], _learned)     # 持久化供后续复用

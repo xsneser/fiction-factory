@@ -129,7 +129,7 @@ def _to_rule(frag):
 
 
 def learn_noise_rules(fanqie_bodies, src, head_nums, f_by_num, existing=None,
-                      body_cache=None):
+                      body_cache=None, on_progress=None):
     """对单源学习噪声规则：用前 CLEAN_NUM 个「番茄有全文且镜像覆盖」的头章做 diff。
 
     fanqie_bodies: {章号: 番茄正文}
@@ -159,6 +159,11 @@ def learn_noise_rules(fanqie_bodies, src, head_nums, f_by_num, existing=None,
         if not m_body or _cjk_len(m_body) < FREE_FULL_MIN_CHARS:
             continue
         samples += 1
+        if on_progress:
+            try:
+                on_progress(samples, CLEAN_NUM)
+            except Exception:
+                pass
         for frag in _noise_fragments(f_body, m_body):
             frag_counts[frag] = frag_counts.get(frag, 0) + 1
 
