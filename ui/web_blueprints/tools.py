@@ -405,12 +405,14 @@ def scout_hot():
 
 @bp.route("/api/scout/sources")
 def scout_sources():
-    """可用镜像下载源清单（静态，不探测）：{ok, sources: [{key, name}]}。
-    供 /scout 抓取表单「下载源」下拉填充；源来自 MIRROR_SOURCES（多源注册表）+ SITES（名称）。"""
+    """可用镜像下载源清单（静态，不探测）：{ok, sources: [{key, name, js_render}]}。
+    供 /scout 抓取表单「下载源」下拉填充；源来自 MIRROR_SOURCES（多源注册表）+ SITES（名称）。
+    js_render=True 表示正文由 JS 填充，需无头浏览器渲染（如 hushuge/piaofeige），耗时较长。"""
     try:
         from plugins.webnovel_scraper import MIRROR_SOURCES, SITES
         return jsonify({"ok": True, "sources": [
-            {"key": k, "name": (SITES.get(k, {}) or {}).get("name") or k}
+            {"key": k, "name": (SITES.get(k, {}) or {}).get("name") or k,
+             "js_render": bool((SITES.get(k, {}) or {}).get("content_render"))}
             for k in MIRROR_SOURCES]})
     except Exception:
         return jsonify({"ok": False, "sources": []})

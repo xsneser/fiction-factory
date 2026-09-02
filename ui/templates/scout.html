@@ -46,10 +46,14 @@
             <span class="opt-note">选基准平台，其目录/封面/简介为权威</span>
         </div>
         <div class="fetch-opt" id="source-row">
-            <span class="opt-label">下载源（勾选即探索）</span>
-            <span id="source-cbs" style="display:flex;gap:14px;flex-wrap:wrap"></span>
-            <span class="opt-note" id="source-note">加载中…</span>
+            <span class="opt-label">下载源</span>
+            <span style="display:inline-flex;gap:4px">
+                <button class="chip source-btn" style="padding:2px 10px;font-size:12px" onclick="checkAllSources()" title="勾选全部源">全选</button>
+                <button class="chip source-btn" style="padding:2px 10px;font-size:12px" onclick="clearAllSources()" title="清空勾选">清空</button>
+            </span>
+            <span id="source-cbs" class="src-chips"></span>
         </div>
+        <div style="font-size:12px;color:#8b949e;margin:6px 0 0 70px" id="source-note">加载中…</div>
         <div class="fetch-opt">
             <span class="opt-label">抓取范围</span>
             <label class="opt-choice"><input type="radio" name="fetch-range" value="full" checked onchange="onRangeChange()"> 全文</label>
@@ -105,6 +109,18 @@
 .opt-note { font-size:12px;color:#484f58; }
 #base-source { min-width:200px; }
 #source-cbs label { cursor:pointer; }
+/* 下载源紧凑胶囊流：单行 6-8 个，避免 17 源横排撑高面板 */
+.src-chips { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-left:4px; }
+.src-chip { display:inline-flex; align-items:center; gap:4px; padding:3px 10px;
+    border-radius:14px; border:1px solid #30363d; background:#21262d;
+    color:#c9d1d9; font-size:12px; cursor:pointer; user-select:none;
+    transition:background .15s,border-color .15s; line-height:1.4; }
+.src-chip input { margin:0; accent-color:#1f6feb; width:13px; height:13px; }
+.src-chip:hover { background:#2d333b; border-color:#484f58; }
+.src-chip.on { background:#1f6feb33; border-color:#1f6feb; color:#58a6ff; }
+.src-chip .js-mark { font-size:10px; color:#d29922; }
+.source-btn { padding:2px 10px; font-size:12px; color:#8b949e; }
+.source-btn:hover { color:#c9d1d9; }
 </style>
 
 <script>
@@ -283,12 +299,21 @@ function refreshSourceNote() {
         : '勾选 ' + n + ' 个源：抓正文只从所选源探测，缺章在勾选源间自动补';
 }
 function onSourceChange() {
+    // 同步胶囊高亮：勾选 → .on
+    document.querySelectorAll('.src-chip').forEach(function(lb) {
+        var cb = lb.querySelector('input[name="mirror"]');
+        if (cb) lb.classList.toggle('on', cb.checked);
+    });
     refreshSourceNote();
     updateHotNotice();
 }
 function checkAllSources() {
     document.querySelectorAll('input[name="mirror"]').forEach(function(c) { c.checked = true; });
-    refreshSourceNote();
+    onSourceChange();
+}
+function clearAllSources() {
+    document.querySelectorAll('input[name="mirror"]').forEach(function(c) { c.checked = false; });
+    onSourceChange();
 }
 /* 指定区间 → 启用起止章输入 */
 function onRangeChange() {
@@ -326,10 +351,8 @@ function loadSources() {
         wrap.innerHTML = '';
         (sources || []).forEach(function(s) {
             var lb = document.createElement('label');
-            lb.className = 'opt-choice';
-            lb.style.display = 'inline-flex';
-            lb.style.alignItems = 'center';
-            lb.style.gap = '3px';
+            lb.className = 'src-chip on';
+            lb.title = s.key + (s.js_render ? '（JS 渲染，需浏览器，较慢）' : '');
             var cb = document.createElement('input');
             cb.type = 'checkbox';
             cb.name = 'mirror';
@@ -337,7 +360,8 @@ function loadSources() {
             cb.checked = true;
             cb.onchange = onSourceChange;
             lb.appendChild(cb);
-            lb.appendChild(document.createTextNode(s.name + '（' + s.key + '）'));
+            lb.appendChild(document.createTextNode(s.name));
+            if (s.js_render) lb.appendChild(document.createTextNode(' ⚙️'));
             wrap.appendChild(lb);
         });
         onSourceChange();
