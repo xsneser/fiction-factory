@@ -146,7 +146,10 @@ def scout_run():
         _cancel_exception = Exception("__CANCELLED__")
         _extra = {"pausable": True}
 
+        _state = {"phase": "", "cur": 0, "total": 0}   # 供 on_step 复用当前进度条位置（防跳 0）
+
         def on_progress(phase, current, total, message):
+            _state.update(phase=phase, cur=current, total=total)
             # 检查取消：如果被取消了就抛异常，让 worker catch 住
             if task_manager.is_cancelled(task_id):
                 raise _cancel_exception
@@ -164,6 +167,20 @@ def scout_run():
                 task_manager.progress(task_id, current, total, "下载", message)
                 task_manager.log(task_id, message, "info")
 
+        def on_step(label, status="running", detail=""):
+            # 分步清单：写 crawl_progress steps + 侧栏 log（取消/暂停与 on_progress 同检查）
+            if task_manager.is_cancelled(task_id):
+                raise _cancel_exception
+            while task_manager.is_paused(task_id):
+                if task_manager.is_cancelled(task_id):
+                    raise _cancel_exception
+                time.sleep(0.5)
+            write_crawl_progress("running", _state["phase"], _state["cur"], _state["total"],
+                                 detail or label, task_id=task_id, title=_task_title,
+                                 extra=_extra,
+                                 step={"label": label, "status": status, "detail": detail})
+            task_manager.log(task_id, f"{label} {detail}".strip(), "info")
+
         try:
             if platform == "merged":
                 # 综合抓取（默认）：番茄元数据+权威目录 + 镜像站全文 → 统一书库一本
@@ -173,7 +190,8 @@ def scout_run():
                     title=title, url=url, book_id=direct_id, site=site,
                     mirrors=mirrors,
                     chapters=chapters, start_chapter=start_chapter, end_chapter=end_chapter,
-                    download_delay=download_delay, on_progress=on_progress)
+                    download_delay=download_delay, on_progress=on_progress,
+                    on_step=on_step)
                 if not task_manager.is_cancelled(task_id):
                     n = dl["chapters"]
                     msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")

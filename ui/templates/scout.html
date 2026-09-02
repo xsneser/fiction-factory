@@ -455,6 +455,22 @@ function pollCrawlProgress() {
                         + '<button class="small" style="background:#da3633" onclick="fetchControl(\'cancel\',\'' + tid + '\')">⏹ 停止</button>'
                         + '</div>';
                 }
+                // 分步清单：每步状态图标 + 标题 + 明细（terminal 快照带 steps 前移 → 完成态常驻）
+                var stepsHtml = '';
+                if (t.steps && t.steps.length) {
+                    stepsHtml = '<div style="margin-top:6px;padding-left:8px;border-left:2px solid #30363d">';
+                    t.steps.forEach(function(s) {
+                        var st = s.status || '';
+                        var gl = st === 'ok' ? '✅' : st === 'error' ? '❌' : st === 'warn' ? '⚠️' : st === 'running' ? '🔄' : '•';
+                        var gc = st === 'ok' ? '#3fb950' : st === 'error' ? '#f85149' : st === 'warn' ? '#d29922' : st === 'running' ? '#58a6ff' : '#8b949e';
+                        stepsHtml += '<div style="font-size:12px;color:#8b949e;margin-top:2px">'
+                            + '<span style="color:' + gc + '">' + gl + '</span> '
+                            + escapeHtml(s.label || '')
+                            + (s.detail ? ' <span style="color:#484f58">' + escapeHtml(s.detail) + '</span>' : '')
+                            + '</div>';
+                    });
+                    stepsHtml += '</div>';
+                }
                 html += '<div class="cp-task" style="padding:10px 0;border-bottom:1px solid #21262d">'
                     + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">'
                     + '<span style="font-size:13px;color:#c9d1d9;font-weight:600">' + escapeHtml(title) + '</span>'
@@ -465,6 +481,7 @@ function pollCrawlProgress() {
                     + '<div style="height:100%;width:' + pct + '%;background:' + fillColor + ';border-radius:4px;transition:width .3s"></div>'
                     + '</div>'
                     + '<div style="font-size:12px;color:#8b949e;margin-top:5px">' + escapeHtml(t.message || '') + '</div>'
+                    + stepsHtml
                     + actions + '</div>';
                 anyVisible = true;
                 // 下载中：书库实时显示已落盘章节（节流，第一章落盘后即出现）

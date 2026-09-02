@@ -1835,20 +1835,27 @@ def fetch_book(title: str = "", url: str = "", book_id: str = "", site: str = "w
     """
     from libraries.crawl_progress import write_crawl_progress
     import time as _time
-    from libraries.crawl_progress import write_crawl_progress
     from plugins.book_fetch import download_book_merged
     _task_id = f"mcp_fetch_book_{int(_time.time() * 1000)}"
     _task_title = (title or url or book_id or "综合抓取")[:40]
+    _state = {"phase": "", "cur": 0, "total": 0}   # 供 on_step 复用进度条位置（防跳 0）
 
     def on_progress(phase, current, total, message):
+        _state.update(phase=phase, cur=current, total=total)
         write_crawl_progress("running", phase, current, total, message,
                              task_id=_task_id, title=_task_title)
+
+    def on_step(label, status="running", detail=""):
+        # 分步清单：写 crawl_progress steps（/scout 页轮询渲染）
+        write_crawl_progress("running", _state["phase"], _state["cur"], _state["total"],
+                             detail or label, task_id=_task_id, title=_task_title,
+                             step={"label": label, "status": status, "detail": detail})
 
     try:
         meta, dl = download_book_merged(
             title=title, url=url, book_id=book_id, site=site,
             chapters=chapters, start_chapter=start_chapter, end_chapter=end_chapter,
-            download_delay=download_delay, on_progress=on_progress)
+            download_delay=download_delay, on_progress=on_progress, on_step=on_step)
         n = dl["chapters"]
         msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")
                else f"下载完成 {n}章")

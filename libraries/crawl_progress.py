@@ -12,45 +12,83 @@ write 侧 task_id 为空 → 归 `"default"` 键。
 import os
 import time
 
-from core.json_store import read_json, write_json_atomic
+from core.json_store import file_lock, read_json, write_json_atomic
 
 _PATH = os.path.join("storage", "crawl_progress.json")
 _DEFAULT_TASK = "default"
 _TERMINAL_STATES = ("done", "error", "cancelled")
 _KEEP_TERMINAL_SECONDS = 60
+# 步骤清单上限：保最新 N 条（分步流程步骤数有限，防超长列表）
+_MAX_STEPS = 12
+
+# 步骤状态枚举（前端映射图标/颜色）
+_STEP_RUNNING = "running"
+_STEP_OK = "ok"
+_STEP_WARN = "warn"
+_STEP_ERROR = "error"
 
 
 def write_crawl_progress(state: str, phase: str = "", current: int = 0,
                          total: int = 0, message: str = "", extra: dict = None,
-                         task_id: str = "", title: str = "") -> dict:
+                         task_id: str = "", title: str = "", step: dict = None) -> dict:
     """写一个任务的进度快照（原子替换），返回该任务快照 dict。
 
     task_id 为空 → 归 'default' 键（兼容旧调用方）；多任务并行各写各键互不覆盖。
+    step（可选 {label,status,detail}）：追加进该任务的 steps 清单——**按 label 幂等替换**
+    （running→ok/warn/error 原地转态），新 label 追加；超 _MAX_STEPS 掐尾保最新。
+    steps 在每次快照里前移保留：terminal 后同 task_id 重下（running/paused 首写）自动清空
+    上一轮残留。前端经 GET /api/crawl/progress 读 t.steps 渲染步骤清单。
     terminal 状态（done/error/cancelled）任务保留 _KEEP_TERMINAL_SECONDS 供前端展示后自动清。
     """
     tid = task_id or _DEFAULT_TASK
     now = time.time()
-    data = read_crawl_progress()
-    tasks = data.get("tasks", {})
-    snap = {
-        "state": state,
-        "phase": phase,
-        "current": current,
-        "total": total,
-        "message": message or "",
-        "ts": now,
-    }
-    if title:
-        snap["title"] = title
-    if extra:
-        snap["extra"] = extra
-    tasks[tid] = snap
-    # 清理 terminal 状态过旧任务（保留 60s 给前端展示后移除）
-    tasks = {k: v for k, v in tasks.items()
-             if v.get("state") not in _TERMINAL_STATES
-             or now - v.get("ts", 0) < _KEEP_TERMINAL_SECONDS}
-    write_json_atomic(_PATH, {"tasks": tasks, "active": tid, "ts": now})
-    return snap
+    # 外层锁包住读-改-写（read_json/write_json_atomic 内取同锁为可重入），
+    # 关掉同进程内 read→write 间隙，steps 累积不丢；跨进程仍原子替换（丢步为既有现状）。
+    with file_lock(_PATH):
+        data = read_crawl_progress()
+        tasks = data.get("tasks", {})
+        old = tasks.get(tid) or {}
+        # 同 task_id 复用且上一轮已终态 → 新一轮 running/paused 先清残留步骤
+        if old.get("state") in _TERMINAL_STATES and state in ("running", "paused"):
+            steps = []
+        else:
+            steps = list((old.get("steps") or [])[:])
+        if step:
+            st = {
+                "label": step.get("label", ""),
+                "status": step.get("status", _STEP_RUNNING),
+                "detail": step.get("detail", ""),
+                "ts": now,
+            }
+            for i, ex in enumerate(steps):
+                if ex.get("label") == st["label"]:
+                    steps[i] = st
+                    break
+            else:
+                steps.append(st)
+            if len(steps) > _MAX_STEPS:
+                steps = steps[-_MAX_STEPS:]
+        snap = {
+            "state": state,
+            "phase": phase,
+            "current": current,
+            "total": total,
+            "message": message or "",
+            "ts": now,
+        }
+        if title:
+            snap["title"] = title
+        if extra:
+            snap["extra"] = extra
+        if steps:
+            snap["steps"] = steps
+        tasks[tid] = snap
+        # 清理 terminal 状态过旧任务（保留 60s 给前端展示后移除）
+        tasks = {k: v for k, v in tasks.items()
+                 if v.get("state") not in _TERMINAL_STATES
+                 or now - v.get("ts", 0) < _KEEP_TERMINAL_SECONDS}
+        write_json_atomic(_PATH, {"tasks": tasks, "active": tid, "ts": now})
+        return snap
 
 
 def read_crawl_progress() -> dict:

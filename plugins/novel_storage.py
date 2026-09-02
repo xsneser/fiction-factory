@@ -86,7 +86,8 @@ def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
         "downloaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     # 合并来源信息（合并抓取传入）
-    for k in ("source_fanqie", "source_web", "fallback_fanqie"):
+    for k in ("source_fanqie", "source_web", "fallback_fanqie",
+              "head_verified", "head_site"):
         if info.get(k) is not None:
             meta[k] = info[k]
     with open(novel_dir / "info.json", "w", encoding="utf-8") as f:
