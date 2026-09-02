@@ -185,6 +185,33 @@
 .cp-step.s-warn { color:#d29922; }
 .cp-step.s-error { color:#f85149; }
 .cp-step .det { color:#484f58; margin-left:4px; }
+/* ─── 抓取消息左右两栏：左=所有源状态，右=操作消息 ─── */
+.cp-body { display:flex; gap:0; margin-top:12px; }
+.cp-sources { width:250px; flex-shrink:0; border-right:1px solid #21262d;
+    padding-right:12px; display:flex; flex-direction:column; gap:3px;
+    max-height:340px; overflow-y:auto; }
+.cp-sources .cp-src { display:flex; align-items:center; gap:6px; font-size:12px;
+    color:#8b949e; padding:3px 6px; border-radius:6px; line-height:1.4; }
+.cp-sources .cp-src:hover { background:#21262d; }
+.cp-sources .s-ic { width:14px; text-align:center; flex-shrink:0; }
+.cp-sources .s-name { font-weight:600; color:#c9d1d9; min-width:58px; flex-shrink:0; }
+.cp-sources .s-det { color:#484f58; font-size:11px; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.cp-sources .cp-src.s-running { background:#1f6feb22; }
+.cp-sources .cp-src.s-running .s-name, .cp-sources .cp-src.s-running .s-ic { color:#58a6ff; }
+.cp-sources .cp-src.s-running .s-det { color:#58a6ffaa; }
+.cp-sources .cp-src.s-ok .s-ic { color:#3fb950; }
+.cp-sources .cp-src.s-ok .s-det { color:#3fb95088; }
+.cp-sources .cp-src.s-warn .s-ic { color:#d29922; }
+.cp-sources .cp-src.s-warn .s-det { color:#d2992288; }
+.cp-sources .cp-src.s-error .s-ic { color:#f85149; }
+.cp-sources .cp-src.s-error .s-det { color:#f8514988; }
+.cp-ops { flex:1 1 auto; min-width:0; padding-left:12px; }
+.cp-ops .cp-steps { margin-top:0; }
+.cp-ops-title { font-size:11px; color:#484f58; text-transform:uppercase;
+    letter-spacing:.5px; margin-bottom:4px; }
+.cp-src-title { font-size:11px; color:#484f58; text-transform:uppercase;
+    letter-spacing:.5px; margin-bottom:5px; }
 .cp-actions { margin-top:10px; display:flex; gap:8px; }
 .cp-actions .small { padding:4px 12px; border-radius:6px; border:none; cursor:pointer; font-size:12px; color:#fff; }
 .cp-actions .small:hover { filter:brightness(1.15); }
@@ -577,20 +604,66 @@ function pollCrawlProgress() {
                         + '<button class="small btn-cancel" onclick="fetchControl(\'cancel\',\'' + tid + '\')">⏹ 停止</button>'
                         + '</div>';
                 }
-                // 分步清单：时间线样式
-                var stepsHtml = '';
+                // 分步消息 → 左右两栏：左=所有源状态（镜像解析:/校对: 前缀按源名归类），右=操作消息
+                var srcMap = {};   // site -> {status, detail}
+                var srcOrder = [];
+                var opSteps = [];
                 if (t.steps && t.steps.length) {
-                    stepsHtml = '<div class="cp-steps">';
                     t.steps.forEach(function(s) {
+                        var lb = s.label || '';
+                        var m = /^(镜像解析|校对):(.+)$/.exec(lb);
+                        if (m) {
+                            var site = m[2].trim();
+                            if (!(site in srcMap)) { srcMap[site] = {}; srcOrder.push(site); }
+                            // 同源多次消息：running → ok 覆盖；镜像解析 → 校对覆盖（显示最新状态）
+                            if (!srcMap[site].status || srcMap[site].status !== 'ok'
+                                || s.status === 'running' || lb.indexOf('校对') === 0) {
+                                srcMap[site].status = s.status;
+                                srcMap[site].detail = s.detail || '';
+                                srcMap[site].isAudit = lb.indexOf('校对') === 0;
+                            }
+                        } else {
+                            opSteps.push(s);
+                        }
+                    });
+                }
+                // 左栏：所有源
+                var srcsHtml = '';
+                if (srcOrder.length) {
+                    srcsHtml = '<div class="cp-sources"><div class="cp-src-title">镜像源状态</div>';
+                    srcOrder.forEach(function(site) {
+                        var s = srcMap[site];
+                        var st = s.status || '';
+                        var sCls = st === 'ok' ? 's-ok' : st === 'error' ? 's-error'
+                            : st === 'warn' ? 's-warn' : st === 'running' ? 's-running' : '';
+                        var sIc = st === 'ok' ? '✓' : st === 'error' ? '✗'
+                            : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
+                        var det = s.detail || (st === 'running' ? '解析中…' : '');
+                        srcsHtml += '<div class="cp-src ' + sCls + '" title="' + escapeHtml(site + ' · ' + det) + '">'
+                            + '<span class="s-ic">' + sIc + '</span>'
+                            + '<span class="s-name">' + escapeHtml(site) + '</span>'
+                            + '<span class="s-det">' + escapeHtml(det) + '</span></div>';
+                    });
+                    srcsHtml += '</div>';
+                }
+                // 右栏：操作消息
+                var opsHtml = '';
+                if (opSteps.length) {
+                    opsHtml = '<div class="cp-ops"><div class="cp-ops-title">操作</div><div class="cp-steps">';
+                    opSteps.forEach(function(s) {
                         var st = s.status || '';
                         var sCls = st === 'ok' ? 's-done' : st === 'error' ? 's-error' : st === 'warn' ? 's-warn' : st === 'running' ? 's-running' : '';
                         var sIc = st === 'ok' ? '✓' : st === 'error' ? '✗' : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
-                        stepsHtml += '<div class="cp-step ' + sCls + '"><span class="ic">' + sIc + '</span>'
+                        opsHtml += '<div class="cp-step ' + sCls + '"><span class="ic">' + sIc + '</span>'
                             + '<span>' + escapeHtml(s.label || '')
                             + (s.detail ? '<span class="det">' + escapeHtml(s.detail) + '</span>' : '')
                             + '</span></div>';
                     });
-                    stepsHtml += '</div>';
+                    opsHtml += '</div></div>';
+                }
+                var bodyHtml = '';
+                if (srcsHtml || opsHtml) {
+                    bodyHtml = '<div class="cp-body">' + srcsHtml + opsHtml + '</div>';
                 }
                 html += '<div class="cp-task ' + stCls + '">'
                     + '<div class="cp-head">'
@@ -603,7 +676,7 @@ function pollCrawlProgress() {
                     + (isDownload && total > 0 ? segHtml
                         : '<div class="cp-bar-wrap"><div class="cp-bar ' + stCls + ' indeterminate"></div></div>')
                     + (t.message ? '<div class="cp-msg">' + escapeHtml(t.message) + '</div>' : '')
-                    + stepsHtml
+                    + bodyHtml
                     + actions
                     + '</div>';
                 anyVisible = true;
