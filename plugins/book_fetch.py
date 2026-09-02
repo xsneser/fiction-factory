@@ -6,8 +6,9 @@
 1. 输入判定：url（fanqie 域→番茄，否则镜像站）/ book_id（数字→番茄）/ 书名
 2. 番茄元数据 + 权威目录（封面/简介/目录；尽力）→ **立即创建书目 info.json**（/scout 即时显示）
 3. 并行探查镜像源（mirrors 限定集合；缺省全部 MIRROR_SOURCES）
-4. **前十章核对**：目录级标题对齐（按「第N章」号）+ 正文抽样——抓番茄免费头章正文，
-   与镜像对应章经广告行过滤后的正文比相似度；判定镜像是否为该番茄书的忠实移植
+4. **前十章核对**：目录级标题对齐（按「第N章」号）+ 正文全量比对——番茄前 HEAD_N 章免费
+   正文**逐一**与镜像对应章经广告行过滤后的正文比相似度（非抽样）；判定镜像是否为该番茄书
+   的忠实移植
 5. 选源：有「完全一致」源优先用；全不一致 → 回退最佳源（镜像正文天然经广告行过滤）并
    head_verified=false 落 info.json
 6. 填充正文：番茄目录为骨架（title/index 番茄为准）；**头章免费部分存番茄权威正文**（无广告），
@@ -32,7 +33,7 @@ logger = logging.getLogger("novel-engine.book_fetch")
 
 # ── 前十章核对参数 ────────────────────────────────────────────────
 HEAD_N = 10                 # 头章数：取前 HEAD_N 个可编号「第N章」的番茄目录项（跳过序章/楔子）
-SAMPLE_K = 3                # 正文抽样比对章数
+# 前十章核对 = 正文全量比对（非抽样）：番茄头章正文逐一与镜像对应章比对
 FREE_FULL_MIN_CHARS = 300   # 番茄正文视为「免费全文」的最少 CJK 字数（锁章预览常低于此）
 TITLE_OK_RATIO = 0.8        # 标题对齐阈值（=通过/缺章计未通过的期望头章数；须 ≥0.8 才算一致）
 CONTENT_OK_RATIO = 0.7      # 正文归一化后 difflib 相似度阈值（镜像正文已去广告行再比）
@@ -100,8 +101,8 @@ def _title_alignment(head_nums, f_by_num, wmap):
     return {"both": len(both), "passed": passed, "expected": expected, "ok": ok}
 
 
-def _fetch_full_fanqie(fanqie, rid, f_by_num, head_nums, fanqie_bodies, limit=SAMPLE_K):
-    """抽样抓番茄头部章正文（免费全文章）；≥FREE_FULL_MIN_CHARS 才算全文，收满 limit 即停。
+def _fetch_full_fanqie(fanqie, rid, f_by_num, head_nums, fanqie_bodies, limit=HEAD_N):
+    """抓番茄头章正文做核对（前十章全量，非抽样）；≥FREE_FULL_MIN_CHARS 才算全文，收满即停。
 
     fanqie_bodies 跨源复用（num → 正文），避免对多个源重复抓同一章。"""
     for n in head_nums:
@@ -119,11 +120,11 @@ def _fetch_full_fanqie(fanqie, rid, f_by_num, head_nums, fanqie_bodies, limit=SA
 
 
 def _content_sample(fanqie_bodies, src, mirror_cache):
-    """对「番茄有全文 且 镜像 wmap 有该章号」的头章做正文抽样比对。
+    """对「番茄有全文 且 镜像 wmap 有该章号」的头章做正文全量比对（前十章，非抽样）。
 
     镜像正文经 crawler.download_chapter → _clean_text 已做广告行筛查，比对即「筛后一致」。
-    相似度 ≥CONTENT_OK_RATIO 计 matched；抽样正文写入 mirror_cache（填充阶段复用，避免重下）。
-    返回 (matched, total)；total==0（番茄头章也全锁、无法抽样）由调用方退化为标题对齐信任。"""
+    相似度 ≥CONTENT_OK_RATIO 计 matched；已比对正文写入 mirror_cache（填充阶段复用，避免重下）。
+    返回 (matched, total)；total==0（番茄头章也全锁、无法比对正文）由调用方退化为标题对齐信任。"""
     matched = total = 0
     for n, f_body in fanqie_bodies.items():
         mch = src["wmap"].get(n)
@@ -148,7 +149,7 @@ def _content_sample(fanqie_bodies, src, mirror_cache):
 def _verify_source_head(fanqie, rid, head_nums, f_by_num, src, fanqie_bodies, mirror_cache):
     """前十章核对单源 → {"site","consistent","align","matched","total"}。
 
-    consistent = 标题对齐 ok 且（无法正文抽样则只看标题 / 抽样全过）。"""
+    consistent = 标题对齐 ok 且（无法正文比对则只看标题 / 前十章正文全部通过）。"""
     align = _title_alignment(head_nums, f_by_num, src["wmap"])
     _fetch_full_fanqie(fanqie, rid, f_by_num, head_nums, fanqie_bodies)
     matched, total = _content_sample(fanqie_bodies, src, mirror_cache)
@@ -324,13 +325,16 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
             probe_keys = wanted
     sources = {}
     with _cf.ThreadPoolExecutor(max_workers=min(3, max(1, len(probe_keys)))) as _ex:
-        for _r in _ex.map(_resolve_source, probe_keys):
+        # 每个被探查的源都回报（找到→章数；未找到/失败→warn），方便下载框看全各源结果
+        for sn, _r in zip(probe_keys, _ex.map(_resolve_source, probe_keys)):
             if _r and _r["wmap"]:
                 sources[_r["site"]] = _r
                 _step(f"镜像解析:{_r['site']}", "ok", f"主书 {len(_r['wmap'])} 章可候选")
                 if on_progress:
                     on_progress("search", 1, 1,
                                 f"镜像源 {_r['site']}: 主书 {len(_r['wmap'])} 章可用")
+            else:
+                _step(f"镜像解析:{sn}", "warn", "未找到该书 / 解析失败")
 
     # ── 给镜像 URL 时反向补番茄元数据（用镜像书名；番茄失败但镜像命中的回补） ──
     if not f_meta and sources:
@@ -433,31 +437,36 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     # 头章元数据：连接键=标题「第N章」号（跳过序章/楔子）；供前十章核对用
     head_nums, head_index_set, f_by_num = _fanqie_head(f_catalog)
 
-    # ── 4) 前十章核对选源：先探查多个源 → 有「完全一致」源用之；无则回退最佳源（广告行过滤） ──
+    # ── 4) 前十章核对选源：每个已找到的源都做全量核对并上报 → 有「完全一致」源取第一个；
+    #      全不一致才回退 matched/coverage 最佳源（镜像正文广告行过滤天然生效） ──
     main_src = None
     head_verified, head_site = False, ""
     mirror_cache, fanqie_bodies = {}, {}
     if sources:
         cand = _candidate_sources(sources, prefer_site, site)
         scored = []
+        first_consistent = None
         for src in cand:
             mc = {}
             ver = _verify_source_head(fanqie, fanqie_rid, head_nums, f_by_num,
                                       src, fanqie_bodies, mc)
             scored.append((src, ver, mc))
             detail = (f"标题 {ver['align']['passed']}/{ver['align']['expected']} · "
-                      f"正文抽样 {ver['matched']}/{ver['total']}")
+                      f"正文比对 {ver['matched']}/{ver['total']}")
             if ver["consistent"]:
-                main_src, head_verified, head_site = src, True, src["site"]
-                mirror_cache = mc
+                if first_consistent is None:
+                    first_consistent = (src, ver, mc)
                 _step(f"校验:{src['site']}", "ok", f"前十章一致（{detail}）")
-                break
-            _step(f"校验:{src['site']}", "error", f"不一致（{detail}）")
-        if main_src:
+            else:
+                _step(f"校验:{src['site']}", "error", f"不一致（{detail}）")
+        if first_consistent:
+            src, _v, mc = first_consistent
+            main_src, head_verified, head_site = src, True, src["site"]
+            mirror_cache = mc
             _step("选择来源", "ok", f"用一致源 {main_src['site']}")
         elif scored:
             # 全不一致 → 回退：matched 最多、其次 coverage 最高（镜像正文已广告行过滤）
-            src, _ver, mc = max(scored, key=lambda t: (t[1]["matched"], t[0]["coverage"]))
+            src, _v, mc = max(scored, key=lambda t: (t[1]["matched"], t[0]["coverage"]))
             main_src, head_site = src, src["site"]
             mirror_cache = mc
             _step("选择来源", "warn",
@@ -481,7 +490,7 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
         idx = ch["index"]
         fnum = _parse_chapter_num(ch.get("title", ""))
         content = ""
-        # 镜像正文：先试核对抽样缓存，否则按源顺序下载（内部 _clean_text 广告行过滤）
+        # 镜像正文：先试核对阶段已比对缓存，否则按源顺序下载（内部 _clean_text 广告行过滤）
         if fnum is not None:
             if mirror_cache.get(fnum):
                 content = mirror_cache[fnum]
