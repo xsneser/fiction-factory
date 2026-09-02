@@ -455,10 +455,10 @@ function pollCrawlProgress() {
                         + '<button class="small" style="background:#da3633" onclick="fetchControl(\'cancel\',\'' + tid + '\')">⏹ 停止</button>'
                         + '</div>';
                 }
-                // 分步清单：每步状态图标 + 标题 + 明细（terminal 快照带 steps 前移 → 完成态常驻）
+                // 分步清单：每步状态图标 + 标题 + 明细；固定高度滚动框（多源/进行中行一多不撑高整卡）
                 var stepsHtml = '';
                 if (t.steps && t.steps.length) {
-                    stepsHtml = '<div style="margin-top:6px;padding-left:8px;border-left:2px solid #30363d">';
+                    stepsHtml = '<div style="margin-top:6px;padding-left:8px;padding-right:4px;border-left:2px solid #30363d;max-height:150px;overflow-y:auto">';
                     t.steps.forEach(function(s) {
                         var st = s.status || '';
                         var gl = st === 'ok' ? '✅' : st === 'error' ? '❌' : st === 'warn' ? '⚠️' : st === 'running' ? '🔄' : '•';
