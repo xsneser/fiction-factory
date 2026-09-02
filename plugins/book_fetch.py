@@ -273,7 +273,7 @@ def _merged_meta(f_meta, total, platform, main_site="", main_src=None, verdict=N
 
 
 def download_book_merged(title: str = "", url: str = "", book_id: str = "",
-                         site: str = "wodushu", chapters: int = 0,
+                         site: str = "bookszw", chapters: int = 0,
                          start_chapter: int = 1, end_chapter: int = 0,
                          download_delay: float = 0.5, on_progress=None,
                          platform: str = "merged", prefer_site: str = "",
@@ -283,9 +283,9 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
     on_progress(phase,current,total,message)  走进度条/滚动消息；
     on_step(label,status,detail)              走分步清单（status: running|ok|warn|error）。
 
-    prefer_site：用户显式下载源（'wodushu'/'bookszw'）时优先该源排主源（仍按章号多源补缺）；
+    prefer_site：用户显式下载源（'bookszw'/'wujixsw'）时优先该源排主源（仍按章号多源补缺）；
     空串=自动择优。不影响单源/番茄路径，纯 merged 主源偏好。
-    mirrors：勾选的下载源清单（如 ['wodushu']）→ 只探测这些源，缺章在勾选源间补；
+    mirrors：勾选的下载源清单（如 ['bookszw']）→ 只探测这些源，缺章在勾选源间补；
     None/空 = 全部 MIRROR_SOURCES 自动探测（与旧行为一致）。
     """
     source = url or book_id or title
@@ -836,7 +836,7 @@ def _save_mirror_only(primary, site, chapters, start, end, delay, on_progress,
         except Exception as e:
             logger.warning(f"on_step failed: {e}")
     from plugins.webnovel_scraper import download_webnovel
-    src_site = primary["site"] if primary else (site or "wodushu")
+    src_site = primary["site"] if primary else (site or "bookszw")
     w_meta = primary["w_meta"] if primary else {}
     info, dl = download_webnovel(
         site=src_site, url=w_meta.get("url", ""), book_id=w_meta.get("book_id", ""),
@@ -935,7 +935,7 @@ def main():
     p.add_argument("--title", default="")
     p.add_argument("--url", default="")
     p.add_argument("--book_id", default="")
-    p.add_argument("--site", default="wodushu")
+    p.add_argument("--site", default="bookszw")
     p.add_argument("--chapters", type=int, default=0)
     p.add_argument("--delay", type=float, default=0.4)
     args = p.parse_args()

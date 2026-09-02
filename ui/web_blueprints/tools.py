@@ -121,8 +121,8 @@ def scout_run():
         if not title and not url and not direct_id:
             return jsonify({"error": "请输入书名 / 番茄 book_id / 镜像站 URL"}), 400
 
-    # site：web 需要具体镜像站（默认 wodushu）；merged/fanqie 留空 → merged 内部自动择优
-    site = raw_site or ("wodushu" if platform == "web" else "")
+    # site：web 需要具体镜像站（默认 bookszw）；merged/fanqie 留空 → merged 内部自动择优
+    site = raw_site or ("bookszw" if platform == "web" else "")
 
     # 单任务互斥 + 任务前置注册：搜索阶段即可暂停/停止
     task_manager.ensure_single("小说抓取")
@@ -210,7 +210,7 @@ def scout_run():
                     # 顶部标题以解析出的书名为准（兜底：未走 on_step 的路径也用 info title）
                     _tname["title"] = (info.get("title") if info else "") or _tname["title"]
                     # site 用实际服务源（用户选源可能解析失败回退自动），非请求时写死的默认源
-                    _actual_site = (info.get("site") if info else None) or site or "wodushu"
+                    _actual_site = (info.get("site") if info else None) or site or "bookszw"
                     write_crawl_progress("done", "download", n, n, msg,
                                          task_id=task_id, title=_tname["title"],
                                          extra={**_extra, "folder": dl.get("folder", ""),

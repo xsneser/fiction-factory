@@ -1779,10 +1779,10 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
         raise
 
 
-def fetch_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
+def fetch_webnovel(site: str = "bookszw", url: str = "", book_id: str = "",
                    chapters: int = 0, start_chapter: int = 1, end_chapter: int = 0,
                    download_delay: float = 0.5) -> dict:
-    """抓取网页镜像站小说（番茄锁定章需 SVIP 时的替代全文源，如 wodushu 我的书城网）。
+    """抓取网页镜像站小说（番茄锁定章需 SVIP 时的替代全文源，如 bookszw 零点看书）。
 
     按书籍 URL 或 book_id 下载→保存到 storage/novels/web/。章节按列表序号（第1章=1）；
     chapters<=0（默认）全文下载（可按站点配置过滤番外）；chapters>0 按区间。
@@ -1821,13 +1821,13 @@ def fetch_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
         raise
 
 
-def fetch_book(title: str = "", url: str = "", book_id: str = "", site: str = "wodushu",
+def fetch_book(title: str = "", url: str = "", book_id: str = "", site: str = "bookszw",
                chapters: int = 0, start_chapter: int = 1, end_chapter: int = 0,
                download_delay: float = 0.5) -> dict:
     """综合抓取一本书（番茄元数据+权威目录 + 镜像站全文 → 统一书库一本）。
 
     输入书名 / 番茄 book_id / 镜像站 URL 任一即可：番茄解析元数据（书名/作者/简介 intro/
-    封面 cover + 章节目录权威，番茄目录为准），镜像站（默认 wodushu 我的书城网）提供全文，
+    封面 cover + 章节目录权威，番茄目录为准），镜像站（默认 bookszw 零点看书）提供全文，
     按番茄目录合并；番茄比镜像多的章节落空占位。番茄解析不到 → 回退镜像站元数据。
     chapters<=0（默认）全书；>0 按区间。进度实时写 storage/crawl_progress.json
     （/scout 页轮询展示）。返回 {ok, title, author, intro, cover, saved_chapters,

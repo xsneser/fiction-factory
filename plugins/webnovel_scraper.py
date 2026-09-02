@@ -70,26 +70,6 @@ def _parse_chapter_num(title: str):
 # ─── 站点适配器注册表 ────────────────────────────────────────────────
 # 新增站点：照抄一条，覆盖必要键即可（其余用默认）。{cid}/{bid} 等模板在调用处替换。
 SITES = {
-    "wodushu": {
-        "name": "我的书城网",
-        "base_url": "https://www.wodushu.com",
-        "encoding": "utf-8",
-        "headers": {"User-Agent": DEFAULT_UA},
-        # 从 URL 解析 book_id（book_id_re 不匹配时整串视为 book_id）
-        "book_id_re": r"/book/(\d+)/",
-        "book_page": lambda b: f"/book/{b}/",
-        "chapter_list_page": lambda b, p: f"/book/{b}/{p}/",
-        "chapter_url": lambda b, cid, suf: f"/read/{b}/{cid}{suf}.html",
-        # 章表链接：组1=href（去重用），组2=chapter_id，组3=链接文本（章节标题，已含「第N章」前缀）。
-        # 注意 {cid}_N.html 续页不会被此正则匹配（数字与 .html 之间隔下划线+数字）。
-        "chapter_link_re": re.compile(
-            r'<a[^>]*href="([^"]*?/read/\d+/(\d+)\.html)"[^>]*>(.*?)</a>', re.S),
-        # 续页链接（模板，{cid} 替换为当前 chapter_id），组1=续页号
-        "extra_page_re": r'href="[^"]*?/read/\d+/{cid}_(\d+)\.html"',
-        "content_div_id": "content",
-        "main_title_re": MAIN_TITLE_RE,   # 主书过滤（排除番外；阿拉伯/中文数字章号都算）
-        "request_delay": 0.5,
-    },
     # 零点看书（笔趣阁克隆）：`/{cat}/{bid}/` 两段数字 URL；正文在 <h1 class="title"> 后（非 div）
     "bookszw": {
         "name": "零点看书",
@@ -206,26 +186,6 @@ SITES = {
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
-    # 互书阁：书页/目录静态可抓（全目录在 /index/{bid}/），正文 <div id="article"> 由 JS 填充 →
-    # content_render 走无头浏览器渲染后按 content_div_id=article 解析
-    "hushuge": {
-        "name": "互书阁",
-        "base_url": "https://www.hushuge.com",
-        "encoding": "utf-8",
-        "headers": {"User-Agent": DEFAULT_UA},
-        "book_id_re": r"/book/(\d+)/",
-        "book_page": lambda b: f"/book/{b}/",
-        "chapter_list_page": lambda b, p: f"/index/{b}/",
-        "chapter_url": lambda b, cid, suf: f"/read/{b}/{cid}{suf}.html",
-        "chapter_link_re": re.compile(
-            r'<a[^>]*href="(/read/\d+/(\d+)\.html)"[^>]*>'
-            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
-        "extra_page_re": r'href="[^"]*?/read/\d+/{cid}_(\d+)\.html"',
-        "content_div_id": "article",
-        "content_render": True,
-        "main_title_re": MAIN_TITLE_RE,
-        "request_delay": 0.5,
-    },
     # 飘花阅读(m 站)：章表分页 /piao/{bid}_{p}/；正文 /piaof/{bid}/{cid}.html 由 JS 填充（渲染后容器 #nr）
     "piaofeige": {
         "name": "飘花阅读",
@@ -294,47 +254,6 @@ SITES = {
             r"^请(关闭浏览器阅读模式|关闭阅读模式|下载APP|安装客户端).*$",
             r"^如无法翻页.*$",
         ],
-        "main_title_re": MAIN_TITLE_RE,
-        "request_delay": 0.5,
-    },
-    # 迷乐文学：书页全量目录（`/{cat}/{bid}/`），章链接为绝对 URL /{cat}_{bid}/{cid}.html，正文容器 #booktxt 含分页 {cid}_N.html
-    "mele6": {
-        "name": "迷乐文学",
-        "base_url": "https://www.mele6.net",
-        "encoding": "utf-8",
-        "headers": {"User-Agent": DEFAULT_UA},
-        "book_id_re": r"/(\d+)/(\d+)/",
-        "book_page": lambda b: f"/{b.split(':')[0]}/{b.split(':')[1]}/",
-        "chapter_list_page": lambda b, p: f"/{b.split(':')[0]}/{b.split(':')[1]}/",  # 书页即全量目录
-        "chapter_url": lambda b, cid, suf: f"/{b.split(':')[0]}_{b.split(':')[1]}/{cid}{suf}.html",
-        # 章链接为绝对 URL 或相对路径：`/283_283487/{cid}.html`（书号段 `{cat}_{bid}`）
-        "chapter_link_re": re.compile(
-            r'<a[^>]*href="(?:https?://[^"/]*)?(/\d+_\d+/(\d+)\.html)"[^>]*>'
-            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
-        "extra_page_re": r'href="[^"]*?/{cid}_(\d+)\.html"',
-        "content_div_id": "booktxt",
-        "drop_line_re": [
-            r"^第[0-9一二三四五六七八九十百千零两]+章.*?（\d+ / \d+）$",
-            r"^（\d+ / \d+）$",
-        ],
-        "main_title_re": MAIN_TITLE_RE,
-        "request_delay": 0.5,
-    },
-    # 三六零小说：目录 /mulu/{cat}/{bid}.html（静态 gbk，cat=bid 前3位；书页仅列近章），章 /mulu/{cat}/{bid}-{cid}.html，正文 #read_content
-    "i360xs": {
-        "name": "三六零小说",
-        "base_url": "https://www.i360xs.com",
-        "encoding": "gbk",
-        "headers": {"User-Agent": DEFAULT_UA},
-        "book_id_re": r"/book/(\d+)\.html",
-        "book_page": lambda b: f"/book/{b}.html",
-        "chapter_list_page": lambda b, p: f"/mulu/{b[:3]}/{b}.html",
-        "chapter_url": lambda b, cid, suf: f"/mulu/{b[:3]}/{b}-{cid}{suf}.html",
-        "chapter_link_re": re.compile(
-            r'<a[^>]*href="(?:https?://[^"/]*)?(/mulu/[^"]*-(\d+)\.html)"[^>]*>'
-            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
-        "extra_page_re": r"(?!)",
-        "content_div_id": "read_content",
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
@@ -470,30 +389,6 @@ SITES = {
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
-    # 希冀小说网（m）：目录 /info/{bid}/ 列近章，章 /info/{bid}/{cid}.html，正文 #chaptercontent，分页 {cid}_N.html
-    "xiji": {
-        "name": "希冀小说网",
-        "base_url": "https://m.xi-ji.com",
-        "encoding": "utf-8",
-        "headers": {"User-Agent": DEFAULT_UA},
-        "book_id_re": r"/info/(\d+)/",
-        "book_page": lambda b: f"/info/{b}/",
-        "chapter_list_page": lambda b, p: f"/info/{b}/",
-        "chapter_url": lambda b, cid, suf: f"/info/{b}/{cid}{suf}.html",
-        "chapter_link_re": re.compile(
-            r'<a[^>]*href="(/info/\d+/(\d+)\.html)"[^>]*>'
-            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
-        "extra_page_re": r"/{cid}_(\d+)\.html",
-        "content_div_id": "chaptercontent",
-        # 章内页签（第N章 标题 1/4）与尾部本文链接过滤
-        "drop_line_re": [
-            r"^第[0-9一二三四五六七八九十百千零两]+章.*[（(]\d+/\d+[)）]$",
-            r"^[（(]\d+/\d+[)）]$",
-            r"^本文链接:.*$",
-        ],
-        "main_title_re": MAIN_TITLE_RE,
-        "request_delay": 0.5,
-    },
     # 九若小说：目录 /book/{bid}/ 列近章，章 /book/{bid}/{cid}.html，正文 #chaptercontent（正文含全角广告字符，drop 过滤）
     "9rxs": {
         "name": "九若小说",
@@ -577,20 +472,15 @@ SITES = {
 # ─── 多镜像源注册表（下载时并行尝试） ──────────────────────────────────
 # 静态可抓站收 requests；正文 JS 填充站标 content_render 走浏览器渲染（playwright，见 browser_render）。
 MIRROR_SOURCES = {
-    "wodushu": lambda: WebnovelCrawler("wodushu"),
     "bookszw": lambda: BookszwCrawler(),
     "uukan": lambda: WebnovelCrawler("uukan"),
     "chensiwx": lambda: WebnovelCrawler("chensiwx"),
     "wujixsw": lambda: WebnovelCrawler("wujixsw"),
-    "hushuge": lambda: WebnovelCrawler("hushuge"),
     "piaofeige": lambda: WebnovelCrawler("piaofeige"),
     "jcxs": lambda: WebnovelCrawler("jcxs"),
-    "mele6": lambda: WebnovelCrawler("mele6"),
-    "i360xs": lambda: WebnovelCrawler("i360xs"),
     "jgwxs": lambda: WebnovelCrawler("jgwxs"),
     "kudushu": lambda: WebnovelCrawler("kudushu"),
     "cssqs": lambda: WebnovelCrawler("cssqs"),
-    "xiji": lambda: WebnovelCrawler("xiji"),
     "9rxs": lambda: WebnovelCrawler("9rxs"),
     "ixdzs": lambda: WebnovelCrawler("ixdzs"),
     "spudnovel": lambda: WebnovelCrawler("spudnovel"),
