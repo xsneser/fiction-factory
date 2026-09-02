@@ -186,7 +186,8 @@ SITES = {
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
-    # 飘花阅读(m 站)：章表分页 /piao/{bid}_{p}/；正文 /piaof/{bid}/{cid}.html 由 JS 填充（渲染后容器 #nr）
+    # 飘花阅读(m 站)：章表分页 /piao/{bid}_{p}/；正文静态内嵌容器 #nr；
+    # 长章分页为「路径段式」/piaof/{bid}/{cid}/N.html（非下划线后缀 {cid}_N.html）
     "piaofeige": {
         "name": "飘花阅读",
         "base_url": "http://m.piaofeige.com",
@@ -202,13 +203,15 @@ SITES = {
             "exact": True,
         },
         "chapter_list_page": lambda b, p: (f"/piao/{b}_{p}/" if p > 1 else f"/piao/{b}/"),
-        "chapter_url": lambda b, cid, suf: f"/piaof/{b}/{cid}{suf}.html",
+        "chapter_url": lambda b, cid, suf: (
+            f"/piaof/{b}/{cid}.html" if not suf
+            else f"/piaof/{b}/{cid}/{suf.lstrip('_')}.html"),
         "chapter_link_re": re.compile(
             r'<a[^>]*href="(/piaof/\d+/(\d+)\.html)"[^>]*>'
             r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
-        "extra_page_re": r'href="[^"]*?/piaof/\d+/{cid}_(\d+)\.html"',
+        "extra_page_re": r'href="[^"]*?/piaof/\d+/{cid}/(\d+)\.html"',
         "content_div_id": "nr",
-        "content_render": True,
+        "content_render": False,
         "drop_line_re": [
             r"^第[0-9一二三四五六七八九十百千零两]+章.*?[（(]第\d+/\d+页[)）]$",
             r"^[（(]第\d+/\d+页[)）]$",
