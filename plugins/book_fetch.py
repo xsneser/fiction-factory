@@ -25,8 +25,11 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
                          site: str = "wodushu", chapters: int = 0,
                          start_chapter: int = 1, end_chapter: int = 0,
                          download_delay: float = 0.5, on_progress=None,
-                         platform: str = "merged"):
-    """合并抓取 → storage/novels/{书名}/。返回 (meta, dl)；dl 含 folder/chapters/already/sources。"""
+                         platform: str = "merged", prefer_site: str = ""):
+    """合并抓取 → storage/novels/{书名}/。返回 (meta, dl)；dl 含 folder/chapters/already/sources。
+
+    prefer_site：用户显式下载源（'wodushu'/'bookszw'）时优先该源排主源（仍按章号多源补缺）；
+    空串=自动择优（coverage 最高源）。不影响单源/番茄路径，纯 merged 主源偏好。"""
     source = url or book_id or title
     if not source:
         raise RuntimeError("请提供书名 / 番茄 book_id / 镜像站 URL")
@@ -130,14 +133,17 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
 
     if f_meta:
         return _save_merged(f_meta, f_catalog, sources, primary, site, chapters,
-                            start_chapter, end_chapter, download_delay, on_progress, platform)
+                            start_chapter, end_chapter, download_delay, on_progress,
+                            platform, prefer_site)
     return _save_mirror_only(primary, site, chapters, start_chapter,
                              end_chapter, download_delay, on_progress)
 
 
 def _save_merged(f_meta, f_catalog, sources, primary, site, chapters, start, end,
-                 delay, on_progress, platform):
-    """番茄元数据 + 番茄目录权威 + 多镜像源按章节号补全文（主源优先、缺章从其他源补）。"""
+                 delay, on_progress, platform, prefer_site: str = ""):
+    """番茄元数据 + 番茄目录权威 + 多镜像源按章节号补全文（主源优先、缺章从其他源补）。
+
+    prefer_site：用户显式源优先排主源（偏好；未解析/缺章时回退 primary 并多源补缺）。"""
     from plugins.novel_storage import save_novel, save_chapter, NOVELS_DIR, _safe_name
     total = len(f_catalog)
     if total == 0:
@@ -153,8 +159,10 @@ def _save_merged(f_meta, f_catalog, sources, primary, site, chapters, start, end
     if not selected:
         raise RuntimeError(f"起始章 {start} 超出番茄目录范围（共 {total} 章）")
 
-    # 主源：primary 优先；无则 site 参数；再回退任一源
-    main_src = primary or (sources.get(site) if sources else None) or \
+    # 主源：用户显式选源（prefer_site）优先 → 无则 primary（coverage 最高）→ site 参数 → 再回退任一源。
+    # prefer_site 即便解析错书，其 wmap 章号对不上番茄「第N章」，逐章按序补缺会自然落到正确源，不会写错正文。
+    preferred = sources.get(prefer_site) if (prefer_site and prefer_site in sources) else None
+    main_src = preferred or primary or (sources.get(site) if sources else None) or \
         (next(iter(sources.values())) if sources else None)
     main_site = main_src["site"] if main_src else (site or "wodushu")
     folder = _safe_name(f_meta["title"])

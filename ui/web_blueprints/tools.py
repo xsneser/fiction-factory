@@ -92,9 +92,18 @@ def scout_run():
     # 综合抓取（默认）：番茄元数据+权威目录 + 镜像站全文，统一书库一本；
     # 显式 platform=fanqie / web 走单源（高级用）
     platform = (data.get("platform", "") or "merged").strip() or "merged"
-    site = (data.get("site", "") or "wodushu").strip() or "wodushu"
+    raw_site = (data.get("site", "") or "").strip()   # 用户显式下载源；空/auto=服务端自动择优
+    if raw_site == "auto":
+        raw_site = ""
     url = data.get("url", "").strip()
     download_delay = float(data.get("download_delay", 0.5) or 0.5)
+
+    # 区间归一化：前端三模式统一传 start/end 真实章号；番茄路径 chapters<=0 会走全文/增量而非区间，
+    # 故当给定 end>=1 且未显式给 chapters 时折算 chapters（merged/web 以 end_chapter 为准，互不影响）。
+    if end_chapter >= 1 and chapters <= 0:
+        if end_chapter < start_chapter:
+            return jsonify({"error": f"结束章 {end_chapter} 小于起始章 {start_chapter}"}), 400
+        chapters = end_chapter - start_chapter + 1
 
     if platform == "web":
         if not url and not direct_id:
@@ -106,6 +115,9 @@ def scout_run():
         platform = "merged"
         if not title and not url and not direct_id:
             return jsonify({"error": "请输入书名 / 番茄 book_id / 镜像站 URL"}), 400
+
+    # site：web 需要具体镜像站（默认 wodushu）；merged/fanqie 留空 → merged 内部自动择优
+    site = raw_site or ("wodushu" if platform == "web" else "")
 
     # 单任务互斥 + 任务前置注册：搜索阶段即可暂停/停止
     task_manager.ensure_single("小说抓取")
@@ -151,8 +163,10 @@ def scout_run():
             if platform == "merged":
                 # 综合抓取（默认）：番茄元数据+权威目录 + 镜像站全文 → 统一书库一本
                 from plugins.book_fetch import download_book_merged
+                # prefer_site：用户显式选源时优先该源（空=自动择优，多源按章号补缺兜底）
                 info, dl = download_book_merged(
                     title=title, url=url, book_id=direct_id, site=site,
+                    prefer_site=site,
                     chapters=chapters, start_chapter=start_chapter, end_chapter=end_chapter,
                     download_delay=download_delay, on_progress=on_progress)
                 if not task_manager.is_cancelled(task_id):
@@ -160,10 +174,12 @@ def scout_run():
                     msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")
                            else f"下载完成 {n}章")
                     task_manager.done(task_id, msg)
+                    # site 用实际服务源（用户选源可能解析失败回退自动），非请求时写死的默认源
+                    _actual_site = (info.get("site") if info else None) or site or "wodushu"
                     write_crawl_progress("done", "download", n, n, msg,
                                          task_id=task_id, title=_task_title,
                                          extra={**_extra, "folder": dl.get("folder", ""),
-                                                "platform": "merged", "site": site})
+                                                "platform": "merged", "site": _actual_site})
                 return
             if platform == "web":
                 # 网页镜像站（如 wodushu）：download_webnovel 内部已按站点适配器
@@ -353,6 +369,19 @@ def scout_hot():
         payload.update({"novels": [], "loading": True})
     _spawn_hot_fetch(cache_key, platform, key, gender, count)
     return jsonify(payload)
+
+
+@bp.route("/api/scout/sources")
+def scout_sources():
+    """可用镜像下载源清单（静态，不探测）：{ok, sources: [{key, name}]}。
+    供 /scout 抓取表单「下载源」下拉填充；源来自 MIRROR_SOURCES（多源注册表）+ SITES（名称）。"""
+    try:
+        from plugins.webnovel_scraper import MIRROR_SOURCES, SITES
+        return jsonify({"ok": True, "sources": [
+            {"key": k, "name": (SITES.get(k, {}) or {}).get("name") or k}
+            for k in MIRROR_SOURCES]})
+    except Exception:
+        return jsonify({"ok": False, "sources": []})
 
 
 @bp.route("/api/scout/hot/rankings")

@@ -71,12 +71,19 @@
             } catch(e) {}
         })();
 
-// Accordion toggle（事件委托：SPA 换入新内容后依然生效，也避免重复绑定）
+// Accordion toggle（事件委托：SPA 换入新内容后依然生效，也避免重复绑定）。
+// accordionSet 挂全局供页面编程展开；header 内带 [data-acc-hint] 时同步翻转「展开 ▸ / 收起 ▾」标签。
+        function accordionSet(header, open) {
+            var body = header && header.nextElementSibling;
+            if (!body) return;
+            var show = (open === undefined) ? !body.classList.contains('show') : !!open;
+            body.classList.toggle('show', show);
+            var hint = header.querySelector('[data-acc-hint]');
+            if (hint) hint.textContent = show ? '收起 ▾' : '展开 ▸';
+        }
         document.addEventListener('click', function(e) {
             var h = e.target.closest('.accordion-header');
-            if (h && h.nextElementSibling) {
-                h.nextElementSibling.classList.toggle('show');
-            }
+            if (h) accordionSet(h);
         });
 
         // ─── SPA 导航：拦截侧边栏链接，避免整页重刷 ───

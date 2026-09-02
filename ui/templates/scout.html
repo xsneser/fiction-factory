@@ -28,18 +28,43 @@
     </div>
 </div>
 
-{# ─── 抓取表单（默认折叠，点 header 展开；后端直抓 POST /api/scout/run，进度走 crawl-progress 轮询） ─── #}
-<div class="accordion" style="margin-top:16px">
-    <div class="accordion-header"><span>⬇️ 抓取下载</span><span style="color:#8b949e;font-size:12px">展开 ▸</span></div>
+{# ─── 抓取表单（默认折叠；点 header 展开，或点热榜书「抓取」自动展开；后端直抓 POST /api/scout/run，进度走 crawl-progress 轮询） ─── #}
+<div class="accordion" id="fetch-accordion" style="margin-top:16px">
+    <div class="accordion-header"><span>⬇️ 抓取下载</span><span data-acc-hint style="color:#8b949e;font-size:12px">展开 ▸</span></div>
     <div class="accordion-body">
         <div style="padding-top:2px">
             <input type="text" id="book-input" placeholder="书名 / 番茄 book_id / 镜像站 URL（综合抓取：番茄简介封面+目录，镜像全文）">
+        </div>
+        <div id="hot-fanqie-notice" style="display:none;font-size:12px;color:#58a6ff;background:#1f6feb22;border:1px solid #1f6feb66;border-radius:6px;padding:8px 10px;margin-top:10px;line-height:1.6"></div>
+        <div class="fetch-opt">
+            <span class="opt-label">抓取方式</span>
+            <label class="opt-choice"><input type="radio" name="fetch-mode" value="merged" checked onchange="onModeChange()"> 综合抓取·番茄为准（目录/封面/简介）</label>
+            <label class="opt-choice"><input type="radio" name="fetch-mode" value="fanqie" onchange="onModeChange()"> 仅番茄</label>
+            <label class="opt-choice"><input type="radio" name="fetch-mode" value="web" onchange="onModeChange()"> 仅镜像站</label>
+        </div>
+        <div class="fetch-opt" id="source-row">
+            <span class="opt-label">下载源</span>
+            <select id="fetch-source">
+                <option value="auto">自动择优（覆盖最全）</option>
+            </select>
+            <span class="opt-note">选源优先尝试，无该书则自动择优</span>
+        </div>
+        <div class="fetch-opt">
+            <span class="opt-label">抓取范围</span>
+            <label class="opt-choice"><input type="radio" name="fetch-range" value="full" checked onchange="onRangeChange()"> 全文</label>
+            <label class="opt-choice"><input type="radio" name="fetch-range" value="range" onchange="onRangeChange()"> 指定区间</label>
+            <span id="range-wrap" style="display:none">
+                <input type="number" id="range-start" min="1" placeholder="起始章" style="width:80px">
+                <span style="color:#8b949e">~</span>
+                <input type="number" id="range-end" min="1" placeholder="结束章" style="width:80px">
+            </span>
+            <span class="opt-note">按「第N章」真实章号</span>
         </div>
         <div style="display:flex;align-items:center;gap:12px;margin-top:12px">
             <button id="btn-scout" class="btn-primary" onclick="startFetch()">🚀 开始抓取</button>
             <span id="fetch-status" style="font-size:12px;color:#8b949e"></span>
         </div>
-        <div style="font-size:12px;color:#484f58;margin-top:8px">默认下载全文；已下载过的书自动只更新新章节</div>
+        <div style="font-size:12px;color:#484f58;margin-top:8px">默认综合抓取全文；已下载过的书自动只更新新章节</div>
     </div>
 </div>
 
@@ -73,11 +98,17 @@
     background:#0d1117; border:1px solid #30363d; border-radius:6px; }
 .hot-item strong { color:#f0f6fc; }
 .novel-actions { display:flex;gap:8px;align-items:center;margin-top:8px; }
+.fetch-opt { display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:13px; }
+.opt-label { font-size:12px;color:#8b949e;flex-shrink:0; }
+.opt-choice { color:#c9d1d9;cursor:pointer;display:inline-flex;align-items:center;gap:3px; }
+.opt-note { font-size:12px;color:#484f58; }
+#fetch-source { min-width:150px; }
 </style>
 
 <script>
 var _hotGenre = '';
 var _hotPollCount = 0;
+var _hotCtx = null;   // 热榜书上下文 {title, book_id}：输入框文本被改即失效
 
 (function(){
     loadHot();
@@ -87,6 +118,14 @@ var _hotPollCount = 0;
         var book = new URLSearchParams(window.location.search).get('book');
         if (book) document.getElementById('book-input').value = book;
     } catch(e) {}
+    loadSources();   // 下载源下拉：/api/scout/sources 静态填充（失败则仅「自动择优」，仍可用）
+    // 热榜书上下文：输入框文本一被改动即失效（防标题被改掉仍发旧 book_id）
+    var _bi = document.getElementById('book-input');
+    if (_bi) _bi.addEventListener('input', function() {
+        if (!_hotCtx) return;
+        _hotCtx = null;
+        updateHotNotice();
+    });
     pollCrawlProgress();   // 立即拉一次，之后定时轮询
 })();
 
@@ -160,7 +199,7 @@ function renderHot(novels) {
         if (intro) html += '<div style="font-size:12px;color:#484f58;margin-top:4px">' + escapeHtml(intro) + '</div>';
         if (n.chapter_count) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">' + n.chapter_count + ' 章 · ' + formatWords(n.word_count) + '</div>';
         html += '</div>';
-        html += '<button class="small" style="background:#1f6feb;white-space:nowrap" data-title="' + escapeHtml(n.title || '') + '" data-id="' + escapeHtml(n.book_id || '') + '" onclick="grabBook(this)">⚡ 抓取</button>';
+        html += '<button class="small" style="background:#1f6feb;white-space:nowrap" data-title="' + escapeHtml(n.title || '') + '" data-id="' + escapeHtml(n.book_id || '') + '" data-platform="' + escapeHtml(n.platform || 'fanqie') + '" onclick="grabBook(this)">⚡ 抓取</button>';
         html += '</div>';
     });
     el.innerHTML = html;
@@ -173,28 +212,130 @@ function formatWords(n) {
     return n + '字';
 }
 
-/* 热榜书 → 填入抓取表单 */
+/* 热榜书 → 填入抓取表单并自动展开下载框；番茄热榜书预置「综合抓取·番茄为准（番茄目录/封面/简介）+ 镜像全文」 */
 function grabBook(btn) {
     var title = btn.getAttribute('data-title') || '';
     var id = btn.getAttribute('data-id') || '';
+    var plat = btn.getAttribute('data-platform') || 'fanqie';
     var input = document.getElementById('book-input');
     if (!input) return;
     input.value = title || id;
+    if (plat !== 'fanqie') {
+        // 非番茄平台（未来扩展）：保持旧行为——只填输入框，不做全配置
+        input.focus();
+        input.scrollIntoView({behavior:'smooth', block:'center'});
+        showToast('已填入「' + (title || id) + '」，点「开始抓取」下载', 'info');
+        return;
+    }
+    _hotCtx = {title: (title || '').trim(), book_id: id || ''};
+    setMode('merged');   // 番茄为准（目录/封面/简介）
+    setSource('auto');
+    setRange('full');
+    updateHotNotice();
+    // 编程展开折叠框（base.js accordionSet；点 header 可再收起）
+    if (typeof accordionSet === 'function') {
+        var header = document.querySelector('#fetch-accordion .accordion-header');
+        if (header) accordionSet(header, true);
+    }
     input.focus();
     input.scrollIntoView({behavior:'smooth', block:'center'});
-    showToast('已填入「' + (title || id) + '」，点「开始抓取」下载', 'info');
+    showToast('已填入「' + (title || id) + '」：番茄目录/封面/简介为准，镜像源下正文，点「开始抓取」', 'info');
+}
+
+/* ─── 抓取表单选项联动（抓取方式/下载源/抓取范围；热榜书预置走 setMode/setSource/setRange） ─── */
+function currentMode() {
+    var r = document.querySelector('input[name="fetch-mode"]:checked');
+    return r ? r.value : 'merged';
+}
+function setMode(m) {
+    var el = document.querySelector('input[name="fetch-mode"][value="' + m + '"]');
+    if (el) { el.checked = true; onModeChange(); }
+}
+function setSource(s) {
+    var el = document.getElementById('fetch-source');
+    if (el) el.value = s;
+}
+function setRange(r) {
+    var el = document.querySelector('input[name="fetch-range"][value="' + r + '"]');
+    if (el) { el.checked = true; onRangeChange(); }
+}
+/* 仅番茄 → 下载源无意义：隐藏 source-row；其余显示 */
+function onModeChange() {
+    var row = document.getElementById('source-row');
+    if (row) row.style.display = (currentMode() === 'fanqie') ? 'none' : '';
+    updateHotNotice();
+}
+/* 指定区间 → 启用起止章输入 */
+function onRangeChange() {
+    var r = document.querySelector('input[name="fetch-range"]:checked');
+    var isRange = !!(r && r.value === 'range');
+    var wrap = document.getElementById('range-wrap');
+    if (wrap) wrap.style.display = isRange ? '' : 'none';
+    var rs = document.getElementById('range-start');
+    var re = document.getElementById('range-end');
+    if (rs) rs.disabled = !isRange;
+    if (re) re.disabled = !isRange;
+}
+/* 番茄热榜书提示：仅当持有 ctx 且方式为综合抓取（番茄为准）时显示 */
+function updateHotNotice() {
+    var el = document.getElementById('hot-fanqie-notice');
+    if (!el) return;
+    if (_hotCtx && currentMode() === 'merged') {
+        el.textContent = '🍅 番茄热榜书《' + (_hotCtx.title || '') + '》：目录 / 封面 / 简介以番茄为准，正文自下方所选镜像源下载';
+        el.style.display = '';
+    } else {
+        el.style.display = 'none';
+    }
+}
+/* 下载源下拉：静态列出可用镜像站（GET /api/scout/sources），失败时仅剩「自动择优」 */
+function loadSources() {
+    var sel = document.getElementById('fetch-source');
+    if (!sel) return;
+    fetch('/api/scout/sources').then(function(r) { return r.json(); })
+      .then(function(d) {
+          if (!d || !d.ok || !d.sources) return;
+          d.sources.forEach(function(s) {
+              var o = document.createElement('option');
+              o.value = s.key;
+              o.textContent = s.name + '（' + s.key + '）';
+              sel.appendChild(o);
+          });
+      }).catch(function() {});
 }
 
 /* ─── 后端直抓：POST /api/scout/run（fire-and-forget，进度靠 crawl-progress 轮询；默认全文/增量） ─── */
 function startFetch() {
     var input = document.getElementById('book-input').value.trim();
     if (!input) return showToast('请输入书名 / 番茄 book_id / 镜像站 URL', 'warning');
-    var body = {};  // 默认综合抓取：番茄元数据+权威目录 + 镜像站全文（服务端自动判定输入类型）
-    if (/^https?:\/\//i.test(input)) {
+    var mode = currentMode();
+    var body = {platform: mode};
+    // 番茄热榜上下文仍有效（输入未改）→ 直发番茄 book_id；否则维持旧探测
+    var useCtx = !!(mode !== 'web' && _hotCtx && input === (_hotCtx.title || '') && _hotCtx.book_id);
+    if (useCtx) {
+        body.book_id = _hotCtx.book_id;
+    } else if (/^https?:\/\//i.test(input)) {
         body.url = input;   // 镜像站或番茄 URL 均可
     } else {
         var m = input.match(/(\d{15,})/);
         if (m) body.book_id = m[1]; else body.title = input;
+    }
+    // 下载源（仅番茄无意义；auto=服务端自动择优）
+    if (mode !== 'fanqie') {
+        var siteEl = document.getElementById('fetch-source');
+        var site = siteEl ? siteEl.value : 'auto';
+        if (site && site !== 'auto') body.site = site;
+    }
+    // 抓取范围（区间按第N章真实章号；全文/增量=不传 chapters，后端默认）
+    var rangeSel = document.querySelector('input[name="fetch-range"]:checked');
+    var isRange = !!(rangeSel && rangeSel.value === 'range');
+    if (isRange) {
+        var rs = parseInt(document.getElementById('range-start').value, 10);
+        var re = parseInt(document.getElementById('range-end').value, 10);
+        if (!rs || !re || isNaN(rs) || isNaN(re) || re < rs) {
+            return showToast('请填写有效的起止章节（起始 ≤ 结束，按第N章真实章号）', 'warning');
+        }
+        body.start_chapter = Math.max(1, rs);
+        body.end_chapter = re;
     }
     var st = document.getElementById('fetch-status');
     if (st) { st.textContent = '⏳ 已提交，进度见下方…'; st.style.color = '#8b949e'; }
@@ -208,7 +349,10 @@ function startFetch() {
             if (st) { st.textContent = '❌ ' + (d.error || '提交失败'); st.style.color = '#f85149'; }
         });
     }).catch(function() {});
-    showToast('🚀 已开始抓取（全文）', 'info');
+    var modeTxt = mode === 'merged' ? '综合抓取' : (mode === 'fanqie' ? '仅番茄' : '仅镜像站');
+    showToast('🚀 已开始抓取（' + modeTxt
+        + (isRange ? '，区间 ' + body.start_chapter + '~' + body.end_chapter + ' 章' : '，全文')
+        + '）', 'info');
 }
 
 /* 暂停/继续/停止：POST /api/scout/fetch/control（可指定 task_id，多任务并行按行控制） */
