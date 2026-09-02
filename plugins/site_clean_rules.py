@@ -46,9 +46,30 @@ def _norm(s):
     return re.sub(r"\s+", "", s or "")
 
 
+def _norm_keep_break(s):
+    """保留换行的归一化：\r\n→\n、折叠连续空行、去行首尾空格。用于跨行广告的 diff 提取。"""
+    s = (s or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [ln.strip() for ln in s.split("\n")]
+    out = []
+    prev_blank = False
+    for ln in lines:
+        if not ln:
+            if prev_blank:
+                continue
+            prev_blank = True
+            out.append("")
+        else:
+            prev_blank = False
+            out.append(ln)
+    return "\n".join(out)
+
+
 def _noise_fragments(f_body, m_body):
-    """番茄 vs 镜像单章正文 → 镜像多出的噪声片段列表（逐字符对齐）。"""
-    fn, mn = _norm(f_body), _norm(m_body)
+    """番茄 vs 镜像单章正文 → 镜像多出的噪声片段列表（保留换行的逐字符对齐）。
+
+    广告/分页标记常跨行嵌入（如 wujixsw 的「章节错误,点此报送…」被 \r\n 拆开），
+    用保留换行的归一化做 diff，提取的片段保留原始结构，便于生成跨行匹配规则。"""
+    fn, mn = _norm_keep_break(f_body), _norm_keep_break(m_body)
     if not fn or not mn:
         return []
     sm = difflib.SequenceMatcher(None, fn, mn, autojunk=False)
@@ -59,6 +80,21 @@ def _noise_fragments(f_body, m_body):
             if frag:
                 frags.append(frag)
     return frags
+
+
+def _pattern_for(frag):
+    """噪声片段 → 空白宽松的正则 pattern：空白（含换行/空格/缩进）统一转 \\s+。
+
+    站点广告常被 \r\n/空格/缩进拆成多行（如 wujixsw「章节错误,点此报送…」跨两行），
+    精确匹配会漏；空白宽松后同一规则可命中不同缩进/换行形态。"""
+    parts = []
+    for tok in re.split(r"\s+", frag):
+        if not tok:
+            continue
+        if parts:
+            parts.append(r"\s+")
+        parts.append(re.escape(tok))
+    return "".join(parts)
 
 
 def _to_rule(frag):
@@ -73,22 +109,23 @@ def _to_rule(frag):
     frag = frag.strip()
     if not frag:
         return None
+    folded = re.sub(r"\s+", "", frag)   # 折叠空白判断形态（跨行广告按整段判定）
     # 分页标记
-    if _PAGING_RE.match(frag):
-        return ("ad_replace", re.escape(frag), "")
+    if _PAGING_RE.match(folded):
+        return ("ad_replace", _pattern_for(frag), "")
     # 孤立标点短串
-    if 1 <= len(frag) <= 4 and _ISOLATED_RE.match(frag):
-        return ("ad_replace", re.escape(frag), "")
+    if 1 <= len(folded) <= 4 and _ISOLATED_RE.match(folded):
+        return ("ad_replace", _pattern_for(frag), "")
     # 广告词特征
     ad_words = ["请收藏", "记住本站", "最快更新", "天才一秒", "笔趣阁",
                 "最新网址", "加入书签", "章节错误", "点击报错", "一秒记住",
                 "手机用户请浏览", "阅读最新章节", "首发", "地址", "域名"]
-    has_ad = any(w in frag for w in ad_words)
+    has_ad = any(w in folded for w in ad_words)
     if not has_ad:
         return None
-    if len(frag) <= MAX_ADREPLACE_LEN:
-        return ("ad_replace", re.escape(frag), "")
-    return ("drop_line", re.escape(frag), "")
+    if len(folded) <= MAX_ADREPLACE_LEN:
+        return ("ad_replace", _pattern_for(frag), "")
+    return ("drop_line", _pattern_for(frag), "")
 
 
 def learn_noise_rules(fanqie_bodies, src, head_nums, f_by_num, existing=None,
