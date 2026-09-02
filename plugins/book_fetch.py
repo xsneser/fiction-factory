@@ -694,14 +694,19 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     _step("下载正文", "running", f"{len(pending)} 章（多源并行）")
 
     def _dl_one(idx, ch):
-        """下载单章（镜像多源合并 + 番茄头章覆盖）→ True 有正文落盘。"""
+        """下载单章（镜像多源合并 + 番茄头章覆盖）→ (有正文, 实际用源site, 章号fnum)。
+
+        返回实际提供正文的源，供前端左栏显示「下载中 第N章」；镜像正文缺失时为 None。"""
         nonlocal downloaded
         fnum = _parse_chapter_num(ch.get("title", ""))
         content = ""
-        # 镜像正文：先试核对阶段已比对缓存，否则按源顺序下载（内部 _clean_text 广告行过滤）
+        used_site = None
+        # 镜像正文：先试核对阶段已比对缓存（主源正文），否则按源顺序下载（内部 _clean_text 广告行过滤）
         if fnum is not None:
             if mirror_cache.get(fnum):
                 content = mirror_cache[fnum]
+                used_site = main_src["site"] if main_src else (
+                    source_order[0]["site"] if source_order else None)
             else:
                 for src in source_order:
                     mch = src["wmap"].get(fnum)
@@ -713,6 +718,7 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                             logger.warning(f"dl {src['site']} ch{fnum}: {e}")
                             content = ""
                         if content:
+                            used_site = src["site"]
                             break
         # 头章（番茄免费区域，含前导序章/楔子）→ 番茄权威全文优先（无广告）：仅当番茄正文
         # 本身 ≥ FREE_FULL_MIN_CHARS（是全文、非锁章预览）且 ≥ 镜像正文 × FULL_LEN_RATIO
@@ -740,7 +746,7 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
         if content:
             with _dl_lock:
                 downloaded += 1
-        return bool(content)
+        return bool(content), used_site, fnum
 
     # 多源并行下载：章节间并发（每章内部仍按 source_order 多源合并补缺）。
     # 并发数上限（默认 6）：兼顾提速与源站压力；慢源 download_chapter 自身无 sleep，靠并发控速。
@@ -751,9 +757,13 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
         for _i, _fut in enumerate(_cfd.as_completed(_futs)):
             _ch = _futs[_fut]
             try:
-                _fut.result()
+                _ok, _us, _fnum = _fut.result()
             except Exception as e:
                 logger.warning(f"dl worker failed {_ch.get('title','')}: {e}")
+                _ok, _us, _fnum = False, None, None
+            # 下载中的源：左栏显示转圈 + 第N章（每章完成后更新该源最新进度）
+            if _us and _fnum is not None:
+                _step(f"下载:{_us}", "running", f"第{_fnum}章")
             if on_progress:
                 on_progress("download", _i + 1, len(pending), _ch.get("title", "")[:30])
     _step("下载正文", "ok", f"{downloaded} 章（本次新增）")

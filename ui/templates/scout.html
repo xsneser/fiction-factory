@@ -185,16 +185,17 @@
 .cp-step.s-warn { color:#d29922; }
 .cp-step.s-error { color:#f85149; }
 .cp-step .det { color:#484f58; margin-left:4px; }
-/* ─── 抓取消息左右两栏：左=所有源状态，右=操作消息 ─── */
+/* ─── 抓取消息左右两栏：左=所有源状态（70%），右=操作消息（30%） ─── */
 .cp-body { display:flex; gap:0; margin-top:12px; }
-.cp-sources { width:250px; flex-shrink:0; border-right:1px solid #21262d;
-    padding-right:12px; display:flex; flex-direction:column; gap:3px;
-    max-height:340px; overflow-y:auto; }
+.cp-sources { flex:0 0 70%; width:70%; min-width:0; border-right:1px solid #21262d;
+    padding-right:14px; display:flex; flex-direction:column; gap:3px;
+    max-height:400px; overflow-y:auto; }
 .cp-sources .cp-src { display:flex; align-items:center; gap:6px; font-size:12px;
-    color:#8b949e; padding:3px 6px; border-radius:6px; line-height:1.4; }
+    color:#8b949e; padding:4px 6px; border-radius:6px; line-height:1.4; }
 .cp-sources .cp-src:hover { background:#21262d; }
-.cp-sources .s-ic { width:14px; text-align:center; flex-shrink:0; }
-.cp-sources .s-name { font-weight:600; color:#c9d1d9; min-width:58px; flex-shrink:0; }
+.cp-sources .s-ic { width:16px; text-align:center; flex-shrink:0; }
+.cp-sources .s-ic .spin { display:inline-block; animation:cp-spin 1s linear infinite; }
+.cp-sources .s-name { font-weight:600; color:#c9d1d9; min-width:60px; flex-shrink:0; }
 .cp-sources .s-det { color:#484f58; font-size:11px; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
 .cp-sources .cp-src.s-running { background:#1f6feb22; }
@@ -206,7 +207,10 @@
 .cp-sources .cp-src.s-warn .s-det { color:#d2992288; }
 .cp-sources .cp-src.s-error .s-ic { color:#f85149; }
 .cp-sources .cp-src.s-error .s-det { color:#f8514988; }
-.cp-ops { flex:1 1 auto; min-width:0; padding-left:12px; }
+.cp-sources .cp-src.s-dl { background:#23863622; }
+.cp-sources .cp-src.s-dl .s-ic, .cp-sources .cp-src.s-dl .s-name { color:#3fb950; }
+.cp-sources .cp-src.s-dl .s-det { color:#3fb950cc; }
+.cp-ops { flex:1 1 30%; min-width:0; padding-left:14px; }
 .cp-ops .cp-steps { margin-top:0; }
 .cp-ops-title { font-size:11px; color:#484f58; text-transform:uppercase;
     letter-spacing:.5px; margin-bottom:4px; }
@@ -604,41 +608,62 @@ function pollCrawlProgress() {
                         + '<button class="small btn-cancel" onclick="fetchControl(\'cancel\',\'' + tid + '\')">⏹ 停止</button>'
                         + '</div>';
                 }
-                // 分步消息 → 左右两栏：左=所有源状态（镜像解析:/校对: 前缀按源名归类），右=操作消息
-                var srcMap = {};   // site -> {status, detail}
+                // 分步消息 → 左右两栏：左=所有源状态（镜像解析:/校对:/下载: 前缀按源名归类），右=操作消息
+                var srcMap = {};   // site -> {status, detail, phase}
                 var srcOrder = [];
                 var opSteps = [];
                 if (t.steps && t.steps.length) {
                     t.steps.forEach(function(s) {
                         var lb = s.label || '';
-                        var m = /^(镜像解析|校对):(.+)$/.exec(lb);
+                        var m = /^(镜像解析|校对|下载):(.+)$/.exec(lb);
                         if (m) {
                             var site = m[2].trim();
+                            var phase = m[1];
                             if (!(site in srcMap)) { srcMap[site] = {}; srcOrder.push(site); }
-                            // 同源多次消息：running → ok 覆盖；镜像解析 → 校对覆盖（显示最新状态）
+                            // 同源多次消息：running → ok 覆盖；镜像解析 → 校对 → 下载 逐级覆盖（显示最新阶段）
                             if (!srcMap[site].status || srcMap[site].status !== 'ok'
-                                || s.status === 'running' || lb.indexOf('校对') === 0) {
+                                || s.status === 'running' || phase === '校对' || phase === '下载') {
                                 srcMap[site].status = s.status;
                                 srcMap[site].detail = s.detail || '';
-                                srcMap[site].isAudit = lb.indexOf('校对') === 0;
+                                srcMap[site].phase = phase;
                             }
                         } else {
                             opSteps.push(s);
                         }
                     });
                 }
-                // 左栏：所有源
+                // 源排序：下载中 > 比对成功(校对ok) > 搜索成功(镜像解析ok) > 进行中 > 失败/未找到
+                var srcRank = function(site) {
+                    var s = srcMap[site];
+                    var st = s.status || '';
+                    if (s.phase === '下载' && st === 'running') return 0;
+                    if (s.phase === '校对' && st === 'ok') return 1;
+                    if (s.phase === '镜像解析' && st === 'ok') return 2;
+                    if (st === 'running') return 3;
+                    return 4;
+                };
+                srcOrder.sort(function(a, b) { return srcRank(a) - srcRank(b); });
+                // 左栏：所有源（70%）
                 var srcsHtml = '';
                 if (srcOrder.length) {
                     srcsHtml = '<div class="cp-sources"><div class="cp-src-title">镜像源状态</div>';
                     srcOrder.forEach(function(site) {
                         var s = srcMap[site];
                         var st = s.status || '';
-                        var sCls = st === 'ok' ? 's-ok' : st === 'error' ? 's-error'
+                        var dl = (s.phase === '下载' && st === 'running');
+                        var sCls = dl ? 's-dl'
+                            : st === 'ok' ? 's-ok' : st === 'error' ? 's-error'
                             : st === 'warn' ? 's-warn' : st === 'running' ? 's-running' : '';
-                        var sIc = st === 'ok' ? '✓' : st === 'error' ? '✗'
-                            : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
-                        var det = s.detail || (st === 'running' ? '解析中…' : '');
+                        // 下载中 → 转圈 icon + 「下载中 第N章」
+                        var sIc, det;
+                        if (dl) {
+                            sIc = '<span class="spin">⏳</span>';
+                            det = s.detail ? ('下载中 ' + s.detail) : '下载中…';
+                        } else {
+                            sIc = st === 'ok' ? '✓' : st === 'error' ? '✗'
+                                : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
+                            det = s.detail || (st === 'running' ? '解析中…' : '');
+                        }
                         srcsHtml += '<div class="cp-src ' + sCls + '" title="' + escapeHtml(site + ' · ' + det) + '">'
                             + '<span class="s-ic">' + sIc + '</span>'
                             + '<span class="s-name">' + escapeHtml(site) + '</span>'
