@@ -73,9 +73,13 @@
     </div>
 </div>
 
-{# ─── 实时进度（多任务并行：每个下载一行进度条） ─── #}
-<div id="crawl-progress" style="display:none;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px;margin-top:12px">
-    <div id="cp-tasks"></div>
+{# ─── 实时进度（多任务并行：每个下载一张进度卡片） ─── #}
+<div id="crawl-progress" style="display:none;margin-top:16px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span style="font-size:13px;color:#8b949e">⚡ 抓取进度</span>
+        <span id="cp-summary" style="font-size:12px;color:#484f58"></span>
+    </div>
+    <div id="cp-tasks" class="cp-tasks"></div>
 </div>
 
 {# ─── 已下载书库（列表；点书卡 → /extract 提取） ─── #}
@@ -121,6 +125,63 @@
 .src-chip .js-mark { font-size:10px; color:#d29922; }
 .source-btn { padding:2px 10px; font-size:12px; color:#8b949e; }
 .source-btn:hover { color:#c9d1d9; }
+/* ─── 抓取进度卡片 ─── */
+.cp-tasks { display:flex; flex-direction:column; gap:10px; }
+.cp-task { background:#161b22; border:1px solid #30363d; border-radius:10px;
+    padding:14px 16px; position:relative; overflow:hidden; }
+.cp-task::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:#30363d; }
+.cp-task.st-running { border-color:#1f6feb66; }
+.cp-task.st-running::before { background:#58a6ff; }
+.cp-task.st-done { border-color:#23863666; }
+.cp-task.st-done::before { background:#3fb950; }
+.cp-task.st-error { border-color:#da363366; }
+.cp-task.st-error::before { background:#f85149; }
+.cp-task.st-paused { border-color:#d2992266; }
+.cp-task.st-paused::before { background:#d29922; }
+.cp-task.st-cancelled { border-color:#484f5866; }
+.cp-task.st-cancelled::before { background:#8b949e; }
+.cp-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.cp-title { display:flex; align-items:center; gap:8px; min-width:0; }
+.cp-title .ttl { font-size:14px; font-weight:600; color:#f0f6fc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cp-ic { font-size:14px; flex-shrink:0; width:20px; text-align:center; }
+.cp-ic .spin { display:inline-block; animation:cp-spin 1s linear infinite; }
+@keyframes cp-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+.cp-num { text-align:right; flex-shrink:0; }
+.cp-pct { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.1; }
+.cp-pct.st-running { color:#58a6ff; }
+.cp-pct.st-done { color:#3fb950; }
+.cp-pct.st-error { color:#f85149; }
+.cp-pct.st-paused { color:#d29922; }
+.cp-pct.st-cancelled { color:#8b949e; }
+.cp-count { font-size:11px; color:#8b949e; margin-top:2px; font-variant-numeric:tabular-nums; }
+.cp-bar-wrap { height:8px; background:#21262d; border-radius:6px; margin-top:10px; overflow:hidden; position:relative; }
+.cp-bar { height:100%; border-radius:6px; transition:width .4s ease; position:relative; overflow:hidden; }
+.cp-bar.st-running { background:linear-gradient(90deg,#1f6feb,#58a6ff); }
+.cp-bar.st-done { background:linear-gradient(90deg,#238636,#3fb950); }
+.cp-bar.st-error { background:linear-gradient(90deg,#b62324,#f85149); }
+.cp-bar.st-paused { background:linear-gradient(90deg,#9e6a03,#d29922); }
+.cp-bar.st-cancelled { background:#6e7681; }
+.cp-bar::after { content:''; position:absolute; inset:0;
+    background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.18) 50%,transparent 100%);
+    animation:cp-shine 2.2s linear infinite; }
+@keyframes cp-shine { from{transform:translateX(-100%)} to{transform:translateX(100%)} }
+.cp-bar.st-done::after, .cp-bar.st-cancelled::after, .cp-bar.st-error::after { animation:none; }
+.cp-msg { font-size:12px; color:#8b949e; margin-top:10px; line-height:1.5; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.cp-msg .dot { color:#484f58; }
+.cp-steps { margin-top:10px; padding-left:6px; border-left:2px solid #21262d; display:flex; flex-direction:column; gap:3px; }
+.cp-step { font-size:12px; color:#8b949e; line-height:1.6; display:flex; gap:6px; align-items:baseline; }
+.cp-step .ic { flex-shrink:0; width:14px; text-align:center; }
+.cp-step.s-running { color:#58a6ff; }
+.cp-step.s-done { color:#3fb950; }
+.cp-step.s-warn { color:#d29922; }
+.cp-step.s-error { color:#f85149; }
+.cp-step .det { color:#484f58; margin-left:4px; }
+.cp-actions { margin-top:10px; display:flex; gap:8px; }
+.cp-actions .small { padding:4px 12px; border-radius:6px; border:none; cursor:pointer; font-size:12px; color:#fff; }
+.cp-actions .small:hover { filter:brightness(1.15); }
+.cp-actions .btn-pause { background:#1f6feb; }
+.cp-actions .btn-resume { background:#238636; }
+.cp-actions .btn-cancel { background:#da3633; }
 </style>
 
 <script>
@@ -455,58 +516,73 @@ function pollCrawlProgress() {
             var now = Date.now() / 1000;
             var anyVisible = false;
             var html = '';
+            var runningCount = 0, doneCount = 0, errCount = 0;
             Object.keys(tasks).forEach(function(tid) {
                 var t = tasks[tid];
                 var state = t.state || '';
                 var stale = (t.ts || 0) > 0 && (now - t.ts) > 30 && (state === 'done' || state === 'error' || state === 'cancelled');
                 if (stale) return;
                 var running = (state === 'running' || state === 'paused');
-                var pct = t.total > 0 ? Math.round((t.current || 0) / t.total * 100) : 0;
+                var total = t.total > 0 ? t.total : 0;
+                var cur = t.current || 0;
+                var pct = total > 0 ? Math.round(cur / total * 100) : 0;
+                if (pct > 100) pct = 100;
                 var title = t.title || tid;
-                var phaseTxt = state === 'paused' ? '⏸ ' + (t.phase || '已暂停')
-                    : state === 'done' ? '✅ 完成'
-                    : state === 'error' ? '❌ 失败'
-                    : state === 'cancelled' ? '⏹ 已停止'
-                    : (t.phase || '');
-                var fillColor = state === 'error' ? '#da3633' : '#58a6ff';
+                var stCls = state === 'running' ? 'st-running'
+                    : state === 'done' ? 'st-done'
+                    : state === 'error' ? 'st-error'
+                    : state === 'paused' ? 'st-paused'
+                    : state === 'cancelled' ? 'st-cancelled' : '';
+                // 状态图标 + 文案
+                var ic, phaseTxt;
+                if (state === 'running') { ic = '<span class="spin">⏳</span>'; phaseTxt = t.phase || '抓取中…'; }
+                else if (state === 'done') { ic = '✅'; phaseTxt = '已完成'; }
+                else if (state === 'error') { ic = '❌'; phaseTxt = '失败'; }
+                else if (state === 'paused') { ic = '⏸'; phaseTxt = '已暂停 · ' + (t.phase || ''); }
+                else if (state === 'cancelled') { ic = '⏹'; phaseTxt = '已停止'; }
+                else { ic = '•'; phaseTxt = t.phase || ''; }
+                if (state === 'running') runningCount++;
+                else if (state === 'done') doneCount++;
+                else if (state === 'error') errCount++;
                 var pausable = !!(t.extra && t.extra.pausable);
                 var actions = '';
                 if (running && pausable) {
                     var pauseLabel = state === 'paused' ? '▶ 继续' : '⏸ 暂停';
                     var pauseAct = state === 'paused' ? 'resume' : 'pause';
-                    actions = '<div style="margin-top:8px;display:flex;gap:8px">'
-                        + '<button class="small" style="background:#1f6feb" onclick="fetchControl(\'' + pauseAct + '\',\'' + tid + '\')">' + pauseLabel + '</button>'
-                        + '<button class="small" style="background:#da3633" onclick="fetchControl(\'cancel\',\'' + tid + '\')">⏹ 停止</button>'
+                    var btnCls = state === 'paused' ? 'btn-resume' : 'btn-pause';
+                    actions = '<div class="cp-actions">'
+                        + '<button class="small ' + btnCls + '" onclick="fetchControl(\'' + pauseAct + '\',\'' + tid + '\')">' + pauseLabel + '</button>'
+                        + '<button class="small btn-cancel" onclick="fetchControl(\'cancel\',\'' + tid + '\')">⏹ 停止</button>'
                         + '</div>';
                 }
-                // 分步清单：每步状态图标 + 标题 + 明细；固定高度滚动框（多源/进行中行一多不撑高整卡）
+                // 分步清单：时间线样式
                 var stepsHtml = '';
                 if (t.steps && t.steps.length) {
-                    stepsHtml = '<div style="margin-top:6px;padding-left:8px;padding-right:4px;border-left:2px solid #30363d;max-height:150px;overflow-y:auto">';
+                    stepsHtml = '<div class="cp-steps">';
                     t.steps.forEach(function(s) {
                         var st = s.status || '';
-                        var gl = st === 'ok' ? '✅' : st === 'error' ? '❌' : st === 'warn' ? '⚠️' : st === 'running' ? '🔄' : '•';
-                        var gc = st === 'ok' ? '#3fb950' : st === 'error' ? '#f85149' : st === 'warn' ? '#d29922' : st === 'running' ? '#58a6ff' : '#8b949e';
-                        stepsHtml += '<div style="font-size:12px;color:#8b949e;margin-top:2px">'
-                            + '<span style="color:' + gc + '">' + gl + '</span> '
-                            + escapeHtml(s.label || '')
-                            + (s.detail ? ' <span style="color:#484f58">' + escapeHtml(s.detail) + '</span>' : '')
-                            + '</div>';
+                        var sCls = st === 'ok' ? 's-done' : st === 'error' ? 's-error' : st === 'warn' ? 's-warn' : st === 'running' ? 's-running' : '';
+                        var sIc = st === 'ok' ? '✓' : st === 'error' ? '✗' : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
+                        stepsHtml += '<div class="cp-step ' + sCls + '"><span class="ic">' + sIc + '</span>'
+                            + '<span>' + escapeHtml(s.label || '')
+                            + (s.detail ? '<span class="det">' + escapeHtml(s.detail) + '</span>' : '')
+                            + '</span></div>';
                     });
                     stepsHtml += '</div>';
                 }
-                html += '<div class="cp-task" style="padding:10px 0;border-bottom:1px solid #21262d">'
-                    + '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">'
-                    + '<span style="font-size:13px;color:#c9d1d9;font-weight:600">' + escapeHtml(title) + '</span>'
-                    + '<span style="font-size:12px;color:#8b949e">' + phaseTxt
-                    + (t.total > 0 ? ' · ' + (t.current || 0) + ' / ' + t.total : '') + '</span>'
+                html += '<div class="cp-task ' + stCls + '">'
+                    + '<div class="cp-head">'
+                    +   '<div class="cp-title"><span class="cp-ic">' + ic + '</span><span class="ttl">' + escapeHtml(title) + '</span></div>'
+                    +   '<div class="cp-num">'
+                    +     '<div class="cp-pct ' + stCls + '">' + (total > 0 ? pct + '%' : (state === 'done' ? '100%' : '—')) + '</div>'
+                    +     (total > 0 ? '<div class="cp-count">' + cur + ' / ' + total + ' 章</div>' : '<div class="cp-count">' + phaseTxt + '</div>')
+                    +   '</div>'
                     + '</div>'
-                    + '<div style="background:#21262d;border-radius:4px;height:6px;margin-top:6px;overflow:hidden">'
-                    + '<div style="height:100%;width:' + pct + '%;background:' + fillColor + ';border-radius:4px;transition:width .3s"></div>'
-                    + '</div>'
-                    + '<div style="font-size:12px;color:#8b949e;margin-top:5px">' + escapeHtml(t.message || '') + '</div>'
+                    + '<div class="cp-bar-wrap"><div class="cp-bar ' + stCls + '" style="width:' + (total > 0 ? pct : 0) + '%"></div></div>'
+                    + (t.message ? '<div class="cp-msg">' + escapeHtml(t.message) + '</div>' : '')
                     + stepsHtml
-                    + actions + '</div>';
+                    + actions
+                    + '</div>';
                 anyVisible = true;
                 // 下载中：书库实时显示已落盘章节（节流，第一章落盘后即出现）
                 if (running && state === 'running' && t.phase === 'download') {
@@ -524,6 +600,15 @@ function pollCrawlProgress() {
             }
             box.style.display = '';
             tarea.innerHTML = html;
+            // 汇总状态
+            var sum = document.getElementById('cp-summary');
+            if (sum) {
+                var parts = [];
+                if (runningCount) parts.push(runningCount + ' 进行中');
+                if (doneCount) parts.push(doneCount + ' 完成');
+                if (errCount) parts.push(errCount + ' 失败');
+                sum.textContent = parts.length ? parts.join(' · ') : '';
+            }
         })
         .catch(function() {});
 }
