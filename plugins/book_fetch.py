@@ -781,15 +781,20 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     # 多源真正并行下载：章节间并发 + 每章轮询分片给一个「通过校对的源」做负责源（prefer），
     # 各源各下一部分章节真正并行提速；负责源缺章/失败时内部仍按 source_order 回退补缺。
     # 并发数上限（默认 6）：兼顾提速与源站压力；慢源 download_chapter 自身无 sleep，靠并发控速。
+    # 取消/停止：on_progress/on_step 在取消时抛 __CANCELLED__（tools.py on_progress 检查），
+    # 这里必须用 shutdown(wait=False, cancel_futures=True) 立即释放、不等在途 worker，否则
+    # 「停止」后仍会等全部已提交章节下载完（几百章）——用户看到的就是停止无效。
     _dl_workers = max(1, min(_DL_WORKERS, len(pending)))
     import concurrent.futures as _cfd
-    with _cfd.ThreadPoolExecutor(max_workers=_dl_workers) as _exd:
+    _dl_ex = _cfd.ThreadPoolExecutor(max_workers=_dl_workers)
+    _dl_cancelled = False
+    try:
         _n_src = max(1, len(_dl_srcs))
         _futs = {}
         for _i, ch in enumerate(pending):
             # 轮询分片：章节 i → 负责源 _dl_srcs[i % _n_src]（真正多源并行下载）
             _prefer = _dl_srcs[_i % _n_src]
-            _futs[_exd.submit(_dl_one, int(ch["index"]), ch, _prefer)] = ch
+            _futs[_dl_ex.submit(_dl_one, int(ch["index"]), ch, _prefer)] = ch
         for _i, _fut in enumerate(_cfd.as_completed(_futs)):
             _ch = _futs[_fut]
             try:
@@ -800,12 +805,25 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             # 下载中的源：左栏显示转圈 + 第N章（每章完成后更新该源最新进度）
             if _us and _fnum is not None:
                 _step(f"下载:{_us}", "running", f"第{_fnum}章")
+            # 进度回调：tools.py 在此检查取消/暂停——取消时抛 __CANCELLED__（下方 finally 释放）
             if on_progress:
                 on_progress("download", _i + 1, len(pending), _ch.get("title", "")[:30])
-    _step("下载正文", "ok", f"{downloaded} 章（本次新增）")
-    if on_progress:
-        on_progress("download", len(pending), len(pending),
-                    f"下载完成 {downloaded}章（本次新增）")
+    except BaseException as _dl_e:
+        _dl_cancelled = True
+        _step("下载正文", "warn", "已停止（多源并行下载中断）")
+        raise
+    finally:
+        # 关键：wait=False + cancel_futures=True —— 取消/异常后不再等待在途 worker，
+        # 未开始的 future 直接取消；正在跑当前章的 worker 跑完当章即退（网络请求无法硬中断）。
+        try:
+            _dl_ex.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+    if not _dl_cancelled:
+        _step("下载正文", "ok", f"{downloaded} 章（本次新增）")
+        if on_progress:
+            on_progress("download", len(pending), len(pending),
+                        f"下载完成 {downloaded}章（本次新增）")
     return meta, {"folder": folder, "chapters": downloaded, "already": False, "sources": "merged"}
 
 

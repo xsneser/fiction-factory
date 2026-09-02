@@ -324,6 +324,36 @@ SITES = {
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
+    # 华东看书(蛋蛋文学 www.dandanwx.com)：书页 /shu/{bid}.html 即全量目录（倒序），
+    # 章 /shu/{bid}/{cid}.html 正文 #content 含分页 {cid}_N.html；头部「最新网址：www.dandanwx.com第N章 … (第x/y页)」需清理
+    "dandanwx": {
+        "name": "蛋蛋文学",
+        "base_url": "http://www.dandanwx.com",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/shu/(\d+)\.html",
+        "book_page": lambda b: f"/shu/{b}.html",
+        # 书页即第 1 页全量目录；目录分页 /shu/{b}_{p}.html（p>1）
+        "chapter_list_page": lambda b, p: (f"/shu/{b}_{p}.html" if p > 1 else f"/shu/{b}.html"),
+        "chapter_url": lambda b, cid, suf: f"/shu/{b}/{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(?:https?://[^"/]*)?(/shu/\d+/(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r'href="[^"]*?/shu/\d+/{cid}_(\d+)\.html"',
+        "content_div_id": "content",
+        # 容器头部：content_tip 广告 + 「第N章 标题 (第x/y页)」头行（同段粘连）
+        "ad_replace": {
+            r"最新网址[:：][^\n第]*第[0-9一二三四五六七八九十百千零两]+章[^\n（(]*[（(]第\d+/\d+页[)）]": "",
+            r"最新网址[:：]\S+": "",
+        },
+        "drop_line_re": [
+            r"^第[0-9一二三四五六七八九十百千零两]+章.*?[（(]第\d+/\d+页[)）]$",
+            r"^第[0-9一二三四五六七八九十百千零两]+章[^\n。]*$",
+            r"^[（(]第\d+/\d+页[)）]$",
+        ],
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
     # 甲骨文小说：书页即全量目录（1272 章一页），章 /chapter/{bid}/{n}，正文 class="text"
     "jgwxs": {
         "name": "甲骨文小说",
@@ -507,6 +537,7 @@ MIRROR_SOURCES = {
     "9rxs": lambda: WebnovelCrawler("9rxs"),
     "ixdzs": lambda: WebnovelCrawler("ixdzs"),
     "spudnovel": lambda: WebnovelCrawler("spudnovel"),
+    "dandanwx": lambda: WebnovelCrawler("dandanwx"),
 }
 
 
@@ -766,10 +797,12 @@ class WebnovelCrawler:
 
         def _probe_pages(html):
             nums = [int(m.group(1)) for m in re.finditer(r'index_(\d+)\.html', html)]
-            if ":" in book_id:
-                bid = book_id.split(":")[1]
-                for m in re.finditer(re.escape(bid) + r'_(\d+)/', html):
-                    nums.append(int(m.group(1)))
+            bid = book_id.split(":")[1] if ":" in book_id else book_id
+            # 目录分页：`{bid}_{p}/`（chensiwx）或 `{bid}_{p}.html`（dandanwx 华东看书）
+            for m in re.finditer(re.escape(bid) + r'_(\d+)/', html):
+                nums.append(int(m.group(1)))
+            for m in re.finditer(re.escape(bid) + r'_(\d+)\.html', html):
+                nums.append(int(m.group(1)))
             return nums
 
         by_href: dict = {}   # 同 href 去重：页顶「开始阅读」按钮常与真正的「第1章」指向同一章，
