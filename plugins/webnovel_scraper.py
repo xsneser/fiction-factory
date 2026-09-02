@@ -415,6 +415,17 @@ SITES = {
         "headers": {"User-Agent": DEFAULT_UA},
         "book_id_re": r"/html/(\d+)/(\d+)/",
         "book_page": lambda b: f"/html/{b.split(':')[0]}/{b.split(':')[1]}/index.html",
+        # 站内搜索：GET /modules/article/search.php?q=（jieqi 搜索）。结果书名在 class="c_subject" 的
+        # <a href="/book/info/N/M.html">书名</a>；但 book_id 需 /html/N/M/index.html 目录链接，
+        # 故 link_re 匹配 c_subject 链接（组1=book/info URL，组2=书名精确匹配），href_map 转换目录链接
+        "site_search": {
+            "path": "/modules/article/search.php", "param": "q", "method": "get",
+            "link_re": re.compile(
+                r'<a href="([^"]*/book/info/(?:\d+)/(?:\d+)\.html)">([^<]+)</a>', re.S),
+            "exact": True,
+            "href_map": lambda href: re.sub(
+                r"/book/info/(\d+)/(\d+)\.html", r"/html/\1/\2/index.html", href),
+        },
         "chapter_list_page": lambda b, p: f"/html/{b.split(':')[0]}/{b.split(':')[1]}/index.html",
         "chapter_url": lambda b, cid, suf: f"/html/{b.split(':')[0]}/{b.split(':')[1]}/{cid}{suf}.html",
         "chapter_link_re": re.compile(
@@ -762,10 +773,10 @@ class WebnovelCrawler:
                             href, text = m.group(1), (m.group(2) or "").strip()
                             if exact:
                                 if text == title:
-                                    return href
+                                    return ss["href_map"](href) if ss.get("href_map") else href
                             else:
                                 if title in text:
-                                    return href
+                                    return ss["href_map"](href) if ss.get("href_map") else href
                 else:
                     url = self.cfg["base_url"] + ss["path"]
                     if str(ss.get("method", "get")).lower() == "post":
@@ -784,10 +795,10 @@ class WebnovelCrawler:
                             href, text = m.group(1), (m.group(2) or "").strip()
                             if exact:
                                 if text == title:
-                                    return href
+                                    return ss["href_map"](href) if ss.get("href_map") else href
                             else:
                                 if title in text:
-                                    return href
+                                    return ss["href_map"](href) if ss.get("href_map") else href
             except Exception as e:
                 logger.warning("site_search failed: %s (%s)", self.site, e)
         # 回退：Bing 搜「书名 site:本站」
