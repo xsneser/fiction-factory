@@ -588,6 +588,24 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                 _f_full = _ex2.submit(_load_full_cov)
                 _ver = _f_head.result()      # 秒级：前十章核对先出（不阻塞于慢源全量目录）
                 _cov, _tall = _f_full.result()  # 等全量目录补拉完成
+            # ── 噪声学习：番茄 vs 镜像前十章正文逐字符 diff → 该源剔除规则（广告/分页/多余字符），
+            #    注入 crawler.cfg（ad_replace/drop_line_re）使本次下载自动剔除；持久化供后续复用。 ──
+            try:
+                from plugins.site_clean_rules import learn_noise_rules, persist_rules, \
+                    load_rules, inject_rules
+                _ph("广告检测中…")
+                _learned = learn_noise_rules(
+                    fanqie_bodies, src, head_nums, f_by_num,
+                    existing=load_rules(src["site"]), body_cache=_mc)
+                if _learned:
+                    inject_rules(src["crawler"], _learned)   # 本次下载立即生效
+                    persist_rules(src["site"], _learned)     # 持久化供后续复用
+                    _noise_n = len(_learned.get("ad_replace") or {}) + \
+                        len(_learned.get("drop_line") or [])
+                    if _noise_n:
+                        _ph(f"学习到 {_noise_n} 条剔除规则")
+            except Exception as _e:
+                logger.warning("noise learn %s failed: %s", src["site"], _e)
             _ph(f"目录 {_cov}/{_tall} · 前十章 {_ver['matched']}/{_ver['total']}，题目/作者比对中…")
             # 目录覆盖：全量目录对番茄编号章覆盖率（消息显示 cov/tall；分数=覆盖率×SCORE_DIR）
             src["coverage"] = _cov   # 供 source_order 排序与 meta 展示

@@ -582,6 +582,12 @@ class WebnovelCrawler:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.cache_dir = Path(cache_dir or f"storage/web_cache/{site}")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # 加载持久化的「每源剔除规则」（历史抓取中学到的广告/分页/多余字符噪声），注入 cfg。
+        try:
+            from plugins.site_clean_rules import apply_rules_to_crawler
+            apply_rules_to_crawler(site, self)
+        except Exception as e:
+            logger.warning("load site clean rules %s failed: %s", site, e)
 
     # ── 基础请求 ──
     def _fetch(self, path: str, timeout: int = 15, retries: int = 3) -> Optional[str]:
