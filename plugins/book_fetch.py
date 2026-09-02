@@ -376,16 +376,33 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     total = len(f_catalog)
     if total == 0:
         raise RuntimeError(f"番茄目录为空: {f_meta['title']}")
-    start = max(1, int(start or 1))
-    if int(chapters or 0) > 0:
-        e = int(end or 0)
-        e = (start + int(chapters) - 1) if e <= 0 else e
+
+    # 免费头章区域：前 HEAD_N 个「第N章」及其之前的序章/楔子（番茄免费正文一般在此范围）
+    head_span = set()
+    numbered = 0
+    for c in sorted(f_catalog, key=lambda c: int(c.get("index") or 0)):
+        head_span.add(int(c["index"]))
+        if _parse_chapter_num(c.get("title", "")) is not None:
+            numbered += 1
+        if numbered >= HEAD_N:
+            break
+
+    # 无镜像源（找不到可用镜像）：只下载番茄免费头章（前十章），不整本落空占位——
+    # 番茄后段锁定、无镜像正文可填，继续往后下载没有意义。
+    no_mirror = not sources
+    if no_mirror:
+        selected = [c for c in f_catalog if int(c.get("index") or 0) in head_span]
     else:
-        e = int(end or 0) or total
-    e = min(e, total)
-    selected = [c for c in f_catalog if start <= int(c.get("index") or 0) <= e]
+        start = max(1, int(start or 1))
+        if int(chapters or 0) > 0:
+            e = int(end or 0)
+            e = (start + int(chapters) - 1) if e <= 0 else e
+        else:
+            e = int(end or 0) or total
+        e = min(e, total)
+        selected = [c for c in f_catalog if start <= int(c.get("index") or 0) <= e]
     if not selected:
-        raise RuntimeError(f"起始章 {start} 超出番茄目录范围（共 {total} 章）")
+        raise RuntimeError(f"无可下载章节: {f_meta['title']}（目录 {total} 章）")
 
     # 断点续下：只把**有正文**的章节算作已下载（空占位不阻断补全）
     folder = _safe_name(f_meta["title"])
@@ -403,15 +420,18 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     if not pending:
         if on_progress:
             on_progress("search", 1, 1, f"已是最新（{len(existing)} 章），无需下载")
-        return _merged_meta(f_meta, total, platform, main_site=site or "wodushu"), \
+        return _merged_meta(f_meta, total, platform, main_site=site), \
             {"folder": folder, "chapters": 0, "already": True, "sources": "merged"}
     if on_progress:
-        on_progress("search", 1, 1,
-                    f"合并抓取: {f_meta['title']}（番茄目录 {total} 章，本次 {len(pending)} 章）")
+        if no_mirror:
+            on_progress("search", 1, 1,
+                        f"无镜像源：仅下载番茄免费头章 {len(pending)} 章（不整本落占位）")
+        else:
+            on_progress("search", 1, 1,
+                        f"合并抓取: {f_meta['title']}（番茄目录 {total} 章，本次 {len(pending)} 章）")
 
-    # 头章元数据：连接键=标题「第N章」号（跳过序章/楔子）；保存键=目录 index
+    # 头章元数据：连接键=标题「第N章」号（跳过序章/楔子）；供前十章核对用
     head_nums, head_index_set, f_by_num = _fanqie_head(f_catalog)
-    head_num_set = set(head_nums)
 
     # ── 4) 前十章核对选源：先探查多个源 → 有「完全一致」源用之；无则回退最佳源（广告行过滤） ──
     main_src = None
@@ -443,9 +463,9 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             _step("选择来源", "warn",
                   f"无完全一致源，回退 {src['site']}（镜像正文已广告行过滤）")
     else:
-        _step("选择来源", "warn", "无镜像源：头章免费正文取番茄，其余落占位")
+        _step("选择来源", "warn", "无镜像源：仅下载番茄免费头章（前十章），不整本落占位")
 
-    main_site = main_src["site"] if main_src else (site or "wodushu")
+    main_site = main_src["site"] if main_src else site
     meta = _merged_meta(f_meta, total, platform, main_site=main_site, main_src=main_src,
                         verdict={"head_verified": head_verified, "head_site": head_site})
 
@@ -473,25 +493,29 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                             src["w_meta"]["book_id"], mch["chapter_id"])
                         if content:
                             break
-        # 头章（番茄前几章免费无广告）→ 番茄权威全文优先：仅当番茄正文 ≥ 镜像正文 ×
-        # FULL_LEN_RATIO 才算完整免费章（锁章预览往往短于此），否则仍用镜像正文
-        if fnum in head_num_set and fanqie and fanqie_rid and fnum in f_by_num:
-            f_body = fanqie_bodies.get(fnum)
+        # 头章（番茄免费区域，含前导序章/楔子）→ 番茄权威全文优先（无广告）：仅当番茄正文
+        # 本身 ≥ FREE_FULL_MIN_CHARS（是全文、非锁章预览）且 ≥ 镜像正文 × FULL_LEN_RATIO
+        # 才取番茄正文；否则用镜像正文（核对一致即与番茄同源全文）。
+        if idx in head_span and fanqie and fanqie_rid and ch.get("id"):
+            f_body = fanqie_bodies.get(fnum, "") if fnum is not None else ""
             if not f_body:
                 try:
-                    f_body = fanqie.download_chapter(fanqie_rid, f_by_num[fnum]["id"])
-                    if f_body and _cjk_len(f_body) >= FREE_FULL_MIN_CHARS:
+                    f_body = fanqie.download_chapter(fanqie_rid, ch["id"])
+                    if fnum is not None and f_body \
+                            and _cjk_len(f_body) >= FREE_FULL_MIN_CHARS:
                         fanqie_bodies[fnum] = f_body
                 except Exception as ex:
                     logger.warning(f"fanqie head fill ch {idx} failed: {ex}")
                     f_body = ""
-            if f_body and _cjk_len(f_body) >= _cjk_len(content) * FULL_LEN_RATIO:
+            if f_body and _cjk_len(f_body) >= FREE_FULL_MIN_CHARS \
+                    and _cjk_len(f_body) >= _cjk_len(content) * FULL_LEN_RATIO:
                 content = f_body
-        # 番茄目录权威：镜像无此章也落 title-only 占位
-        save_chapter(platform, folder, {
-            "index": idx, "title": ch["title"], "content": content or "",
-            "word_count": _cjk_len(content or ""),
-        })
+        # 番茄目录权威：镜像无此章也落 title-only 占位（无镜像源时只取头章、空正文不落盘）
+        if content or not no_mirror:
+            save_chapter(platform, folder, {
+                "index": idx, "title": ch["title"], "content": content or "",
+                "word_count": _cjk_len(content or ""),
+            })
         if content:
             downloaded += 1
         if on_progress:

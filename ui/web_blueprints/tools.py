@@ -136,8 +136,10 @@ def scout_run():
                        total=1, phase="搜索", url="/scout")
     task_manager.register_cancel(task_id)
     _task_title = (title or direct_id or url) or "抓取任务"
+    # 顶部显示标题：提交的是 book_id/URL 时，解析番茄成功后由 on_step 换成书名
+    _tname = {"title": _task_title}
     write_crawl_progress("running", "搜索", 0, 1, "开始搜索...",
-                         task_id=task_id, title=_task_title, extra={"pausable": True})
+                         task_id=task_id, title=_tname["title"], extra={"pausable": True})
 
     def worker():
         from plugins.fanqie_scout import FanqieScoutAgent
@@ -159,7 +161,7 @@ def scout_run():
                     raise _cancel_exception
                 time.sleep(0.5)
             write_crawl_progress("running", phase, current, total, message,
-                                 task_id=task_id, title=_task_title, extra=_extra)
+                                 task_id=task_id, title=_tname["title"], extra=_extra)
             if phase == "search":
                 task_manager.progress(task_id, current, total, "搜索", message)
                 task_manager.log(task_id, message, "info")
@@ -175,8 +177,13 @@ def scout_run():
                 if task_manager.is_cancelled(task_id):
                     raise _cancel_exception
                 time.sleep(0.5)
+            # 解析番茄成功后：顶部标题换成书名（detail 形如「冒姓琅琊 · 封面/简介/目录 N 章」）
+            if label == "解析番茄" and detail:
+                _nm = detail.split(" · ")[0].strip()
+                if _nm:
+                    _tname["title"] = _nm
             write_crawl_progress("running", _state["phase"], _state["cur"], _state["total"],
-                                 detail or label, task_id=task_id, title=_task_title,
+                                 detail or label, task_id=task_id, title=_tname["title"],
                                  extra=_extra,
                                  step={"label": label, "status": status, "detail": detail})
             task_manager.log(task_id, f"{label} {detail}".strip(), "info")
@@ -197,10 +204,12 @@ def scout_run():
                     msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")
                            else f"下载完成 {n}章")
                     task_manager.done(task_id, msg)
+                    # 顶部标题以解析出的书名为准（兜底：未走 on_step 的路径也用 info title）
+                    _tname["title"] = (info.get("title") if info else "") or _tname["title"]
                     # site 用实际服务源（用户选源可能解析失败回退自动），非请求时写死的默认源
                     _actual_site = (info.get("site") if info else None) or site or "wodushu"
                     write_crawl_progress("done", "download", n, n, msg,
-                                         task_id=task_id, title=_task_title,
+                                         task_id=task_id, title=_tname["title"],
                                          extra={**_extra, "folder": dl.get("folder", ""),
                                                 "platform": "merged", "site": _actual_site})
                 return
@@ -218,7 +227,7 @@ def scout_run():
                            else f"下载完成 {n}章")
                     task_manager.done(task_id, msg)
                     write_crawl_progress("done", "download", n, n, msg,
-                                         task_id=task_id, title=_task_title,
+                                         task_id=task_id, title=_tname["title"],
                                          extra={**_extra, "folder": dl.get("folder", ""),
                                                 "platform": "web", "site": site})
                 return
@@ -230,7 +239,7 @@ def scout_run():
             if not novel:
                 task_manager.fail(task_id, "未找到该书")
                 write_crawl_progress("error", "", 0, 0, f"not found: {title or direct_id}",
-                                     task_id=task_id, title=_task_title, extra=_extra)
+                                     task_id=task_id, title=_tname["title"], extra=_extra)
                 return
             task_manager.log(task_id, f"找到: {novel.title}", "success")
 
@@ -242,7 +251,7 @@ def scout_run():
                 task_manager.done(task_id, f"下载完成 {dl_info['chapters']}章")
                 write_crawl_progress("done", "download", dl_info["chapters"], dl_info["chapters"],
                                      f"下载完成 {dl_info['chapters']}章",
-                                     task_id=task_id, title=_task_title,
+                                     task_id=task_id, title=_tname["title"],
                                      extra={**_extra, "folder": dl_info.get("folder", ""),
                                             "platform": "fanqie"})
         except Exception as e:
@@ -251,7 +260,7 @@ def scout_run():
             if err_msg == "__CANCELLED__":
                 task_manager.cancel(task_id)
                 write_crawl_progress("cancelled", "", 0, 0, "已停止",
-                                     task_id=task_id, title=_task_title, extra=_extra)
+                                     task_id=task_id, title=_tname["title"], extra=_extra)
                 return
             # 翻译常见异常为用户友好提示
             if "NoneType" in err_msg and "subscriptable" in err_msg:
@@ -262,7 +271,7 @@ def scout_run():
                 err_msg = "网络连接失败，请检查网络"
             task_manager.fail(task_id, err_msg)
             write_crawl_progress("error", "", 0, 0, err_msg,
-                                 task_id=task_id, title=_task_title, extra=_extra)
+                                 task_id=task_id, title=_tname["title"], extra=_extra)
 
     threading.Thread(target=worker, daemon=True, name="scout-fetch").start()
     return jsonify({"ok": True, "task_id": task_id})

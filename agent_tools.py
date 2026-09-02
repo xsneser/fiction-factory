@@ -1839,16 +1839,21 @@ def fetch_book(title: str = "", url: str = "", book_id: str = "", site: str = "w
     _task_id = f"mcp_fetch_book_{int(_time.time() * 1000)}"
     _task_title = (title or url or book_id or "综合抓取")[:40]
     _state = {"phase": "", "cur": 0, "total": 0}   # 供 on_step 复用进度条位置（防跳 0）
+    _tname = {"title": _task_title}                # 顶部标题：解析番茄成功后自动换成书名
 
     def on_progress(phase, current, total, message):
         _state.update(phase=phase, cur=current, total=total)
         write_crawl_progress("running", phase, current, total, message,
-                             task_id=_task_id, title=_task_title)
+                             task_id=_task_id, title=_tname["title"])
 
     def on_step(label, status="running", detail=""):
         # 分步清单：写 crawl_progress steps（/scout 页轮询渲染）
+        if label == "解析番茄" and detail:
+            _nm = detail.split(" · ")[0].strip()
+            if _nm:
+                _tname["title"] = _nm
         write_crawl_progress("running", _state["phase"], _state["cur"], _state["total"],
-                             detail or label, task_id=_task_id, title=_task_title,
+                             detail or label, task_id=_task_id, title=_tname["title"],
                              step={"label": label, "status": status, "detail": detail})
 
     try:
@@ -1859,15 +1864,17 @@ def fetch_book(title: str = "", url: str = "", book_id: str = "", site: str = "w
         n = dl["chapters"]
         msg = (f"已是最新（{dl.get('skipped', 0)} 章）" if dl.get("already")
                else f"下载完成 {n}章")
+        # 最终顶标题以解析出的书名为准（兜底：未走 on_step 的路径也用 meta title）
+        _tname["title"] = meta.get("title") or _tname["title"]
         write_crawl_progress("done", "download", n, n, msg,
-                             task_id=_task_id, title=_task_title,
+                             task_id=_task_id, title=_tname["title"],
                              extra={"folder": dl["folder"], "platform": "merged", "site": site})
         return {"ok": True, "title": meta["title"], "author": meta["author"],
                 "intro": meta.get("intro", ""), "cover": meta.get("cover", ""),
                 "saved_chapters": n, "folder": dl["folder"], "already": dl.get("already", False),
                 "platform": meta.get("platform", "merged"), "sources": dl.get("sources", "merged")}
     except Exception as e:
-        write_crawl_progress("error", "", 0, 0, str(e), task_id=_task_id, title=_task_title)
+        write_crawl_progress("error", "", 0, 0, str(e), task_id=_task_id, title=_tname["title"])
         raise
 
 
