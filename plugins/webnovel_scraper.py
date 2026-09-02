@@ -15,6 +15,7 @@ MCP / Web / CLI 统一入口：`download_webnovel`。进度复写 storage/crawl_
 - 长章拆续页 `{cid}_2.html`、`_3.html`，正文 `<div class="content" id="content">`，UTF-8
 - 站点声称章数 ≠ 实际（1556 vs 1386）→ chapter_count / 进度 total 一律用去重后的目录长度
 """
+import html as _html
 import logging
 import re
 import time
@@ -110,6 +111,52 @@ SITES = {
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
+    # UU看书：书页只列最近几章，全目录在 /chapter/{bid}.html（页参忽略：第1页即全量，重复页无新 href 自动停）
+    "uukan": {
+        "name": "UU看书",
+        "base_url": "https://www.uukan.org",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/book/([A-Za-z0-9_-]+)\.html",
+        "book_page": lambda b: f"/book/{b}.html",
+        "chapter_list_page": lambda b, p: f"/chapter/{b}.html",
+        "chapter_url": lambda b, cid, suf: f"/chapter/{b}/{cid}{suf}.html",
+        # 章号不连续且目录含「开始阅读」等链接 → 仅匹配含编号标题的章锚点（组1=href 组2=chapter_id）
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/chapter/[^"]+/([A-Za-z0-9_-]+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r"(?!)",
+        "content_div_id": "content",
+        "main_title_re": MAIN_TITLE_RE,
+        "request_delay": 0.5,
+    },
+    # 零点看书镜像(m.chensiwx)：/{cat}/{bid}/ 章表分页 /{cat}/{bid}_{p}/；正文 id=content 内含章 h1/分页头行需清理
+    "chensiwx": {
+        "name": "零点看书·辰巳镜像",
+        "base_url": "http://m.chensiwx.com",
+        "encoding": "utf-8",
+        "headers": {"User-Agent": DEFAULT_UA},
+        "book_id_re": r"/(\d+)/(\d+)/",
+        "book_page": lambda b: f"/{b.split(':')[0]}/{b.split(':')[1]}/",
+        "chapter_list_page": lambda b, p: (
+            f"/{b.split(':')[0]}/{b.split(':')[1]}_{p}/" if p > 1
+            else f"/{b.split(':')[0]}/{b.split(':')[1]}/"),
+        "chapter_url": lambda b, cid, suf: f"/{b.split(':')[0]}/{b.split(':')[1]}/{cid}{suf}.html",
+        "chapter_link_re": re.compile(
+            r'<a[^>]*href="(/\d+/\d+/(\d+)\.html)"[^>]*>'
+            r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
+        "extra_page_re": r'href="[^"]*?/{cid}_(\d+)\.html"',
+        "content_div_id": "content",
+        "main_title_re": MAIN_TITLE_RE,
+        # 容器内章 h1 / (第x/y页) / 纯章标题行清理（正文段落不以「第N章」开头且多以句号结尾）
+        "drop_line_re": [
+            r"^第[0-9一二三四五六七八九十百千零两]+章[^\n。]*$",
+            r"^第[0-9一二三四五六七八九十百千零两]+章.*?[（(]第\d+/\d+页[)）]$",
+            r"^[（(]第\d+/\d+页[)）]$",
+            r"^[（(]本章未完.*?[)）]$",
+        ],
+        "request_delay": 0.5,
+    },
 }
 
 # ─── 多镜像源注册表（下载时并行尝试） ──────────────────────────────────
@@ -117,6 +164,8 @@ SITES = {
 MIRROR_SOURCES = {
     "wodushu": lambda: WebnovelCrawler("wodushu"),
     "bookszw": lambda: BookszwCrawler(),
+    "uukan": lambda: WebnovelCrawler("uukan"),
+    "chensiwx": lambda: WebnovelCrawler("chensiwx"),
 }
 
 
@@ -350,7 +399,12 @@ class WebnovelCrawler:
             if not nxt:
                 break
             suffix = f"_{nxt.group(1)}"
-        return self._clean_text("\n".join(parts))
+        text = self._clean_text("\n".join(parts))
+        drop = self.cfg.get("drop_line_re")
+        if drop:
+            dr = re.compile("|".join(drop)) if isinstance(drop, (list, tuple)) else re.compile(drop)
+            text = "\n\n".join(b for b in text.split("\n\n") if not dr.search(b))
+        return text
 
     def _extract_content(self, html: str) -> str:
         if self.cfg.get("content_mode") == "after_title":
@@ -378,7 +432,7 @@ class WebnovelCrawler:
         # 去「第N章 标题 (第X/Y页)」头行 + 「（本章未完…）」分页尾
         txt = re.sub(r'^\s*第[0-9一二三四五六七八九十百千零两]+章.*?\(第\d+/\d+页\)\s*', '', txt)
         txt = re.sub(r'[（(]本章未完.*?[）)]', '', txt)
-        return txt
+        return _html.unescape(txt)
 
     # ── 清洗 ──
     @staticmethod
