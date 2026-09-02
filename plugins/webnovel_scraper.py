@@ -117,7 +117,8 @@ SITES = {
         },
         "book_id_re": r"/book/([A-Za-z0-9_-]+)\.html",
         "book_page": lambda b: f"/book/{b}.html",
-        "chapter_list_page": lambda b, p: f"/chapter/{b}.html",
+        # 目录分页 /chapter/{bid}/{p}.html（每页 500 章）；book 页只列最近几章
+        "chapter_list_page": lambda b, p: f"/chapter/{b}/{p}.html",
         "chapter_url": lambda b, cid, suf: f"/chapter/{b}/{cid}{suf}.html",
         # 章号不连续且目录含「开始阅读」等链接 → 仅匹配含编号标题的章锚点（组1=href 组2=chapter_id）
         "chapter_link_re": re.compile(
@@ -788,6 +789,9 @@ class WebnovelCrawler:
             for m in re.finditer(re.escape(bid) + r'_(\d+)/', html):
                 nums.append(int(m.group(1)))
             for m in re.finditer(re.escape(bid) + r'_(\d+)\.html', html):
+                nums.append(int(m.group(1)))
+            # 通用分页：/{bid}/{N}.html（uukan /chapter/xxx/2.html）——目录分页链接为纯数字
+            for m in re.finditer(re.escape(bid) + r'/(\d+)\.html', html):
                 nums.append(int(m.group(1)))
             return nums
 
