@@ -261,9 +261,16 @@ SITES = {
         "name": "精彩小说网",
         "base_url": "https://www.jcxs.org",
         "encoding": "utf-8",
-        "headers": {"User-Agent": DEFAULT_UA},
+        "headers": {"User-Agent": DEFAULT_UA,
+                    "Referer": "https://www.jcxs.org/search.html"},
         "book_id_re": r"/book/(\d+)/",
         "book_page": lambda b: f"/book/{b}/",
+        # 站内搜索：POST /search.html 参数 s（表单 id=novel_search，input name=s）。
+        # 实测须带 Referer=搜索页；结果书页链接 <a href="/book/59587/">书名</a>，文本=书名精确命中
+        "site_search": {
+            "path": "/search.html", "param": "s", "method": "post",
+            "exact": True,
+        },
         "chapter_list_page": lambda b, p: (f"/book/{b}/{p}/" if p > 1 else f"/book/{b}/"),
         "chapter_url": lambda b, cid, suf: f"/read/{b}/{cid}{suf}/",
         "chapter_link_re": re.compile(
