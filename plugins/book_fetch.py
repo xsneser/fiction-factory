@@ -146,16 +146,28 @@ def _content_sample(fanqie_bodies, src, mirror_cache):
     return matched, total
 
 
-def _verify_source_head(fanqie, rid, head_nums, f_by_num, src, fanqie_bodies, mirror_cache):
+def _head_verify(fanqie_bodies, head_nums, f_by_num, src, mirror_cache):
     """前十章核对单源 → {"site","consistent","align","matched","total"}。
 
+    fanqie_bodies 由调用方一次性备好（番茄头章免费全文），本函数只读、不改——
+    故可对多个源**并发**调用（每个源独立 crawler，mirror_cache 线程局部）。
     consistent = 标题对齐 ok 且（无法正文比对则只看标题 / 前十章正文全部通过）。"""
     align = _title_alignment(head_nums, f_by_num, src["wmap"])
-    _fetch_full_fanqie(fanqie, rid, f_by_num, head_nums, fanqie_bodies)
     matched, total = _content_sample(fanqie_bodies, src, mirror_cache)
     consistent = align["ok"] and (total == 0 or matched == total)
     return {"site": src["site"], "consistent": consistent, "align": align,
             "matched": matched, "total": total}
+
+
+def _catalog_coverage(f_catalog, src):
+    """该镜像源目录对番茄**编号章**的覆盖 → (覆盖数, 番茄编号章总数)。"""
+    f_all = {_parse_chapter_num(c.get("title", "")) for c in f_catalog}
+    f_all.discard(None)
+    if f_all:
+        cov = len(set(src["wmap"]) & f_all)
+    else:
+        cov = len(src["wmap"])
+    return cov, len(f_all)
 
 
 def _candidate_sources(sources, prefer_site="", site=""):
@@ -253,6 +265,7 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
 
     # ── 1) 番茄元数据 + 权威目录（封面/简介/目录；尽力） ──
     f_meta, f_catalog = None, []
+    _step("解析番茄", "running", "搜索番茄：书名/book_id…")
     try:
         if fanqie_rid:
             n = fanqie._get_novel_from_page(fanqie_rid)
@@ -274,10 +287,13 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
             from plugins.novel_storage import save_novel, NOVELS_DIR, _safe_name
             _folder = _safe_name(f_meta["title"])
             if not (NOVELS_DIR / _folder / "info.json").exists():
+                _step("创建书目", "running", _folder)
                 save_novel(platform, _merged_meta(
                     f_meta, len(f_catalog), platform,
                     main_site=(prefer_site or site or ""), main_src=None), [])
                 _step("创建书目", "ok", _folder)
+            else:
+                _step("创建书目", "ok", f"已存在（{_folder}），复用目录增量补章")
         except Exception as e:
             logger.warning(f"early create novel entry failed: {e}")
             _step("创建书目", "warn", "提前建目录失败（随保存补齐）")
@@ -325,8 +341,17 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
             probe_keys = wanted
     sources = {}
     with _cf.ThreadPoolExecutor(max_workers=min(3, max(1, len(probe_keys)))) as _ex:
-        # 每个被探查的源都回报（找到→章数；未找到/失败→warn），方便下载框看全各源结果
-        for sn, _r in zip(probe_keys, _ex.map(_resolve_source, probe_keys)):
+        # 每个源先显示「解析中」，再**并发**解析；as_completed → 谁先完成谁先翻结果
+        for sn in probe_keys:
+            _step(f"镜像解析:{sn}", "running", "搜索/解析中…")
+        _futs = {_ex.submit(_resolve_source, sn): sn for sn in probe_keys}
+        for _fut in _cf.as_completed(_futs):
+            sn = _futs[_fut]
+            try:
+                _r = _fut.result()
+            except Exception as e:
+                logger.warning(f"mirror {sn} resolve error: {e}")
+                _r = None
             if _r and _r["wmap"]:
                 sources[_r["site"]] = _r
                 _step(f"镜像解析:{_r['site']}", "ok", f"主书 {len(_r['wmap'])} 章可候选")
@@ -437,40 +462,79 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     # 头章元数据：连接键=标题「第N章」号（跳过序章/楔子）；供前十章核对用
     head_nums, head_index_set, f_by_num = _fanqie_head(f_catalog)
 
-    # ── 4) 前十章核对选源：每个已找到的源都做全量核对并上报 → 有「完全一致」源取第一个；
-    #      全不一致才回退 matched/coverage 最佳源（镜像正文广告行过滤天然生效） ──
+    # ── 4) 选源：目录校对 → 取番茄头章正文作对照 → 各源前十章核对（并发，各自进行中→结果） ──
     main_src = None
     head_verified, head_site = False, ""
     mirror_cache, fanqie_bodies = {}, {}
     if sources:
         cand = _candidate_sources(sources, prefer_site, site)
-        scored = []
-        first_consistent = None
-        for src in cand:
-            mc = {}
-            ver = _verify_source_head(fanqie, fanqie_rid, head_nums, f_by_num,
-                                      src, fanqie_bodies, mc)
-            scored.append((src, ver, mc))
-            detail = (f"标题 {ver['align']['passed']}/{ver['align']['expected']} · "
-                      f"正文比对 {ver['matched']}/{ver['total']}")
-            if ver["consistent"]:
-                if first_consistent is None:
-                    first_consistent = (src, ver, mc)
-                _step(f"校验:{src['site']}", "ok", f"前十章一致（{detail}）")
-            else:
-                _step(f"校验:{src['site']}", "error", f"不一致（{detail}）")
-        if first_consistent:
-            src, _v, mc = first_consistent
-            main_src, head_verified, head_site = src, True, src["site"]
-            mirror_cache = mc
+
+        # 4a) 目录校对：多个镜像源总数/目录不一致时，以番茄目录为基准列出各源覆盖（缺章跨源补）
+        if len(cand) > 1:
+            _step("目录校对", "running", "比对各源目录与番茄…")
+            parts = []
+            for src in cand:
+                cov, tall = _catalog_coverage(f_catalog, src)
+                parts.append(f"{src['site']} 覆盖番茄 {cov}/{tall or len(src['wmap'])}")
+            _step("目录校对", "ok", "； ".join(parts) + "（缺章跨源自动补）")
+
+        # 4b) 取番茄免费头章正文作对照基准（一次、顺序；fanqie_bodies 只读，供并发核对共享）
+        if fanqie and fanqie_rid:
+            _step("取番茄头章", "running", "抓番茄免费头章正文作对照…")
+            fanqie_bodies = _fetch_full_fanqie(
+                fanqie, fanqie_rid, f_by_num, head_nums, fanqie_bodies)
+            _step("取番茄头章", "ok", f"{len(fanqie_bodies)} 章可作正文对照")
+
+        # 4c) 每个源的前十章核对**并发**：各自先「核对中」，as_completed → 完成翻 ok/error
+        import concurrent.futures as _cfv
+        done = {}
+        with _cfv.ThreadPoolExecutor(max_workers=max(1, min(3, len(cand)))) as _exv:
+
+            def _verify_worker(src):
+                _mc = {}
+                _ver = _head_verify(fanqie_bodies, head_nums, f_by_num, src, _mc)
+                return _ver, _mc
+
+            for _i, src in enumerate(cand):
+                _step(f"校验:{src['site']}", "running", "标题 + 前十章正文比对中…")
+            _fv = {_exv.submit(_verify_worker, src): src for src in cand}
+            for _fut in _cfv.as_completed(_fv):
+                src = _fv[_fut]
+                try:
+                    ver, _mc = _fut.result()
+                except Exception as e:
+                    logger.warning(f"verify {src['site']} failed: {e}")
+                    _step(f"校验:{src['site']}", "error", f"核对异常（{e}）")
+                    continue
+                done[src["site"]] = (ver, _mc)
+                _detail = (f"标题 {ver['align']['passed']}/{ver['align']['expected']} · "
+                           f"正文比对 {ver['matched']}/{ver['total']}")
+                if ver["consistent"]:
+                    _step(f"校验:{src['site']}", "ok", f"前十章一致（{_detail}）")
+                else:
+                    _step(f"校验:{src['site']}", "error", f"不一致（{_detail}）")
+
+        # 4d) 选择：候选序中第一个一致源；全不一致/核对异常 → 回退 matched/coverage 最佳源
+        _step("选择来源", "running", "按核对结论选主源…")
+        chosen = next((src for src in cand
+                       if src["site"] in done and done[src["site"]][0]["consistent"]), None)
+        if chosen:
+            _ver, _mc = done[chosen["site"]]
+            main_src, head_verified, head_site = chosen, True, chosen["site"]
+            mirror_cache = _mc
             _step("选择来源", "ok", f"用一致源 {main_src['site']}")
-        elif scored:
+        elif done:
             # 全不一致 → 回退：matched 最多、其次 coverage 最高（镜像正文已广告行过滤）
-            src, _v, mc = max(scored, key=lambda t: (t[1]["matched"], t[0]["coverage"]))
-            main_src, head_site = src, src["site"]
-            mirror_cache = mc
+            _bsite = max(done, key=lambda s: (done[s][0]["matched"], sources[s]["coverage"]))
+            _ver, _mc = done[_bsite]
+            main_src, head_site = sources[_bsite], _bsite
+            mirror_cache = _mc
             _step("选择来源", "warn",
-                  f"无完全一致源，回退 {src['site']}（镜像正文已广告行过滤）")
+                  f"无完全一致源，回退 {_bsite}（镜像正文已广告行过滤）")
+        else:
+            main_src = _best_mirror(sources)
+            head_site = main_src["site"] if main_src else ""
+            _step("选择来源", "warn", "核对异常，回退覆盖率最高源（未做一致校验）")
     else:
         _step("选择来源", "warn", "无镜像源：仅下载番茄免费头章（前十章），不整本落占位")
 

@@ -18,8 +18,8 @@ _PATH = os.path.join("storage", "crawl_progress.json")
 _DEFAULT_TASK = "default"
 _TERMINAL_STATES = ("done", "error", "cancelled")
 _KEEP_TERMINAL_SECONDS = 60
-# 步骤清单上限：保最新 N 条（分步流程步骤数有限，防超长列表）
-_MAX_STEPS = 12
+# 步骤清单上限：保最新 N 条（综合抓取多源时含 目录校对/取番茄头章/每源校验等，放宽防挤掉早期步）
+_MAX_STEPS = 24
 
 # 步骤状态枚举（前端映射图标/颜色）
 _STEP_RUNNING = "running"
