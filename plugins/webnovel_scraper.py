@@ -333,6 +333,12 @@ SITES = {
         "headers": {"User-Agent": DEFAULT_UA},
         "book_id_re": r"/shu/(\d+)\.html",
         "book_page": lambda b: f"/shu/{b}.html",
+        # 站内搜索：/search.html?keyWord=（表单参数名 keyWord）；结果含书页 href（相对路径）
+        "site_search": {
+            "path": "/search.html", "param": "keyWord", "method": "get",
+            "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S),
+            "exact": True,   # 链接文本与书名完全一致才命中（排除作者/近似名）
+        },
         # 书页即第 1 页全量目录；目录分页 /shu/{b}_{p}.html（p>1）
         "chapter_list_page": lambda b, p: (f"/shu/{b}_{p}.html" if p > 1 else f"/shu/{b}.html"),
         "chapter_url": lambda b, cid, suf: f"/shu/{b}/{cid}{suf}.html",
