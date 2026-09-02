@@ -731,7 +731,8 @@ class WebnovelCrawler:
         return url
 
     # ── 章表 ──
-    def get_chapter_list(self, book_id: str, max_pages: int = 200) -> list[dict]:
+    def get_chapter_list(self, book_id: str, max_pages: int = 200,
+                         quick: bool = False) -> list[dict]:
         """遍历分页章表 → 跨页去重 → 带编号按数字升序、番外排尾。
 
         返回 [{chapter_id, title, href, num}]（未赋 index，由 download_webnovel 过滤后编号）。
@@ -740,6 +741,10 @@ class WebnovelCrawler:
         性能：bookszw/chensiwx 等大书（3000+ 章）章表分 150 页、服务器单页响应 ~0.74s，
         串行拉全约 110-125s（并发必被 429 限流丢章，不可用）。此处用「第 1 页探测总页数
         → 只翻已知页 + 失败页补拉」，减少空翻且不丢章。非分页源走串行原逻辑。
+
+        quick=True：只拉第 1 页 + 最后一页（探测总章数即止，秒级），用于综合抓取探测阶段
+        先确认「书存在 + 总章数」；返回的目录仅含首尾两页（够前十章核对）。全量目录由
+        download_book_merged 选定主源后补拉。
         """
         link_re = self.cfg["chapter_link_re"]
 
@@ -759,6 +764,14 @@ class WebnovelCrawler:
                     new += 1
             return new
 
+        def _probe_pages(html):
+            nums = [int(m.group(1)) for m in re.finditer(r'index_(\d+)\.html', html)]
+            if ":" in book_id:
+                bid = book_id.split(":")[1]
+                for m in re.finditer(re.escape(bid) + r'_(\d+)/', html):
+                    nums.append(int(m.group(1)))
+            return nums
+
         by_href: dict = {}   # 同 href 去重：页顶「开始阅读」按钮常与真正的「第1章」指向同一章，
         #                    无编号标题排后，重复时替换为带「第N章」编号的那条
         first = self._fetch(self.cfg["chapter_list_page"](book_id, 1))
@@ -766,27 +779,29 @@ class WebnovelCrawler:
             return []
         _add_page(first, by_href)
         # 探测总页数：bookszw/chensiwx 第 1 页含全部分页链接 → 只翻已知页，省去探测性空翻
-        page_nums = []
-        for m in re.finditer(r'index_(\d+)\.html', first):
-            page_nums.append(int(m.group(1)))
-        if ":" in book_id:
-            bid = book_id.split(":")[1]
-            for m in re.finditer(re.escape(bid) + r'_(\d+)/', first):
-                page_nums.append(int(m.group(1)))
+        page_nums = _probe_pages(first)
         if page_nums:
-            pages = [p for p in range(2, min(max(page_nums), max_pages) + 1)]
-            failed = []
-            for p in pages:
-                html = self._fetch(self.cfg["chapter_list_page"](book_id, p), retries=0)
-                if html:
-                    _add_page(html, by_href)
-                else:
-                    failed.append(p)
-            # 失败页统一补拉（带短间隔，避限流）
-            for p in failed:
-                html = self._fetch(self.cfg["chapter_list_page"](book_id, p))
-                if html:
-                    _add_page(html, by_href)
+            total_pages = max(page_nums)
+            if quick:
+                # quick：拉最后一页拿总章数（仅首尾两页）
+                last = self._fetch(self.cfg["chapter_list_page"](book_id, total_pages),
+                                   retries=0)
+                if last:
+                    _add_page(last, by_href)
+            else:
+                pages = [p for p in range(2, min(total_pages, max_pages) + 1)]
+                failed = []
+                for p in pages:
+                    html = self._fetch(self.cfg["chapter_list_page"](book_id, p), retries=0)
+                    if html:
+                        _add_page(html, by_href)
+                    else:
+                        failed.append(p)
+                # 失败页统一补拉（带短间隔，避限流）
+                for p in failed:
+                    html = self._fetch(self.cfg["chapter_list_page"](book_id, p))
+                    if html:
+                        _add_page(html, by_href)
         else:
             # 无分页线索 → 串行翻页（原逻辑，失败页重试一次不中断）
             for page in range(2, max_pages + 1):

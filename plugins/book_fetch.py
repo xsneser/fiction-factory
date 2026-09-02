@@ -40,6 +40,13 @@ CONTENT_OK_RATIO = 0.7      # 正文归一化后 difflib 相似度阈值（镜�
 FULL_LEN_RATIO = 0.85       # 头章存番茄全文前提：番茄 CJK 字数 ≥ 镜像正文 × 此比率（防锁章预览当全文）
 _CHAPTER_PREFIX_RE = re.compile(r"^第[0-9一二三四五六七八九十百千零两]+章")
 
+# ── 打分制选源权重（各源独立并行校对后汇总总分，取最高分下载） ──
+SCORE_DIR = 35      # 目录一致分：全量目录覆盖番茄编号章比例 × SCORE_DIR
+SCORE_TITLE = 15    # 标题一致分：前十章标题通过占比 × SCORE_TITLE
+SCORE_BODY = 40     # 前十章正文一致分：前十章正文比对通过占比 × SCORE_BODY
+SCORE_AD_MAX = 10   # 广告扣分上限：正文广告残留密度越高扣越多
+AD_DENSITY_SAMPLE = 3   # 广告检测抽样的头章数（0 = 跳过广告检测）
+
 
 def _cjk_len(s):
     """中文字符数（与 novel_storage 字数口径一致）。"""
@@ -122,14 +129,17 @@ def _fetch_full_fanqie(fanqie, rid, f_by_num, head_nums, fanqie_bodies, limit=HE
 def _content_sample(fanqie_bodies, src, mirror_cache):
     """对「番茄有全文 且 镜像 wmap 有该章号」的头章做正文全量比对（前十章，非抽样）。
 
+    total = 番茄头章中镜像覆盖的章数（可比对基数）；matched = 其中正文一致数。
+    若某章镜像取不到正文（锁章/抓取失败），total 仍计入（显示如 9/10 = 10 章里对 9 章）。
     镜像正文经 crawler.download_chapter → _clean_text 已做广告行筛查，比对即「筛后一致」。
     相似度 ≥CONTENT_OK_RATIO 计 matched；已比对正文写入 mirror_cache（填充阶段复用，避免重下）。
     返回 (matched, total)；total==0（番茄头章也全锁、无法比对正文）由调用方退化为标题对齐信任。"""
-    matched = total = 0
+    matched = total = fetched = 0
     for n, f_body in fanqie_bodies.items():
         mch = src["wmap"].get(n)
         if not mch:
             continue
+        total += 1   # 镜像有该章 → 计入可比对基数（即使正文取不到也显示 9/10 而非 9/9）
         try:
             m_body = src["crawler"].download_chapter(
                 src["w_meta"]["book_id"], mch["chapter_id"])
@@ -138,12 +148,12 @@ def _content_sample(fanqie_bodies, src, mirror_cache):
             continue
         if not m_body:
             continue
+        fetched += 1
         mirror_cache[n] = m_body
-        total += 1
         ratio = difflib.SequenceMatcher(None, _norm(f_body), _norm(m_body)).ratio()
         if ratio >= CONTENT_OK_RATIO:
             matched += 1
-    return matched, total
+    return matched, total, fetched
 
 
 def _head_verify(fanqie_bodies, head_nums, f_by_num, src, mirror_cache):
@@ -153,10 +163,60 @@ def _head_verify(fanqie_bodies, head_nums, f_by_num, src, mirror_cache):
     故可对多个源**并发**调用（每个源独立 crawler，mirror_cache 线程局部）。
     consistent = 标题对齐 ok 且（无法正文比对则只看标题 / 前十章正文全部通过）。"""
     align = _title_alignment(head_nums, f_by_num, src["wmap"])
-    matched, total = _content_sample(fanqie_bodies, src, mirror_cache)
-    consistent = align["ok"] and (total == 0 or matched == total)
+    matched, total, fetched = _content_sample(fanqie_bodies, src, mirror_cache)
+    # 一致 = 标题对齐 ok 且（无正文可比 → 只信标题 / 所有取到正文的章都一致）
+    consistent = align["ok"] and (fetched == 0 or matched == fetched)
     return {"site": src["site"], "consistent": consistent, "align": align,
             "matched": matched, "total": total}
+
+
+def _est_total(w_cat):
+    """quick 探测目录（仅首尾两页）估算总章数：取最大编号章号（末页多为最后一章）。"""
+    nums = [c["num"] for c in w_cat if c.get("num") is not None]
+    return max(nums) if nums else len(w_cat)
+
+
+_AD_FEATURE_RE = re.compile(
+    r"请收藏|记住本站|最快更新|天才一秒|永久.{0,6}域名|笔趣阁.{0,6}(网址|地址)|"
+    r"^https?://\S+$|^www\.\S+$|加入书签|章节错误|点击报错|一秒记住|手机用户请浏览|"
+    r"阅读最新章节|最新章节全文阅读|手机阅读"
+)
+
+
+def _probe_ad_density(crawler, book_id, chapter_id):
+    """抓原始正文（不走 _clean_text 广告过滤），统计广告特征行占比 → [0,1]。
+
+    0 = 无广告；>0 正文中混入站点广告（用户要求广告扣分依据）。
+    """
+    try:
+        parts = []
+        suffix = ""
+        extra_re = crawler.cfg["extra_page_re"].format(cid=re.escape(chapter_id))
+        for _ in range(5):
+            path = crawler.cfg["chapter_url"](book_id, chapter_id, suffix)
+            html = crawler._page_html(path)
+            if not html:
+                break
+            text = crawler._extract_content(html)
+            if text:
+                parts.append(text)
+            cur = int(suffix.lstrip("_")) if suffix else 1
+            nxt = None
+            for m in re.finditer(extra_re, html):
+                if int(m.group(1)) > cur:
+                    nxt = m
+                    break
+            if not nxt:
+                break
+            suffix = f"_{nxt.group(1)}"
+        raw = "\n".join(parts)
+        lines = [l.strip() for l in raw.split("\n") if l.strip()]
+        if not lines:
+            return 0.0
+        ad = sum(1 for l in lines if _AD_FEATURE_RE.search(l))
+        return min(1.0, ad / max(1, len(lines)) * 3)   # 广告行权重 ×3（少量广告即明显）
+    except Exception:
+        return 0.0
 
 
 def _catalog_coverage(f_catalog, src):
@@ -308,7 +368,7 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
     target_title = (f_meta or {}).get("title") or query_title
     mirror_host = _up(mirror_url).netloc if mirror_url else ""
 
-    def _resolve_source(sn):
+    def _resolve_source(sn, quick=True):
         try:
             crawler = MIRROR_SOURCES[sn]()
             w_meta = None
@@ -320,7 +380,9 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
                     w_meta = crawler.resolve_book(w_url)
             if not w_meta:
                 return None
-            w_cat = crawler.get_chapter_list(w_meta["book_id"])
+            # 探测阶段 quick：只拉首尾两页确认「书存在 + 总章数」（秒级），
+            # 慢源（bookszw/chensiwx 3000+ 章）不再全量拉表阻塞流程；全量由选源后补拉
+            w_cat = crawler.get_chapter_list(w_meta["book_id"], quick=quick)
             main_re = crawler.cfg.get("main_title_re")
             if main_re:
                 filt = [c for c in w_cat if re.match(main_re, c["title"])]
@@ -328,8 +390,11 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
                     w_cat = filt
             wmap = {c["num"]: c for c in w_cat if c["num"] is not None}
             coverage = (len(set(wmap) & fanqie_nums) if fanqie_nums else len(wmap))
+            # 总章数：quick 下由末页最大章号估算；非 quick 全量时即 len(wmap)
+            total_ch = len(wmap) if not quick else _est_total(w_cat)
             return {"site": sn, "crawler": crawler, "w_meta": w_meta,
-                    "wmap": wmap, "coverage": coverage}
+                    "wmap": wmap, "coverage": coverage,
+                    "total_ch": total_ch, "quick": quick}
         except Exception as e:
             logger.warning(f"mirror {sn} resolve failed: {e}")
             return None
@@ -462,79 +527,105 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     # 头章元数据：连接键=标题「第N章」号（跳过序章/楔子）；供前十章核对用
     head_nums, head_index_set, f_by_num = _fanqie_head(f_catalog)
 
-    # ── 4) 选源：目录校对 → 取番茄头章正文作对照 → 各源前十章核对（并发，各自进行中→结果） ──
+    # ── 4) 每源独立并行校对打分：全量目录(目录分) + 前十章标题/正文(标题+正文分)
+    #        + 正文广告检测(广告扣分) → 总分；所有源出分后取最高分做主源。
+    #        没搜到书的源已在 _resolve_source 被过滤（不进 sources），此处不再处理。
     main_src = None
     head_verified, head_site = False, ""
     mirror_cache, fanqie_bodies = {}, {}
     if sources:
         cand = _candidate_sources(sources, prefer_site, site)
 
-        # 4a) 目录校对：多个镜像源总数/目录不一致时，以番茄目录为基准列出各源覆盖（缺章跨源补）
-        if len(cand) > 1:
-            _step("目录校对", "running", "比对各源目录与番茄…")
-            parts = []
-            for src in cand:
-                cov, tall = _catalog_coverage(f_catalog, src)
-                parts.append(f"{src['site']} 覆盖番茄 {cov}/{tall or len(src['wmap'])}")
-            _step("目录校对", "ok", "； ".join(parts) + "（缺章跨源自动补）")
-
-        # 4b) 取番茄免费头章正文作对照基准（一次、顺序；fanqie_bodies 只读，供并发核对共享）
+        # 4a) 取番茄免费头章正文作对照基准（一次，供所有源并发核对共享；只读）
         if fanqie and fanqie_rid:
             _step("取番茄头章", "running", "抓番茄免费头章正文作对照…")
             fanqie_bodies = _fetch_full_fanqie(
                 fanqie, fanqie_rid, f_by_num, head_nums, fanqie_bodies)
             _step("取番茄头章", "ok", f"{len(fanqie_bodies)} 章可作正文对照")
 
-        # 4c) 每个源的前十章核对**并发**：各自先「核对中」，as_completed → 完成翻 ok/error
+        # 4b) 每源一个 worker 独立推进全链路（各源互不阻塞，快源先出分）：
+        #     全量目录(目录分) → 前十章标题/正文(标题分+正文分) → 正文广告检测(广告扣分) → 总分
         import concurrent.futures as _cfv
+
+        def _audit_worker(src):
+            score_subs = {}
+            # (1) 全量目录：quick 探测只有首尾两页 → 拉全量（慢源在此等待，其余源不受影响）
+            if src.get("quick") and not src.get("_full"):
+                full = src["crawler"].get_chapter_list(src["w_meta"]["book_id"])
+                main_re = src["crawler"].cfg.get("main_title_re")
+                if main_re:
+                    filt = [c for c in full if re.match(main_re, c["title"])]
+                    if filt:
+                        full = filt
+                src["wmap"] = {c["num"]: c for c in full if c["num"] is not None}
+                src["_full"] = True
+            # 目录分：全量目录对番茄编号章覆盖率
+            _cov, _tall = _catalog_coverage(f_catalog, src)
+            src["coverage"] = _cov   # 供 source_order 排序与 meta 展示
+            score_subs["dir"] = round(SCORE_DIR * _cov / max(1, _tall), 1)
+            # (2) 前十章标题 + 正文核对
+            _mc = {}
+            _ver = _head_verify(fanqie_bodies, head_nums, f_by_num, src, _mc)
+            _align_ok = (_ver["align"]["passed"] / max(1, _ver["align"]["expected"]))
+            score_subs["title"] = round(SCORE_TITLE * _align_ok, 1)
+            if _ver["total"] > 0:
+                score_subs["body"] = round(SCORE_BODY * _ver["matched"] / _ver["total"], 1)
+            else:
+                score_subs["body"] = 0.0   # 无正文可比 → 不给正文分（不盲目信任）
+            # (3) 正文广告检测（抽样前 AD_DENSITY_SAMPLE 个 wmap 章）
+            _ad = 0.0
+            _ad_n = 0
+            for _ch in list(src["wmap"].values())[:AD_DENSITY_SAMPLE]:
+                _d = _probe_ad_density(src["crawler"], src["w_meta"]["book_id"],
+                                       _ch["chapter_id"])
+                _ad = max(_ad, _d)
+                _ad_n += 1
+            score_subs["ad"] = round(-SCORE_AD_MAX * _ad, 1)
+            score_subs["total"] = round(
+                score_subs["dir"] + score_subs["title"] + score_subs["body"]
+                + score_subs["ad"], 1)
+            return {"site": src["site"], "ver": _ver, "mc": _mc,
+                    "score": score_subs, "src": src}
+
         done = {}
-        with _cfv.ThreadPoolExecutor(max_workers=max(1, min(3, len(cand)))) as _exv:
-
-            def _verify_worker(src):
-                _mc = {}
-                _ver = _head_verify(fanqie_bodies, head_nums, f_by_num, src, _mc)
-                return _ver, _mc
-
-            for _i, src in enumerate(cand):
-                _step(f"校验:{src['site']}", "running", "标题 + 前十章正文比对中…")
-            _fv = {_exv.submit(_verify_worker, src): src for src in cand}
+        with _cfv.ThreadPoolExecutor(max_workers=max(1, min(4, len(cand)))) as _exv:
+            for src in cand:
+                _step(f"校对:{src['site']}", "running", "目录+前十章+广告并行校对中…")
+            _fv = {_exv.submit(_audit_worker, src): src for src in cand}
             for _fut in _cfv.as_completed(_fv):
                 src = _fv[_fut]
                 try:
-                    ver, _mc = _fut.result()
+                    _r = _fut.result()
                 except Exception as e:
-                    logger.warning(f"verify {src['site']} failed: {e}")
-                    _step(f"校验:{src['site']}", "error", f"核对异常（{e}）")
+                    logger.warning(f"audit {src['site']} failed: {e}")
+                    _step(f"校对:{src['site']}", "error", f"校对异常（{e}）")
                     continue
-                done[src["site"]] = (ver, _mc)
-                _detail = (f"标题 {ver['align']['passed']}/{ver['align']['expected']} · "
-                           f"正文比对 {ver['matched']}/{ver['total']}")
-                if ver["consistent"]:
-                    _step(f"校验:{src['site']}", "ok", f"前十章一致（{_detail}）")
-                else:
-                    _step(f"校验:{src['site']}", "error", f"不一致（{_detail}）")
+                done[src["site"]] = _r
+                _s = _r["score"]
+                _ad_note = f" 广告-{abs(_s['ad'])}" if _s["ad"] < 0 else ""
+                _step(f"校对:{src['site']}", "ok",
+                      f"总分 {_s['total']}（目录 {_s['dir']} + 标题 {_s['title']}"
+                      f" + 正文 {_s['body']}{_ad_note}）")
 
-        # 4d) 选择：候选序中第一个一致源；全不一致/核对异常 → 回退 matched/coverage 最佳源
-        _step("选择来源", "running", "按核对结论选主源…")
-        chosen = next((src for src in cand
-                       if src["site"] in done and done[src["site"]][0]["consistent"]), None)
-        if chosen:
-            _ver, _mc = done[chosen["site"]]
-            main_src, head_verified, head_site = chosen, True, chosen["site"]
-            mirror_cache = _mc
-            _step("选择来源", "ok", f"用一致源 {main_src['site']}")
-        elif done:
-            # 全不一致 → 回退：matched 最多、其次 coverage 最高（镜像正文已广告行过滤）
-            _bsite = max(done, key=lambda s: (done[s][0]["matched"], sources[s]["coverage"]))
-            _ver, _mc = done[_bsite]
-            main_src, head_site = sources[_bsite], _bsite
-            mirror_cache = _mc
-            _step("选择来源", "warn",
-                  f"无完全一致源，回退 {_bsite}（镜像正文已广告行过滤）")
+        # 4c) 选主源：prefer_site 置顶同分优先；否则取总分最高者（多源合并下载时仅决定主源优先序）
+        _step("选择来源", "running", "按总分选主源…")
+        if done:
+            _ranked = sorted(done.values(),
+                             key=lambda r: (r["site"] == prefer_site, r["score"]["total"]),
+                             reverse=True)
+            _top = _ranked[0]
+            main_src = _top["src"]
+            main_src["score"] = _top["score"]
+            mirror_cache = _top["mc"]
+            head_site = _top["site"]
+            head_verified = bool(_top["ver"]["consistent"])
+            _step("选择来源", "ok",
+                  f"主源 {main_src['site']}（总分 {_top['score']['total']}"
+                  f"，前十章{'一致' if head_verified else '不一致'}）")
         else:
             main_src = _best_mirror(sources)
             head_site = main_src["site"] if main_src else ""
-            _step("选择来源", "warn", "核对异常，回退覆盖率最高源（未做一致校验）")
+            _step("选择来源", "warn", "所有源校对异常，回退覆盖率最高源")
     else:
         _step("选择来源", "warn", "无镜像源：仅下载番茄免费头章（前十章），不整本落占位")
 
@@ -542,10 +633,36 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     meta = _merged_meta(f_meta, total, platform, main_site=main_site, main_src=main_src,
                         verdict={"head_verified": head_verified, "head_site": head_site})
 
-    # 多源顺序：主源在前，其余按 coverage 降序（缺章跨源补）
+    # 多源合并下载：主源在前（总分优先），其余按总分/覆盖降序——缺章跨源补（用户要求多元合并）
+    def _src_key(s):
+        sc = (s.get("score") or {}).get("total", 0)
+        return (sc, s["coverage"])
     source_order = ([main_src] if main_src else []) + \
         sorted([s for s in sources.values() if s is not main_src],
-               key=lambda s: s["coverage"], reverse=True)
+               key=_src_key, reverse=True)
+
+    # 补全参与下载源的 wmap：quick 探测只有首尾两页 → 拉全量（下载需按章号取 chapter_id）。
+    # 先补主源（下载依赖），其余补缺源按需逐个补；全程 on_step 展示进度（后台慢慢比对目录）。
+    for _si, src in enumerate(source_order):
+        if not src.get("quick") or src.get("_full"):
+            continue
+        _step(f"拉全目录:{src['site']}", "running", f"{src.get('total_ch','?')} 章…")
+        try:
+            full = src["crawler"].get_chapter_list(src["w_meta"]["book_id"])
+            main_re = src["crawler"].cfg.get("main_title_re")
+            if main_re:
+                filt = [c for c in full if re.match(main_re, c["title"])]
+                if filt:
+                    full = filt
+            src["wmap"] = {c["num"]: c for c in full if c["num"] is not None}
+            _cov2, _ = _catalog_coverage(f_catalog, src)
+            src["coverage"] = _cov2
+            src["_full"] = True
+            _step(f"拉全目录:{src['site']}", "ok",
+                  f"{len(src['wmap'])} 章（vs 番茄 {total}）")
+        except Exception as e:
+            logger.warning(f"full wmap {src['site']} failed: {e}")
+            _step(f"拉全目录:{src['site']}", "warn", "拉取失败，用 quick 部分目录")
 
     save_novel(platform, meta, [])   # 重建 info.json（书目先前已建则原地更新 + head 字段）
     downloaded = 0
