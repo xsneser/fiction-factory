@@ -544,42 +544,47 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             _step("取番茄头章", "ok", f"{len(fanqie_bodies)} 章可作正文对照")
 
         # 4b) 每源一个 worker 独立推进全链路（各源互不阻塞，快源先出分）：
-        #     全量目录(目录分) → 前十章标题/正文(标题分+正文分) → 正文广告检测(广告扣分) → 总分
+        #     前十章标题/正文核对(标题分+正文分，秒级) **与** 全量目录补拉(目录分) **并行**，
+        #     慢源拉全量目录期间前十章核对已同时完成；随后广告检测(广告扣分) → 总分。
         import concurrent.futures as _cfv
 
         def _audit_worker(src):
             score_subs = {}
-            # (1) 全量目录：quick 探测只有首尾两页 → 拉全量（慢源在此等待，其余源不受影响）
-            if src.get("quick") and not src.get("_full"):
-                full = src["crawler"].get_chapter_list(src["w_meta"]["book_id"])
-                main_re = src["crawler"].cfg.get("main_title_re")
-                if main_re:
-                    filt = [c for c in full if re.match(main_re, c["title"])]
-                    if filt:
-                        full = filt
-                src["wmap"] = {c["num"]: c for c in full if c["num"] is not None}
-                src["_full"] = True
+            _mc = {}
+            # 并行两个子任务：A=前十章核对（用 quick 前 20 章，秒级） B=全量目录补拉（慢源耗时）
+            def _load_full_cov():
+                if src.get("quick") and not src.get("_full"):
+                    full = src["crawler"].get_chapter_list(src["w_meta"]["book_id"])
+                    main_re = src["crawler"].cfg.get("main_title_re")
+                    if main_re:
+                        filt = [c for c in full if re.match(main_re, c["title"])]
+                        if filt:
+                            full = filt
+                    src["wmap"] = {c["num"]: c for c in full if c["num"] is not None}
+                    src["_full"] = True
+                return _catalog_coverage(f_catalog, src)
+            with _cfv.ThreadPoolExecutor(max_workers=2) as _ex2:
+                _f_head = _ex2.submit(
+                    _head_verify, fanqie_bodies, head_nums, f_by_num, src, _mc)
+                _f_full = _ex2.submit(_load_full_cov)
+                _ver = _f_head.result()      # 秒级：前十章核对先出（不阻塞于慢源全量目录）
+                _cov, _tall = _f_full.result()  # 等全量目录补拉完成
             # 目录分：全量目录对番茄编号章覆盖率
-            _cov, _tall = _catalog_coverage(f_catalog, src)
             src["coverage"] = _cov   # 供 source_order 排序与 meta 展示
             score_subs["dir"] = round(SCORE_DIR * _cov / max(1, _tall), 1)
-            # (2) 前十章标题 + 正文核对
-            _mc = {}
-            _ver = _head_verify(fanqie_bodies, head_nums, f_by_num, src, _mc)
+            # 标题分 + 前十章正文分
             _align_ok = (_ver["align"]["passed"] / max(1, _ver["align"]["expected"]))
             score_subs["title"] = round(SCORE_TITLE * _align_ok, 1)
             if _ver["total"] > 0:
                 score_subs["body"] = round(SCORE_BODY * _ver["matched"] / _ver["total"], 1)
             else:
                 score_subs["body"] = 0.0   # 无正文可比 → 不给正文分（不盲目信任）
-            # (3) 正文广告检测（抽样前 AD_DENSITY_SAMPLE 个 wmap 章）
+            # 广告检测（抽样前 AD_DENSITY_SAMPLE 个 wmap 章）
             _ad = 0.0
-            _ad_n = 0
             for _ch in list(src["wmap"].values())[:AD_DENSITY_SAMPLE]:
                 _d = _probe_ad_density(src["crawler"], src["w_meta"]["book_id"],
                                        _ch["chapter_id"])
                 _ad = max(_ad, _d)
-                _ad_n += 1
             score_subs["ad"] = round(-SCORE_AD_MAX * _ad, 1)
             score_subs["total"] = round(
                 score_subs["dir"] + score_subs["title"] + score_subs["body"]
