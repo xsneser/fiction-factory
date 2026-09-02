@@ -694,11 +694,24 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     save_novel(platform, meta, [])   # 重建 info.json（书目先前已建则原地更新 + head 字段）
     downloaded = 0
     _dl_lock = threading.Lock()
-    _step("下载正文", "running", f"{len(pending)} 章（多源并行）")
 
-    def _dl_one(idx, ch):
+    # 真正并行的下载源 = 通过校对的源（前十章正文有匹配，同一本书且可作正文源），按分数降序。
+    # 用户要求「多源真正并行」：不再让主源独占全部章节，而是把章节轮询分片给多个通过源同时下载；
+    # 某源缺章/失败时仍回退 source_order 其余源补缺（保持多源合并）。
+    _dl_srcs = []
+    if done:
+        _passed = sorted([r for r in done.values() if r["audit"]["head_m"] > 0],
+                         key=lambda r: r["score"]["total"], reverse=True)
+        _dl_srcs = [r["src"] for r in _passed]
+    if not _dl_srcs and main_src:
+        _dl_srcs = [main_src]
+
+    _step("下载正文", "running", f"{len(pending)} 章（{len(_dl_srcs)} 源并行）")
+
+    def _dl_one(idx, ch, prefer=None):
         """下载单章（镜像多源合并 + 番茄头章覆盖）→ (有正文, 实际用源site, 章号fnum)。
 
+        prefer：该章优先使用的源（多源并行分片）；prefer 缺章/失败时按 source_order 顺序回退补缺。
         返回实际提供正文的源，供前端左栏显示「下载中 第N章」；镜像正文缺失时为 None。"""
         nonlocal downloaded
         fnum = _parse_chapter_num(ch.get("title", ""))
@@ -711,7 +724,10 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                 used_site = main_src["site"] if main_src else (
                     source_order[0]["site"] if source_order else None)
             else:
-                for src in source_order:
+                # prefer 源优先，其余按 source_order（主源在前）回退补缺
+                _order = ([prefer] if prefer else []) + \
+                    [s for s in source_order if s is not prefer]
+                for src in _order:
                     mch = src["wmap"].get(fnum)
                     if mch:
                         try:
@@ -751,12 +767,18 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                 downloaded += 1
         return bool(content), used_site, fnum
 
-    # 多源并行下载：章节间并发（每章内部仍按 source_order 多源合并补缺）。
+    # 多源真正并行下载：章节间并发 + 每章轮询分片给一个「通过校对的源」做负责源（prefer），
+    # 各源各下一部分章节真正并行提速；负责源缺章/失败时内部仍按 source_order 回退补缺。
     # 并发数上限（默认 6）：兼顾提速与源站压力；慢源 download_chapter 自身无 sleep，靠并发控速。
     _dl_workers = max(1, min(_DL_WORKERS, len(pending)))
     import concurrent.futures as _cfd
     with _cfd.ThreadPoolExecutor(max_workers=_dl_workers) as _exd:
-        _futs = {_exd.submit(_dl_one, int(ch["index"]), ch): ch for ch in pending}
+        _n_src = max(1, len(_dl_srcs))
+        _futs = {}
+        for _i, ch in enumerate(pending):
+            # 轮询分片：章节 i → 负责源 _dl_srcs[i % _n_src]（真正多源并行下载）
+            _prefer = _dl_srcs[_i % _n_src]
+            _futs[_exd.submit(_dl_one, int(ch["index"]), ch, _prefer)] = ch
         for _i, _fut in enumerate(_cfd.as_completed(_futs)):
             _ch = _futs[_fut]
             try:

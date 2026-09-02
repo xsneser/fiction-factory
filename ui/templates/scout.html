@@ -730,7 +730,9 @@ function pollCrawlProgress() {
                             _det = g.n + ' 个源，通过 ' + g.ok + ' 个'
                                 + (g.running ? '（比对中）' : '');
                         } else { // dl
-                            _det = g.detail ? ('当前 ' + g.detail) : '进行中…';
+                            // 下载：running 显当前章；ok/warn（无 running）显完成
+                            _det = g.running ? (g.detail ? ('当前 ' + g.detail) : '进行中…')
+                                : (g.err ? '下载失败' : '完成');
                         }
                         return '<div class="cp-step ' + _sCls + '"><span class="ic">' + _sIc + '</span>'
                             + '<span>' + escapeHtml(labelTxt)

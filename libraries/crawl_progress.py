@@ -18,8 +18,10 @@ _PATH = os.path.join("storage", "crawl_progress.json")
 _DEFAULT_TASK = "default"
 _TERMINAL_STATES = ("done", "error", "cancelled")
 _KEEP_TERMINAL_SECONDS = 60
-# 步骤清单上限：保最新 N 条（综合抓取多源时含 目录校对/取番茄头章/每源校验等，放宽防挤掉早期步）
-_MAX_STEPS = 24
+# 步骤清单上限：保最新 N 条（综合抓取多源时含 目录校对/取番茄头章/每源校验/下载进度等。
+# 17 源 × 3 阶段（镜像解析/校对/下载）≈ 51 + 操作步骤 ≈ 60+；设 120 保证完整流程不被掐尾，
+# 避免下载阶段新增步骤时挤掉早期「解析番茄/创建书目」导致前端操作顺序错乱）
+_MAX_STEPS = 120
 
 # 步骤状态枚举（前端映射图标/颜色）
 _STEP_RUNNING = "running"
