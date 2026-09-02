@@ -606,10 +606,12 @@ class WebnovelCrawler:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     # ── 基础请求 ──
-    def _fetch(self, path: str, timeout: int = 15) -> Optional[str]:
-        """GET base_url+path，瞬态失败小退避重试 3 次（30 分钟大下载中途不因抖动崩掉）。"""
+    def _fetch(self, path: str, timeout: int = 15, retries: int = 3) -> Optional[str]:
+        """GET base_url+path，瞬态失败小退避重试 3 次（30 分钟大下载中途不因抖动崩掉）。
+
+        retries=0：单次请求即返回（章表探测用；失败页由 get_chapter_list 判断后自行处理）。"""
         url = path if path.startswith("http") else self.cfg["base_url"] + path
-        for attempt in range(3):
+        for attempt in range(max(1, retries)):
             try:
                 r = self.session.get(url, timeout=timeout)
                 if r.status_code == 200:
@@ -734,19 +736,17 @@ class WebnovelCrawler:
 
         返回 [{chapter_id, title, href, num}]（未赋 index，由 download_webnovel 过滤后编号）。
         终止条件：某页 0 个新 href（实测末页后重复返回 HTTP 200，不 404）。
+
+        性能：bookszw/chensiwx 等大书（3000+ 章）章表分 150 页、服务器单页响应 ~0.74s，
+        串行拉全约 110-125s（并发必被 429 限流丢章，不可用）。此处用「第 1 页探测总页数
+        → 只翻已知页 + 失败页补拉」，减少空翻且不丢章。非分页源走串行原逻辑。
         """
         link_re = self.cfg["chapter_link_re"]
 
         def _num_rank(c):
             return 0 if _parse_chapter_num(c["title"]) is not None else 1
 
-        by_href: dict = {}   # 同 href 去重：页顶「开始阅读」按钮常与真正的「第1章」指向同一章，
-        #                    无编号标题排后，重复时替换为带「第N章」编号的那条
-        for page in range(1, max_pages + 1):
-            path = self.cfg["chapter_list_page"](book_id, page)
-            html = self._fetch(path)
-            if not html:
-                break
+        def _add_page(html, by_href):
             new = 0
             for m in link_re.finditer(html):
                 href, cid, inner = m.group(1), m.group(2), m.group(3)
@@ -757,8 +757,46 @@ class WebnovelCrawler:
                 else:
                     by_href[href] = entry
                     new += 1
-            if new == 0:
-                break   # 末页后重复页 → 终止
+            return new
+
+        by_href: dict = {}   # 同 href 去重：页顶「开始阅读」按钮常与真正的「第1章」指向同一章，
+        #                    无编号标题排后，重复时替换为带「第N章」编号的那条
+        first = self._fetch(self.cfg["chapter_list_page"](book_id, 1))
+        if not first:
+            return []
+        _add_page(first, by_href)
+        # 探测总页数：bookszw/chensiwx 第 1 页含全部分页链接 → 只翻已知页，省去探测性空翻
+        page_nums = []
+        for m in re.finditer(r'index_(\d+)\.html', first):
+            page_nums.append(int(m.group(1)))
+        if ":" in book_id:
+            bid = book_id.split(":")[1]
+            for m in re.finditer(re.escape(bid) + r'_(\d+)/', first):
+                page_nums.append(int(m.group(1)))
+        if page_nums:
+            pages = [p for p in range(2, min(max(page_nums), max_pages) + 1)]
+            failed = []
+            for p in pages:
+                html = self._fetch(self.cfg["chapter_list_page"](book_id, p), retries=0)
+                if html:
+                    _add_page(html, by_href)
+                else:
+                    failed.append(p)
+            # 失败页统一补拉（带短间隔，避限流）
+            for p in failed:
+                html = self._fetch(self.cfg["chapter_list_page"](book_id, p))
+                if html:
+                    _add_page(html, by_href)
+        else:
+            # 无分页线索 → 串行翻页（原逻辑，失败页重试一次不中断）
+            for page in range(2, max_pages + 1):
+                html = self._fetch(self.cfg["chapter_list_page"](book_id, page), retries=0)
+                if not html:
+                    html = self._fetch(self.cfg["chapter_list_page"](book_id, page))
+                if not html:
+                    break
+                if _add_page(html, by_href) == 0:
+                    break   # 末页后重复页 → 终止
         if not by_href:
             return []
         catalog = list(by_href.values())
