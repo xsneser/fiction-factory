@@ -221,7 +221,8 @@ SITES = {
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
     },
-    # 精彩小说网：书页只列近章，全目录 /book/{b}/{p}/（每页近 20 章），正文 /read/{b}/{cid}/ 容器 #novelbody
+    # 精彩小说网：书页只列近章，全目录 /book/{b}/{p}/（每页近 20 章），正文 /read/{b}/{cid}/ 容器 #novelbody；
+    # 长章正文多页且续页号偏移：第1页 = base {cid}/，第2页 = _1，第3页 = _2…（extra_page_base=0）
     "jcxs": {
         "name": "精彩小说网",
         "base_url": "https://www.jcxs.org",
@@ -241,7 +242,9 @@ SITES = {
         "chapter_link_re": re.compile(
             r'<a[^>]*href="(/read/\d+/(\d+)/)"[^>]*>'
             r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
-        "extra_page_re": r"(?!)",
+        # 长章续页 /read/{b}/{cid}_N/（组1=页号）；base 页视为 0 号 → _1(第2页) 才会被跟随
+        "extra_page_re": r'href="[^"]*?/read/\d+/{cid}_(\d+)/"',
+        "extra_page_base": 0,
         "content_div_id": "novelbody",
         # 容器头部导航噪音（字体/护眼/页签/上下章）与底部阅读模式提示过滤
         "drop_line_re": [
@@ -868,7 +871,9 @@ class WebnovelCrawler:
                 parts.append(text)
             # 只跟随「页码更大」的续页（兼容 bookszw 双向分页：页2 有回 _1 的上一页链接，
             # 若匹配任意 _N 会在页1↔页2 死循环）
-            cur = int(suffix.lstrip("_")) if suffix else 1
+            # base 页号可用 extra_page_base 覆盖（jcxs 续页号偏移：第2页=_1 → base 当 0 号）
+            cur = (int(suffix.lstrip("_")) if suffix
+                   else int(self.cfg.get("extra_page_base", 1)))
             nxt = None
             for m in re.finditer(extra_re, html):
                 if int(m.group(1)) > cur:
