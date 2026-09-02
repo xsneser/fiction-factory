@@ -166,6 +166,15 @@
     animation:cp-shine 2.2s linear infinite; }
 @keyframes cp-shine { from{transform:translateX(-100%)} to{transform:translateX(100%)} }
 .cp-bar.st-done::after, .cp-bar.st-cancelled::after, .cp-bar.st-error::after { animation:none; }
+/* 分段进度条：每章一小段，下载前灰、下载后绿（仅 download 阶段渲染） */
+.cp-segs { display:flex; gap:1px; height:10px; margin-top:10px; overflow:hidden; border-radius:5px; }
+.cp-segs .seg { flex:1 1 0; min-width:1px; background:#21262d; transition:background .2s; }
+.cp-segs .seg.on { background:#3fb950; }
+.cp-segs .seg.fail { background:#f85149; }
+/* 解析中不确定进度条（非 download 阶段）：流动高光，避免「100%」假象 */
+.cp-bar.indeterminate { width:100%; background:linear-gradient(90deg,#21262d,#1f6feb55,#21262d); background-size:200% 100%; animation:cp-flow 1.4s linear infinite; }
+.cp-bar.indeterminate::after { animation:none; }
+@keyframes cp-flow { from{background-position:200% 0} to{background-position:-200% 0} }
 .cp-msg { font-size:12px; color:#8b949e; margin-top:10px; line-height:1.5; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .cp-msg .dot { color:#484f58; }
 .cp-steps { margin-top:10px; padding-left:6px; border-left:2px solid #21262d; display:flex; flex-direction:column; gap:3px; }
@@ -523,11 +532,24 @@ function pollCrawlProgress() {
                 var stale = (t.ts || 0) > 0 && (now - t.ts) > 30 && (state === 'done' || state === 'error' || state === 'cancelled');
                 if (stale) return;
                 var running = (state === 'running' || state === 'paused');
-                var total = t.total > 0 ? t.total : 0;
-                var cur = t.current || 0;
+                var isDownload = t.phase === 'download';
+                // 仅 download 阶段有「章节进度」；解析阶段（search/…）不显示百分比（防 100% 假象）
+                var total = isDownload && t.total > 0 ? t.total : 0;
+                var cur = isDownload ? (t.current || 0) : 0;
                 var pct = total > 0 ? Math.round(cur / total * 100) : 0;
                 if (pct > 100) pct = 100;
                 var title = t.title || tid;
+                // 分段进度条：每章一小段（大书自动聚合成 ≤500 段），前 cur 段绿、其余灰
+                var segHtml = '';
+                if (isDownload && total > 0) {
+                    var segN = Math.min(total, 500);
+                    var onN = Math.max(0, Math.min(segN, Math.round(cur / total * segN)));
+                    var segs = '';
+                    for (var _s = 0; _s < segN; _s++) {
+                        segs += '<span class="seg' + (_s < onN ? ' on' : '') + '"></span>';
+                    }
+                    segHtml = '<div class="cp-segs">' + segs + '</div>';
+                }
                 var stCls = state === 'running' ? 'st-running'
                     : state === 'done' ? 'st-done'
                     : state === 'error' ? 'st-error'
@@ -574,11 +596,12 @@ function pollCrawlProgress() {
                     + '<div class="cp-head">'
                     +   '<div class="cp-title"><span class="cp-ic">' + ic + '</span><span class="ttl">' + escapeHtml(title) + '</span></div>'
                     +   '<div class="cp-num">'
-                    +     '<div class="cp-pct ' + stCls + '">' + (total > 0 ? pct + '%' : (state === 'done' ? '100%' : '—')) + '</div>'
-                    +     (total > 0 ? '<div class="cp-count">' + cur + ' / ' + total + ' 章</div>' : '<div class="cp-count">' + phaseTxt + '</div>')
+                    +     '<div class="cp-pct ' + stCls + '">' + (isDownload && total > 0 ? pct + '%' : (state === 'done' ? '100%' : '…')) + '</div>'
+                    +     (isDownload && total > 0 ? '<div class="cp-count">' + cur + ' / ' + total + ' 章</div>' : '<div class="cp-count">' + phaseTxt + '</div>')
                     +   '</div>'
                     + '</div>'
-                    + '<div class="cp-bar-wrap"><div class="cp-bar ' + stCls + '" style="width:' + (total > 0 ? pct : 0) + '%"></div></div>'
+                    + (isDownload && total > 0 ? segHtml
+                        : '<div class="cp-bar-wrap"><div class="cp-bar ' + stCls + ' indeterminate"></div></div>')
                     + (t.message ? '<div class="cp-msg">' + escapeHtml(t.message) + '</div>' : '')
                     + stepsHtml
                     + actions

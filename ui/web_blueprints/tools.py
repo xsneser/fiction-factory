@@ -151,7 +151,10 @@ def scout_run():
         _state = {"phase": "", "cur": 0, "total": 0}   # 供 on_step 复用当前进度条位置（防跳 0）
 
         def on_progress(phase, current, total, message):
-            _state.update(phase=phase, cur=current, total=total)
+            # 解析阶段（search/…）不推进「章节」进度：total 保持 0 → 前端显示「解析中」而非百分比；
+            # 仅 download 阶段用真实章节数 total/current 驱动分段进度条。
+            disp_total = total if phase == "download" else 0
+            _state.update(phase=phase, cur=current, total=disp_total)
             # 检查取消：如果被取消了就抛异常，让 worker catch 住
             if task_manager.is_cancelled(task_id):
                 raise _cancel_exception
@@ -160,7 +163,7 @@ def scout_run():
                 if task_manager.is_cancelled(task_id):
                     raise _cancel_exception
                 time.sleep(0.5)
-            write_crawl_progress("running", phase, current, total, message,
+            write_crawl_progress("running", phase, current, disp_total, message,
                                  task_id=task_id, title=_tname["title"], extra=_extra)
             if phase == "search":
                 task_manager.progress(task_id, current, total, "搜索", message)

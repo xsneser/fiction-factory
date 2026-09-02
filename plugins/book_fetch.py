@@ -24,6 +24,7 @@ import difflib
 import json
 import logging
 import re
+import threading
 import time
 from typing import Optional
 
@@ -46,6 +47,7 @@ SCORE_TITLE = 15    # 标题一致分：前十章标题通过占比 × SCORE_TIT
 SCORE_BODY = 40     # 前十章正文一致分：前十章正文比对通过占比 × SCORE_BODY
 SCORE_AD_MAX = 10   # 广告扣分上限：正文广告残留密度越高扣越多
 AD_DENSITY_SAMPLE = 3   # 广告检测抽样的头章数（0 = 跳过广告检测）
+_DL_WORKERS = 6     # 多源并行下载并发数（章节间并发；每章内部仍多源合并补缺）
 
 
 def _cjk_len(s):
@@ -688,9 +690,12 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
 
     save_novel(platform, meta, [])   # 重建 info.json（书目先前已建则原地更新 + head 字段）
     downloaded = 0
-    _step("下载正文", "running", f"{len(pending)} 章")
-    for i, ch in enumerate(pending):
-        idx = ch["index"]
+    _dl_lock = threading.Lock()
+    _step("下载正文", "running", f"{len(pending)} 章（多源并行）")
+
+    def _dl_one(idx, ch):
+        """下载单章（镜像多源合并 + 番茄头章覆盖）→ True 有正文落盘。"""
+        nonlocal downloaded
         fnum = _parse_chapter_num(ch.get("title", ""))
         content = ""
         # 镜像正文：先试核对阶段已比对缓存，否则按源顺序下载（内部 _clean_text 广告行过滤）
@@ -701,8 +706,12 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                 for src in source_order:
                     mch = src["wmap"].get(fnum)
                     if mch:
-                        content = src["crawler"].download_chapter(
-                            src["w_meta"]["book_id"], mch["chapter_id"])
+                        try:
+                            content = src["crawler"].download_chapter(
+                                src["w_meta"]["book_id"], mch["chapter_id"])
+                        except Exception as e:
+                            logger.warning(f"dl {src['site']} ch{fnum}: {e}")
+                            content = ""
                         if content:
                             break
         # 头章（番茄免费区域，含前导序章/楔子）→ 番茄权威全文优先（无广告）：仅当番茄正文
@@ -729,11 +738,24 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                 "word_count": _cjk_len(content or ""),
             })
         if content:
-            downloaded += 1
-        if on_progress:
-            on_progress("download", i + 1, len(pending), ch["title"][:30])
-        if i < len(pending) - 1:
-            time.sleep(delay)
+            with _dl_lock:
+                downloaded += 1
+        return bool(content)
+
+    # 多源并行下载：章节间并发（每章内部仍按 source_order 多源合并补缺）。
+    # 并发数上限（默认 6）：兼顾提速与源站压力；慢源 download_chapter 自身无 sleep，靠并发控速。
+    _dl_workers = max(1, min(_DL_WORKERS, len(pending)))
+    import concurrent.futures as _cfd
+    with _cfd.ThreadPoolExecutor(max_workers=_dl_workers) as _exd:
+        _futs = {_exd.submit(_dl_one, int(ch["index"]), ch): ch for ch in pending}
+        for _i, _fut in enumerate(_cfd.as_completed(_futs)):
+            _ch = _futs[_fut]
+            try:
+                _fut.result()
+            except Exception as e:
+                logger.warning(f"dl worker failed {_ch.get('title','')}: {e}")
+            if on_progress:
+                on_progress("download", _i + 1, len(pending), _ch.get("title", "")[:30])
     _step("下载正文", "ok", f"{downloaded} 章（本次新增）")
     if on_progress:
         on_progress("download", len(pending), len(pending),
