@@ -459,6 +459,14 @@
         .char-card .cc-persona { font-size:12px; color:var(--fg-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .char-card .accordion-body { padding:0 16px 14px; }
         .char-card .accordion-body.show { padding:0 16px 14px; }
+
+        /* ─── 提取入库暂存区卡片（复用 char-grid/char-card，加勾选交互） ─── */
+        .review-grid { margin-bottom:4px; }
+        .review-card { position:relative; cursor:pointer; }
+        .review-card .cc-head { padding-right:26px; }
+        .review-card .review-cb { position:absolute; top:14px; right:14px; width:16px; height:16px; accent-color:var(--brand,#1f6feb); cursor:pointer; }
+        .review-card .rc-desc { font-size:13px; line-height:1.65; color:#c9d1d9; }
+        .review-card .rc-meta { font-size:12px; color:#484f58; margin-top:2px; }
         @media (max-width:560px) { .char-grid { grid-template-columns:1fr; } }
         /* 角色库分类标签：默认 12 个 + 「更多」折叠，展开后换行显示全部（解决 34 个标签横向过长） */
         .tabs.char-tabs { flex-wrap:wrap; gap:6px 4px; }

@@ -28,6 +28,7 @@
 <div id="agent-status" style="display:none;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 14px;margin-top:12px">
     <span>🤖 Agent 处理中…</span>
 </div>
+<div id="extract-progress" class="scout-card" style="display:none;margin-top:12px"></div>
 
 {# ─── 结果审查区（agent set_review 呈现候选；勾选后 library_review.js 入库） ─── #}
 <div id="review-area" style="display:none;margin-top:20px"></div>
@@ -114,21 +115,36 @@ function analyzeFrom() {
     var task = '对已下载小说《' + n.title + '》（platform=' + (n.platform || 'fanqie') + '，folder=' + n.folder
         + '，已下载' + (n.saved_chapters || 0) + '章）：按 novel-scout 整本扫读协议，从头顺序逐章读全书'
         + '（章节已下载，直接 read_crawled_novel 读，勿再 fetch_book 重复下载），读到可复用内容随手提炼五类'
-        + '（桥段/情节弧/笑点/角色 + 写作风格规则）；自主决定何时 ingest_library_assets 入库——入库前先'
-        + ' query_arc_library/query_plots/query_gags/query_characters 比对库内已有，结构/机制高度近似的差异化或跳过；'
-        + '上下文变重时用 extract_state 保存（cursor+压缩记忆）并停下汇报「已读到第N章，回复‘继续’续读」；'
-        + '直到读完置 status=done 并汇总汇报。风格规则归属笔名「' + (currentPenName || '') + '」。';
+        + '（桥段/情节弧/笑点/角色 + 写作风格规则）；候选必须通过 drive_ui(set_review) 送入本页暂存区，'
+        + '禁止直接调用 ingest_library_assets；入库前先 query_arc_library/query_plots/query_gags/query_characters 比对库内已有，'
+        + '结构/机制高度近似的差异化或跳过；'
+        + '将成熟候选通过 drive_ui(set_review) 放入提取页暂存区，等待用户在页面勾选确认后入库；持续读完整本，'
+        + '不要按固定章节数停下或等待阶段报告；上下文变重时自行压缩已读内容并继续，直到读完置 status=done。'
+        + '风格规则归属笔名「' + (currentPenName || '') + '」。';
     window.agentSendTask(task);
     showToast('🤖 已交给 Agent 分析提炼', 'info');
 }
 
-/* ─── set_review 命令 → 渲染审查卡（SSE 实时路径） ─── */
+/* ─── 统一暂存区渲染入口：SSE(oncommand) 与轮询(extract-progress) 都汇聚到这里，按数据签名去重 ─── */
+var lastReviewSignature = '';
+function renderReview(data, scroll) {
+    if (!data) return;
+    var sig = '';
+    try { sig = JSON.stringify(data); } catch (ignore) {}
+    if (sig && sig === lastReviewSignature) return;   // 同一批数据已渲染过，跳过
+    lastReviewSignature = sig;
+    renderReviewCards(data, 'review-area');
+    if (scroll) {
+        var area = document.getElementById('review-area');
+        if (area) area.scrollIntoView({behavior:'smooth', block:'start'});
+    }
+}
+
+/* ─── set_review 命令 → 立即渲染暂存区（SSE 实时路径；轮询兜底） ─── */
 window.onnecommand = function(e) {
     var d = e && e.detail;
     if (!d || d.cmd !== 'set_review' || !d.args) return;
-    renderReviewCards(d.args, 'review-area');
-    var area = document.getElementById('review-area');
-    if (area) area.scrollIntoView({behavior:'smooth', block:'start'});
+    renderReview(d.args, true);
 };
 
 /* 入库成功后（library_review.js 回调）：刷新下拉与选中书详情 */
@@ -142,5 +158,33 @@ window.addEventListener('ne:agent-state', function(e) {
     var el = document.getElementById('agent-status');
     if (el) el.style.display = busy ? '' : 'none';
 });
+
+var extractProgressTimer = setInterval(loadExtractProgress, 2000);
+function loadExtractProgress() {
+    fetch('/api/scout/extract-progress').then(function(r) { return r.json(); }).then(function(d) {
+        var el = document.getElementById('extract-progress');
+        if (!el || !d || !d.folder || d.status === 'idle') return;
+        var selected = selectedBook();
+        if (selected && selected.folder && selected.folder !== d.folder) {
+            el.style.display = 'none';
+            return;
+        }
+        var s = d.staged || {}, c = d.committed || {};
+        var read = d.read_end ? ('正在阅读第 ' + d.read_start + '-' + d.read_end + ' 章') : (d.message || '处理中');
+        el.style.display = '';
+        el.innerHTML = '<strong>📖 提取进度</strong> <span class="tag">' + escapeHtml(d.title || d.folder) + '</span>'
+            + '<div style="margin-top:8px;color:#c9d1d9">' + escapeHtml(read) + '</div>'
+            + '<div style="margin-top:6px;color:#8b949e">桥段 ' + (s.plots || 0)
+            + ' · 弧 ' + (s.structures || 0) + ' · 笑点 ' + (s.gags || 0)
+            + ' · 人物 ' + (s.characters || 0) + ' <span style="color:#d29922">（暂存区）</span></div>'
+            + '<div style="margin-top:4px;color:#8b949e">已入库：桥段 ' + (c.plots || 0)
+            + ' · 弧 ' + (c.structures || 0) + ' · 笑点 ' + (c.gags || 0)
+            + ' · 人物 ' + (c.characters || 0) + ' · ' + escapeHtml(d.message || '') + '</div>';
+        if (d.review && (d.review.plots || d.review.structures || d.review.gags || d.review.characters || d.review.style_rules)) {
+            renderReview(d.review, false);
+        }
+    }).catch(function() {});
+}
+loadExtractProgress();
 </script>
 {% endblock %}

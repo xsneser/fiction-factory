@@ -29,7 +29,7 @@ function renderReviewCards(d, areaId) {
     var html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">';
     html += '<button class="btn-primary" onclick="ingestAll()">📦 全部入库</button>';
     html += '<button class="btn" style="background:#30363d;color:#f0f6fc" onclick="ingestSelected()">✅ 入库选中</button>';
-    html += '<span style="font-size:12px;color:#8b949e">勾选下方条目后入库</span>';
+    html += '<span style="font-size:12px;color:#8b949e">勾选下方条目后入库（AI 只负责放入暂存区，入库由你手动确认）</span>';
     html += '</div>';
 
     html += '<div class="tabs" style="margin-bottom:12px">';
@@ -39,57 +39,59 @@ function renderReviewCards(d, areaId) {
     });
     html += '</div>';
 
+    // 复用角色原型库卡片网格样式（char-grid / char-card）
     REVIEW_CATS.forEach(function(c) {
         var items = c.src(d) || [];
         html += '<div class="review-panel" id="review-' + c.key + '"' + (c.key!=='plot'?' style="display:none"':'') + '>';
         if (items.length === 0) {
             html += '<div class="empty" style="padding:30px"><p style="color:#484f58">无提取结果</p></div>';
         } else {
+            html += '<div class="char-grid review-grid">';
             items.forEach(function(item, idx) {
                 var itemHtml = '';
                 try {
-                    itemHtml += '<label class="review-item">';
+                    itemHtml += '<label class="char-card review-card">';
                     itemHtml += '<input type="checkbox" class="review-cb" data-cat="' + c.key + '" data-idx="' + idx + '" checked>';
-                    itemHtml += '<div class="review-content">';
                     if (c.key === 'plot') {
-                        itemHtml += '<div><code>' + escapeHtml(item.category||'') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></div>';
-                        itemHtml += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.description||'').slice(0,120) + '</div>';
-                        if (item.structure) itemHtml += '<div style="font-size:12px;color:#484f58;margin-top:2px">结构: ' + escapeHtml(item.structure).slice(0,100) + '</div>';
+                        itemHtml += '<span class="cc-head"><span class="cc-title"><code class="tag blue">' + escapeHtml(item.category||'桥段') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></span></span>';
+                        itemHtml += '<div class="rc-desc">' + escapeHtml(item.description||'') + '</div>';
+                        if (item.structure) itemHtml += '<div class="rc-meta">结构: ' + escapeHtml(item.structure) + '</div>';
                     } else if (c.key === 'structure') {
-                        itemHtml += '<div><strong>' + escapeHtml(item.name||'') + '</strong></div>';
-                        itemHtml += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.description||'').slice(0,120) + '</div>';
+                        itemHtml += '<span class="cc-head"><span class="cc-title"><code class="tag blue">情节弧</code> <strong>' + escapeHtml(item.name||'') + '</strong></span></span>';
+                        itemHtml += '<div class="rc-desc">' + escapeHtml(item.description||'') + '</div>';
                         // stages 是对象数组（StageNode），逐层取 name 而非整对象 join（防 [object Object]）
                         var stageArr = _arr(item.stages);
                         if (stageArr.length) {
                             var stageNames = stageArr.map(function(s){ return (s && s.name) ? s.name : String(s); });
-                            itemHtml += '<div style="font-size:12px;color:#484f58;margin-top:2px">阶段: ' + escapeHtml(stageNames.join(' → ')).slice(0,100) + '</div>';
+                            itemHtml += '<div class="rc-meta">阶段: ' + escapeHtml(stageNames.join(' → ')) + '</div>';
                         }
                     } else if (c.key === 'gag') {
-                        itemHtml += '<div><code>' + escapeHtml(item.category||'') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></div>';
-                        itemHtml += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.pattern_description||item.description||'').slice(0,120) + '</div>';
+                        itemHtml += '<span class="cc-head"><span class="cc-title"><code class="tag blue">' + escapeHtml(item.category||'笑点') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></span></span>';
+                        itemHtml += '<div class="rc-desc">' + escapeHtml(item.pattern_description||item.description||'') + '</div>';
                     } else if (c.key === 'character') {
                         var arch = _join(item.archetypes, ' / ');
                         var tag0 = _arr(item.tags)[0] || '';
-                        itemHtml += '<div><code>' + escapeHtml(arch || tag0) + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></div>';
-                        itemHtml += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.personality||item.description||'').slice(0,120) + '</div>';
+                        itemHtml += '<span class="cc-head"><span class="cc-title"><code class="tag blue">' + escapeHtml(arch || tag0 || '角色') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></span></span>';
+                        itemHtml += '<div class="rc-desc">' + escapeHtml(item.personality||item.description||'') + '</div>';
                         var cps = _join(item.catchphrases, '、');
-                        if (cps) itemHtml += '<div style="font-size:12px;color:#484f58;margin-top:2px">口癖: ' + escapeHtml(cps).slice(0,80) + '</div>';
+                        if (cps) itemHtml += '<div class="rc-meta">口癖: ' + escapeHtml(cps) + '</div>';
                     } else if (c.key === 'style') {
-                        var kindTag = item.kind === 'prefer' ? '<code style="background:#1f6feb">句式风格</code>' : '<code style="background:#a371f7">禁止内容</code>';
-                        itemHtml += '<div>' + kindTag + ' <strong>' + escapeHtml(item.pattern||'') + '</strong></div>';
-                        if (item.desc) itemHtml += '<div style="font-size:13px;color:#c9d1d9;margin-top:4px">' + escapeHtml(item.desc).slice(0,120) + '</div>';
+                        var kindTag = item.kind === 'prefer' ? '<code class="tag" style="background:#1f6feb">句式风格</code>' : '<code class="tag" style="background:#a371f7">禁止内容</code>';
+                        itemHtml += '<span class="cc-head"><span class="cc-title">' + kindTag + ' <strong>' + escapeHtml(item.pattern||'') + '</strong></span></span>';
+                        if (item.desc) itemHtml += '<div class="rc-desc">' + escapeHtml(item.desc) + '</div>';
                         var reps = _join(item.replacements, '、');
-                        if (reps) itemHtml += '<div style="font-size:12px;color:#484f58;margin-top:2px">替换: ' + escapeHtml(reps).slice(0,80) + '</div>';
+                        if (reps) itemHtml += '<div class="rc-meta">替换: ' + escapeHtml(reps) + '</div>';
                     }
-                    itemHtml += '</div></label>';
+                    itemHtml += '</label>';
                 } catch (err) {
                     if (window.console) console.error('审查卡渲染失败', c.key, item, err);
-                    itemHtml = '<div class="review-item"><div class="review-content">'
-                        + '<div style="color:#d29922">⚠️ 该项解析失败'
-                        + (item && item.name ? '：' + escapeHtml(String(item.name)) : '') + '</div></div></div>';
+                    itemHtml = '<label class="char-card review-card"><span class="cc-head"><span class="cc-title"><code class="tag" style="background:#a371f7">解析失败</code>'
+                        + (item && item.name ? '<strong>' + escapeHtml(String(item.name)) + '</strong>' : '') + '</span></span>'
+                        + '<div class="rc-desc" style="color:#d29922">⚠️ 该项解析失败</div></label>';
                 }
                 html += itemHtml;
             });
+            html += '</div>';
         }
         html += '</div>';
     });
