@@ -180,6 +180,16 @@ def _head_verify(fanqie_bodies, head_nums, f_by_num, src, mirror_cache,
             "matched": matched, "total": total}
 
 
+def _title_match(target: str, got: str) -> bool:
+    """书名是否匹配：去空白/标点后相等，或互相包含（镜像站书页名可能带前缀/后缀）。"""
+    def _norm(s):
+        return re.sub(r"[\s：:，,。.、！!？?《》<>「」『』【】\[\]·~\-—_]*", "", s or "")
+    a, b = _norm(target), _norm(got)
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a
+
+
 def _est_total(w_cat):
     """quick 探测目录（仅首尾两页）估算总章数：取最大编号章号（末页多为最后一章）。
 
@@ -412,6 +422,13 @@ def download_book_merged(title: str = "", url: str = "", book_id: str = "",
                 w_url = crawler.search_book_url(target_title)
                 if w_url:
                     w_meta = crawler.resolve_book(w_url)
+                    # 书名验证：搜索/兜底可能返回同站其他书（尤其 Bing 兜底），书页书名与目标明显
+                    # 不符时视为错误书丢弃，避免解析到错误的书（title 相异且互不包含）
+                    if w_meta and target_title and not _title_match(
+                            target_title, w_meta.get("title", "")):
+                        logger.warning(f"mirror {sn} search 命中书名不符: "
+                                       f"目标「{target_title}」 vs 书页「{w_meta.get('title')}」，丢弃")
+                        w_meta = None
             if not w_meta:
                 # 未找到：仍返回主页 URL（左栏点击 → 该源网站主页），wmap 空表示未命中
                 return {"site": sn, "crawler": crawler, "w_meta": None,

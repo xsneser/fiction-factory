@@ -109,11 +109,12 @@ SITES = {
         "base_url": "https://www.uukan.org",
         "encoding": "utf-8",
         "headers": {"User-Agent": DEFAULT_UA},
-        # 站内搜索 /search?searchkey= 常被 Cloudflare 拦（401）；配置上以便偶发可用，失败自动回退 Bing
+        # 站内搜索：路径式 /search/{书名}.html（实测 200 命中书页）；query 式 /search?searchkey= 被 Cloudflare 拦 401
         "site_search": {
-            "path": "/search", "param": "searchkey", "method": "get",
+            "path_template": "/search/{title}.html",
             "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S),
             "exact": True,
+            "timeout": 10,
         },
         "book_id_re": r"/book/([A-Za-z0-9_-]+)\.html",
         "book_page": lambda b: f"/book/{b}.html",
@@ -647,6 +648,10 @@ class WebnovelCrawler:
             raise RuntimeError(f"无法访问书页: {book_url}")
         title = _meta_content(html, "book_name")
         if not title:
+            # <h1> 书名（比 <title> 干净，后者常带站点后缀如「-UU看书-…」）
+            h1 = re.search(r"<h1[^>]*>\s*([^<]{1,60}?)\s*</h1>", html)
+            title = h1.group(1).strip() if h1 else ""
+        if not title:
             t = re.search(r"<title>([^<]{1,60})</title>", html)
             title = t.group(1).split("_")[0].strip() if t else ""
         return {
@@ -697,12 +702,21 @@ class WebnovelCrawler:
                                 if title in text:
                                     return ss["href_map"](href) if ss.get("href_map") else href
                 else:
-                    url = self.cfg["base_url"] + ss["path"]
-                    _st = int(ss.get("timeout", 12))
-                    if str(ss.get("method", "get")).lower() == "post":
-                        r = self.session.post(url, data={ss["param"]: title}, timeout=_st)
+                    from urllib.parse import quote
+                    if ss.get("path_template"):
+                        # 路径式搜索：书名 URL 编码后拼进路径（如 uukan /search/{书名}.html），
+                        # Cloudflare 站 query 式常 401，路径式可绕过
+                        url = self.cfg["base_url"] + ss["path_template"].format(
+                            title=quote(title))
+                        _st = int(ss.get("timeout", 12))
+                        r = self.session.get(url, timeout=_st)
                     else:
-                        r = self.session.get(url, params={ss["param"]: title}, timeout=_st)
+                        url = self.cfg["base_url"] + ss["path"]
+                        _st = int(ss.get("timeout", 12))
+                        if str(ss.get("method", "get")).lower() == "post":
+                            r = self.session.post(url, data={ss["param"]: title}, timeout=_st)
+                        else:
+                            r = self.session.get(url, params={ss["param"]: title}, timeout=_st)
                     if r.status_code == 200:
                         r.encoding = self.cfg.get("encoding", "utf-8")
                         html = r.text
