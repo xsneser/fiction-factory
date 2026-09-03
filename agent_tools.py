@@ -1786,7 +1786,7 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
         locked = 0
         for i, ch in enumerate(pending):
             content = crawler.download_chapter(novel.book_id, ch["id"])
-            cjk = len(_re.findall(r"[一-鿿]", content or ""))
+            cjk = count_prose_units(content or "")
             if content and content.strip() and cjk >= FANQIE_FREE_MIN_CHARS:
                 save_chapter("fanqie", folder, {
                     "index": ch["index"], "title": ch["title"],
@@ -1955,10 +1955,11 @@ def read_crawled_novel(platform: str = "", folder: str = "",
     novel_storage.load_novel。返回 {ok, title, author, platform, genre,
     chapter_count, chapters:[{index,title,word_count}], chapter:{...}}。
     """
-    from plugins.novel_storage import load_novel
+    from plugins.novel_storage import load_novel, read_chapter
     if not folder:
         raise RuntimeError("请提供 folder（书名目录，来自 list_crawled_novels）")
-    data = load_novel(platform, folder)
+    # 目录只读元数据（几千章的书不整本载正文）；正文单章走 read_chapter 懒加载
+    data = load_novel(platform, folder, with_content=False)
     if not data:
         raise RuntimeError(f"未找到已下载小说：{folder}")
     info, chapters = data["info"], data["chapters"]
@@ -1973,12 +1974,11 @@ def read_crawled_novel(platform: str = "", folder: str = "",
                      for i, c in enumerate(chapters)],
     }
     if chapter:
-        for c in chapters:
-            if c.get("index") == chapter:
-                result["chapter"] = {"index": c.get("index"), "title": c.get("title", ""),
-                                     "content": c.get("content", "")}
-                return result
-        raise RuntimeError(f"章节不存在：第{chapter}章")
+        c = read_chapter(platform, folder, chapter)
+        if not c:
+            raise RuntimeError(f"章节不存在：第{chapter}章")
+        result["chapter"] = {"index": c.get("index"), "title": c.get("title", ""),
+                             "content": c.get("content", "")}
     return result
 
 

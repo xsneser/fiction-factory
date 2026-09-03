@@ -93,6 +93,8 @@ def _parse_chapter_num(title: str):
 
 # ─── 站点适配器注册表 ────────────────────────────────────────────────
 # 新增站点：照抄一条，覆盖必要键即可（其余用默认）。{cid}/{bid} 等模板在调用处替换。
+from core.text_utils import count_prose_units  # noqa: E402
+
 SITES = {
     # 零点看书（笔趣阁克隆）：`/{cat}/{bid}/` 两段数字 URL；正文在 <h1 class="title"> 后（非 div）
     "bookszw": {
@@ -1035,7 +1037,7 @@ class WebnovelCrawler:
                     "index": start + i,
                     "title": ch["title"],
                     "content": content,
-                    "word_count": len(re.findall(r"[一-鿿]", content)),
+                    "word_count": count_prose_units(content),
                 })
             if on_progress:
                 on_progress("download", i + 1, len(selected), ch["title"][:30])
@@ -1149,7 +1151,7 @@ def download_webnovel(site: str = "bookszw", url: str = "", book_id: str = "",
             save_chapter(platform, folder, {
                 "index": ch["index"], "title": ch["title"],
                 "content": content,
-                "word_count": len(_re.findall(r"[一-鿿]", content)),
+                "word_count": count_prose_units(content),
             })
             downloaded += 1
         if on_progress:

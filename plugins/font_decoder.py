@@ -30,6 +30,8 @@ class FanqieDecoder:
     # ─── 解码入口：把正文里的 PUA 密文还原为汉字 ───
     def decode_content(self, content: str) -> str:
         """按 charset 双 mode 解码，返回残留 PUA 最少的结果（无 PUA 的文本原样返回）。"""
+        if not content or self._count_pua(content) == 0:
+            return content   # 无 PUA：早退，省两遍逐字拷贝（榜单/正文大量无密文输入）
         charset = self._load_charset()
         if not charset:
             return content

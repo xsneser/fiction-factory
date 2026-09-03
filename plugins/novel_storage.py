@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -162,8 +163,21 @@ def save_chapter(platform: str, folder: str, ch: dict) -> None:
     _write_chapter(ch_dir, int(ch.get("index") or 0), ch)
 
 
+_LIST_TTL = 2.0
+_list_cache = {"ts": 0.0, "platform": "", "data": None}   # 书库列表短 TTL（下载中新增书 ≤2s 可见）
+
+
 def list_novels(platform: str = "") -> list[dict]:
-    """列出已下载的小说（统一书库）。platform 非空时按 info.json 的 platform 字段过滤。"""
+    """列出已下载的小说（统一书库）。platform 非空时按 info.json 的 platform 字段过滤。
+
+    短 TTL(2s) 缓存整库目录扫描（书籍元数据变化不频繁）；每次返回浅拷贝，避免调用方
+    改写污染缓存。
+    """
+    now = time.time()
+    if (_list_cache["data"] is not None
+            and _list_cache["platform"] == platform
+            and now - _list_cache["ts"] < _LIST_TTL):
+        return [dict(i) for i in _list_cache["data"]]
     ensure_dirs()
     novels = []
     for novel_dir in sorted(d for d in NOVELS_DIR.iterdir() if d.is_dir()):
@@ -189,11 +203,17 @@ def list_novels(platform: str = "") -> list[dict]:
         else:
             info["cover_url"] = ""
         novels.append(info)
+    _list_cache.update(ts=now, platform=platform, data=list(novels))
     return novels
 
 
-def load_novel(platform: str, novel_folder: str) -> Optional[dict]:
-    """加载一本完整的小说数据（统一书库：路径以 folder 为准）。"""
+def load_novel(platform: str, novel_folder: str,
+               with_content: bool = True) -> Optional[dict]:
+    """加载一本小说数据（统一书库：路径以 folder 为准）。
+
+    with_content=False：只读章元数据（index/title/word_count/source），不保留正文——
+    供目录/阅读器列表用，避免几千章把整本正文全部载入内存（正文按章走 read_chapter 懒加载）。
+    """
     try:
         novel_dir = resolve_novel_dir(novel_folder)
     except ValueError:
@@ -215,10 +235,18 @@ def load_novel(platform: str, novel_folder: str) -> Optional[dict]:
         for ch_file in sorted(ch_dir.glob("*.json")):
             try:
                 with open(ch_file, encoding="utf-8") as f:
-                    chapters.append(json.load(f))
+                    ch = json.load(f)
             except Exception:
                 logger.warning("跳过无法解析的章节 %s", ch_file)
                 continue
+            if with_content:
+                chapters.append(ch)
+            else:
+                chapters.append({
+                    "index": ch.get("index", 0),
+                    "title": ch.get("title", ""),
+                    "word_count": ch.get("word_count", 0),
+                })
 
     return {"info": info, "chapters": chapters}
 
@@ -316,3 +344,19 @@ def _safe_name(name: str) -> str:
     import re
     name = re.sub(r'[\\/:*?"<>|]', '_', name).strip()
     return name[:60] or "unknown"
+
+
+def parse_book_id(info: Optional[dict]) -> tuple[str, str]:
+    """归一 info['book_id'] → (平台/源, 数字 id)。
+
+    各平台历史写法不一：merged=`fanqie:{id}`、web=`{site}:{id}`、fanqie=裸数字。
+    返回首个为源（fanqie/web 或镜像 site），第二个为剥离前缀的 id；空返回 ("", "")。
+    只读归一，不改写存量 info（管线 only）。
+    """
+    raw = str((info or {}).get("book_id", "") or "").strip()
+    if not raw:
+        return "", ""
+    if ":" in raw:
+        src, _, rest = raw.partition(":")
+        return src, rest
+    return "fanqie", raw

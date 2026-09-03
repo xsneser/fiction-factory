@@ -114,8 +114,9 @@ def _sched_on_done(stats, pref_site, ok, used_site, window=_DL_MISS_WINDOW):
 
 
 def _cjk_len(s):
-    """中文字符数（与 novel_storage 字数口径一致）。"""
-    return len(re.findall(r"[一-鿿]", s or ""))
+    """字数：中文按字 + 英文按词（与引擎 count_prose_units 同一口径，避免混排章节低估）。"""
+    from core.text_utils import count_prose_units
+    return count_prose_units(s or "")
 
 
 def _norm(text):

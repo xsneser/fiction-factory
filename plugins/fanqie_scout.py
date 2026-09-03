@@ -90,17 +90,23 @@ def _find_cover_url(obj, depth=0):
 
 
 def _load_fanqie_cookie() -> str:
-    """读取番茄登录 Cookie（可空）：优先环境变量 FANQIE_COOKIE，其次 storage/fanqie_cookie.txt。
-    带登录 Cookie 请求时，锁定章节（isChapterLock）的 SSR 可能返回全文而非 200 字预览。"""
-    cookie = os.environ.get("FANQIE_COOKIE", "") or ""
-    if not cookie:
-        try:
-            p = Path("storage") / "fanqie_cookie.txt"
-            if p.exists():
-                cookie = p.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
-    return cookie
+    """读取番茄登录 Cookie（可空）：环境变量 FANQIE_COOKIE 非空优先，其次 storage/fanqie_cookie.txt。
+    带登录 Cookie 请求时，锁定章节（isChapterLock）的 SSR 可能返回全文而非 200 字预览。
+    记录注入来源，便于诊断「锁章预览」是缺 Cookie 还是用了过期 Cookie。"""
+    env = (os.environ.get("FANQIE_COOKIE", "") or "").strip()
+    if env:
+        logger.info("番茄 Cookie 来源：FANQIE_COOKIE 环境变量（%d 字符）", len(env))
+        return env
+    try:
+        p = Path("storage") / "fanqie_cookie.txt"
+        if p.exists():
+            cookie = p.read_text(encoding="utf-8").strip()
+            if cookie:
+                logger.info("番茄 Cookie 来源：storage/fanqie_cookie.txt")
+            return cookie
+    except Exception:
+        pass
+    return ""
 
 
 # 「阅读榜·全品类」合成榜 key 别名：番茄网页榜单没有官方全品类/完本榜（只有 男频/女频 ×
@@ -115,9 +121,11 @@ GENDER_READ_ALL_KEYS = {
     "女频阅读榜": 2, "女频": 2,
 }
 
-# 番茄正文视为「免费全文」的最少 CJK 字数（SVIP 锁定章预览常低于此 → 不当正文落盘，
+# 番茄正文视为「免费全文」的最少字数（SVIP 锁定章预览常低于此 → 不当正文落盘，
 # 与 book_fetch.FREE_FULL_MIN_CHARS 同口径；独立常量避免模块循环导入）
 FANQIE_FREE_MIN_CHARS = 300
+
+from core.text_utils import count_prose_units as _count_prose_units  # noqa: E402
 
 
 class FanqieCrawler:
@@ -1255,7 +1263,7 @@ class FanqieScoutAgent:
         skipped_locked = 0
         for i, ch in enumerate(pending):
             content = self.crawler.download_chapter(novel.book_id, ch["id"])
-            cjk = len(re.findall(r"[一-鿿]", content or ""))
+            cjk = _count_prose_units(content or "")
             if content and content.strip() and cjk >= FANQIE_FREE_MIN_CHARS:
                 save_chapter("fanqie", folder, {
                     "index": ch["index"], "title": ch["title"],

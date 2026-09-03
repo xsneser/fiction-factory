@@ -65,7 +65,7 @@ def novel_reader_page():
     platform = (request.args.get("platform", "") or "fanqie").strip()
     if not folder:
         return redirect(url_for("tools.novels_page"))
-    data = load_novel(platform, folder)
+    data = load_novel(platform, folder, with_content=False)
     if not data:
         return redirect(url_for("tools.novels_page"))
     info = data["info"]
