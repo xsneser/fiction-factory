@@ -233,6 +233,7 @@ var _hotGender = 'male';   // male/female（番茄榜单 gender 数值 1=男 2=�
 var _hotPollCount = 0;
 var _hotNovels = [];       // 当前热榜全量（前端分页展示：前 50 + 加载更多）
 var _hotLimit = 50;
+var _hotSeq = 0;           // 性别/题材切换序号：慢响应回来发现过期即丢弃，防串台
 var _hotCtx = null;   // 热榜书上下文 {title, book_id}：输入框文本被改即失效
 
 (function(){
@@ -257,15 +258,17 @@ var _hotCtx = null;   // 热榜书上下文 {title, book_id}：输入框文本�
 
 /* ─── 热榜侦察 ─── */
 
-/* 平台 tab：仅热榜浏览用（抓取默认综合，不再依赖 tab）；起点/晋江为「即将推出」占位 */
+/* 平台 tab：仅热榜浏览用（抓取默认综合，不再依赖 tab）；其余平台热榜暂无数据源，统一「即将推出」 */
 function switchPlatform(btn) {
     var p = btn.getAttribute('data-platform') || '';
-    if (p !== 'fanqie' && p !== 'web') { showToast('该平台热榜即将推出', 'info'); return; }
+    if (p !== 'fanqie') { showToast('该平台热榜即将推出', 'info'); return; }
     document.querySelectorAll('.hot-tabs .chip').forEach(function(c) { c.classList.remove('active'); });
     btn.classList.add('active');
+    loadHot();
 }
 
 function switchGender(btn) {
+    _hotSeq++;                       // 新一次选择：更早的在途响应全部作废
     _hotGender = btn.getAttribute('data-gender') || 'male';
     _hotGenre = '';                 // 换频默认回到「全部」
     _hotLimit = 50;
@@ -276,6 +279,7 @@ function switchGender(btn) {
 }
 
 function switchGenre(btn) {
+    _hotSeq++;                       // 新一次题材：过期响应丢弃
     _hotGenre = btn.getAttribute('data-genre') || '';
     document.querySelectorAll('#hot-chips .chip').forEach(function(c) { c.classList.remove('active'); });
     btn.classList.add('active');
@@ -287,10 +291,12 @@ function switchGenre(btn) {
 function loadHotRankings() {
     var wrap = document.getElementById('hot-chips');
     if (!wrap) return;
+    var seq = _hotSeq;
     wrap.innerHTML = '<span style="color:#484f58;font-size:12px">题材加载中…</span>';
     fetch('/api/scout/hot/rankings?platform=fanqie&gender=' + encodeURIComponent(_hotGender))
         .then(function(r) { return r.json(); })
         .then(function(d) {
+            if (seq !== _hotSeq) return;   // 期间已切性别：过期响应丢弃
             var chips = [{k: '', label: '全部'}, {k: '阅读榜全品类', label: '📖 阅读榜·全品类'}];
             (d.rankings || []).forEach(function(rk) { chips.push({k: rk.id, label: rk.name}); });
             var html = chips.map(function(c) {
@@ -306,11 +312,13 @@ function loadHotRankings() {
 function loadHot() {
     var el = document.getElementById('hot-list');
     if (!el) return;
+    var seq = _hotSeq;
     _hotPollCount = 0;
     el.innerHTML = '<div class="empty"><p style="color:#484f58">加载中...</p></div>';
     fetchHot().then(function(d) {
+        if (seq !== _hotSeq) return;   // 已切性别/题材：过期响应丢弃
         if (!d || !d.ok) { el.innerHTML = '<div class="empty"><p style="color:#f85149">热榜加载失败</p></div>'; return; }
-        if (d.novels && d.novels.length) { renderHot(d.novels, true); return; }
+        if (d.novels && d.novels.length) { renderHot(d.novels, false); return; }
         if (d.loading || d.refreshing) { pollHot(); return; }
         el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据（上游热榜接口暂不可用，可改用抓取表单直接下载）</p></div>';
     }).catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
@@ -329,7 +337,9 @@ function pollHot() {
         return;
     }
     setTimeout(function() {
+        var seq = _hotSeq;
         fetchHot().then(function(d) {
+            if (seq !== _hotSeq) return;   // 过期响应丢弃
             if (d && d.ok && d.novels && d.novels.length) { renderHot(d.novels, true); return; }
             if (d && d.ok && (d.loading || d.refreshing)) { pollHot(); return; }
             var el = document.getElementById('hot-list');
@@ -338,11 +348,16 @@ function pollHot() {
     }, 2000);
 }
 
-function renderHot(novels, reset) {
+function renderHot(novels, keepLimit) {
     var el = document.getElementById('hot-list');
     if (!el) return;
-    if (!novels || !novels.length) { el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据（上游热榜接口暂不可用，可改用抓取表单直接下载）</p></div>'; return; }
-    if (reset !== false) { _hotNovels = novels; _hotLimit = 50; }
+    if (novels) _hotNovels = novels;
+    if (!keepLimit) _hotLimit = 50;   // 仅显式新加载重置页数；刷新/加载更多保持
+    if (!_hotNovels || !_hotNovels.length) {
+        el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据（上游热榜接口暂不可用，可改用抓取表单直接下载）</p></div>';
+        return;
+    }
+    var total = _hotNovels.length;
     var shown = _hotNovels.slice(0, _hotLimit);
     var html = '';
     shown.forEach(function(n) {
@@ -362,17 +377,18 @@ function renderHot(novels, reset) {
         html += '<button class="small" style="background:#1f6feb;white-space:nowrap" data-title="' + escapeHtml(n.title || '') + '" data-id="' + escapeHtml(n.book_id || '') + '" data-platform="' + escapeHtml(n.platform || 'fanqie') + '" onclick="grabBook(this)">⚡ 抓取</button>';
         html += '</div>';
     });
-    if (_hotNovels.length > shown.length) {
+    if (total > shown.length) {
         html += '<div style="text-align:center;margin-top:10px">'
-              + '<button class="small" onclick="hotLoadMore()">↓ 加载更多（还有 ' + (_hotNovels.length - shown.length) + ' 本）</button>'
-              + '<div style="font-size:11px;color:#484f58;margin-top:4px">共 ' + _hotNovels.length + ' 本 · ' + _hotGender + (_hotGenre ? ' · ' + _hotGenre : '') + '</div></div>';
+              + '<button class="small" onclick="hotLoadMore()">↓ 加载更多（还有 ' + (total - shown.length) + ' 本）</button>'
+              + '<div style="font-size:11px;color:#484f58;margin-top:4px">共 ' + total + ' 本 · ' + (_hotGender === 'female' ? '女频' : '男频')
+              + (_hotGenre ? ' · ' + _hotGenre : '') + '</div></div>';
     }
     el.innerHTML = html;
 }
 
 function hotLoadMore() {
     _hotLimit += 50;
-    renderHot(null, false);
+    renderHot(null, true);   // keepLimit：不重置页数；novels=null 不覆盖已取数据
 }
 
 function formatWords(n) {
@@ -392,6 +408,8 @@ function grabBook(btn) {
     input.value = title || id;
     if (plat !== 'fanqie') {
         // 非番茄平台（未来扩展）：保持旧行为——只填输入框，不做全配置
+        _hotCtx = null;      // 程序赋值不触发 input 事件：显式清热榜书上下文 + 通知
+        updateHotNotice();
         input.focus();
         input.scrollIntoView({behavior:'smooth', block:'center'});
         showToast('已填入「' + (title || id) + '」，点「开始抓取」下载', 'info');
@@ -595,9 +613,15 @@ function fetchControl(action, taskId) {
       }).catch(function() {});
 }
 
+/* 任务卡 暂停/继续/停止 控件事件委托：data-act + data-task-id（tid 含引号也安全，不内联 onclick） */
+document.addEventListener('click', function(ev) {
+    var b = ev.target && ev.target.closest ? ev.target.closest('button[data-act]') : null;
+    if (!b) return;
+    fetchControl(b.getAttribute('data-act') || '', b.getAttribute('data-task-id') || '');
+});
+
 /* ─── 实时进度（crawl-progress 轮询；多任务并行各自进度行；terminal 展示 6s 后消失） ─── */
 var _lastLibraryRefresh = 0;   // 下载中书库节流刷新（≤1次/3s）
-var _terminalHideTimer = null;
 function pollCrawlProgress() {
     fetch('/api/crawl/progress')
         .then(function(r) { return r.json(); })
@@ -656,9 +680,10 @@ function pollCrawlProgress() {
                     var pauseLabel = state === 'paused' ? '▶ 继续' : '⏸ 暂停';
                     var pauseAct = state === 'paused' ? 'resume' : 'pause';
                     var btnCls = state === 'paused' ? 'btn-resume' : 'btn-pause';
+                    // 控件走 data-act/data-task-id + 事件委托（杜绝把含引号的 tid 内联进 onclick 造成断 JS/注入）
                     actions = '<div class="cp-actions">'
-                        + '<button class="small ' + btnCls + '" onclick="fetchControl(\'' + pauseAct + '\',\'' + tid + '\')">' + pauseLabel + '</button>'
-                        + '<button class="small btn-cancel" onclick="fetchControl(\'cancel\',\'' + tid + '\')">⏹ 停止</button>'
+                        + '<button class="small ' + btnCls + '" data-act="' + pauseAct + '" data-task-id="' + escapeHtml(tid) + '">' + pauseLabel + '</button>'
+                        + '<button class="small btn-cancel" data-act="cancel" data-task-id="' + escapeHtml(tid) + '">⏹ 停止</button>'
                         + '</div>';
                 }
                 // 分步消息 → 左右两栏：左=所有源状态（镜像解析:/校对:/下载: 前缀按源名归类），右=操作消息
@@ -755,8 +780,9 @@ function pollCrawlProgress() {
                         }
                         // 左栏每源 = 超链接（新标签打开）：后端已携带该源书页 URL（搜到书）
                         // 或该源主页 URL（解析中/未找到）；后端保证 url 非空，异常兜底 # 不跳内部页。
-                        var _href = s.url || '#';
-                        srcsHtml += '<a class="cp-src ' + sCls + '" href="' + _href
+                        var _href = s.url || '';
+                        if (!/^https?:\/\//i.test(_href)) _href = '#';   // 仅 http(s) 允许成链接（其余降级 #，防 javascript: 注入）
+                        srcsHtml += '<a class="cp-src ' + sCls + '" href="' + escapeHtml(_href)
                             + '" target="_blank" rel="noopener"'
                             + ' title="' + escapeHtml(_dispName + ' · ' + det + '（点击新标签打开该源页面）') + '">'
                             + '<span class="s-ic">' + sIc + '</span>'
@@ -840,7 +866,7 @@ function pollCrawlProgress() {
                 if (srcsHtml || opsHtml) {
                     bodyHtml = '<div class="cp-body">' + srcsHtml + opsHtml + '</div>';
                 }
-                html += '<div class="cp-task ' + stCls + '" data-tid="' + tid + '">'
+                html += '<div class="cp-task ' + stCls + '" data-tid="' + escapeHtml(tid) + '">'
                     + '<div class="cp-head">'
                     +   '<div class="cp-title"><span class="cp-ic">' + ic + '</span><span class="ttl">' + escapeHtml(title) + '</span></div>'
                     +   '<div class="cp-num">'

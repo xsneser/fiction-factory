@@ -10,7 +10,8 @@ window.initNovelReader = function (meta, chapterList) {
     var _srcNames = {fanqie: '番茄', merged: '多源合并'};   // site key → 中文站名
 
     // 拉取镜像源中文名映射（供来源显示；失败时仅显示原始 site key）
-    fetch('/api/scout/sources').then(function (r) { return r.json(); })
+    // ReaderCore 待映射就绪后再 create——否则首章 source 会在映射回来前渲染成 site key
+    var _boot = fetch('/api/scout/sources').then(function (r) { return r.json(); })
       .then(function (d) {
           if (d && d.ok && d.sources) {
               d.sources.forEach(function (s) { _srcNames[s.key] = s.name; });
@@ -51,12 +52,14 @@ window.initNovelReader = function (meta, chapterList) {
         }
     }
 
-    ReaderCore.create({
-        chapters: chapterList || [],
-        pagesNext: 'reader-pages-next',   // 双容器推入动画（与写作台一致）
-        persistKey: 'ne_novel_reader_' + ((meta && meta.folder) || 'x'),
-        getChapterContent: function (ch, cb) {
-            loadOne(ch, function (content) { prefetchAround(ch); cb(content); });
-        },
+    _boot.then(function () {
+        ReaderCore.create({
+            chapters: chapterList || [],
+            pagesNext: 'reader-pages-next',   // 双容器推入动画（与写作台一致）
+            persistKey: 'ne_novel_reader_' + ((meta && meta.folder) || 'x'),
+            getChapterContent: function (ch, cb) {
+                loadOne(ch, function (content) { prefetchAround(ch); cb(content); });
+            },
+        });
     });
 };
