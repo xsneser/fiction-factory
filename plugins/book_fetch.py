@@ -26,6 +26,7 @@ import logging
 import re
 import threading
 import time
+from collections import deque
 from typing import Optional
 
 from plugins.webnovel_scraper import _parse_chapter_num
@@ -48,6 +49,68 @@ SCORE_BODY = 40     # 前十章正文一致分：前十章正文比对通过占�
 SCORE_AD_MAX = 10   # 广告扣分上限：正文广告残留密度越高扣越多
 AD_DENSITY_SAMPLE = 3   # 广告检测抽样的头章数（0 = 跳过广告检测）
 _DL_WORKERS = 6     # 多源并行下载并发数（章节间并发；每章内部仍多源合并补缺）
+
+# ── 自适应均衡 + 自愈 prefer 分片参数（多源并行下载负责源选择；见 _choose_prefer/_sched_on_done） ──
+_DL_MISS_WINDOW = 8      # 负责源未命中滚动窗宽（deque；miss率 = 窗内 1 数 / 宽）
+_DL_MISS_PENALTY = 4.0   # miss率在选源 cost 的权重（0.25 miss ≈ +1 在途负载）
+_DL_MISS_DOWN = 0.5      # miss率超此值：有更健康候选时不再选作 prefer（仍可兜底/自愈回升）
+
+
+def _sched_stats(srcs, window=_DL_MISS_WINDOW):
+    """coordinator-only 每源调度状态（worker 线程从不读写）。
+
+    {site: {"src": 源记录, "load": 以该源为负责源的在途章数,
+            "assigned": 累计被选为负责源次数（均衡 tie-break）,
+            "miss_q": 最近 window 次「负责是否由本源提供」0/1 滚动窗}}"""
+    return {s["site"]: {"src": s, "load": 0, "assigned": 0,
+                        "miss_q": deque([0] * window, maxlen=window)}
+            for s in srcs}
+
+
+def _choose_prefer(avail, stats, window=_DL_MISS_WINDOW,
+                   penalty=_DL_MISS_PENALTY, down=_DL_MISS_DOWN):
+    """从可用候选源里挑本章「负责源」。
+
+    avail = wmap 确实含本章的源（避免白分片）。均衡：cost = load + penalty*miss率，
+    tie-break=累计 assigned（少者优先）→ 全健康源近似轮询均匀交替。
+    自愈：miss率 > down 的源仅当存在更健康候选时被排除当 prefer（仍可作 _dl_one 兜底）；
+    候选全 down → 选最不 down 者（保持探测、失败恢复后可回升）。
+    确定性；avail 空返回 None。"""
+    if not avail:
+        return None
+
+    def _rate(s):
+        return sum(stats[s["site"]]["miss_q"]) / float(window)
+
+    up = [s for s in avail if _rate(s) <= down]
+    pool = up or avail
+    return min(pool, key=lambda s: (stats[s["site"]]["load"]
+                                    + penalty * _rate(s),
+                                    stats[s["site"]]["assigned"]))
+
+
+def _sched_on_done(stats, pref_site, ok, used_site, window=_DL_MISS_WINDOW):
+    """完成回调（仅 coordinator）：释放负责源 load，更新负责源 miss/hit 与提供源自愈。
+
+    负责源 miss = 失败/空，或正文实际由**其它镜像站**提供（兜底）；
+    ok 且 used_site == 负责源 → hit；
+    ok 且 used_site ∈ (None, "fanqie") → 中性（番茄头章权威覆盖/缓存，非负责源之过）；
+    ok 且 used_site 是镜像站（兜底命中）→ 给该提供源追加 0 → down 源自愈回升。"""
+    def _upd(site, miss):
+        stats[site]["miss_q"].append(1 if miss else 0)
+
+    if pref_site in stats:
+        st = stats[pref_site]
+        st["load"] = max(0, st["load"] - 1)
+        if not ok:
+            _upd(pref_site, True)
+        elif used_site == pref_site:
+            _upd(pref_site, False)
+        elif used_site not in (None, "fanqie"):
+            _upd(pref_site, True)
+        # else ok 且 used_site ∈ (None,"fanqie") → 中性，不改 miss 窗
+    if ok and used_site in stats and used_site != pref_site:
+        _upd(used_site, False)   # 实际提供正文的镜像 → 记一次 hit（自愈）
 
 
 def _cjk_len(s):
@@ -894,29 +957,40 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     import concurrent.futures as _cfd
     _dl_ex = _cfd.ThreadPoolExecutor(max_workers=_dl_workers)
     _dl_cancelled = False
-    _n_src = max(1, len(_dl_srcs))
     _dl_cnt = {}   # site → 该源已成功下载章节数（左栏「下载中 共N章」）
     # 有界窗口提交（替代一次性 submit 全量）：在途 future ≤ _dl_workers，每完成一章且未暂停才补位。
     # 这样 tools.py on_progress 的暂停/取消检查点成为真正闸门——暂停时 coordinator 阻塞不再补位，
     # 池线程跑完窗口内章节即空转，不再像旧代码那样把已入队数百章全部排干写盘（暂停形同虚设）。
     # 取消语义不变：on_progress 抛 __CANCELLED__ → except → finally shutdown(cancel_futures=True)。
     # 对 MCP 调用方（on_progress 非阻塞/不抛）行为一致：每完成一章立即补位，等效原排干。
-    _jobs = list(enumerate(pending))   # (原序 i, ch)：保持轮询分片 prefer = _dl_srcs[i % _n_src]
-    _inflight = {}                     # Future → ch
+    # 负责源分派 = 自适应均衡 + 自愈（_choose_prefer/_sched_on_done），取代固定轮询：
+    # 只从确实含该章的全量 wmap 源里按 min(load + penalty*miss率, 累计 assigned) 选负责源。
+    _jobs = list(enumerate(pending))   # (原序 i, ch)：骨架仍按番茄目录原序、一次一章
+    _inflight = {}                     # Future → (ch, pref_site|None)
+    _dl_st = _sched_stats(_dl_srcs)    # 每源调度状态（仅 coordinator 线程读写）
     _done_n = 0
     _next = 0
 
     def _fill(limit):
-        """提交至多 limit 个待下载章节（轮询分片 prefer 保持原语义）。"""
+        """提交至多 limit 个待下载章节；负责源自适应均衡分派（无镜像源时 prefer=None）。"""
         nonlocal _next
         added = 0
         while _next < len(_jobs) and added < limit:
             _i, _ch = _jobs[_next]
             _next += 1
-            # 轮询分片：章节 i → 负责源 _dl_srcs[i % _n_src]（真正多源并行下载）；
-            # 无镜像源（_dl_srcs 空，仅番茄头章）时 prefer=None，_dl_one 已处理
-            _prefer = _dl_srcs[_i % _n_src] if _dl_srcs else None
-            _inflight[_dl_ex.submit(_dl_one, int(_ch["index"]), _ch, _prefer)] = _ch
+            _pref = None
+            if _dl_srcs:
+                # 只从 wmap 确实含本章的源里选负责源（避免白分片）；fnum=None（番外/序章）
+                # _dl_one 镜像分支本就 if fnum is not None 跳过 → prefer=None 与现行为一致
+                _fnum = _parse_chapter_num(_ch.get("title", ""))
+                if _fnum is not None:
+                    _avail = [s for s in _dl_srcs if _fnum in s.get("wmap", {})]
+                    _pref = _choose_prefer(_avail, _dl_st)
+            if _pref is not None:
+                _dl_st[_pref["site"]]["load"] += 1
+                _dl_st[_pref["site"]]["assigned"] += 1
+            _inflight[_dl_ex.submit(_dl_one, int(_ch["index"]), _ch, _pref)] = \
+                (_ch, _pref["site"] if _pref else None)
             added += 1
 
     try:
@@ -924,12 +998,14 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
         while _inflight:
             _done, _ = _cfd.wait(list(_inflight), return_when=_cfd.FIRST_COMPLETED)
             for _fut in _done:
-                _ch = _inflight.pop(_fut)
+                _ch, _pref_site = _inflight.pop(_fut)
                 try:
                     _ok, _us, _fnum = _fut.result()
                 except Exception as e:
                     logger.warning(f"dl worker failed {_ch.get('title','')}: {e}")
                     _ok, _us, _fnum = False, None, None
+                # 自适应调度完成回调：释放负责源 load + 更新 miss/hit + 提供源自愈
+                _sched_on_done(_dl_st, _pref_site, _ok, _us)
                 # 下载中的源：左栏显示转圈 + 「第X章 · 共Y章」（当前章号 + 该源累计已下载数）
                 if _us and _ok:
                     _dl_cnt[_us] = _dl_cnt.get(_us, 0) + 1
