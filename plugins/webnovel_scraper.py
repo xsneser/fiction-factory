@@ -382,8 +382,9 @@ SITES = {
             "path": "/search/", "param": "searchkey", "method": "get",
             "exact": True,
         },
-        "chapter_list_page": lambda b, p: f"/book/{b}/",
+        "chapter_list_page": lambda b, p: f"/index/{b}/" if p == 1 else f"/index/{b}/{p}/",
         "chapter_url": lambda b, cid, suf: f"/read/{b}/{cid}{suf}.html",
+        # 目录页 /index/{bid}/ 每页 50 章（书页 /book/{bid}/ 只显示最新章节，不适用）
         "chapter_link_re": re.compile(
             r'<a[^>]*href="(/read/\d+/(\d+)\.html)"[^>]*>'
             r'([^<]*第[0-9一二三四五六七八九十百千零两]+章[^<]*)</a>', re.S),
@@ -800,6 +801,9 @@ class WebnovelCrawler:
             # 通用分页：/{bid}/{N}.html（uukan /chapter/xxx/2.html）——目录分页链接为纯数字
             for m in re.finditer(re.escape(bid) + r'/(\d+)\.html', html):
                 nums.append(int(m.group(1)))
+            # 目录分页：/index/{bid}/{N}/（cssqs 苍穹书社目录页，每页 50 章）
+            for m in re.finditer(r'/index/' + re.escape(bid) + r'/(\d+)/', html):
+                nums.append(int(m.group(1)))
             return nums
 
         by_href: dict = {}   # 同 href 去重：页顶「开始阅读」按钮常与真正的「第1章」指向同一章，
@@ -832,7 +836,10 @@ class WebnovelCrawler:
                                 pass
                         html = self._fetch(self.cfg["chapter_list_page"](book_id, p), retries=0)
                         if html:
-                            _add_page(html, by_href)
+                            if _add_page(html, by_href) == 0:
+                                # 0 新增 = 重复页（单页全量目录的章号被 _probe_pages 误当分页 → 后续页同内容）
+                                # 或已翻过真实末页 → 提前终止，避免串行空翻到 max_pages（与下方无分页分支 :856 一致）
+                                break
                         else:
                             failed.append(p)
                     # 失败页统一补拉（带短间隔，避限流）
