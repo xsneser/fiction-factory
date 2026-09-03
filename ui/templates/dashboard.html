@@ -3,27 +3,27 @@
 {% from "_flow_stepper.html" import status_badge %}
 <h1>🏠 仪表盘</h1>
 <div class="cards">
-    <div class="card">
+    <div class="card stat-card">
         <div class="label">总书目</div>
         <div class="stat">{{ books|length }}</div>
     </div>
-    <div class="card">
+    <div class="card stat-card">
         <div class="label">笔名数</div>
         <div class="stat">{{ pen_names|length }}</div>
     </div>
-    <div class="card">
+    <div class="card stat-card">
         <div class="label">桥段模板</div>
         <div class="stat">{{ plot_count }}</div>
     </div>
-    <div class="card">
+    <div class="card stat-card">
         <div class="label">情节弧结构</div>
         <div class="stat">{{ struct_count }}</div>
     </div>
-    <div class="card">
+    <div class="card stat-card">
         <div class="label">笑点模式</div>
         <div class="stat">{{ gag_count }}</div>
     </div>
-    <div class="card">
+    <div class="card stat-card">
         <div class="label">角色原型</div>
         <div class="stat">{{ char_count }}</div>
     </div>

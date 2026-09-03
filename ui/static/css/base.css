@@ -272,11 +272,16 @@
         /* Cards */
         .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; margin-bottom:24px; }
         .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:20px; transition:all .2s; }
-        .card:hover { border-color:#58a6ff; }
+        .card:hover { border-color:#58a6ff; box-shadow:0 4px 16px rgba(0,0,0,.35); transform:translateY(-1px); }
         .card .title { font-size:16px; font-weight:600; color:#58a6ff; margin-bottom:8px; }
         .card .meta { font-size:12px; color:#8b949e; margin-bottom:6px; }
         .card .stat { font-size:32px; font-weight:bold; color:#f0f6fc; }
         .card .label { font-size:11px; color:#8b949e; }
+        /* 统计卡专属（P2-1）：标签在上、数字在下、强调色条，层级更清晰 */
+        .stat-card { position:relative; overflow:hidden; padding:18px 20px; }
+        .stat-card::before { content:''; position:absolute; left:0; top:0; right:0; height:3px; background:linear-gradient(90deg, var(--brand), var(--accent)); }
+        .stat-card .label { font-size:12px; color:var(--fg-muted); margin-bottom:10px; letter-spacing:.3px; }
+        .stat-card .stat { font-size:36px; font-weight:700; color:var(--fg-strong); line-height:1.1; }
         /* ─── 笔名与风格页（/profiles）：单栏——顶部笔名切换按钮 + 双标签主区 + 屏幕左侧滑出抽屉 ─── */
         .prof-toprow { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
         .prof-pen-btn { display:flex; align-items:center; gap:10px; padding:10px 16px;
@@ -404,9 +409,11 @@
         .tag.blue { background:#0d1d33; color:#58a6ff; }
         .tag.yellow { background:#332b0d; color:#d29922; }
         .tag.red { background:#330d0d; color:#f85149; }
-        /* Tabs */
-        .tabs { display:flex; gap:4px; margin-bottom:20px; border-bottom:1px solid #30363d; }
-        .tabs a { padding:8px 16px; color:#8b949e; text-decoration:none; font-size:13px; border-bottom:2px solid transparent; }
+        /* Tabs（筛选/切换）：窄容器横向滚动，分类多时可扫读（UI 优化 P2-2） */
+        .tabs { display:flex; gap:4px; margin-bottom:20px; border-bottom:1px solid #30363d; overflow-x:auto; flex-wrap:nowrap; scrollbar-width:thin; padding-bottom:0; }
+        .tabs::-webkit-scrollbar { height:4px; }
+        .tabs::-webkit-scrollbar-thumb { background:#30363d; border-radius:2px; }
+        .tabs a { padding:8px 16px; color:#8b949e; text-decoration:none; font-size:13px; border-bottom:2px solid transparent; white-space:nowrap; flex-shrink:0; }
         .tabs a.active, .tabs a:hover { color:#f0f6fc; border-bottom-color:#58a6ff; }
         /* Agent 面板页签（右侧侧栏） */
         .agent-tabs { display:flex; gap:2px; border-bottom:1px solid #21262d; margin-bottom:8px; }

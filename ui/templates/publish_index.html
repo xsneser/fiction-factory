@@ -11,10 +11,10 @@
 {% set n_wait = books_info|rejectattr('book.status','equalto','published')|list|length %}
 
 <div class="cards" style="margin-bottom:20px">
-    <div class="card"><div class="label">总书目</div><div class="stat">{{ n_all }}</div></div>
-    <div class="card"><div class="label">已上架</div><div class="stat">{{ n_pub }}</div></div>
-    <div class="card"><div class="label">检查通过·可上架</div><div class="stat">{{ n_ok }}</div></div>
-    <div class="card"><div class="label">待处理</div><div class="stat">{{ n_wait }}</div></div>
+    <div class="card stat-card"><div class="label">总书目</div><div class="stat">{{ n_all }}</div></div>
+    <div class="card stat-card"><div class="label">已上架</div><div class="stat">{{ n_pub }}</div></div>
+    <div class="card stat-card"><div class="label">检查通过·可上架</div><div class="stat">{{ n_ok }}</div></div>
+    <div class="card stat-card"><div class="label">待处理</div><div class="stat">{{ n_wait }}</div></div>
 </div>
 
 {% if books_info %}
