@@ -103,6 +103,19 @@ def _load_fanqie_cookie() -> str:
     return cookie
 
 
+# 「阅读榜·全品类」合成榜 key 别名：番茄网页榜单没有官方全品类/完本榜（只有 男频/女频 ×
+# 阅读榜(30万字+)/新书榜(<30万字)，mold 1=新书、2=阅读），完整阅读榜 = 按性别拉全部品类
+# 阅读榜（/api/rank/category/list，每品类官方 top，单次 limit=100 可回满）跨品类去重合并。
+READ_ALL_KEYS = frozenset({
+    "阅读榜全品类", "全品类阅读榜", "阅读榜·全品类", "全部阅读榜", "全品类", "阅读榜",
+})
+# 显式指定性别的全品类阅读榜别名 → 目标 gender 数值（番茄榜单 gender：1=男频 2=女频）
+GENDER_READ_ALL_KEYS = {
+    "男频阅读榜": 1, "男频": 1,
+    "女频阅读榜": 2, "女频": 2,
+}
+
+
 class FanqieCrawler:
     """番茄小说爬虫"""
 
@@ -182,6 +195,16 @@ class FanqieCrawler:
         书名/简介为 PUA 字体加密，经 FanqieDecoder.decode_content 还原为汉字。
         """
         key = (key or "").strip()
+        g = gender
+        if key in GENDER_READ_ALL_KEYS:        # 「男频阅读榜/女频」等显式性别别名 → 锁定性别后走全品类阅读榜
+            g = GENDER_READ_ALL_KEYS[key]
+            key = "阅读榜全品类"
+        if key in READ_ALL_KEYS:               # 「阅读榜·全品类」→ 整性别全品类阅读榜合并（无官方单榜）
+            try:
+                return self.discover_read_rank_all(gender=g) or []
+            except Exception as e:
+                logger.warning(f"read-rank-all failed (gender={g}): {e}")
+                return []
         if key and key != "全部":
             if not key.isdigit():
                 key = self.GENRE_CATEGORY.get(key, "")
@@ -191,8 +214,12 @@ class FanqieCrawler:
                 except Exception as e:
                     logger.warning(f"rank hot list failed (key={key}): {e}")
                     return []
-        # 空/'全部'/未识别的题材 → 聚合头部分类
+        # 空/'全部'/未识别题材 → 聚合。男频沿用头部分类口径；女频无男频那套头部分类，
+        # 且女频全品类书量本就不大 → 女频「全部」直接 = 女频全品类阅读榜
         try:
+            if gender == 2:
+                rows = self.discover_read_rank_all(gender=2)
+                return rows[:count] if (count and count > 0) else rows
             return self._rank_aggregate(count, gender, rank_mold) or []
         except Exception as e:
             logger.warning(f"aggregate hot list failed: {e}")
@@ -263,6 +290,67 @@ class FanqieCrawler:
         for i, n in enumerate(merged[:count]):
             n.rank = i + 1
         return merged[:count]
+
+    def discover_read_rank_all(self, gender: int = 1, per_cat_cap: int = 300) -> list[NovelInfo]:
+        """整性别「阅读榜·全品类」合并榜（无官方单榜的合成口径）。
+
+        番茄阅读榜 = rank_mold 2；榜单页按品类划分（男 19 品类 / 女 18 品类，每品类官方
+        top100 左右）。此处遍历该性别 list_rankings 的全品类，逐类走
+        /api/rank/category/list 翻页拉阅读榜（单次 limit=100 即可回满该品类），
+        PUA 书名/作者/简介同 _novel_from_rank 解码；跨品类按 book_id 去重后按在读量
+        (read_count) 降序重排为整频完整阅读榜。单分类失败跳过不阻断。
+        """
+        label = "male" if gender == 1 else "female"
+        cats = self.list_rankings(gender=label) or []
+        if not cats:
+            logger.warning("discover_read_rank_all: 品类清单为空")
+            return []
+        names = {str(c.get("id")): c.get("name", "") for c in cats if c.get("id")}
+        first_cat = next(iter(names), "258")
+        api = f"{self.BASE_URL}/api/rank/category/list"
+        hdr = {"Accept": "application/json, text/plain, */*",
+               "Referer": f"{self.BASE_URL}/rank/{gender}_2_{first_cat}"}
+        merged: dict[str, NovelInfo] = {}
+        for cat in cats:
+            cid = str(cat.get("id", ""))
+            if not cid:
+                continue
+            try:
+                params = dict(app_id=2503, rank_list_type=3, offset=0, limit=100,
+                              category_id=cid, rank_version="", gender=gender, rankMold=2)
+                offset, total, got = 0, 0, 0
+                while True:
+                    params["offset"] = offset
+                    resp = self.session.get(api, params=params, timeout=self.DETAIL_TIMEOUT,
+                                            headers=hdr)
+                    if resp.status_code != 200:
+                        break
+                    try:
+                        data = resp.json().get("data") or {}
+                    except Exception:
+                        break
+                    items = data.get("book_list") or []
+                    if not items:
+                        break
+                    total = int(data.get("total_num") or 0)
+                    for it in items:
+                        n = self._novel_from_rank(it, cid, names)
+                        if n.book_id and n.book_id not in merged:
+                            merged[n.book_id] = n
+                    got += len(items)
+                    offset += len(items)
+                    # 翻到官方 total / 单品类上限 / 本页已不是满页(limit=100)即停
+                    if (total and offset >= total) or got >= per_cat_cap or len(items) < 100:
+                        break
+                    if offset >= 2000:      # 硬护栏防失控翻页
+                        break
+            except Exception as e:
+                logger.warning(f"read-rank-all category {cid} failed: {e}")
+                continue
+        rows = sorted(merged.values(), key=lambda n: n.hot_score, reverse=True)
+        for i, n in enumerate(rows):
+            n.rank = i + 1
+        return rows
 
     def _novel_from_rank(self, item: dict, category_id: str, names: dict) -> NovelInfo:
         """榜单条目 → NovelInfo：书名/简介字体解码，read_count→hot_score，currentPos→rank。"""

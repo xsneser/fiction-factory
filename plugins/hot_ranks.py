@@ -19,7 +19,7 @@
 
 字段契约与接入方式见 docs/设计文档-多平台热榜接口.md。
 """
-from plugins.fanqie_scout import FanqieCrawler
+from plugins.fanqie_scout import FanqieCrawler, READ_ALL_KEYS
 
 
 class BaseHotRanker:
@@ -53,9 +53,10 @@ class FanqieRanker(BaseHotRanker):
 
     def discover(self, key: str = "", count: int = 10, gender: str = "male",
                  rank_mold: int = 2, **kw) -> list[dict]:
+        # 番茄榜单 gender 数值：1=男频 2=女频（原传 0 是潜伏 bug，女频从未拉成功）
         novels = self._c().discover_hot(
             key=key, count=count,
-            gender=(1 if gender != "female" else 0),
+            gender=(2 if gender == "female" else 1),
             rank_mold=rank_mold)
         return [n.__dict__ for n in novels]
 
