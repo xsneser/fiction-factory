@@ -237,6 +237,7 @@ SITES = {
         "site_search": {
             "path": "/search.html", "param": "s", "method": "post",
             "exact": True,
+            "timeout": 6,
         },
         "chapter_list_page": lambda b, p: (f"/book/{b}/{p}/" if p > 1 else f"/book/{b}/"),
         "chapter_url": lambda b, cid, suf: f"/read/{b}/{cid}{suf}/",
@@ -265,6 +266,10 @@ SITES = {
         ],
         "main_title_re": MAIN_TITLE_RE,
         "request_delay": 0.5,
+        # jcxs.org 服务器响应极慢且波动（书页/目录分页常 Read timed out）：
+        # 缩短超时 + 限制重试（2 次），快速失败避免解析卡数分钟，又对瞬时超时保留一次重试机会
+        "timeout": 8,
+        "retries": 2,
     },
     # 华东看书(蛋蛋文学 www.dandanwx.com)：书页 /shu/{bid}.html 即全量目录（倒序），
     # 章 /shu/{bid}/{cid}.html 正文 #content 含分页 {cid}_N.html；头部「最新网址：www.dandanwx.com第N章 … (第x/y页)」需清理
@@ -605,10 +610,13 @@ class WebnovelCrawler:
             logger.warning("load site clean rules %s failed: %s", site, e)
 
     # ── 基础请求 ──
-    def _fetch(self, path: str, timeout: int = 15, retries: int = 3) -> Optional[str]:
+    def _fetch(self, path: str, timeout: int = None, retries: int = None) -> Optional[str]:
         """GET base_url+path，瞬态失败小退避重试 3 次（30 分钟大下载中途不因抖动崩掉）。
 
-        retries=0：单次请求即返回（章表探测用；失败页由 get_chapter_list 判断后自行处理）。"""
+        retries=0：单次请求即返回（章表探测用；失败页由 get_chapter_list 判断后自行处理）。
+        timeout/retries 可每源配置（SITES[site].timeout / .retries），慢源可快速失败避免长时间阻塞。"""
+        timeout = self.cfg.get("timeout", 15) if timeout is None else timeout
+        retries = self.cfg.get("retries", 3) if retries is None else retries
         url = path if path.startswith("http") else self.cfg["base_url"] + path
         for attempt in range(max(1, retries)):
             try:
@@ -690,10 +698,11 @@ class WebnovelCrawler:
                                     return ss["href_map"](href) if ss.get("href_map") else href
                 else:
                     url = self.cfg["base_url"] + ss["path"]
+                    _st = int(ss.get("timeout", 12))
                     if str(ss.get("method", "get")).lower() == "post":
-                        r = self.session.post(url, data={ss["param"]: title}, timeout=12)
+                        r = self.session.post(url, data={ss["param"]: title}, timeout=_st)
                     else:
-                        r = self.session.get(url, params={ss["param"]: title}, timeout=12)
+                        r = self.session.get(url, params={ss["param"]: title}, timeout=_st)
                     if r.status_code == 200:
                         r.encoding = self.cfg.get("encoding", "utf-8")
                         html = r.text
