@@ -269,6 +269,59 @@ def read_chapter(platform: str, novel_folder: str, index: int) -> Optional[dict]
         return None
 
 
+def read_novel_info(novel_folder: str) -> Optional[dict]:
+    """只读书元数据（info.json）——不扫章节目录。
+
+    供单章 / 成批顺序读免整本目录开销（load_novel 即使 with_content=False 也会遍历
+    全部章节文件建目录）。非法 folder 返回 None。
+    """
+    try:
+        novel_dir = resolve_novel_dir(novel_folder)
+    except ValueError:
+        logger.warning("read_novel_info 非法 folder: %r", novel_folder)
+        return None
+    info_file = novel_dir / "info.json"
+    if not info_file.exists():
+        return None
+    try:
+        with open(info_file, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        logger.warning("跳过无法解析的 info %s", info_file)
+        return None
+
+
+def read_chapter_range(novel_folder: str, start: int, end: int) -> list[dict]:
+    """成批顺序读 [start, end] 真实章号区间（含两端）正文——只读该区间文件，不整本扫盘。
+
+    章节文件按 `####.json` 真实章号命名；缺失章（镜像合并留白/占位）跳过。返回按
+    index 升序、含正文的章节 dict 列表（{index,title,content,word_count[,source]}）。
+    供整本扫读分窗一次取若干章，免每章一次工具往返。
+    """
+    if int(end) < int(start):
+        end = start
+    try:
+        novel_dir = resolve_novel_dir(novel_folder)
+    except ValueError:
+        logger.warning("read_chapter_range 非法 folder: %r", novel_folder)
+        return []
+    ch_dir = novel_dir / "chapters"
+    out = []
+    for idx in range(int(start), int(end) + 1):
+        ch_file = ch_dir / f"{idx:04d}.json"
+        if not ch_file.exists():
+            continue
+        try:
+            with open(ch_file, encoding="utf-8") as f:
+                ch = json.load(f)
+            if ch.get("content"):
+                out.append(ch)
+        except Exception:
+            logger.warning("跳过无法解析的章节 %s", ch_file)
+            continue
+    return out
+
+
 def delete_novel(platform: str, novel_folder: str) -> bool:
     """删除一部小说（统一书库：路径以 folder 为准；非法 folder 拒绝不删）。"""
     try:

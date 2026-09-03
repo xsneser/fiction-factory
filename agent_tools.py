@@ -1947,39 +1947,103 @@ def list_crawled_novels(platform: str = "") -> dict:
 
 
 def read_crawled_novel(platform: str = "", folder: str = "",
-                       chapter: int = 0) -> dict:
-    """读已下载小说的内容：chapter=0 返回元数据+章节目录（标题/字数）；
-    chapter>0 返回该章正文。供 agent 抓取参考书后借鉴设定/写法。
+                       chapter: int = 0, start_chapter: int = 0,
+                       end_chapter: int = 0, max_chapters: int = 25) -> dict:
+    """读已下载小说内容。三种模式互斥（folder 为唯一路径 key，platform 仅作兼容/过滤）：
 
-    统一书库：folder 为唯一路径 key（platform 参数仅作兼容/过滤）。复用
-    novel_storage.load_novel。返回 {ok, title, author, platform, genre,
-    chapter_count, chapters:[{index,title,word_count}], chapter:{...}}。
+    - chapter=0（默认）：只返回元数据 + 章节目录 {chapters:[{index,title,word_count}]}，正文不进。
+    - chapter>0：只返回该章正文 {chapter:{index,title,content,word_count}}——**不再回带整份章节目录**
+      （目录开头 chapter=0 读一次即可；单章走 O(1) 懒加载，不整本扫盘）。
+    - start_chapter>0：成批顺序读 [start_chapter, end_chapter]（end 缺省 = start + max_chapters - 1，
+      max_chapters 默认 25 防单次工具结果过大触发裁剪），返回紧凑
+      {chapters:[{index,title,content,word_count}]}（**无目录回声**）——整本扫读分窗一次取若干章，
+      免每章一次工具往返。
+
+    返回 {ok, title, author, platform, folder, chapter_count, chapters|chapter, ...}。
     """
-    from plugins.novel_storage import load_novel, read_chapter
+    from plugins.novel_storage import (load_novel, read_chapter,
+                                       read_chapter_range, read_novel_info)
     if not folder:
         raise RuntimeError("请提供 folder（书名目录，来自 list_crawled_novels）")
-    # 目录只读元数据（几千章的书不整本载正文）；正文单章走 read_chapter 懒加载
+
+    # ── 成批顺序读（start_chapter>0）——只回窗口正文，不回带目录 ──
+    if start_chapter:
+        lo = int(start_chapter)
+        hi = (int(end_chapter) if (end_chapter and int(end_chapter) >= lo)
+              else lo + int(max_chapters) - 1)
+        if hi < lo:
+            hi = lo
+        chapters = read_chapter_range(folder, lo, hi)
+        info = read_novel_info(folder) or {}
+        return {
+            "ok": True, "title": info.get("title", ""), "author": info.get("author", ""),
+            "platform": info.get("platform", platform or ""), "folder": folder,
+            "chapter_count": info.get("chapter_count", 0),
+            "read_start": lo, "read_end": hi,
+            "chapters": [{"index": c.get("index"), "title": c.get("title", ""),
+                          "word_count": c.get("word_count", 0),
+                          "content": c.get("content", "")} for c in chapters],
+        }
+
+    # ── 单章（chapter>0）——只回该章正文，不回带目录 ──
+    if chapter:
+        c = read_chapter(platform, folder, int(chapter))
+        if not c:
+            raise RuntimeError(f"章节不存在：第{chapter}章")
+        info = read_novel_info(folder) or {}
+        return {
+            "ok": True, "title": info.get("title", ""), "author": info.get("author", ""),
+            "platform": info.get("platform", platform or ""), "folder": folder,
+            "chapter_count": info.get("chapter_count", 0),
+            "chapter": {"index": c.get("index"), "title": c.get("title", ""),
+                        "word_count": c.get("word_count", 0), "content": c.get("content", "")},
+        }
+
+    # ── 目录（chapter=0）——元数据 + 章节目录（with_content=False，正文不进）──
     data = load_novel(platform, folder, with_content=False)
     if not data:
         raise RuntimeError(f"未找到已下载小说：{folder}")
     info, chapters = data["info"], data["chapters"]
-    result = {
+    return {
         "ok": True,
         "title": info.get("title", ""), "author": info.get("author", ""),
         "platform": info.get("platform", platform or ""), "genre": info.get("genre", ""),
         "intro": info.get("intro", ""), "cover": info.get("cover", ""),
-        "book_id": info.get("book_id", ""), "chapter_count": len(chapters),
+        "book_id": info.get("book_id", ""), "folder": folder,
+        "chapter_count": len(chapters),
         "chapters": [{"index": c.get("index", i + 1), "title": c.get("title", ""),
                       "word_count": c.get("word_count", 0)}
                      for i, c in enumerate(chapters)],
     }
-    if chapter:
-        c = read_chapter(platform, folder, chapter)
-        if not c:
-            raise RuntimeError(f"章节不存在：第{chapter}章")
-        result["chapter"] = {"index": c.get("index"), "title": c.get("title", ""),
-                             "content": c.get("content", "")}
-    return result
+
+
+def extract_state(folder: str = "", action: str = "load",
+                  mode: str = "summary", state: dict | None = None) -> dict:
+    """读/存「整本扫读」提取的断点工作状态（storage/extract_work/<folder>.json，每书一个文件）。
+
+    整本顺序通读式提取分多段跑（dsh 会话内无上下文压缩），段间靠本文件续：
+    每段读到自己判断的窗口末尾 → 把「压缩记忆 digest + 游标 cursor + 已入库名称」save 落盘 →
+    下一段 load(summary) 从断点续读（只带 digest、不带旧章原文）。
+
+    action=load（默认）：读状态。mode=summary 只回 {book, cursor, status, memory,
+      committed_counts/names, style_rules_profile}（精简防 dsh 8KB 裁剪；无记录 exists=false）；
+      mode=full 回全部（含 segments_log）。重复读不消费。
+    action=save：需 folder + state（state schema：book{cursor,status,memory{digest,open_segments,
+      people,unresolved},committed{plots,structures,gags,characters},style_rules_profile,
+      segments_log}；缺省补默认）。整体覆盖，返回 {ok, folder, cursor, status}。
+    action=clear：删除该书扫读状态（重新扫读/归档），返回 {ok, cleared}。
+
+    状态文件纯规则读写，无 LLM。
+    """
+    from libraries.extract_state import (clear_extract_state, load_extract_state,
+                                         save_extract_state)
+    if not folder:
+        raise RuntimeError("请提供 folder（书名目录，来自 list_crawled_novels）")
+    if action == "clear":
+        return clear_extract_state(folder)
+    if action == "save":
+        return save_extract_state(folder, state)
+    return load_extract_state(folder, mode=mode)
 
 
 def ingest_library_assets(plots: list | None = None, structures: list | None = None,
@@ -2031,7 +2095,7 @@ def _build_registry():
         # fetch_book = 综合抓取（番茄元数据+权威目录 + 镜像站全文，统一书库）；fetch_novel 番茄专用；
         # fetch_webnovel 镜像站专用）
         fetch_book, fetch_novel, fetch_webnovel, discover_hot, list_rankings, list_crawled_novels, read_crawled_novel,
-        ingest_library_assets,
+        extract_state, ingest_library_assets,
     ]
     seen = set()
     entries = []
