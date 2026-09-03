@@ -15,14 +15,13 @@ description: 侦察/抓取/提取阶段（建书可选前置）。侦察热榜/�
    （`fetch_novel`=番茄专用、`fetch_webnovel`=镜像站专用，高级用；默认请用 `fetch_book`。）
 3. 「读」→ `list_crawled_novels()` 列已下载书库（统一书库，platform 为 info 字段）；`read_crawled_novel(folder, chapter=N)` 读章节目录（默认）或单章正文（folder 为唯一路径 key）。
    > **书已下载时（任务文案给出 folder/书名）跳过抓取**：提取页「分析提取」任务即此场景——直接 `read_crawled_novel(folder=...)` 读正文 → 第 4 步分析呈现，**不要再 `fetch_book` 重复下载**。
-4. **「分析并呈现（默认）」** → 读完参考书后，自主提炼**五类资产**：
-   - **桥段(plot) / 情节弧(structure) / 笑点(gag) / 角色(character)**：字段契约见 NOVEL_AGENT.md 1.2；
-     **弧模板抽多层树**：`read_crawled_novel(chapter=0)` 看章节目录/字数定位各叙事弧的章节边界，再抽样读正文，
-     把每个典型弧拆成**多层弧树**（大弧→子弧→阶段；`structure.stages` 即子弧，子弧用 `children` 继续嵌套，
-     深度/分支按书里真实结构定、**不要求均匀**）。
-   - **写作风格(style_rules)**：读若干章正文后提炼该书的句式风格/用词特点，转成规则列表
-     `[{kind, pattern, desc?, severity?, replacements?}]`——`kind=prefer` 句式风格正向指令（如「句长偏短」）|
-     `ban` 禁止内容（`replacements` 有值=AI 高频词自动去 AI 味替换、空=硬禁句式检测）；
+4. **「分析并呈现（默认）」** → 读完参考书后，**代表性单弧采样**：只挑题材典型、可在别书复用的弧拆成**单弧模板**（≈1.5万–4万字），**不还原全书**、不做「顶层弧覆盖全纵轴」（那是平台书级规则）。提炼前先 `query_arc_library`/`query_plots`/`query_gags` 查库内去重。提炼**五类资产**（字段契约见 NOVEL_AGENT.md 1.2；决策判据速查如下，全量方法论见 `docs/设计文档-外部书目提取-代表性单弧采样.md`）：
+   - **桥段(plot)**：叶弧内切**单场景事件**（0.3–2章/800–2500字）；`structure` 写箭头流程骨架 `[羞辱]→[隐忍]→[亮实力]→[震惊]→[后悔]`；剥掉主角名/金手指/数值、提成 `slots[{name,options}]` 变量槽——**只收结构清晰、可迁移、库里同类少的**。
+   - **情节弧(structure)**：`read_crawled_novel(chapter=0)` 看章节目录，按边界信号（目标开合 / 完整张力呼吸 / 卷·副本·换地图标题 / 1.5万–4万字量级）在抽样正文里圈候选弧。**`total_words`=采样弧自身字数跨度，绝不=全书**。层级判断：目标能拆出 ≥2 个「递进、各自独立开合一次小张力、占 ≥~5千字连续篇幅」的子目标 → `children` 递归（深度/分支按真实结构、**不要求均匀**）；并列小额操作 → 收作本节点 `key_events`；一个都不够格 → 叶 stage。
+   - **笑点(gag)**：抓「为什么好笑」的**机制**→ `pattern_description`（含结构句式）+`fit_scenes`+`examples`；绑定具体角色的口头禅笑点 → 归角色 `catchphrases`，不进 gag。
+   - **内涵/母题(theme)**：弧模板整弧与每 stage 写 `themes:[{name, position(开头/中段/结尾), how(靠哪类事件让读者尝到)}]`——母题≠笑点；参考词汇 公平/成长的代价/身份与伪装/牺牲/归属感/传承与突破（可扩）。此为 scout 桥段母题传导的主要载体（THEME_PLOT_COMPAT 只覆盖内置 plot_dating）。
+   - **角色(character)**：人设类型+口头禅+适配题材，剥与书名绑定的专属剧情；`examples` 注明出处角色。
+   - **写作风格(style_rules)**：抽读 5–15 章 → 句式层转 `prefer` 正向指令（如「句长偏短」）、用词/套话层转 `ban`（`replacements` 有值=AI 高频词自动去 AI 味替换、空=硬禁句式检测）；**规则站在去 AI 味视角、不克隆作者**（平台不做拆书仿写/指纹）；一档 3–8 条 prefer + 5–15 条 ban；
      **归属用户所选笔名**（任务文案里带的笔名，落 `profile_id`；未指定时归默认笔名「枫落」）。
    - 调 `drive_ui(set_review)` 把五类候选呈现到提取页审查区：
      payload `{title, platform?, folder?, downloaded_chapters?, profile_id?, profile_name?,
