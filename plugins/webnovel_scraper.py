@@ -36,6 +36,30 @@ _AD_LINE_RE = re.compile(
     r"^https?://\S+$|^www\.\S+$"
 )
 
+# 镜像分页页眉行：形如「第20章 开始躺平生活（第2页）-《冰河末世，我囤积了百亿物资》」（jcxs 等）。
+# 散文正文不会有此形；标题可为任意字符，非贪婪匹配到第一个（第N页）标记即弃整行。
+_PAGE_HEADER_RE = re.compile(
+    r"^第[0-9一二三四五六七八九十百千零两]+章.*?[（(]第\d+(?:/\d+)?页[)）].*$"
+)
+
+
+def _strip_page_residue(text: str) -> str:
+    """去镜像分页残留：
+    ① 每页「第N章 标题（第M页）…」页眉行（jcxs 等——per-site drop_line_re 锚点常要求「章」后
+       紧跟括号，把标题漏配在中间，兜不住）；
+    ② 拼缝相邻重复段（站方下一页会把上一页末段整句重复一次）。
+    正文不会真有逐字相邻重复的整段，整段折叠安全。块按 \n\n 分（_clean_text 输出格式）。"""
+    out = []
+    for b in (text or "").split("\n\n"):
+        b = b.strip()
+        if not b or _PAGE_HEADER_RE.match(b):
+            continue
+        if out and b == out[-1]:
+            continue
+        out.append(b)
+    return "\n\n".join(out)
+
+
 # 主书章节标题：第N章（阿拉伯或中文数字都算），番外（如「张丽娟（一）」）不匹配
 MAIN_TITLE_RE = r"^第(?:[0-9一二三四五六七八九十百千零两]+)章"
 _CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
@@ -941,7 +965,9 @@ class WebnovelCrawler:
         if drop:
             dr = re.compile("|".join(drop)) if isinstance(drop, (list, tuple)) else re.compile(drop)
             text = "\n\n".join(b for b in text.split("\n\n") if not dr.search(b))
-        return text
+        # 分页残留兜底：drop_line_re 过滤后页眉/重复段可能变成相邻同段，
+        # 统一在此去页眉行 + 折叠相邻重复段（见 _strip_page_residue）
+        return _strip_page_residue(text)
 
     def _extract_content(self, html: str) -> str:
         if self.cfg.get("content_mode") == "after_title":
