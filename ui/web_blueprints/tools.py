@@ -324,6 +324,11 @@ def scout_fetch_control():
                 break
     if not tid:
         return jsonify({"ok": False, "error": "没有进行中的抓取任务"}), 404
+    if not task_manager.get(tid):
+        # foreign 任务（MCP/外部进程直接写 crawl_progress，未登记 task_manager）：
+        # task_manager.pause/cancel 是 no-op，若只翻快照会假暂停——如实拒绝，别假装成功
+        return jsonify({"ok": False,
+                        "error": "该任务由外部进程(MCP)启动，无法在本页暂停/停止——请在发起端控制"}), 409
     t = task_manager.get(tid) or {}
     # 标题/进度权威在 crawl_progress 快照：运行中 on_step「解析番茄」已把数字 book_id/URL 换成
     # 中文书名并写进快照；task_manager 的 title 是启动时 title or direct_id（数字 book_id）从不更新，
@@ -381,9 +386,13 @@ def _spawn_hot_fetch(cache_key: str, platform: str, key: str, gender: str, count
         try:
             from plugins.hot_ranks import discover as hot_discover
             items = hot_discover(platform, key=key, count=count, gender=gender) or []
-            cache = _read_hot_cache()
-            cache[cache_key] = {"ts": time.time(), "schema": _HOT_SCHEMA, "novels": items}
-            _write_hot_cache(cache)
+            # 跨进程锁包读-改-写：多 key 并发后台拉取互不覆盖各自条目
+            from core.json_store import process_file_lock
+            with process_file_lock(_HOT_CACHE_PATH):
+                cache = _read_hot_cache()
+                cache[cache_key] = {"ts": time.time(), "schema": _HOT_SCHEMA,
+                                    "novels": items}
+                _write_hot_cache(cache)
         except Exception as e:
             logging.getLogger("tools").warning(
                 "热榜拉取失败(platform=%s key=%s): %s", platform, key, e)
@@ -463,8 +472,11 @@ def scout_hot_rankings():
                         "rankings": entry.get("rankings", [])})
     from plugins.hot_ranks import list_rankings as hr_list_rankings
     rankings = hr_list_rankings(platform, gender=gender) or []
-    cache[cache_key] = {"ts": time.time(), "schema": _HOT_SCHEMA, "rankings": rankings}
-    _write_hot_cache(cache)
+    from core.json_store import process_file_lock
+    with process_file_lock(_HOT_CACHE_PATH):
+        cache = _read_hot_cache()
+        cache[cache_key] = {"ts": time.time(), "schema": _HOT_SCHEMA, "rankings": rankings}
+        _write_hot_cache(cache)
     return jsonify({"ok": True, "platform": platform, "gender": gender, "rankings": rankings})
 
 

@@ -12,7 +12,7 @@ write 侧 task_id 为空 → 归 `"default"` 键。
 import os
 import time
 
-from core.json_store import file_lock, read_json, write_json_atomic
+from core.json_store import process_file_lock, read_json, write_json_atomic
 
 _PATH = os.path.join("storage", "crawl_progress.json")
 _DEFAULT_TASK = "default"
@@ -44,9 +44,9 @@ def write_crawl_progress(state: str, phase: str = "", current: int = 0,
     """
     tid = task_id or _DEFAULT_TASK
     now = time.time()
-    # 外层锁包住读-改-写（read_json/write_json_atomic 内取同锁为可重入），
-    # 关掉同进程内 read→write 间隙，steps 累积不丢；跨进程仍原子替换（丢步为既有现状）。
-    with file_lock(_PATH):
+    # 跨进程文件锁包住读-改-写（read_json/write_json_atomic 内另取进程内可重入锁），
+    # 修 MCP 进程与 Flask 进程并发 RMW 丢彼此任务/步骤。
+    with process_file_lock(_PATH):
         data = read_crawl_progress()
         tasks = data.get("tasks", {})
         old = tasks.get(tid) or {}
@@ -82,6 +82,8 @@ def write_crawl_progress(state: str, phase: str = "", current: int = 0,
             "message": message or "",
             "ts": now,
         }
+        if state in _TERMINAL_STATES:
+            snap["ended_ts"] = now     # 终态时刻（retention 判断应基于终态而非末次写）
         if title:
             snap["title"] = title
         if extra:
@@ -89,11 +91,16 @@ def write_crawl_progress(state: str, phase: str = "", current: int = 0,
         if steps:
             snap["steps"] = steps
         tasks[tid] = snap
-        # 清理 terminal 状态过旧任务（保留 60s 给前端展示后移除）
+        # 清理终态过旧任务：保留 _KEEP_TERMINAL_SECONDS 供前端展示后移除（以 ended_ts 为终）
+        keep_until = now - _KEEP_TERMINAL_SECONDS
         tasks = {k: v for k, v in tasks.items()
                  if v.get("state") not in _TERMINAL_STATES
-                 or now - v.get("ts", 0) < _KEEP_TERMINAL_SECONDS}
-        write_json_atomic(_PATH, {"tasks": tasks, "active": tid, "ts": now})
+                 or v.get("ended_ts", v.get("ts", 0)) >= keep_until}
+        # active = 最新 running/paused 任务（非“最后写者”——终态快照不再占 active）
+        _actives = [(t.get("ts", 0), k) for k, t in tasks.items()
+                    if t.get("state") in ("running", "paused")]
+        active = max(_actives)[1] if _actives else ""
+        write_json_atomic(_PATH, {"tasks": tasks, "active": active, "ts": now})
         return snap
 
 

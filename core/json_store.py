@@ -42,6 +42,61 @@ def file_lock(path: str | Path) -> Iterator[None]:
         yield
 
 
+@contextmanager
+def process_file_lock(path: str | Path, timeout: float = 10.0) -> Iterator[None]:
+    """跨进程文件锁（同机多进程互斥）：Windows msvcrt.locking / POSIX fcntl.flock。
+
+    `json_store.file_lock` 只是进程内 RLock——MCP 进程与 Flask 进程会并发对同一
+    storage/*.json 读-改-写（crawl_progress / hot_cache），需 OS 级排他。此锁用独立的
+    `<path>.lock` 文件；timeout 内没抢到仍继续执行（尽力而为，避免把 Flask 单线程
+    服务拖死）。
+    """
+    p = _resolved(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = p.with_name(p.name + ".lock")
+    fd = lock_file.open("a+b")
+    try:
+        fd.seek(0)
+        if fd.read(1) == b"":
+            fd.write(b"\x00")
+            fd.flush()
+        fd.seek(0)
+        deadline = time.time() + timeout
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                try:
+                    msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.time() > deadline:
+                        break
+                    time.sleep(0.05)
+        else:
+            import fcntl
+            while True:
+                try:
+                    fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.time() > deadline:
+                        break
+                    time.sleep(0.05)
+        yield
+    finally:
+        try:
+            fd.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        fd.close()
+
+
 def _replace_with_retry(src: Path, dst: Path, attempts: int = 6,
                         delay: float = 0.15) -> None:
     """os.replace 带瞬态重试：Windows 上目标被其他进程瞬态占用（杀软扫描/并发读）
