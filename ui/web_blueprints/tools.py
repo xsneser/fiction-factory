@@ -230,7 +230,7 @@ def scout_run():
                                                 "platform": "merged", "site": _actual_site})
                 return
             if platform == "web":
-                # 网页镜像站（如 wodushu）：download_webnovel 内部已按站点适配器
+                # 网页镜像站（如 bookszw）：download_webnovel 内部已按站点适配器
                 # 解析书→章表→逐章下载落盘；on_progress 在章边界检查暂停/取消
                 from plugins.webnovel_scraper import download_webnovel
                 info, dl = download_webnovel(

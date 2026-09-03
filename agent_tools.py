@@ -1684,24 +1684,6 @@ def _wrap_book_lock(fn):
     return wrapper
 
 
-def preview_diff(book_id: str, snapshot_id: str) -> dict:
-    """预览某次快照与当前书状态的差异（决策点落库前的 diff 审查，只读）。"""
-    from libraries.book_snapshot import preview_diff as _pd
-    return _pd(book_id, snapshot_id)
-
-
-def rollback_book(book_id: str, snapshot_id: str) -> dict:
-    """把书全量回滚到某次快照（恢复至快照时刻状态，谨慎使用）。"""
-    from libraries.book_snapshot import rollback as _rb
-    return _rb(book_id, snapshot_id)
-
-
-def list_snapshots(book_id: str) -> dict:
-    """列出某书的全部快照（新→旧）。"""
-    from libraries.book_snapshot import list_snapshots as _ls
-    return {"book_id": book_id, "snapshots": _ls(book_id)}
-
-
 def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
                 start_chapter: int = 1, end_chapter: int = 0,
                 download_delay: float = 1.0) -> dict:
@@ -1724,7 +1706,6 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
         raise RuntimeError(f"结束章 {effective_end} 小于起始章 {start_chapter}")
     from libraries.crawl_progress import write_crawl_progress
     from plugins.fanqie_scout import FanqieCrawler
-    import re as _re
     import time as _time
     crawler = FanqieCrawler()
     _task_id = f"mcp_fetch_novel_{int(_time.time() * 1000)}"
@@ -1815,7 +1796,7 @@ def fetch_webnovel(site: str = "bookszw", url: str = "", book_id: str = "",
                    download_delay: float = 0.5) -> dict:
     """抓取网页镜像站小说（番茄锁定章需 SVIP 时的替代全文源，如 bookszw 零点看书）。
 
-    按书籍 URL 或 book_id 下载→保存到 storage/novels/web/。章节按列表序号（第1章=1）；
+    按书籍 URL 或 book_id 下载→保存到统一书库 storage/novels/<书名>/。章节按列表序号（第1章=1）；
     chapters<=0（默认）全文下载（可按站点配置过滤番外）；chapters>0 按区间。
     纯抓取、无需 LLM（复用 plugins.webnovel_scraper.download_webnovel + novel_storage）。
     进度实时写入 storage/crawl_progress.json（/scout 页轮询展示）。返回 {ok, title,

@@ -117,7 +117,14 @@ if __name__ == "__main__":
     from plugins.fanqie_scout import FanqieCrawler
     import json as _j
 
-    info = _j.loads(Path("storage/novels/fanqie/十日终焉/info.json").read_text(encoding="utf-8"))
+    # 统一书库：取第一本有 book_id 的书做解码自检（不再硬编码旧 platform 子目录路径）
+    from plugins.novel_storage import NOVELS_DIR
+    _info_file = next(iter(NOVELS_DIR.glob("*/info.json")), None)
+    if not _info_file:
+        print("书库为空，跳过自检"); sys.exit(0)
+    info = _j.loads(_info_file.read_text(encoding="utf-8"))
+    if not info.get("book_id"):
+        print("无可用 book_id 书，跳过自检"); sys.exit(0)
     crawler = FanqieCrawler()
     ch = crawler.get_chapter_list(info["book_id"], 1)[0]
     r = crawler.session.get(f"https://fanqienovel.com/reader/{ch['id']}", timeout=15,

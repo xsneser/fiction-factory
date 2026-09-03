@@ -149,7 +149,7 @@ def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
         "chapter_count": info.get("chapter_count", 0),
         "cover": info.get("cover", ""),
         "intro": info.get("intro", ""),   # 简介（番茄权威，镜像回退）
-        "site": info.get("site", ""),     # 镜像站来源（如 wodushu）
+        "site": info.get("site", ""),     # 镜像站来源（如 bookszw）
         "downloaded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     # 合并来源信息（合并抓取传入）

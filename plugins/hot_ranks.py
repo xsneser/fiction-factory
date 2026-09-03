@@ -19,7 +19,7 @@
 
 字段契约与接入方式见 docs/设计文档-多平台热榜接口.md。
 """
-from plugins.fanqie_scout import FanqieCrawler, READ_ALL_KEYS
+from plugins.fanqie_scout import FanqieCrawler
 
 
 class BaseHotRanker:

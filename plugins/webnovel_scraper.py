@@ -100,13 +100,7 @@ SITES = {
         "encoding": "utf-8",
         "headers": {"User-Agent": DEFAULT_UA},
         # 站内搜索（search_book_url 优先用，失败回退 Bing）：GET base+path?param=书名，
-        # 结果链接正则组1=书页 href（相对路径，resolve 时拼 base）
-        "site_search": {
-            "path": "/ar.php", "param": "keyWord", "method": "get",
-            "link_re": re.compile(r'<a[^>]*href="([^"]+)"[^>]*>([^<]{2,40})</a>', re.S),
-            "exact": True,   # 链接文本需与书名完全一致才命中
-        },
-        # 两段书号：book_id 存 "cat:bid"；章表分页 /index_{p}.html（p>1），每页 +20 章
+        # 结果链接正则组1=书页 href（相对路径，resolve 时拼 base）；两段书号 book_id 存 "cat:bid"
         "book_id_re": r"/(\d+)/(\d+)/",
         "book_page": lambda b: f"/{b.split(':')[0]}/{b.split(':')[1]}/",
         "site_search": {
