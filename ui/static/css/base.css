@@ -377,8 +377,8 @@
         input:focus, select:focus, textarea:focus { border-color:#58a6ff; outline:none; }
         input::placeholder, textarea::placeholder { color:var(--fg-dim); opacity:1; }
         textarea { min-height:80px; resize:vertical; }
-        .form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-        .form-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+        .form-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; }
+        .form-row-3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; }
         /* Buttons —— 主操作用品牌蓝，绿色仅保留给「成功/完成」语义（UI 视觉优化：语义分离） */
         button, .btn { padding:8px 16px; background:var(--brand); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500; transition:all .2s; }
         button:hover, .btn:hover { background:var(--brand-hover); }
