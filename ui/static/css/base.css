@@ -13,6 +13,8 @@
             --fg-muted: #8b949e;
             --fg-dim: #6e7681;
             --accent: #58a6ff;
+            --brand: #1f6feb;          /* 品牌主色：主按钮 / 激活态（UI 优化：与语义色分离） */
+            --brand-hover: #388bfd;
             --success: #238636;
             --success-fg: #3fb950;
             --danger: #da3633;
@@ -377,14 +379,25 @@
         textarea { min-height:80px; resize:vertical; }
         .form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
         .form-row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
-        /* Buttons */
-        button, .btn { padding:8px 16px; background:#238636; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500; transition:all .2s; }
-        button:hover { background:#2ea043; }
-        .btn-primary { background:#238636; color:white; border:none; padding:10px 24px; border-radius:8px; font-size:14px; cursor:pointer; }
+        /* Buttons —— 主操作用品牌蓝，绿色仅保留给「成功/完成」语义（UI 视觉优化：语义分离） */
+        button, .btn { padding:8px 16px; background:var(--brand); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500; transition:all .2s; }
+        button:hover, .btn:hover { background:var(--brand-hover); }
+        .btn-primary { background:var(--brand); color:white; border:none; padding:10px 24px; border-radius:8px; font-size:14px; cursor:pointer; }
+        .btn-primary:hover { background:var(--brand-hover); }
         button.secondary, .btn.secondary { background:#30363d; }
+        button.secondary:hover, .btn.secondary:hover { background:#3d444d; }
         button.danger, .btn.danger { background:#da3633; }
+        button.danger:hover, .btn.danger:hover { background:#b62324; }
         button.small, .btn.small { padding:4px 10px; font-size:12px; }
         a.btn { text-decoration:none; display:inline-block; }
+        /* 主按钮禁用/进行中态 */
+        button:disabled, .btn:disabled { opacity:.5; cursor:not-allowed; }
+        /* 键盘焦点环（可访问性） */
+        button:focus-visible, .btn:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+            outline:2px solid var(--brand); outline-offset:2px;
+        }
+        /* 按钮按压态 */
+        button:active, .btn:active { transform:translateY(1px); filter:brightness(.92); }
         /* Tags */
         .tag { display:inline-block; padding:2px 8px; background:#1f2937; border-radius:12px; font-size:11px; color:#8b949e; margin:2px; }
         .tag.green { background:#0d3322; color:#3fb950; }
