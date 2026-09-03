@@ -49,8 +49,8 @@
         .crumbs .sep { color:var(--fg-dim); }
         .crumbs .cur { color:var(--fg); }
         /* Main */
-        .main-wrapper { flex:1; display:flex; overflow:hidden; min-height:0; }
-        main { flex:1; padding:30px; overflow-y:auto; min-height:0; }
+        .main-wrapper { flex:1; display:flex; overflow:hidden; min-height:0; min-width:0; }
+        main { flex:1; min-width:0; padding:clamp(16px, 2.5vw, 30px); overflow-y:auto; min-height:0; }
         /* Right sidebar - Agent 聊天面板 */
         aside#status-bar {
             width: 360px; background:#161b22; border-left:1px solid #30363d;
@@ -489,4 +489,34 @@
         .world-edit .f-char-toggle:hover { color:#c9d1d9; }
         .world-edit .f-char-body { padding-top:8px; }
         .world-edit .unassigned-card .f-char-toggle { border-top:0; padding:0; }
+
+        /* ═══ UI 视觉检测优化 · 响应式断点体系（2026-09-03）═══
+         * 目标：窄窗口下把空间回归内容区，杜绝表格/表单竖排挤压。
+         * 断点：1200（折叠 Agent 面板）→ 760（导航收窄）→ 560（极窄兜底）。
+         * 折叠由 JS 根据窗口宽度 + 用户锁定偏好控制（见 base.js restoreStatusBar）。 */
+        .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+        .table-scroll table { width:100%; min-width:760px; }
+
+        /* 窄屏兜底：即便 Agent 面板被用户锁定展开，内容区也保持可读 */
+        @media (max-width:1200px){
+            main { padding:clamp(14px, 2vw, 24px); }
+            .cards { grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); }
+        }
+        @media (max-width:900px){
+            /* 表格在 <900 时强制外层滚动，防列挤压 */
+            .table-scroll table { min-width:680px; }
+        }
+        /* 极窄窗口：侧栏信息密度降级（导航收窄为图标列需模板层 data-icon 支持，此处保守处理：仅压缩留白，避免 emoji 被 font-size:0 一并隐藏） */
+        @media (max-width:760px){
+            nav { width:150px; }
+            nav .logo { padding:14px 16px; font-size:18px; }
+            nav a { padding:8px 16px; font-size:13px; }
+            main { padding:12px; }
+        }
+        @media (max-width:560px){
+            .cards { grid-template-columns:1fr; }
+            .form-row, .form-row-3 { grid-template-columns:1fr; }
+            .detail-grid { grid-template-columns:1fr; }
+            .prof-drawer { max-width:min(280px, calc(100vw - 56px)); }
+        }
 

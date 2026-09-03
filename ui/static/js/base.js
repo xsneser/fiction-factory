@@ -32,15 +32,35 @@
         }
         function restoreStatusBar() {
             try {
-                if (localStorage.getItem('ne_status_collapsed') === '1') {
-                    setStatusCollapsed(true);
+                var locked = localStorage.getItem('ne_status_locked');
+                var collapsed = localStorage.getItem('ne_status_collapsed');
+                if (locked === '1') {
+                    setStatusCollapsed(collapsed === '1');
+                } else {
+                    // 未锁定：窄窗口（<1200px）默认折叠，把空间让给内容区；宽窗口默认展开
+                    setStatusCollapsed(window.innerWidth < 1200);
                 }
             } catch(e) {}
         }
+        // 未锁定时随窗口宽度实时折叠/展开（用户手动锁过则尊重其偏好）
+        var _neResizeInit = false;
+        function _neInitStatusResize() {
+            if (_neResizeInit) return;
+            _neResizeInit = true;
+            window.addEventListener('resize', function() {
+                try {
+                    if (localStorage.getItem('ne_status_locked') === '1') return;
+                    var bar = document.getElementById('status-bar');
+                    if (!bar) return;
+                    setStatusCollapsed(window.innerWidth < 1200);
+                } catch(e) {}
+            });
+        }
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', restoreStatusBar);
+            document.addEventListener('DOMContentLoaded', function(){ restoreStatusBar(); _neInitStatusResize(); });
         } else {
             restoreStatusBar();
+            _neInitStatusResize();
         }
 
 // 全局 toast：showToast 即时弹出；flashToast 存 sessionStorage，配合 location.reload() 在下次加载后弹出。

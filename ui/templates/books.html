@@ -4,6 +4,7 @@
 <h1>📚 书库 <a href="/books/start" class="btn" style="float:right">+ 新书</a></h1>
 
 {% if books %}
+<div class="table-scroll">
 <table>
     <thead><tr><th>书名</th><th>笔名</th><th>题材标签</th><th>故事线</th><th>进度</th><th>状态</th><th>操作</th></tr></thead>
     <tbody>
@@ -35,6 +36,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <div class="empty"><div class="icon">📚</div><p>书库为空</p><a href="/books/start" class="btn">创建新书</a></div>
 {% endif %}
