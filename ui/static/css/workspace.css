@@ -6,7 +6,18 @@ main { overflow: hidden; }
 /* 工作台高度 100%；下方折叠面板（基础设定）展开超出时整体可滚动，避免被裁切 */
 .tle-layout { display:flex; flex-direction:column; height:100%; min-height:0; overflow-y:auto; }
 .editor-split { flex:1; min-height:0; display:flex; gap:16px; align-items:stretch; }
-.editor-left { width:50%; min-width:320px; max-width:70%; flex-shrink:0; display:flex; flex-direction:column; min-height:0; }
+.editor-left { width:50%; min-width:320px; max-width:70%; flex-shrink:0; display:flex; flex-direction:column; min-height:0; transition:width .22s ease, min-width .22s ease, max-width .22s ease; }
+/* 左栏折叠（P3-3）：正文区占满，展开按钮贴在左缘 */
+.editor-left.collapsed { width:0; min-width:0; max-width:0; overflow:hidden; border:0; }
+.editor-split.collapsed-left .editor-divider { display:none; }
+.el-collapse-btn { background:none; border:1px solid var(--border-soft); color:var(--fg-dim); border-radius:6px;
+    padding:1px 7px; font-size:11px; cursor:pointer; margin-left:8px; transition:all .15s; }
+.el-collapse-btn:hover { color:var(--accent); border-color:var(--accent); }
+.el-expand-btn { position:absolute; left:0; top:50%; transform:translateY(-50%); z-index:50;
+    background:var(--bg-elev); border:1px solid var(--border-soft); border-left:none; color:var(--fg-muted);
+    border-radius:0 8px 8px 0; padding:10px 6px; font-size:11px; cursor:pointer; display:none; box-shadow:2px 0 8px rgba(0,0,0,.3); }
+.el-expand-btn:hover { color:var(--accent); }
+.editor-split.collapsed-left .el-expand-btn { display:block; }
 .editor-scroll { flex:1; min-height:0; overflow:hidden; }
 .editor-storyline { height:100%; min-height:0; overflow:hidden; }
 .editor-mid { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding-right:4px; position:relative; }   /* relative：目录抽屉绝对定位在右栏内部 */

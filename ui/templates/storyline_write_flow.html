@@ -5,7 +5,7 @@
 {% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css?v=4">
-<link rel="stylesheet" href="/static/css/workspace.css">
+<link rel="stylesheet" href="/static/css/workspace.css?v=1">
 <link rel="stylesheet" href="/static/css/reader.css">
 {% from "_flow_stepper.html" import status_badge %}
 {% from "_info_bar.html" import info_bar %}
@@ -26,9 +26,10 @@
 ) }}
 
 {# ─── 两栏：左=故事线（可拖拽） | 右=按章分页阅读器（书式翻页 + 目录抽屉） ─── #}
-<div class="editor-split">
-    <div class="editor-left">
-        <div class="gen-split-title">📋 故事线（点击桥段高亮对应正文）</div>
+<div class="editor-split" id="editor-split" style="position:relative">
+    <button type="button" class="el-expand-btn" id="el-expand-btn" title="展开故事线" onclick="toggleStorylinePanel()">▶ 故事线</button>
+    <div class="editor-left" id="editor-left">
+        <div class="gen-split-title">📋 故事线（点击桥段高亮对应正文）<button type="button" class="el-collapse-btn" title="折叠故事线" onclick="toggleStorylinePanel()">◀</button></div>
         <div class="editor-scroll"><div id="editor-storyline" class="editor-storyline"></div></div>
     </div>
 
@@ -67,6 +68,15 @@
 
 <script src="/static/js/story_line.js?v=4"></script>
 <script src="/static/js/reader_core.js"></script>
+<script>
+function toggleStorylinePanel() {
+    var split = document.getElementById('editor-split');
+    var left = document.getElementById('editor-left');
+    if (!split || !left) return;
+    split.classList.toggle('collapsed-left');
+    left.classList.toggle('collapsed');
+}
+</script>
 <script>/* ═══ 阅读器（共享分页核心 ReaderCore）+ 写作台专属：桥段渲染/高亮/轮询 ═══ */
 function _ms_esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
