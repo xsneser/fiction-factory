@@ -2,18 +2,15 @@
 
 Bing 搜索能找到大量无需 SVIP 的全文镜像站（广告多）。本模块用「站点适配器 dict +
 泛化爬虫」一次性支持这类站：新增站点只需在 SITES 里加一条配置（书页/章表/正文选择器/
-编码/主书过滤正则），无需改爬虫逻辑。首个适配器 = wodushu（我的书城网，实测《十日终焉》
-全书可抓、无登录/无 Cookie/无反爬限制）。
+编码/主书过滤正则/分页形态），无需改爬虫逻辑。默认适配 = bookszw（零点看书）。
 
 MCP / Web / CLI 统一入口：`download_webnovel`。进度复写 storage/crawl_progress.json
-（/scout 页轮询）。存储复用 plugins/novel_storage（platform="web"）。
+（/scout 页轮询）。存储复用 plugins/novel_storage（统一书库，platform="web"）。
 
-实测要点（wodushu）：
-- 章表分页 `/book/{bid}/{page}/`；页面顶部有「最近更新」块（番外重复）会污染顺序，
-  必须按标题里的 `第N章` 数字排序、番外排尾，不能取首见顺序
-- 分页不会 404 结束（末页后重复返回 HTTP 200）→ 以「某页 0 个新 href」终止 + 页数上限
-- 长章拆续页 `{cid}_2.html`、`_3.html`，正文 `<div class="content" id="content">`，UTF-8
-- 站点声称章数 ≠ 实际（1556 vs 1386）→ chapter_count / 进度 total 一律用去重后的目录长度
+镜像站点适配要点（均由 SITES 配置驱动）：
+- 章表分页、主书过滤（番外排尾）、末页终止（0 个新 href / 页数上限）
+- 长章拆续页、正文抽取/页眉接缝清洗统一收口到 WebnovelCrawler.download_chapter
+- 站点声称章数 ≠ 实际 → chapter_count / 进度 total 一律用去重后的目录长度
 """
 import html as _html
 import logging
