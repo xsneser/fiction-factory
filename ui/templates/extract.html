@@ -111,10 +111,13 @@ function analyzeFrom() {
     if (typeof window.agentSendTask !== 'function') return showToast('侧栏 Agent 未就绪，请刷新页面', 'error');
     var n = selectedBook();
     if (!n) return showToast('请先选择一本书', 'warning');
-    var task = '分析已下载小说《' + n.title + '》（platform=' + (n.platform || 'fanqie') + '，folder=' + n.folder
-        + '，已下载' + (n.saved_chapters || 0) + '章）：按 novel-scout 流程读正文自主提炼五类候选'
-        + '（桥段/情节弧/笑点/角色 + 写作风格规则），用 drive_ui set_review 呈现到提取页审查区，'
-        + '停在页面等我勾选确认入库，不要直接 ingest。风格规则归属笔名「' + (currentPenName || '') + '」。';
+    var task = '对已下载小说《' + n.title + '》（platform=' + (n.platform || 'fanqie') + '，folder=' + n.folder
+        + '，已下载' + (n.saved_chapters || 0) + '章）：按 novel-scout 整本扫读协议，从头顺序逐章读全书'
+        + '（章节已下载，直接 read_crawled_novel 读，勿再 fetch_book 重复下载），读到可复用内容随手提炼五类'
+        + '（桥段/情节弧/笑点/角色 + 写作风格规则）；自主决定何时 ingest_library_assets 入库——入库前先'
+        + ' query_arc_library/query_plots/query_gags/query_characters 比对库内已有，结构/机制高度近似的差异化或跳过；'
+        + '上下文变重时用 extract_state 保存（cursor+压缩记忆）并停下汇报「已读到第N章，回复‘继续’续读」；'
+        + '直到读完置 status=done 并汇总汇报。风格规则归属笔名「' + (currentPenName || '') + '」。';
     window.agentSendTask(task);
     showToast('🤖 已交给 Agent 分析提炼', 'info');
 }

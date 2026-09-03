@@ -97,12 +97,13 @@
 
 ### 其他工具
 - `query_arc_library` / `arc_material_candidates`：从情节弧库选弧模板作参考（tags/关键词命中；**模板=单弧可多层**，返回嵌套 stages 含 `children` 层级）。
-- `ingest_library_assets`：读参考书后**代表性单弧采样**自主提炼资产入库四库（纯规则；只挑典型可复用弧，**不还原全书**，方法见 novel-scout skill）——plot `{name,category,sub_category,structure,slots[{name,options}],notes,word_range}`；
+- `ingest_library_assets`：把 agent **整本扫读**提炼的资产写入四库（纯规则落盘；入库前 agent 先 `query_*` 查重避免过度重复，方法见 novel-scout skill）——plot `{name,category,sub_category,structure,slots[{name,options}],notes,word_range}`；
   structure `{name,total_words,tags?,description?,stages[{name,description,min_words,max_words,key_events,children?[{…}],foreshadow_opportunities?,themes?}]}`——**弧模板=单弧，只表述字数**：`total_words`=该采样弧在书里的字数跨度（约1.5万-4万），**绝不=全书**；stages 即其子弧，子弧可再 `children` 多层嵌套，深度/分支按书里真实结构定、**不要求均匀**；stage 可带 `foreshadow_opportunities`（能埋的坑）与 `themes:[{name,position,how}]`（母题，定义见 1.1）；
   gag `{name,category,pattern_description,fit_scenes,examples}`；
   character `{name,personality,description,archetypes,examples,catchphrases,tags,fit_tags}`。
-- `list_rankings` / `discover_hot` / `fetch_novel` / `list_crawled_novels` / `read_crawled_novel`：查榜单/分类清单 / 侦察热榜（`discover_hot(platform, key, count)`——key 为榜单分类 id 或题材中文名，空=聚合综合热榜）/ 抓取下载（`fetch_novel(title 或 book_id, chapters, start_chapter?, end_chapter?)`——按真实章号区间下载，如 start_chapter=100,end_chapter=130；只给 chapters 时从 start_chapter 缺省 1 起）/ 读已抓书库 / 读章节目录或正文（供借鉴设定/写法，不改书）。
-- 侦察/提取默认走 `novel-scout` skill：给小说 id/书名 → `fetch_novel` → 读正文 → 自主提炼五类资产（桥段/弧/笑点/角色 + 写作风格规则，风格归属用户所选笔名）→ `drive_ui(set_review)` 呈现候选 → **停页面等用户确认后由页面入库**（不直接 ingest）。
+- `list_rankings` / `discover_hot` / `fetch_novel` / `list_crawled_novels` / `read_crawled_novel`：查榜单/分类清单 / 侦察热榜（`discover_hot(platform, key, count)`——key 为榜单分类 id 或题材中文名，空=聚合综合热榜）/ 抓取下载（`fetch_novel(title 或 book_id, chapters, start_chapter?, end_chapter?)`——按真实章号区间下载，如 start_chapter=100,end_chapter=130；只给 chapters 时从 start_chapter 缺省 1 起）/ 读已抓书库 / 读已下载小说——**`chapter=0` 目录一次、`chapter>0` 只回该章正文（不再回带整份目录）、`start_chapter`+`end_chapter` 成批顺序读窗口**（整本扫读分窗用；不改书）。
+- `extract_state`：读/存「整本扫读」断点记忆（`storage/extract_work/<folder>.json`，纯规则）——段尾 `action=save`（`cursor`+压缩记忆 `memory{digest,open_segments,people,unresolved}`+`committed` 已入库名）落盘、段首 `action=load`（`mode=summary` 精简续读）、`action=clear` 重扫。长书必须在上下文变重时压缩续段，**不要一次会话读完**。
+- 侦察/提取默认走 `novel-scout` skill：给小说 id/书名 → 下载 → **顺序逐章通读全书**（分窗读、随手提炼五类：桥段/弧/笑点/角色 + 写作风格规则，风格归属用户所选笔名）→ 入库前 `query_*` 查重 → 默认**自主 `ingest_library_assets` 分批入库**（名称记 committed）；仅当用户要过目时改 `drive_ui(set_review)` 呈现 → 停页面等用户勾选 → 页面 POST `/api/scout/ingest` 落库。
 - `publish_check` / `publish_book` / `mark_finished` / `export_book`：上架检查 / 发布 / 完本 / 导出投稿包。
 
 ---
