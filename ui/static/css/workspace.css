@@ -7,8 +7,9 @@ main { overflow: hidden; }
 .tle-layout { display:flex; flex-direction:column; height:100%; min-height:0; overflow-y:auto; }
 .editor-split { flex:1; min-height:0; display:flex; gap:16px; align-items:stretch; }
 .editor-left { width:50%; min-width:320px; max-width:70%; flex-shrink:0; display:flex; flex-direction:column; min-height:0; transition:width .22s ease, min-width .22s ease, max-width .22s ease; }
-/* 左栏折叠（P3-3）：正文区占满，展开按钮贴在左缘 */
-.editor-left.collapsed { width:0; min-width:0; max-width:0; overflow:hidden; border:0; }
+/* 左栏折叠（P3-3）：正文区占满，展开按钮贴在左缘。
+ * 注：用 display:none 实现（此前 width/min-width:0 方案在 flex 布局下被 min-width 兜底到 320px 覆盖，display 最可靠） */
+.editor-left.collapsed { display:none; }
 .editor-split.collapsed-left .editor-divider { display:none; }
 .el-collapse-btn { background:none; border:1px solid var(--border-soft); color:var(--fg-dim); border-radius:6px;
     padding:1px 7px; font-size:11px; cursor:pointer; margin-left:8px; transition:all .15s; }
