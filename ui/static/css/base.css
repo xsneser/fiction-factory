@@ -266,7 +266,7 @@
         }
         aside#status-bar #agent-stop:hover { background:rgba(248,81,73,.12); }
         aside#status-bar #agent-stop:disabled { opacity:.4; cursor:not-allowed; }
-        h1 { font-size:24px; margin-bottom:20px; color:#f0f6fc; }
+        h1 { font-size:24px; margin-bottom:20px; color:#f0f6fc; font-weight:700; letter-spacing:.2px; }
         h2 { font-size:18px; margin:20px 0 12px; color:#c9d1d9; }
         h3 { font-size:15px; margin:12px 0 8px; color:#8b949e; }
         /* Cards */
