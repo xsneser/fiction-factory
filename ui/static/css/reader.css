@@ -21,6 +21,7 @@
     column-fill:auto; transition:transform .22s ease; will-change:transform;
     padding:24px 0; box-sizing:border-box; }
 .reader-pages .m-chapter-title { font-size:18px; font-weight:700; color:var(--fg-strong); margin:0 0 14px; }
+.reader-pages .m-chapter-src { font-size:12px; color:var(--fg-muted); margin:-6px 0 14px; }
 .reader-pages .m-loading { color:var(--fg-muted); padding:20px; }
 
 /* 目录抽屉：绝对定位于阅读器内（.reader-layout position:relative + overflow:hidden 裁剪） */

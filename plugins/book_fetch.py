@@ -237,14 +237,30 @@ def _probe_ad_density(crawler, book_id, chapter_id):
         return 0.0
 
 
-def _catalog_coverage(f_catalog, src):
-    """该镜像源目录对番茄**编号章**的覆盖 → (覆盖数, 番茄编号章总数)。"""
+def _catalog_coverage(f_catalog, src, on_progress=None):
+    """该镜像源目录对番茄**编号章**的覆盖 → (覆盖数, 番茄编号章总数)。
+
+    on_progress(done, total) 逐章比对进度回调（目录比对进度，按批次节流避免频繁写盘）。"""
     f_all = {_parse_chapter_num(c.get("title", "")) for c in f_catalog}
     f_all.discard(None)
-    if f_all:
-        cov = len(set(src["wmap"]) & f_all)
+    if not f_all:
+        return len(src["wmap"]), 0
+    wkeys = [n for n in src["wmap"] if n is not None]
+    cov = 0
+    total = len(wkeys)
+    if on_progress:
+        # 批次节流：约 100 个进度点（大书 3000+ 章 → 每 ~30 章回调一次）
+        step = max(1, total // 100)
+        for i, n in enumerate(wkeys, 1):
+            if n in f_all:
+                cov += 1
+            if i % step == 0 or i == total:
+                try:
+                    on_progress(i, total)
+                except Exception:
+                    pass
     else:
-        cov = len(src["wmap"])
+        cov = len(set(wkeys) & f_all)
     return cov, len(f_all)
 
 
@@ -613,7 +629,11 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                             full = filt
                     src["wmap"] = {c["num"]: c for c in full if c["num"] is not None}
                     src["_full"] = True
-                return _catalog_coverage(f_catalog, src)
+                # 目录比对进度：逐章与番茄编号章对齐（章号交集）
+                def _cov_prog(done, total):
+                    _ph(f"目录比对中 {done}/{total} 章")
+                _ph("目录比对中…")
+                return _catalog_coverage(f_catalog, src, on_progress=_cov_prog)
             with _cfv.ThreadPoolExecutor(max_workers=2) as _ex2:
                 _ph("前十章正文比对中…")
                 def _head_prog(done, total):
@@ -686,7 +706,7 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
                               "ad": _ad, "ad_n": AD_DENSITY_SAMPLE}}
 
         done = {}
-        with _cfv.ThreadPoolExecutor(max_workers=max(1, min(4, len(cand)))) as _exv:
+        with _cfv.ThreadPoolExecutor(max_workers=max(1, min(8, len(cand)))) as _exv:
             for src in cand:
                 _step(f"校对:{src['site']}", "running", "目录+前十章+广告并行校对中…")
             _fv = {_exv.submit(_audit_worker, src): src for src in cand}
@@ -833,11 +853,14 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             if f_body and _cjk_len(f_body) >= FREE_FULL_MIN_CHARS \
                     and _cjk_len(f_body) >= _cjk_len(content) * FULL_LEN_RATIO:
                 content = f_body
+                used_site = "fanqie"   # 正文实际取自番茄权威全文
         # 番茄目录权威：镜像无此章也落 title-only 占位（无镜像源时只取头章、空正文不落盘）
         if content or not no_mirror:
             save_chapter(platform, folder, {
                 "index": idx, "title": ch["title"], "content": content or "",
                 "word_count": _cjk_len(content or ""),
+                # 本章获取来源：镜像站 site / 番茄（头章权威正文）
+                "source": used_site or ("fanqie" if (idx in head_span and content) else ""),
             })
         if content:
             with _dl_lock:
@@ -869,11 +892,12 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             except Exception as e:
                 logger.warning(f"dl worker failed {_ch.get('title','')}: {e}")
                 _ok, _us, _fnum = False, None, None
-            # 下载中的源：左栏显示转圈 + 该源累计已下载章节数（每章完成后更新）
+            # 下载中的源：左栏显示转圈 + 「第X章 · 共Y章」（当前章号 + 该源累计已下载数）
             if _us and _ok:
                 _dl_cnt[_us] = _dl_cnt.get(_us, 0) + 1
             if _us and _fnum is not None:
-                _step(f"下载:{_us}", "running", f"共{_dl_cnt.get(_us, 1)}章")
+                _step(f"下载:{_us}", "running",
+                      f"第{_fnum}章 · 共{_dl_cnt.get(_us, 1)}章")
             # 进度回调：tools.py 在此检查取消/暂停——取消时抛 __CANCELLED__（下方 finally 释放）
             if on_progress:
                 on_progress("download", _i + 1, len(pending), _ch.get("title", "")[:30])

@@ -101,7 +101,13 @@ window.ReaderCore = (function () {
             if (!container) return;
             if (!ch) { container.innerHTML = ''; return; }
             var num = ch.index || ch.num || '';
+            var srcHtml = '';
+            if (ch.source) {
+                var _src = ch.source === 'fanqie' ? '番茄' : (ch.source === 'merged' ? '多源合并' : ch.source);
+                srcHtml = '<div class="m-chapter-src">获取来源：' + _ms_esc(_src) + '</div>';
+            }
             container.innerHTML = '<div class="m-chapter-title">第' + _ms_esc(num) + '章 ' + _ms_esc(ch.title || '') + '</div>'
+                + srcHtml
                 + _ms_esc(content == null ? '' : content);
         }
         function _applyChapter(i, opts_) {

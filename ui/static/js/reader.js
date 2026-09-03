@@ -7,6 +7,15 @@
 
 window.initNovelReader = function (meta, chapterList) {
     var _cache = {};   // index -> 正文（已加载/已预取章缓存）
+    var _srcNames = {fanqie: '番茄', merged: '多源合并'};   // site key → 中文站名
+
+    // 拉取镜像源中文名映射（供来源显示；失败时仅显示原始 site key）
+    fetch('/api/scout/sources').then(function (r) { return r.json(); })
+      .then(function (d) {
+          if (d && d.ok && d.sources) {
+              d.sources.forEach(function (s) { _srcNames[s.key] = s.name; });
+          }
+      }).catch(function () {});
 
     function loadOne(ch, cb) {
         var key = String(ch && ch.index);
@@ -17,6 +26,11 @@ window.initNovelReader = function (meta, chapterList) {
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 var content = (d && d.chapter && d.chapter.content) || '';
+                if (ch && d && d.chapter) {
+                    // 把本章获取来源（镜像站/番茄）翻译成中文并透传给章节对象，阅读器标题下显示
+                    var _src = d.chapter.source || '';
+                    ch.source = _src ? (_srcNames[_src] || _src) : '';
+                }
                 _cache[key] = content;
                 cb(content);
             })

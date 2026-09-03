@@ -53,12 +53,15 @@ def _download_cover(novel_dir: Path, cover_url: str) -> bool:
 
 def _write_chapter(ch_dir: Path, idx: int, ch: dict) -> None:
     with open(ch_dir / f"{int(idx):04d}.json", "w", encoding="utf-8") as f:
-        json.dump({
+        _ch = {
             "index": int(idx),
             "title": ch.get("title", f"第{int(idx)}章"),
             "content": ch.get("content", ""),
             "word_count": ch.get("word_count", 0),
-        }, f, ensure_ascii=False, indent=2)
+        }
+        if ch.get("source"):
+            _ch["source"] = ch["source"]   # 本章获取来源（镜像站 site / 番茄 / 合并）
+        json.dump(_ch, f, ensure_ascii=False, indent=2)
 
 
 def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
