@@ -258,6 +258,9 @@ def scout_run():
                                      task_id=task_id, title=_tname["title"], extra=_extra)
                 return
             task_manager.log(task_id, f"找到: {novel.title}", "success")
+            # 顶部标题换成真书名：fanqie 单源路径不走 on_step「解析番茄」，否则 book_id 起下载
+            # 的快照标题全程是数字（merged 路径的 on_step 已处理）
+            _tname["title"] = novel.title
 
             _, dl_info = scout.fetch_novel(
                 novel.title, chapters, start_chapter=start_chapter,
@@ -308,7 +311,7 @@ def scout_fetch_control():
     请求体可带 task_id（前端按进度行传，指定控制哪个任务）；缺省回退「running 的『小说抓取』」。
     /scout 页每个任务行「⏸ / ▶ / ⏹」按钮调此端点，UI 仍由 crawl-progress 轮询接棒。"""
     from plugins import task_manager
-    from libraries.crawl_progress import write_crawl_progress
+    from libraries.crawl_progress import write_crawl_progress, read_crawl_progress
     data = request.json or {}
     action = data.get("action", "")
     if action not in ("pause", "resume", "cancel"):
@@ -322,11 +325,21 @@ def scout_fetch_control():
     if not tid:
         return jsonify({"ok": False, "error": "没有进行中的抓取任务"}), 404
     t = task_manager.get(tid) or {}
-    cur = t.get("current", 0) or 0
-    total = t.get("total", 0) or 0
-    phase = t.get("phase", "") or ""
+    # 标题/进度权威在 crawl_progress 快照：运行中 on_step「解析番茄」已把数字 book_id/URL 换成
+    # 中文书名并写进快照；task_manager 的 title 是启动时 title or direct_id（数字 book_id）从不更新，
+    # 不可作标题源——否则每次 暂停/继续/停止 都把前端标题打回一串数字。
+    # cur/total/phase 同理读快照（task_manager.progress 在通过暂停检查后才更新，滞后一章），
+    # 快照即 UI 上次渲染；resume 后下一个 on_progress 会纠正残余偏差。
+    snap = (read_crawl_progress().get("tasks") or {}).get(tid) or {}
+    cur = snap.get("current", t.get("current", 0)) or 0
+    total = snap.get("total", t.get("total", 0)) or 0
+    phase = snap.get("phase") or t.get("phase", "") or ""
     _extra = {"pausable": True}
-    _title = t.get("title", "") or tid
+    _title = snap.get("title") or t.get("title", "") or tid
+    # 终态守卫：陈旧点击（已完成/已取消/已失败后双击继续/暂停）不得把快照复活成 running/paused 空卡
+    _cur_state = snap.get("state") or (t.get("status") if t else "") or ""
+    if _cur_state in ("done", "error", "cancelled"):
+        return jsonify({"ok": False, "error": f"任务已结束（{_cur_state}），无法{action}"}), 409
     if action == "pause":
         task_manager.pause(tid)
         write_crawl_progress("paused", phase, cur, total, "已暂停",
