@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 38
+EXPECT_MCP_TOOLS = 39
 PASS, FAIL = [], []
 
 
@@ -103,7 +103,7 @@ async def main():
                 for t in ("query_plots", "query_profiles",
                           "query_characters", "chapter_quality_gate",
                           "fetch_book", "fetch_novel", "fetch_webnovel", "discover_hot", "list_rankings",
-                          "list_crawled_novels", "read_crawled_novel", "ingest_library_assets",
+                          "list_crawled_novels", "read_crawled_novel", "extract_state", "ingest_library_assets",
                           "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
                           "get_writing_context", "get_pen_style", "add_style_rule", "delete_style_rule"):
                     check(f"工具 {t} 在列", t in names)
@@ -186,17 +186,26 @@ async def main():
                       any(i.get("kind") == "ui_command" and i.get("cmd") == "set_outline" for i in intents))
                 check("drive_ui set_review 已写入意图队列（kind=ui_command cmd=set_review）",
                       any(i.get("kind") == "ui_command" and i.get("cmd") == "set_review" for i in intents))
-                # set_review 持久化快照（/scout 轮询恢复用）
-                _review_path = os.path.join(_ROOT, "storage", "review_pending.json")
-                _review_ok = False
-                if os.path.exists(_review_path):
-                    try:
-                        with open(_review_path, encoding="utf-8") as f:
-                            _review_data = json.load(f)
-                        _review_ok = _review_data.get("title") == "冒烟测试书"
-                    except Exception:
-                        _review_ok = False
-                check("set_review 已落 review_pending.json 快照（title 匹配）", _review_ok)
+                # extract_state（整本扫读断点/记忆存档）：load 无记录 → save → load(summary) 往返 → clear
+                st0 = await call_json(session, "extract_state",
+                                      {"folder": "冒烟扫读书", "action": "load"})
+                check("extract_state load 无记录 exists=false",
+                      st0.get("exists") is False)
+                st1 = await call_json(session, "extract_state",
+                                      {"folder": "冒烟扫读书", "action": "save",
+                                       "state": {"book": {"title": "冒烟扫读书", "chapter_count": 10},
+                                                 "cursor": 3, "status": "running",
+                                                 "memory": {"digest": "已读前三章梗概"}}})
+                check("extract_state save OK（cursor=3）",
+                      st1.get("ok") is True and st1.get("cursor") == 3)
+                st2 = await call_json(session, "extract_state",
+                                      {"folder": "冒烟扫读书", "action": "load", "mode": "summary"})
+                check("extract_state load(summary) 往返 cursor/digest 正确",
+                      st2.get("exists") is True and st2.get("cursor") == 3
+                      and (st2.get("memory") or {}).get("digest", "") == "已读前三章梗概")
+                st3 = await call_json(session, "extract_state",
+                                      {"folder": "冒烟扫读书", "action": "clear"})
+                check("extract_state clear OK", st3.get("cleared") == "冒烟扫读书")
 
                 # ── 4. tool-log source=mcp 断言 ──
                 log_file = os.path.join(_ROOT, "storage", "tool_log.jsonl")
@@ -226,7 +235,7 @@ async def main():
         except Exception:
             pass
         try:
-            os.remove(os.path.join(_ROOT, "storage", "review_pending.json"))
+            os.remove(os.path.join(_ROOT, "storage", "extract_work", "冒烟扫读书.json"))
         except Exception:
             pass
 
