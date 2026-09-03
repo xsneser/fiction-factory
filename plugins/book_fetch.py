@@ -870,37 +870,61 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     # 多源真正并行下载：章节间并发 + 每章轮询分片给一个「通过校对的源」做负责源（prefer），
     # 各源各下一部分章节真正并行提速；负责源缺章/失败时内部仍按 source_order 回退补缺。
     # 并发数上限（默认 6）：兼顾提速与源站压力；慢源 download_chapter 自身无 sleep，靠并发控速。
-    # 取消/停止：on_progress/on_step 在取消时抛 __CANCELLED__（tools.py on_progress 检查），
-    # 这里必须用 shutdown(wait=False, cancel_futures=True) 立即释放、不等在途 worker，否则
-    # 「停止」后仍会等全部已提交章节下载完（几百章）——用户看到的就是停止无效。
+    # 暂停/停止：on_progress/on_step 在取消时抛 __CANCELLED__（tools.py on_progress 检查）。
+    # 提交改有界窗口后，暂停即不再补位（下载真停）；取消/异常仍须 shutdown(wait=False,
+    # cancel_futures=True) 立即释放、不等在途 worker，否则「停止」后仍会等窗口内已提交章节跑完。
     _dl_workers = max(1, min(_DL_WORKERS, len(pending)))
     import concurrent.futures as _cfd
     _dl_ex = _cfd.ThreadPoolExecutor(max_workers=_dl_workers)
     _dl_cancelled = False
+    _n_src = max(1, len(_dl_srcs))
+    _dl_cnt = {}   # site → 该源已成功下载章节数（左栏「下载中 共N章」）
+    # 有界窗口提交（替代一次性 submit 全量）：在途 future ≤ _dl_workers，每完成一章且未暂停才补位。
+    # 这样 tools.py on_progress 的暂停/取消检查点成为真正闸门——暂停时 coordinator 阻塞不再补位，
+    # 池线程跑完窗口内章节即空转，不再像旧代码那样把已入队数百章全部排干写盘（暂停形同虚设）。
+    # 取消语义不变：on_progress 抛 __CANCELLED__ → except → finally shutdown(cancel_futures=True)。
+    # 对 MCP 调用方（on_progress 非阻塞/不抛）行为一致：每完成一章立即补位，等效原排干。
+    _jobs = list(enumerate(pending))   # (原序 i, ch)：保持轮询分片 prefer = _dl_srcs[i % _n_src]
+    _inflight = {}                     # Future → ch
+    _done_n = 0
+    _next = 0
+
+    def _fill(limit):
+        """提交至多 limit 个待下载章节（轮询分片 prefer 保持原语义）。"""
+        nonlocal _next
+        added = 0
+        while _next < len(_jobs) and added < limit:
+            _i, _ch = _jobs[_next]
+            _next += 1
+            # 轮询分片：章节 i → 负责源 _dl_srcs[i % _n_src]（真正多源并行下载）；
+            # 无镜像源（_dl_srcs 空，仅番茄头章）时 prefer=None，_dl_one 已处理
+            _prefer = _dl_srcs[_i % _n_src] if _dl_srcs else None
+            _inflight[_dl_ex.submit(_dl_one, int(_ch["index"]), _ch, _prefer)] = _ch
+            added += 1
+
     try:
-        _n_src = max(1, len(_dl_srcs))
-        _dl_cnt = {}   # site → 该源已成功下载章节数（左栏「下载中 共N章」）
-        _futs = {}
-        for _i, ch in enumerate(pending):
-            # 轮询分片：章节 i → 负责源 _dl_srcs[i % _n_src]（真正多源并行下载）
-            _prefer = _dl_srcs[_i % _n_src]
-            _futs[_dl_ex.submit(_dl_one, int(ch["index"]), ch, _prefer)] = ch
-        for _i, _fut in enumerate(_cfd.as_completed(_futs)):
-            _ch = _futs[_fut]
-            try:
-                _ok, _us, _fnum = _fut.result()
-            except Exception as e:
-                logger.warning(f"dl worker failed {_ch.get('title','')}: {e}")
-                _ok, _us, _fnum = False, None, None
-            # 下载中的源：左栏显示转圈 + 「第X章 · 共Y章」（当前章号 + 该源累计已下载数）
-            if _us and _ok:
-                _dl_cnt[_us] = _dl_cnt.get(_us, 0) + 1
-            if _us and _fnum is not None:
-                _step(f"下载:{_us}", "running",
-                      f"第{_fnum}章 · 共{_dl_cnt.get(_us, 1)}章")
-            # 进度回调：tools.py 在此检查取消/暂停——取消时抛 __CANCELLED__（下方 finally 释放）
-            if on_progress:
-                on_progress("download", _i + 1, len(pending), _ch.get("title", "")[:30])
+        _fill(_dl_workers)   # 先灌 N 个在途
+        while _inflight:
+            _done, _ = _cfd.wait(list(_inflight), return_when=_cfd.FIRST_COMPLETED)
+            for _fut in _done:
+                _ch = _inflight.pop(_fut)
+                try:
+                    _ok, _us, _fnum = _fut.result()
+                except Exception as e:
+                    logger.warning(f"dl worker failed {_ch.get('title','')}: {e}")
+                    _ok, _us, _fnum = False, None, None
+                # 下载中的源：左栏显示转圈 + 「第X章 · 共Y章」（当前章号 + 该源累计已下载数）
+                if _us and _ok:
+                    _dl_cnt[_us] = _dl_cnt.get(_us, 0) + 1
+                if _us and _fnum is not None:
+                    _step(f"下载:{_us}", "running",
+                          f"第{_fnum}章 · 共{_dl_cnt.get(_us, 1)}章")
+                _done_n += 1
+                # 进度回调：tools.py 在此检查取消/暂停——取消时抛 __CANCELLED__（下方 finally 释放）；
+                # 暂停时阻塞不返回 → _fill 不被调 → 不补位 → 下载真正停下（在途 ≤ _dl_workers 跑完当章）
+                if on_progress:
+                    on_progress("download", _done_n, len(pending), _ch.get("title", "")[:30])
+                _fill(1)   # 本章完成（且未被暂停阻塞返回）才补位下一章
     except BaseException as _dl_e:
         _dl_cancelled = True
         _step("下载正文", "warn", "已停止（多源并行下载中断）")
