@@ -109,9 +109,20 @@ def read_crawl_progress() -> dict:
 
     兼容旧单任务格式（无 tasks 键、带 state 的旧快照 → 归一为 default 键）。
     无记录返回 {"tasks": {}, "active": "", "ts": 0}。
+    读时顺带清理超 _KEEP_TERMINAL_SECONDS 的终态任务（写回一次）——这样前端可在
+    数据未变时跳过整块重建（清理导致 tasks 变化 → 前端签名变化会触发末次重渲染）。
     """
     d = read_json(_PATH, {}) or {}
     if "tasks" in d:
+        tasks = d.get("tasks") or {}
+        now = time.time()
+        cutoff = now - _KEEP_TERMINAL_SECONDS
+        pruned = {k: v for k, v in tasks.items()
+                  if v.get("state") not in _TERMINAL_STATES
+                  or v.get("ended_ts", v.get("ts", 0)) >= cutoff}
+        if len(pruned) != len(tasks):
+            d = {"tasks": pruned, "active": d.get("active", ""), "ts": now}
+            write_json_atomic(_PATH, d)
         return d
     if d.get("state"):   # 旧单任务格式
         return {"tasks": {_DEFAULT_TASK: d}, "active": _DEFAULT_TASK,

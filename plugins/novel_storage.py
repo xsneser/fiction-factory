@@ -125,7 +125,8 @@ def _write_chapter(ch_dir: Path, idx: int, ch: dict) -> None:
     }
     if ch.get("source"):
         _ch["source"] = ch["source"]   # 本章获取来源（镜像站 site / 番茄 / 合并）
-    write_json_atomic(ch_dir / f"{int(idx):04d}.json", _ch)
+    # 正文可再生成：免每章 os.fsync（几千章下载的主成本）；info/状态仍 fsync
+    write_json_atomic(ch_dir / f"{int(idx):04d}.json", _ch, fsync=False)
 
 
 def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:

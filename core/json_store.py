@@ -138,10 +138,13 @@ def read_json(path: str | Path, default: Any = None) -> Any:
             return json.load(f)
 
 
-def write_json_atomic(path: str | Path, data: Any, *, indent: int = 2) -> None:
+def write_json_atomic(path: str | Path, data: Any, *, indent: int = 2,
+                      fsync: bool = True) -> None:
     """原子保存 JSON。
 
     临时文件创建在目标文件同目录，确保 os.replace 在同一文件系统内完成。
+    fsync=False 用于可再生成的正文类（save_chapter 逐章），省每章一次磁盘 fsync；
+    状态/进度/info 等权威小文件保持默认 True。
     """
     p = Path(path)
     with file_lock(p):
@@ -158,7 +161,8 @@ def write_json_atomic(path: str | Path, data: Any, *, indent: int = 2) -> None:
                 json.dump(data, f, ensure_ascii=False, indent=indent)
                 f.write("\n")
                 f.flush()
-                os.fsync(f.fileno())
+                if fsync:
+                    os.fsync(f.fileno())
             _replace_with_retry(tmp_path, p)
         except Exception:
             try:

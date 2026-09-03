@@ -622,6 +622,7 @@ document.addEventListener('click', function(ev) {
 
 /* ─── 实时进度（crawl-progress 轮询；多任务并行各自进度行；terminal 展示 6s 后消失） ─── */
 var _lastLibraryRefresh = 0;   // 下载中书库节流刷新（≤1次/3s）
+var _lastProgSig = '';         // 进度快照签名：数据未变则跳过整块 DOM 重建（免每秒全量 innerHTML）
 function pollCrawlProgress() {
     fetch('/api/crawl/progress')
         .then(function(r) { return r.json(); })
@@ -630,6 +631,15 @@ function pollCrawlProgress() {
             var tarea = document.getElementById('cp-tasks');
             if (!box || !tarea || !d || !d.ok) return;
             var tasks = d.tasks || {};
+            // 数据未变（ts/任务数/每任务 state·steps·进度 一致）→ 跳过整块重建（保留滚动位置，省每 1s 全量 innerHTML）
+            var _sig = (d.ts || 0) + ':' + Object.keys(tasks).length;
+            Object.keys(tasks).sort().forEach(function(tid) {
+                var _t = tasks[tid];
+                _sig += '|' + tid + ':' + (_t.state || '') + ':'
+                     + ((_t.steps || []).length) + ':' + (_t.current || 0);
+            });
+            if (_sig === _lastProgSig && tarea && tarea.children.length) return;
+            _lastProgSig = _sig;
             var now = Date.now() / 1000;
             var anyVisible = false;
             var html = '';
