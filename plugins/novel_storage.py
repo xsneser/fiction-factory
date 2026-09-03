@@ -16,10 +16,17 @@ migrate_unified() 迁移到统一目录；各函数仍保留 platform 参数签�
 旧调用方），但路径一律以 folder 为准，platform 仅作字段/过滤/展示。
 """
 import json
+import logging
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+from core.json_store import write_json_atomic
+from core.safe_paths import ensure_child_path
+
+logger = logging.getLogger("novel_storage")
 
 NOVELS_DIR = Path(__file__).parent.parent / "storage" / "novels"
 
@@ -31,11 +38,47 @@ def ensure_dirs():
     NOVELS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def resolve_novel_dir(novel_folder: str) -> Path:
+    """把客户端/外部给的 folder 安全解析成书目录：必须是 NOVELS_DIR 的直接子目录名。
+
+    拒绝空、`.`/`..`、含路径分隔或绝对路径（防 `folder=..`/绝对路径越权 rmtree 或
+    读任意文件）。越界抛 ValueError，调用方（端点）转 400。
+    """
+    if not novel_folder:
+        raise ValueError("folder 为空")
+    if novel_folder in (".", ".."):
+        raise ValueError(f"非法 folder: {novel_folder!r}")
+    f = Path(novel_folder)
+    if f.name != novel_folder:   # 含 / 或 \ 路径分隔 / 绝对路径
+        raise ValueError(f"非法 folder: {novel_folder!r}")
+    return ensure_child_path(NOVELS_DIR, NOVELS_DIR / novel_folder)
+
+
+def _count_saved_chapters(ch_dir: Path) -> int:
+    """数已落盘且 content 非空的章节数（占位/空正文不算，与合并路径 content-aware 一致）。"""
+    if not ch_dir.exists():
+        return 0
+    n = 0
+    for ch_file in ch_dir.glob("*.json"):
+        try:
+            with ch_file.open(encoding="utf-8") as f:
+                if json.load(f).get("content"):
+                    n += 1
+        except Exception:
+            logger.warning("跳过无法解析的章节 %s", ch_file)
+            continue
+    return n
+
+
 def _download_cover(novel_dir: Path, cover_url: str) -> bool:
-    """尽力下载封面到 novel_dir/cover.jpg（失败不影响存书）。"""
+    """尽力下载封面到 novel_dir/cover.jpg（失败不影响存书）。
+
+    临时文件 + os.replace 原子落盘；已存在且非 0 字节视为已缓存（0 字节残留可重下）。
+    """
     if not cover_url:
         return False
-    if (novel_dir / "cover.jpg").exists():
+    cover_file = novel_dir / "cover.jpg"
+    if cover_file.exists() and cover_file.stat().st_size > 0:
         return True   # 已缓存，避免增量更新重复拉取
     try:
         import requests
@@ -44,24 +87,25 @@ def _download_cover(novel_dir: Path, cover_url: str) -> bool:
             "Referer": "https://fanqienovel.com/",
         })
         if r.status_code == 200 and r.content:
-            (novel_dir / "cover.jpg").write_bytes(r.content)
+            tmp = novel_dir / ".cover.jpg.tmp"
+            tmp.write_bytes(r.content)
+            os.replace(str(tmp), str(cover_file))
             return True
     except Exception:
-        pass
+        logger.warning("封面下载失败: %s", cover_url)
     return False
 
 
 def _write_chapter(ch_dir: Path, idx: int, ch: dict) -> None:
-    with open(ch_dir / f"{int(idx):04d}.json", "w", encoding="utf-8") as f:
-        _ch = {
-            "index": int(idx),
-            "title": ch.get("title", f"第{int(idx)}章"),
-            "content": ch.get("content", ""),
-            "word_count": ch.get("word_count", 0),
-        }
-        if ch.get("source"):
-            _ch["source"] = ch["source"]   # 本章获取来源（镜像站 site / 番茄 / 合并）
-        json.dump(_ch, f, ensure_ascii=False, indent=2)
+    _ch = {
+        "index": int(idx),
+        "title": ch.get("title", f"第{int(idx)}章"),
+        "content": ch.get("content", ""),
+        "word_count": ch.get("word_count", 0),
+    }
+    if ch.get("source"):
+        _ch["source"] = ch["source"]   # 本章获取来源（镜像站 site / 番茄 / 合并）
+    write_json_atomic(ch_dir / f"{int(idx):04d}.json", _ch)
 
 
 def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
@@ -93,8 +137,7 @@ def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
               "head_verified", "head_site"):
         if info.get(k) is not None:
             meta[k] = info[k]
-    with open(novel_dir / "info.json", "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+    write_json_atomic(novel_dir / "info.json", meta)
 
     # 封面本地缓存（尽力而为，失败不影响存书）
     if info.get("cover"):
@@ -110,7 +153,11 @@ def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
 def save_chapter(platform: str, folder: str, ch: dict) -> None:
     """增量保存单章到 storage/novels/{folder}/chapters/{index}.json
     （供下载中逐章落盘，书库实时可见；真实章号文件名，区间下载可续写）。"""
-    ch_dir = NOVELS_DIR / folder / "chapters"
+    try:
+        novel_dir = resolve_novel_dir(folder)
+    except ValueError as exc:
+        raise ValueError(f"save_chapter 非法 folder: {folder!r}") from exc
+    ch_dir = novel_dir / "chapters"
     ch_dir.mkdir(parents=True, exist_ok=True)
     _write_chapter(ch_dir, int(ch.get("index") or 0), ch)
 
@@ -125,14 +172,16 @@ def list_novels(platform: str = "") -> list[dict]:
         info_file = novel_dir / "info.json"
         if not info_file.exists():
             continue
-        with open(info_file, encoding="utf-8") as f:
-            info = json.load(f)
+        try:
+            with open(info_file, encoding="utf-8") as f:
+                info = json.load(f)
+        except Exception:
+            logger.warning("跳过无法解析的 info %s", info_file)
+            continue
         if platform and info.get("platform", "") != platform:
             continue
         info["path"] = str(novel_dir)
-        ch_dir = novel_dir / "chapters"
-        chapter_files = sorted(ch_dir.glob("*.json")) if ch_dir.exists() else []
-        info["saved_chapters"] = len(chapter_files)
+        info["saved_chapters"] = _count_saved_chapters(novel_dir / "chapters")
         info["folder"] = novel_dir.name
         if (novel_dir / "cover.jpg").exists():
             from urllib.parse import quote
@@ -145,35 +194,60 @@ def list_novels(platform: str = "") -> list[dict]:
 
 def load_novel(platform: str, novel_folder: str) -> Optional[dict]:
     """加载一本完整的小说数据（统一书库：路径以 folder 为准）。"""
-    novel_dir = NOVELS_DIR / novel_folder
+    try:
+        novel_dir = resolve_novel_dir(novel_folder)
+    except ValueError:
+        logger.warning("load_novel 非法 folder: %r", novel_folder)
+        return None
     info_file = novel_dir / "info.json"
     if not info_file.exists():
         return None
-    with open(info_file, encoding="utf-8") as f:
-        info = json.load(f)
+    try:
+        with open(info_file, encoding="utf-8") as f:
+            info = json.load(f)
+    except Exception:
+        logger.warning("跳过无法解析的 info %s", info_file)
+        return None
 
     ch_dir = novel_dir / "chapters"
     chapters = []
     if ch_dir.exists():
         for ch_file in sorted(ch_dir.glob("*.json")):
-            with open(ch_file, encoding="utf-8") as f:
-                chapters.append(json.load(f))
+            try:
+                with open(ch_file, encoding="utf-8") as f:
+                    chapters.append(json.load(f))
+            except Exception:
+                logger.warning("跳过无法解析的章节 %s", ch_file)
+                continue
 
     return {"info": info, "chapters": chapters}
 
 
 def read_chapter(platform: str, novel_folder: str, index: int) -> Optional[dict]:
     """读单章（storage/novels/{folder}/chapters/{index:04d}.json，真实章号）。"""
-    ch_file = NOVELS_DIR / novel_folder / "chapters" / f"{int(index):04d}.json"
+    try:
+        novel_dir = resolve_novel_dir(novel_folder)
+    except ValueError:
+        logger.warning("read_chapter 非法 folder: %r", novel_folder)
+        return None
+    ch_file = novel_dir / "chapters" / f"{int(index):04d}.json"
     if not ch_file.exists():
         return None
-    with open(ch_file, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(ch_file, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        logger.warning("跳过无法解析的章节 %s", ch_file)
+        return None
 
 
 def delete_novel(platform: str, novel_folder: str) -> bool:
-    """删除一部小说（统一书库：路径以 folder 为准）。"""
-    novel_dir = NOVELS_DIR / novel_folder
+    """删除一部小说（统一书库：路径以 folder 为准；非法 folder 拒绝不删）。"""
+    try:
+        novel_dir = resolve_novel_dir(novel_folder)
+    except ValueError:
+        logger.warning("delete_novel 非法 folder: %r", novel_folder)
+        return False
     if novel_dir.exists():
         shutil.rmtree(novel_dir)
         return True

@@ -65,6 +65,7 @@ class BookManager:
         self.dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, BookConfig] = {}
         self._scan_sig = None  # (book 数量, book.json mtime 之和) → 磁盘是否变化
+        self._mtimes: dict[str, float] = {}  # book_id → book.json mtime（get() 失效用）
         self._load_all()
 
     def _load_all(self):
@@ -75,6 +76,10 @@ class BookManager:
                     try:
                         cfg = BookConfig.from_dict(read_json(cfg_path, {}))
                         self._cache[cfg.book_id] = cfg
+                        try:
+                            self._mtimes[cfg.book_id] = cfg_path.stat().st_mtime
+                        except OSError:
+                            pass
                     except Exception as e:
                         # 单本书损坏不拖垮整个书库（否则缓存为空，create 会撞号覆盖）
                         logger.warning("跳过无法解析的图书配置 %s: %s", cfg_path, e)
@@ -101,11 +106,30 @@ class BookManager:
         return list(self._cache.values())
 
     def get(self, book_id: str) -> BookConfig | None:
-        if book_id not in self._cache:
+        cached = self._cache.get(book_id)
+        cfg_path = self.dir / book_id / "book.json"
+        if cached is None:
             # 缓存未命中时重新扫描磁盘
             self._cache = {}
+            self._mtimes = {}
             self._load_all()
-        return self._cache.get(book_id)
+            return self._cache.get(book_id)
+        # 外部直写 book.json（如 MCP 进程落章）会改变 mtime → 只重读该书，避免 current_chapter
+        # / total_words 长期陈旧（list_all 用整库 mtime-sig，get() 用单书 O(1) 失效）。
+        try:
+            cur = cfg_path.stat().st_mtime
+        except OSError:
+            return cached
+        if self._mtimes.get(book_id) != cur:
+            try:
+                fresh = BookConfig.from_dict(read_json(cfg_path, {}))
+                if fresh.book_id == book_id:
+                    self._cache[book_id] = fresh
+                    self._mtimes[book_id] = cur
+                    return fresh
+            except Exception as e:
+                logger.warning("get() 重读 book.json 失败 %s: %s", cfg_path, e)
+        return cached
 
     def _next_book_id(self) -> str:
         """基于磁盘现有 book_* 目录取下一个可用 id。

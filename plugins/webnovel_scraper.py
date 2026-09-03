@@ -611,7 +611,7 @@ def _strip_tags(s: str) -> str:
 class WebnovelCrawler:
     """通用网页镜像站爬虫（站点行为由 SITES[site] 配置驱动）。"""
 
-    def __init__(self, site: str = "wodushu", verify: bool = True,
+    def __init__(self, site: str = "bookszw", verify: bool = True,
                  cache_dir: str = ""):
         if site not in SITES:
             raise ValueError(f"未知站点: {site}（可用: {', '.join(SITES)}）")
@@ -1055,11 +1055,11 @@ class BookszwCrawler(WebnovelCrawler):
         super().__init__(site="bookszw", verify=verify)
 
 
-def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
+def download_webnovel(site: str = "bookszw", url: str = "", book_id: str = "",
                       chapters: int = 0, start_chapter: int = 1, end_chapter: int = 0,
                       download_delay: float = 0.5, on_progress=None,
                       platform: str = "web") -> tuple:
-    """下载网页镜像站小说 → storage/novels/{platform}/。MCP / Web / CLI 统一入口。
+    """下载网页镜像站小说 → 统一书库 storage/novels/<书名>/。MCP / Web / CLI 统一入口。
 
     chapters<=0（默认）→ 全文（从 start_chapter 到目录尾，可按 main_title_re 过滤番外）；
     chapters>0 → 按列表序号区间（第1章=1）。先建目录+info.json（/scout 立即显示），
@@ -1104,7 +1104,7 @@ def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
     # 查重：同平台同书名已存在 → 复用目录（保留首见源 info.json，避免 book_id/site 被覆盖），
     # 只补缺章；不同源同书名也复用目录不产生第二条目。
     folder = _safe_name(info["title"])
-    existing_info = NOVELS_DIR / platform / folder / "info.json"
+    existing_info = NOVELS_DIR / folder / "info.json"
     if existing_info.exists():
         old_site = "?"
         try:
@@ -1123,7 +1123,7 @@ def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
             "site": site,
         }, [])
     # 断点续下：跳过已落盘章节（下载中断后从缺章续抓，避免重下已完成的）
-    ch_dir = NOVELS_DIR / platform / folder / "chapters"
+    ch_dir = NOVELS_DIR / folder / "chapters"
     existing: set[int] = set()
     if ch_dir.is_dir():
         for f in ch_dir.glob("*.json"):
@@ -1166,8 +1166,8 @@ def download_webnovel(site: str = "wodushu", url: str = "", book_id: str = "",
 
 def main():
     import argparse
-    p = argparse.ArgumentParser(description="网页镜像站小说下载（默认 wodushu）")
-    p.add_argument("--site", default="wodushu")
+    p = argparse.ArgumentParser(description="网页镜像站小说下载（默认 bookszw）")
+    p.add_argument("--site", default="bookszw")
     p.add_argument("--url", default="")
     p.add_argument("--book_id", default="")
     p.add_argument("--chapters", type=int, default=0, help="0=全文（默认）")
@@ -1184,7 +1184,7 @@ def main():
             site=args.site, url=args.url, book_id=args.book_id,
             chapters=args.chapters, start_chapter=args.start,
             end_chapter=args.end, download_delay=args.delay, on_progress=prog)
-        print(f"✅ {info['title']} 下载完成 {dl['chapters']}章 → storage/novels/web/{dl['folder']}/")
+        print(f"✅ {info['title']} 下载完成 {dl['chapters']}章 → storage/novels/{dl['folder']}/")
     except Exception as e:
         print(f"❌ {e}", flush=True)
         raise SystemExit(1)

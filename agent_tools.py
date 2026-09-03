@@ -1705,13 +1705,14 @@ def list_snapshots(book_id: str) -> dict:
 def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
                 start_chapter: int = 1, end_chapter: int = 0,
                 download_delay: float = 1.0) -> dict:
-    """抓取番茄小说：按书名或 book_id 搜索→下载指定章区间→保存到 storage/novels/fanqie/。
+    """抓取番茄小说：按书名或 book_id 搜索→下载指定章区间→保存到统一书库 storage/novels/。
 
     章节区间按**真实章号**：start_chapter=100, end_chapter=130 下载第 100~130 章
     （存为 0100..0130.json）；只给 chapters 时默认从 start_chapter(缺省 1) 起 N 章。
-    纯抓取、无需 LLM（复用 FanqieCrawler + novel_storage.save_novel）。进度实时写入
+    幂等：已落盘章跳过不重下（already=True）；SVIP 锁定章预览不当正文落盘。
+    纯抓取、无需 LLM（复用 FanqieCrawler + novel_storage）。进度实时写入
     storage/crawl_progress.json（/scout 页轮询展示）。返回 {ok, title, author,
-    saved_chapters, folder, platform}。
+    saved_chapters, folder, already, platform}。
     """
     if not title and not book_id:
         raise RuntimeError("请提供书名 title 或 book_id")
@@ -1747,33 +1748,64 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
         if not chapter_list:
             raise RuntimeError(f"起始章 {start_chapter} 超出该书可下载范围（目录 {len(catalog)} 章）")
         total_ch = len(chapter_list)
-        downloaded = []
-        for i, ch in enumerate(chapter_list):
+        from plugins.novel_storage import (save_novel, save_chapter, NOVELS_DIR,
+                                           _safe_name)
+        from plugins.fanqie_scout import FANQIE_FREE_MIN_CHARS
+        folder = _safe_name(novel.title)
+
+        # 幂等：跳过已落盘章；无缺章 → already
+        existing = set()
+        _ch_dir = NOVELS_DIR / folder / "chapters"
+        if _ch_dir.is_dir():
+            for _cf in _ch_dir.glob("*.json"):
+                try:
+                    existing.add(int(_cf.stem))
+                except ValueError:
+                    pass
+        pending = [c for c in chapter_list if int(c.get("index") or 0) not in existing]
+        skipped = total_ch - len(pending)
+        if not pending:
+            write_crawl_progress("done", "download", 0, 0,
+                                 f"已是最新（{len(existing)} 章）",
+                                 task_id=_task_id, title=_task_title,
+                                 extra={"folder": folder, "platform": "fanqie"})
+            return {"ok": True, "title": novel.title, "author": novel.author,
+                    "saved_chapters": 0, "folder": folder, "already": True,
+                    "platform": "fanqie"}
+
+        # info.json：仅当该书尚未落盘时创建（增量/续传保留原来源元数据）
+        if not (NOVELS_DIR / folder / "info.json").exists():
+            save_novel("fanqie", {
+                "title": novel.title, "author": novel.author,
+                "book_id": novel.book_id, "url": novel.url,
+                "genre": novel.genre, "chapter_count": novel.chapter_count,
+                "cover": novel.cover, "intro": novel.intro,
+            }, [])
+
+        downloaded = 0
+        locked = 0
+        for i, ch in enumerate(pending):
             content = crawler.download_chapter(novel.book_id, ch["id"])
-            if content.strip():
-                downloaded.append({
+            cjk = len(_re.findall(r"[一-鿿]", content or ""))
+            if content and content.strip() and cjk >= FANQIE_FREE_MIN_CHARS:
+                save_chapter("fanqie", folder, {
                     "index": ch["index"], "title": ch["title"],
-                    "content": content,
-                    "word_count": len(_re.findall(r"[一-鿿]", content)),
+                    "content": content, "word_count": cjk,
                 })
-            on_progress("download", i + 1, total_ch, ch["title"][:30])
-            if i < total_ch - 1:
+                downloaded += 1
+            elif content and content.strip():
+                locked += 1   # 锁章预览：不当正文落盘
+            on_progress("download", i + 1, len(pending), ch["title"][:30])
+            if i < len(pending) - 1:
                 _time.sleep(download_delay)   # 礼貌爬取间隔
 
-        from plugins.novel_storage import save_novel
-        folder = save_novel("fanqie", {
-            "title": novel.title, "author": novel.author,
-            "book_id": novel.book_id, "url": novel.url,
-            "genre": novel.genre, "chapter_count": novel.chapter_count,
-            "cover": novel.cover, "intro": novel.intro,
-        }, downloaded)
-        write_crawl_progress("done", "download", len(downloaded), len(downloaded),
-                             f"下载完成 {len(downloaded)}章",
+        _msg = f"下载完成 {downloaded}章" + (f"（跳过 {skipped}）" if skipped else "")
+        write_crawl_progress("done", "download", downloaded, len(pending), _msg,
                              task_id=_task_id, title=_task_title,
                              extra={"folder": folder, "platform": "fanqie"})
         return {"ok": True, "title": novel.title, "author": novel.author,
-                "saved_chapters": len(downloaded), "folder": folder,
-                "platform": "fanqie"}
+                "saved_chapters": downloaded, "folder": folder,
+                "already": False, "platform": "fanqie"}
     except Exception as e:
         write_crawl_progress("error", "", 0, 0, str(e), task_id=_task_id, title=_task_title)
         raise

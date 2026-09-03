@@ -565,11 +565,15 @@ def scout_novels():
 def scout_novel_cover():
     """已下载小说本地封面（统一书库 storage/novels/<folder>/cover.jpg）。"""
     from flask import send_file
-    from plugins.novel_storage import NOVELS_DIR
+    from plugins.novel_storage import NOVELS_DIR, resolve_novel_dir
     folder = request.args.get("folder", "").strip()
     if not folder:
         return ("", 404)
-    cover_file = NOVELS_DIR / folder / "cover.jpg"
+    try:
+        novel_dir = resolve_novel_dir(folder)
+    except ValueError:
+        return jsonify({"ok": False, "error": "非法 folder"}), 400
+    cover_file = novel_dir / "cover.jpg"
     if not cover_file.is_file():
         return ("", 404)
     return send_file(str(cover_file), mimetype="image/jpeg")
@@ -577,13 +581,17 @@ def scout_novel_cover():
 
 @bp.route("/api/scout/novels/delete", methods=["POST"])
 def scout_novels_delete():
-    """删除已下载小说（storage/novels/<platform>/<folder>/）。"""
-    from plugins.novel_storage import delete_novel
+    """删除已下载小说（统一书库 storage/novels/<folder>/；folder 必须为直接子目录名）。"""
+    from plugins.novel_storage import delete_novel, resolve_novel_dir
     data = request.json or {}
     platform = data.get("platform") or "fanqie"
     folder = data.get("folder", "")
     if not folder:
         return jsonify({"ok": False, "error": "缺少 folder"}), 400
+    try:
+        resolve_novel_dir(folder)   # 路径护栏：非法 folder（../ 绝对路径等）直接 400，不触碰文件系统
+    except ValueError:
+        return jsonify({"ok": False, "error": "非法 folder"}), 400
     ok = delete_novel(platform, folder)
     if not ok:
         return jsonify({"ok": False, "error": "未找到该小说"}), 404
@@ -593,7 +601,7 @@ def scout_novels_delete():
 @bp.route("/api/scout/novels/chapter")
 def scout_novel_chapter():
     """读已下载小说单章正文（按真实章号 index，供阅读器懒加载）。"""
-    from plugins.novel_storage import read_chapter
+    from plugins.novel_storage import read_chapter, resolve_novel_dir
     folder = request.args.get("folder", "").strip()
     platform = (request.args.get("platform", "") or "fanqie").strip()
     try:
@@ -602,6 +610,10 @@ def scout_novel_chapter():
         chapter = 0
     if not folder or chapter <= 0:
         return jsonify({"ok": False, "error": "缺 folder 或 chapter"}), 400
+    try:
+        resolve_novel_dir(folder)
+    except ValueError:
+        return jsonify({"ok": False, "error": "非法 folder"}), 400
     ch = read_chapter(platform, folder, chapter)
     if not ch:
         return jsonify({"ok": False, "error": f"第 {chapter} 章不存在"}), 404

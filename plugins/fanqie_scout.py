@@ -115,6 +115,10 @@ GENDER_READ_ALL_KEYS = {
     "女频阅读榜": 2, "女频": 2,
 }
 
+# 番茄正文视为「免费全文」的最少 CJK 字数（SVIP 锁定章预览常低于此 → 不当正文落盘，
+# 与 book_fetch.FREE_FULL_MIN_CHARS 同口径；独立常量避免模块循环导入）
+FANQIE_FREE_MIN_CHARS = 300
+
 
 class FanqieCrawler:
     """番茄小说爬虫"""
@@ -1193,51 +1197,77 @@ class FanqieScoutAgent:
                         if start_chapter <= int(c.get("index") or 0) <= end_chapter]
         total_ch = len(chapter_list)
 
+        from plugins.novel_storage import (save_novel, save_chapter, NOVELS_DIR,
+                                           _safe_name)
+        folder = _safe_name(novel.title)
+
         # 已是最新（无需下载）：不重写存储，直接返回现有文件夹
         if not chapter_list:
             if on_progress:
                 on_progress("download", 0, 0, "已是最新，无需下载")
-            from plugins.novel_storage import _safe_name
-            return novel, {"folder": _safe_name(novel.title), "chapters": 0}
+            return novel, {"folder": folder, "chapters": 0, "already": True}
 
         if on_progress:
             on_progress("download", 0, total_ch, f"下载 {total_ch} 章...")
 
-        # 逐章落盘：先建目录 + info.json（含封面），每抓一章即写 chapters/（书库实时可见、停止保留已抓）
-        from plugins.novel_storage import save_novel, save_chapter
-        folder = save_novel("fanqie", {
-            "title": novel.title, "author": novel.author,
-            "book_id": novel.book_id, "url": novel.url,
-            "genre": novel.genre, "chapter_count": novel.chapter_count,
-            "cover": novel.cover,
-        }, [])
+        # 建目录 + info.json（含封面）——仅当该书尚未落盘 info（增量/续传保留原来源元数据，
+        # 不覆盖 downloaded_at / site / 番茄合并来源字段）
+        if not (NOVELS_DIR / folder / "info.json").exists():
+            save_novel("fanqie", {
+                "title": novel.title, "author": novel.author,
+                "book_id": novel.book_id, "url": novel.url,
+                "genre": novel.genre, "chapter_count": novel.chapter_count,
+                "cover": novel.cover,
+            }, [])
 
+        # 断点/重复请求幂等：跳过已落盘章
+        existing = set()
+        _ch_dir = NOVELS_DIR / folder / "chapters"
+        if _ch_dir.is_dir():
+            for _cf in _ch_dir.glob("*.json"):
+                try:
+                    existing.add(int(_cf.stem))
+                except ValueError:
+                    pass
+        pending = [c for c in chapter_list if int(c.get("index") or 0) not in existing]
+        skipped_existing = total_ch - len(pending)
         downloaded = 0
-        for i, ch in enumerate(chapter_list):
+        skipped_locked = 0
+        for i, ch in enumerate(pending):
             content = self.crawler.download_chapter(novel.book_id, ch["id"])
-            if content.strip():
+            cjk = len(re.findall(r"[一-鿿]", content or ""))
+            if content and content.strip() and cjk >= FANQIE_FREE_MIN_CHARS:
                 save_chapter("fanqie", folder, {
                     "index": ch["index"], "title": ch["title"],
                     "content": content,
-                    "word_count": len(re.findall(r"[一-鿿]", content)),
+                    "word_count": cjk,
                 })
                 downloaded += 1
+            elif content and content.strip():
+                # 锁章预览/占位：不当正文落盘，留待有镜像全文或解锁后再补（进度如实际报）
+                skipped_locked += 1
             if on_progress:
-                on_progress("download", i+1, total_ch, ch["title"][:30])
-            if i < total_ch - 1:
+                on_progress("download", i + 1, len(pending), ch["title"][:30])
+            if i < len(pending) - 1:
                 time.sleep(download_delay)  # 礼貌爬取间隔
 
         if on_progress:
-            on_progress("download", total_ch, total_ch, f"下载完成 {downloaded}章")
+            on_progress("download", len(pending), len(pending),
+                        f"下载完成 {downloaded}章（本次新增）")
 
-        return novel, {"folder": folder, "chapters": downloaded}
+        return novel, {"folder": folder, "chapters": downloaded,
+                       "already": False, "skipped_existing": skipped_existing,
+                       "skipped_locked": skipped_locked}
 
 
 
     def _existing_max_chapter(self, title: str) -> int:
-        """该书在本地书库已下载的最大章号（0 = 未下载过）。"""
+        """该书在本地书库已下载的最大章号（0 = 未下载过）。
+
+        统一书库：路径为 NOVELS_DIR/<书名>/（无 platform 子目录）。
+        """
         from plugins.novel_storage import NOVELS_DIR, _safe_name
-        ch_dir = NOVELS_DIR / "fanqie" / _safe_name(title) / "chapters"
+        ch_dir = NOVELS_DIR / _safe_name(title) / "chapters"
         if not ch_dir.is_dir():
             return 0
         idxs = []
