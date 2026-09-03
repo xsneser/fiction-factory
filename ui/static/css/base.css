@@ -460,6 +460,13 @@
         .char-card .accordion-body { padding:0 16px 14px; }
         .char-card .accordion-body.show { padding:0 16px 14px; }
         @media (max-width:560px) { .char-grid { grid-template-columns:1fr; } }
+        /* 角色库分类标签：默认 12 个 + 「更多」折叠，展开后换行显示全部（解决 34 个标签横向过长） */
+        .tabs.char-tabs { flex-wrap:wrap; gap:6px 4px; }
+        .tabs.char-tabs .tabs-more { padding:6px 12px; font-size:12px; color:var(--accent); background:none;
+            border:1px solid var(--border-soft); border-radius:6px; cursor:pointer; white-space:nowrap; }
+        .tabs.char-tabs .tabs-more:hover { border-color:var(--accent); background:rgba(88,166,255,.08); }
+        .tabs.char-tabs .tabs-more-wrap { display:inline-flex; gap:6px 4px; flex-wrap:wrap; }
+        .tabs.char-tabs .tabs-more-wrap[hidden] { display:none; }
         /* Toast */
         #toast-root { position:fixed; top:20px; right:20px; z-index:2000; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
         .toast { background:#1e2130; border:1px solid #2a2d3a; border-radius:8px; padding:10px 16px; font-size:13px; color:#e6edf3; box-shadow:0 4px 20px rgba(0,0,0,.5); max-width:380px; white-space:pre-line; animation:toast-in .2s ease; pointer-events:auto; }

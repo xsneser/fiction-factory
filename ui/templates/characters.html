@@ -2,11 +2,19 @@
 {% block content %}
 <h1>🎭 角色原型库 <span style="font-size:14px;color:#8b949e">（{{ archetypes|length }} 原型）</span></h1>
 
-<div class="tabs" style="margin-bottom:16px">
+<div class="tabs char-tabs" style="margin-bottom:16px">
     <a href="/characters" class="{{ 'active' if not current_cat else '' }}">全部</a>
-    {% for c in categories %}
+    {% for c in categories[:12] %}
     <a href="/characters?tag={{ c }}" class="{{ 'active' if c == current_cat else '' }}">{{ c }}</a>
     {% endfor %}
+    {% if categories|length > 12 %}
+    <button type="button" class="tabs-more" id="cats-more-btn" onclick="toggleMoreCats()">{{ '收起 ▴' if current_cat in categories[12:] else '更多(' ~ (categories|length - 12) ~ ') ▾' }}</button>
+    <span class="tabs-more-wrap" id="cats-more-wrap" {% if current_cat in categories[12:] %}style="display:inline"{% else %}hidden{% endif %}>
+        {% for c in categories[12:] %}
+        <a href="/characters?tag={{ c }}" class="{{ 'active' if c == current_cat else '' }}">{{ c }}</a>
+        {% endfor %}
+    </span>
+    {% endif %}
 </div>
 
 {% if archetypes %}
@@ -51,6 +59,14 @@
 {% endif %}
 
 <script>
+function toggleMoreCats() {
+    var wrap = document.getElementById('cats-more-wrap');
+    var btn = document.getElementById('cats-more-btn');
+    if (!wrap || !btn) return;
+    var open = wrap.hidden;
+    wrap.hidden = !open;
+    btn.textContent = open ? '收起 ▴' : '更多({{ categories|length - 12 }}) ▾';
+}
 async function toggleChar(id) {
     const r = await fetch('/api/characters/' + id + '/toggle', {method:'POST'});
     const d = await r.json();
