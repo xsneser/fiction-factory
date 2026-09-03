@@ -485,7 +485,7 @@ class FanqieCrawler:
                     continue
             return None
 
-        print(f"[搜索] 并行搜索 '{title[:30]}' -> {len(unique_queries)}种查询")
+        logger.info("并行搜索 '%s' -> %d种查询", str(title)[:30], len(unique_queries))
         
         # 先用最精确的查询串行试一次
         if unique_queries:
@@ -496,7 +496,7 @@ class FanqieCrawler:
         
         # 失败则并行跑剩余查询（每个查询用独立 session，requests.Session 非线程安全）
         if len(unique_queries) > 1:
-            def _parallel_search():
+            def _parallel_search(query: str):
                 import requests as _req
                 import threading as _threading
                 import urllib3 as _urllib3
@@ -532,7 +532,7 @@ class FanqieCrawler:
                 return None
             
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(unique_queries)-1) as executor:
-                futures = {executor.submit(_parallel_search): q for q in unique_queries[1:]}
+                futures = {executor.submit(_parallel_search, q): q for q in unique_queries[1:]}
                 try:
                     for future in concurrent.futures.as_completed(futures, timeout=5):
                         try:
@@ -702,7 +702,13 @@ class FanqieCrawler:
         """下载单章 — 从阅读器页面SSR提取"""
         cache_file = self.cache_dir / f"{chapter_id}.txt"
         if cache_file.exists():
-            return cache_file.read_text(encoding="utf-8")
+            try:
+                cached = cache_file.read_text(encoding="utf-8")
+            except Exception:
+                cached = ""
+            if cached:
+                return cached
+            # 空/损坏缓存（0 字节残留）视为未缓存，重新下载
 
         try:
             r = self.session.get(
@@ -746,7 +752,21 @@ class FanqieCrawler:
                     content = self._decoder.decode_content(content)
 
                 if content.strip():
-                    cache_file.write_text(content, encoding="utf-8")
+                    # 原子写缓存（临时文件 + os.replace），避免并发读/崩溃读到半写正文
+                    import tempfile as _tf
+                    import os as _os
+                    self.cache_dir.mkdir(parents=True, exist_ok=True)
+                    _fd, _tmp = _tf.mkstemp(dir=str(self.cache_dir), suffix=".tmp")
+                    try:
+                        with _os.fdopen(_fd, "w", encoding="utf-8") as _f:
+                            _f.write(content)
+                        _os.replace(_tmp, str(cache_file))
+                    except Exception:
+                        try:
+                            _os.unlink(_tmp)
+                        except Exception:
+                            pass
+                        raise
 
             return content or ""
         except Exception as e:

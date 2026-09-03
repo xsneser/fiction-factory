@@ -134,7 +134,7 @@ def write_jsonl_atomic(path: str | Path, items: list) -> None:
                     f.write(json.dumps(item, ensure_ascii=False) + "\n")
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_path, p)
+            _replace_with_retry(tmp_path, p)
         except Exception:
             try:
                 tmp_path.unlink(missing_ok=True)

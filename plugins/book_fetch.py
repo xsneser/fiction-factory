@@ -970,6 +970,7 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
     _dl_st = _sched_stats(_dl_srcs)    # 每源调度状态（仅 coordinator 线程读写）
     _done_n = 0
     _next = 0
+    _site_submit: dict[str, float] = {}   # 每源上次提交时刻（download_delay 礼貌节流，coordinator 线程读写）
 
     def _fill(limit):
         """提交至多 limit 个待下载章节；负责源自适应均衡分派（无镜像源时 prefer=None）。"""
@@ -989,6 +990,16 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             if _pref is not None:
                 _dl_st[_pref["site"]]["load"] += 1
                 _dl_st[_pref["site"]]["assigned"] += 1
+            # 每源礼貌节流：同一负责源相邻两次提交 ≥ download_delay（多源各自独立推进不受累加；
+            # 单源场景等效旧单源逐章 sleep，修复 merged 此前忽略 download_delay 直接锤单源的问题）
+            if _pref is not None and delay and delay > 0:
+                _now = time.monotonic()
+                _last = _site_submit.get(_pref["site"])
+                if _last is not None:
+                    _gap = delay - (_now - _last)
+                    if _gap > 0:
+                        time.sleep(_gap)
+                _site_submit[_pref["site"]] = time.monotonic()
             _inflight[_dl_ex.submit(_dl_one, int(_ch["index"]), _ch, _pref)] = \
                 (_ch, _pref["site"] if _pref else None)
             added += 1
@@ -1055,10 +1066,11 @@ def _save_mirror_only(primary, site, chapters, start, end, delay, on_progress,
     # 标记番茄回退
     try:
         from plugins.novel_storage import NOVELS_DIR
+        from core.json_store import write_json_atomic
         info_file = NOVELS_DIR / dl["folder"] / "info.json"
         d = json.loads(info_file.read_text(encoding="utf-8"))
         d["fallback_fanqie"] = True
-        info_file.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json_atomic(info_file, d)
     except Exception as e:
         logger.warning(f"mark fallback_fanqie failed: {e}")
     return info, {**dl, "sources": "mirror-fallback"}
