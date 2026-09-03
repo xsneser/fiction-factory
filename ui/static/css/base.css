@@ -446,6 +446,20 @@
         .accordion-header:hover { background:#1f2937; }
         .accordion-body { padding:0 16px 16px; display:none; }
         .accordion-body.show { display:block; }
+        /* ─── 角色原型库卡片网格（characters.html）：复用 accordion 展开交互，视觉改为网格卡片 ─── */
+        .char-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; margin-bottom:24px; }
+        .char-card.accordion { margin-bottom:0; border-radius:10px; overflow:hidden; transition:border-color .2s, box-shadow .2s, transform .2s; }
+        .char-card.accordion:hover { border-color:#58a6ff; box-shadow:0 4px 18px rgba(0,0,0,.32); transform:translateY(-1px); }
+        .char-card .accordion-header { flex-direction:column; align-items:stretch; gap:8px; padding:14px 16px 12px; }
+        .char-card .cc-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .char-card .cc-name { font-size:15px; color:var(--fg-strong); }
+        .char-card .cc-arrow { margin-left:auto; font-size:11px; color:var(--fg-dim); transition:color .15s; flex-shrink:0; }
+        .char-card .accordion-header:hover .cc-arrow { color:var(--accent); }
+        .char-card .cc-tags { display:flex; flex-wrap:wrap; gap:6px; }
+        .char-card .cc-persona { font-size:12px; color:var(--fg-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .char-card .accordion-body { padding:0 16px 14px; }
+        .char-card .accordion-body.show { padding:0 16px 14px; }
+        @media (max-width:560px) { .char-grid { grid-template-columns:1fr; } }
         /* Toast */
         #toast-root { position:fixed; top:20px; right:20px; z-index:2000; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
         .toast { background:#1e2130; border:1px solid #2a2d3a; border-radius:8px; padding:10px 16px; font-size:13px; color:#e6edf3; box-shadow:0 4px 20px rgba(0,0,0,.5); max-width:380px; white-space:pre-line; animation:toast-in .2s ease; pointer-events:auto; }

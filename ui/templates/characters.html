@@ -9,15 +9,18 @@
     {% endfor %}
 </div>
 
+{% if archetypes %}
+<div class="char-grid">
 {% for a in archetypes %}
-<div class="accordion" id="char-{{ a.id }}" style="opacity:{{ '0.5' if not a.enabled else '1' }}">
+<div class="char-card accordion" id="char-{{ a.id }}" style="opacity:{{ '0.5' if not a.enabled else '1' }}">
     <div class="accordion-header">
-        <span>
-            <strong>{{ a.name }}</strong>
-            {% for t in a.tags %}<span class="tag blue">{{ t }}</span>{% endfor %}
+        <span class="cc-title">
+            <strong class="cc-name">{{ a.name }}</strong>
             {% if not a.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
+            <span class="cc-arrow" data-acc-hint>展开 ▸</span>
         </span>
-        <span style="color:#8b949e;font-size:12px">{{ a.personality }}</span>
+        <span class="cc-tags">{% for t in a.tags %}<span class="tag blue">{{ t }}</span>{% endfor %}</span>
+        <span class="cc-persona">{{ a.personality }}</span>
     </div>
     <div class="accordion-body">
         <p style="color:#c9d1d9">{{ a.description }}</p>
@@ -41,9 +44,11 @@
         </p>
     </div>
 </div>
+{% endfor %}
+</div>
 {% else %}
 <div class="empty"><div class="icon">🎭</div><p>还没有角色原型</p></div>
-{% endfor %}
+{% endif %}
 
 <script>
 async function toggleChar(id) {
