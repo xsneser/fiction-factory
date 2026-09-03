@@ -446,19 +446,23 @@
         .accordion-header:hover { background:#1f2937; }
         .accordion-body { padding:0 16px 16px; display:none; }
         .accordion-body.show { display:block; }
-        /* ─── 角色原型库卡片网格（characters.html）：复用 accordion 展开交互，视觉改为网格卡片 ─── */
+        /* ─── 角色原型库卡片网格（characters.html）：全量内容直显，无折叠交互 ─── */
         .char-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; margin-bottom:24px; }
-        .char-card.accordion { margin-bottom:0; border-radius:10px; overflow:hidden; transition:border-color .2s, box-shadow .2s, transform .2s; }
-        .char-card.accordion:hover { border-color:#58a6ff; box-shadow:0 4px 18px rgba(0,0,0,.32); transform:translateY(-1px); }
-        .char-card .accordion-header { flex-direction:column; align-items:stretch; gap:8px; padding:14px 16px 12px; }
+        .char-card { background:var(--bg-elev); border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:8px; transition:border-color .2s, box-shadow .2s, transform .2s; }
+        .char-card:hover { border-color:#58a6ff; box-shadow:0 4px 18px rgba(0,0,0,.32); transform:translateY(-1px); }
+        .char-card .cc-head { display:flex; flex-direction:column; gap:6px; }
         .char-card .cc-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
         .char-card .cc-name { font-size:15px; color:var(--fg-strong); }
-        .char-card .cc-arrow { margin-left:auto; font-size:11px; color:var(--fg-dim); transition:color .15s; flex-shrink:0; }
-        .char-card .accordion-header:hover .cc-arrow { color:var(--accent); }
         .char-card .cc-tags { display:flex; flex-wrap:wrap; gap:6px; }
-        .char-card .cc-persona { font-size:12px; color:var(--fg-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .char-card .accordion-body { padding:0 16px 14px; }
-        .char-card .accordion-body.show { padding:0 16px 14px; }
+        .char-card .cc-persona { font-size:12px; color:var(--fg-muted); }
+        .char-card .cc-desc { font-size:13px; line-height:1.7; color:#c9d1d9; }
+        .char-card .cc-sec { padding-top:2px; }
+        .char-card .cc-sec-label { display:block; font-size:11px; color:var(--fg-dim); margin:6px 0 4px; }
+        .char-card .cc-example { font-size:13px; padding-left:12px; border-left:2px solid var(--border-soft); color:#c9d1d9; margin:2px 0; line-height:1.5; }
+        .char-card .cc-line { display:flex; flex-wrap:wrap; gap:6px; }
+        .char-card .cc-foot { margin-top:auto; padding-top:10px; border-top:1px solid var(--border-soft); display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+        .char-card .cc-meta { font-size:11px; color:var(--fg-dim); }
+        .char-card .cc-actions { display:flex; gap:6px; }
         @media (max-width:560px) { .char-grid { grid-template-columns:1fr; } }
         /* 角色库分类标签：默认 12 个 + 「更多」折叠，展开后换行显示全部（解决 34 个标签横向过长） */
         .tabs.char-tabs { flex-wrap:wrap; gap:6px 4px; }

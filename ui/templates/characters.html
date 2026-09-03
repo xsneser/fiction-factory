@@ -20,36 +20,40 @@
 {% if archetypes %}
 <div class="char-grid">
 {% for a in archetypes %}
-<div class="char-card accordion" id="char-{{ a.id }}" style="opacity:{{ '0.5' if not a.enabled else '1' }}">
-    <div class="accordion-header">
+<div class="char-card" id="char-{{ a.id }}" style="opacity:{{ '0.55' if not a.enabled else '1' }}">
+    <div class="cc-head">
         <span class="cc-title">
             <strong class="cc-name">{{ a.name }}</strong>
             {% if not a.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
-            <span class="cc-arrow" data-acc-hint>展开 ▸</span>
         </span>
         <span class="cc-tags">{% for t in a.tags %}<span class="tag blue">{{ t }}</span>{% endfor %}</span>
-        <span class="cc-persona">{{ a.personality }}</span>
     </div>
-    <div class="accordion-body">
-        <p style="color:#c9d1d9">{{ a.description }}</p>
-        {% if a.examples %}
-        <p><strong>代表人物:</strong></p>
-        {% for e in a.examples %}<p style="font-size:13px;padding-left:12px;border-left:2px solid #30363d">· {{ e }}</p>{% endfor %}
-        {% endif %}
-        {% if a.catchphrases %}
-        <p><strong>口癖示例:</strong> {% for c in a.catchphrases %}<span class="tag yellow">「{{ c }}」</span>{% endfor %}</p>
-        {% endif %}
-        {% if a.fit_tags %}
-        <p><strong>适配标签:</strong> {% for g in a.fit_tags %}<span class="tag green">{{ g }}</span>{% endfor %}</p>
-        {% endif %}
-        <p style="color:#484f58;font-size:11px">
-            收录: {{ a.created_at }}
-            · 来源: {{ a.source or '创作积累' }}
-        </p>
-        <p style="margin-top:8px">
+    <div class="cc-persona">{{ a.personality }}</div>
+    <p class="cc-desc">{{ a.description }}</p>
+    {% if a.examples %}
+    <div class="cc-sec">
+        <span class="cc-sec-label">代表人物</span>
+        {% for e in a.examples %}<p class="cc-example">· {{ e }}</p>{% endfor %}
+    </div>
+    {% endif %}
+    {% if a.catchphrases %}
+    <div class="cc-sec">
+        <span class="cc-sec-label">口癖示例</span>
+        <div class="cc-line">{% for c in a.catchphrases %}<span class="tag yellow">「{{ c }}」</span>{% endfor %}</div>
+    </div>
+    {% endif %}
+    {% if a.fit_tags %}
+    <div class="cc-sec">
+        <span class="cc-sec-label">适配标签</span>
+        <div class="cc-line">{% for g in a.fit_tags %}<span class="tag green">{{ g }}</span>{% endfor %}</div>
+    </div>
+    {% endif %}
+    <div class="cc-foot">
+        <span class="cc-meta">收录 {{ a.created_at }} · {{ a.source or '创作积累' }}</span>
+        <span class="cc-actions">
             <button class="small" onclick="toggleChar('{{ a.id }}')">{{ '✅ 启用' if not a.enabled else '⏸ 禁用' }}</button>
             <button class="small danger" onclick="deleteChar('{{ a.id }}')">🗑 删除</button>
-        </p>
+        </span>
     </div>
 </div>
 {% endfor %}
