@@ -34,9 +34,20 @@ NOVELS_DIR = Path(__file__).parent.parent / "storage" / "novels"
 # 旧平台子目录名（迁移源；统一后不再新建）
 _LEGACY_PLATFORM_DIRS = ("fanqie", "web", "qidian", "jinjiang")
 
+_MIGRATED = False   # 一次性旧目录迁移标志（首次 ensure_dirs 触发；幂等）
+
 
 def ensure_dirs():
+    global _MIGRATED
     NOVELS_DIR.mkdir(parents=True, exist_ok=True)
+    if not _MIGRATED:
+        _MIGRATED = True
+        try:
+            # 统一书库前的旧 platform 子目录若仍在，会被 list/读/删 静默跳过或护栏拒绝 →
+            # 首次进入即迁移（幂等：只搬不存在的章节/合并元数据，随后清理空平台目录）。
+            migrate_unified()
+        except Exception as e:   # noqa: BLE001 - 迁移失败不应阻断正常读写
+            logger.warning("旧平台目录迁移跳过: %s", e)
 
 
 def resolve_novel_dir(novel_folder: str) -> Path:
@@ -55,20 +66,28 @@ def resolve_novel_dir(novel_folder: str) -> Path:
     return ensure_child_path(NOVELS_DIR, NOVELS_DIR / novel_folder)
 
 
-def _count_saved_chapters(ch_dir: Path) -> int:
-    """数已落盘且 content 非空的章节数（占位/空正文不算，与合并路径 content-aware 一致）。"""
-    if not ch_dir.exists():
-        return 0
-    n = 0
-    for ch_file in ch_dir.glob("*.json"):
+def existing_complete_chapters(folder: str, min_units: int = 0) -> set:
+    """已落盘且 content 有效（非空；min_units>0 时 word_count≥它）的章号集合。
+
+    供增量下载幂等判断：空占位/锁章短预览（word_count 偏低）视为「未完成」→ 重下修复。
+    word_count 读取存章字段（与字数口径一致），避免逐章重算。
+    """
+    out = set()
+    try:
+        ch_dir = resolve_novel_dir(folder) / "chapters"
+    except ValueError:
+        return out
+    if not ch_dir.is_dir():
+        return out
+    for f in ch_dir.glob("*.json"):
         try:
-            with ch_file.open(encoding="utf-8") as f:
-                if json.load(f).get("content"):
-                    n += 1
+            with f.open(encoding="utf-8") as fh:
+                ch = json.load(fh)
+            if ch.get("content") and (min_units <= 0 or int(ch.get("word_count") or 0) >= min_units):
+                out.add(int(f.stem))
         except Exception:
-            logger.warning("跳过无法解析的章节 %s", ch_file)
             continue
-    return n
+    return out
 
 
 def _download_cover(novel_dir: Path, cover_url: str) -> bool:
@@ -148,6 +167,7 @@ def save_novel(platform: str, info: dict, chapters: list[dict]) -> str:
     for i, ch in enumerate(chapters):
         idx = int(ch.get("index") or (i + 1))
         _write_chapter(novel_dir / "chapters", idx, ch)
+    _invalidate_list_cache()   # 新书立即可见（列表缓存失效）
     return safe_name
 
 
@@ -165,6 +185,11 @@ def save_chapter(platform: str, folder: str, ch: dict) -> None:
 
 _LIST_TTL = 2.0
 _list_cache = {"ts": 0.0, "platform": "", "data": None}   # 书库列表短 TTL（下载中新增书 ≤2s 可见）
+
+
+def _invalidate_list_cache():
+    """书级变更（新建/删除）即时失效列表缓存；章级增量仍靠 2s TTL 兜底。"""
+    _list_cache["ts"] = 0.0
 
 
 def list_novels(platform: str = "") -> list[dict]:
@@ -195,7 +220,9 @@ def list_novels(platform: str = "") -> list[dict]:
         if platform and info.get("platform", "") != platform:
             continue
         info["path"] = str(novel_dir)
-        info["saved_chapters"] = _count_saved_chapters(novel_dir / "chapters")
+        # 显示口径=文件数（快）；content 完整性判断由下载路径各自 content-aware，不在此重解析
+        ch_dir = novel_dir / "chapters"
+        info["saved_chapters"] = len(list(ch_dir.glob("*.json"))) if ch_dir.exists() else 0
         info["folder"] = novel_dir.name
         if (novel_dir / "cover.jpg").exists():
             from urllib.parse import quote
@@ -246,6 +273,7 @@ def load_novel(platform: str, novel_folder: str,
                     "index": ch.get("index", 0),
                     "title": ch.get("title", ""),
                     "word_count": ch.get("word_count", 0),
+                    "source": ch.get("source", ""),   # 元数据也带每章来源（阅读器中文显示需要）
                 })
 
     return {"info": info, "chapters": chapters}
@@ -331,6 +359,7 @@ def delete_novel(platform: str, novel_folder: str) -> bool:
         return False
     if novel_dir.exists():
         shutil.rmtree(novel_dir)
+        _invalidate_list_cache()
         return True
     return False
 

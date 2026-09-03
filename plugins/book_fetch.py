@@ -29,6 +29,7 @@ import time
 from collections import deque
 from typing import Optional
 
+from core.text_utils import count_prose_units  # noqa: E402
 from plugins.webnovel_scraper import _parse_chapter_num
 
 logger = logging.getLogger("novel-engine.book_fetch")
@@ -114,9 +115,9 @@ def _sched_on_done(stats, pref_site, ok, used_site, window=_DL_MISS_WINDOW):
 
 
 def _cjk_len(s):
-    """字数：中文按字 + 英文按词（与引擎 count_prose_units 同一口径，避免混排章节低估）。"""
-    from core.text_utils import count_prose_units
-    return count_prose_units(s or "")
+    """纯中文字数——锁章门 / FREE_MIN / FULL_RATIO 判据用（英文/数字不计，防混排内容误跨门）。"""
+    from core.text_utils import cjk_char_count
+    return cjk_char_count(s or "")
 
 
 def _norm(text):
@@ -869,7 +870,24 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
             logger.warning(f"full wmap {src['site']} failed: {e}")
             _step(f"拉全目录:{src['site']}", "warn", "拉取失败，用 quick 部分目录")
 
-    save_novel(platform, meta, [])   # 重建 info.json（书目先前已建则原地更新 + head 字段）
+    # info.json：首建全写（save_novel 含封面）；增量/续传（已有 info）只并入本次 head/校验字段，
+    # 保留原 downloaded_at / site / book_id 等来源元数据（不因每次 resume 重置/整写覆盖）。
+    from core.json_store import read_json, write_json_atomic
+    _i_dir = NOVELS_DIR / _safe_name(f_meta["title"])
+    _i_path = _i_dir / "info.json"
+    if _i_path.exists():
+        _old = read_json(_i_path, {}) or {}
+        _merged = dict(_old)
+        _merged.update({k: v for k, v in meta.items()
+                        if k != "downloaded_at"
+                        and (k != "site" or not _old.get("site"))})
+        if not _merged.get("downloaded_at"):
+            from datetime import datetime as _dt
+            _merged["downloaded_at"] = _old.get("downloaded_at") \
+                or _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        write_json_atomic(_i_path, _merged)
+    else:
+        save_novel(platform, meta, [])
     downloaded = 0
     _dl_lock = threading.Lock()
 
@@ -939,7 +957,7 @@ def _save_merged(f_meta, f_catalog, sources, site, chapters, start, end, delay,
         if content or not no_mirror:
             save_chapter(platform, folder, {
                 "index": idx, "title": ch["title"], "content": content or "",
-                "word_count": _cjk_len(content or ""),
+                "word_count": count_prose_units(content or ""),
                 # 本章获取来源：镜像站 site / 番茄（头章权威正文）
                 "source": used_site or ("fanqie" if (idx in head_span and content) else ""),
             })

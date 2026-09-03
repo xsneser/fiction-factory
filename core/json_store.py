@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -15,6 +16,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+
+_log = logging.getLogger("json_store")
 
 _LOCKS: dict[Path, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
@@ -43,18 +46,20 @@ def file_lock(path: str | Path) -> Iterator[None]:
 
 
 @contextmanager
-def process_file_lock(path: str | Path, timeout: float = 10.0) -> Iterator[None]:
+def process_file_lock(path: str | Path, timeout: float = 1.0) -> Iterator[None]:
     """跨进程文件锁（同机多进程互斥）：Windows msvcrt.locking / POSIX fcntl.flock。
 
     `json_store.file_lock` 只是进程内 RLock——MCP 进程与 Flask 进程会并发对同一
     storage/*.json 读-改-写（crawl_progress / hot_cache），需 OS 级排他。此锁用独立的
-    `<path>.lock` 文件；timeout 内没抢到仍继续执行（尽力而为，避免把 Flask 单线程
-    服务拖死）。
+    `<path>.lock` 文件。短超时（默认 1s，避免拖住 Flask 单线程）；**抢不到即抛
+    TimeoutError**（不静默无锁放行——那会复现要修的 RMW 竞态），调用方自行降级为
+    进程内 file_lock 或跳过。
     """
     p = _resolved(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     lock_file = p.with_name(p.name + ".lock")
     fd = lock_file.open("a+b")
+    acquired = False
     try:
         fd.seek(0)
         if fd.read(1) == b"":
@@ -67,33 +72,43 @@ def process_file_lock(path: str | Path, timeout: float = 10.0) -> Iterator[None]
             while True:
                 try:
                     msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
+                    acquired = True
                     break
                 except OSError:
                     if time.time() > deadline:
                         break
-                    time.sleep(0.05)
+                    time.sleep(0.03)
         else:
             import fcntl
             while True:
                 try:
                     fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
                     break
                 except OSError:
                     if time.time() > deadline:
                         break
-                    time.sleep(0.05)
+                    time.sleep(0.03)
+        if not acquired:
+            # 短超时仍抢不到（另一进程持锁 >1s）：降级为进程内锁 + 明确告警，不静默无锁、
+            # 不长时间拖住 Flask 单线程（尽力而为，多数瞬态竞争 1s 内即让出）。
+            _log.warning("跨进程文件锁获取超时(%.0fs)，降级进程内锁(尽力而为): %s", timeout, lock_file)
+            with file_lock(p):
+                yield
+            return
         yield
     finally:
-        try:
-            fd.seek(0)
-            if os.name == "nt":
-                import msvcrt
-                msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
+        if acquired:
+            try:
+                fd.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
         fd.close()
 
 

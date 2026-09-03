@@ -1753,15 +1753,9 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
         from plugins.fanqie_scout import FANQIE_FREE_MIN_CHARS
         folder = _safe_name(novel.title)
 
-        # 幂等：跳过已落盘章；无缺章 → already
-        existing = set()
-        _ch_dir = NOVELS_DIR / folder / "chapters"
-        if _ch_dir.is_dir():
-            for _cf in _ch_dir.glob("*.json"):
-                try:
-                    existing.add(int(_cf.stem))
-                except ValueError:
-                    pass
+        # 幂等：跳过已落盘**且 content 完整**的章（短预览/空占位视为缺章 → 下次重下修复）
+        from plugins.novel_storage import existing_complete_chapters
+        existing = existing_complete_chapters(folder, min_units=FANQIE_FREE_MIN_CHARS)
         pending = [c for c in chapter_list if int(c.get("index") or 0) not in existing]
         skipped = total_ch - len(pending)
         if not pending:
@@ -1784,13 +1778,14 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
 
         downloaded = 0
         locked = 0
+        from core.text_utils import cjk_char_count as _cjkc   # 锁章门用纯 CJK 口径
         for i, ch in enumerate(pending):
             content = crawler.download_chapter(novel.book_id, ch["id"])
-            cjk = count_prose_units(content or "")
-            if content and content.strip() and cjk >= FANQIE_FREE_MIN_CHARS:
+            units = count_prose_units(content or "")
+            if content and content.strip() and _cjkc(content or "") >= FANQIE_FREE_MIN_CHARS:
                 save_chapter("fanqie", folder, {
                     "index": ch["index"], "title": ch["title"],
-                    "content": content, "word_count": cjk,
+                    "content": content, "word_count": units,
                 })
                 downloaded += 1
             elif content and content.strip():
@@ -1799,13 +1794,17 @@ def fetch_novel(title: str = "", book_id: str = "", chapters: int = 30,
             if i < len(pending) - 1:
                 _time.sleep(download_delay)   # 礼貌爬取间隔
 
-        _msg = f"下载完成 {downloaded}章" + (f"（跳过 {skipped}）" if skipped else "")
+        _msg = f"下载完成 {downloaded}章"
+        if skipped:
+            _msg += f"（跳过 {skipped}）"
+        if locked:
+            _msg += f"，{locked} 章锁定预览未落盘（需解锁/镜像全文）"
         write_crawl_progress("done", "download", downloaded, len(pending), _msg,
                              task_id=_task_id, title=_task_title,
                              extra={"folder": folder, "platform": "fanqie"})
         return {"ok": True, "title": novel.title, "author": novel.author,
                 "saved_chapters": downloaded, "folder": folder,
-                "already": False, "platform": "fanqie"}
+                "already": False, "locked": locked, "platform": "fanqie"}
     except Exception as e:
         write_crawl_progress("error", "", 0, 0, str(e), task_id=_task_id, title=_task_title)
         raise
@@ -2048,7 +2047,7 @@ def extract_state(folder: str = "", action: str = "load",
 
 def ingest_library_assets(plots: list | None = None, structures: list | None = None,
                           gags: list | None = None, characters: list | None = None,
-                          source: str = "fanqie") -> dict:
+                          source: str = "fanqie", gate: bool = True) -> dict:
     """提取入库：把 agent 从参考书/已抓取书提炼的桥段/弧/笑点/角色写入四库。
 
     纯规则落盘、无 LLM（复用 FanqieScoutAgent.ingest_selected，角色走新增
@@ -2059,16 +2058,71 @@ def ingest_library_assets(plots: list | None = None, structures: list | None = N
     深度/分支按书里真实结构定、不要求均匀；只表述字数，不含章数）；gag {name, category,
     pattern_description, fit_scenes, examples}；character {name, personality,
     description, archetypes, examples, catchphrases, tags, fit_tags}。
-    返回 {ok, source, plots, structures, gags, characters}。
+
+    gate=True（默认）：入库前经 extract_judge 闸门——结构不完整 / 库内机制级近似 /
+    自评书级专用的候选**不写入四库**，返回 judge 报告（incomplete 缺字段 /
+    duplicate 库内近似 / book_archive 书级专用），agent 据报告修正或记入
+    extract_state.digest。候选可带自评字段 `_book_specific=true` / `_reusable=false`
+    主动标书级专用。
+    gate=False：维持旧行为（仅 scout_{source}_{name} 精确 id 去重，全量写入）。
+
+    返回 {ok, source, plots, structures, gags, characters, judge?}。
     """
     if not any([plots, structures, gags, characters]):
         raise RuntimeError("至少提供 plots/structures/gags/characters 之一")
     from plugins.fanqie_scout import FanqieScoutAgent
+    from libraries.extract_judge import judge_all, split_by_decision
+
+    cands = {"plots": plots or [], "structures": structures or [],
+             "gags": gags or [], "characters": characters or []}
+    filtered = cands
+    report = {}
+    if gate:
+        judge = judge_all(plots=cands["plots"], structures=cands["structures"],
+                          gags=cands["gags"], characters=cands["characters"],
+                          plot_lib=plot_lib, struct_lib=struct_lib,
+                          gag_lib=gag_lib, char_lib=char_lib)
+        filtered = {}
+        dropped = {}
+        for kind, src in cands.items():
+            keep, drop = split_by_decision(src, judge.get(kind, []))
+            filtered[kind] = keep
+            for dec, items in drop.items():
+                dropped.setdefault(dec, []).extend(items)
+        report["judge"] = {
+            "gated": bool(dropped),
+            "incomplete": dropped.get("incomplete", []),
+            "duplicate": dropped.get("duplicate", []),
+            "book_archive": dropped.get("book_archive", []),
+        }
+
     scout = FanqieScoutAgent(plot_lib=plot_lib, struct_lib=struct_lib,
                              gag_lib=gag_lib, char_lib=char_lib)
-    stats = scout.ingest_selected(plots=plots, structures=structures,
-                                  gags=gags, characters=characters, source=source)
-    return {"ok": True, "source": source, **stats}
+    stats = scout.ingest_selected(plots=filtered["plots"], structures=filtered["structures"],
+                                  gags=filtered["gags"], characters=filtered["characters"],
+                                  source=source)
+    return {"ok": True, "source": source, **stats, **report}
+
+
+def judge_extraction(plots: list | None = None, structures: list | None = None,
+                     gags: list | None = None, characters: list | None = None) -> dict:
+    """入库判断闸门（预检，不写库）：对候选执行「什么能进四库」的确定性判定。
+
+    每条候选返回 decision ∈ four_lib（可进四库）/ duplicate（库内已有机制级近似，
+    跳过或差异化改名）/ incomplete（结构不完整，缺字段，需补全或落书级档案）/
+    book_archive（自评书级专用，不进四库，可记 extract_state）。附 reasons 与
+    overlap_with（与库内哪条近似）。
+
+    判据：①结构完整性（桥段需 structure 箭头骨架 + slots、弧需 stages、笑点需
+    pattern_description、角色需 personality）②库内 bigram 机制级近似（含本批
+    已过闸候选）③候选自评 `_book_specific=true` / `_reusable=false`。
+    纯规则无 LLM。入库请用 ingest_library_assets（gate=True 应用同一闸门自动过滤）。
+    """
+    from libraries.extract_judge import judge_all
+    return {"ok": True, **judge_all(plots=plots, structures=structures,
+                                    gags=gags, characters=characters,
+                                    plot_lib=plot_lib, struct_lib=struct_lib,
+                                    gag_lib=gag_lib, char_lib=char_lib)}
 
 
 def _build_registry():
@@ -2095,7 +2149,7 @@ def _build_registry():
         # fetch_book = 综合抓取（番茄元数据+权威目录 + 镜像站全文，统一书库）；fetch_novel 番茄专用；
         # fetch_webnovel 镜像站专用）
         fetch_book, fetch_novel, fetch_webnovel, discover_hot, list_rankings, list_crawled_novels, read_crawled_novel,
-        extract_state, ingest_library_assets,
+        extract_state, judge_extraction, ingest_library_assets,
     ]
     seen = set()
     entries = []

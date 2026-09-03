@@ -211,10 +211,10 @@ def persist_rules(site, rules):
     读-改-写整体持文件锁（core.json_store 同路径可重入）+ 原子替换，避免多 worker 并发
     RMW 互相覆盖丢规则/写坏文件。
     """
-    from core.json_store import file_lock, read_json, write_json_atomic
+    from core.json_store import process_file_lock, read_json, write_json_atomic
     try:
         os.makedirs(STORAGE_DIR, exist_ok=True)
-        with file_lock(RULES_FILE):
+        with process_file_lock(RULES_FILE):
             data = read_json(RULES_FILE, {}) or {}
             data[site] = rules
             write_json_atomic(RULES_FILE, data)

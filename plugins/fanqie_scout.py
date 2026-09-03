@@ -1248,27 +1248,22 @@ class FanqieScoutAgent:
                 "cover": novel.cover,
             }, [])
 
-        # 断点/重复请求幂等：跳过已落盘章
-        existing = set()
-        _ch_dir = NOVELS_DIR / folder / "chapters"
-        if _ch_dir.is_dir():
-            for _cf in _ch_dir.glob("*.json"):
-                try:
-                    existing.add(int(_cf.stem))
-                except ValueError:
-                    pass
+        # 断点/重复请求幂等：跳过已落盘**且 content 完整**的章（短预览/空占位视为缺章重下）
+        from plugins.novel_storage import existing_complete_chapters
+        existing = existing_complete_chapters(folder, min_units=FANQIE_FREE_MIN_CHARS)
         pending = [c for c in chapter_list if int(c.get("index") or 0) not in existing]
         skipped_existing = total_ch - len(pending)
         downloaded = 0
         skipped_locked = 0
+        from core.text_utils import cjk_char_count as _cjkc   # 锁章门用纯 CJK 口径
         for i, ch in enumerate(pending):
             content = self.crawler.download_chapter(novel.book_id, ch["id"])
-            cjk = _count_prose_units(content or "")
-            if content and content.strip() and cjk >= FANQIE_FREE_MIN_CHARS:
+            units = _count_prose_units(content or "")
+            if content and content.strip() and _cjkc(content or "") >= FANQIE_FREE_MIN_CHARS:
                 save_chapter("fanqie", folder, {
                     "index": ch["index"], "title": ch["title"],
                     "content": content,
-                    "word_count": cjk,
+                    "word_count": units,
                 })
                 downloaded += 1
             elif content and content.strip():
@@ -1290,20 +1285,14 @@ class FanqieScoutAgent:
 
 
     def _existing_max_chapter(self, title: str) -> int:
-        """该书在本地书库已下载的最大章号（0 = 未下载过）。
+        """该书在本地书库已下载的**完整**最大章号（0 = 未下载过/全不完整）。
 
-        统一书库：路径为 NOVELS_DIR/<书名>/（无 platform 子目录）。
+        只计 content 有效（≥ FREE 字数）的章：若最后落盘的是锁章短预览/空占位，视为缺章，
+        增量起点会回退到它之前 → 下次重下可修复。统一书库：NOVELS_DIR/<书名>/。
         """
-        from plugins.novel_storage import NOVELS_DIR, _safe_name
-        ch_dir = NOVELS_DIR / _safe_name(title) / "chapters"
-        if not ch_dir.is_dir():
-            return 0
-        idxs = []
-        for f in ch_dir.glob("*.json"):
-            try:
-                idxs.append(int(f.stem))
-            except ValueError:
-                pass
+        from plugins.novel_storage import _safe_name, existing_complete_chapters
+        idxs = existing_complete_chapters(_safe_name(title),
+                                          min_units=FANQIE_FREE_MIN_CHARS)
         return max(idxs) if idxs else 0
 
     def scout_single_book(self, title: str, chapters: int = 50,
