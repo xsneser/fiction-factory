@@ -165,7 +165,8 @@ function loadExtractProgress() {
         var el = document.getElementById('extract-progress');
         if (!el || !d || !d.folder || d.status === 'idle') return;
         var selected = selectedBook();
-        if (selected && selected.folder && selected.folder !== d.folder) {
+        // 只显示「当前选中书 == 进度书」的进度：未选书 / 选了其他书 → 隐藏（不残留陈旧任务进度）
+        if (!selected || !selected.folder || selected.folder !== d.folder) {
             el.style.display = 'none';
             return;
         }
