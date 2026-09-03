@@ -19,7 +19,9 @@ description: 外部书库阶段：侦察热榜/抓取下载/已下载书读/整�
 3. **随手提炼（不等整本读完）**：窗内边读边记——一句能讲清的**桥段**随手收；「读者可感知目标+起承转合张力」出现=**弧开口**，跟踪到它**阶段性收束**（达成/失败/转化+节奏回落）就定一个**弧模板**；人物刻画起点→记**角色**；好笑的机制→记**笑点**；句式/用词习惯→记**风格素材**。
    - 例（《十日终焉》）：开头「九个人，只剩十人时杀一人」的规则揭晓 = **桥段**；「老旧的钨丝灯泡，到后来没人记得是谁留下的」跨章收束 = **弧**；「清冷的女人」开口的说话方式与反应 = **角色起点**。
    - 弧边界沿用：目标开合 / 完整张力呼吸 / 卷·副本·换地图标题 / 字数量级。**不设 1.5万–4万硬框**——小弧也收、大弧用 children 拆层。`total_words`=该弧真实字数跨度（非全书）。
-4. **入库决策（自主，先查重）**：每收束几段（或段末）把候选汇总，逐条先 `query_arc_library`/`query_plots`/`query_gags`/`query_characters` 用标签/关键词/结构骨架/机制查库——**高度近似不重名硬灌**：跳过，或差异化（改名+notes 注明差异）再入。确认后**分批 `ingest_library_assets` 直入**（可边扫边入）；入库名记入 `extract_state.committed` 防后续重复。
+4. **入库决策（自主，先查重，再过闸门）**：每收束几段（或段末）把候选汇总，逐条先 `query_arc_library`/`query_plots`/`query_gags`/`query_characters` 用标签/关键词/结构骨架/机制查库——**高度近似不重名硬灌**：跳过，或差异化（改名+notes 注明差异）再入。确认后**分批 `ingest_library_assets` 直入**（可边扫边入）；入库名记入 `extract_state.committed` 防后续重复。
+   - **入库前过闸门（默认 gate=True）**：`ingest_library_assets` 自动执行 `judge_extraction` 判断——结构不完整（桥段缺 `structure`/`slots`、弧缺 `stages`、笑点缺 `pattern_description`、角色缺 `personality`）→ **incomplete** 拦截（补齐字段或记入 digest 落书级档案）；库内机制级近似 → **duplicate** 拦截（跳过或差异化改名）；候选自评书级专用（带 `_book_specific=true` / `_reusable=false`）→ **book_archive**（记 digest，不进四库）。被拦截的在返回 `judge` 报告里给出 reasons，据此处理，不要硬绕。
+   - 想先看判定再决定入库 → 调 `judge_extraction`（只判不写库）。**语义级同骨架去重**靠候选带 `_mechanism_key`（规范化骨架/机制键）：同键候选只收第一个变体。
    - 风格规则：读过有代表性章节后产出，归属任务带的笔名（未指定默认「枫落」）：句式层 `prefer`、用词/套话层 `ban`（带 `replacements` 触发去 AI 味替换/空=硬禁）；一档 prefer 3–8 + ban 5–15 条。
 5. **记忆压缩（一段读完就停）**：上下文预算变重（经验：顺序读过 ~60–150 章 / 单窗结果明显变大 / 自感重）→ 把本段并进压缩记忆 → `extract_state(action=save, folder, state={book, cursor=已读到第N章, memory:{digest, open_segments, people, unresolved}, committed})` → **停下汇报**「已读到第 N 章，记忆已压缩落盘；回复『继续』我从第 N+1 章续读」。别硬顶到超限。
 6. **收尾**：读到末章（chapter_count）或连续几窗无可提炼 → save 置 `status=done`，汇总（共 N 弧 / M 桥段 / K 笑点 / 角色 / 风格规则，入库 X 条），结束。**不要原地打转重复提炼**。
