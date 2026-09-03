@@ -61,11 +61,13 @@ def write_crawl_progress(state: str, phase: str = "", current: int = 0,
                 "status": step.get("status", _STEP_RUNNING),
                 "detail": step.get("detail", ""),
                 "ts": now,
+                "t0": now,   # 首次创建时间（同 label 更新时保留，供前端显示「该源从起点起的运行时长」）
             }
             if step.get("url"):
                 st["url"] = step["url"]   # 源相关步骤携带书页/主页链接（左栏渲染为超链接）
             for i, ex in enumerate(steps):
                 if ex.get("label") == st["label"]:
+                    st["t0"] = ex.get("t0") or ex.get("ts") or now   # 保留首见时间
                     steps[i] = st
                     break
             else:

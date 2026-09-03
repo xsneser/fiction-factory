@@ -629,7 +629,7 @@ function pollCrawlProgress() {
                             var site = m[2].trim();
                             var phase = m[1];
                             if (!(site in srcMap)) { srcMap[site] = {}; srcOrder.push(site); }
-                            if (!srcMap[site].t0) srcMap[site].t0 = s.ts || 0;   // 该源最早出现时间（镜像解析起点）
+                            if (!srcMap[site].t0) srcMap[site].t0 = s.t0 || s.ts || 0;   // 该源最早出现时间（镜像解析起点，step 保留首见 t0）
                             srcMap[site].ts = s.ts || srcMap[site].ts || 0;      // 该源最新步骤时间
                             // 同源多次消息：running → ok 覆盖；镜像解析 → 校对 → 下载 逐级覆盖（显示最新阶段）
                             if (!srcMap[site].status || srcMap[site].status !== 'ok'
