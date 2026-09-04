@@ -1026,7 +1026,7 @@ class OutlineGenerator:
 
     def _select_book_themes(self, genre: str,
                             tl: Optional[BookStoryline] = None) -> list[str]:
-        """选定全书内涵（只读阶段级，内涵唯一来源 = StageNode.themes）。
+        """选定全书内涵（只读弧节点级，内涵来源 = 弧库 ArcNode.themes / 书 OutlineSlot.stages）。
 
         汇总各 outline.stages[].themes[].name（去重取前 3）；
         全部为空 → 兜底默认（用可挂桥段的中英内涵名）。

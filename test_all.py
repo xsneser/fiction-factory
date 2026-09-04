@@ -60,8 +60,13 @@ assert_ok("桥段库-搜索", len(plot.search(category="开篇")) >= 2)
 assert_ok("桥段库-匹配", len(plot.match_for_chapter("主角在家族大会上被退婚，当众打脸立威", genre="爽文")) > 0)
 
 struct = StructureLibrary()
-assert_ok("情节弧库-数量", len(struct.templates) >= 5)
+assert_ok("情节弧库-根弧数", len(struct.roots()) >= 5)
 assert_ok("情节弧库-搜索", len(struct.search(tags=["玄幻"])) >= 1)
+# 扁平统一：全行同键集、子弧 parent 非空
+_arc_keys = set(struct.templates[0].to_dict().keys())
+assert_ok("弧-存储统一键集", all(set(t.to_dict().keys()) == _arc_keys for t in struct.templates))
+assert_ok("弧-子弧带父指针", all(not t.is_root and t.parent_arc_id for t in struct.templates if not t.is_root))
+assert_ok("弧-库级嵌套还原", len(struct.children_of("arc_scifi_01")) >= 4)
 
 gag = GagLibrary()
 assert_ok("笑点库-数量", len(gag.patterns) >= 10, f"{len(gag.patterns)} 模式")
@@ -217,12 +222,11 @@ assert_ok("弧-序列化含键", _dD["outlines"][1]["parent_arc_id"] == "a1")
 assert_ok("弧-往返一致", BookStoryline.from_dict(_dD).outlines[1].parent_arc_id == "a1")
 assert_ok("弧-旧数据兼容", BookStoryline.from_dict(
     {"outlines": [{"id": "a3", "template_id": "t", "name": "旧数据"}]}).outlines[0].parent_arc_id == "")
-from libraries.structure import StageNode
-_stgTmpl = type("StubTmpl", (), {"stages": [
-    StageNode(name="阶段1", description="阶段描述", min_words=15000, max_words=45000,
-              key_events=["事件A", "事件B"], foreshadow_opportunities=["坑1"], themes=[])
-]})()
-_stgDict = structure_to_stages(_stgTmpl)[0]
+from libraries.structure import ArcNode
+_stgNode = ArcNode(id="n1", name="阶段1", description="阶段描述",
+                   min_words=15000, max_words=45000,
+                   key_events=["事件A", "事件B"], foreshadow_opportunities=["坑1"], themes=[])
+_stgDict = structure_to_stages([_stgNode])[0]
 assert_ok("弧-阶段保留描述", _stgDict.get("description") == "阶段描述"
           and _stgDict.get("foreshadow_opportunities") == ["坑1"])
 
