@@ -3,7 +3,7 @@
 """
 
 from .plot import PlotLibrary, PlotTemplate, PlotSlot
-from .structure import StructureLibrary, StructureTemplate
+from .structure import StructureLibrary, ArcNode, StructureTemplate
 from .gag import GagLibrary, GagPattern
 from .character import CharacterLibrary, CharacterArchetype
 from .profiles import PenNameProfile, ProfileManager, PRESET_PROFILES
