@@ -457,8 +457,8 @@ class BookStoryline:
 # ═══════════════════════════════════════════
 
 def structure_to_stages(stage_nodes, words_per_chapter: int = 3000) -> list[dict]:
-    """把一根弧的「直接子弧节点（ArcNode）」展开为 stage dict（name/min_ch/max_ch/events/description/foreshadow_opportunities/themes）——多实现共用防漂移。
-    扁平存储后调用方先取某根弧的 children_of(template_id) 传入；模板只表述字数
+    """把若干弧节点（ArcNode，平级库通常传选中弧自身一个）展开为 stage dict（name/min_ch/max_ch/events/description/foreshadow_opportunities/themes）——多实现共用防漂移。
+    弧库平级后无子弧可再拆，故「选中的整段弧」即作为书弧内的一条阶段展开；模板只表述字数
     （min_words/max_words），此处按每章字数换算成章数（book 侧 stage 兼容视图）。"""
     wpc = max(1, words_per_chapter or 3000)
     return [
@@ -576,7 +576,7 @@ class StorylineBuilder:
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(template_ids)>1 else ''}",
                 start_chapter=ch,
                 end_chapter=ch + max(1, tmpl.total_words // 3000) - 1,
-                stages=structure_to_stages(self.structures.children_of(tid)),
+                stages=structure_to_stages([tmpl]),
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
             ))
@@ -591,9 +591,9 @@ class StorylineBuilder:
         """AI 辅助生成大纲序列"""
         available = ""
         if self.structures:
-            templates = self.structures.roots()[:20]  # 最多 20 个根弧候选
+            templates = self.structures.roots()[:30]  # 最多 30 个平级弧候选
             available = "\n".join(
-                f"- {t.id}: {t.name} ({t.total_words}字) | 阶段: {'→'.join(s.name for s in self.structures.children_of(t.id)[:5])}"
+                f"- {t.id}: {t.name} ({t.total_words}字) | 简介: {(t.description or '')[:60]}"
                 for t in templates
             )
 
@@ -646,7 +646,7 @@ class StorylineBuilder:
             if self.structures:
                 tmpl = self.structures.get_by_id(tid)
                 if tmpl:
-                    stages = structure_to_stages(self.structures.children_of(tid))
+                    stages = structure_to_stages([tmpl])
             outline = OutlineSlot(
                 id=oid,
                 template_id=tid,

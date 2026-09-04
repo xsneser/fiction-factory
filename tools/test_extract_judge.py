@@ -81,12 +81,12 @@ check("split 拆出 1 进库 / 1 丢弃",
       f"keep={len(keep)} dropped={list(dropped)}")
 
 # ── 5. 四类各自判据 ──
-check("structure 缺 stages → incomplete",
+check("structure 缺 description → incomplete",
       judge_candidate("structure", {"name": "孤例弧"}, [])["decision"] == "incomplete")
-s_ok = {"name": "规则副本通关弧", "total_words": 20000,
-        "stages": [{"name": "入场", "description": "进入规则副本"},
-                   {"name": "破局", "description": "破解规则"}]}
-check("structure 有 stages → four_lib",
+s_ok = {"name": "规则副本通关弧",
+        "description": "入场→探清规则→破局登顶的一整段弧（可复用内容主体）",
+        "min_words": 12000, "max_words": 24000}
+check("structure 有 description → four_lib",
       judge_candidate("structure", s_ok, [])["decision"] == "four_lib")
 check("gag 缺 pattern_description → incomplete",
       judge_candidate("gag", {"name": "某段子"}, [])["decision"] == "incomplete")
@@ -130,42 +130,36 @@ try:
 finally:
     agent_tools.plot_lib = orig
 
-# ── 7. structure 扁平行闸门 + 按根落盘（隔离临时库，不污染真实库）──
-from libraries.structure import StructureLibrary, normalize_structures
+# ── 7. structure 平级独立弧闸门 + 逐条落盘（隔离临时库，不污染真实库）──
+from libraries.structure import StructureLibrary
 StructureLibrary._instance = None
 stmp = tempfile.mkdtemp()
 sl = StructureLibrary(data_dir=stmp)
 orig_sl = agent_tools.struct_lib
 agent_tools.struct_lib = sl
 try:
-    flat_rows = [
-        {"id": "r1", "name": "复仇·夺嫡清算弧", "description": "被夺权者蛰伏反杀、当众清算的一整段弧",
-         "min_words": 20000, "max_words": 30000, "key_events": [], "themes": [],
-         "tags": ["复仇", "爽文"], "opening_patterns": [], "climax_patterns": [], "parent_arc_id": ""},
-        {"id": "r1a", "name": "蛰伏", "description": "示弱潜伏、攒底牌", "min_words": 4000, "max_words": 8000,
-         "key_events": ["藏拙", "收买旧部"], "themes": [], "tags": [], "opening_patterns": [],
-         "climax_patterns": [], "parent_arc_id": "r1"},
-        {"id": "r1b", "name": "当众反杀", "description": "在清算现场翻盘", "min_words": 6000, "max_words": 12000,
-         "key_events": ["立威", "反将一军"], "themes": [], "tags": [], "opening_patterns": [],
-         "climax_patterns": [], "parent_arc_id": "r1"},
+    arcs = [
+        {"name": "复仇·夺嫡清算弧", "description": "被夺权者蛰伏反杀、当众清算的一整段弧",
+         "min_words": 20000, "max_words": 30000, "tags": ["复仇", "爽文"]},
+        {"name": "蛰伏攒底牌", "description": "示弱潜伏、暗中串联旧部", "min_words": 3000, "max_words": 6000,
+         "tags": ["复仇"]},
     ]
-    trees = normalize_structures(flat_rows)
-    check("扁平行归一为 1 棵根树", len(trees) == 1 and len(trees[0].get("stages", [])) == 2, str(len(trees)))
-    j = agent_tools.judge_extraction(structures=flat_rows)
-    check("judge_extraction 按根树判 four_lib", j["structures"][0]["decision"] == "four_lib",
-          str(j["structures"][0]))
+    j = agent_tools.judge_extraction(structures=arcs)
+    check("judge_extraction 平级逐弧判 four_lib",
+          len(j["structures"]) == 2 and all(x["decision"] == "four_lib" for x in j["structures"]),
+          str(j["structures"]))
     before3 = len(sl.templates)
-    rr = agent_tools.ingest_library_assets(structures=flat_rows, source="fanqie", gate=True)
+    rr = agent_tools.ingest_library_assets(structures=arcs, source="fanqie", gate=True)
     after3 = len(sl.templates)
-    check("扁平行 gate=True 落 3 节点行", after3 == before3 + 3 and rr.get("structures") == 1,
+    check("平级 gate=True 落 2 弧", after3 == before3 + 2 and rr.get("structures") == 2,
           f"before={before3} after={after3} stats={rr.get('structures')}")
-    added = [t for t in sl.templates if t.id.startswith("scout_fanqie_复仇")]
-    check("落库根 id 规范 + 子链 parent", len(added) == 3 and added[0].is_root
-          and added[1].parent_arc_id == added[0].id,
-          str([(t.id, t.parent_arc_id) for t in added]))
+    added = [t for t in sl.templates if t.id.startswith("scout_fanqie_")]
+    check("每条独立弧落 1 行(id规范, 无parent, 自带tags)",
+          len(added) == 2 and all("parent_arc_id" not in t.to_dict() for t in added)
+          and all(t.tags for t in added), str([(t.id, t.tags) for t in added]))
     before4 = len(sl.templates)
-    agent_tools.ingest_library_assets(structures=flat_rows, source="fanqie", gate=True)
-    check("重复同根整树跳过", len(sl.templates) == before4)
+    agent_tools.ingest_library_assets(structures=arcs, source="fanqie", gate=True)
+    check("重复逐条跳过", len(sl.templates) == before4)
 finally:
     agent_tools.struct_lib = orig_sl
 

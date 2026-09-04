@@ -521,7 +521,7 @@ class OutlineGenerator:
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(candidates) > 1 else ''}",
                 start_chapter=ch,
                 end_chapter=ch + min(max(1, tmpl.total_words // 3000), 50) - 1,
-                stages=structure_to_stages(self.structures.children_of(tmpl.id)),
+                stages=structure_to_stages([tmpl]),
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
             )
@@ -561,7 +561,7 @@ class OutlineGenerator:
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(templates) > 1 else ''}",
                 start_chapter=ch,
                 end_chapter=ch + min(max(1, tmpl.total_words // 3000), 50) - 1,
-                stages=structure_to_stages(self.structures.children_of(tmpl.id)),
+                stages=structure_to_stages([tmpl]),
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
             )
@@ -595,7 +595,7 @@ class OutlineGenerator:
         # 构建候选模板描述
         cand_text = "\n".join(
             f"- {t.id}: {t.name}（{t.total_words}字）"
-            f" | 阶段: {' → '.join(s.name for s in self.structures.children_of(t.id)[:5])}"
+            f" | 简介: {(t.description or '')[:80]}"
             for t in candidates
         )
 
@@ -687,7 +687,7 @@ class OutlineGenerator:
             stages = []
             tmpl = next((t for t in candidates if t.id == tid), None)
             if tmpl:
-                stages = structure_to_stages(self.structures.children_of(tmpl.id))
+                stages = structure_to_stages([tmpl])
 
             start = od.get("start_chapter", outlines[-1].end_chapter - 2 if outlines else 1)
             end = od.get("end_chapter", start + (max(1, tmpl.total_words // 3000) if tmpl else 30) - 1)
@@ -785,7 +785,7 @@ class OutlineGenerator:
                 o = outlines[idx]
                 o.template_id = tmpl.id
                 o.name = f"{tmpl.name}(复查修正)"
-                o.stages = structure_to_stages(self.structures.children_of(tmpl.id))
+                o.stages = structure_to_stages([tmpl])
                 o.end_chapter = max(
                     o.end_chapter, o.start_chapter + min(max(1, tmpl.total_words // 3000), 50) - 1)
                 applied += 1

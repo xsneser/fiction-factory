@@ -2,11 +2,11 @@
 情节弧库（Structure Library）
 各类网文题材的故事骨架结构模板。
 
-存储模型（2026-09 扁平化）：
-  每行 = 一个弧节点（ArcNode），任意深度平铺；父子关系用 parent_arc_id 指针表达，
-  子弧永不内嵌在父行里。所有弧（根/子/孙…）字段集完全一致、渲染一致。
-  根弧 = parent_arc_id=="" 且把模板元数据（tags/opening_patterns/climax_patterns/
-  source/created_at/enabled）作为普通字段填值的节点，不是另一类型。
+存储模型（2026-09 v3 平级独立）：
+  每行 = 一个**平级独立弧模板**（ArcNode），无父子层级、无 parent_arc_id；
+  每个弧自带完整内容：字数区间 / 描述(本弧情节怎么发展) / key_events / themes /
+  tags(题材) / source / created_at / enabled。原树中的「整段壳」与各层子弧在
+  迁移/内置构造时都各自成为独立弧，tags/来源/收录 从原树根平铺到每个独立弧。
   兼容别名 StructureTemplate = ArcNode（旧引用/类型注解可继续用）。
 """
 import re
@@ -16,40 +16,35 @@ from pathlib import Path
 from .base_library import JsonLibrary
 
 
-# ─── 统一的弧节点 ───
+# ─── 统一的平级弧节点 ───
 
 @dataclass
 class ArcNode:
-    """一个情节弧节点（根弧/子弧统一结构）。
-    只表述字数（min_words/max_words 为该节点建议字数区间，与运行时字数轴一致，不含章数）。
-    root 与任意深度子节点的字段集完全相同；差异仅体现在 parent_arc_id 与取值。"""
-    id: str                        # 根: 模板 id(arc_xxx / scout_src_名)；子: "{父id}::{序}"(父级内 0 基 DFS 链)
+    """一个平级独立情节弧模板。
+    只表述字数（min_words/max_words 为该弧建议字数区间，与运行时字数轴一致，不含章数）。
+    全库每个弧字段集完全相同；无父-子关联。"""
+    id: str                        # 唯一 id（arc_xxx / scout_src_名）
     name: str
-    description: str = ""
+    description: str = ""          # 本弧情节怎么发展（可复用内容主体）
     min_words: int = 0
     max_words: int = 0
     key_events: list[str] = field(default_factory=list)
     foreshadow_opportunities: list[str] = field(default_factory=list)  # 埋坑机会
-    themes: list = field(default_factory=list)   # 节点级内涵 [{name, position, how}]，含插入位置
-    parent_arc_id: str = ""        # 父节点 id；"" = 根弧（一棵模板树的根）
-    tags: list[str] = field(default_factory=list)              # 根弧填题材标签、子弧留空（键一致）
-    opening_patterns: list[str] = field(default_factory=list)  # 开篇桥段模板引用（根弧元数据）
-    climax_patterns: list[str] = field(default_factory=list)   # 高潮桥段模板引用（根弧元数据）
+    themes: list = field(default_factory=list)   # 内涵 [{name, position, how}]，含插入位置
+    tags: list[str] = field(default_factory=list)              # 题材标签（每弧可搜）
+    opening_patterns: list[str] = field(default_factory=list)  # 开篇桥段模板引用
+    climax_patterns: list[str] = field(default_factory=list)   # 高潮桥段模板引用
     source: str = ""               # 来源
     created_at: str = ""           # 收录时间
     enabled: bool = True           # 启用状态
 
     @property
     def total_words(self) -> int:
-        """整段字数量（兼容旧模板字段读取；根弧 min=max=整弧跨度）。"""
+        """整段字数量（兼容旧模板字段读取；整段跨度弧 min=max=整段）。"""
         return self.max_words or self.min_words or 0
 
-    @property
-    def is_root(self) -> bool:
-        return self.parent_arc_id == ""
-
     def to_dict(self) -> dict:
-        # 永远输出统一键集：任意深度字段结构一致
+        # 永远输出统一键集（无 parent）：全库字段结构一致
         return {
             "id": self.id, "name": self.name,
             "description": self.description,
@@ -57,7 +52,6 @@ class ArcNode:
             "key_events": self.key_events,
             "foreshadow_opportunities": self.foreshadow_opportunities,
             "themes": self.themes,
-            "parent_arc_id": self.parent_arc_id,
             "tags": self.tags,
             "opening_patterns": self.opening_patterns,
             "climax_patterns": self.climax_patterns,
@@ -79,7 +73,6 @@ class ArcNode:
             key_events=list(d.get("key_events") or []),
             foreshadow_opportunities=list(d.get("foreshadow_opportunities") or []),
             themes=list(d.get("themes") or []),
-            parent_arc_id=str(d.get("parent_arc_id") or ""),
             tags=list(d.get("tags") or []),
             opening_patterns=list(d.get("opening_patterns") or []),
             climax_patterns=list(d.get("climax_patterns") or []),
@@ -116,12 +109,12 @@ def _words_of(d: dict) -> tuple:
     return 0, 0
 
 
-# ─── 扁平化 helper（迁移/入库/评审/judge 共用） ───
+# ─── 平级化 helper（内置构造 / 旧数据迁移） ───
 
 def flatten_nested_tree(tree: dict, root_id: str = "", source: str = "", created_at: str = "") -> list[dict]:
-    """把一棵嵌套弧树 dict（顶层用 stages，子层用 children，均可多层）摊平成
-    「统一键的扁平节点行 dict」列表；子行 id 规范为 '{父id}::{序}'（父级内 0 基，
-    DFS 前序）。返回的行可直接 ArcNode.from_dict / 原样落盘。"""
+    """把一棵旧嵌套弧树 dict（顶层用 stages，子层用 children，可多层）摊平成
+    「带 parent_arc_id 的节点行 dict」列表（父级内 0 基 DFS 链 id）。仅供随后
+    independentize_rows 转平级，或旧格式迁移用；最终落盘不含 parent。"""
     root_id = root_id or str(tree.get("id") or "")
     rows: list[dict] = []
 
@@ -170,77 +163,56 @@ def flatten_nested_tree(tree: dict, root_id: str = "", source: str = "", created
     return rows
 
 
-def partition_rows_by_root(rows: list[dict]) -> list[tuple]:
-    """把扁平行列表聚成 [(根行, [后代行...])]。
-    根 = parent_arc_id 为空，或其父 id 不在批内（健壮兜底）。保文件/数组顺序。"""
-    rows = [r for r in (rows or []) if isinstance(r, dict) and r]
-    id_set = {str(r.get("id")) for r in rows if r.get("id")}
-    children_map: dict = {}
-    for r in rows:
-        children_map.setdefault(str(r.get("parent_arc_id") or ""), []).append(r)
+def independentize_rows(rows: list[dict]) -> list[dict]:
+    """把「带 parent_arc_id 的扁平行」转成**平级独立弧行**：
+    ① 每棵树的根 tags/source/created_at 平铺到每个后代（后代原本无 tags）→ 各自可搜；
+    ② 每行去掉 parent_arc_id（及可能的 children/stages 残留）。
+    返回可直接 ArcNode.from_dict 的统一行。"""
+    rows = [dict(r) for r in rows if isinstance(r, dict)]
+    if not rows:
+        return rows
+    id_map = {str(r.get("id")): r for r in rows if r.get("id")}
 
-    roots = []
-    seen = set()
-    for r in rows:
+    def root_of(r: dict) -> dict:
+        seen = set()
         pid = str(r.get("parent_arc_id") or "")
-        if (not pid) or (pid not in id_set):
-            if id(r) not in seen:
-                seen.add(id(r))
-                roots.append(r)
-
-    def dfs(node, acc):
-        acc.append(node)
-        for c in children_map.get(str(node.get("id") or ""), []):
-            dfs(c, acc)
+        while pid and pid in id_map and pid not in seen:
+            seen.add(pid)
+            r = id_map[pid]
+            pid = str(r.get("parent_arc_id") or "")
+        return r
 
     out = []
-    for root in roots:
-        acc = []
-        dfs(root, acc)
-        out.append((root, acc[1:]))
+    for r in rows:
+        root = root_of(r)
+        nr = dict(r)
+        for k in ("tags", "source", "created_at"):
+            if not nr.get(k) and root is not r and root.get(k):
+                v = root.get(k)
+                nr[k] = list(v) if isinstance(v, list) else v
+        nr.pop("parent_arc_id", None)
+        nr.pop("children", None)
+        nr.pop("stages", None)
+        out.append(nr)
     return out
 
 
-def rows_to_tree_dicts(rows: list[dict]) -> list[dict]:
-    """扁平行列表 → 每棵根弧一个「临时嵌套树 dict」（含 stages 递归）。
-    仅作 judge/评审/展示用，从不落盘。"""
-    if not rows:
-        return []
-    groups = partition_rows_by_root(rows)
-    if not groups:  # 全部孤立（无 id 等），退化为每行一棵
-        return [dict(r) for r in rows if isinstance(r, dict)]
-
-    id_map = {}
-    children_map: dict = {}
-    for r in rows:
-        id_map[str(r.get("id"))] = r
-        children_map.setdefault(str(r.get("parent_arc_id") or ""), []).append(r)
-
-    def nest(node) -> dict:
-        d = dict(node)
-        kids = children_map.get(str(node.get("id") or ""), [])
-        if kids:
-            d["stages"] = [nest(k) for k in kids]
-        return d
-
-    return [nest(root) for root, _ in groups]
-
-
-def normalize_structures(items) -> list[dict]:
-    """入库/评审前的结构载荷归一：扁平行列表 → 每棵根弧一棵临时嵌套树 dict。
-    输入已是树形态（含 stages）则原样返回。
-    判定：任一项含 parent_arc_id 键（含空值）或缺少 stages → 视为扁平行。"""
+def normalize_structures(items) -> list:
+    """入库/评审前的结构载荷归一：弧库 = 平级独立弧，**每个候选即一条独立弧 dict**，
+    原样返回（不做任何聚树）。兼容：候选带旧嵌套 stages 时按其顶层节点数摊平为独立弧。"""
     items = list(items or [])
-    if not items:
-        return []
-    flat = any(isinstance(x, dict) and ("parent_arc_id" in x or "stages" not in x) for x in items)
-    if flat:
-        return rows_to_tree_dicts(items)
-    return items
+    out = []
+    for it in items:
+        if isinstance(it, dict) and ("stages" in it or "children" in it) and "parent_arc_id" not in it:
+            # 旧嵌套树形态（整棵模板）→ 摊平成平级独立弧（含原根壳 + 各层子节点）
+            out.extend(independentize_rows(flatten_nested_tree(it)))
+        else:
+            out.append(it)
+    return out
 
 
 def make_root_id(name, source: str = "fanqie") -> str:
-    """生成 scout 入库根弧 id：scout_{source}_{清洗(name)[:40]}。"""
+    """生成 scout 入库弧 id：scout_{source}_{清洗(name)[:40]}。"""
     base = re.sub(r"[^0-9A-Za-z一-鿿\-]", "", str(name or ""))[:40]
     if not base:
         base = "arc"
@@ -250,10 +222,10 @@ def make_root_id(name, source: str = "fanqie") -> str:
 # ─── 库管理器 ───
 
 class StructureLibrary(JsonLibrary):
-    """情节弧库管理器（进程内单例，JSONL 一行一弧节点）。
-    旧嵌套模板在加载时自动迁移成扁平行。"""
+    """情节弧库管理器（进程内单例，JSONL 一行一个**平级独立弧**）。
+    旧嵌套/带父子的数据在加载时自动迁移为平级。"""
     _instance = None
-    _list_attr = "templates"     # 扁平列表：含全部节点（根 + 任意深度子节点）
+    _list_attr = "templates"     # 平级弧列表（每个 = 一条可独立挑选的弧模板）
     _key = "templates"
     _file_name = "structures.jsonl"
 
@@ -265,124 +237,81 @@ class StructureLibrary(JsonLibrary):
     def _builtin(cls) -> list:
         return BUILTIN_STRUCTURES
 
-    @classmethod
-    def _from_payload(cls, dicts: list) -> list:
-        """把原始载荷（可能含旧嵌套模板）统一转成扁平行节点列表。"""
-        out = []
-        for d in dicts:
-            if isinstance(d, dict) and "stages" in d and "parent_arc_id" not in d:
-                out.extend(ArcNode.from_dict(r) for r in flatten_nested_tree(d))
-            else:
-                out.append(ArcNode.from_dict(d))
-        return out
-
     def _load_jsonl(self):
-        """优先读 .jsonl；同名旧单 JSON（.json）存在则自动迁移；jsonl 内旧嵌套行也自动展平。"""
-        legacy = Path(str(self._save_path)).with_suffix(".json")
-        if not self._save_path.exists() and legacy.exists():
-            from core.json_store import read_json
+        """优先读 .jsonl；同名旧单 JSON（.json）自动迁移；v1 嵌套树 / v2 带 parent 的
+        数据在此统一迁移为平级独立弧行并落盘。"""
+        from core.json_store import read_json, read_jsonl
+        save = Path(str(self._save_path))
+        legacy = save.with_suffix(".json")
+        raw = None
+        if not save.exists() and legacy.exists():
             data = read_json(legacy, {})
-            items = self._from_payload(data.get(self._key, []))
-            setattr(self, self._list_attr, items)
-            self._save()
-            return
-        migrated = False
-        if self._save_path.exists():
-            from core.json_store import read_jsonl
-            out = []
-            for d in read_jsonl(self._save_path):
-                if isinstance(d, dict) and "stages" in d and "parent_arc_id" not in d:
-                    out.extend(ArcNode.from_dict(r) for r in flatten_nested_tree(d))
-                    migrated = True
-                else:
-                    out.append(ArcNode.from_dict(d))
-        else:
+            raw = data.get(self._key, [])
+        elif save.exists():
+            raw = read_jsonl(save)
+        if raw is None:
             out = list(self._builtin())
+            setattr(self, self._list_attr, out)
+            return
+
+        migrated = False
+        flat: list = []
+        for d in raw:
+            if isinstance(d, dict) and ("stages" in d or "children" in d) and "parent_arc_id" not in d:
+                # v1：一整棵嵌套模板 → 摊平成带 parent 的行（稍后转平级）
+                flat.extend(flatten_nested_tree(d))
+                migrated = True
+            else:
+                flat.append(d)
+        # v2：扁平行带 parent_arc_id → 平级化（tags 平铺 + 去 parent）
+        if any(isinstance(d, dict) and d.get("parent_arc_id") for d in flat):
+            flat = independentize_rows(flat)
+            migrated = True
+        elif any(isinstance(d, dict) and "parent_arc_id" in d for d in flat):
+            # 带空 parent 键的旧行：只去掉键
+            flat = independentize_rows(flat)
+            migrated = True
+        out = [ArcNode.from_dict(d) for d in flat if isinstance(d, dict)]
         setattr(self, self._list_attr, out)
         if migrated:
             self._save()
 
-    # ── 查询（扁平世界的新/旧接口） ──
+    # ── 查询（无层级：每个弧都是独立模板） ──
     def roots(self, include_disabled: bool = True) -> list:
-        """全部根弧（一棵模板树一个根），文件顺序。默认含已禁用（与原 .templates 全量语义一致）。"""
-        return [t for t in self.templates if t.parent_arc_id == ""
-                and (include_disabled or t.enabled)]
+        """全部弧（无层级 = 全库即候选模板清单）；默认含已禁用（与原全量语义一致）。"""
+        return [t for t in self.templates if include_disabled or t.enabled]
 
     def get_by_id(self, node_id: str):
-        """任意节点（根或子弧）按 id 取；找不到返回 None。"""
         for t in self.templates:
             if t.id == node_id:
                 return t
         return None
 
     def get_node(self, node_id: str):
-        """get_by_id 的显式别名。"""
         return self.get_by_id(node_id)
 
     def children_of(self, parent_id: str) -> list:
-        """某节点的直接子弧（文件顺序）；父 id 不存在返回空。"""
-        return [t for t in self.templates if t.parent_arc_id == parent_id]
+        """无父子层级：恒空（兼容旧调用点）。"""
+        return []
 
     def root_of(self, node_id: str):
-        """沿 parent_arc_id 上溯到根弧；找不到返回 None。"""
-        cur = self.get_by_id(node_id)
-        seen = set()
-        while cur and cur.parent_arc_id and cur.parent_arc_id != cur.id:
-            if cur.parent_arc_id in seen:
-                return None
-            seen.add(cur.parent_arc_id)
-            cur = self.get_by_id(cur.parent_arc_id)
-        return cur
+        return self.get_by_id(node_id)
 
     def descendant_ids(self, node_id: str) -> set:
-        """某节点的全部后代 id（含自身），BFS。"""
-        out = {node_id}
-        frontier = list(self.children_of(node_id))
-        while frontier:
-            nxt = []
-            for c in frontier:
-                if c.id in out:
-                    continue
-                out.add(c.id)
-                nxt.extend(self.children_of(c.id))
-            frontier = nxt
-        return out
+        return {node_id} if self.get_by_id(node_id) else set()
 
     def subtree_dicts(self, node_id: str) -> dict:
-        """把某节点及其后代组装成嵌套展示 dict：{**node.to_dict(), "children":[...]}。"""
         node = self.get_by_id(node_id)
-        if not node:
-            return {}
-
-        def nest(n) -> dict:
-            d = n.to_dict()
-            kids = self.children_of(n.id)
-            if kids:
-                d["children"] = [nest(k) for k in kids]
-            return d
-
-        return nest(node)
+        return node.to_dict() if node else {}
 
     def display_trees(self, include_disabled: bool = True) -> list:
-        """给模板页用的根树克隆：根节点临时挂 .children（仅浅拷贝副本，
-        非 dataclass 字段，绝不进 to_dict/落盘）。"""
+        """全弧浅拷列表（无 children；兼容旧展示调用点）。"""
         import copy
-        trees = []
-        for root in self.roots(include_disabled=include_disabled):
-            root_c = copy.copy(root)
-            root_c.children = [self._node_clone(c) for c in self.children_of(root.id)]
-            trees.append(root_c)
-        return trees
-
-    def _node_clone(self, node) -> object:
-        import copy
-        c = copy.copy(node)
-        kids = self.children_of(node.id)
-        c.children = [self._node_clone(k) for k in kids]
-        return c
+        return [copy.copy(t) for t in self.templates
+                if include_disabled or t.enabled]
 
     def delete_tree(self, node_id: str) -> int:
-        """删除某节点及其全部后代，返回删除行数。"""
+        """删除单个弧（无层级，无连坐）。返回删除行数。"""
         ids = self.descendant_ids(node_id)
         before = len(self.templates)
         self.templates = [t for t in self.templates if t.id not in ids]
@@ -390,7 +319,7 @@ class StructureLibrary(JsonLibrary):
         return before - len(self.templates)
 
     def search(self, tags=None, word_count: int = 0) -> list:
-        """按标签（任一命中）/整段字数筛选**根弧**模板。tags 为列表或逗号/空格分隔字符串。"""
+        """按标签（任一命中）/整段字数筛选弧模板。tags 为列表或逗号/空格分隔字符串。"""
         results = self.roots(include_disabled=True)
         if isinstance(tags, str):
             tags = [x.strip() for x in tags.replace("，", " ").replace(",", " ").split() if x.strip()]
@@ -399,12 +328,11 @@ class StructureLibrary(JsonLibrary):
             results = [t for t in results if tag_set.intersection(t.tags or [])]
             results.sort(key=lambda t: -len(tag_set.intersection(t.tags or [])))  # 命中多的排前
         if word_count:
-            # 找整段字数最接近的根弧模板
             results.sort(key=lambda t: abs(t.total_words - word_count))
         return results
 
 
-# ─── 内置情节弧结构模板（代码里以嵌套字面量书写，加载即扁平化成节点行） ───
+# ─── 内置情节弧结构模板（代码以嵌套字面量书写，import 即平级化为独立弧行） ───
 
 _BUILTIN_SPECS = [
     {
@@ -619,7 +547,8 @@ _BUILTIN_SPECS = [
     },
 ]
 
-BUILTIN_STRUCTURES: list = []
+# 每个原树节点（整段壳 + 各层子弧）都平级化为一个独立弧模板：tags/来源/收录平铺到每弧。
+_BUILTIN_RAW: list = []
 for _spec in _BUILTIN_SPECS:
-    _rows = flatten_nested_tree(_spec, root_id=_spec["id"])
-    BUILTIN_STRUCTURES.extend(ArcNode.from_dict(r) for r in _rows)
+    _BUILTIN_RAW.extend(flatten_nested_tree(_spec, root_id=_spec["id"]))
+BUILTIN_STRUCTURES: list = [ArcNode.from_dict(r) for r in independentize_rows(_BUILTIN_RAW)]

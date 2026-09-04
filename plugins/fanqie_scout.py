@@ -877,45 +877,40 @@ class NovelAnalyzer:
             return []
 
     def extract_structure(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
-        """提取大纲结构模式（**扁平行**：structures 数组每行 = 一个弧/子弧节点，
-        父子关系用 parent_arc_id 关联，不内嵌；入库按行落盘）"""
+        """提取大纲结构模式（**平级独立弧**：structures 数组每行 = 一条可复用的独立弧模板，
+        无父子层级；入库按行落盘）"""
         text = self._build_sample_text(samples, 2000)
         ch_count = novel.chapter_count or len(samples) * 10
 
         prompt = f"""分析番茄小说《{novel.title}》（{novel.genre}，约{ch_count}章）的章节结构，
 从书中识别出**若干个典型的、可复用的叙事弧**（每个弧是一个有明确目标/方向的剧情单元，
-如 重生复仇弧、试炼扬名弧、误会和解弧）。
+如 重生复仇弧、试炼扬名弧、误会和解弧、末日囤货弧、误会和解小弧）。
 
-每个叙事弧 = 一棵「根弧 + 任意深度子弧」的树。请把整棵树按**扁平行**输出：
-structures 数组里**每一行 = 一个弧节点**（根/子/孙弧结构完全一致），父子关系用
-parent_arc_id 指向父节点 id；**绝不要**把子弧内嵌在父节点里。
+**弧库是平级独立弧**：structures 数组里**每个元素 = 一条独立的弧模板**，相互之间**没有
+父子/包含关系**，不要产出树层级、不要写 parent 类字段。
 
-每个弧节点字段统一：
-  - id: 本批内唯一的节点标识（如 s1/s1a/s1a0）；子节点把父的 id 填到 parent_arc_id
-  - name / description: 节点名 / 这个弧做什么
-  - min_words / max_words: 该节点在书里实际占用的字数区间（按每章约 3000 字估算）
-  - key_events: 关键事件；foreshadow_opportunities: 埋坑机会；themes: 节点级内涵
-  - parent_arc_id: 父节点 id；根节点填空或省略
-  - tags: 仅根节点填题材/可复用场景标签；opening_patterns / climax_patterns 根节点可选
-深度与各层分支数按书里真实结构定，**不要均匀**——有的弧只一层（平铺几个直接子弧），
-有的两层，有的子弧内还要拆到三层。
+每条弧字段统一：
+  - name: 弧名（一句话能讲清这弧干什么）
+  - description: 这个弧做什么 / 本弧内情节怎么发展（关键：能被复用的内容主体）
+  - min_words / max_words: 该弧在书里实际占用的字数区间（按每章约 3000 字估算；大弧
+    （如跨十几章）与小弧（如几章的小目标）都可以收，粒度为真实可复用的那个「弧」）
+  - key_events: 关键事件；foreshadow_opportunities: 埋坑机会；themes: 弧级内涵
+  - tags: 题材/可复用场景标签（每弧都要给，便于入库后按题材检索）
+长度/粒度按书里真实结构定、**不要求均匀**。
 
 【小说内容样本】
 {text}
 
-返回 JSON（扁平节点行数组）：
+返回 JSON（独立弧数组）：
 {{"structures": [
-  {{"id":"s1","name":"重生复仇弧","description":"这个弧做什么、适合什么情境",
-    "min_words":30000,"max_words":40000,"key_events":[],"foreshadow_opportunities":[],
-    "themes":[],"tags":["复仇","爽文"],"opening_patterns":[],"climax_patterns":[],
-    "parent_arc_id":""}},
-  {{"id":"s1a","name":"确认处境","description":"这个子弧做什么",
-    "min_words":3000,"max_words":6000,"key_events":["事件1","事件2"],
-    "foreshadow_opportunities":["埋坑1"],"themes":[],
-    "tags":[],"opening_patterns":[],"climax_patterns":[],"parent_arc_id":"s1"}},
-  {{"id":"s1b","name":"布局","description":"...","min_words":9000,"max_words":15000,
-    "key_events":["事件1"],"foreshadow_opportunities":[],"themes":[],
-    "tags":[],"opening_patterns":[],"climax_patterns":[],"parent_arc_id":"s1"}}
+  {{"name":"重生复仇弧","description":"被夺权者蛰伏反杀，当众清算并夺回一切的一整段弧：藏拙→串联旧部→在清算场合翻盘",
+    "min_words":30000,"max_words":45000,
+    "key_events":["蛰伏示弱","收买旧部","当众反杀"],"foreshadow_opportunities":["幕后黑手另有其人"],
+    "themes":[],"tags":["复仇","爽文"]}},
+  {{"name":"末日囤货开局","description":"灾变前用先知囤物资、抢住所，抢在秩序崩塌前站稳脚跟的小弧",
+    "min_words":6000,"max_words":12000,
+    "key_events":["变卖资产","扫货","加固住所"],"foreshadow_opportunities":[],
+    "themes":[],"tags":["末世","求生"]}}
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的小说结构分析师。只返回JSON。",
@@ -997,10 +992,9 @@ class LibraryIngestor:
                 self._add_plot(plot, source)
                 stats["plots"] += 1
 
-        from libraries.structure import normalize_structures
-        for tree in normalize_structures(analysis.get("structures", [])):
+        for arc in analysis.get("structures", []):
             if self.struct_lib:
-                self._add_structure(tree, source)
+                self._add_structure(arc, source)
                 stats["structures"] += 1
 
         for gag in analysis.get("gags", []):
@@ -1034,21 +1028,24 @@ class LibraryIngestor:
         self.plot_lib.templates.append(template)
 
     def _add_structure(self, data: dict, source: str):
-        """把一棵根弧树 dict（含 stages）摊平成**扁平节点行**写入情节弧库。
+        """把**一条平级独立弧 dict** 写入情节弧库（每行一弧）。
 
-        data 须为单棵树（调用方先经 normalize_structures 把扁平行/嵌套归一成树）。
-        根 id = scout_{source}_{清洗名}；子节点 id = '{根}::{序}' 链（由 flatten 生成）。
+        id = scout_{source}_{清洗名}（精确去重，已存在则跳过）。data 各字段
+        （name/description/min/max_words/key_events/themes/tags/…）即 ArcNode 字段。
         """
         from datetime import datetime
-        from libraries.structure import ArcNode, flatten_nested_tree, make_root_id
+        from libraries.structure import ArcNode, make_root_id
         sid = make_root_id(data.get("name", ""), source)
         for t in self.struct_lib.templates:
             if t.id == sid:
-                return  # 已存在整棵跳过
+                return  # 已存在跳过
 
         created = str(data.get("created_at") or "") or datetime.now().strftime("%Y-%m-%d %H:%M")
-        rows = flatten_nested_tree(data, root_id=sid, source=source, created_at=created)
-        self.struct_lib.templates.extend(ArcNode.from_dict(r) for r in rows)
+        d = dict(data)
+        d["id"] = sid
+        d["source"] = source
+        d["created_at"] = d.get("created_at") or created
+        self.struct_lib.templates.append(ArcNode.from_dict(d))
 
     def _add_gag(self, data: dict, source: str):
         from libraries.gag import GagPattern
@@ -1368,10 +1365,8 @@ class FanqieScoutAgent:
             self.plot_lib._save()
 
         if structures and self.struct_lib:
-            from libraries.structure import normalize_structures
-            trees = normalize_structures(structures)
-            for tree in trees:
-                self.ingestor._add_structure(tree, source)
+            for arc in structures:
+                self.ingestor._add_structure(arc, source)
                 stats["structures"] += 1
             if on_progress:
                 on_progress("ingest", 1, 1, f"大纲已入库 {stats['structures']}个")

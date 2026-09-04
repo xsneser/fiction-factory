@@ -43,9 +43,9 @@ gen = OutlineGenerator(llm_client=None, structure_lib=lib)
 tl = BookStoryline()
 tl.outlines = [
     OutlineSlot(id="o1", template_id="arc_xuanhuan_01", name="a",
-                stages=structure_to_stages(lib.children_of("arc_xuanhuan_01"))),
+                stages=structure_to_stages([lib.get_by_id("arc_xuanhuan_01::2")])),  # 试炼夺魁(带 成长的代价)
     OutlineSlot(id="o2", template_id="arc_chuanyue_01", name="b",
-                stages=structure_to_stages(lib.children_of("arc_chuanyue_01"))),
+                stages=structure_to_stages([lib.get_by_id("arc_chuanyue_01::3")])),  # 局势反转(带 复仇)
 ]
 themes = gen._select_book_themes("玄幻", tl)
 check("从节点内涵汇总全书内涵", "成长的代价（Cost of Growth）" in themes
@@ -92,7 +92,7 @@ lib2 = StructureLibrary()
 gen2 = OutlineGenerator(llm_client=None, structure_lib=lib2)
 tl4 = BookStoryline()
 tl4.outlines = [OutlineSlot(id="o1", template_id="arc_chuanyue_01", name="穿越",
-                            stages=structure_to_stages(lib2.children_of("arc_chuanyue_01")))]
+                            stages=structure_to_stages([lib2.get_by_id("arc_chuanyue_01::3")]))]
 themes4 = gen2._select_book_themes("穿越", tl4)
 check("书级内涵含节点级内涵名", "复仇（Revenge）" in themes4, str(themes4))
 

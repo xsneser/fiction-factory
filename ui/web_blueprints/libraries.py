@@ -224,19 +224,10 @@ def style_rule_delete(rule_id):
 
 @bp.route("/structures")
 def structures():
-    """情节弧库页：每弧一张独立卡（平铺）——弧内不画子弧，父子关系以「属于」小标签表示。
-    存储为扁平行（每行一个弧节点，parent_arc_id 关联）；此处把全库节点转成展示卡列表。"""
+    """情节弧库页：全库**平级独立弧**，每弧一张统一卡（无父子层级），每卡自带 ⏸/🗑。"""
     lib = struct_lib
-    name_of = {n.id: n.name for n in lib.templates}
-    cards = []
-    for n in lib.templates:
-        c = n.to_dict()  # 统一字段
-        c["parent_name"] = name_of.get(n.parent_arc_id, "") if n.parent_arc_id else ""
-        c["child_count"] = len(lib.children_of(n.id))
-        cards.append(c)
     return render_template("structures.html",
-                           arc_cards=cards,
-                           template_count=len(lib.roots()))
+                           arc_cards=[n.to_dict() for n in lib.templates])
 
 
 @bp.route("/gags")

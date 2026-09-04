@@ -82,7 +82,7 @@ def _build_next_arc(builder, tl, mode="rule"):
              "events": s.key_events[:5],
              "description": getattr(s, "description", ""),
              "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or [])}
-            for s in struct_lib.children_of(tmpl.id)
+            for s in [tmpl]
         ],
         predecessor=tl.outlines[-1].id if tl.outlines else "",
         transition_type="sequential",

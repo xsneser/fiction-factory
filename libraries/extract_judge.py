@@ -62,8 +62,8 @@ def _field(obj: Any, name: str, default: Any = "") -> Any:
 _REQUIRED = {
     "plot":      (["structure", "slots"],
                   "桥段需箭头流程骨架 structure + 至少一个变量槽 slots（否则不可迁移复用）"),
-    "structure": (["stages"],
-                  "弧模板需至少一个 stage（否则不是可复用弧模板）"),
+    "structure": (["description"],
+                  "弧模板需有可复用内容描述 description（否则是空壳不可复用）"),
     "gag":       (["pattern_description"],
                   "笑点需机制描述 pattern_description（否则是段子不是机制）"),
     "character": (["personality"],
@@ -226,9 +226,8 @@ def judge_all(plots: Optional[list] = None, structures: Optional[list] = None,
         entries = getattr(plot_lib, "templates", []) if plot_lib else []
         result["plots"] = judge_batch("plot", plots, entries, thresholds)
     if structures is not None:
-        # 情节弧库扁平存储：structure 判定/去重单元 = 一棵根弧（根 + 子弧）。候选须已按根
-        # 归一成树 dict（libraries.structure.normalize_structures / rows_to_tree_dicts），
-        # 池 = 库内根弧（不拿子弧当独立模板比对）。
+        # 情节弧库 = 平级独立弧：structure 判定/去重单元 = **单条弧**（带可复用 description）。
+        # 池 = 库内全部弧（每弧独立比对）。
         if struct_lib is not None and hasattr(struct_lib, "roots"):
             entries = struct_lib.roots()
         else:

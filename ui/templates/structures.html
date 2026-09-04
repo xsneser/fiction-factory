@@ -1,9 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
-{# 情节弧库：扁平行存储（每行一个弧，parent_arc_id 关联）。
-   每弧（根模板/子弧/孙弧…）用同一张卡、同一版式渲染——不做「模板」徽标/大块专属区；
-   角色差别只体现在卡内数据：子弧显示「属于 父弧」，根弧标题右侧多两个小操作按钮。 #}
-<h1>📋 情节弧库 <span style="font-size:14px;color:#8b949e">（{{ arc_cards|length }} 弧 · 每弧统一卡，父弧由「属于」关联）</span></h1>
+{# 情节弧库：全库 = 平级独立弧模板（每行一弧，无父子层级）。
+   每个弧一张完全一样的卡，标题右 ⏸/🗑 每张都有、只作用于该弧自己。 #}
+<h1>📋 情节弧库 <span style="font-size:14px;color:#8b949e">（{{ arc_cards|length }} 弧 · 每行一弧，无父子层级）</span></h1>
 {% for c in arc_cards %}
 <div class="card" style="margin-bottom:10px;opacity:{{ '0.6' if not c.enabled else '1' }}">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
@@ -11,17 +10,13 @@
             <strong>{{ c.name }}</strong>
             {% if not c.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
         </span>
-        {% if c.parent_arc_id == "" %}
         <span style="display:flex;gap:6px;align-items:center">
             <button class="small" style="font-size:12px" onclick="toggleStruct('{{ c.id }}')">{{ '✅ 启用' if not c.enabled else '⏸ 禁用' }}</button>
-            <button class="small danger" style="font-size:12px" onclick="deleteStruct('{{ c.id }}')">🗑</button>
+            <button class="small danger" style="font-size:12px" onclick="deleteStruct('{{ c.id }}')">🗑 删除</button>
         </span>
-        {% endif %}
     </div>
     <p style="font-size:12px;color:#8b949e;margin:6px 0 4px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
         <span class="tag" style="font-size:11px">({{ c.min_words }}-{{ c.max_words }}字)</span>
-        {% if c.parent_name %}<code class="tag" style="background:#30363d;font-size:11px">属于 {{ c.parent_name }}</code>{% endif %}
-        {% if c.child_count > 0 %}<span class="tag" style="font-size:11px">{{ c.child_count }} 子弧</span>{% endif %}
         {% if c.tags %}{% for tag in c.tags %}<span class="tag green" style="font-size:11px">{{ tag }}</span>{% endfor %}{% endif %}
         {% if c.created_at %}<span style="font-size:11px">收录 {{ c.created_at }}</span>{% endif %}
         {% if c.source %}<span style="font-size:11px">来源 {{ c.source }}</span>{% endif %}
@@ -89,7 +84,7 @@ async function toggleStruct(id) {
     else showToast('操作失败: ' + (d.error||''), 'error');
 }
 async function deleteStruct(id) {
-    if (!confirm('确认删除情节弧「' + id + '」（含全部子弧）？')) return;
+    if (!confirm('确认删除情节弧「' + id + '」？')) return;
     const r = await fetch('/api/structures/' + id + '/delete', {method:'POST'});
     const d = await r.json();
     if (d.ok) location.reload();
