@@ -177,8 +177,8 @@ def start_new_book():
             phase="config",
         )
 
-        # 新流程：步 3 ②生成的大纲+桥段随书落库 → 书创建即 phase=ready
-        # （不再 submit 后手动 generate_full_outline；roles 用最终人物重标，幂等）
+        # 新流程：步 3 ②生成的大纲+桥段随书落库 → 书创建即 phase=plots（草案）
+        # ready 只由用户在书详情页「确认弧+桥段」给出（深化+确认门，见 /api/book/<id>/confirm-storyline）
         if outline_data and isinstance(outline_data.get("outlines"), list) and outline_data["outlines"]:
             from libraries.storyline import BookStoryline as _BS, annotate_plot_roles
             _tmp = _BS.from_dict({
@@ -191,7 +191,7 @@ def start_new_book():
             storyline.plots = _tmp.plots
             storyline.threads = _tmp.threads
             storyline.themes = _tmp.themes
-            storyline.phase = "ready"
+            storyline.phase = "plots"
             storyline.generated_at = time.strftime("%Y-%m-%d %H:%M:%S")
             annotate_plot_roles(storyline)
 
@@ -209,10 +209,12 @@ def start_new_book():
         book_mgr.save_storyline(book.book_id, storyline)
 
         # 向导（JSON）返回 book_id 供前端接续生成；旧 form 入口保留 302
+        # newdraft=1：书详情页据此自动给 agent 发「深化弧+桥段」任务（plots 草案期）
         if is_json:
             return jsonify({"ok": True, "book_id": book.book_id,
-                            "redirect": url_for("books.book_detail", book_id=book.book_id)})
-        return redirect(url_for("books.book_detail", book_id=book.book_id))
+                            "redirect": url_for("books.book_detail", book_id=book.book_id,
+                                                newdraft=1)})
+        return redirect(url_for("books.book_detail", book_id=book.book_id, newdraft=1))
 
     from libraries.world_tags import WORLD_TAG_GROUPS
     return render_template("start_book.html",

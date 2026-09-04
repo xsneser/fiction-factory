@@ -20,10 +20,8 @@ PHASE_GATES = {
     "save_book_meta": {"ready"},
     "save_bridge_draft": {"ready"},
     "save_chapter_text": {"ready"},
-    # 大纲链 —— config/outlines/plots 阶段推进用；ready 放行（新流程书创建即 ready，重跑走 regenerate=True）
-    "fill_gags": {"plots"},
-    # 建书规划 —— 仅 config 阶段（未建大纲前）
-    "save_basic_info": {"config"},
+    # 建书规划 —— config 落基本盘；plots 草案期放行（深化弧/补差异化命题时改 basic_info，ready 后禁）
+    "save_basic_info": {"config", "plots"},
     # 上架 —— 需已有正文
     "publish_check": {"ready"},
     "publish_book": {"ready"},

@@ -694,7 +694,10 @@ def save_outlines(book_id: str, outlines: list | None = None,
     """[薄工具] 保存弧/桥段/线程/内涵（agent 生成后调用，内部不调 LLM）。
 
     接受 agent 生成的结构化 dict 列表，反序列化为 OutlineSlot / PlotSlot 落盘；
-    mode=replace 整体替换 | append 续写追加。含 plots 则 phase=plots，否则 outlines。
+    mode=replace 整体替换 | append 续写追加。
+    含 plots 则 phase=plots（草案待确认）否则 outlines；但**已 ready 书保持 ready**
+    （续写/扩写追加弧后不降级——ready 翻转只由用户在书详情 UI 确认，见 confirm-storyline）。
+    弧的 `notes`（设计意图/偏离库模板点）随 OutlineSlot 落盘，供蓝图过目复核。
     """
     tl = _require_tl(book_id)
     from libraries.storyline import OutlineSlot, PlotSlot, reconcile_outline
@@ -721,6 +724,7 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 parent_arc_id=o.get("parent_arc_id", ""),
                 narrative=o.get("narrative", "chronological"),
                 narrative_target=o.get("narrative_target", ""),
+                notes=o.get("notes", ""),
             ))
         for _o in tl.outlines:
             reconcile_outline(_o, tl.words_per_chapter or 3000)
@@ -745,7 +749,7 @@ def save_outlines(book_id: str, outlines: list | None = None,
         tl.threads = threads
     if themes:
         tl.themes = themes
-    tl.phase = "plots" if plots else "outlines"
+    tl.phase = tl.phase if tl.phase == "ready" else ("plots" if plots else "outlines")
     tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
     save_tl(book_id, tl)
     _drop_engine(book_id)
@@ -797,27 +801,6 @@ def arc_material_candidates(book_id: str) -> dict:
             "current_phase": getattr(tl, "phase", ""),
             "has_outline": bool(getattr(tl, "outlines", None))}
 
-
-def confirm_outlines(book_id: str) -> dict:
-    """确认弧序列，进入桥段编排阶段（phase → plots）。"""
-    tl = _require_tl(book_id)
-    tl.phase = "plots"
-    save_tl(book_id, tl)
-    _drop_engine(book_id)
-    return {"ok": True, "phase": tl.phase}
-
-
-def fill_gags(book_id: str) -> dict:
-    """给桥段挂载内涵（compatible_plots 规则）+ 标注吸睛点（规则，不调 LLM）。"""
-    tl = _require_tl(book_id)
-    builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
-                               gag_lib=gag_lib)
-    builder.fill_themes_and_hooks(tl.plots, tl)
-    annotate_plot_roles(tl)
-    tl.phase = "ready" if tl.plots else "gags"
-    save_tl(book_id, tl)
-    _drop_engine(book_id)
-    return {"ok": True, "phase": tl.phase}
 
 
 _WIZARD_CAND_FILE = os.path.join(_ROOT, "storage", "wizard_candidates.json")
@@ -1643,7 +1626,7 @@ def _func_to_schema(fn):
 
 # 写类工具：进入前须拿书锁（防 Web / MCP 双进程同书撞写），退出释放。
 _LOCKED_TOOLS = {
-    "confirm_world", "fill_gags",
+    "confirm_world",
     # 薄工具（agent 生成后落盘，同样需书锁防并发）
     "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
 }
@@ -2114,7 +2097,7 @@ def _build_registry():
         # 规划（薄工具：agent 生成后落盘；旧工具内 LLM 生成已由 agent 自主生成接管）
         save_basic_info,
         save_outlines, save_book_meta,
-        fill_gags, arc_material_candidates,
+        arc_material_candidates,
         # 写作 / 元数据（薄工具：agent 生成后落盘）
         save_bridge_draft, save_chapter_text,
         add_style_rule, delete_style_rule,
