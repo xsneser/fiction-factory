@@ -1,28 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
-{# 情节弧库扁平渲染：每行一个弧节点（统一字段），父弧由 parent_arc_id 关联。
-   单递归宏 render_node 对任意深度节点用同一套渲染；根弧（parent_arc_id==""）
-   在同一宏内条件多渲染 tags/收录/启用/删除 等模板级 chrome。 #}
-{% macro render_node(node, depth) %}
-  <div style="margin:6px 0;border-left:2px solid #30363d;padding-left:10px">
+{# 情节弧库：扁平行存储（每行一个弧节点，父子用 parent_arc_id 关联）。
+   展示 = 每弧一张独立卡（平铺）：弧内不画子弧，父-子关系以卡顶「属于 … / 子弧 N」小标签表示；
+   每张卡即本弧自身内容（字数区间 / 本弧情节怎么发展的描述 / 事件），内涵按 node_id 独立可编辑。 #}
+<h1>📋 情节弧库 <span style="font-size:14px;color:#8b949e">（{{ template_count }} 模板 · 每行一个弧，父弧由「属于」关联）</span></h1>
+{% for c in arc_cards %}
+<div class="card" style="margin-bottom:12px;opacity:{{ '0.5' if not c.enabled else '1' }}">
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
-      <strong>{{ node.name }}</strong>
-      {% if node.parent_arc_id == "" %}<code class="tag blue">模板</code>{% endif %}
-      {% if not node.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
-      <span style="font-size:12px;color:#8b949e">({{ node.min_words }}-{{ node.max_words }}字)</span>
-      {% if node.children %}<span class="tag" style="font-size:11px">{{ node.children|length }} 子弧</span>{% endif %}
+        <strong>{{ c.name }}</strong>
+        {% if c.parent_arc_id == "" %}<code class="tag blue">模板</code>{% endif %}
+        {% if not c.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
     </div>
-    {% if node.description %}
-    <p style="font-size:12px;color:#8b949e;margin:4px 0">{{ node.description }}</p>
+    <p style="font-size:12px;color:#8b949e;margin:4px 0;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        <span class="tag" style="font-size:11px">({{ c.min_words }}-{{ c.max_words }}字)</span>
+        {% if c.parent_name %}<code class="tag" style="background:#30363d;font-size:11px">属于 {{ c.parent_name }}</code>{% endif %}
+        {% if c.child_count > 0 %}<span class="tag" style="font-size:11px">{{ c.child_count }} 子弧</span>{% endif %}
+    </p>
+    {% if c.description %}
+    <p style="font-size:13px;margin:6px 0">{{ c.description }}</p>
     {% endif %}
-    {% if node.key_events %}
-    <p style="font-size:12px;color:#a5b3c2;margin:2px 0">事件：{{ node.key_events | join(' / ') }}</p>
+    {% if c.key_events %}
+    <p style="font-size:12px;color:#a5b3c2;margin:2px 0">事件：{{ c.key_events | join(' / ') }}</p>
     {% endif %}
-    {% if node.themes %}
-    <details class="stage-themes" style="margin:4px 0;font-size:12px">
-      <summary style="cursor:pointer;color:#8b949e">🎭 {{ node.name }} 内涵{% if node.themes %}<span class="tag yellow" style="margin-left:6px">{{ node.themes|length }}</span>{% endif %}</summary>
-      <div class="stage-theme-editor" data-node-id="{{ node.id }}" style="padding:6px 0 2px 12px">
-        {% for m in (node.themes or []) %}
+    <details class="stage-themes" style="margin:6px 0;font-size:12px" {% if not c.themes %}open{% endif %}>
+      <summary style="cursor:pointer;color:#8b949e">🎭 {{ c.name }} 内涵{% if c.themes %}<span class="tag yellow" style="margin-left:6px">{{ c.themes|length }}</span>{% endif %}</summary>
+      <div class="stage-theme-editor" data-node-id="{{ c.id }}" style="padding:6px 0 2px 12px">
+        {% for m in (c.themes or []) %}
         <div class="st-row" style="display:flex;gap:6px;margin:4px 0;align-items:center">
           <input class="st-name" placeholder="内涵名（如：复仇（Revenge））" value="{{ m.name }}" style="flex:1;min-width:0">
           <input class="st-position" placeholder="位置（开头/中段/结尾）" value="{{ m.position }}" style="width:130px">
@@ -34,31 +37,19 @@
         <button type="button" class="small" onclick="saveStageThemes(this)">💾 保存节点内涵</button>
       </div>
     </details>
-    {% endif %}
-    {% if node.children %}
-      {% for c in node.children %}
-        {{ render_node(c, depth + 1) }}
-      {% endfor %}
-    {% endif %}
-    {% if node.parent_arc_id == "" %}
-    <div style="margin-top:8px">
-      {% if node.tags %}{% for tag in node.tags %}<span class="tag green">{{ tag }}</span>{% endfor %}{% endif %}
+    {% if c.parent_arc_id == "" %}
+    <div style="margin-top:10px">
+      {% if c.tags %}{% for tag in c.tags %}<span class="tag green">{{ tag }}</span>{% endfor %}{% endif %}
       <p style="color:#484f58;font-size:11px;margin-top:8px">
-        总字数: {{ node.total_words }} · 收录: {{ node.created_at or '—' }}
-        · 来源: {{ node.source or '创作积累' }}
+        总字数: {{ c.total_words }} · 收录: {{ c.created_at or '—' }}
+        · 来源: {{ c.source or '创作积累' }}
       </p>
       <p style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button class="small" onclick="toggleStruct('{{ node.id }}')">{{ '✅ 启用' if not node.enabled else '⏸ 禁用' }}</button>
-        <button class="small danger" onclick="deleteStruct('{{ node.id }}')">🗑 删除</button>
+        <button class="small" onclick="toggleStruct('{{ c.id }}')">{{ '✅ 启用' if not c.enabled else '⏸ 禁用' }}</button>
+        <button class="small danger" onclick="deleteStruct('{{ c.id }}')">🗑 删除</button>
       </p>
     </div>
     {% endif %}
-  </div>
-{% endmacro %}
-<h1>📋 情节弧库 <span style="font-size:14px;color:#8b949e">（{{ templates|length }} 模板 · 每行一个弧节点，父弧由 parent 关联）</span></h1>
-{% for t in templates %}
-<div class="card" style="margin-bottom:16px;opacity:{{ '0.5' if not t.enabled else '1' }}">
-    {{ render_node(t, 0) }}
 </div>
 {% endfor %}
 
