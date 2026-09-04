@@ -17,7 +17,7 @@ def dashboard():
     return render_template("dashboard.html",
         books=rows, pen_names=pen_names,
         plot_count=len(plot_lib.templates),
-        struct_count=len(struct_lib.templates),
+        struct_count=len(struct_lib.roots()),
         gag_count=len(gag_lib.patterns),
         char_count=len(char_lib.archetypes),
         style_rule_count=len(style_rules.rules),
@@ -217,7 +217,7 @@ def start_new_book():
     from libraries.world_tags import WORLD_TAG_GROUPS
     return render_template("start_book.html",
         pen_names=profiles.list_all(),
-        structures=struct_lib.templates,
+        structures=struct_lib.display_trees(),
         openings=plot_lib.search(category="开篇"),
         golden_fingers=plot_lib.search(category="成长") + plot_lib.search(category="爽文"),
         borrow_books=_borrow_books(),

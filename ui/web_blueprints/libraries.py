@@ -90,27 +90,22 @@ def struct_toggle(struct_id): return _lib_toggle("structures", struct_id)
 
 
 @bp.route("/api/structures/<struct_id>/delete", methods=["POST"])
-def struct_delete(struct_id): return _lib_delete("structures", struct_id)
-
-
-@bp.route("/api/structures/<struct_id>/node/themes", methods=["POST"])
-def struct_stage_themes(struct_id):
-    """编辑某个弧/阶段节点的节点级内涵 [{name, position, how}]（含插入位置+表达手法）。
-    path 为沿 stages→children 的索引列表（如 [0,2] = 顶层第0个子弧的第2个孙弧），支持多层嵌套。"""
-    t = struct_lib.get_by_id(struct_id)
-    if not t:
+def struct_delete(struct_id):
+    """删除一根情节弧：删除该根弧及其全部后代节点（防扁平库留下孤儿子行）。"""
+    lib = struct_lib
+    if not any(x.id == struct_id for x in lib.templates):
         return jsonify({"ok": False, "error": "not found"}), 404
-    path = (request.json or {}).get("path")
-    if not isinstance(path, list) or not path:
-        return jsonify({"ok": False, "error": "path must be non-empty list"}), 400
-    # 沿 stages→children 递归寻址目标节点
-    nodes = t.stages
-    node = None
-    for p in path:
-        if not isinstance(p, int) or not (0 <= p < len(nodes)):
-            return jsonify({"ok": False, "error": "path out of range"}), 400
-        node = nodes[p]
-        nodes = node.children
+    removed = lib.delete_tree(struct_id)
+    return jsonify({"ok": True, "removed": removed})
+
+
+@bp.route("/api/structures/<node_id>/node/themes", methods=["POST"])
+def struct_stage_themes(node_id):
+    """编辑**任意**弧节点（根或任意深度子弧，统一按 id 寻址）的节点级内涵
+    [{name, position, how}]（含插入位置+表达手法）。扁平库每节点一行独立可编辑。"""
+    node = struct_lib.get_by_id(node_id)
+    if not node:
+        return jsonify({"ok": False, "error": "not found"}), 404
     themes = (request.json or {}).get("themes")
     if not isinstance(themes, list):
         return jsonify({"ok": False, "error": "themes must be list"}), 400
@@ -229,7 +224,7 @@ def style_rule_delete(rule_id):
 
 @bp.route("/structures")
 def structures():
-    return render_template("structures.html", templates=struct_lib.templates)
+    return render_template("structures.html", templates=struct_lib.display_trees())
 
 
 @bp.route("/gags")
