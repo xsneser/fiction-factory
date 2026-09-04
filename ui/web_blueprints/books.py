@@ -180,6 +180,35 @@ def book_detail(book_id):
         draft=draft)
 
 
+@bp.route("/api/book/<book_id>/confirm-storyline", methods=["POST"])
+def api_confirm_storyline(book_id):
+    """用户确认弧+桥段（plots 草案 → ready）：挂内涵/吸睛 + phase=ready。
+
+    这是 plots→ready 的唯一翻转（agent 工具面已删 fill_gags/confirm_outlines），
+    只能由用户在书详情页点「确认弧+桥段，开始写作」触发，agent 无此工具。
+    """
+    tl = book_mgr.load_storyline(book_id)
+    if tl is None:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if tl.phase == "ready":
+        return jsonify({"ok": True, "phase": "ready", "idempotent": True})
+    if tl.phase != "plots":
+        return jsonify({"ok": False,
+                        "error": f"仅 plots 草案可确认（当前 phase={tl.phase}）"}), 400
+    if not tl.plots:
+        return jsonify({"ok": False,
+                        "error": "尚无桥段，请先让 agent 深化弧+桥段落盘再确认"}), 400
+    builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
+                               gag_lib=gag_lib)
+    builder.fill_themes_and_hooks(tl.plots, tl)
+    from libraries.storyline import annotate_plot_roles
+    annotate_plot_roles(tl)
+    tl.phase = "ready"
+    tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    book_mgr.save_storyline(book_id, tl)
+    return jsonify({"ok": True, "phase": "ready", "plots": len(tl.plots)})
+
+
 @bp.route("/api/book/<book_id>/generate-meta", methods=["POST"])
 def api_book_generate_meta(book_id):
     """书库详情页：手动生成书名+简介（基于第 1 章内容）。
