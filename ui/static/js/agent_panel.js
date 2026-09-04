@@ -45,7 +45,7 @@ console.log('[agent-panel] v28 events-stream');
     // ─── 工具卡中文化：工具名 → 中文动作；drive_ui cmd → 中文效果；JSON 键 → 中文 ───
     var TOOL_ZH = {
         drive_ui: '驱动建书向导',
-        export_book: '导出投稿包', extend_outline: '续写故事线', fill_gags: '挂载笑点',
+        export_book: '导出投稿包', extend_outline: '续写故事线',
         fill_plots: '填充桥段', generate_book_meta: '生成书名+简介', generate_characters: '生成角色',
         generate_core_conflict: '生成核心矛盾', generate_factions: '生成势力', generate_full_outline: '生成完整大纲',
         generate_outlines: '生成大纲序列', generate_rest_world: '补全其余世界观', generate_title: '生成书名',

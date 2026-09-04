@@ -260,6 +260,7 @@ def api_generate_outlines(storyline_id):
 
 
 @bp.route("/api/storyline/<storyline_id>/confirm-outlines", methods=["POST"])
+# 已废弃（老路径收敛）：phase 翻转统一走 books 蓝图 /api/book/<id>/confirm-storyline（plots→ready，仅 UI 确认）；agent 不可达本路由。
 def api_confirm_outlines(storyline_id):
     """确认大纲配置，进入桥段编排阶段"""
     tl = _resolve_storyline(storyline_id)
@@ -319,8 +320,9 @@ def api_fill_plots(storyline_id):
 
 
 @bp.route("/api/storyline/<storyline_id>/fill-gags", methods=["POST"])
+# 已废弃（老路径收敛）：plots→ready 翻转统一走 books 蓝图 /api/book/<id>/confirm-storyline（仅 UI 确认）；本路由仅供旧编辑器兼容、agent 不可达。
 def api_fill_gags(storyline_id):
-    """注入笑点和吸睛点"""
+    """注入笑点和吸睛点（废弃，仅旧编辑器兼容）"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404

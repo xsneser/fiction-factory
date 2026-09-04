@@ -3,9 +3,10 @@ name: novel-master
 description: >-
   NovelEngine 创作平台的统一入口。Use when the user wants to 写小说/开新书/生成弧/写正文/上架/续写
   (start the platform and drive any novel creation task on NovelEngine)。
-  职责：① 确保平台服务（58080）已启动；② 按用户意图分发到分 skill（novel-build / novel-outline /
-  novel-write / novel-publish）并执行；③ 用 get_book_detail 校验阶段，跨阶段时引导到正确 skill，
+  职责：① 确保平台服务（58080）已启动；② 按用户意图分发到分 skill（novel-build / novel-write /
+  novel-publish）并执行；③ 用 get_book_detail 校验阶段，跨阶段时引导到正确 skill，
   不跨阶段硬做。本 skill 是调度器，具体流程见各分 skill 正文。
+  注：排弧/深化弧在 dsh 侧（novel-build 提交后深化 + 书详情「确认弧+桥段」）；Claude 侧不做弧构建。
 ---
 # NovelEngine 主 skill（启动器 + 调度表）
 
@@ -25,8 +26,8 @@ description: >-
 | 用户意图（中英触发词） | 分 skill | 分 skill 文件 |
 |---|---|---|
 | 开新书 / 建书 / 写设定 / 构思世界观 / 借鉴已有书 / 生成书名 / 开头几章 | `novel-build` | `.claude/skills/novel-build/SKILL.md`（注：dsh 侧/按钮流程已拆为 `novel-build-candidates`（步 1 候选呈现）→ `novel-build`（步 2 建书），与 Claude 侧交互式 `novel-build` 独立、不做镜像） |
-| 生成弧 / 排故事线 / 选桥段 / 一键完整弧 / 续写 / 扩写 | `novel-outline` | `.claude/skills/novel-outline/SKILL.md` |
-| 写正文 / 写下一章 / 继续写 / 写桥段 | `novel-write` | `.claude/skills/novel-write/SKILL.md` |
+| 生成弧 / 排故事线 / 深化弧 / 确认弧 / 一键完整弧（弧未 ready 前） | 交给 dsh 侧（建书向导落弧 → 提交后深化）→ 用户在书详情点「✅ 确认弧+桥段」进 ready；Claude 不代跑排弧 | `.claude/skills/novel-build/SKILL.md` |
+| 写正文 / 写下一章 / 继续写 / 写桥段 / 续写 / 扩写（正文续写） | `novel-write` | `.claude/skills/novel-write/SKILL.md` |
 | 上架 / 发布 / 完本 / 导出 / 生成书名简介 / 检查能否发书 | `novel-publish` | `.claude/skills/novel-publish/SKILL.md` |
 | 删书 / 删除一本书 | 无 skill——`navigate("/books")` 让用户**手动点删除按钮**（护栏：直删工具不在工具面，外部 agent 不能删） | — |
 
@@ -35,8 +36,8 @@ description: >-
 ## 第三步：跨阶段引导（防硬做）
 
 - 拿不准用户在哪个阶段 → 先 `mcp__novel-engine__list_books` 看有哪些书，再 `mcp__novel-engine__get_book_detail` 看目标书 `phase`：
-  - `config` → 在 build（未锁定世界观）或 outline（已锁定，准备排弧）之间判断。
-  - `outlines` / `plots` → 弧已建，引导到 write 或 outline 续写。
+  - `config` → 未落弧：引导 dsh 建弧（建书向导/排弧），或 Claude 侧只做设定不排弧。
+  - `outlines` / `plots` → 弧+桥段已落（草案）但未 ready：引导用户在书详情页「✅ 确认弧+桥段」进 ready（深化由 dsh）。
   - `ready` → 引导到 write（写作）或 publish（上架）。
 - 用户没指定具体书 → 先问「对哪本书操作？」；书多时列出书名让用户挑。
 

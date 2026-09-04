@@ -14,8 +14,10 @@ description: >-
 > **不要**调用内部跑 LLM 的旧工具（`write_next_bridge` / `write_chapter`，已废弃留档）。
 
 ## 前置检查（必做）
-1. `mcp__novel-engine__get_book_state(book_id)`：`phase != ready` → 提示先跑 `novel-outline`；
-   看 `current_chapter` 与进行中草稿（draft）定位续写点。
+1. `mcp__novel-engine__get_book_state(book_id)`：
+   - `phase=config`（缺弧）→ 提示先经建书向导/dsh 落弧（本 skill 不排弧）。
+   - `phase=plots`（弧+桥段草案待确认）→ 提示用户在书详情页「✅ 确认弧+桥段」进 ready 再写（agent 无翻 ready 工具）。
+   - `phase=ready` → 继续；看 `current_chapter` 与进行中草稿（draft）定位续写点。
 2. `mcp__novel-engine__get_storyline(book_id)` → 当前弧、下一个待写桥段（plot_id/名称/写在哪章）。
 
 ## 上下文组装（渐进式披露 — **单次读取**，不要把整本书灌进上下文）
@@ -58,7 +60,7 @@ description: >-
 - 全书写完 → 引导 `novel-publish`（save_book_meta → publish_check → publish_book）。
 
 ## 失败处置
-- phase 不过 → 引导 `novel-outline`，勿硬写。
+- phase 不过（config 缺弧 / plots 待确认）→ 按前置检查处理：config 引导落弧，plots 引导书详情确认进 ready，勿硬写。
 - `BookBusyError` → 稍后重试。`budget_paused` → 停，问用户。
 - 生成内容为空/报错 → 检查 `api.json` 模型配置与 max_tokens 余量（推理型模型需留足）。
 - `save_chapter_text` 保存失败 → 桥段已用 `save_bridge_draft` 落盘（草稿还在，可续），检查后重试。
