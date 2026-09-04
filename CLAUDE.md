@@ -9,8 +9,8 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 
 | 阶段 | 分 skill | 前置 phase | 出口 | 主要工具 |
 |---|---|---|---|---|
-| 建书 | `novel-build-candidates` + `novel-build` | 无书 / phase=config | `ready`（拆分：`novel-build-candidates` 生成候选并**呈现**（`set_candidates`），停在步 2 等用户挑选；用户点「已挑选完毕」后页面自动触发 `novel-build`——步 3「内容构建工作台」分阶段构建（core_conflict→弧+桥段→势力→人物→其余维度）并随提交落库，**书创建即带弧 phase=ready**，直接进写作台） | drive_ui（驱动建书向导，含 set_candidates/set_outline）/ query_arc_library / arc_material_candidates / query_plots / query_characters / save_basic_info（旧 world_candidates / generate_core_conflict / generate_outline_preview / generate_factions / generate_characters / generate_rest_world / generate_full_outline / generate_world / confirm_world / confirm_outlines 工具**已删除**（2026-08-24/08-28 大清理，无兜底），步 3 内容全由 agent 自主生成经 set_outline / set_world / set_characters 落表） |
-| 弧+写作 | `novel-story` | `config` 且 basic_info 充实（先排弧）→ `ready`（写作） | 章节/桥段写完 | **agent 自主生成 → `save_outlines`** / arc_material_candidates / fill_gags / **`save_bridge_draft` / `save_chapter_text`** / save_book_meta / chapter_quality_gate（完整章节质量门禁）（旧 write_next_bridge 等已废弃留档） |
+| 建书 | `novel-build-candidates` + `novel-build` | 无书 / phase=config | `ready`（拆分：`novel-build-candidates` 生成候选并**呈现**（`set_candidates`），停在步 2 等用户挑选；用户点「已挑选完毕」后页面自动触发 `novel-build`——步 3「内容构建工作台」分阶段构建（core_conflict→弧+桥段→势力→人物→其余维度）并随提交落库，**书创建即带弧 phase=plots（草案）**；提交后深化弧+桥段、用户在书详情页「确认弧+桥段」后才 ready 进写作台） | drive_ui（驱动建书向导，含 set_candidates/set_outline）/ query_arc_library / arc_material_candidates / query_plots / query_characters / save_basic_info（旧 world_candidates / generate_core_conflict / generate_outline_preview / generate_factions / generate_characters / generate_rest_world / generate_full_outline / generate_world / confirm_world / confirm_outlines 工具**已删除**（2026-08-24/08-28 大清理，无兜底），步 3 内容全由 agent 自主生成经 set_outline / set_world / set_characters 落表） |
+| 弧+写作 | `novel-story` | `config`/`plots`（排弧+深化）→ 用户在书详情「确认弧+桥段」→ `ready`（写作） | 章节/桥段写完 | **agent 自主生成 → `save_outlines`** / arc_material_candidates / validate_storyline（深化回改环）/ **`save_bridge_draft` / `save_chapter_text`** / save_book_meta / chapter_quality_gate（完整章节质量门禁）；ready 翻转无 agent 工具、仅书详情 UI 确认（fill_gags/confirm_outlines 已收敛移除） |
 | 上架 | `novel-publish` | 已有第 1 章正文 | `published` / `finished` | publish_check / publish_book / mark_finished / export_book |
 
 ## 发现与编排规则
@@ -22,7 +22,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 - 状态信号：`storyline.phase ∈ config/outlines/plots/ready`；`book.status ∈ planning/writing/reviewing/finished/published/paused`。
 - 写类工具带书级文件锁，冲突抛 `BookBusyError`，稍后重试；`budget_paused` 表示预算/额度触发，停下问用户。
 - 需要可视化页面时用 `mcp__novel-engine__navigate` 切站内页（完整路由表见下）。切页与读数据是两回事：即使已用 get_book_state 读过数据，只要用户要「打开页面」就要再调 navigate。
-- **护栏（必须遵守）**：建/删书工具不在工具面（无法经 MCP/任何工具面直调）。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；**世界观在向导步 3「内容构建工作台」分阶段构建（core_conflict→弧+桥段→势力→人物→其余维度）并随提交落库，书创建即带弧 phase=ready 直接进写作台**（大纲+桥段由 **agent 自主生成**经 `drive_ui(set_outline)` 落表、随 submit 落库；旧 `generate_outline_preview`/`generate_full_outline`/`generate_world` 工具已删，兜底走 agent 自主生成 → `save_outlines`/`save_basic_info`）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
+- **护栏（必须遵守）**：建/删书工具不在工具面（无法经 MCP/任何工具面直调）。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；**世界观在向导步 3「内容构建工作台」分阶段构建（core_conflict→弧+桥段→势力→人物→其余维度）并随提交落库，书创建即带弧 phase=plots（草案），提交后深化弧+桥段、**用户须在书详情页「确认弧+桥段」才 phase=ready**（ready 翻转无任何 agent 工具，仅 UI 确认端点 /api/book/&lt;id&gt;/confirm-storyline）（大纲+桥段由 **agent 自主生成**经 `drive_ui(set_outline)` 落表、随 submit 落库；旧 `generate_outline_preview`/`generate_full_outline`/`generate_world` 工具已删，兜底走 agent 自主生成 → `save_outlines`/`save_basic_info`）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
 
 ## 站内页面路由表（navigate 用；无书时部分页 302 重定向）
 
