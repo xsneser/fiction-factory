@@ -21,6 +21,7 @@ from libraries.book_manager import BookManager, BookConfig
 from libraries.cost_tracker import CostTracker
 from libraries.de_ai import DeAIEngine
 from libraries.character_state import CharacterStateMachine
+from libraries.promise_ledger import promise_op
 from libraries.reviewer import ContentReviewer
 from libraries.assembler import BookAssemblerPlan
 from libraries.prompt_harness import PromptHarness
@@ -88,8 +89,6 @@ class EngineState:
     # 书目信息
     title: str = ""
     pen_name: str = ""
-    genre: str = ""
-    sub_genre: str = ""
     platform: str = "fanqie"
 
     # 大纲
@@ -193,8 +192,6 @@ class NovelEngine:
             book_id=book_id,
             title=self.book.title,
             pen_name=self.book.pen_name,
-            genre=self.book.genre,
-            sub_genre=self.book.sub_genre,
             platform=self.book.platform,
             current_chapter=self.book.current_chapter,
             total_chapters=self.book.chapter_count,
@@ -486,6 +483,7 @@ class NovelEngine:
             "type": self._promise_type(p.category),
             "desc": desc,
             "status": "pending",
+            "op": "seed",  # 读者承诺六操作分级（AI-NWA payoff_directives）
             "setup_chapter": getattr(p, "written_chapter", 0) or 0,
             "deadline_chapter": self._estimate_bridge_chapter(payoff) if payoff else 0,
             "payoff_plot_id": payoff.id if payoff else "",
@@ -509,6 +507,7 @@ class NovelEngine:
             # 收局：兑现对应承诺
             if rpid and rpid in by_setup and by_setup[rpid].get("status") != "fulfilled":
                 by_setup[rpid]["status"] = "fulfilled"
+                by_setup[rpid]["op"] = "payoff"
                 by_setup[rpid]["payoff_plot_id"] = p.id
                 by_setup[rpid]["payoff_chapter"] = chapter_num
                 changed = True
@@ -516,6 +515,11 @@ class NovelEngine:
             if (not rpid and p.id not in by_setup
                     and any(q.resolves_plot_id == p.id for q in self.storyline.plots if q.id != p.id)):
                 promises.append(self._build_promise_from_setup(p))
+                changed = True
+        # 六操作分级随章节推进演化：pending 承诺按 deadline 距离重定 op（seed→touch→pressure→payoff）
+        for q in promises:
+            if q.get("status") == "pending" and q.get("op") != promise_op(q, chapter_num):
+                q["op"] = promise_op(q, chapter_num)
                 changed = True
         if changed:
             self.storyline.promises = promises
@@ -605,7 +609,8 @@ class NovelEngine:
     def _prepare_chapter_context(self, chapter_num: int):
         """取本章写作上下文：上文结尾 + 角色状态 + 进行中章节草稿 + 已完成章节语义摘要。
 
-        返回 (prev_ending, char_states, chapter_buffer, chapter_words, summaries_context)。
+        返回 (prev_ending, char_states, chapter_buffer, chapter_words,
+               summaries_context, draft_bridges)。
         """
         prev_ending = ""
         if chapter_num > 1:
@@ -624,11 +629,13 @@ class NovelEngine:
             logger.warning("构建角色上下文失败（继续写作）: %s", e)
 
         buffer, words = [], 0
+        draft_bridges = []
         try:
             draft = self._load_draft()
             if draft and draft.get("chapter_num") == chapter_num:
                 buffer = draft.get("buffer", []) or []
                 words = int(draft.get("words", 0) or 0)
+                draft_bridges = draft.get("bridges") or []
         except Exception as e:
             logger.warning("恢复章节草稿失败: %s", e)
 
@@ -643,7 +650,7 @@ class NovelEngine:
                     summaries_context = "\n".join(lines)
             except Exception as e:
                 logger.warning("加载章节摘要失败（继续写作）: %s", e)
-        return prev_ending, char_states, buffer, words, summaries_context
+        return prev_ending, char_states, buffer, words, summaries_context, draft_bridges
 
     def _summarize_chapter(self, chapter_num: int, full_text: str, ctx=None) -> str:
         """为刚写完的一章生成 80-150 字语义摘要（跨章长程记忆）。
@@ -679,8 +686,6 @@ class NovelEngine:
         """
         if not self.llm or not self.book:
             return {"status": "skip"}
-        genre = self.state.genre or ""
-        sub_genre = self.state.sub_genre or ""
         platform = self.state.platform or "fanqie"
         ch1 = chapter1_text or ""
 
@@ -746,10 +751,29 @@ class NovelEngine:
         full_text = result["text"]
         # storyline 路径补一次免费规则层去AI味（词替换+段落节奏），与节拍路径行为一致；
         # 仅在桥段写完落盘前处理，word_count 仍以写作时统计为准。
-        try:
-            full_text = self.de_ai.process_rule_based(full_text).processed
-        except Exception as e:
-            logger.warning("去AI味失败: %s", e)
+        # 若桥段元数据完整（bridges 逐段 join 后能无损重建整段正文），则改为逐桥段去AI味，
+        # 并把 per-bridge segments 随章节落盘（供写作台点击桥段→高亮对应正文）；
+        # 否则回退整段去AI味（旧草稿无 bridges 时兜底，不丢数据）。
+        bridges = result.get("bridges") or []
+        if (isinstance(bridges, list) and bridges
+                and "\n\n".join((b.get("text") or "") for b in bridges) == result.get("text")):
+            segments = []
+            for b in bridges:
+                seg_text = b.get("text") or ""
+                try:
+                    seg_text = self.de_ai.process_rule_based(seg_text).processed
+                except Exception as e:
+                    logger.warning("去AI味(桥段)失败: %s", e)
+                segments.append({"plot_id": b.get("plot_id"),
+                                 "plot_name": b.get("plot_name"), "text": seg_text})
+            full_text = "\n\n".join(s["text"] for s in segments)
+            result["bridges"] = segments
+        else:
+            try:
+                full_text = self.de_ai.process_rule_based(full_text).processed
+            except Exception as e:
+                logger.warning("去AI味失败: %s", e)
+            result.pop("bridges", None)
         self.state.current_chapter = chapter_num
         # 进度写回 book.json：否则书库/详情页看不到已写章节与进度
         if self.book and self.book.current_chapter < chapter_num:
@@ -817,7 +841,8 @@ class NovelEngine:
                 self.book_mgr.save_chapter(
                     self.state.book_id, chapter_num,
                     f"第{chapter_num}章", full_text, summary,
-                    review=review_dict)
+                    review=review_dict,
+                    bridges=result.get("bridges"))
             except Exception as e:
                 logger.warning("保存章节失败: %s", e)
 
@@ -842,12 +867,12 @@ class NovelEngine:
         if not self.storyline_writer:
             raise RuntimeError("蓝图写作器未初始化，请先调用 continue_book()")
         self.state.current_chapter = chapter_num
-        prev_ending, char_states, buffer, words, summaries = self._prepare_chapter_context(chapter_num)
+        prev_ending, char_states, buffer, words, summaries, draft_bridges = self._prepare_chapter_context(chapter_num)
 
         gen = self.storyline_writer.write_chapter_stepwise(
             chapter_num, prev_ending, char_states,
             chapter_buffer="\n\n".join(buffer), chapter_words=words,
-            summaries_context=summaries)
+            summaries_context=summaries, bridge_meta=draft_bridges)
         result = None
         last_skip = {}
         try:
@@ -863,7 +888,8 @@ class NovelEngine:
         if last_skip.get("code") == "budget_exhausted":
             if result and result.get("text"):
                 self._save_draft(chapter_num, result["text"].split("\n\n"),
-                                 result.get("word_count", 0))
+                                 result.get("word_count", 0),
+                                 bridges=result.get("bridges") or [])
             yield {"type": "budget_paused",
                    "message": last_skip.get("reason", "预算耗尽，暂停写作")}
             return
@@ -920,7 +946,7 @@ class NovelEngine:
             yield {"type": "complete", "message": "已写完全部章节",
                    "book_id": self.state.book_id, "status": getattr(self.book, "status", "") or "finished"}
             return
-        prev_ending, char_states, buffer, words, summaries = self._prepare_chapter_context(chapter_num)
+        prev_ending, char_states, buffer, words, summaries, draft_bridges = self._prepare_chapter_context(chapter_num)
 
         gen = self.storyline_writer.write_bridge_stepwise(
             chapter_num, prev_ending, char_states,
@@ -928,11 +954,14 @@ class NovelEngine:
             summaries_context=summaries)
         result = None
         last_skip = {}
+        last_stall = {}
         try:
             while True:
                 evt = next(gen)
                 if evt.get("type") == "bridge_skip":
                     last_skip = evt
+                elif evt.get("type") == "repair_stalled":
+                    last_stall = evt
                 yield evt
         except StopIteration as si:
             result = si.value
@@ -943,14 +972,21 @@ class NovelEngine:
                 yield {"type": "budget_paused",
                        "message": last_skip.get("reason", "预算耗尽，暂停写作")}
                 return
+            # 连续修复失败 = 主动停：repair_stalled 事件已在循环中 yield，此处保留草稿待用户决策
+            if last_stall:
+                return
             # complete / 本章已满：若还有进行中的草稿，收尾固化为最后一章，避免半章文本丢失
             self._finalize_leftover_draft()
             return
 
-        # 持久化桥段进度 + 进行中章节草稿
+        # 持久化桥段进度 + 进行中章节草稿（bridges 随草稿落盘，跨断点续写保留桥段↔正文映射）
         self.book_mgr.save_storyline(self.state.book_id, self.storyline)
         buffer = buffer + [result["text"]]
-        self._save_draft(chapter_num, buffer, result["chapter_words"])
+        new_bridges = list(draft_bridges) + [{
+            "plot_id": result.get("plot_id"),
+            "plot_name": result.get("plot_name"),
+            "text": result["text"]}]
+        self._save_draft(chapter_num, buffer, result["chapter_words"], bridges=new_bridges)
 
         if result.get("cut_chapter"):
             final = self._finalize_written_chapter(chapter_num, {
@@ -959,6 +995,7 @@ class NovelEngine:
                 "beats": 0,
                 "beat_details": [],
                 "input_text": result.get("input_text", ""),
+                "bridges": new_bridges,
                 "blueprint": {
                     "chapter_title": f"第{chapter_num}章",
                     "chapter_num": chapter_num,
@@ -984,7 +1021,7 @@ class NovelEngine:
         if not self.storyline_writer:
             return {"error": "蓝图写作器未初始化，请先调用 continue_book()"}
         chapter_num = inst.chapter_num
-        prev_ending, char_states, buffer, words, summaries = self._prepare_chapter_context(chapter_num)
+        prev_ending, char_states, buffer, words, summaries, draft_bridges = self._prepare_chapter_context(chapter_num)
         result = self.storyline_writer.write_chapter(
             chapter_num=chapter_num,
             previous_chapter_ending=prev_ending,
@@ -992,6 +1029,7 @@ class NovelEngine:
             chapter_buffer="\n\n".join(buffer),
             chapter_words=words,
             summaries_context=summaries,
+            bridge_meta=draft_bridges,
         )
         final = self._finalize_written_chapter(chapter_num, result)
         self._clear_draft()
@@ -1028,14 +1066,16 @@ class NovelEngine:
             logger.warning("加载章节草稿失败: %s", e)
             return None
 
-    def _save_draft(self, chapter_num: int, buffer: list, words: int):
+    def _save_draft(self, chapter_num: int, buffer: list, words: int,
+                    bridges: list | None = None):
         p = self._draft_path()
         if not p:
             return
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(
-                {"chapter_num": chapter_num, "buffer": buffer, "words": words},
+                {"chapter_num": chapter_num, "buffer": buffer, "words": words,
+                 "bridges": bridges or []},
                 ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             logger.warning("保存章节草稿失败: %s", e)
@@ -1065,6 +1105,7 @@ class NovelEngine:
                 "beat_details": [],
                 "input_text": "\n".join(
                     getattr(self.storyline_writer, "_input_texts", []) or []),
+                "bridges": draft.get("bridges") or [],
                 "blueprint": {
                     "chapter_title": f"第{ch}章",
                     "chapter_num": ch,

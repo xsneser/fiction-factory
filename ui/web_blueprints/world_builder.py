@@ -1,7 +1,10 @@
 """世界观设定卡（启动新书前置 v3）— 蓝图（自 ui/web_ui.py 按域拆分）。
 
-启动新书改为「设定先行」：一句话设定 → 世界观设定卡（生成/示例候选/从书借鉴/逐项编辑）
-→ 确认 → 进现有大纲生成（OutlineGenerator 此时 skip Phase 1 LLM 分析）。
+启动新书「设定先行」三条无书路径（建书向导内触发）：
+- 候选：`POST /api/world-builder/candidates`（步 2 挑世界观方向，tags 硬约束）
+- 世界观补全：`POST /api/world-builder/world-complete`（步 3 自动补全 12 维 + 基调）
+- 从书借鉴：`POST /api/world-builder/borrow-preview`（无书别名预览 seed）
+另有带书路径：生成（SSE）/ 确认 / 逐项编辑（书详情页设定卡）。
 """
 import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -79,14 +82,11 @@ def api_world_generate(book_id):
         task_id = f"world_{book_id}_{int(time.time())}"
         task_manager.start(task_id, name="世界观生成",
                            title=tl.book_title or tl.pen_name or "",
-                           agent="world", book_id=book_id,
-                           book_title=tl.book_title or "",
-                           step=("借鉴生成世界观" if mode == "borrow" else "生成世界观"),
                            total=2, phase="构思设定...",
                            url=f"/books/{book_id}")
         try:
             for event_type, message, data_dict in gen.generate(
-                genre=tl.genre, sub_genre=tl.sub_genre, idea=idea,
+                idea=idea,
                 pen_name=tl.pen_name, platform=tl.platform,
                 seed_basic_info=seed, storyline=tl,
                 on_save=lambda _tl: _save_storyline(_tl, book_id),
@@ -100,7 +100,6 @@ def api_world_generate(book_id):
                     task_manager.progress(task_id,
                                           current=data_dict.get("phase", 0),
                                           phase=message or "")
-                    task_manager.llm_call(task_id)
                 elif event_type == "done":
                     task_manager.done(task_id, message="世界观生成完成")
                 elif event_type == "error":
@@ -145,13 +144,9 @@ def api_world_candidates(book_id):
     tid = f"worldcand_{book_id}_{int(time.time())}"
     task_manager.start(tid, name="世界观候选",
                        title=tl.book_title or tl.pen_name or "",
-                       agent="world", book_id=book_id,
-                       book_title=tl.book_title or "",
-                       step="产出差异化候选", total=1, phase="生成中...",
                        url=f"/books/{book_id}")
     try:
-        candidates = gen.generate_candidates(genre=tl.genre, sub_genre=tl.sub_genre, idea=idea)
-        task_manager.llm_call(tid)
+        candidates = gen.generate_candidates(idea=idea)
     except Exception as e:
         task_manager.fail(tid, str(e))
         raise
@@ -166,58 +161,230 @@ def api_world_candidates(book_id):
 # 无 book_id 别名：新书启动向导②在建书前生成 AI 候选（generate_candidates 本就不读目标书）
 @bp.route("/api/world-builder/candidates", methods=["POST"])
 def api_world_candidates_nobook():
-    """示例候选（无目标书版本，供启动向导②）：body {idea, genre?, sub_genre?}。"""
+    """示例候选（无目标书版本，供启动向导②）：body {idea, genre?, sub_genre?, tags?}。
+
+    tags 为题材标签（硬约束，向导步 1 已选）；genre 为空时由 derive_genre(tags) 推导。
+    """
     body = request.get_json(silent=True) or {}
     idea = (body.get("idea") or "").strip()
     genre = (body.get("genre") or "").strip()
     sub_genre = (body.get("sub_genre") or "").strip()
+    raw_tags = body.get("tags") or []
+    tags = [str(t).strip() for t in raw_tags if isinstance(t, str) and t.strip()]
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
     llm = get_llm()
     if not llm:
         return jsonify({"ok": False, "error": "LLM 未配置，请先在设置页配置 API"}), 500
     from libraries.world_builder import WorldBuildingGenerator
     from libraries.prompt_harness import PromptHarness
-    harness = PromptHarness()   # 无书：storyline=None，_tags_block 空
+    harness = PromptHarness()   # 无书：storyline=None，_tags_block 空；tags 由 generate_candidates 透传
     gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
-    candidates = gen.generate_candidates(genre=genre, sub_genre=sub_genre, idea=idea)
+    candidates = gen.generate_candidates(idea=idea, tags=tags)
     if not candidates:
         return jsonify({"ok": False, "error": "示例候选生成失败，请重试"}), 500
     return jsonify({"ok": True, "candidates": candidates})
 
 
-# 无 book_id 别名：向导③根据世界观生成主角候选 + 配角候选（书名已在②选中，建书前）
-@bp.route("/api/world-builder/characters", methods=["POST"])
-def api_world_characters_nobook():
-    """根据世界观生成主角候选 + 配角候选。body {idea, title?, genre?, tags?}。"""
+# 无 book_id 别名：新书启动向导③世界观补全（进入步 3 自动触发；generate() 本就不读目标书）
+@bp.route("/api/world-builder/world-complete", methods=["POST"])
+def api_world_complete_nobook():
+    """世界观补全（无目标书版本，供启动向导③）：AI 从 idea+题材标签+候选方向
+    补全 world_building 12 维 + 基调（tone/target_audience/pov/era_language）。
+
+    body {idea, world_brief?, tags?, title?, genre?, sub_genre?, pen_name?}；
+    种子优先 world_brief（候选 120-200 字简述），空则用 idea；genre 空时由 derive_genre(tags) 推导。
+    返回 basic_info（world_building 12 键 + 基调；characters 由 LLM 推导，向导忽略——角色仍由 Agent set_characters 推送）。
+    """
     body = request.get_json(silent=True) or {}
     idea = (body.get("idea") or "").strip()
+    world_brief = (body.get("world_brief") or "").strip()
     title = (body.get("title") or "").strip()
+    pen_name = (body.get("pen_name") or "").strip()
     genre = (body.get("genre") or "").strip()
-    tags = body.get("tags") or []
+    sub_genre = (body.get("sub_genre") or "").strip()
+    raw_tags = body.get("tags") or []
+    tags = [str(t).strip() for t in raw_tags if isinstance(t, str) and t.strip()]
+    seed = world_brief or idea
+    if not seed:
+        return jsonify({"ok": False, "error": "缺少一句话设定或世界观简述"}), 400
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
     llm = get_llm()
     if not llm:
         return jsonify({"ok": False, "error": "LLM 未配置，请先在设置页配置 API"}), 500
+
     from libraries.world_builder import WorldBuildingGenerator
     from libraries.prompt_harness import PromptHarness
-    harness = PromptHarness()   # 无书：storyline=None
+    from libraries.storyline import BookStoryline
+    tl = BookStoryline(pen_name=pen_name,
+                       platform="fanqie",
+                       basic_info={"characters": [],
+                                   "world_building": {"description": seed, "tags": tags},
+                                   "tone": "", "target_audience": "",
+                                   "pov": "第三人称", "era_language": ""})
+    profile = _profile_for(tl)   # 笔名风格档案（无则 None，生成降级为无风格约束）
+    harness = PromptHarness(storyline=tl, profile=profile)   # 无书：storyline=新鲜种子 tl，_tags_block 注入标签硬约束
+    gen = WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
+    done_basic_info = None
+    try:
+        for event_type, message, data_dict in gen.generate(
+                idea=seed,
+                pen_name=pen_name, platform="fanqie", storyline=tl):
+            if event_type == "done":
+                done_basic_info = data_dict.get("basic_info") or tl.basic_info
+            elif event_type == "error":
+                return jsonify({"ok": False, "error": message or "世界观生成失败"}), 500
+    except Exception as e:
+        import traceback
+        return jsonify({"ok": False, "error": f"世界观生成失败：{e}",
+                        "traceback": traceback.format_exc()}), 500
+    if not done_basic_info:
+        return jsonify({"ok": False, "error": "世界观生成失败"}), 500
+    return jsonify({"ok": True, "basic_info": done_basic_info})
 
-    # 从角色原型库取与题材/流派匹配的原型（供 AI 挑选适配），回退全部启用原型
-    archetypes = []
-    if isinstance(char_lib, object) and getattr(char_lib, "archetypes", None):
-        sel = None
-        if tags:
-            sel = char_lib.search(tag=tags[0])
-        elif genre:
-            sel = char_lib.search(genre=genre)
-        if not sel:
-            sel = [a for a in char_lib.archetypes if a.enabled]
-        archetypes = [a.to_dict() for a in sel][:10]
 
-    gen = WorldBuildingGenerator(llm_client=llm, harness=harness)
-    result = gen.generate_characters(idea=idea, genre=genre, tags=tags,
-                                     title=title, archetypes=archetypes)
-    if not result:
-        return jsonify({"ok": False, "error": "主角/配角候选生成失败，请重试"}), 500
+# ═══════════════════════════════════════════
+# 分阶段内容构建端点（无书，供内部 agent / skill 逐步填充向导步 3）
+# ═══════════════════════════════════════════
+
+def _stage_gen(llm, pen_name=""):
+    """构造无书 WorldBuildingGenerator（带笔名风格档案，无则 None）。"""
+    from libraries.world_builder import WorldBuildingGenerator
+    from libraries.prompt_harness import PromptHarness
+    from libraries.storyline import BookStoryline
+    profile = None
+    if pen_name:
+        profile = _profile_for(BookStoryline(pen_name=pen_name))
+    harness = PromptHarness(profile=profile)
+    return WorldBuildingGenerator(llm_client=llm, profile=profile, harness=harness)
+
+
+@bp.route("/api/world-builder/stage/core-conflict", methods=["POST"])
+def api_stage_core_conflict():
+    """分阶段构建①：从一句话设定+题材标签推导主线核心矛盾。
+
+    body {idea, world_brief?, tags?, genre?, sub_genre?, pen_name?} → {core_conflict, genre}。
+    """
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    world_brief = (body.get("world_brief") or "").strip()
+    pen_name = (body.get("pen_name") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    sub_genre = (body.get("sub_genre") or "").strip()
+    tags = [str(t).strip() for t in (body.get("tags") or []) if isinstance(t, str) and t.strip()]
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+    gen = _stage_gen(llm, pen_name)
+    conflict = gen.generate_core_conflict(
+        idea=world_brief or idea,
+        tags=tags, pen_name=pen_name)
+    if not conflict:
+        return jsonify({"ok": False, "error": "核心矛盾生成失败，请重试"}), 500
+    return jsonify({"ok": True, "core_conflict": conflict, "genre": genre})
+
+
+@bp.route("/api/world-builder/stage/factions", methods=["POST"])
+def api_stage_factions():
+    """分阶段构建③：从一句话+核心矛盾发散世界里的势力派系。
+
+    body {idea, world_brief?, core_conflict?, tags?, genre?, sub_genre?} → {factions}。
+    """
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    world_brief = (body.get("world_brief") or "").strip()
+    core_conflict = (body.get("core_conflict") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    sub_genre = (body.get("sub_genre") or "").strip()
+    tags = [str(t).strip() for t in (body.get("tags") or []) if isinstance(t, str) and t.strip()]
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+    gen = _stage_gen(llm)
+    factions = gen.generate_factions(
+        idea=world_brief or idea,
+        core_conflict=core_conflict, tags=tags)
+    if not factions:
+        return jsonify({"ok": False, "error": "势力生成失败，请重试"}), 500
+    return jsonify({"ok": True, "factions": factions})
+
+
+@bp.route("/api/world-builder/stage/rest-world", methods=["POST"])
+def api_stage_rest_world():
+    """分阶段构建⑤：大纲确定后补全其余世界观维度 + 基调（保留 core_conflict/factions）。
+
+    body {idea, world_brief?, core_conflict?, factions?, outline_preview?, tags?,
+          genre?, sub_genre?, pen_name?} → {world_building:{...8维}, tone, target_audience, pov, era_language}。
+    """
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    world_brief = (body.get("world_brief") or "").strip()
+    core_conflict = (body.get("core_conflict") or "").strip()
+    outline_preview = (body.get("outline_preview") or "").strip()
+    pen_name = (body.get("pen_name") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    sub_genre = (body.get("sub_genre") or "").strip()
+    raw_factions = body.get("factions") or []
+    factions = [f for f in raw_factions if isinstance(f, dict)] or []
+    tags = [str(t).strip() for t in (body.get("tags") or []) if isinstance(t, str) and t.strip()]
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+    gen = _stage_gen(llm, pen_name)
+    result = gen.generate_rest_world(
+        idea=idea, world_brief=world_brief,
+        core_conflict=core_conflict, factions=factions,
+        outline_preview=outline_preview, tags=tags, pen_name=pen_name)
+    if not result.get("world_building"):
+        return jsonify({"ok": False, "error": "世界观维度补全失败，请重试"}), 500
     return jsonify({"ok": True, **result})
+
+
+@bp.route("/api/world-builder/characters", methods=["POST"])
+def api_stage_characters():
+    """分阶段构建④：从一句话+已定核心矛盾/势力/开篇大纲桥段生成角色候选。
+
+    body {idea, world_brief?, core_conflict?, factions?, outline_preview?, tags?, title?,
+          genre?, sub_genre?} → {protagonists, supporting_cast}。
+    """
+    body = request.get_json(silent=True) or {}
+    idea = (body.get("idea") or "").strip()
+    world_brief = (body.get("world_brief") or "").strip()
+    core_conflict = (body.get("core_conflict") or "").strip()
+    outline_preview = (body.get("outline_preview") or "").strip()
+    title = (body.get("title") or "").strip()
+    genre = (body.get("genre") or "").strip()
+    sub_genre = (body.get("sub_genre") or "").strip()
+    raw_factions = body.get("factions") or []
+    factions = [f for f in raw_factions if isinstance(f, dict)] or []
+    tags = [str(t).strip() for t in (body.get("tags") or []) if isinstance(t, str) and t.strip()]
+    if not genre and tags:
+        from libraries.world_tags import derive_genre
+        genre = derive_genre(tags)
+    llm = get_llm()
+    if not llm:
+        return jsonify({"ok": False, "error": "LLM 未配置"}), 500
+    gen = _stage_gen(llm)
+    result = gen.generate_characters(
+        idea=world_brief or idea, tags=tags,
+        title=title, core_conflict=core_conflict, factions=factions,
+        outline_preview=outline_preview)
+    if not result:
+        return jsonify({"ok": False, "error": "角色候选生成失败，请重试"}), 500
+    return jsonify({"ok": True, "protagonists": result.get("protagonists", []),
+                    "supporting_cast": result.get("supporting_cast", [])})
 
 
 # ═══════════════════════════════════════════
@@ -237,7 +404,7 @@ def _borrow_preview():
         return jsonify({"ok": False, "error": "源书没有可借鉴的设定"}), 404
     return jsonify({"ok": True, "seed": seed,
                     "source_title": src.book_title or src.pen_name or source_book_id,
-                    "source_genre": src.genre})
+                    "source_genre": genre_from_tags(src)})
 
 
 @bp.route("/api/world-builder/<book_id>/borrow-preview", methods=["POST"])

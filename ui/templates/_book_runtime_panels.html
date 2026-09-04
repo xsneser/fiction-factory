@@ -1,0 +1,237 @@
+{# ─── 书详情运行时面板（竞品规则层组件 UI 化）：角色状态 / 读者承诺台账 / 爽点标注 ─── #}
+{# 依赖：包含页已定义 window.BOOK_ID（book_detail.html）；手风琴复用全局 .accordion-header 委托 ── #}
+
+<div class="accordion">
+    <div class="accordion-header">🎭 角色状态 <span class="sl-chev">▸</span></div>
+    <div class="accordion-body">
+        <div id="rp-char-states"><div class="empty">加载中…</div></div>
+    </div>
+</div>
+
+<div class="accordion">
+    <div class="accordion-header">⏳ 读者承诺台账 <span class="sl-chev">▸</span></div>
+    <div class="accordion-body">
+        <div id="rp-promises"><div class="empty">加载中…</div></div>
+    </div>
+</div>
+
+<div class="accordion">
+    <div class="accordion-header">🔍 质量诊断 <span class="sl-chev">▸</span></div>
+    <div class="accordion-body">
+        <div id="rp-diag"><button type="button" class="small" onclick="runDiagnose()">▶ 运行诊断（连续性/追读/承诺）</button></div>
+    </div>
+</div>
+
+<div class="accordion">
+    <div class="accordion-header">🗂 历史快照 <span class="sl-chev">▸</span></div>
+    <div class="accordion-body">
+        <div id="rp-snaps"><button type="button" class="small" onclick="loadSnapshots()">🔄 加载快照</button></div>
+    </div>
+</div>
+
+<script>
+function _rp_esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* 🗂 历史快照：diff 审查 + 回滚（写工具落库前自动留底） */
+function loadSnapshots(){
+    var el = document.getElementById('rp-snaps'); if(!el) return;
+    el.innerHTML = '<span class="hint">加载中…</span>';
+    fetch('/api/book/'+window.BOOK_ID+'/snapshots').then(function(r){ return r.json(); }).then(function(d){
+        var snaps = d.snapshots || [];
+        if(!snaps.length){ el.innerHTML = '<div class="empty">还没有快照（写工具落库前自动留底，最多保留 10 份）</div>'; return; }
+        el.innerHTML = '<div style="margin-top:4px">' + snaps.map(function(s){
+            return '<div class="snap-item" style="display:flex;gap:8px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--border-soft)">'
+                + '<code style="font-size:11px;color:var(--fg-dim)">'+_rp_esc(s.snapshot_id)+'</code>'
+                + ' <span class="tag">'+_rp_esc(s.tool)+'</span>'
+                + '<button type="button" class="small" onclick="showSnapDiff(\''+s.snapshot_id+'\', this)">🔍 diff</button>'
+                + '<button type="button" class="small danger" onclick="doRollback(\''+s.snapshot_id+'\')">↩ 回滚</button>'
+                + '</div><div class="snap-diff" style="display:none;padding:6px 0"></div>';
+        }).join('') + '</div>';
+    }).catch(function(){ el.innerHTML = '<span class="tag red">加载失败</span>'; });
+}
+function showSnapDiff(sid, btn){
+    var box = btn.closest('.snap-item').querySelector('.snap-diff');
+    box.style.display = box.style.display === 'none' ? 'block' : 'none';
+    if(box.dataset.loaded) return;
+    box.innerHTML = '<span class="hint">加载 diff…</span>';
+    fetch('/api/book/'+window.BOOK_ID+'/snapshots/'+sid+'/diff').then(function(r){ return r.json(); }).then(function(d){
+        if(d.error){ box.innerHTML = '<span class="tag red">'+_rp_esc(d.error)+'</span>'; return; }
+        if(!d.files_changed){ box.innerHTML = '<span class="hint">无差异（该书当前状态与快照一致）</span>'; box.dataset.loaded = 1; return; }
+        box.innerHTML = '<span class="tag">'+d.files_changed+' 个文件变更</span>'
+            + (d.diffs||[]).map(function(x){
+                return '<div style="margin-top:4px"><b>'+_rp_esc(x.file)+'</b>'
+                    + '<pre style="white-space:pre-wrap;font-size:11px;background:var(--bg-inset);border:1px solid var(--border-soft);padding:6px;max-height:200px;overflow:auto">'+_rp_esc(x.diff)+'</pre></div>';
+            }).join('');
+        box.dataset.loaded = 1;
+    }).catch(function(){ box.innerHTML = '<span class="tag red">diff 加载失败</span>'; });
+}
+function doRollback(sid){
+    if(!confirm('确认回滚到快照 '+sid+'？该书将恢复至快照时刻状态（回滚前会自动留底一次）。')) return;
+    fetch('/api/book/'+window.BOOK_ID+'/snapshots/'+sid+'/rollback', {method:'POST'})
+        .then(function(r){ return r.json(); }).then(function(d){
+            if(d.ok){ showToast('✅ 已回滚到 '+sid, 'success'); location.reload(); }
+            else showToast('回滚失败: '+(d.error||''), 'error');
+        }).catch(function(){ showToast('回滚请求失败', 'error'); });
+}
+
+/* 🔍 审查本章 / 🧹 去AI本章（书详情章节内一键跑） */
+function runChapterReview(n){
+    var el = document.getElementById('rp-review-'+n); if(!el) return;
+    el.innerHTML = '<span class="hint">审查中…</span>';
+    fetch('/api/book/'+window.BOOK_ID+'/chapter/'+n+'/review', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if(!d.ok){ el.innerHTML = '<span class="tag red">'+_rp_esc(d.error||'审查失败')+'</span>'; return; }
+            var cls = d.passed ? 'green' : 'red';
+            var issues = (d.issues||[]).map(function(i){
+                var sev = i.severity === 'error' ? 'red' : (i.severity === 'warning' ? 'yellow' : 'blue');
+                return '<div style="font-size:12px;padding:2px 0"><span class="tag '+sev+'">'+_rp_esc(i.severity||'info')+'</span> '
+                    + _rp_esc(i.description||'')
+                    + (i.location ? ' <span style="color:var(--fg-dim)">'+_rp_esc(i.location)+'</span>' : '')
+                    + '</div>';
+            }).join('');
+            el.innerHTML = '<span class="tag '+cls+'">🔍 '+d.score+'分'+(d.passed?' 通过':' 未过')+'</span>'
+                + (d.summary ? ' <span style="color:var(--fg-dim);font-size:12px">'+_rp_esc(d.summary)+'</span>' : '')
+                + (issues ? '<div style="margin-top:4px">'+issues+'</div>' : '');
+        })
+        .catch(function(){ el.innerHTML = '<span class="tag red">审查请求失败</span>'; });
+}
+function runChapterDeai(n){
+    var el = document.getElementById('rp-deai-'+n); if(!el) return;
+    el.innerHTML = '<span class="hint">去AI中…</span>';
+    fetch('/api/book/'+window.BOOK_ID+'/chapter/'+n+'/deai', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if(!d.ok){ el.innerHTML = '<span class="tag red">'+_rp_esc(d.error||'去AI失败')+'</span>'; return; }
+            el.innerHTML = '<span class="tag green">🧹 替换 '+d.word_replacements+' 处</span>'
+                + '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px;color:var(--fg-muted)">展开处理结果（'+d.processed_length+' 字）</summary>'
+                + '<pre style="white-space:pre-wrap;font-size:12px;background:var(--bg-inset);border:1px solid var(--border-soft);padding:8px;max-height:300px;overflow:auto;margin-top:4px">'+_rp_esc(d.processed)+'</pre>'
+                + '</details>';
+        })
+        .catch(function(){ el.innerHTML = '<span class="tag red">去AI请求失败</span>'; });
+}
+
+/* 🔍 质量诊断：连续性/追读/承诺（规则层，点按钮跑一次） */
+function runDiagnose(){
+    var el = document.getElementById('rp-diag'); if(!el) return;
+    el.innerHTML = '<span class="hint">诊断中…</span>';
+    fetch('/api/book/'+window.BOOK_ID+'/diagnose', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if(d.error){ el.innerHTML = '<span class="tag red">'+_rp_esc(d.error)+'</span>'; return; }
+            var html = '';
+            var c = d.continuity || {};
+            var checks = c.checks || {};
+            var chNames = Object.keys(checks);
+            if(chNames.length){
+                var MAP = {ok:'✅', warn:'⚠️', partial:'🟡'};
+                html += '<div class="card" style="padding:8px 12px;margin:6px 0"><b>🧩 连续性扫描</b>'
+                    + ' <span class="tag">'+_rp_esc(c.scanned_chapters||0)+' 章</span>';
+                if((c.issues||[]).length) html += ' <span class="tag red">'+_rp_esc(c.issue_count||0)+' 处问题</span>';
+                html += '<div style="margin-top:6px">' + chNames.map(function(k){
+                    var v = checks[k]||{};
+                    var st = v.status || 'partial';
+                    return '<div style="padding:2px 0;font-size:12px">' + (MAP[st]||'⚪') + ' <b>'+_rp_esc(k)+'</b>'
+                        + (v.detail ? ' <span style="color:var(--fg-dim)">'+_rp_esc(v.detail)+'</span>' : '') + '</div>';
+                }).join('') + '</div></div>';
+            }
+            var r = d.retention || {};
+            if((r.chapter_level||[]).length){
+                html += '<div class="card" style="padding:8px 12px;margin:6px 0"><b>📈 追读诊断</b>'
+                    + '<div style="margin-top:6px">' + r.chapter_level.map(function(ch){
+                        var risk = ch.drop_risk ? ' <span class="tag red">掉读风险</span>' : '';
+                        return '<div style="padding:2px 0;font-size:12px">第'+_rp_esc(ch.chapter)+'章 · 钩子 '
+                            + _rp_esc(Math.round((ch.hook_strength||0)*100))+'%'
+                            + ' · 对话比 '+_rp_esc(Math.round((ch.dialogue_ratio||0)*100))+'%' + risk
+                            + (ch.reason ? ' <span style="color:var(--fg-dim)">'+_rp_esc(ch.reason)+'</span>' : '') + '</div>';
+                    }).join('') + '</div></div>';
+            }
+            var p = d.promises || {};
+            if((p.counts||{}).total){
+                html += '<div class="card" style="padding:8px 12px;margin:6px 0"><b>⏳ 承诺台账</b>'
+                    + ' <span class="tag">逾期 '+_rp_esc(p.counts.overdue||0)+'</span>'
+                    + ' <span class="tag">推进 '+_rp_esc(p.counts.advanced||0)+'</span>'
+                    + ' <span class="tag">停滞 '+_rp_esc(p.counts.stalled||0)+'</span>'
+                    + ' <span class="tag green">兑现 '+_rp_esc(p.counts.fulfilled_recently||0)+'</span></div>';
+            }
+            var sug = (c.suggestions||[]).concat(r.suggestions||[], p.suggestions||[]);
+            if(sug.length){
+                html += '<div class="card" style="padding:8px 12px;margin:6px 0"><b>💡 建议</b><div style="margin-top:4px">'
+                    + sug.map(function(s){ return '<div class="hint" style="font-size:12px;color:var(--fg-muted)">'+_rp_esc(s)+'</div>'; }).join('')
+                    + '</div></div>';
+            }
+            el.innerHTML = html || '<div class="empty">无诊断结果（需已写章节）</div>';
+        })
+        .catch(function(){ el.innerHTML = '<span class="tag red">诊断请求失败</span>'; });
+}
+
+/* 章节「💥 标注爽点」按钮（book_detail 章节 accordion 内调用） */
+function runPunchPoints(n){
+    var el = document.getElementById('rp-tags-'+n); if(!el) return;
+    el.innerHTML = '<span class="hint">标注中…</span>';
+    fetch('/api/book/'+window.BOOK_ID+'/chapter/'+n+'/punch-points', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if(!d.ok){ el.innerHTML = '<span class="tag red">'+_rp_esc(d.error||'标注失败')+'</span>'; return; }
+            var tags = d.tags || [];
+            el.innerHTML = tags.length
+                ? tags.map(function(t){ return '<span class="tag" style="margin:2px">'+_rp_esc(t.tag)+'</span>'; }).join('')
+                : '<span class="hint">未检出爽点</span>';
+        })
+        .catch(function(){ el.innerHTML = '<span class="tag red">请求失败</span>'; });
+}
+
+(function(){
+    var BOOK = window.BOOK_ID || '';
+    if(!BOOK) return;
+
+    /* 🎭 角色状态 */
+    fetch('/api/book/'+BOOK+'/character-states').then(function(r){ return r.json(); }).then(function(d){
+        var el = document.getElementById('rp-char-states'); if(!el) return;
+        var cs = d.characters || [];
+        if(!cs.length){ el.innerHTML = '<div class="empty">还没有角色状态（开始写作后生成）</div>'; return; }
+        var warns = (d.warnings||[]).map(function(w){ return '<div class="tag red" style="margin:2px">'+_rp_esc(w)+'</div>'; }).join('');
+        var cards = cs.map(function(c){
+            var offline = (c.offline_chapters||0) > 50;
+            var meta = [];
+            if(c.location) meta.push('📍 '+_rp_esc(c.location));
+            if(c.mood) meta.push('情绪：'+_rp_esc(c.mood));
+            if(c.goal) meta.push('目标：'+_rp_esc(c.goal));
+            if(c.last_appeared_chapter) meta.push('最近出场 第'+c.last_appeared_chapter+'章');
+            return '<div style="padding:8px 12px;margin:6px 0;border:1px solid var(--border);border-radius:8px;background:var(--bg-inset)">'
+                + '<b>'+_rp_esc(c.name)+'</b>'
+                + (offline ? ' <span class="tag red">离线 '+c.offline_chapters+' 章</span>' : '')
+                + (meta.length ? '<div style="font-size:12px;color:var(--fg-dim);margin-top:4px">'+meta.join(' · ')+'</div>' : '')
+                + '</div>';
+        }).join('');
+        el.innerHTML = (warns ? '<div class="form-row">'+warns+'</div>' : '') + cards;
+    }).catch(function(){});
+
+    /* ⏳ 读者承诺台账 */
+    fetch('/api/book/'+BOOK+'/promises').then(function(r){ return r.json(); }).then(function(d){
+        var el = document.getElementById('rp-promises'); if(!el) return;
+        if(!d || !(d.counts||{}).total){ el.innerHTML = '<div class="empty">还没有读者承诺（大纲设局/收局桥段会生成）</div>'; return; }
+        var OP = {seed:'刚埋设', touch:'维持', pressure:'施压', partial_reveal:'部分揭示', payoff:'兑现'};
+        function rows(list){
+            return list.map(function(q){
+                var op = OP[q.op] || q.op || '';
+                var dl = q.deadline_chapter ? ' <span style="color:var(--fg-dim);font-size:11px">（约第'+q.deadline_chapter+'章）</span>' : '';
+                return '<div style="padding:4px 0;border-bottom:1px dashed var(--border-soft)">'
+                    + (op ? '<span class="tag" style="margin-right:6px">'+_rp_esc(op)+'</span>' : '')
+                    + _rp_esc(q.desc||'钩子') + dl + '</div>';
+            }).join('');
+        }
+        var groups = [
+            ['🔴 逾期', d.overdue||[]], ['🔵 推进', d.advanced||[]],
+            ['⚪ 停滞', d.stalled||[]], ['✅ 近期兑现', d.fulfilled_recently||[]],
+        ];
+        var sug = (d.suggestions||[]).map(function(s){ return '<div class="hint" style="display:block;color:var(--fg-muted)">'+_rp_esc(s)+'</div>'; }).join('');
+        var html = sug;
+        groups.forEach(function(g){
+            if(!g[1].length) return;
+            html += '<div style="margin-top:8px"><b>'+g[0]+'</b>' + rows(g[1]) + '</div>';
+        });
+        el.innerHTML = html || '<div class="empty">无</div>';
+    }).catch(function(){});
+})();
+</script>

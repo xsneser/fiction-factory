@@ -1,0 +1,97 @@
+# NovelEngine × dsh headless 侧车 —— 配置模板
+# 用法:拷到 ~/.dsh/profiles/headless/cordis.patch.yml(或作为 --patch 覆盖层)
+# 语法要点:dsh 的 patch 层只支持 id-targeted override;新增条目必须用 `insert`(不带 id)。
+# 运行:cd D:/NovelEngine && dsh --profile headless "任务"
+- insert:
+    - id: mcp-novelengine
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: novelengine
+        transport: stdio
+        command: python
+        args: ['mcp_server.py']
+        cwd: 'D:/NovelEngine'
+        # 长耗时工具(generate_full_outline 等)必须 > 10 分钟,否则被掐断
+        toolCallTimeoutMs: 600000
+# workspace instructions:只注入小说写作指令(NOVEL_AGENT.md),不注入给 Claude Code 的工程 CLAUDE.md
+- id: agent-instructions
+  config:
+    maxBytes: 20000
+    instructionFileCandidates: ['NOVEL_AGENT.md']
+    localInstructionFileCandidates: []
+# 特化 persona:角色 + 指向 NOVEL_AGENT.md(唯一规则源:只留定义与契约;流程按 §2 分发表用 Skill 工具调用 agent-sidecar/skills/novel-*)
+- id: system-prompt
+  config:
+    # 关运行时快照(sandbox/approval 对纯 MCP 小说 agent 无意义,对应工具已禁)
+    includeRuntimeContext: false
+    persona: >-
+      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
+      You drive the NovelEngine novel-creation platform through its MCP tools (mcp__novelengine__*).
+      Follow the workflow, routing, and guardrails in NOVEL_AGENT.md (your workspace instructions)
+      — it is the single source of truth.
+# ── 禁用 dsh 系统工具（护栏：只留 MCP + 联网）──
+# 用户拍板完全禁用系统工具（dsh 只能经 MCP 驱动平台，不能直操文件/shell/子代理/任务）；
+# 保留联网（tool-web/web/web-search-deepseek）+ mcp__novelengine__*。语法：
+# patch 层 id-targeted override `disabled: true`（dsh-headless 自身以此禁 hmr）。
+# 文件
+- id: tool-fs
+  disabled: true
+- id: tool-fs-search
+  disabled: true
+- id: tool-str-replace-editor
+  disabled: true
+# shell
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: bash-sandbox
+  disabled: true
+- id: pwsh-sandbox
+  disabled: true
+# 子代理 / 工作流
+- id: subagent
+  disabled: true
+- id: subagent-spawn-in-process
+  disabled: true
+- id: subagent-fork-in-process
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-subagent-report
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: workflow-worker-thread
+  disabled: true
+# 后台任务
+- id: tool-jobs
+  disabled: true
+- id: jobs
+  disabled: true
+# 目标 / 其它
+- id: tool-goal
+  disabled: true
+- id: goal
+  disabled: true
+- id: goal-round-driver
+  disabled: true
+- id: tool-todo
+  disabled: true
+- id: tool-ralph
+  disabled: true
+- id: tool-ask-user
+  disabled: true
+- id: user-questions
+  disabled: true
+# 依赖被禁服务（shell/goals）的 C 级插件
+- id: permission
+  disabled: true
+- id: command-goal
+  disabled: true

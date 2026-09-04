@@ -1,0 +1,7 @@
+{
+  "agent": {
+    "dsh": {
+      "profile": "headless"
+    }
+  }
+}

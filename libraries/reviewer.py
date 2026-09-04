@@ -6,6 +6,12 @@ from dataclasses import dataclass, field
 
 from core.text_utils import count_prose_units
 from .de_ai import AI_WORD_MAP
+from .style_ban import check_style_bans
+
+
+# 单章硬字数下限：低于「目标字数 × 此比例」判「正文不完整」不通过。
+# save_chapter_text 据此拒收短章；chapter_quality_gate 的 review 检查取 r.passed 自动联动。
+HARD_MIN_RATIO = 0.6
 
 
 # AI 痕迹词的展示文案（仅文案；词表本体单一来源 = de_ai.AI_WORD_MAP）
@@ -95,6 +101,17 @@ class ContentReviewer:
                         suggestion="建议减少使用",
                     ))
 
+        # 硬禁句式（STYLE_BAN_LIST 单一来源，与上方 ai_sentences 部分重叠——
+        # 检测策略分离不强行合并，见 style_ban 模块注释）
+        for issue in check_style_bans(content):
+            issues.append(ReviewIssue(
+                severity=issue["severity"],
+                category=issue["category"],
+                description=issue["description"],
+                location=issue["location"],
+                suggestion=issue["suggestion"],
+            ))
+
         return issues
 
     def check_paragraph_rhythm(self, content: str) -> list[ReviewIssue]:
@@ -179,9 +196,18 @@ class ContentReviewer:
         result = ReviewResult(passed=True)
         score = 100
 
-        # 1. 字数
+        # 1. 字数：低于硬下限（目标×HARD_MIN_RATIO）= 正文不完整 → 直接不通过；
+        #    仅在 [下限, 目标×0.7) 区间保留软警告（-15）。
         ok, wc = self.check_word_count(content, target_words * 0.7, target_words * 1.3)
-        if not ok:
+        hard_min = int(target_words * HARD_MIN_RATIO)
+        if wc < hard_min:
+            result.issues.append(ReviewIssue(
+                severity="error", category="word_count",
+                description=f"字数 {wc} 低于本章下限 {hard_min}，正文不完整",
+                suggestion="请继续写满本章（逐桥段补全全部场景）后再保存",
+            ))
+            score = min(score, 55)      # 强制 passed=False（55 < 60）
+        elif not ok:
             result.issues.append(ReviewIssue(
                 severity="warning", category="word_count",
                 description=f"字数 {wc} 与目标 {target_words} 偏差较大"
@@ -224,5 +250,6 @@ class ContentReviewer:
         return result
 
     def _get_replacements(self, word: str) -> str:
-        options = AI_WORD_MAP.get(word, [])
+        from .style_rules import StyleRuleLibrary
+        options = StyleRuleLibrary().get_word_map().get(word, [])
         return "、".join(o for o in options if o)

@@ -342,12 +342,22 @@ class OutlineAgent:
         if name and name != o.name:
             summary.append(f"大纲「{o.name}」改名 →「{name}」")
             o.name = name
-        if nf.get("start_chapter"):
-            o.start_chapter = int(nf["start_chapter"])
+        _axis_changed = False
+        if nf.get("start_chapter") is not None:
+            o.start_chapter = int(nf["start_chapter"]); o.start_word = None; _axis_changed = True
             summary.append(f"大纲起始章节 → 第{o.start_chapter}章")
-        if nf.get("end_chapter"):
-            o.end_chapter = int(nf["end_chapter"])
+        if nf.get("end_chapter") is not None:
+            o.end_chapter = int(nf["end_chapter"]); o.end_word = None; _axis_changed = True
             summary.append(f"大纲结束章节 → 第{o.end_chapter}章")
+        if nf.get("start_word") is not None:
+            o.start_word = int(nf["start_word"]); o.start_chapter = None; _axis_changed = True
+            summary.append(f"大纲起始字数 → {o.start_word}")
+        if nf.get("end_word") is not None:
+            o.end_word = int(nf["end_word"]); o.end_chapter = None; _axis_changed = True
+            summary.append(f"大纲结束字数 → {o.end_word}")
+        if _axis_changed:
+            from libraries.storyline import reconcile_outline
+            reconcile_outline(o, tl.words_per_chapter or 3000)
         if nf.get("narrative"):
             o.narrative = nf["narrative"]
             summary.append(f"大纲叙事手法 → {nf['narrative']}")

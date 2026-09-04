@@ -1,6 +1,6 @@
 """预置题材标签库（番茄式【双强、末日】硬约束）。
 
-供新书启动向导步骤③渲染 chips（dashboard.py GET 传入 start_book.html），
+供新书启动向导步骤①渲染 chips（dashboard.py GET 传入 start_book.html），
 及 prompt_harness 校验/展示（_tags_block 读 world_building.tags 时用）。
 标签是读者预期：世界观/大纲/写作 prompt 必须严格契合所选标签的网文套路。
 
@@ -48,6 +48,15 @@ TAG_GENRE_MAP = {
     "悬疑": "悬疑", "权谋": "悬疑", "复仇": "悬疑", "悬念": "悬疑",
     "历史": "历史",
 }
+
+
+def genre_from_tags(tl) -> str:
+    """从故事线的题材标签推导流派（tl 无 genre 字段，tags 是唯一题材来源）。"""
+    try:
+        tags = (tl.basic_info or {}).get("world_building", {}).get("tags") or []
+    except Exception:
+        tags = []
+    return derive_genre(tags)
 
 
 def derive_genre(tags, fallback: str = "玄幻") -> str:

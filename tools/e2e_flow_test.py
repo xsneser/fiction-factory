@@ -49,83 +49,38 @@ def shot(page, name):
 
 
 def step_scout(page, book_title, chapters=8):
-    """① 爬取：搜索 → 下载。下载完成靠侧边栏任务状态确认（scout页只下载，不分析）"""
-    log("═══ 步骤1: 爬取 /scout ═══")
+    """① 侦察/提取合并页：下载+分析由侧栏 dsh agent 驱动（页内输入发任务），浏览器自动化只验证页面渲染"""
+    log("═══ 步骤1: 侦察/提取 /scout ═══")
     page.goto(BASE + "/scout")
     shot(page, "01_scout_initial")
 
-    # 填书名
-    page.fill("#book-title", book_title)
-    page.fill("#chapters", str(chapters))
-    shot(page, "02_scout_filled")
-
-    # 点开始抓取
-    page.click("#btn-scout")
-    log("已点击「开始抓取」，等待下载...")
-
-    # 观察侧边栏任务状态：等待"下载完成"或按钮恢复
-    deadline = time.time() + 180
-    download_ok = False
-    while time.time() < deadline:
-        # 侧边栏任务相位
-        phases = page.locator(".task-phase").all_text_contents()
-        if any("下载完成" in p for p in phases):
-            download_ok = True
-            break
-        # 按钮恢复 disabled=None
-        if page.locator("#btn-scout").get_attribute("disabled") is None:
-            # 等 2 秒确认任务状态
-            time.sleep(2)
-            phases = page.locator(".task-phase").all_text_contents()
-            if any("下载完成" in p for p in phases):
-                download_ok = True
-                break
-        # 任务日志报错
-        log_text = page.locator("#task-log-list div").all_text_contents()
-        if any("失败" in t or "错误" in t for t in log_text):
-            log(f"任务日志报错: {[t for t in log_text if '失败' in t or '错误' in t][-1][:80]}", "fail")
-            break
-        time.sleep(3)
-    shot(page, "03_scout_done")
-    log(f"爬取下载: 完成={download_ok}（任务相位: {[p for p in phases][-1][:40] if phases else '无'}）")
-    return download_ok
+    # 验证合并页四区渲染：任务条（书名/章节数/笔名）+ 已下载书库
+    wait_for(page, "#book-title", 20000)
+    wait_for(page, "#scout-pen", 20000)
+    wait_for(page, "#novels-list", 20000)
+    log("合并页就绪：Agent 任务条 + 已下载书库渲染", "ok")
+    # 下载/分析现由 agent 驱动（fetch_novel → set_review 呈现候选待确认），不在浏览器自动化范围
+    log("下载/分析由 agent 驱动，跳过浏览器自动抓取", "skip")
+    return True
 
 
 def step_extract(page):
-    """② 提取：资产库提取"""
-    log("═══ 步骤2: 提取 /extract ═══")
-    page.goto(BASE + "/extract")
-    shot(page, "04_extract_initial")
+    """② 已下载书库独立页 /novels：验证列表渲染（分析由 agent 完成后经 set_review 在 /scout 呈现候选，用户确认入库）"""
+    log("═══ 步骤2: 已下载书库 /novels ═══")
+    page.goto(BASE + "/novels")
+    shot(page, "04_novels_initial")
 
     # 等待已下载小说列表
-    wait_for(page, "#library-novels-list .card", 20000)
-    novels = page.locator("#library-novels-list .card").count()
+    wait_for(page, "#novels-list .card", 20000)
+    novels = page.locator("#novels-list .card").count()
     log(f"已下载小说列表: {novels} 本")
     if novels == 0:
         log("无可提取小说，跳过提取", "skip")
         return False
 
-    # 点击第一本小说的"提取"按钮
-    first = page.locator("#library-novels-list .card").first
-    btn = first.locator("button").first
-    btn_text = btn.text_content() or ""
-    btn.click()
-    log(f"点击提取按钮: {btn_text.strip()}")
-    shot(page, "05_extract_running")
-
-    # 等待结果区出现（SSE）
-    deadline = time.time() + 120
-    done = False
-    while time.time() < deadline:
-        if page.locator("#extract-result-area").count() and page.locator("#extract-result-area").is_visible():
-            # 检查是否有入库按钮（说明分析完成）
-            if page.locator("#extract-result-area .btn-primary").count():
-                done = True
-                break
-        time.sleep(3)
-    shot(page, "06_extract_result")
-    log(f"提取完成: {done}")
-    return done
+    log("提取为 agent 分析 + /scout 页确认入库（set_review 候选卡），不在浏览器自动化范围", "skip")
+    shot(page, "06_novels_list")
+    return True
 
 
 def step_desk(page):

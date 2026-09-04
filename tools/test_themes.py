@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""内涵嵌入大纲库 单元测试（python tools/test_themes.py）"""
+"""内涵嵌入情节弧库 单元测试（python tools/test_themes.py）"""
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -22,15 +22,15 @@ def check(name, cond, detail=""):
 
 
 # ─── 1) 模板级内涵已移除（内涵唯一来源 = StageNode.themes）───
-t0 = StructureTemplate(id="t1", name="测试", genre="玄幻")
+t0 = StructureTemplate(id="t1", name="测试", tags=["玄幻"])
 d0 = t0.to_dict()
 check("模板级无 themes 字段", "themes" not in d0)
 check("模板 from_dict 兼容", StructureTemplate.from_dict({"id": "x", "name": "n", "genre": "g"}).id == "x")
 
 # ─── 2) 内置种子：阶段内涵（非模板级）───
 check("内置模板含阶段内涵", any(any(s.themes for s in x.stages) for x in BUILTIN_STRUCTURES))
-check("内置内涵为中英对照", any(s.themes and s.themes[0]["name"] == "公平（Justice）"
-      for s in BUILTIN_STRUCTURES[1].stages))
+check("内置内涵为中英对照", any(s.themes and "（" in s.themes[0]["name"] and "）" in s.themes[0]["name"]
+      for x in BUILTIN_STRUCTURES for s in x.stages))
 
 # 结构库实例读取（存量 jsonl 已迁移：无模板级 themes）
 lib = StructureLibrary()
@@ -40,10 +40,10 @@ check("存量模板无顶层 themes", all("themes" not in t.to_dict() for t in l
 gen = OutlineGenerator(llm_client=None, structure_lib=lib)
 tl = BookStoryline()
 tl.outlines = [
-    OutlineSlot(id="o1", template_id="struct_xuanhuan_01", name="a",
-                stages=structure_to_stages(lib.get_by_id("struct_xuanhuan_01"))),
-    OutlineSlot(id="o2", template_id="struct_chuanyue_01", name="b",
-                stages=structure_to_stages(lib.get_by_id("struct_chuanyue_01"))),
+    OutlineSlot(id="o1", template_id="arc_xuanhuan_01", name="a",
+                stages=structure_to_stages(lib.get_by_id("arc_xuanhuan_01"))),
+    OutlineSlot(id="o2", template_id="arc_chuanyue_01", name="b",
+                stages=structure_to_stages(lib.get_by_id("arc_chuanyue_01"))),
 ]
 themes = gen._select_book_themes("玄幻", tl)
 check("从阶段内涵汇总全书内涵", "成长的代价（Cost of Growth）" in themes
@@ -77,7 +77,7 @@ check("阶段级优先 theme_hints", p2.theme_hints == ["复仇（Revenge）", "
 st = StageNode("朋友阵亡", "挚友为救主角而死", 3, 8,
                ["身陷重围", "挚友牺牲", "主角含泪立誓"], [],
                MOMENTS)
-tt = StructureTemplate(id="t9", name="测试", genre="玄幻", stages=[st])
+tt = StructureTemplate(id="t9", name="测试", tags=["玄幻"], stages=[st])
 d = tt.to_dict()
 tt2 = StructureTemplate.from_dict(d)
 check("阶段 themes 序列化往返", tt2.stages[0].themes == MOMENTS, str(tt2.stages[0].themes))
@@ -89,16 +89,16 @@ check("structure_to_stages 带阶段内涵", stages[0].get("themes") == MOMENTS,
 lib2 = StructureLibrary()
 gen2 = OutlineGenerator(llm_client=None, structure_lib=lib2)
 tl4 = BookStoryline()
-tl4.outlines = [OutlineSlot(id="o1", template_id="struct_chuanyue_01", name="穿越",
-                            stages=structure_to_stages(lib2.get_by_id("struct_chuanyue_01")))]
+tl4.outlines = [OutlineSlot(id="o1", template_id="arc_chuanyue_01", name="穿越",
+                            stages=structure_to_stages(lib2.get_by_id("arc_chuanyue_01")))]
 themes4 = gen2._select_book_themes("穿越", tl4)
 check("书级内涵含阶段级内涵名", "复仇（Revenge）" in themes4, str(themes4))
 
 # ─── 7) theme_block rich 渲染（render_bridge_prompt）───
-tl5 = BookStoryline(genre="穿越")
+tl5 = BookStoryline()
 h = PromptHarness(storyline=tl5)
-item = {"outline": OutlineSlot(id="o1", template_id="struct_chuanyue_01", name="穿越"),
-        "stage": {"name": "最终清算"}, "plot": PlotSlot(id="p3", template_id="x",
+item = {"outline": OutlineSlot(id="o1", template_id="arc_chuanyue_01", name="穿越"),
+        "stage": {"name": "局势反转"}, "plot": PlotSlot(id="p3", template_id="x",
                                                        name="清算", slots=[], theme_moments=MOMENTS)}
 prompt = h.render_bridge_prompt(item, chapter_buffer="", prev_ending="", bridge_text="正文",
                                 budget_remaining=3000)
@@ -151,6 +151,6 @@ with tempfile.TemporaryDirectory() as td:
 
 
 if __name__ == "__main__":
-    print("═══ 内涵嵌入大纲库 测试 ═══")
+    print("═══ 内涵嵌入情节弧库 测试 ═══")
     print("\n结果:", "全部通过 ✅" if not FAIL else f"失败 {len(FAIL)} 项 ❌")
     sys.exit(1 if FAIL else 0)

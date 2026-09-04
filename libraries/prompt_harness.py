@@ -3,11 +3,11 @@
 
 统一出口：
   · 书级设定卡（Book Bible）：主角/世界观/配角/基调/内涵/风格 压缩成紧凑 bullet，
-    在全书开始前确立统一的写作风格与世界观，注入所有写作与大纲决策。
+    在全书开始前确立统一的写作风格与世界观，注入所有写作与弧决策。
   · render_bridge_prompt   ：桥段写作（取代 storyline_writer._group_prompt 的内联拼装）
-  · render_detector_prompt ：笑点探测器（gag_injector 用；笑点完全涌现，不写入大纲）
+  · render_detector_prompt ：笑点探测器（gag_injector 用；笑点完全涌现，不写入弧）
   · render_summary_prompt  ：章节语义摘要（长程记忆）
-  · render_outline_context ：大纲各 phase 前置设定卡
+  · render_outline_context ：弧各 phase 前置设定卡
   · prescreen_gag_pool     ：候选笑点模式池免费规则预筛
 
 约定：保持 deepseek-v4-flash；不新增"写完质量重写"型后处理；
@@ -16,9 +16,10 @@
 from typing import Optional
 
 from .storyline import BookStoryline, get_characters, get_mc, relation_to_mc
+from .promise_ledger import promise_op
 
 
-# 桥段 category → 适合的笑点 fit_scene 关键词（免费规则，不写进大纲）
+# 桥段 category → 适合的笑点 fit_scene 关键词（免费规则，不写进弧）
 CATEGORY_GAG_SCENES = {
     "爽文": ["打脸后", "身份揭示", "多人场景"],
     "开篇": ["身份揭示", "日常对话"],
@@ -54,6 +55,64 @@ CATEGORY_ENEMY_LOSS = {
     "职场": "被当众驳倒/失去主动权",
 }
 DEFAULT_ENEMY_LOSS = "对手付出代价或计划受挫"
+
+# 角色档案字段分类（竞品借鉴：AI-NWA character_hard_facts）——
+# 硬事实不得写反；软倾向只作语气参考，不写成旁白确认的事实
+_HARD_FIELDS = ("identity", "faction", "power_level", "location")
+_SOFT_FIELDS = ("personality", "catchphrase", "mood", "brief")
+_HARD_LABELS = {"identity": "身份", "faction": "势力", "power_level": "境界/实力", "location": "位置"}
+_SOFT_LABELS = {"personality": "性格", "catchphrase": "口头禅", "mood": "情绪", "brief": "简介"}
+
+
+def _tail_paragraphs(text: str, max_chars: int = 150) -> str:
+    """按 \n\n 取尾部完整段落，累计不超过 max_chars（P0-6 段落边界尾提取）。
+
+    替代 prev_ending[-150:] 字符硬截断：保证上下文以完整段落收尾，
+    不把一句话从中间切断；单段超长时保留其尾部（最近内容优先），守住上限。
+    """
+    paras = [p.strip() for p in (text or "").split("\n\n") if p.strip()]
+    if not paras:
+        return ""
+    out, total = [], 0
+    for p in reversed(paras):
+        if total + len(p) > max_chars:
+            if not out:
+                return p[-max_chars:]
+            break
+        out.append(p)
+        total += len(p)
+    return "\n\n".join(reversed(out))
+
+
+# 权威层级（竞品借鉴：OpenNovel 三档权威标签）——高权威覆盖低权威
+AUTHORITY_CANON = (
+    "【权威层级】高权威覆盖低权威："
+    "CANON（书级设定/一致性/视角/前文上下文，不可违反）＞ "
+    "STATE MEMORY（角色当前状态/章节语义摘要，必须尊重）＞ "
+    "OPTIONAL（吸睛点/内涵/灵机一动，仅文风参考）"
+)
+
+# 前文上下文块预算：各块已自带安全帽（本桥段300/本章900/上一章150/角色态500/摘要600），
+# 预算与各块上限之和同量级 → 常规不触发裁剪；收紧此值即启用「超预算丢低优先级块」
+_CONTEXT_BUDGET = 2450
+
+
+def _assemble_blocks(blocks, budget=_CONTEXT_BUDGET):
+    """按 dropOrder 组装上下文块：超预算时优先丢低优先级块（块内不再二次截断）。
+
+    blocks: list[(dropOrder, tier, header, text)]；dropOrder 越小越优先保留，
+    tier 为权威分级元数据（canon/state/optional，实际取舍只看 dropOrder）。
+    返回 (lines, dropped_header_names)。
+    """
+    ordered = sorted(blocks, key=lambda b: b[0])
+    lines, used, dropped = [], 0, []
+    for _order, _tier, header, text in ordered:
+        if used + len(text) > budget:
+            dropped.append(header.strip("【】"))
+            continue
+        lines.append(header + text)
+        used += len(text)
+    return lines, dropped
 
 
 # 炸裂开场（第一章前 N 桥段强制）—— 番茄/飞卢式冷开场铁律
@@ -183,7 +242,7 @@ class PromptHarness:
         return "\n".join(parts)
 
     def _tags_block(self) -> str:
-        """【题材标签（硬约束）】块 —— 已选 tags 时注入世界/大纲/写作 prompt。"""
+        """【题材标签（硬约束）】块 —— 已选 tags 时注入世界/弧/写作 prompt。"""
         tl = self.storyline
         if not tl:
             return ""
@@ -411,7 +470,8 @@ class PromptHarness:
                              inspiration_hint: str = "",
                              is_opening: bool = False,
                              review_hint: str = "",
-                             chapter_num: int = 0) -> str:
+                             chapter_num: int = 0,
+                             chapter_participants: str = "") -> str:
         """返回 user prompt 字符串（system 沿用 storyline_writer 的铁律，不在本方法内）。
 
         item = {"outline": OutlineSlot, "stage": dict, "plot": PlotSlot}
@@ -437,26 +497,25 @@ class PromptHarness:
         hook_block = ""
         hooks = list(getattr(p, "hook_points", None) or [])
         if hooks:
-            hook_block = ("\n【本桥段吸睛点】" + "、".join(hooks[:2])
+            hook_block = ("\n【OPTIONAL｜本桥段吸睛点】" + "、".join(hooks[:2])
                           + "\n（写出实感：用具体画面/结果把这几个吸睛点做成读者想看的爽点/悬念/反转，不直白点破、不加括号注解）")
 
-        # 前文上下文（修复：原 _group_prompt 的 character_states 形参未被渲染）
-        ctx = []
-        if prev_ending:
-            ctx.append("【上一章结尾】" + prev_ending[-150:])
-        if chapter_buffer:
-            ctx.append("【本章已写正文】" + chapter_buffer[-900:])
+        # 前文上下文：按 dropOrder 预算组装（权威分级见 AUTHORITY_CANON；超预算丢低优先级块）
+        context_blocks = []
         if bridge_text:
-            ctx.append("【本桥段已写】" + bridge_text[-300:])
+            context_blocks.append((0, "canon", "【本桥段已写】", bridge_text[-300:]))
+        if chapter_buffer:
+            context_blocks.append((1, "canon", "【本章已写正文】", chapter_buffer[-900:]))
+        if prev_ending:
+            context_blocks.append((2, "canon", "【上一章结尾】", _tail_paragraphs(prev_ending)))
         if character_states:
-            ctx.append("【角色当前状态】\n" + character_states.strip()[:500])
-        context_text = "\n".join(ctx) if ctx else "（本章开头，尚无前文）"
-
-        # 长程记忆：已完成章节语义摘要
-        summaries_block = ""
+            context_blocks.append((3, "state", "【角色当前状态】\n", character_states.strip()[:500]))
         if summaries_context:
-            summaries_block = ("【已完成章节语义摘要】\n"
-                               + summaries_context.strip()[:600] + "\n\n")
+            context_blocks.append((4, "state", "【已完成章节语义摘要】\n", summaries_context.strip()[:600]))
+        context_lines, dropped = _assemble_blocks(context_blocks)
+        context_text = "\n".join(context_lines) if context_lines else "（本章开头，尚无前文）"
+        if dropped:
+            context_text += "\n（上下文超预算，已省略低优先级块：" + "、".join(dropped) + "）"
 
         # 内涵跟随桥段：从情节自然流露，不点破。阶段级 theme_moments 优先（含位置/手法）。
         theme_block = ""
@@ -475,20 +534,20 @@ class PromptHarness:
                     seg += f"：{m['how']}"
                 lines.append(seg)
             if lines:
-                theme_block = ("\n【本桥段要自然体现的内涵（含插入位置）】\n"
+                theme_block = ("\n【OPTIONAL｜本桥段要自然体现的内涵（含插入位置）】\n"
                                + "\n".join(lines)
                                + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
         else:
             themes = list(getattr(p, "theme_hints", None) or [])
             if themes:
-                theme_block = ("\n【本桥段要自然体现的内涵】\n"
+                theme_block = ("\n【OPTIONAL｜本桥段要自然体现的内涵】\n"
                                + "、".join(themes[:3])
                                + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
 
         # 灵机一动（探测器命中后注入下一组）
         inspiration_block = ""
         if inspiration_hint:
-            inspiration_block = "\n【灵机一动】顺势落地\n" + inspiration_hint.strip()
+            inspiration_block = "\n【OPTIONAL｜灵机一动】顺势落地\n" + inspiration_hint.strip()
 
         # 收局槽位：解决/呼应更早埋下的设局钩子（桥段拆分）
         payoff_block = ""
@@ -501,8 +560,8 @@ class PromptHarness:
         if item.get("resolver_name"):
             setup_block = ("\n【设局桥段】为『" + str(item.get("resolver_name")) +
                            "』埋钩子，结尾留一个明确未解决的悬念。")
-        # 读者承诺台账：本桥段要兑现的 / 已逾期的 / 活跃可推进的（免费规则）
-        promises_block = self._promises_block(p, chapter_num) if chapter_num else ""
+        # 读者承诺合同：本章必达 / 本桥段收束 / 已逾期 / 必出场角色 / 读者可见变化（免费规则）
+        promises_block = self._promises_block(p, chapter_num, events) if chapter_num else ""
         # 写前编辑诊断：本节要达到什么（读者欲望/爽点/敌人损失/追更理由）
         diag_block = self._pre_write_diagnosis(p, stage_name)
 
@@ -517,9 +576,17 @@ class PromptHarness:
 
         # 本桥段出场人物（性格/性别/口头禅，防"她"字错误、保持声线）
         roles_block = self._roles_block(p) if getattr(p, "roles", None) else ""
+        # 分角色态势表：本桥段每个出场角色的行动方向/去向/内心/语气（规则层，零成本）
+        roles_status_block = self._roles_status_block(item) if getattr(p, "roles", None) else ""
+
+        # 本章参与者（本弧其余桥段出场角色并集）——防逐桥段重复注入、防漏写后续才出场的人
+        chapter_participants_block = ""
+        if chapter_participants:
+            chapter_participants_block = ("\n【本章参与者】" + chapter_participants
+                                          + "\n（本章/本弧出场的全部角色，硬事实同样适用；本桥段精确出场见上）")
 
         bible = self.build_book_bible_condensed()
-        bible_block = f"【书级设定（简）】\n{bible}\n\n" if bible else ""
+        bible_block = f"【CANON｜书级设定（简）】\n{bible}\n\n" if bible else ""
 
         opening_block = (OPENING_MODE_RULES + "\n\n") if is_opening else ""
         consistency_block = CONSISTENCY_RULES + "\n\n"
@@ -534,23 +601,26 @@ class PromptHarness:
             except Exception:
                 pass
 
+        authority_block = AUTHORITY_CANON + "\n\n"
         return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个句子。
 
-{bible_block}{opening_block}{consistency_block}{platform_block}{review_block}{pov_block}【所属大纲】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
+{authority_block}{bible_block}{opening_block}{consistency_block}{platform_block}{review_block}{pov_block}【所属弧】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
 【当前阶段】{stage_name}
-【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按大纲自然推进'}
+【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按弧自然推进'}
 【桥段骨架】{structure}
 【变量槽位】{slots_text or '跟随上下文自由发挥'}
 {diag_block}
 {hook_block}
 {roles_block}
+{roles_status_block}
+{chapter_participants_block}
 {theme_block}
 {payoff_block}
 {setup_block}
 {promises_block}
 {inspiration_block}
 
-{summaries_block}【前文上下文】
+【CANON｜前文上下文】
 {context_text}
 
 【写作要求】
@@ -585,10 +655,12 @@ class PromptHarness:
             f"- 章尾追更理由：本节结尾留一个具体悬念，让读者想知道「接下来会怎样」\n\n"
         )
 
-    def _promises_block(self, p, chapter_num: int) -> str:
-        """读者承诺台账块：本桥段要兑现的、已逾期的、活跃可推进的（免费规则，从 storyline.promises 现算）。
+    def _promises_block(self, p, chapter_num: int, events=None) -> str:
+        """读者承诺合同块：本章必达 / 本桥段收束 / 已逾期 / 必出场角色 / 读者可见变化。
 
-        模拟人类作者的"伏笔账本"：写前扫一眼还有哪些欠读者没还、哪个逾期了。
+        竞品借鉴：AI-NWA obligation_contract + reader_experience（简化版）。
+        免费规则，从 storyline.promises 现算——模拟人类作者的"伏笔账本"：
+        写前扫一眼还有哪些欠读者没还、哪个逾期了、本章必须兑现什么。
         """
         if not self.storyline:
             return ""
@@ -598,27 +670,74 @@ class PromptHarness:
             return ""
         resolving = [q for q in active
                      if q.get("setup_plot_id") and q.get("setup_plot_id") == getattr(p, "resolves_plot_id", "")]
+        must_hit = [q for q in active
+                    if (q.get("deadline_chapter") or 0) == chapter_num]
         overdue = [q for q in active
                    if (q.get("deadline_chapter") or 0) and (q.get("deadline_chapter") or 0) < chapter_num]
-        reserved = {id(q) for q in resolving} | {id(q) for q in overdue}
+        reserved = {id(q) for q in resolving} | {id(q) for q in must_hit} | {id(q) for q in overdue}
         others = [q for q in active if id(q) not in reserved][:2]
 
+        _OP_TAG = {
+            "seed": "刚埋设·保持存在感",
+            "touch": "维持·轻提即可",
+            "pressure": "施压·临期/逾期",
+            "partial_reveal": "部分揭示·留悬念",
+            "payoff": "兑现",
+        }
         lines = []
+        if must_hit:
+            lines.append("【伏笔·兑现】本章必达：兑现「" + (must_hit[0].get("desc", "") or "前文钩子")
+                         + "」，本章内必须让读者看到结果/推进。")
         if resolving:
-            lines.append("本桥段收束：兑现读者承诺「" + (resolving[0].get("desc", "") or "前文钩子")
+            lines.append("【伏笔·兑现】本桥段收束：兑现读者承诺「" + (resolving[0].get("desc", "") or "前文钩子")
                          + "」，给出结果/反转、补上闭环。")
         if overdue:
-            lines.append("已逾期读者承诺（本章内请推进或兑现其一）："
+            lines.append("【伏笔·施压】已逾期读者承诺（本章内请推进或兑现其一）："
                          + "；".join((q.get("desc", "") or "钩子") for q in overdue[:2]))
-        if others:
-            lines.append("活跃读者承诺（可择机自然推进）："
-                         + "；".join((q.get("desc", "") or "钩子") for q in others))
+        for q in others:
+            op = promise_op(q, chapter_num)
+            tag = _OP_TAG.get(op, "touch")
+            lines.append(f"【伏笔·{tag}】{q.get('desc', '') or '钩子'}（可择机自然推进）")
+        # 必出场角色：承诺 desc 里提到的本桥段角色（兑现承诺的关键人物）
+        required_roles = [r for r in (p.roles or [])
+                          if any(r in (q.get("desc", "") or "") for q in active)]
+        if required_roles:
+            lines.append("必出场角色：" + "、".join(required_roles[:3])
+                         + "（兑现承诺的关键人物，本章必须出场）")
+        # 读者可见变化（netChange）：本桥段读者应看到什么变了
+        net_change = self._net_change_block(p, events)
+        if net_change:
+            lines.append("读者可见变化：" + net_change)
         if not lines:
             return ""
         return "【读者承诺台账】\n" + "\n".join(lines) + "\n\n"
 
+    def _net_change_block(self, p, events=None) -> str:
+        """读者可见变化（netChange）：本桥段读者应看到什么变了。
+
+        从 stage events + p.hook_points 推导（免费规则，不调 LLM）。
+        """
+        parts = []
+        evs = [str(e) for e in (events or []) if e][:2]
+        if evs:
+            parts.append("、".join(evs) + " 有结果")
+        hooks = list(getattr(p, "hook_points", None) or [])
+        if hooks:
+            parts.append(hooks[0] + " 落地")
+        return "；".join(parts) if parts else ""
+
+    def _role_hard_soft(self, c: dict) -> tuple[str, str]:
+        """把角色档案拆成「硬事实 vs 软倾向」两段文案（中文标签）。"""
+        hard = [f"{_HARD_LABELS.get(f, f)}={str(c.get(f, ''))[:30]}" for f in _HARD_FIELDS if c.get(f)]
+        soft = [f"{_SOFT_LABELS.get(f, f)}={str(c.get(f, ''))[:30]}" for f in _SOFT_FIELDS if c.get(f)]
+        return "、".join(hard), "、".join(soft)
+
     def _roles_block(self, p) -> str:
-        """本桥段出场人物：性别/性格/惯用语句/简介（防性别指代错、保持角色声线）。"""
+        """本桥段出场人物：硬事实（身份/势力/境界/位置）+ 软倾向（性格/口头禅/简介）。
+
+        竞品借鉴：AI-NWA character_hard_facts——软倾向只作语气参考，
+        不写成旁白确认的事实（防「她字错误/身份穿帮」）。
+        """
         if not self.storyline:
             return ""
         bi = self.storyline.basic_info or {}
@@ -633,11 +752,14 @@ class PromptHarness:
         lines = []
         for rname in (p.roles or [])[:4]:
             if rname == mc_name:
+                hard, soft = self._role_hard_soft(protag)
                 seg = f"- {rname}（主角）"
                 if protag.get("gender"):
                     seg += f"[{protag['gender']}]"
-                if protag.get("personality"):
-                    seg += f"，性格{str(protag['personality'])[:40]}"
+                if hard:
+                    seg += f" 硬事实：{hard}"
+                if soft:
+                    seg += f"；软倾向：{soft}"
                 lines.append(seg)
             else:
                 c = cast_map.get(rname)
@@ -647,16 +769,61 @@ class PromptHarness:
                         seg += f"（{c['title']}）"
                     if c.get("gender"):
                         seg += f"[{c['gender']}]"
-                    if c.get("personality"):
-                        seg += f"，性格{str(c['personality'])[:40]}"
-                    if c.get("catchphrase"):
-                        seg += f"，口头禅「{str(c['catchphrase'])[:40]}」"
-                    if c.get("brief"):
-                        seg += f"，{str(c['brief'])[:40]}"
+                    hard, soft = self._role_hard_soft(c)
+                    if hard:
+                        seg += f" 硬事实：{hard}"
+                    if soft:
+                        seg += f"；软倾向：{soft}"
                 lines.append(seg)
         if not lines:
             return ""
-        return ("\n【本桥段出场人物——严格保持其性别/声线/口头禅，人称别写错】\n"
+        return ("\n【STATE｜本桥段出场人物——硬事实不得写反；软倾向只作语气参考，不写成旁白确认的事实】\n"
+                + "\n".join(lines))
+
+    def _roles_status_block(self, item) -> str:
+        """分角色态势表：本桥段每个出场角色的行动方向/去向/内心/语气。
+
+        规则层零成本：主角占主导推进位、配角按性格反应；每个角色给独立声线，
+        避免多角色同质化（设计文档 §2.3 设计 A）。
+        """
+        if not self.storyline:
+            return ""
+        p = item.get("plot")
+        if not p:
+            return ""
+        roles = list(getattr(p, "roles", None) or [])[:4]
+        if not roles:
+            return ""
+        bi = self.storyline.basic_info or {}
+        protag = get_mc(bi)
+        mc_name = str(protag.get("name", "") or "").strip()
+        cast_map = {str(c.get("name", "")).strip(): c
+                    for c in get_characters(bi) if isinstance(c, dict) and c.get("name")}
+        stage = item.get("stage") or {}
+        events = stage.get("events", []) if isinstance(stage, dict) else []
+        event_txt = "、".join(str(e) for e in events[:2]) if events else "本阶段事件"
+        lines = []
+        for rname in roles:
+            rname = str(rname or "").strip()
+            if not rname:
+                continue
+            if rname == mc_name:
+                lines.append(
+                    f"- 「{rname}」（主角）：本桥段{event_txt}的主角位——主动行动/决断/推进剧情；"
+                    f"内心可流露但克制，视角锁定主角；语气："
+                    f"{str(protag.get('personality', ''))[:30] or '果断、干练'}")
+            else:
+                c = cast_map.get(rname, {}) or {}
+                rel = str(c.get("relation", "") or "")
+                lines.append(
+                    f"- 「{rname}」（{'主角的' + rel if rel else '配角'}）："
+                    f"对{event_txt}做出符合其性格的反应，去向跟随剧情走向；"
+                    f"给一句符合人设的言行或心声，与主角声线区分；"
+                    f"性格（软倾向，只作语气参考）：{str(c.get('personality', ''))[:30] or '待定'}，"
+                    f"口头禅「{str(c.get('catchphrase', ''))[:20] or '无'}」")
+        if not lines:
+            return ""
+        return ("\n【STATE｜分角色态势表——每个出场角色要有各自的行动/去向/内心/语气，避免同质化】\n"
                 + "\n".join(lines))
 
     # ═══════════════════════════════════════════
@@ -716,12 +883,12 @@ class PromptHarness:
         }
 
     # ═══════════════════════════════════════════
-    # 场景 A：大纲各 phase 前置设定卡
+    # 场景 A：弧各 phase 前置设定卡
     # ═══════════════════════════════════════════
 
     def render_outline_context(self, phase_kind: str,
                                storyline: Optional[BookStoryline] = None) -> str:
-        """返回要拼到大纲 prompt 开头的上下文块（空字符串表示无需前置）。
+        """返回要拼到弧 prompt 开头的上下文块（空字符串表示无需前置）。
 
         phase_kind ∈ analyze/sequence/select_plots/theme_review/validate
         """
@@ -743,7 +910,7 @@ class PromptHarness:
             self.storyline = prev_storyline
 
     # ═══════════════════════════════════════════
-    # 候选笑点模式池预筛（免费规则，不写进大纲）
+    # 候选笑点模式池预筛（免费规则，不写进弧）
     # ═══════════════════════════════════════════
 
     def prescreen_gag_pool(self, plot, book_id: str = "") -> list:
@@ -789,8 +956,7 @@ class PromptHarness:
         parts = [
             "请根据以下一句话设定，构思一段【世界观设定短文】（300-500 字叙事化文字，不要列条目）：",
             "",
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
-            f"【一句话设定】{idea or '（请按该流派标准开局自由构思）'}",
+            f"【一句话设定】{idea or '（请按该题材方向标准开局自由构思）'}",
         ]
         if platform:
             parts.append(f"【目标平台】{platform}")
@@ -811,7 +977,6 @@ class PromptHarness:
         """Call B：设定短文 → 结构化 JSON（扩展世界观 + 主角/配角推导）。"""
         style = _profile_style_text(profile if profile is not None else self.profile)
         parts = [
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
             f"【一句话设定】{idea or ''}",
         ]
         if str(world_summary or "").strip():
@@ -843,41 +1008,81 @@ class PromptHarness:
         return "\n".join(parts)
 
     def render_world_candidates_prompt(self, idea: str, genre: str = "",
-                                       sub_genre: str = "", count: int = 5) -> str:
-        """示例候选：一次产出 count 个差异化世界观候选。"""
-        tb = self._tags_block()
-        return "\n".join([
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
-            f"【一句话设定】{idea or '（无，按流派自由发散）'}",
+                                       sub_genre: str = "", count: int = 5,
+                                       tags=None, existing_candidates=None) -> str:
+        """示例候选：一次产出 count 个差异化世界观候选。
+
+        步 1 用户给一句话设定 + 题材标签、不另选题材——【题材方向】未指定时要求 AI
+        从一句话/题材标签自行推导，避免输出被示例模板固化。
+        existing_candidates 传入时改为「增量」模式：只生成 **1 个**与已有候选
+        差异明显的新方向（逐个生成、给足思考空间，质量高于一次多个）。
+        """
+        tb = self._tags_block()   # 书内已有标签时走它（书内部分/存量书路径）
+        if not tb and tags:
+            _tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
+            if _tags:
+                tb = ("【题材标签（硬约束）】" + "、".join(_tags)
+                      + "。世界观候选必须契合这些标签的网文套路与读者预期，"
+                        "禁止漂移到标签之外题材。")
+        parts = [
+            f"【一句话设定】{idea or '（无，按题材方向自由发散）'}",
             tb if tb else "",
-            f"【要求】从这句话/流派发散出 {count} 个截然不同的世界观方向，方向之间差异要明显（如：废土系统流 / 灵气复苏权谋流 / 异界学院召唤流）。",
-            '返回 JSON：{"candidates":[{"title":"候选名/书名","one_liner":"一句话核心设定（可直接作为新书的一句话种子）","world_brief":"120-200字世界观简述","genre_hint":"子流派标签"}]}',
-        ])
+        ]
+        if existing_candidates:
+            listed = "\n".join(
+                f"- {i}.「{c.get('title') or ''}」{(c.get('one_liner') or '')}"
+                for i, c in enumerate(existing_candidates, 1))
+            parts.append(
+                f"【已生成候选】\n{listed}\n"
+                f"【要求】在已有候选基础上，只产出 **1 个**与它们差异最明显、最出彩的**新**世界观方向"
+                f"（严禁与已有候选重复/雷同；给足这一方向的深度设定与差异化亮点）。"
+                f"若未指定题材方向：先自行推导这句话隐含的题材方向，再在该框架内挑一个与众不同的走向。")
+        else:
+            parts.append(
+                f"【要求】从这句话发散出 {count} 个截然不同的世界观方向，方向之间差异要明显。"
+                f"若未指定题材方向：先自行推导这句话隐含的题材方向（例如用户想写的是都市、玄幻、科幻、悬疑、历史等），"
+                f"再在该题材框架内发散差异明显的方向；不要套用固定的题材细分模板，候选只体现同源设定下的不同走向。")
+        parts.append('返回 JSON：{"candidates":[{"title":"候选名/书名","one_liner":"一句话核心设定（可直接作为新书的一句话种子）","world_brief":"120-200字世界观简述","genre_hint":"题材细分标签"}]}')
+        return "\n".join(parts)
 
     def render_characters_prompt(self, idea: str, genre: str = "",
                                  sub_genre: str = "", tags=None, title: str = "",
-                                 archetypes=None) -> str:
-        """根据世界观（一句话 + 题材标签 + 书名 + 角色原型库）生成角色候选（向导③按钮）。
+                                 archetypes=None, core_conflict: str = "",
+                                 factions=None, outline_preview: str = "") -> str:
+        """根据世界观（一句话 + 题材标签 + 书名 + 角色原型库）生成角色候选（向导③，Agent 经 set_characters 填入）。
 
-        书名已在向导②选中；角色从原型库挑选 archetype_id 并适配到本书，输出统一字段
-        （姓名/身份/性格/口癖/重要度/金手指(主角)/关系(其他)）。
+        题材标签在向导步 1 选择、书名由步 2 选中候选带入步 3；角色从原型库挑选
+        archetype_id 并适配到本书，输出统一字段（姓名/身份/性格/口癖/重要度/金手指(主角)/关系(其他)）。
+        可带已定核心矛盾/势力/开篇弧桥段上下文（分阶段构建的 ①③② 阶段产出），让角色与之自洽。
         """
         tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
         parts = [
-            f"【流派】{genre}" + (f"/{sub_genre}" if sub_genre else ""),
             f"【书名】{title or '（待定）'}",
-            f"【世界观】{idea or '（无，按流派自由发散）'}",
+            f"【世界观】{idea or '（无，按题材方向自由发散）'}",
         ]
         if tags:
             parts.append(f"【题材标签】{'、'.join(tags)}（硬约束，必须契合）")
+        if core_conflict:
+            parts.append(f"【已定核心矛盾】{core_conflict}")
+        if factions:
+            _fl = []
+            for f in factions:
+                if isinstance(f, dict):
+                    _fl.append((f.get("name") or "") + ("：" + f.get("stance") if f.get("stance") else ""))
+                else:
+                    _fl.append(str(f))
+            if _fl:
+                parts.append("【已定势力】" + "、".join(_fl))
+        if outline_preview:
+            parts.append(f"【已选开篇弧与桥段】{outline_preview}")
         if archetypes:
             lines = []
             for a in archetypes[:10]:
                 a_ph = "、".join((a.get("catchphrases") or [])[:2]) or "—"
                 a_tags = "、".join(a.get("tags") or []) or "—"
-                a_genres = "、".join(a.get("fit_genres") or []) or "—"
+                a_fit_tags = "、".join(a.get("fit_tags") or []) or "—"
                 lines.append(f"- {a.get('id')} {a.get('name')}（性格:{a.get('personality') or '—'}｜"
-                             f"标签:{a_tags}｜适配:{a_genres}｜口癖:{a_ph}）")
+                             f"标签:{a_tags}｜适配:{a_fit_tags}｜口癖:{a_ph}）")
             parts.append("【可选角色原型（从中挑选 archetype_id 并适配到本书）】\n" + "\n".join(lines))
         parts.append(
             "你是网文人物策划。根据上述世界观、书名与可选角色原型：\n"
@@ -887,13 +1092,64 @@ class PromptHarness:
             "重要度 importance=2~5 按戏份递减，彼此要有区分度）。\n"
             "3. 每个角色必须从【可选角色原型】中挑选一个 archetype_id 作为原型基础，"
             "并把原型适配成符合本书世界观的具体角色；没有合适原型时可省略 archetype_id。\n"
-            '只返回 JSON：{"protagonists":[{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":""},'
-            '{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":""},'
-            '{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","importance":1,"archetype_id":""}],'
-            '"supporting_cast":[{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":2,"archetype_id":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":2,"archetype_id":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":3,"archetype_id":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":3,"archetype_id":""},'
-            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","importance":4,"archetype_id":""}]}'
+            "4. 每个角色补充：gender 性别、age 年龄（数字，未知填 0）、death_year 死亡年份"
+            "（数字，未定/健在填 0）、title 称呼/称号、brief 100 字内人物简介——"
+            "这些字段让书详情页人物卡片完整，不要留空。\n"
+            "5. 势力标注：若世界观已有势力（factions），为角色填 faction 所属势力名"
+            "（与势力名一致），无势力可留空归『未归属』；金手指 golden_finger 仅主角/"
+            "关键角色需要，配角一律留空。\n"
+            '只返回 JSON：{"protagonists":[{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","faction":"","importance":1,"archetype_id":"","gender":"","age":0,"death_year":0,"title":"","brief":""},'
+            '{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","faction":"","importance":1,"archetype_id":"","gender":"","age":0,"death_year":0,"title":"","brief":""},'
+            '{"name":"","identity":"","personality":"","catchphrase":"","golden_finger":"","faction":"","importance":1,"archetype_id":"","gender":"","age":0,"death_year":0,"title":"","brief":""}],'
+            '"supporting_cast":[{"name":"","identity":"","relation":"","personality":"","catchphrase":"","faction":"","importance":2,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","faction":"","importance":2,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","faction":"","importance":3,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","faction":"","importance":3,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0},'
+            '{"name":"","identity":"","relation":"","personality":"","catchphrase":"","faction":"","importance":4,"archetype_id":"","gender":"","title":"","brief":"","age":0,"death_year":0}]}'
         )
+        return "\n".join(parts)
+
+    def render_core_conflict_prompt(self, idea: str, genre: str = "",
+                                    sub_genre: str = "", tags=None,
+                                    profile=None) -> str:
+        """分阶段构建①：从一句话设定+题材标签推导故事主线的核心矛盾（驱动全书的根本冲突，1-2 句）。
+
+        返回纯文本，供 generate_core_conflict 使用。
+        """
+        tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
+        style = ""
+        if profile and getattr(profile, "summary", ""):
+            style = f"\n【笔名风格】{profile.summary}"
+        return "\n".join([
+            f"【一句话设定】{idea or '（无）'}",
+            f"【题材标签】{'、'.join(tags) if tags else '（未选）'}（硬约束，必须契合）",
+            style,
+            "【任务】你是网文故事架构师。思考这本书的主线应该由什么样的核心矛盾驱动——"
+            "这是贯穿全书的根本冲突（人物目标 × 世界阻力 × 无法两全），1-2 句说清，"
+            "要具体可驱动后续势力/人物/桥段，不要空泛（例：'主角的复制异能每升级一次就吞噬一段记忆，"
+            "他必须在变强与找回自己之间抉择，而幕后组织正等着他失去自我'）。",
+            "只返回核心矛盾一句话，不要解释、不要多余内容。",
+        ])
+
+    def render_factions_prompt(self, idea: str, core_conflict: str = "",
+                               genre: str = "", sub_genre: str = "",
+                               tags=None, outline_preview: str = "") -> str:
+        """分阶段构建③：基于一句话设定 + 核心矛盾 + 题材标签 + 已定弧桥段，发散世界里的主要势力派系。
+
+        返回 JSON list，供 generate_factions 使用。
+        """
+        tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
+        parts = [
+            f"【一句话设定】{idea or '（无）'}",
+            f"【核心矛盾】{core_conflict or '（未定）'}",
+            f"【题材标签】{'、'.join(tags) if tags else '（未选）'}（硬约束，必须契合）",
+        ]
+        if outline_preview:
+            parts.append(f"【已定弧与桥段】\n{outline_preview}")
+        parts += [
+            "【任务】你是网文世界观架构师。思考这个世界应该存在哪些势力/派系（2-4 个），"
+            "它们围绕【核心矛盾】各自持什么立场、追求什么，彼此冲突或结盟。每个势力给出："
+            "name 名称、stance 立场（一句）、desc 背景与目标（一句）。势力要呼应核心矛盾与已定故事线，不要泛泛的'官方''反派'。",
+            '只返回 JSON：{"factions":[{"name":"","stance":"","desc":""}]}',
+        ]
         return "\n".join(parts)

@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}NovelEngine — 小说工厂{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
-    <script src="{{ url_for('static', filename='js/base.js') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v26">
+    <script src="{{ url_for('static', filename='js/base.js') }}?v2"></script>
+    {% block head %}{% endblock %}
 </head>
 <body>
     <nav>
@@ -17,15 +18,15 @@
         <a href="/publish" class="{{ 'active' if request.path == '/publish' or request.path.startswith('/publish/') or request.path.startswith('/books/') and '/publish' in request.path else '' }}">🚀 上架管理</a>
         <div class="section">资产库</div>
         <a href="/plots" class="{{ 'active' if request.path == '/plots' or request.path.startswith('/plots/') else '' }}">🧩 桥段库</a>
-        <a href="/structures" class="{{ 'active' if request.path == '/structures' or request.path.startswith('/structures/') else '' }}">📋 大纲库</a>
+        <a href="/structures" class="{{ 'active' if request.path == '/structures' or request.path.startswith('/structures/') else '' }}">📋 情节弧库</a>
         <a href="/gags" class="{{ 'active' if request.path == '/gags' or request.path.startswith('/gags/') else '' }}">😂 笑点库</a>
         <a href="/characters" class="{{ 'active' if request.path == '/characters' or request.path.startswith('/characters/') else '' }}">🎭 角色原型库</a>
         <div class="section">管理</div>
-        <a href="/profiles" class="{{ 'active' if request.path == '/profiles' or request.path.startswith('/profiles/') else '' }}">👤 笔名档案</a>
+        <a href="/profiles" class="{{ 'active' if request.path == '/profiles' or request.path.startswith('/profiles/') else '' }}">✍️ 笔名与风格</a>
         <a href="/settings" class="{{ 'active' if request.path == '/settings' else '' }}">⚙️ 设置</a>
         <div class="section">工具</div>
-        <a href="/scout" class="{{ 'active' if request.path == '/scout' else '' }}">🔍 小说抓取</a>
-        <a href="/extract" class="{{ 'active' if request.path == '/extract' else '' }}">📝 内容提取</a>
+        <a href="/scout" class="{{ 'active' if request.path == '/scout' or request.path == '/novels' else '' }}">📚 外部书库</a>
+        <a href="/extract" class="{{ 'active' if request.path == '/extract' else '' }}">🧪 提取入库</a>
         <details class="nav-debug">
             <summary>🧪 调试工具</summary>
             <a href="/deai">🔄 去AI测试</a>
@@ -38,31 +39,32 @@
             {% block content %}{% endblock %}
         </main>
         <aside id="status-bar">
-            <div class="status-head">
-                <div class="status-title">🤖 Agent</div>
-                <button class="status-toggle" onclick="toggleStatusBar()" title="折叠 Agent" aria-label="折叠 Agent">◀</button>
-            </div>
             <div class="agent-tabs">
                 <a data-tab="chat" class="active" onclick="switchAgentTab('chat')">💬 对话</a>
                 <a data-tab="tools" onclick="switchAgentTab('tools')">🔧 工具日志</a>
+                <button class="status-toggle" onclick="toggleStatusBar()" title="折叠" aria-label="折叠">◀</button>
             </div>
-            {# OpenClaw 式 Agent 聊天助手：对话 + 工具步骤卡，可操作全链路（创建→上架）并导航页面 #}
+            {# 内嵌 Agent 对话（左页签）与外部 MCP 工具日志（右页签）为两种模式，输入区只属于对话页签 #}
             <div id="agent-chat"></div>
             <div id="agent-tools-log" style="display:none"></div>
+            <div id="agent-token-flow" class="agent-token-flow">⚡ 0 tokens</div>
             <div id="agent-input-wrap">
                 <textarea id="agent-input" rows="2"
                     placeholder="让 Agent 帮你建书 / 生成大纲 / 续写 / 上架…"></textarea>
                 <div class="agent-input-actions">
                     <button id="agent-clear" title="清空对话">🗑</button>
+                    <button id="agent-debug" title="调试模式：显示每次 LLM 调用的提示词 / MCP 工具 / 返回JSON" class="debug-toggle">🔍 调试</button>
                     <button id="agent-send" title="发送">发送</button>
+                    <button id="agent-stop" title="停止当前任务（类似 Ctrl+C）" style="display:none">⏹ 停止</button>
                 </div>
             </div>
         </aside>
     </div>
-    <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开 Agent" aria-label="展开 Agent">▶</button>
+    <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开" aria-label="展开">▶</button>
 
     <div id="toast-root"></div>
-    <script src="{{ url_for('static', filename='js/agent_panel.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/markdown.js') }}?v1"></script>
+    <script src="{{ url_for('static', filename='js/agent_panel.js') }}?v31"></script>
 </body>
 </html>
 

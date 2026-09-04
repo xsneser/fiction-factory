@@ -1,7 +1,11 @@
 """Agent 聊天端点 — 侧栏对话面板的后端（SSE 流式，无状态）。
 
 浏览器持有 user/assistant 消息历史，POST /api/agent/chat 全量带上；
-后端跑 function calling 循环（plugins/agent_loop.py），逐事件流式返回。
+后端转发到 dsh headless 一次性子进程（libraries/dsh_bridge.py，经 MCP 驱动平台）。
+内置 agent（plugins/agent_loop.py）已删除，dsh 是唯一大脑。
+
+SSE 事件协议：tool_start / reply / error / done（dsh 桥）；navigate 等由
+nav-intent 意图队列经浏览器 2.5s 轮询消费，不走 SSE。
 """
 import sys
 import os
@@ -10,8 +14,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from flask import Blueprint, request, jsonify  # noqa: E402
 from .ctx import sse_stream_response  # noqa: E402
-from plugins.agent_loop import run_agent_loop, get_tool_log, clear_tool_log  # noqa: E402
 from agent_tools import TOOL_REGISTRY  # noqa: E402
+from libraries.nav_intent import take_nav_intents  # noqa: E402
+from libraries.dsh_bridge import run_dsh_task, interrupt_current_task, get_current_task_status, _DEBUG_PROMPT_DIR  # noqa: E402
+from libraries.build_status import set_build_status  # noqa: E402
+from libraries.tool_log import get_tool_log, clear_tool_log  # noqa: E402
 
 bp = Blueprint("agent", __name__)
 
@@ -20,10 +27,12 @@ bp = Blueprint("agent", __name__)
 def agent_chat():
     """侧栏 Agent 对话。body: {"messages": [{"role": "user"|"assistant", "content": "..."}]}。
 
-    返回 SSE 事件：tool_start / tool_result / reply / navigate / canvas / error / done。
+    返回 SSE 事件：tool_start / reply / error / done。
+    最后一条 user 消息作为当前任务、其余作为历史（多轮语义），转发 dsh headless。
     """
     data = request.get_json(silent=True) or {}
     raw_messages = data.get("messages") or []
+    debug = bool(data.get("debug"))   # 调试模式：前端 🔍 开关，透传给 dsh 子进程 emit llm/call
     messages = []
     for m in raw_messages:
         role = m.get("role")
@@ -36,8 +45,12 @@ def agent_chat():
 
     def generate():
         try:
-            for line in run_agent_loop(messages, emit):
-                yield line
+            task, history = "", list(messages)
+            if history and history[-1].get("role") == "user":
+                last = history.pop(-1)
+                task = last.get("content", "")
+            for evt in run_dsh_task(task, history, debug=debug):
+                yield emit(evt)
         except Exception as e:
             import traceback
             yield emit({"type": "error", "message": f"{e}\n{traceback.format_exc()}"})
@@ -46,9 +59,69 @@ def agent_chat():
     return sse_stream_response(generate())
 
 
+@bp.route("/api/agent/chat/cancel", methods=["POST"])
+def agent_chat_cancel():
+    """打断当前正在跑的 dsh 任务（全服务单任务；无任务也返回 ok，幂等）。"""
+    interrupted = interrupt_current_task()
+    return jsonify({"ok": True, "interrupted": interrupted})
+
+
+@bp.route("/api/agent/chat/status", methods=["GET"])
+def agent_chat_status():
+    """当前是否有 dsh 任务在跑（前端切页/刷新后恢复感知用）。
+
+    返回 {running, started_at, task, pid}；运行中给展示信息，未运行 running=False。
+    """
+    return jsonify({"ok": True, **get_current_task_status()})
+
+
+@bp.route("/api/agent/task-events", methods=["GET"])
+def agent_task_events():
+    """刷新后重建工具卡流：读取 dsh 工具事件（ts >= since，unix 秒）。
+
+    侧栏 dsh 的工具调用落盘 task_events.jsonl（source=dsh 不进 tool_log）；
+    前端刷新后按任务 started_at 拉取，重建「刷新前」的工具卡流。
+    """
+    since = float(request.args.get("since", "0") or 0)
+    from libraries.dsh_bridge import get_task_events
+    return jsonify({"ok": True, "events": get_task_events(since)})
+
+
+@bp.route("/api/agent/task-events/clear", methods=["POST"])
+def agent_task_events_clear():
+    """清空 dsh 工具事件存储（前端「清空对话」时调用）。"""
+    from libraries.dsh_bridge import clear_task_events
+    clear_task_events()
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/agent/token-usage", methods=["GET"])
+def agent_token_usage():
+    """实时 token 流量（本地 API 代理检测器累计；前端 2s 轮询）。"""
+    from libraries.token_proxy import ensure_proxy, get_token_usage
+    ensure_proxy()
+    return jsonify({"ok": True, **get_token_usage()})
+
+
+@bp.route("/api/agent/token-usage/clear", methods=["POST"])
+def agent_token_usage_clear():
+    """清零 token 流量累计（新任务/清空对话时调用）。"""
+    from libraries.token_proxy import clear_token_usage
+    clear_token_usage()
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/agent/build-status", methods=["POST"])
+def agent_build_status():
+    """浏览器上报建书向导状态（WZ.reportStatus），写入 storage/build_status.json 供 MCP 工具读取。"""
+    data = request.get_json(silent=True) or {}
+    set_build_status(data)
+    return jsonify({"ok": True})
+
+
 @bp.route("/api/agent/tool-log", methods=["GET"])
 def agent_tool_log():
-    """右侧面板「工具日志」页签数据：所有暴露工具数 + 本次会话工具调用汇总与时间线。"""
+    """右侧面板「工具日志」页签数据：所有暴露工具数 + 工具调用汇总与时间线。"""
     log = get_tool_log()
     success = sum(1 for x in log if x.get("ok"))
     return jsonify({
@@ -65,3 +138,25 @@ def agent_tool_log():
 def agent_tool_log_clear():
     clear_tool_log()
     return jsonify({"ok": True, "total": 0})
+
+
+@bp.route("/api/agent/nav-intents", methods=["GET"])
+def agent_nav_intents():
+    """navigate 外部驱动桥：浏览器轮询消费外部（MCP）写入的跳转意图（取后即清空）。"""
+    return jsonify({"ok": True, "intents": take_nav_intents()})
+
+
+@bp.route("/api/agent/debug-prompt/<seq>", methods=["GET"])
+def agent_debug_prompt(seq):
+    """调试卡「提示词/返回JSON」按需拉完整原文（SSE 事件里只有裁剪预览，完整载荷在 storage/debug-prompts/<seq>.json）。
+
+    seq 数字白名单防路径穿越；文件不存在（新任务已清空/未写入）返回 404，前端保持裁剪预览。
+    """
+    if not seq.isdigit():
+        return jsonify({"ok": False, "error": "bad seq"}), 400
+    try:
+        with open(os.path.join(_DEBUG_PROMPT_DIR, f"{seq}.json"), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return jsonify({"ok": False, "error": "not found"}), 404
+    return jsonify({"ok": True, **data})

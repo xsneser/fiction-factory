@@ -19,8 +19,6 @@ class BookConfig:
     book_id: str = ""
     title: str = ""                        # 书名
     pen_name: str = ""                     # 笔名
-    genre: str = ""                        # 流派
-    sub_genre: str = ""                    # 子流派
     platform: str = ""                     # 目标平台：fanqie/qidian/...
     chapter_count: int = 500
     current_chapter: int = 0
@@ -67,6 +65,7 @@ class BookManager:
         self.dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, BookConfig] = {}
         self._scan_sig = None  # (book 数量, book.json mtime 之和) → 磁盘是否变化
+        self._mtimes: dict[str, float] = {}  # book_id → book.json mtime（get() 失效用）
         self._load_all()
 
     def _load_all(self):
@@ -77,6 +76,10 @@ class BookManager:
                     try:
                         cfg = BookConfig.from_dict(read_json(cfg_path, {}))
                         self._cache[cfg.book_id] = cfg
+                        try:
+                            self._mtimes[cfg.book_id] = cfg_path.stat().st_mtime
+                        except OSError:
+                            pass
                     except Exception as e:
                         # 单本书损坏不拖垮整个书库（否则缓存为空，create 会撞号覆盖）
                         logger.warning("跳过无法解析的图书配置 %s: %s", cfg_path, e)
@@ -103,11 +106,30 @@ class BookManager:
         return list(self._cache.values())
 
     def get(self, book_id: str) -> BookConfig | None:
-        if book_id not in self._cache:
+        cached = self._cache.get(book_id)
+        cfg_path = self.dir / book_id / "book.json"
+        if cached is None:
             # 缓存未命中时重新扫描磁盘
             self._cache = {}
+            self._mtimes = {}
             self._load_all()
-        return self._cache.get(book_id)
+            return self._cache.get(book_id)
+        # 外部直写 book.json（如 MCP 进程落章）会改变 mtime → 只重读该书，避免 current_chapter
+        # / total_words 长期陈旧（list_all 用整库 mtime-sig，get() 用单书 O(1) 失效）。
+        try:
+            cur = cfg_path.stat().st_mtime
+        except OSError:
+            return cached
+        if self._mtimes.get(book_id) != cur:
+            try:
+                fresh = BookConfig.from_dict(read_json(cfg_path, {}))
+                if fresh.book_id == book_id:
+                    self._cache[book_id] = fresh
+                    self._mtimes[book_id] = cur
+                    return fresh
+            except Exception as e:
+                logger.warning("get() 重读 book.json 失败 %s: %s", cfg_path, e)
+        return cached
 
     def _next_book_id(self) -> str:
         """基于磁盘现有 book_* 目录取下一个可用 id。
@@ -133,7 +155,7 @@ class BookManager:
         book_id = self._next_book_id()
         cfg = BookConfig(
             book_id=book_id, title=title, pen_name=pen_name,
-            genre=genre, sub_genre=sub_genre, platform=platform,
+            platform=platform,
             chapter_count=chapter_count,
             structure_template_id=structure_template_id,
             style_profile_id=style_profile_id,
@@ -157,8 +179,12 @@ class BookManager:
 
     def save_chapter(self, book_id: str, chapter_num: int,
                      title: str, content: str, summary: str = "",
-                     review: dict | None = None):
-        """保存章节（review：规则审查结果 dict，随章节落盘供详情页展示）"""
+                     review: dict | None = None,
+                     bridges: list | None = None):
+        """保存章节（review：规则审查结果 dict，随章节落盘供详情页展示；
+        bridges：本桥段逐段去AI味后的 [{plot_id, plot_name, text}]，供写作台
+        点击桥段→高亮对应正文；旧文件无此键，向前兼容。
+        content 为派生缓存，落盘时保证 == "\n\n".join(bridges[].text)）"""
         book_dir = self.dir / book_id / "chapters"
         book_dir.mkdir(parents=True, exist_ok=True)
         chapter_file = book_dir / f"{chapter_num:04d}.json"
@@ -166,6 +192,7 @@ class BookManager:
             "num": chapter_num, "title": title,
             "content": content, "summary": summary,
             "review": review,
+            "bridges": bridges,
             "created_at": datetime.now().isoformat(),
         })
 

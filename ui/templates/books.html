@@ -4,27 +4,29 @@
 <h1>📚 书库 <a href="/books/start" class="btn" style="float:right">+ 新书</a></h1>
 
 {% if books %}
+<div class="table-scroll">
 <table>
-    <thead><tr><th>书名</th><th>笔名</th><th>流派</th><th>大纲</th><th>进度</th><th>状态</th><th>操作</th></tr></thead>
+    <thead><tr><th>书名</th><th>笔名</th><th>题材标签</th><th>故事线</th><th>进度</th><th>状态</th><th>操作</th></tr></thead>
     <tbody>
     {% for r in books %}
     {% set b = r.book %}
     <tr>
         <td><strong><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title or '(待定)' }}</a></strong></td>
         <td>{{ b.pen_name }}</td>
-        <td><span class="tag">{{ b.genre }}</span>{% if b.sub_genre %} <span class="tag blue">{{ b.sub_genre }}</span>{% endif %}</td>
+        <td>{% if r.tags %}{% for t in r.tags[:6] %}<span class="tag">{{ t }}</span>{% endfor %}{% else %}—{% endif %}</td>
         <td>
             {% if r.has_storyline %}
-            <span class="tag blue">故事线 {{ r.storyline_outlines }}大纲 · {{ r.storyline_plots }}桥段</span>
+            <span class="tag blue">{{ r.storyline_outlines }}故事线 · {{ r.storyline_plots }}桥段</span>
             {% elif r.outline_count %}
             <span class="tag green">结构 {{ r.outline_count }}阶段</span>
             {% else %}
-            <span class="tag">无大纲</span>
+            <span class="tag">无故事线</span>
             {% endif %}
         </td>
-        <td>{{ b.current_chapter }}/{{ b.chapter_count }}</td>
+        <td>已写 {{ b.current_chapter }} 章</td>
         <td>{{ status_badge(b.status) }}</td>
         <td style="white-space:nowrap">
+            <a href="/books/{{ b.book_id }}/continue" class="btn small">✍️ 写作</a>
             <a href="/books/{{ b.book_id }}" class="btn small secondary">📖 详情</a>
             <form method="POST" action="/books/{{ b.book_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ b.title }}》？')">
                 <button class="small danger">删除</button>
@@ -34,6 +36,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <div class="empty"><div class="icon">📚</div><p>书库为空</p><a href="/books/start" class="btn">创建新书</a></div>
 {% endif %}

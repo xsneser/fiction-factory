@@ -1,0 +1,88 @@
+{# 风格规则卡片 partial —— ② 句式风格（prefer 正向）+ ③ 禁止的内容（ban：AI 词带替换 / 硬禁句式无替换）。
+   需要上下文：current_scope、prefers、bans。
+   render_cards 默认 True：scope=new 时传 False（新建模式只有档案表单，无规则卡）。
+   逐条保存/删除/新增走 /api/style-rules（与档案表单的「保存修改」分开）。 #}
+{% set render_cards = render_cards|default(True) %}
+
+{% if render_cards %}
+<!-- ② 句式风格（正向：怎么写——一条条规则） -->
+<h2 style="margin:0 0 10px">✍️ 仿写句式 <span style="font-size:12px;color:#8b949e;font-weight:normal">（正向：本笔名怎么写，如「句长偏短」「爱用（）做注释」）</span></h2>
+<div class="card" style="margin-bottom:16px">
+    <div style="margin-top:8px">
+    {% for r in prefers %}
+    <div class="sr-row" data-id="{{ r.id }}" data-kind="prefer" style="display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap">
+        <input class="sr-pattern" value="{{ r.pattern }}" title="句式风格描述" style="flex:2;min-width:280px">
+        <label style="font-size:12px"><input type="checkbox" class="sr-enabled" {{ 'checked' if r.enabled }}> 启用</label>
+        <button type="button" class="small" onclick="saveRow(this)">💾 保存</button>
+        <button type="button" class="small danger" onclick="delRow('{{ r.id }}')">🗑</button>
+    </div>
+    {% endfor %}
+    <button type="button" class="small" onclick="addRow('prefer')">➕ 句式</button>
+    </div>
+</div>
+
+<!-- ③ 禁止的内容（负向：不能写——带替换候选的自动去AI味，无替换的审查检测，统一一张卡） -->
+<h2 style="margin:0 0 10px">🚫 禁止的词语句式 <span style="font-size:12px;color:#8b949e;font-weight:normal">（负向：不能写——带替换候选的自动去AI味，无替换的审查检测）</span></h2>
+<div class="card" style="margin-bottom:16px">
+    <div style="margin-top:8px">
+    {% for r in bans %}
+    <div class="sr-row" data-id="{{ r.id }}" data-kind="ban" style="display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap">
+        <input class="sr-pattern" value="{{ r.pattern }}" title="词或句式（正则）" style="flex:1.4;min-width:160px">
+        <input class="sr-desc" value="{{ r.desc }}" title="说明" style="flex:1.1;min-width:140px">
+        <input class="sr-repl" value="{{ r.replacements|join('、') }}" title="替换候选（顿号分隔；留空=仅检测的硬禁句式）" style="flex:1.5;min-width:180px">
+        <select class="sr-severity" style="width:100px">
+            <option value="warning" {{ 'selected' if r.severity=='warning' }}>warning</option>
+            <option value="info" {{ 'selected' if r.severity=='info' }}>info</option>
+        </select>
+        <label style="font-size:12px"><input type="checkbox" class="sr-enabled" {{ 'checked' if r.enabled }}> 启用</label>
+        <button type="button" class="small" onclick="saveRow(this)">💾 保存</button>
+        <button type="button" class="small danger" onclick="delRow('{{ r.id }}')">🗑</button>
+    </div>
+    {% endfor %}
+    <button type="button" class="small" onclick="addRow('ban')">➕ 禁止内容</button>
+    </div>
+</div>
+
+<script>
+var currentScope = "{{ current_scope }}";
+async function saveRow(btn) {
+    var row = btn.closest('.sr-row');
+    var kind = row.dataset.kind;
+    var payload = {kind: kind, profile_id: currentScope, pattern: row.querySelector('.sr-pattern').value.trim(),
+                   desc: row.querySelector('.sr-desc') ? row.querySelector('.sr-desc').value.trim() : '',
+                   enabled: row.querySelector('.sr-enabled').checked};
+    if (kind === 'ban') {
+        payload.severity = row.querySelector('.sr-severity').value;
+        payload.replacements = (row.querySelector('.sr-repl').value||'').split(/[、,]/).map(function(s){return s.trim();}).filter(Boolean);
+    }
+    const r = await fetch('/api/style-rules/' + row.dataset.id, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if (d.ok) showToast('✅ 已保存', 'success');
+    else showToast('保存失败: ' + (d.error||''), 'error');
+}
+async function delRow(id) {
+    if (!confirm('确认删除这条规则？')) return;
+    const r = await fetch('/api/style-rules/' + id + '/delete', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else showToast('删除失败: ' + (d.error||''), 'error');
+}
+async function addRow(kind) {
+    if (kind === 'ban') {
+        var content = prompt('禁止内容（词或句式，如：仿佛 或 不是…而是）');
+        if (!content || !content.trim()) return;
+        var repl = prompt('替换候选（可选，顿号分隔；留空 = 仅检测的硬禁句式）');
+        var payload = {kind: 'ban', profile_id: currentScope, pattern: content.trim(), desc: '', enabled: true};
+        if (repl && repl.trim()) payload.replacements = repl.split(/[、,]/).map(function(s){return s.trim();}).filter(Boolean);
+    } else {
+        var content = prompt('句式风格（如：爱用全角括号（）做注释）');
+        if (!content || !content.trim()) return;
+        var payload = {kind: 'prefer', profile_id: currentScope, pattern: content.trim(), desc: '', enabled: true};
+    }
+    const r = await fetch('/api/style-rules', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if (d.ok) location.reload();
+    else showToast('添加失败: ' + (d.error||''), 'error');
+}
+</script>
+{% endif %}

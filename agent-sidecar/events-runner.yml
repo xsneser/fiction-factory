@@ -1,0 +1,25 @@
+# events-runner —— 让 dsh headless 核心主动推送工具事件流（NovelEngine 定制）
+#
+# 用法：作为 --patch 叠加在 headless profile 上（与 mcp overlay 并列，dsh 支持重复 --patch）：
+#   cd D:/NovelEngine
+#   node vendor/dsh-ne/lib/bin.js --profile headless \
+#     --patch agent-sidecar/events-runner.yml --patch storage/dsh_runtime.yml "<任务>"
+#   → stdout 逐行实时输出 NDJSON：tool/call → tool/result → … → reply → done
+#   （不 push 此 patch 时仍走原 headless-runner，纯文本最终回复，两侧互不干扰）
+#
+# 浏览器侧：libraries/dsh_bridge.py 的运行期 overlay（storage/dsh_runtime.yml）已内嵌
+# 同款条目并动态拼 file:/// 绝对 URL，无需手动挂本文件。
+#
+# 语法要点（dsh patch 层，勿改 profile 的 cordis.yml）：
+#   - headless-runner 行用 id-targeted `disabled: true` 关掉；
+#   - 新增条目必须用 `insert`（不带 id）追加到根列表；
+#   - insert 的 name 支持 file:/// 绝对 URL（cordis-plugin-loader 的 import(name) 走 ESM 路径）。
+#   events-runner.mjs 必须位于 vendor/dsh-ne/ 内（@deepseek-ai/* 依赖要从该 node_modules 解析）。
+- id: headless-runner
+  disabled: true
+- insert:
+    - id: events-runner
+      name: 'file:///D:/NovelEngine/vendor/dsh-ne/events-runner.mjs'
+      inject: [headlessStartup]
+      config:
+        task: !!js ctx.headlessStartup.task

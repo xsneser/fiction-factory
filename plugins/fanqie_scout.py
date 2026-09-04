@@ -15,6 +15,7 @@
   使用本模块产生的任何法律风险由使用者自行承担。
 """
 import json
+import os
 import re
 import time
 import logging
@@ -33,7 +34,7 @@ logger = logging.getLogger("fanqie-scout")
 
 @dataclass
 class NovelInfo:
-    """小说基本信息"""
+    """小说基本信息（多平台热榜统一字段；platform/rank 为热榜条目扩展，默认值兼容旧调用）"""
     book_id: str
     title: str
     author: str
@@ -44,6 +45,9 @@ class NovelInfo:
     hot_score: int = 0
     intro: str = ""
     url: str = ""
+    cover: str = ""
+    platform: str = ""
+    rank: int = 0
 
 
 @dataclass
@@ -60,6 +64,69 @@ class ScoutResult:
 # ═══════════════════════════════════════
 # 爬虫核心
 # ═══════════════════════════════════════
+
+# 封面提取：SSR/API 页面结构多变，递归找常见封面键（限深度，防误伤大对象）
+_COVER_KEYS = ("thumbUri", "thumb_uri", "coverUrl", "book_cover", "cover")
+
+
+def _find_cover_url(obj, depth=0):
+    """防御式在 dict/list 里找封面 URL：命中 http 开头字符串即返回，未命中返回空串。"""
+    if depth > 4:
+        return ""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in _COVER_KEYS and isinstance(v, str) and v.startswith("http"):
+                return v
+        for v in obj.values():
+            r = _find_cover_url(v, depth + 1)
+            if r:
+                return r
+    elif isinstance(obj, list):
+        for it in obj:
+            r = _find_cover_url(it, depth + 1)
+            if r:
+                return r
+    return ""
+
+
+def _load_fanqie_cookie() -> str:
+    """读取番茄登录 Cookie（可空）：环境变量 FANQIE_COOKIE 非空优先，其次 storage/fanqie_cookie.txt。
+    带登录 Cookie 请求时，锁定章节（isChapterLock）的 SSR 可能返回全文而非 200 字预览。
+    记录注入来源，便于诊断「锁章预览」是缺 Cookie 还是用了过期 Cookie。"""
+    env = (os.environ.get("FANQIE_COOKIE", "") or "").strip()
+    if env:
+        logger.info("番茄 Cookie 来源：FANQIE_COOKIE 环境变量（%d 字符）", len(env))
+        return env
+    try:
+        p = Path("storage") / "fanqie_cookie.txt"
+        if p.exists():
+            cookie = p.read_text(encoding="utf-8").strip()
+            if cookie:
+                logger.info("番茄 Cookie 来源：storage/fanqie_cookie.txt")
+            return cookie
+    except Exception:
+        pass
+    return ""
+
+
+# 「阅读榜·全品类」合成榜 key 别名：番茄网页榜单没有官方全品类/完本榜（只有 男频/女频 ×
+# 阅读榜(30万字+)/新书榜(<30万字)，mold 1=新书、2=阅读），完整阅读榜 = 按性别拉全部品类
+# 阅读榜（/api/rank/category/list，每品类官方 top，单次 limit=100 可回满）跨品类去重合并。
+READ_ALL_KEYS = frozenset({
+    "阅读榜全品类", "全品类阅读榜", "阅读榜·全品类", "全部阅读榜", "全品类", "阅读榜",
+})
+# 显式指定性别的全品类阅读榜别名 → 目标 gender 数值（番茄榜单 gender：1=男频 2=女频）
+GENDER_READ_ALL_KEYS = {
+    "男频阅读榜": 1, "男频": 1,
+    "女频阅读榜": 2, "女频": 2,
+}
+
+# 番茄正文视为「免费全文」的最少字数（SVIP 锁定章预览常低于此 → 不当正文落盘，
+# 与 book_fetch.FREE_FULL_MIN_CHARS 同口径；独立常量避免模块循环导入）
+FANQIE_FREE_MIN_CHARS = 300
+
+from core.text_utils import count_prose_units as _count_prose_units  # noqa: E402
+
 
 class FanqieCrawler:
     """番茄小说爬虫"""
@@ -81,11 +148,28 @@ class FanqieCrawler:
         "Referer": "https://fanqienovel.com/",
     }
 
-    # 番茄的品类映射
+    # 番茄的品类映射（旧 book_list 接口的题材 id → 中文名，抓取链路仍在用）
     GENRE_MAP = {
         1: "玄幻", 2: "都市", 3: "历史", 4: "武侠",
         5: "科幻", 6: "悬疑", 7: "游戏", 8: "轻小说",
         9: "短篇", 10: "现实",
+    }
+
+    # 番茄榜单分类映射（榜单页 /rank/{gender}_{rankMold}_{category_id}；UI 题材中文名 → 榜单分类 id）
+    GENRE_CATEGORY = {
+        "玄幻": "258",    # 传统玄幻
+        "都市": "261",    # 都市日常
+        "科幻": "8",      # 科幻末世
+        "历史": "273",    # 历史古代
+        "仙侠": "1140",   # 东方仙侠
+        "西方奇幻": "1141",
+    }
+    # 「全部」聚合使用的头部分类（各取前 N 合并按在读量排序）
+    AGGREGATE_CATEGORIES = ["258", "261", "8", "273", "1140", "1141"]
+    # 分类 id → 中文名（榜单页 rankCategoryTypeList 可动态取全量；此处兜底常用）
+    CATEGORY_NAMES = {
+        "258": "传统玄幻", "261": "都市日常", "8": "科幻末世",
+        "273": "历史古代", "1140": "东方仙侠", "1141": "西方奇幻",
     }
 
     def __init__(self, cache_dir: str = "storage/fanqie_cache", verify: bool = True):
@@ -97,41 +181,233 @@ class FanqieCrawler:
         if not verify:
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        # 登录 Cookie 注入：带番茄账号 Cookie 时，锁定章节（isChapterLock）SSR 返回全文
+        cookie = _load_fanqie_cookie()
+        if cookie:
+            for part in cookie.split(";"):
+                part = part.strip()
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    self.session.cookies.set(k.strip(), v.strip(), domain=".fanqienovel.com")
+
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._decoder = None  # lazy init
 
     def _init_decoder(self):
         if self._decoder is None:
-            from plugins.font_decoder import FanqieDecoder, load_mapping
+            from plugins.font_decoder import FanqieDecoder
             self._decoder = FanqieDecoder(verify=self.session.verify)
-            self._cached_mapping = {}
-            # 加载预生成的映射表（可能有多个字体），锚定项目根避免依赖 CWD
-            storage_dir = Path(__file__).resolve().parent.parent / "storage"
-            for mp in storage_dir.glob("font_mapping*.json"):
-                try:
-                    self._cached_mapping.update(load_mapping(str(mp)))
-                except Exception:
-                    pass
 
-    def discover_hot(self, genre_id: int = 0, count: int = 10) -> list[NovelInfo]:
-        """发现热榜小说"""
-        novels = []
+    def discover_hot(self, key: str = "", count: int = 10, gender: int = 1,
+                     rank_mold: int = 2) -> list[NovelInfo]:
+        """番茄热榜。key：榜单分类 id（如 '258'）或题材中文名（如 '玄幻'）；空/'全部' → 聚合头部分类。
 
-        # 先尝试 API
-        try:
-            novels = self._api_hot_list(genre_id, count)
-        except Exception as e:
-            logger.warning(f"API hot list failed: {e}")
-
-        # 如果 API 失败，尝试网页抓取
-        if not novels:
+        榜单页 /rank/{gender}_{rankMold}_{key} 的 SSR __INITIAL_STATE__.rank.book_list 解析，
+        书名/简介为 PUA 字体加密，经 FanqieDecoder.decode_content 还原为汉字。
+        """
+        key = (key or "").strip()
+        g = gender
+        if key in GENDER_READ_ALL_KEYS:        # 「男频阅读榜/女频」等显式性别别名 → 锁定性别后走全品类阅读榜
+            g = GENDER_READ_ALL_KEYS[key]
+            key = "阅读榜全品类"
+        if key in READ_ALL_KEYS:               # 「阅读榜·全品类」→ 整性别全品类阅读榜合并（无官方单榜）
             try:
-                novels = self._web_hot_list(genre_id, count)
+                return self.discover_read_rank_all(gender=g) or []
             except Exception as e:
-                logger.warning(f"Web hot list failed: {e}")
+                logger.warning(f"read-rank-all failed (gender={g}): {e}")
+                return []
+        if key and key != "全部":
+            if not key.isdigit():
+                key = self.GENRE_CATEGORY.get(key, "")
+            if key:
+                try:
+                    return self._rank_by_category(key, count, gender, rank_mold) or []
+                except Exception as e:
+                    logger.warning(f"rank hot list failed (key={key}): {e}")
+                    return []
+        # 空/'全部'/未识别题材 → 聚合。男频沿用头部分类口径；女频无男频那套头部分类，
+        # 且女频全品类书量本就不大 → 女频「全部」直接 = 女频全品类阅读榜
+        try:
+            if gender == 2:
+                rows = self.discover_read_rank_all(gender=2)
+                return rows[:count] if (count and count > 0) else rows
+            return self._rank_aggregate(count, gender, rank_mold) or []
+        except Exception as e:
+            logger.warning(f"aggregate hot list failed: {e}")
+            return []
 
-        return novels[:count]
+    def _get_decoder(self) -> Optional[font_decoder.FanqieDecoder]:
+        """懒初始化字体解码器（书名/简介/正文统一用它还原 PUA 密文）。"""
+        self._init_decoder()
+        return self._decoder
+
+    def _extract_ssr(self, html: str) -> Optional[dict]:
+        """提取页面 __INITIAL_STATE__ JSON。
+
+        用 raw_decode 精确定位对象结尾（SSR 在 JS 函数里，`};` 后不一定紧跟 </script>）；
+        页面偶发 undefined 字面量（无数据字段）先替换为 null 保证可解析。
+        """
+        i = html.find("window.__INITIAL_STATE__=")
+        if i < 0:
+            return None
+        j = html.find("{", i)
+        if j < 0:
+            return None
+        text = re.sub(r"\bundefined\b", "null", html[j:])
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(text)
+            return obj
+        except Exception as e:
+            logger.warning(f"SSR parse failed: {e}")
+            return None
+
+    def _rank_by_category(self, category_id: str, count: int, gender: int = 1,
+                          rank_mold: int = 2) -> list[NovelInfo]:
+        """拉单个榜单分类页，解析 rank.book_list → NovelInfo（排名/在读量/解码书名简介）。"""
+        url = f"{self.BASE_URL}/rank/{gender}_{rank_mold}_{category_id}"
+        resp = self.session.get(url, timeout=self.DETAIL_TIMEOUT,
+                                headers={"Accept": "text/html,application/xhtml+xml"})
+        if resp.status_code != 200:
+            logger.warning(f"rank page {url} -> {resp.status_code}")
+            return []
+        ssr = self._extract_ssr(resp.text)
+        if not ssr:
+            return []
+        rank = ssr.get("rank") or {}
+        items = rank.get("book_list") or []
+        # 从页面分类清单动态补全 id→name（新分类兜底）
+        names = dict(self.CATEGORY_NAMES)
+        for grp in ((rank.get("rankCategoryTypeList") or {}).get("male") or []) + \
+                   ((rank.get("rankCategoryTypeList") or {}).get("female") or []):
+            if grp.get("id"):
+                names[str(grp["id"])] = grp.get("name", "")
+        return [self._novel_from_rank(item, category_id, names) for item in items[:count]]
+
+    def _rank_aggregate(self, count: int, gender: int = 1, rank_mold: int = 2) -> list[NovelInfo]:
+        """「全部」聚合：头部分类各取前 5，去重后按在读量排序取 count（单分类失败不阻断）。"""
+        merged: list[NovelInfo] = []
+        seen: set[str] = set()
+        for cat in self.AGGREGATE_CATEGORIES:
+            try:
+                for n in self._rank_by_category(cat, 5, gender, rank_mold):
+                    if n.book_id in seen:
+                        continue
+                    seen.add(n.book_id)
+                    merged.append(n)
+            except Exception as e:
+                logger.warning(f"aggregate category {cat} failed: {e}")
+        merged.sort(key=lambda n: n.hot_score, reverse=True)
+        # 跨分类合并后按在读量重排 rank（各分类内排名在此处无全局意义）
+        for i, n in enumerate(merged[:count]):
+            n.rank = i + 1
+        return merged[:count]
+
+    def discover_read_rank_all(self, gender: int = 1, per_cat_cap: int = 300) -> list[NovelInfo]:
+        """整性别「阅读榜·全品类」合并榜（无官方单榜的合成口径）。
+
+        番茄阅读榜 = rank_mold 2；榜单页按品类划分（男 19 品类 / 女 18 品类，每品类官方
+        top100 左右）。此处遍历该性别 list_rankings 的全品类，逐类走
+        /api/rank/category/list 翻页拉阅读榜（单次 limit=100 即可回满该品类），
+        PUA 书名/作者/简介同 _novel_from_rank 解码；跨品类按 book_id 去重后按在读量
+        (read_count) 降序重排为整频完整阅读榜。单分类失败跳过不阻断。
+        """
+        label = "male" if gender == 1 else "female"
+        cats = self.list_rankings(gender=label) or []
+        if not cats:
+            logger.warning("discover_read_rank_all: 品类清单为空")
+            return []
+        names = {str(c.get("id")): c.get("name", "") for c in cats if c.get("id")}
+        first_cat = next(iter(names), "258")
+        api = f"{self.BASE_URL}/api/rank/category/list"
+        hdr = {"Accept": "application/json, text/plain, */*",
+               "Referer": f"{self.BASE_URL}/rank/{gender}_2_{first_cat}"}
+        merged: dict[str, NovelInfo] = {}
+        for cat in cats:
+            cid = str(cat.get("id", ""))
+            if not cid:
+                continue
+            try:
+                params = dict(app_id=2503, rank_list_type=3, offset=0, limit=100,
+                              category_id=cid, rank_version="", gender=gender, rankMold=2)
+                offset, total, got = 0, 0, 0
+                while True:
+                    params["offset"] = offset
+                    resp = self.session.get(api, params=params, timeout=self.DETAIL_TIMEOUT,
+                                            headers=hdr)
+                    if resp.status_code != 200:
+                        break
+                    try:
+                        data = resp.json().get("data") or {}
+                    except Exception:
+                        break
+                    items = data.get("book_list") or []
+                    if not items:
+                        break
+                    total = int(data.get("total_num") or 0)
+                    for it in items:
+                        n = self._novel_from_rank(it, cid, names)
+                        if n.book_id and n.book_id not in merged:
+                            merged[n.book_id] = n
+                    got += len(items)
+                    offset += len(items)
+                    # 翻到官方 total / 单品类上限 / 本页已不是满页(limit=100)即停
+                    if (total and offset >= total) or got >= per_cat_cap or len(items) < 100:
+                        break
+                    if offset >= 2000:      # 硬护栏防失控翻页
+                        break
+            except Exception as e:
+                logger.warning(f"read-rank-all category {cid} failed: {e}")
+                continue
+        rows = sorted(merged.values(), key=lambda n: n.hot_score, reverse=True)
+        for i, n in enumerate(rows):
+            n.rank = i + 1
+        return rows
+
+    def _novel_from_rank(self, item: dict, category_id: str, names: dict) -> NovelInfo:
+        """榜单条目 → NovelInfo：书名/简介字体解码，read_count→hot_score，currentPos→rank。"""
+        dec = self._get_decoder()
+        name = item.get("bookName", "") or ""
+        author = item.get("author", "") or ""
+        abstract = item.get("abstract", "") or ""
+        if dec:
+            # 书名/作者/简介均可能为 PUA 字体加密，统一还原
+            name = dec.decode_content(name)
+            author = dec.decode_content(author)
+            abstract = dec.decode_content(abstract)
+        cat_id = str(item.get("curent_category_id") or category_id or "")
+        return NovelInfo(
+            book_id=str(item.get("bookId", "") or ""),
+            title=name,
+            author=author,
+            genre=names.get(cat_id, item.get("categoryV2") or ""),
+            word_count=int(item.get("wordNumber", 0) or 0),
+            chapter_count=0,
+            hot_score=int(item.get("read_count", 0) or 0),
+            intro=abstract,
+            url=f"{self.BASE_URL}/page/{item.get('bookId','')}",
+            cover=item.get("thumbUri", "") or "",
+            platform="fanqie",
+            rank=int(item.get("currentPos", 0) or 0),
+        )
+
+    def list_rankings(self, gender: str = "male", rank_mold: int = 2) -> list[dict]:
+        """番茄榜单分类清单（男频/女频），来自任一榜单页 SSR rank.rankCategoryTypeList（各页一致）。"""
+        url = f"{self.BASE_URL}/rank/1_{rank_mold}_258"
+        try:
+            resp = self.session.get(url, timeout=self.DETAIL_TIMEOUT,
+                                    headers={"Accept": "text/html,application/xhtml+xml"})
+            if resp.status_code != 200:
+                return []
+            ssr = self._extract_ssr(resp.text)
+            if not ssr:
+                return []
+            rcl = (ssr.get("rank") or {}).get("rankCategoryTypeList") or {}
+            items = rcl.get(gender) or []
+            return [{"id": str(c.get("id")), "name": c.get("name", "")} for c in items]
+        except Exception as e:
+            logger.warning(f"list_rankings failed: {e}")
+            return []
 
     def search_novel(self, title: str) -> Optional[NovelInfo]:
         """按书名搜索——Bing搜索 + 页面解析 + fanqie搜索页兜底"""
@@ -217,7 +493,7 @@ class FanqieCrawler:
                     continue
             return None
 
-        print(f"[搜索] 并行搜索 '{title[:30]}' -> {len(unique_queries)}种查询")
+        logger.info("并行搜索 '%s' -> %d种查询", str(title)[:30], len(unique_queries))
         
         # 先用最精确的查询串行试一次
         if unique_queries:
@@ -228,7 +504,7 @@ class FanqieCrawler:
         
         # 失败则并行跑剩余查询（每个查询用独立 session，requests.Session 非线程安全）
         if len(unique_queries) > 1:
-            def _parallel_search():
+            def _parallel_search(query: str):
                 import requests as _req
                 import threading as _threading
                 import urllib3 as _urllib3
@@ -264,7 +540,7 @@ class FanqieCrawler:
                 return None
             
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(unique_queries)-1) as executor:
-                futures = {executor.submit(_parallel_search): q for q in unique_queries[1:]}
+                futures = {executor.submit(_parallel_search, q): q for q in unique_queries[1:]}
                 try:
                     for future in concurrent.futures.as_completed(futures, timeout=5):
                         try:
@@ -334,6 +610,7 @@ class FanqieCrawler:
                 hot_score=page.get("readCount", 0),
                 intro=page.get("abstract", ""),
                 url=f"{self.BASE_URL}/page/{book_id}",
+                cover=_find_cover_url(page),
             )
         except Exception as e:
             logger.warning(f"Page parse failed for {book_id}: {e}")
@@ -351,57 +628,8 @@ class FanqieCrawler:
             hot_score=info.get("read_count", 0),
             intro=info.get("abstract", ""),
             url=f"{self.BASE_URL}/page/{info.get('book_id','')}",
+            cover=_find_cover_url(info),
         )
-
-    def _api_hot_list(self, genre_id: int, count: int) -> list[NovelInfo]:
-        """通过 API 获取热榜"""
-        url = f"{self.API_BASE}/author/library/book_list/v0"
-        params = {
-            "page_index": 0,
-            "page_size": min(count, 30),
-            "filter_type": 3,  # 3 = 热榜
-            "order": 1,        # 1 = 按热度
-        }
-        if genre_id > 0:
-            params["genre_type"] = genre_id
-
-        resp = self.session.get(url, params=params, timeout=self.DETAIL_TIMEOUT)
-        data = resp.json()
-
-        novels = []
-        items = data.get("data", {}).get("book_list", [])
-        for item in items:
-            info = item.get("book_info", item)
-            novels.append(NovelInfo(
-                book_id=str(info.get("book_id", "")),
-                title=info.get("book_name", ""),
-                author=info.get("author", ""),
-                genre=self.GENRE_MAP.get(info.get("genre_type", 0), ""),
-                word_count=info.get("all_word_count", 0),
-                chapter_count=info.get("all_chapter_count", 0),
-                hot_score=info.get("read_count", 0),
-                intro=info.get("abstract", ""),
-                url=f"{self.BASE_URL}/page/{info.get('book_id','')}",
-            ))
-        return novels
-
-    def _web_hot_list(self, genre_id: int, count: int) -> list[NovelInfo]:
-        """网页抓取热榜（备用方案）"""
-        url = f"{self.BASE_URL}/rank/hot"
-        resp = self.session.get(url, timeout=self.DETAIL_TIMEOUT)
-        text = resp.text
-
-        novels = []
-        # 从页面中提取小说信息
-        pattern = r'book_id["\']?\s*[:=]\s*["\']?(\d+)'
-        ids = re.findall(pattern, text)
-
-        for bid in ids[:count]:
-            info = self.get_novel_info(bid)
-            if info:
-                novels.append(info)
-
-        return novels
 
     def get_novel_info(self, book_id: str) -> Optional[NovelInfo]:
         """获取单本书详细信息"""
@@ -420,6 +648,7 @@ class FanqieCrawler:
                 chapter_count=info.get("all_chapter_count", 0),
                 intro=info.get("abstract", ""),
                 url=f"{self.BASE_URL}/page/{book_id}",
+                cover=_find_cover_url(info),
             )
         except Exception as e:
             logger.warning(f"Failed to get info for {book_id}: {e}")
@@ -481,7 +710,13 @@ class FanqieCrawler:
         """下载单章 — 从阅读器页面SSR提取"""
         cache_file = self.cache_dir / f"{chapter_id}.txt"
         if cache_file.exists():
-            return cache_file.read_text(encoding="utf-8")
+            try:
+                cached = cache_file.read_text(encoding="utf-8")
+            except Exception:
+                cached = ""
+            if cached:
+                return cached
+            # 空/损坏缓存（0 字节残留）视为未缓存，重新下载
 
         try:
             r = self.session.get(
@@ -512,22 +747,34 @@ class FanqieCrawler:
                         break
 
             if content:
+                # 1) 去掉图片块（<img>...</img>，内含 {{image_domain}} 模板占位，无实际图）
+                content = re.sub(r'<img[^>]*>.*?</img>', '', content, flags=re.DOTALL)
+                content = re.sub(r'<img[^>]*>', '', content)
+                # 2) 段落/换行标签 → 换行（<p></p><br><div> 都转，否则剥掉后整章挤成一段）
+                content = re.sub(r'</?p[^>]*>|<br\s*/?>|</?div[^>]*>', '\n', content)
                 content = re.sub(r'<[^>]+>', '', content)
                 content = re.sub(r'\n{3,}', '\n\n', content)
-
-                # PUA 字体解码
+                # 3) PUA 字体解码（全量检查——开头可能被长 <img> 模板占位挤出前 100 字）
                 self._init_decoder()
-                if any(0xE000 <= ord(c) <= 0xF8FF for c in content[:100]):
-                    if self._cached_mapping:
-                        content = font_decoder.decode_with_mapping(
-                            content, self._cached_mapping)
-                    else:
-                        content = self._decoder.decode_page(r.text)
-                        # 剔除 HTML 标签（解码后可能残留）
-                        content = re.sub(r'<[^>]+>', '', content)
+                if any(0xE000 <= ord(c) <= 0xF8FF for c in content):
+                    content = self._decoder.decode_content(content)
 
                 if content.strip():
-                    cache_file.write_text(content, encoding="utf-8")
+                    # 原子写缓存（临时文件 + os.replace），避免并发读/崩溃读到半写正文
+                    import tempfile as _tf
+                    import os as _os
+                    self.cache_dir.mkdir(parents=True, exist_ok=True)
+                    _fd, _tmp = _tf.mkstemp(dir=str(self.cache_dir), suffix=".tmp")
+                    try:
+                        with _os.fdopen(_fd, "w", encoding="utf-8") as _f:
+                            _f.write(content)
+                        _os.replace(_tmp, str(cache_file))
+                    except Exception:
+                        try:
+                            _os.unlink(_tmp)
+                        except Exception:
+                            pass
+                        raise
 
             return content or ""
         except Exception as e:
@@ -630,31 +877,37 @@ class NovelAnalyzer:
             return []
 
     def extract_structure(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
-        """提取大纲结构模式"""
+        """提取大纲结构模式（多层弧树：每模板 = 单个可复用弧，stages 可嵌套 children）"""
         text = self._build_sample_text(samples, 2000)
         ch_count = novel.chapter_count or len(samples) * 10
 
         prompt = f"""分析番茄小说《{novel.title}》（{novel.genre}，约{ch_count}章）的章节结构，
-提取出该流派的大纲骨架模式。
+从书中识别出**若干个典型的、可复用的叙事弧**（每个弧是一个有明确目标/方向的剧情单元，
+如 重生复仇弧、试炼扬名弧、误会和解弧）。
 
-大纲骨架应包含：
-1. 卷（Volume）划分：全书分几个大卷，每卷的核心任务
-2. 弧（Arc）划分：每卷内的叙事弧线
-3. 每段的关键事件列表
+每个弧都要拆成**多层的弧树**（大弧 → 子弧 → 阶段）：深度与各层分支数按书里真实结构定，
+**不要均匀**——有的弧只有一层（直接平铺几个阶段），有的弧两层，有的子弧内还要再拆到三层。
+子弧/阶段的 min_words/max_words 按它在书里实际占用的**字数区间**填（如 3000~6000 字，按每章约 3000 字估算）。
 
 【小说内容样本】
 {text}
 
 返回 JSON：
 {{"structures": [
-  {{"name":"{novel.genre}标准结构",
-   "total_chapters":{ch_count},
+  {{"name":"弧名（如 重生复仇弧）",
+   "total_words":{ch_count * 3000},
+   "tags":["题材标签","可复用场景"],
+   "description":"这个弧做什么、适合什么情境",
    "stages":[
-     {{"name":"阶段名","description":"这个阶段做什么",
-       "min_chapters":10,"max_chapters":20,
-       "key_events":["事件1","事件2"]}}
-   ]
-  }}
+     {{"name":"子弧名","description":"这个子弧做什么",
+       "min_words":30000,"max_words":60000,
+       "key_events":["事件1","事件2"],
+       "children":[
+         {{"name":"孙弧/阶段名","description":"...",
+           "min_words":9000,"max_words":24000,
+           "key_events":["事件1","事件2"]}}
+       ]}}
+   ]}}
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的小说结构分析师。只返回JSON。",
@@ -720,10 +973,12 @@ class NovelAnalyzer:
 class LibraryIngestor:
     """将分析结果导入各库（桥段/大纲/笑点）"""
 
-    def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None):
+    def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None,
+                 char_lib=None):
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
         self.gag_lib = gag_lib
+        self.char_lib = char_lib
 
     def ingest(self, analysis: dict, source: str = "fanqie") -> dict:
         """导入分析结果到各库"""
@@ -776,22 +1031,29 @@ class LibraryIngestor:
             if t.id == sid:
                 return
 
-        stages = []
-        for s in data.get("stages", []):
+        def _node(s) -> StageNode:
             if isinstance(s, str):
-                stages.append(StageNode(name=s, description=""))
-            else:
-                stages.append(StageNode(
-                    name=s.get("name",""), description=s.get("description",""),
-                    min_chapters=s.get("min_chapters",10),
-                    max_chapters=s.get("max_chapters",20),
-                    key_events=s.get("key_events",[]),
-                ))
+                return StageNode(name=s, description="")
+            return StageNode(
+                name=s.get("name",""), description=s.get("description",""),
+                # 兼容旧数据 min_chapters/max_chapters → ×3000
+                min_words=s.get("min_words", s.get("min_chapters", 10) * 3000),
+                max_words=s.get("max_words", s.get("max_chapters", 20) * 3000),
+                key_events=s.get("key_events",[]),
+                foreshadow_opportunities=s.get("foreshadow_opportunities",[]),
+                themes=s.get("themes",[]),
+                children=[_node(c) for c in s.get("children", [])],
+            )
+
         template = StructureTemplate(
             id=sid, name=data.get("name",""),
-            genre="", sub_genre="",
-            total_chapters=data.get("total_chapters",500),
-            stages=stages,
+            description=data.get("description",""),
+            # 兼容旧 total_chapters（×3000 估字数，与 structure.py from_dict 口径一致）
+            total_words=data.get("total_words", data.get("total_chapters", 500) * 3000),
+            stages=[_node(s) for s in data.get("stages", [])],
+            tags=data.get("tags", []),
+            source=source,
+            created_at=data.get("created_at", ""),
         )
         self.struct_lib.templates.append(template)
 
@@ -807,10 +1069,34 @@ class LibraryIngestor:
             category=data.get("category",""),
             pattern_description=data.get("pattern_description",""),
             template=data.get("pattern_description",""),
-            fit_scenes=data.get("scene_fit",[]),
+            fit_scenes=data.get("fit_scenes") or data.get("scene_fit") or [],
             examples=data.get("examples",[]),
         )
         self.gag_lib.patterns.append(pattern)
+
+    def _add_character(self, data: dict, source: str):
+        from libraries.character import CharacterArchetype
+        if not self.char_lib:
+            return
+        cid = f"scout_{source}_{data.get('name','unknown')}"
+        for c in self.char_lib.archetypes:
+            if c.id == cid:
+                return
+
+        kwargs = dict(
+            id=cid, name=data.get("name", ""),
+            personality=data.get("personality", ""),
+            description=data.get("description", ""),
+            archetypes=data.get("archetypes", []),
+            examples=data.get("examples", []),
+            catchphrases=data.get("catchphrases", []),
+            tags=data.get("tags", []),
+            fit_tags=data.get("fit_tags", []),
+            source=source,
+        )
+        if data.get("created_at"):
+            kwargs["created_at"] = data["created_at"]
+        self.char_lib.archetypes.append(CharacterArchetype(**kwargs))
 
 
 # ═══════════════════════════════════════════
@@ -828,13 +1114,14 @@ class FanqieScoutAgent:
     """
 
     def __init__(self, llm_client=None, plot_lib=None, struct_lib=None,
-                 gag_lib=None, verify: bool = True):
+                 gag_lib=None, char_lib=None, verify: bool = True):
         self.crawler = FanqieCrawler(verify=verify)
         self.analyzer = NovelAnalyzer(llm_client)
         self.plot_lib = plot_lib
         self.struct_lib = struct_lib
         self.gag_lib = gag_lib
-        self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib)
+        self.char_lib = char_lib
+        self.ingestor = LibraryIngestor(plot_lib, struct_lib, gag_lib, char_lib)
 
     def run(self, genre: str = "", book_count: int = 5,
             chapters_per_book: int = 30, delay: float = 1.5,
@@ -895,11 +1182,15 @@ class FanqieScoutAgent:
 
         return result
 
-    def fetch_novel(self, title: str, chapters: int = 50,
+    def fetch_novel(self, title: str, chapters: int = 0,
+                    start_chapter: int = 1, end_chapter: int = 0,
                     on_progress=None, download_delay: float = 1.0) -> tuple:
-        """仅下载（不分析不入库），返回 (NovelInfo, downloaded_chapters)"""
-        result = ScoutResult()
+        """仅下载（不分析不入库），返回 (NovelInfo, downloaded_chapters)。
 
+        chapters<=0（默认）→ 全文/增量下载：书未下载则从头下全文；已在本地则只补新章节
+        （起始 = 已下载最大章 + 1，结束 = 全书总章数）。chapters>0 时按真实章号区间下载：
+        start_chapter=100, end_chapter=130 下载 100~130 章；只给 chapters 时从 start_chapter(缺省 1) 起 N 章。
+        """
         if on_progress:
             on_progress("search", 0, 1, f"搜索: {title}")
         novel = self.crawler.search_novel(title)
@@ -909,39 +1200,100 @@ class FanqieScoutAgent:
         if on_progress:
             on_progress("search", 1, 1, f"找到: {novel.title}")
 
-        chapter_list = self.crawler.get_chapter_list(novel.book_id, chapters)
+        full = int(chapters or 0) <= 0
+        if full:
+            # 全文/增量：起始 = 已下载最大章 + 1（无则 1），结束 = 全书总章数
+            existing_max = self._existing_max_chapter(novel.title)
+            total = int(novel.chapter_count or 0)
+            if total <= 0:
+                total = 10000   # 未知总章数兜底：SSR 目录按全部卷返回，此处仅作目录拉取上限
+            start_chapter = existing_max + 1
+            end_chapter = total
+            if existing_max:
+                if on_progress:
+                    on_progress("search", 1, 1,
+                                f"已下载至第 {existing_max} 章，增量更新 {existing_max+1}~{total} 章")
+        else:
+            start_chapter = max(1, int(start_chapter or 1))
+            effective_end = int(end_chapter or 0)
+            if effective_end <= 0:
+                effective_end = start_chapter + int(chapters or 0) - 1
+            end_chapter = effective_end
+
+        catalog = self.crawler.get_chapter_list(novel.book_id, end_chapter)
+        chapter_list = [c for c in catalog
+                        if start_chapter <= int(c.get("index") or 0) <= end_chapter]
         total_ch = len(chapter_list)
+
+        from plugins.novel_storage import (save_novel, save_chapter, NOVELS_DIR,
+                                           _safe_name)
+        folder = _safe_name(novel.title)
+
+        # 已是最新（无需下载）：不重写存储，直接返回现有文件夹
+        if not chapter_list:
+            if on_progress:
+                on_progress("download", 0, 0, "已是最新，无需下载")
+            return novel, {"folder": folder, "chapters": 0, "already": True}
 
         if on_progress:
             on_progress("download", 0, total_ch, f"下载 {total_ch} 章...")
 
-        downloaded = []
-        for i, ch in enumerate(chapter_list):
+        # 建目录 + info.json（含封面）——仅当该书尚未落盘 info（增量/续传保留原来源元数据，
+        # 不覆盖 downloaded_at / site / 番茄合并来源字段）
+        if not (NOVELS_DIR / folder / "info.json").exists():
+            save_novel("fanqie", {
+                "title": novel.title, "author": novel.author,
+                "book_id": novel.book_id, "url": novel.url,
+                "genre": novel.genre, "chapter_count": novel.chapter_count,
+                "cover": novel.cover,
+            }, [])
+
+        # 断点/重复请求幂等：跳过已落盘**且 content 完整**的章（短预览/空占位视为缺章重下）
+        from plugins.novel_storage import existing_complete_chapters
+        existing = existing_complete_chapters(folder, min_units=FANQIE_FREE_MIN_CHARS)
+        pending = [c for c in chapter_list if int(c.get("index") or 0) not in existing]
+        skipped_existing = total_ch - len(pending)
+        downloaded = 0
+        skipped_locked = 0
+        from core.text_utils import cjk_char_count as _cjkc   # 锁章门用纯 CJK 口径
+        for i, ch in enumerate(pending):
             content = self.crawler.download_chapter(novel.book_id, ch["id"])
-            if content.strip():
-                imported_re = re
-                downloaded.append({
+            units = _count_prose_units(content or "")
+            if content and content.strip() and _cjkc(content or "") >= FANQIE_FREE_MIN_CHARS:
+                save_chapter("fanqie", folder, {
                     "index": ch["index"], "title": ch["title"],
                     "content": content,
-                    "word_count": len(imported_re.findall(r"[\u4e00-\u9fff]", content)),
+                    "word_count": units,
                 })
+                downloaded += 1
+            elif content and content.strip():
+                # 锁章预览/占位：不当正文落盘，留待有镜像全文或解锁后再补（进度如实际报）
+                skipped_locked += 1
             if on_progress:
-                on_progress("download", i+1, total_ch, ch["title"][:30])
-            if i < total_ch - 1:
+                on_progress("download", i + 1, len(pending), ch["title"][:30])
+            if i < len(pending) - 1:
                 time.sleep(download_delay)  # 礼貌爬取间隔
 
         if on_progress:
-            on_progress("download", total_ch, total_ch, f"下载完成 {len(downloaded)}章")
+            on_progress("download", len(pending), len(pending),
+                        f"下载完成 {downloaded}章（本次新增）")
 
-        # 保存到 storage/novels/
-        from plugins.novel_storage import save_novel
-        folder = save_novel("fanqie", {
-            "title": novel.title, "author": novel.author,
-            "book_id": novel.book_id, "url": novel.url,
-            "genre": novel.genre, "chapter_count": novel.chapter_count,
-        }, downloaded)
+        return novel, {"folder": folder, "chapters": downloaded,
+                       "already": False, "skipped_existing": skipped_existing,
+                       "skipped_locked": skipped_locked}
 
-        return novel, {"folder": folder, "chapters": len(downloaded)}
+
+
+    def _existing_max_chapter(self, title: str) -> int:
+        """该书在本地书库已下载的**完整**最大章号（0 = 未下载过/全不完整）。
+
+        只计 content 有效（≥ FREE 字数）的章：若最后落盘的是锁章短预览/空占位，视为缺章，
+        增量起点会回退到它之前 → 下次重下可修复。统一书库：NOVELS_DIR/<书名>/。
+        """
+        from plugins.novel_storage import _safe_name, existing_complete_chapters
+        idxs = existing_complete_chapters(_safe_name(title),
+                                          min_units=FANQIE_FREE_MIN_CHARS)
+        return max(idxs) if idxs else 0
 
     def scout_single_book(self, title: str, chapters: int = 50,
                           on_progress=None, download_delay: float = 1.0) -> ScoutResult:
@@ -1004,13 +1356,13 @@ class FanqieScoutAgent:
         return result
 
     def ingest_selected(self, plots: list = None, structures: list = None,
-                        gags: list = None,
+                        gags: list = None, characters: list = None,
                         source: str = "fanqie", on_progress=None) -> dict:
-        """选择性入库"""
+        """选择性入库（含角色原型库）"""
         from datetime import datetime
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        stats = {"plots": 0, "structures": 0, "gags": 0}
+        stats = {"plots": 0, "structures": 0, "gags": 0, "characters": 0}
 
         if plots and self.plot_lib:
             for item in plots:
@@ -1041,6 +1393,16 @@ class FanqieScoutAgent:
             if on_progress:
                 on_progress("ingest", 1, 1, f"笑点已入库 {stats['gags']}个")
             self.gag_lib._save()
+
+        if characters and self.char_lib:
+            for item in characters:
+                item["source"] = source
+                item["created_at"] = now
+                self.ingestor._add_character(item, source)
+                stats["characters"] += 1
+            if on_progress:
+                on_progress("ingest", 1, 1, f"角色已入库 {stats['characters']}个")
+            self.char_lib._save()
 
         return stats
 

@@ -9,8 +9,10 @@
 from dataclasses import dataclass, field
 from typing import Optional
 import json
+import math
 
 from core.json_store import read_json, write_json_atomic
+from libraries.world_tags import genre_from_tags
 
 
 # ═══════════════════════════════════════════
@@ -40,7 +42,7 @@ DEFAULT_WORLD_BUILDING = {
 
 # 单条角色条目键（顺序即 to_dict 展示顺序）
 _CHAR_FIELDS = ("name", "role", "importance", "identity", "gender", "personality",
-                "catchphrase", "brief", "title", "golden_finger",
+                "catchphrase", "brief", "title", "golden_finger", "faction",
                 "age", "death_year", "archetype_id", "relations")
 
 _CHAR_DEFAULT_ROLE = "配角"
@@ -90,6 +92,7 @@ def _char_from_protagonist(p) -> dict:
         "brief": str(p.get("background", "") or ""),
         "title": "",
         "golden_finger": str(p.get("golden_finger", "") or ""),
+        "faction": "",
         "age": int(p.get("age") or 0),
         "death_year": int(p.get("death_year") or 0),
         "archetype_id": "",
@@ -115,6 +118,7 @@ def _char_from_support(c, mc_name) -> dict:
         "brief": str(c.get("brief", "") or ""),
         "title": str(c.get("title", "") or ""),
         "golden_finger": "",
+        "faction": "",
         "age": int(c.get("age") or 0),
         "death_year": int(c.get("death_year") or 0),
         "archetype_id": str(c.get("archetype_id", "") or ""),
@@ -125,13 +129,14 @@ def _char_from_support(c, mc_name) -> dict:
 def normalize_basic_info(bi) -> dict:
     """把 basic_info 统一为 characters 数组（主角/配角合一）。旧结构自动迁移，幂等。
 
-    - characters 已存在 → 逐条 _canon_char
-    - 否则从 protagonist(dict) + supporting_cast(list) 派生
+    - characters 已存在且非空 → 逐条 _canon_char
+    - 否则（含 characters 为空列表）从 protagonist(dict) + supporting_cast(list) 派生
+      —— 空 characters 时仍回退派生，避免 'characters: []' 吞掉旧格式 protagonist
     - 兜底：无 role==主角 的有名字条目时，首个有名字条目标为主角
     - 移除旧键 protagonist/supporting_cast
     """
     bi = dict(bi or {})
-    if isinstance(bi.get("characters"), list):
+    if isinstance(bi.get("characters"), list) and bi["characters"]:
         chars = [_canon_char(c) for c in bi["characters"] if isinstance(c, dict)]
     else:
         chars = []
@@ -190,15 +195,55 @@ def relation_to_mc(c, bi) -> str:
                 return str(r.get("relation", "") or "")
     return str(c.get("relation", "") or "")
 
+
+# ─── 弧的章/字双坐标换算（字数轴=落盘权威；start_word/end_word 0 基、start 含/end 不含） ───
+def chapter_to_word(ch, wpc):
+    """1-based 章号 → 0-based 字数起点：第 N 章占 [(N-1)*wpc, N*wpc)。"""
+    return max(0, (int(ch) - 1) * int(wpc or 3000))
+
+
+def word_to_chapter_start(w, wpc):
+    """0-based 字数 w（含）→ 所在章（1-based）。"""
+    return 1 if (w or 0) <= 0 else (int(w) // int(wpc or 3000)) + 1
+
+
+def word_to_chapter_end(ew, wpc):
+    """排他 end 字数 → 覆盖到的末章（1-based）。"""
+    if not ew or ew <= 0:
+        return 1
+    return max(1, math.ceil(int(ew) / int(wpc or 3000)))
+
+
+def reconcile_outline(o, wpc):
+    """幂等同步弧的章/字双坐标：缺哪对补哪对；双全则原样保留（防字坐标被章坐标覆盖丢精度）。
+
+    - 仅章坐标（旧书）→ 按每章字数推导字坐标（整章对齐）。
+    - 仅字坐标（新书，无章节输入）→ 推导章坐标作兼容视图。
+    - 双全 → 都不动。"""
+    wpc = wpc or 3000
+    has_word = (o.start_word is not None and o.end_word is not None
+                and o.start_word >= 0 and o.end_word >= 0)
+    has_ch = (o.start_chapter is not None and o.end_chapter is not None
+              and o.start_chapter > 0 and o.end_chapter > 0)
+    if not has_word:
+        o.start_word = chapter_to_word(o.start_chapter if has_ch else 1, wpc)
+        o.end_word = int(o.end_chapter if has_ch else 30) * wpc
+    if not has_ch:
+        o.start_chapter = word_to_chapter_start(o.start_word, wpc)
+        o.end_chapter = max(o.start_chapter, word_to_chapter_end(o.end_word, wpc))
+
+
 @dataclass
 class OutlineSlot:
-    """一个大纲在故事线上的位置"""
+    """一个大纲（情节弧）在故事线上的位置：树状目标节点，字数跨度（0 基，start 含/end 不含），可多层嵌套（parent_arc_id）；start_chapter/end_chapter 为兼容/推导视图。"""
     id: str                        # 唯一标识
     template_id: str               # 对应 StructureLibrary 里的模板，""=已展开不依赖模板
-    name: str                      # 显示名称（如"都市爽文开篇"）
-    start_chapter: int = 1         # 从第几章开始
+    name: str                      # 显示名称（如"末日来临前囤物资"）
+    start_chapter: int = 1         # 从第几章开始（兼容/推导视图）
     end_chapter: int = 30          # 到第几章
-    stages: list = field(default_factory=list)   # 从模板展开的阶段 [{name,min_ch,max_ch,events}]
+    start_word: Optional[int] = None  # 0-based inclusive 字数，权威；None=由 chapter 推导
+    end_word: Optional[int] = None    # exclusive 字数，权威；None=由 chapter 推导
+    stages: list = field(default_factory=list)   # 从模板展开的阶段 [{name,min_ch,max_ch,events,description,foreshadow_opportunities,themes}]
     expanded: bool = False         # 是否已展开填充了桥段
     notes: str = ""                # 用户备注
 
@@ -207,6 +252,7 @@ class OutlineSlot:
     predecessor: str = ""          # 前驱大纲 id
     successor: str = ""            # 后继大纲 id
     transition_type: str = "sequential"  # sequential(顺序接续)|overlap(重叠过渡)|merge(融合)
+    parent_arc_id: str = ""          # 弧树嵌套：父弧 id，空=顶层弧
 
     # 叙事手法（故事线严谨性：顺叙/倒叙/插叙）
     narrative: str = "chronological"   # chronological(顺叙)|flashback(倒叙)|interleaved(插叙)
@@ -255,8 +301,6 @@ class PlotSlot:
 class BookStoryline:
     """整本书的故事线配置 —— 新书启动的核心产出"""
     book_title: str = ""
-    genre: str = ""
-    sub_genre: str = ""
     words_per_chapter: int = 3000
     pen_name: str = ""
     platform: str = "fanqie"   # 目标平台：fanqie/qidian（写作时注入平台写作约束）
@@ -293,24 +337,27 @@ class BookStoryline:
     updated_at: str = ""
 
     def to_dict(self) -> dict:
-        return {
-            "book_title": self.book_title,
-            "genre": self.genre,
-            "sub_genre": self.sub_genre,
-            "words_per_chapter": self.words_per_chapter,
-            "pen_name": self.pen_name,
-            "platform": self.platform,
-            "basic_info": self.basic_info,
-            "outlines": [{
+        def _outline_dict(o):
+            reconcile_outline(o, self.words_per_chapter or 3000)   # 落盘前同步章/字双坐标
+            return {
                 "id": o.id, "template_id": o.template_id, "name": o.name,
                 "start_chapter": o.start_chapter, "end_chapter": o.end_chapter,
+                "start_word": o.start_word, "end_word": o.end_word,
                 "stages": o.stages, "expanded": o.expanded, "notes": o.notes,
                 "overlaps_with": o.overlaps_with,
                 "predecessor": o.predecessor, "successor": o.successor,
                 "transition_type": o.transition_type,
                 "narrative": o.narrative,
                 "narrative_target": o.narrative_target,
-            } for o in self.outlines],
+                "parent_arc_id": o.parent_arc_id,
+            }
+        return {
+            "book_title": self.book_title,
+            "words_per_chapter": self.words_per_chapter,
+            "pen_name": self.pen_name,
+            "platform": self.platform,
+            "basic_info": self.basic_info,
+            "outlines": [_outline_dict(o) for o in self.outlines],
             "plots": [{
                 "id": p.id, "template_id": p.template_id, "name": p.name,
                 "category": p.category, "sub_category": p.sub_category,
@@ -343,8 +390,6 @@ class BookStoryline:
     def from_dict(cls, d: dict) -> "BookStoryline":
         tl = cls(
             book_title=d.get("book_title", ""),
-            genre=d.get("genre", ""),
-            sub_genre=d.get("sub_genre", ""),
             words_per_chapter=d.get("words_per_chapter", 3000),
             pen_name=d.get("pen_name", ""),
             platform=d.get("platform", "fanqie"),
@@ -355,18 +400,31 @@ class BookStoryline:
             generated_at=d.get("generated_at", ""),
             updated_at=d.get("updated_at", ""),
         )
-        tl.outlines = [OutlineSlot(
-            id=o.get("id", ""), template_id=o.get("template_id", ""),
-            name=o.get("name", ""), start_chapter=o.get("start_chapter", 1),
-            end_chapter=o.get("end_chapter", 30), stages=o.get("stages", []),
-            expanded=o.get("expanded", False), notes=o.get("notes", ""),
-            overlaps_with=o.get("overlaps_with", []),
-            predecessor=o.get("predecessor", ""),
-            successor=o.get("successor", ""),
-            transition_type=o.get("transition_type", "sequential"),
-            narrative=o.get("narrative", "chronological"),
-            narrative_target=o.get("narrative_target", ""),
-        ) for o in d.get("outlines", [])]
+        tl.outlines = []
+        for o in d.get("outlines", []):
+            _sc = o.get("start_chapter")
+            _ec = o.get("end_chapter")
+            _sw = o.get("start_word")
+            _ew = o.get("end_word")
+            _slot = OutlineSlot(
+                id=o.get("id", ""), template_id=o.get("template_id", ""),
+                name=o.get("name", ""),
+                start_chapter=int(_sc) if _sc is not None else None,
+                end_chapter=int(_ec) if _ec is not None else None,
+                start_word=int(_sw) if _sw is not None else None,
+                end_word=int(_ew) if _ew is not None else None,
+                stages=o.get("stages", []),
+                expanded=o.get("expanded", False), notes=o.get("notes", ""),
+                overlaps_with=o.get("overlaps_with", []),
+                predecessor=o.get("predecessor", ""),
+                successor=o.get("successor", ""),
+                transition_type=o.get("transition_type", "sequential"),
+                narrative=o.get("narrative", "chronological"),
+                narrative_target=o.get("narrative_target", ""),
+                parent_arc_id=o.get("parent_arc_id", ""),
+            )
+            reconcile_outline(_slot, tl.words_per_chapter or 3000)
+            tl.outlines.append(_slot)
         tl.plots = [PlotSlot(
             id=p.get("id", ""), template_id=p.get("template_id", ""),
             name=p.get("name", ""), category=p.get("category", ""),
@@ -398,11 +456,17 @@ class BookStoryline:
 # 故事线生成器
 # ═══════════════════════════════════════════
 
-def structure_to_stages(tmpl) -> list[dict]:
-    """把结构模板的阶段展开为 stage dict（name/min_ch/max_ch/events/themes）——多实现共用防漂移。"""
+def structure_to_stages(tmpl, words_per_chapter: int = 3000) -> list[dict]:
+    """把结构模板的阶段展开为 stage dict（name/min_ch/max_ch/events/description/foreshadow_opportunities/themes）——多实现共用防漂移。
+    模板只表述字数（min_words/max_words），此处按每章字数换算成章数（book 侧 stage 兼容视图）。"""
+    wpc = max(1, words_per_chapter or 3000)
     return [
-        {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
+        {"name": s.name,
+         "min_ch": max(1, s.min_words // wpc),
+         "max_ch": max(1, s.max_words // wpc),
          "events": s.key_events[:5],
+         "description": getattr(s, "description", ""),
+         "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or []),
          "themes": list(s.themes or [])}
         for s in tmpl.stages
     ]
@@ -454,7 +518,7 @@ def mount_themes_and_hooks(plot: "PlotSlot", storyline_themes: list) -> None:
 
 
 class StorylineBuilder:
-    """根据流派和用户需求，生成大纲故事线 + 桥段配置"""
+    """根据题材方向和用户需求，生成大纲故事线 + 桥段配置"""
 
     def __init__(self, structure_lib=None, plot_lib=None, gag_lib=None, llm_client=None):
         self.structures = structure_lib
@@ -484,20 +548,20 @@ class StorylineBuilder:
         return self._ai_build_sequence(genre, sub_genre, custom_context, max_outlines)
 
     def _rule_build_sequence(self, genre: str) -> list[OutlineSlot]:
-        """规则拼接：按流派选 2-3 个大纲，默认顺序接续"""
+        """规则拼接：按题材方向选 2-3 个大纲，默认顺序接续"""
         if not self.structures:
             return []
 
-        # 流派→常见大纲序列
+        # 题材方向→常见弧模板序列
         genre_map = {
-            "玄幻": ["struct_xuanhuan_01", "struct_xuanhuan_01"],  # 升级×2
-            "都市": ["struct_dushi_01", "struct_dushi_01"],
-            "言情": ["struct_tianwen_01", "struct_tianwen_01"],
-            "悬疑": ["struct_xuanyi_01", "struct_xuanyi_01"],
-            "穿越": ["struct_chuanyue_01", "struct_xuanhuan_01"],
+            "玄幻": ["arc_xuanhuan_01", "arc_xuanhuan_01"],  # 试炼扬名×2
+            "都市": ["arc_dushi_01", "arc_dushi_01"],
+            "言情": ["arc_tianwen_01", "arc_tianwen_01"],
+            "悬疑": ["arc_xuanyi_01", "arc_xuanyi_01"],
+            "穿越": ["arc_chuanyue_01", "arc_xuanhuan_01"],
         }
 
-        template_ids = genre_map.get(genre, ["struct_xuanhuan_01"])
+        template_ids = genre_map.get(genre, ["arc_xuanhuan_01"])
         outlines = []
         ch = 1
         for i, tid in enumerate(template_ids):
@@ -510,7 +574,7 @@ class StorylineBuilder:
                 template_id=tid,
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(template_ids)>1 else ''}",
                 start_chapter=ch,
-                end_chapter=ch + tmpl.total_chapters - 1,
+                end_chapter=ch + max(1, tmpl.total_words // 3000) - 1,
                 stages=structure_to_stages(tmpl),
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
@@ -528,7 +592,7 @@ class StorylineBuilder:
         if self.structures:
             templates = self.structures.templates[:20]  # 最多 20 个候选
             available = "\n".join(
-                f"- {t.id}: {t.name} ({t.total_chapters}章) | 阶段: {'→'.join(s.name for s in t.stages[:5])}"
+                f"- {t.id}: {t.name} ({t.total_words}字) | 阶段: {'→'.join(s.name for s in t.stages[:5])}"
                 for t in templates
             )
 
@@ -555,7 +619,7 @@ class StorylineBuilder:
 
 注意：
 - 相邻大纲建议有 3-5 章的重叠区（过渡更自然）
-- 同一流派下可以有不同风格的大纲（如开局爽文→中期正剧）
+- 同一题材方向下可以有不同风格的大纲（如开局爽文→中期正剧）
 - 总章节数控制在合理范围内（不要超过 500）
 
 可用大纲模板：
@@ -621,11 +685,11 @@ class StorylineBuilder:
             stage_name = stage.get("name", "")
             events = stage.get("events", [])
 
-            # 匹配桥段：阶段名+事件描述+流派
+            # 匹配桥段：阶段名+事件描述+题材方向
             context = f"{outline.name} {stage_name} {' '.join(events)}"
-            candidates = self.plots.match_for_chapter(context, storyline.genre)
+            candidates = self.plots.match_for_chapter(context, genre_from_tags(storyline))
             if not candidates:
-                candidates = self.plots.search(category=storyline.genre)
+                candidates = self.plots.search(category=genre_from_tags(storyline))
                 if not candidates:
                     candidates = self.plots.templates[:1]
 
@@ -693,7 +757,10 @@ def load_storyline(path: str) -> Optional[BookStoryline]:
 
 
 def _deep_keep_existing(existing: dict, generated: dict) -> dict:
-    """以 generated 为基础，existing 里非空字段覆盖（dict 递归）。"""
+    """以 generated 为基础，existing 里非空字段覆盖（dict 递归）。
+
+    age/death_year 的 0 视为"未知"（跳过，保留 generated 真值），否则 0 会覆盖生成值。
+    """
     existing = existing or {}
     generated = generated or {}
     merged = dict(generated)
@@ -701,7 +768,7 @@ def _deep_keep_existing(existing: dict, generated: dict) -> dict:
         gv = merged.get(k)
         if isinstance(ev, dict) and isinstance(gv, dict):
             merged[k] = _deep_keep_existing(ev, gv)
-        elif ev not in (None, "", [], {}):
+        elif ev not in (None, "", [], {}, 0):
             merged[k] = ev
     return merged
 
@@ -709,7 +776,8 @@ def _deep_keep_existing(existing: dict, generated: dict) -> dict:
 def _merge_characters(existing_chars, generated_chars) -> list:
     """characters 数组合并：
     - MC 逐字段深合并（existing 非空字段保留，generated 补空）
-    - 非 MC：existing 非空则整组保留，否则用 generated（复刻旧 supporting_cast 语义）
+    - 非 MC：按姓名逐字段补全——existing 空字段（性别/简介/称呼/年龄等）由 generated 补，
+      generated 里没有 existing 对应角色的追加（不复刻"整组保留/整组丢弃"）
     """
     existing_chars = list(existing_chars or [])
     generated_chars = list(generated_chars or [])
@@ -728,7 +796,15 @@ def _merge_characters(existing_chars, generated_chars) -> list:
 
     ex_nonmc = [c for c in existing_chars if c is not ex_mc]
     gen_nonmc = [c for c in generated_chars if c is not gen_mc]
-    merged.extend(ex_nonmc or gen_nonmc)
+    gen_by_name = {str(c.get("name", "") or "").strip(): c
+                   for c in gen_nonmc if str(c.get("name", "") or "").strip()}
+    for c in ex_nonmc:
+        merged.append(_deep_keep_existing(
+            c, gen_by_name.get(str(c.get("name", "") or "").strip()) or {}))
+    ex_names = {str(c.get("name", "") or "").strip() for c in ex_nonmc}
+    for g in gen_nonmc:
+        if str(g.get("name", "") or "").strip() not in ex_names:
+            merged.append(dict(g))
     # 兜底标主角
     if merged and not _is_mc(merged[0]):
         for c in merged:

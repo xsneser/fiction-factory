@@ -1,187 +1,1054 @@
 {% extends "base.html" %}
-{% block title %}抓取 — NovelEngine{% endblock %}
+{% block title %}外部书库 — NovelEngine{% endblock %}
 {% block content %}
-<h1>🔍 抓取 <span style="font-size:14px;color:#8b949e">采集小说数据 → 自动分析入库</span></h1>
+<h1>📚 外部书库 <span style="font-size:14px;color:#8b949e">热榜侦察 + 抓取下载 + 已下载书库（点书卡去提取）</span></h1>
 
-<div class="tabs" style="margin-bottom:20px">
-    <a href="javascript:;" class="platform-tab active" data-platform="fanqie" onclick="switchPlatform('fanqie')">🍅 番茄小说</a>
-    <a href="javascript:;" class="platform-tab" data-platform="web" onclick="switchPlatform('web')" style="opacity:0.5;cursor:not-allowed">🌐 网页抓取 <span style="font-size:11px;color:#8b949e">即将推出</span></a>
-    <a href="javascript:;" class="platform-tab" data-platform="qidian" onclick="switchPlatform('qidian')" style="opacity:0.5;cursor:not-allowed">📖 起点中文 <span style="font-size:11px;color:#8b949e">即将推出</span></a>
-    <a href="javascript:;" class="platform-tab" data-platform="jinjiang" onclick="switchPlatform('jinjiang')" style="opacity:0.5;cursor:not-allowed">🌸 晋江文学城 <span style="font-size:11px;color:#8b949e">即将推出</span></a>
-</div>
-
-{# ─── 番茄小说面板 ─── #}
-<div id="platform-fanqie" class="platform-panel">
-    <p style="font-size:13px;color:#8b949e;margin-bottom:16px">搜索番茄小说 → 下载章节 → LLM 拆解 → 自动入库桥段/大纲/笑点库</p>
-    <div class="scout-form">
-        <div class="input-row">
-            <input type="text" id="book-title" placeholder="输入书名，如：十日终焉" onfocus="clearOther('book-id')">
-            <span class="or-divider">或</span>
-            <input type="text" id="book-id" placeholder="直接输入 book_id 或 URL" onfocus="clearOther('book-title')">
-        </div>
-        <div class="form-row-inline">
-            <label>下载章节数</label>
-            <input type="number" id="chapters" value="30" min="5" max="100">
-        </div>
-        <button id="btn-scout" class="btn-primary" onclick="startScout()">🍅 开始抓取</button>
+{# ─── 热榜侦察（多平台 tab；仅番茄可用，其余即将推出；后台线程拉取 + 缓存 /api/scout/hot） ─── #}
+<div class="scout-card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>🔥 热榜侦察</strong>
+        <button class="small" onclick="loadHot()">🔄 刷新</button>
+    </div>
+    <div class="hot-tabs" style="margin-top:12px">
+        <button class="chip active" data-platform="fanqie" onclick="switchPlatform(this)">🍅 番茄</button>
+        <button class="chip" data-platform="qidian" onclick="switchPlatform(this)" title="即将推出">📖 起点</button>
+        <button class="chip" data-platform="jinjiang" onclick="switchPlatform(this)" title="即将推出">🌸 晋江</button>
+        <button class="chip" data-platform="web" onclick="switchPlatform(this)">🌐 网页</button>
+    </div>
+    <div class="hot-genders" style="margin-top:8px">
+        <button class="chip active" data-gender="male" onclick="switchGender(this)">👦 男频</button>
+        <button class="chip" data-gender="female" onclick="switchGender(this)">👧 女频</button>
+    </div>
+    <div class="hot-chips" id="hot-chips" style="margin-top:8px"></div>
+    <div id="hot-list" style="margin-top:12px">
+        <div class="empty"><p style="color:#484f58">加载中...</p></div>
     </div>
 </div>
 
-<div id="result-area" style="display:none"></div>
+{# ─── 抓取表单（默认折叠；点 header 展开，或点热榜书「抓取」自动展开；后端直抓 POST /api/scout/run，进度走 crawl-progress 轮询） ─── #}
+<div class="accordion" id="fetch-accordion" style="margin-top:16px">
+    <div class="accordion-header"><span>⬇️ 抓取下载</span><span data-acc-hint style="color:#8b949e;font-size:12px">展开 ▸</span></div>
+    <div class="accordion-body">
+        <div style="padding-top:2px">
+            <input type="text" id="book-input" placeholder="书名 / 番茄 book_id / 镜像站 URL（综合抓取：番茄简介封面+目录，镜像全文）">
+        </div>
+        <div id="hot-fanqie-notice" style="display:none;font-size:12px;color:#58a6ff;background:#1f6feb22;border:1px solid #1f6feb66;border-radius:6px;padding:8px 10px;margin-top:10px;line-height:1.6"></div>
+        <div class="fetch-opt">
+            <span class="opt-label">基准（目录/封面/简介为准）</span>
+            <select id="base-source" onchange="onBaselineChange()">
+                <option value="fanqie">🍅 番茄（当前仅此可做基准）</option>
+                <option value="qidian" disabled>📖 起点（即将推出）</option>
+                <option value="jinjiang" disabled>🌸 晋江（即将推出）</option>
+            </select>
+            <span class="opt-note">选基准平台，其目录/封面/简介为权威</span>
+        </div>
+        <div class="fetch-opt" id="source-row">
+            <span class="opt-label">下载源</span>
+            <span style="display:inline-flex;gap:4px">
+                <button class="chip source-btn" style="padding:2px 10px;font-size:12px" onclick="checkAllSources()" title="勾选全部源">全选</button>
+                <button class="chip source-btn" style="padding:2px 10px;font-size:12px" onclick="clearAllSources()" title="清空勾选">清空</button>
+            </span>
+            <span id="source-cbs" class="src-chips"></span>
+        </div>
+        <div style="font-size:12px;color:#8b949e;margin:6px 0 0 70px" id="source-note">加载中…</div>
+        <div class="fetch-opt">
+            <span class="opt-label">抓取范围</span>
+            <label class="opt-choice"><input type="radio" name="fetch-range" value="full" checked onchange="onRangeChange()"> 全文</label>
+            <label class="opt-choice"><input type="radio" name="fetch-range" value="range" onchange="onRangeChange()"> 指定区间</label>
+            <span id="range-wrap" style="display:none">
+                <input type="number" id="range-start" min="1" placeholder="起始章" style="width:80px">
+                <span style="color:#8b949e">~</span>
+                <input type="number" id="range-end" min="1" placeholder="结束章" style="width:80px">
+            </span>
+            <span class="opt-note">按「第N章」真实章号</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:12px">
+            <button id="btn-scout" class="btn-primary" onclick="startFetch()">🚀 开始抓取</button>
+            <span id="fetch-status" style="font-size:12px;color:#8b949e"></span>
+        </div>
+        <div style="font-size:12px;color:#484f58;margin-top:8px">默认基准=番茄、勾选全部下载源、下载全文；全部不勾选下载源 = 仅番茄站内正文；已下载过的书自动只更新新章节</div>
+    </div>
+</div>
+
+{# ─── 实时进度（多任务并行：每个下载一张进度卡片） ─── #}
+<div id="crawl-progress" style="display:none;margin-top:16px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span style="font-size:13px;color:#8b949e">⚡ 抓取进度</span>
+        <span id="cp-summary" style="font-size:12px;color:#484f58"></span>
+    </div>
+    <div id="cp-tasks" class="cp-tasks"></div>
+</div>
+
+{# ─── 已下载书库（列表；点书卡 → /extract 提取） ─── #}
+<div class="scout-card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>📚 已下载书库</strong>
+        <button class="small" onclick="loadNovels()">🔄 刷新</button>
+    </div>
+    <div id="novels-list" style="margin-top:12px">
+        <div class="empty"><p style="color:#484f58">加载中...</p></div>
+    </div>
+</div>
 
 <style>
-.scout-form { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; }
-.input-row { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
-.input-row input { flex: 1; }
-.or-divider { color: #484f58; font-size: 12px; white-space: nowrap; }
-.form-row-inline { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-.form-row-inline label { font-size: 13px; color: #8b949e; }
-.form-row-inline input[type=number] { width: 80px; }
-
-.result-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-top: 16px; cursor: pointer; transition: all 0.2s; }
-.result-card:hover { border-color: #58a6ff; }
-.result-card .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.result-card .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 12px 0; }
-.result-card .stat-item { text-align: center; padding: 8px; background: #0d1117; border-radius: 6px; }
-.result-card .stat-num { font-size: 24px; font-weight: bold; color: #58a6ff; }
-.result-card .stat-label { font-size: 11px; color: #8b949e; }
-.result-card .detail-section { margin-top: 12px; }
-.result-card .detail-item { padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
-.result-card .detail-item:last-child { border-bottom: none; }
-.tabs .platform-tab { cursor: pointer; }
-.review-item { display:flex;align-items:flex-start;gap:12px;padding:12px;margin-bottom:8px;background:#161b22;border:1px solid #30363d;border-radius:6px;cursor:pointer;transition:border-color .2s; }
-.review-item:hover { border-color:#58a6ff; }
-.review-item input[type=checkbox] { margin-top:3px;width:16px;height:16px;accent-color:#238636; }
-.review-content { flex:1; }
-.review-panel { margin-top:8px; }
+.scout-card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:20px; margin-top:16px; }
+.form-row-inline { display:flex; align-items:center; gap:10px; margin:14px 0; flex-wrap:wrap; }
+.form-row-inline label { font-size:13px; color:#8b949e; }
+.form-row-inline input[type=number] { width:80px; }
+.form-row-inline select { min-width:120px; }
+.hot-chips { display:flex; gap:8px; flex-wrap:wrap; }
+.chip { padding:4px 14px; border-radius:16px; border:1px solid #30363d; background:#21262d;
+    color:#c9d1d9; font-size:13px; cursor:pointer; }
+.chip.active { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+.hot-item { display:flex; align-items:flex-start; gap:12px; padding:12px; margin-bottom:8px;
+    background:#0d1117; border:1px solid #30363d; border-radius:6px; }
+.hot-item strong { color:#f0f6fc; }
+.novel-actions { display:flex;gap:8px;align-items:center;margin-top:8px; }
+.fetch-opt { display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:13px; }
+.opt-label { font-size:12px;color:#8b949e;flex-shrink:0; }
+.opt-choice { color:#c9d1d9;cursor:pointer;display:inline-flex;align-items:center;gap:3px; }
+.opt-note { font-size:12px;color:#484f58; }
+#base-source { min-width:200px; }
+#source-cbs label { cursor:pointer; }
+/* 下载源紧凑胶囊流：单行 6-8 个，避免 17 源横排撑高面板 */
+.src-chips { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-left:4px; }
+.src-chip { display:inline-flex; align-items:center; gap:4px; padding:3px 10px;
+    border-radius:14px; border:1px solid #30363d; background:#21262d;
+    color:#c9d1d9; font-size:12px; cursor:pointer; user-select:none;
+    transition:background .15s,border-color .15s; line-height:1.4; }
+.src-chip input { margin:0; accent-color:#1f6feb; width:13px; height:13px; }
+.src-chip:hover { background:#2d333b; border-color:#484f58; }
+.src-chip.on { background:#1f6feb33; border-color:#1f6feb; color:#58a6ff; }
+.src-chip .js-mark { font-size:10px; color:#d29922; }
+.source-btn { padding:2px 10px; font-size:12px; color:#8b949e; }
+.source-btn:hover { color:#c9d1d9; }
+/* ─── 抓取进度卡片 ─── */
+.cp-tasks { display:flex; flex-direction:column; gap:10px; }
+.cp-task { background:#161b22; border:1px solid #30363d; border-radius:10px;
+    padding:14px 16px; position:relative; overflow:hidden; }
+.cp-task::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:#30363d; }
+.cp-task.st-running { border-color:#1f6feb66; }
+.cp-task.st-running::before { background:#58a6ff; }
+.cp-task.st-done { border-color:#23863666; }
+.cp-task.st-done::before { background:#3fb950; }
+.cp-task.st-error { border-color:#da363366; }
+.cp-task.st-error::before { background:#f85149; }
+.cp-task.st-paused { border-color:#d2992266; }
+.cp-task.st-paused::before { background:#d29922; }
+.cp-task.st-cancelled { border-color:#484f5866; }
+.cp-task.st-cancelled::before { background:#8b949e; }
+.cp-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.cp-title { display:flex; align-items:center; gap:8px; min-width:0; }
+.cp-title .ttl { font-size:14px; font-weight:600; color:#f0f6fc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cp-ic { font-size:14px; flex-shrink:0; width:20px; text-align:center; }
+.cp-ic .spin { display:inline-block; animation:cp-spin 1s linear infinite; }
+@keyframes cp-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+.cp-num { text-align:right; flex-shrink:0; }
+.cp-pct { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.1; }
+.cp-pct.st-running { color:#58a6ff; }
+.cp-pct.st-done { color:#3fb950; }
+.cp-pct.st-error { color:#f85149; }
+.cp-pct.st-paused { color:#d29922; }
+.cp-pct.st-cancelled { color:#8b949e; }
+.cp-count { font-size:11px; color:#8b949e; margin-top:2px; font-variant-numeric:tabular-nums; }
+.cp-bar-wrap { height:8px; background:#21262d; border-radius:6px; margin-top:10px; overflow:hidden; position:relative; }
+.cp-bar { height:100%; border-radius:6px; transition:width .4s ease; position:relative; overflow:hidden; }
+.cp-bar.st-running { background:linear-gradient(90deg,#1f6feb,#58a6ff); }
+.cp-bar.st-done { background:linear-gradient(90deg,#238636,#3fb950); }
+.cp-bar.st-error { background:linear-gradient(90deg,#b62324,#f85149); }
+.cp-bar.st-paused { background:linear-gradient(90deg,#9e6a03,#d29922); }
+.cp-bar.st-cancelled { background:#6e7681; }
+.cp-bar::after { content:''; position:absolute; inset:0;
+    background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.18) 50%,transparent 100%);
+    animation:cp-shine 2.2s linear infinite; }
+@keyframes cp-shine { from{transform:translateX(-100%)} to{transform:translateX(100%)} }
+.cp-bar.st-done::after, .cp-bar.st-cancelled::after, .cp-bar.st-error::after { animation:none; }
+/* 分段进度条：每章一小段，下载前灰、下载后绿（仅 download 阶段渲染） */
+.cp-segs { display:flex; gap:1px; height:10px; margin-top:10px; overflow:hidden; border-radius:5px; }
+.cp-segs .seg { flex:1 1 0; min-width:1px; background:#21262d; transition:background .2s; }
+.cp-segs .seg.on { background:#3fb950; }
+.cp-segs .seg.fail { background:#f85149; }
+/* 解析中不确定进度条（非 download 阶段）：流动高光，避免「100%」假象 */
+.cp-bar.indeterminate { width:100%; background:linear-gradient(90deg,#21262d,#1f6feb55,#21262d); background-size:200% 100%; animation:cp-flow 1.4s linear infinite; }
+.cp-bar.indeterminate::after { animation:none; }
+@keyframes cp-flow { from{background-position:200% 0} to{background-position:-200% 0} }
+.cp-msg { font-size:12px; color:#8b949e; margin-top:10px; line-height:1.5; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.cp-msg .dot { color:#484f58; }
+.cp-steps { margin-top:10px; padding-left:6px; border-left:2px solid #21262d; display:flex; flex-direction:column; gap:3px; }
+.cp-step { font-size:12px; color:#8b949e; line-height:1.6; display:flex; gap:6px; align-items:baseline; }
+.cp-step .ic { flex-shrink:0; width:14px; text-align:center; }
+.cp-step.s-running { color:#58a6ff; }
+.cp-step.s-done { color:#3fb950; }
+.cp-step.s-warn { color:#d29922; }
+.cp-step.s-error { color:#f85149; }
+.cp-step .det { color:#484f58; margin-left:4px; }
+/* ─── 抓取消息左右两栏：左=所有源状态（70%），右=操作消息（30%） ─── */
+.cp-body { display:flex; gap:0; margin-top:12px; }
+.cp-sources { flex:0 0 70%; width:70%; min-width:0; border-right:1px solid #21262d;
+    padding-right:14px; display:flex; flex-direction:column; gap:3px;
+    max-height:400px; overflow-y:auto; }
+.cp-sources .cp-src { display:flex; align-items:center; gap:6px; font-size:12px;
+    color:#8b949e; padding:4px 6px; border-radius:6px; line-height:1.4; }
+.cp-sources .cp-src:hover { background:#21262d; }
+.cp-sources .s-ic { width:16px; text-align:center; flex-shrink:0; }
+.cp-sources .s-ic .spin { display:inline-block; animation:cp-spin 1s linear infinite; }
+.cp-sources .s-name { font-weight:600; color:#c9d1d9; min-width:44px; max-width:64px;
+    flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cp-sources .s-det { color:#484f58; font-size:11px; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.cp-sources .s-tm { color:#58a6ff99; font-size:10px; flex-shrink:0; margin-left:2px;
+    font-variant-numeric:tabular-nums; }
+.cp-sources .s-ok .s-tm { color:#3fb95088; }
+.cp-sources .s-warn .s-tm { color:#d2992288; }
+.cp-sources .s-dl .s-tm { color:#3fb95099; }
+.cp-sources .cp-src.s-running { background:#1f6feb22; }
+.cp-sources .cp-src.s-running .s-name, .cp-sources .cp-src.s-running .s-ic { color:#58a6ff; }
+.cp-sources .cp-src.s-running .s-det { color:#58a6ffaa; }
+.cp-sources .cp-src.s-ok .s-ic { color:#3fb950; }
+.cp-sources .cp-src.s-ok .s-det { color:#3fb95088; }
+.cp-sources .cp-src.s-warn .s-ic { color:#d29922; }
+.cp-sources .cp-src.s-warn .s-det { color:#d2992288; }
+.cp-sources .cp-src.s-error .s-ic { color:#f85149; }
+.cp-sources .cp-src.s-error .s-det { color:#f8514988; }
+.cp-sources .cp-src.s-dl { background:#23863622; }
+.cp-sources .cp-src.s-dl .s-ic, .cp-sources .cp-src.s-dl .s-name { color:#3fb950; }
+.cp-sources .cp-src.s-dl .s-det { color:#3fb950cc; }
+.cp-ops { flex:1 1 30%; min-width:0; padding-left:14px; }
+.cp-ops .cp-steps { margin-top:0; }
+.cp-ops-title { font-size:11px; color:#484f58; text-transform:uppercase;
+    letter-spacing:.5px; margin-bottom:4px; }
+.cp-src-title { font-size:11px; color:#484f58; text-transform:uppercase;
+    letter-spacing:.5px; margin-bottom:5px; }
+.cp-actions { margin-top:10px; display:flex; gap:8px; }
+.cp-actions .small { padding:4px 12px; border-radius:6px; border:none; cursor:pointer; font-size:12px; color:#fff; }
+.cp-actions .small:hover { filter:brightness(1.15); }
+.cp-actions .btn-pause { background:#1f6feb; }
+.cp-actions .btn-resume { background:#238636; }
+.cp-actions .btn-cancel { background:#da3633; }
 </style>
 
-<script src="/static/js/library_review.js"></script>
 <script>
-var STORAGE_KEY = 'ne_scout';
-var lastResult = null;
-var currentPlatform = 'fanqie';
+var _hotGenre = '';        // 题材 key：空=全部(头部分类聚合)；'阅读榜全品类'=该性别全品类阅读榜；其余=品类 id/题材名
+var _hotGender = 'male';   // male/female（番茄榜单 gender 数值 1=男 2=女）
+var _hotPollCount = 0;
+var _hotNovels = [];       // 当前热榜全量（前端分页展示：前 50 + 加载更多）
+var _hotLimit = 50;
+var _hotSeq = 0;           // 性别/题材切换序号：慢响应回来发现过期即丢弃，防串台
+var _hotCtx = null;   // 热榜书上下文 {title, book_id}：输入框文本被改即失效
 
-// 书名/book_id 两个输入框互斥：聚焦一个时清空另一个
-function clearOther(otherId) {
-    var el = document.getElementById(otherId);
-    if (el) el.value = '';
-}
-
-// 页面加载恢复
 (function(){
+    loadHotRankings();   // 按性别动态填充题材 chips（置顶「全部」「阅读榜·全品类」）
+    loadHot();
+    loadNovels();
+    // 从外部书库跳入：?book= 预填书名
     try {
-        var s = sessionStorage.getItem(STORAGE_KEY);
-        if (s) { lastResult = JSON.parse(s); if (lastResult.title) showResults(lastResult); }
+        var book = new URLSearchParams(window.location.search).get('book');
+        if (book) document.getElementById('book-input').value = book;
     } catch(e) {}
+    loadSources();   // 下载源下拉：/api/scout/sources 静态填充（失败则仅「自动择优」，仍可用）
+    // 热榜书上下文：输入框文本一被改动即失效（防标题被改掉仍发旧 book_id）
+    var _bi = document.getElementById('book-input');
+    if (_bi) _bi.addEventListener('input', function() {
+        if (!_hotCtx) return;
+        _hotCtx = null;
+        updateHotNotice();
+    });
+    pollCrawlProgress();   // 立即拉一次，之后定时轮询
 })();
 
-var PLATFORM_NAMES = {web: '🌐 网页抓取', qidian: '📖 起点中文', jinjiang: '🌸 晋江文学城'};
-function switchPlatform(pid) {
-    // 未上线平台：只提示，不切面板（面板已精简删除）
-    if (pid !== 'fanqie') {
-        showToast((PLATFORM_NAMES[pid] || '该平台') + ' 抓取功能即将推出', 'info');
-        return;
-    }
-    document.querySelectorAll('.platform-tab').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('.platform-panel').forEach(function(p) { p.style.display = 'none'; });
-    var tab = document.querySelector('.platform-tab[data-platform="fanqie"]');
-    if (tab) tab.classList.add('active');
-    var panel = document.getElementById('platform-fanqie');
-    if (panel) panel.style.display = 'block';
-    currentPlatform = 'fanqie';
+/* ─── 热榜侦察 ─── */
+
+/* 平台 tab：仅热榜浏览用（抓取默认综合，不再依赖 tab）；其余平台热榜暂无数据源，统一「即将推出」 */
+function switchPlatform(btn) {
+    var p = btn.getAttribute('data-platform') || '';
+    if (p !== 'fanqie') { showToast('该平台热榜即将推出', 'info'); return; }
+    document.querySelectorAll('.hot-tabs .chip').forEach(function(c) { c.classList.remove('active'); });
+    btn.classList.add('active');
+    loadHot();
 }
 
-function startScout() {
-    if (currentPlatform !== 'fanqie') return;
-    var title = document.getElementById('book-title').value.trim();
-    var bookId = document.getElementById('book-id').value.trim();
-    var chapters = parseInt(document.getElementById('chapters').value) || 30;
-    var directId = '';
-    if (bookId) { var m = bookId.match(/(\\d{15,})/); directId = m ? m[1] : bookId; }
-    if (!title && !directId) return showToast('请输入书名或 book_id', 'warning');
+function switchGender(btn) {
+    _hotSeq++;                       // 新一次选择：更早的在途响应全部作废
+    _hotGender = btn.getAttribute('data-gender') || 'male';
+    _hotGenre = '';                 // 换频默认回到「全部」
+    _hotLimit = 50;
+    document.querySelectorAll('.hot-genders .chip').forEach(function(c) { c.classList.remove('active'); });
+    btn.classList.add('active');
+    loadHotRankings();              // 题材 chips 换成该频全品类 + 置顶「全部」「阅读榜·全品类」
+    loadHot();
+}
 
-    document.getElementById('btn-scout').disabled = true;
-    document.getElementById('btn-scout').textContent = '抓取中...';
-    document.getElementById('result-area').style.display = 'none';
-    // 不再清空侧边栏日志（会误清其它任务的日志），日志统一由后端 task_manager 驱动
+function switchGenre(btn) {
+    _hotSeq++;                       // 新一次题材：过期响应丢弃
+    _hotGenre = btn.getAttribute('data-genre') || '';
+    document.querySelectorAll('#hot-chips .chip').forEach(function(c) { c.classList.remove('active'); });
+    btn.classList.add('active');
+    _hotLimit = 50;
+    loadHot();
+}
 
-    sessionStorage.removeItem(STORAGE_KEY);
-    lastResult = null;
+/* 按性别从 /api/scout/hot/rankings 拉该频全品类题材 chips；置顶「全部」「阅读榜·全品类」 */
+function loadHotRankings() {
+    var wrap = document.getElementById('hot-chips');
+    if (!wrap) return;
+    var seq = _hotSeq;
+    wrap.innerHTML = '<span style="color:#484f58;font-size:12px">题材加载中…</span>';
+    fetch('/api/scout/hot/rankings?platform=fanqie&gender=' + encodeURIComponent(_hotGender))
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (seq !== _hotSeq) return;   // 期间已切性别：过期响应丢弃
+            var chips = [{k: '', label: '全部'}, {k: '阅读榜全品类', label: '📖 阅读榜·全品类'}];
+            (d.rankings || []).forEach(function(rk) { chips.push({k: rk.id, label: rk.name}); });
+            var html = chips.map(function(c) {
+                var active = (c.k === _hotGenre) ? ' active' : '';
+                return '<button class="chip' + active + '" data-genre="' + escapeHtml(c.k)
+                     + '" onclick="switchGenre(this)">' + escapeHtml(c.label) + '</button>';
+            }).join('');
+            wrap.innerHTML = html;
+        })
+        .catch(function() { wrap.innerHTML = '<span style="color:#f85149;font-size:12px">题材加载失败</span>'; });
+}
 
+function loadHot() {
+    var el = document.getElementById('hot-list');
+    if (!el) return;
+    var seq = _hotSeq;
+    _hotPollCount = 0;
+    el.innerHTML = '<div class="empty"><p style="color:#484f58">加载中...</p></div>';
+    fetchHot().then(function(d) {
+        if (seq !== _hotSeq) return;   // 已切性别/题材：过期响应丢弃
+        if (!d || !d.ok) { el.innerHTML = '<div class="empty"><p style="color:#f85149">热榜加载失败</p></div>'; return; }
+        if (d.novels && d.novels.length) { renderHot(d.novels, false); return; }
+        if (d.loading || d.refreshing) { pollHot(); return; }
+        el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据（上游热榜接口暂不可用，可改用抓取表单直接下载）</p></div>';
+    }).catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
+}
+
+function fetchHot() {
+    return fetch('/api/scout/hot?key=' + encodeURIComponent(_hotGenre)
+                 + '&gender=' + encodeURIComponent(_hotGender) + '&count=50')
+        .then(function(r) { return r.json(); });
+}
+
+function pollHot() {
+    if (_hotPollCount++ > 30) {
+        var el = document.getElementById('hot-list');
+        if (el) el.innerHTML = '<div class="empty"><p style="color:#484f58">热榜拉取超时，请稍后重试</p></div>';
+        return;
+    }
+    setTimeout(function() {
+        var seq = _hotSeq;
+        fetchHot().then(function(d) {
+            if (seq !== _hotSeq) return;   // 过期响应丢弃
+            if (d && d.ok && d.novels && d.novels.length) { renderHot(d.novels, true); return; }
+            if (d && d.ok && (d.loading || d.refreshing)) { pollHot(); return; }
+            var el = document.getElementById('hot-list');
+            if (el) el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据（上游热榜接口暂不可用，可改用抓取表单直接下载）</p></div>';
+        }).catch(function() {});
+    }, 2000);
+}
+
+function renderHot(novels, keepLimit) {
+    var el = document.getElementById('hot-list');
+    if (!el) return;
+    if (novels) _hotNovels = novels;
+    if (!keepLimit) _hotLimit = 50;   // 仅显式新加载重置页数；刷新/加载更多保持
+    if (!_hotNovels || !_hotNovels.length) {
+        el.innerHTML = '<div class="empty"><p style="color:#484f58">暂无热榜数据（上游热榜接口暂不可用，可改用抓取表单直接下载）</p></div>';
+        return;
+    }
+    var total = _hotNovels.length;
+    var shown = _hotNovels.slice(0, _hotLimit);
+    var html = '';
+    shown.forEach(function(n) {
+        var intro = n.intro || '';
+        if (intro.length > 80) intro = intro.slice(0, 80) + '…';
+        html += '<div class="hot-item">';
+        if (n.cover) html += '<img src="' + escapeHtml(n.cover) + '" alt="" loading="lazy" style="width:54px;height:72px;object-fit:cover;border-radius:4px;background:#21262d;flex-shrink:0" onerror="this.style.display=\'none\'">';
+        html += '<div style="flex:1;min-width:0">';
+        html += '<div><strong>' + escapeHtml(n.title || '') + '</strong> <span class="tag">' + escapeHtml(n.author || '') + '</span>';
+        if (n.rank) html += ' <span class="tag" style="background:#238636">第' + n.rank + '名</span>';
+        if (n.genre) html += ' <span class="tag" style="background:#21262d">' + escapeHtml(n.genre) + '</span>';
+        if (n.hot_score) html += ' <span style="font-size:12px;color:#d29922">🔥 ' + escapeHtml(String(n.hot_score)) + '</span>';
+        html += '</div>';
+        if (intro) html += '<div style="font-size:12px;color:#484f58;margin-top:4px">' + escapeHtml(intro) + '</div>';
+        if (n.chapter_count) html += '<div style="font-size:12px;color:#484f58;margin-top:2px">' + n.chapter_count + ' 章 · ' + formatWords(n.word_count) + '</div>';
+        html += '</div>';
+        html += '<button class="small" style="background:#1f6feb;white-space:nowrap" data-title="' + escapeHtml(n.title || '') + '" data-id="' + escapeHtml(n.book_id || '') + '" data-platform="' + escapeHtml(n.platform || 'fanqie') + '" onclick="grabBook(this)">⚡ 抓取</button>';
+        html += '</div>';
+    });
+    if (total > shown.length) {
+        html += '<div style="text-align:center;margin-top:10px">'
+              + '<button class="small" onclick="hotLoadMore()">↓ 加载更多（还有 ' + (total - shown.length) + ' 本）</button>'
+              + '<div style="font-size:11px;color:#484f58;margin-top:4px">共 ' + total + ' 本 · ' + (_hotGender === 'female' ? '女频' : '男频')
+              + (_hotGenre ? ' · ' + _hotGenre : '') + '</div></div>';
+    }
+    el.innerHTML = html;
+}
+
+function hotLoadMore() {
+    _hotLimit += 50;
+    renderHot(null, true);   // keepLimit：不重置页数；novels=null 不覆盖已取数据
+}
+
+function formatWords(n) {
+    n = parseInt(n) || 0;
+    if (n >= 10000) return (n / 10000).toFixed(1) + '万字';
+    if (n >= 1000) return (n / 1000).toFixed(1) + '千字';
+    return n + '字';
+}
+
+/* 热榜书 → 填入抓取表单并自动展开下载框；番茄热榜书预置「综合抓取·番茄为准（番茄目录/封面/简介）+ 镜像全文」 */
+function grabBook(btn) {
+    var title = btn.getAttribute('data-title') || '';
+    var id = btn.getAttribute('data-id') || '';
+    var plat = btn.getAttribute('data-platform') || 'fanqie';
+    var input = document.getElementById('book-input');
+    if (!input) return;
+    input.value = title || id;
+    if (plat !== 'fanqie') {
+        // 非番茄平台（未来扩展）：保持旧行为——只填输入框，不做全配置
+        _hotCtx = null;      // 程序赋值不触发 input 事件：显式清热榜书上下文 + 通知
+        updateHotNotice();
+        input.focus();
+        input.scrollIntoView({behavior:'smooth', block:'center'});
+        showToast('已填入「' + (title || id) + '」，点「开始抓取」下载', 'info');
+        return;
+    }
+    _hotCtx = {title: (title || '').trim(), book_id: id || ''};
+    setBaseline('fanqie');   // 基准=番茄（目录/封面/简介）
+    checkAllSources();       // 下载源全勾（默认从全部镜像源探索正文）
+    setRange('full');
+    updateHotNotice();
+    // 编程展开折叠框（base.js accordionSet；点 header 可再收起）
+    if (typeof accordionSet === 'function') {
+        var header = document.querySelector('#fetch-accordion .accordion-header');
+        if (header) accordionSet(header, true);
+    }
+    input.focus();
+    input.scrollIntoView({behavior:'smooth', block:'center'});
+    showToast('已填入「' + (title || id) + '」：基准=番茄（目录/封面/简介），正文从勾选下载源抓取，点「开始抓取」', 'info');
+}
+
+/* ─── 抓取表单选项联动（基准平台下拉 / 下载源勾选 / 抓取范围；热榜书预置走 setBaseline/checkAllSources/setRange） ─── */
+function currentBaseline() {
+    var el = document.getElementById('base-source');
+    return el ? el.value : 'fanqie';
+}
+function setBaseline(b) {
+    var el = document.getElementById('base-source');
+    if (el) el.value = b;
+    onBaselineChange();
+}
+function setRange(r) {
+    var el = document.querySelector('input[name="fetch-range"][value="' + r + '"]');
+    if (el) { el.checked = true; onRangeChange(); }
+}
+/* 基准平台：当前仅番茄可抓；起点/晋江 disabled，防御拉回番茄 */
+function onBaselineChange() {
+    if (currentBaseline() !== 'fanqie') {
+        var el = document.getElementById('base-source');
+        if (el) el.value = 'fanqie';
+        showToast('该基准平台即将推出，暂只能以番茄为准', 'info');
+    }
+    updateHotNotice();
+}
+/* 下载源勾选集合：勾选上的源才会被「探索」（后端只探测这些源） */
+function checkedSources() {
+    var out = [];
+    document.querySelectorAll('input[name="mirror"]:checked').forEach(function(c) { out.push(c.value); });
+    return out;
+}
+/* 下载源行内提示：随勾选数更新；0 勾选 = 仅基准平台站内正文 */
+function refreshSourceNote() {
+    var note = document.getElementById('source-note');
+    if (!note) return;
+    var n = checkedSources().length;
+    note.textContent = n === 0
+        ? '未勾选 → 仅基准平台站内正文（番茄正文，SVIP 锁定章可能空/占位）'
+        : '勾选 ' + n + ' 个源：抓正文只从所选源探测，缺章在勾选源间自动补';
+}
+function onSourceChange() {
+    // 同步胶囊高亮：勾选 → .on
+    document.querySelectorAll('.src-chip').forEach(function(lb) {
+        var cb = lb.querySelector('input[name="mirror"]');
+        if (cb) lb.classList.toggle('on', cb.checked);
+    });
+    refreshSourceNote();
+    updateHotNotice();
+}
+function checkAllSources() {
+    document.querySelectorAll('input[name="mirror"]').forEach(function(c) { c.checked = true; });
+    onSourceChange();
+}
+function clearAllSources() {
+    document.querySelectorAll('input[name="mirror"]').forEach(function(c) { c.checked = false; });
+    onSourceChange();
+}
+/* 指定区间 → 启用起止章输入 */
+function onRangeChange() {
+    var r = document.querySelector('input[name="fetch-range"]:checked');
+    var isRange = !!(r && r.value === 'range');
+    var wrap = document.getElementById('range-wrap');
+    if (wrap) wrap.style.display = isRange ? '' : 'none';
+    var rs = document.getElementById('range-start');
+    var re = document.getElementById('range-end');
+    if (rs) rs.disabled = !isRange;
+    if (re) re.disabled = !isRange;
+}
+/* 番茄热榜书提示：基准=番茄且持有 ctx 时显示；正文来源随勾选源数变化 */
+function updateHotNotice() {
+    var el = document.getElementById('hot-fanqie-notice');
+    if (!el) return;
+    if (_hotCtx && currentBaseline() === 'fanqie') {
+        var withSrc = checkedSources().length > 0;
+        el.textContent = '🍅 番茄热榜书《' + (_hotCtx.title || '') + '》：目录 / 封面 / 简介以番茄为准，正文'
+            + (withSrc ? '自勾选下载源获取（缺章自动跨源补）' : '以番茄站内为准（未勾选下载源）');
+        el.style.display = '';
+    } else {
+        el.style.display = 'none';
+    }
+}
+/* 下载源勾选框：静态列出可用镜像站（GET /api/scout/sources），默认全勾；失败回退内置清单 */
+var _FALLBACK_SOURCES = [
+    {key: 'bookszw', name: '零点看书'}
+];
+var _SITE_NAMES = {};   // site key → 中文名（供左栏源状态显示中文名）
+function loadSources() {
+    var wrap = document.getElementById('source-cbs');
+    if (!wrap) return;
+    var fill = function(sources) {
+        wrap.innerHTML = '';
+        _SITE_NAMES = {};
+        (sources || []).forEach(function(s) {
+            _SITE_NAMES[s.key] = s.name;
+            var lb = document.createElement('label');
+            lb.className = 'src-chip on';
+            lb.title = s.key + (s.js_render ? '（JS 渲染，需浏览器，较慢）' : '');
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.name = 'mirror';
+            cb.value = s.key;
+            cb.checked = true;
+            cb.onchange = onSourceChange;
+            lb.appendChild(cb);
+            lb.appendChild(document.createTextNode(s.name));
+            if (s.js_render) lb.appendChild(document.createTextNode(' ⚙️'));
+            wrap.appendChild(lb);
+        });
+        onSourceChange();
+    };
+    fetch('/api/scout/sources').then(function(r) { return r.json(); })
+      .then(function(d) {
+          if (d && d.ok && d.sources && d.sources.length) fill(d.sources);
+          else fill(_FALLBACK_SOURCES);
+      }).catch(function() { fill(_FALLBACK_SOURCES); });
+}
+
+/* ─── 后端直抓：POST /api/scout/run（fire-and-forget，进度靠 crawl-progress 轮询；默认全文/增量） ─── */
+function startFetch() {
+    var input = document.getElementById('book-input').value.trim();
+    if (!input) return showToast('请输入书名 / 番茄 book_id / 镜像站 URL', 'warning');
+    if (currentBaseline() !== 'fanqie') return showToast('该基准平台即将推出，暂只能以番茄为准', 'warning');
+    var checked = checkedSources();
+    var isUrl = /^https?:\/\//i.test(input);
+    // 勾选 ≥1 个下载源 → 综合抓取（基准番茄目录/封面/简介 + 只探测勾选源）；全部不勾 → 仅基准站站内正文
+    var mode = (checked.length > 0) ? 'merged' : 'fanqie';
+    if (isUrl && checked.length === 0) {
+        return showToast('粘贴了 URL 但未勾选任何下载源；请至少勾选一个镜像源，或填书名 / 番茄 book_id 走站内', 'warning');
+    }
+    var body = {platform: mode};
+    if (mode === 'merged') body.mirrors = checked;
+    // 番茄热榜上下文仍有效（输入未改）→ 直发番茄 book_id；否则维持旧探测
+    var useCtx = !!(_hotCtx && input === (_hotCtx.title || '') && _hotCtx.book_id);
+    if (useCtx) {
+        body.book_id = _hotCtx.book_id;
+    } else if (isUrl) {
+        body.url = input;   // 镜像站或番茄 URL 均可（综合路径按 URL 自动判定）
+    } else {
+        var m = input.match(/(\d{15,})/);
+        if (m) body.book_id = m[1]; else body.title = input;
+    }
+    // 抓取范围（区间按第N章真实章号；全文/增量=不传 chapters，后端默认）
+    var rangeSel = document.querySelector('input[name="fetch-range"]:checked');
+    var isRange = !!(rangeSel && rangeSel.value === 'range');
+    if (isRange) {
+        var rs = parseInt(document.getElementById('range-start').value, 10);
+        var re = parseInt(document.getElementById('range-end').value, 10);
+        if (!rs || !re || isNaN(rs) || isNaN(re) || re < rs) {
+            return showToast('请填写有效的起止章节（起始 ≤ 结束，按第N章真实章号）', 'warning');
+        }
+        body.start_chapter = Math.max(1, rs);
+        body.end_chapter = re;
+    }
+    var st = document.getElementById('fetch-status');
+    if (st) { st.textContent = '⏳ 已提交，进度见下方…'; st.style.color = '#8b949e'; }
     fetch('/api/scout/run', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({title: title, chapters: chapters, book_id: directId})
+        body: JSON.stringify(body),
     }).then(function(r) {
-        var reader = r.body.getReader();
-        var decoder = new TextDecoder();
-        function read() {
-            reader.read().then(function(res) {
-                if (res.done) return;
-                var raw = decoder.decode(res.value, {stream: true});
-                var lines = raw.split('\\n');
-                for (var i = 0; i < lines.length; i++) {
-                    var line = lines[i].trim();
-                    if (line.startsWith('data: ')) {
-                        try {
-                            var d = JSON.parse(line.slice(6));
-                            handleEvent(d);
-                        } catch(e) {}
+        // 后台线程执行：立即返回 JSON，下载由后台线程落盘 crawl_progress.json（前端轮询展示，可暂停/停止）
+        if (!r.ok) return r.json().then(function(d) {
+            if (st) { st.textContent = '❌ ' + (d.error || '提交失败'); st.style.color = '#f85149'; }
+        });
+    }).catch(function() {});
+    var modeTxt = mode === 'merged' ? ('综合抓取（源: ' + checked.join('/') + '）') : '仅番茄站内';
+    showToast('🚀 已开始抓取（' + modeTxt
+        + (isRange ? '，区间 ' + body.start_chapter + '~' + body.end_chapter + ' 章' : '，全文')
+        + '）', 'info');
+}
+
+/* 暂停/继续/停止：POST /api/scout/fetch/control（可指定 task_id，多任务并行按行控制） */
+function fetchControl(action, taskId) {
+    var body = {action: action};
+    if (taskId) body.task_id = taskId;
+    fetch('/api/scout/fetch/control', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+          if (!d.ok) showToast(d.error || '操作失败', 'warning');
+      }).catch(function() {});
+}
+
+/* 任务卡 暂停/继续/停止 控件事件委托：data-act + data-task-id（tid 含引号也安全，不内联 onclick） */
+document.addEventListener('click', function(ev) {
+    var b = ev.target && ev.target.closest ? ev.target.closest('button[data-act]') : null;
+    if (!b) return;
+    fetchControl(b.getAttribute('data-act') || '', b.getAttribute('data-task-id') || '');
+});
+
+/* ─── 实时进度（crawl-progress 轮询；多任务并行各自进度行；terminal 展示 6s 后消失） ─── */
+var _lastLibraryRefresh = 0;   // 下载中书库节流刷新（≤1次/3s）
+var _lastProgSig = '';         // 进度快照签名：数据未变则跳过整块 DOM 重建（免每秒全量 innerHTML）
+function pollCrawlProgress() {
+    fetch('/api/crawl/progress')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            var box = document.getElementById('crawl-progress');
+            var tarea = document.getElementById('cp-tasks');
+            if (!box || !tarea || !d || !d.ok) return;
+            var tasks = d.tasks || {};
+            // 数据未变（ts/任务数/每任务 state·steps·进度 一致）→ 跳过整块重建（保留滚动位置，省每 1s 全量 innerHTML）
+            var _sig = (d.ts || 0) + ':' + Object.keys(tasks).length;
+            Object.keys(tasks).sort().forEach(function(tid) {
+                var _t = tasks[tid];
+                _sig += '|' + tid + ':' + (_t.state || '') + ':'
+                     + ((_t.steps || []).length) + ':' + (_t.current || 0);
+            });
+            if (_sig === _lastProgSig && tarea && tarea.children.length) return;
+            _lastProgSig = _sig;
+            var now = Date.now() / 1000;
+            var anyVisible = false;
+            var html = '';
+            var runningCount = 0, doneCount = 0, errCount = 0;
+            Object.keys(tasks).forEach(function(tid) {
+                var t = tasks[tid];
+                var state = t.state || '';
+                var stale = (t.ts || 0) > 0 && (now - t.ts) > 30 && (state === 'done' || state === 'error' || state === 'cancelled');
+                if (stale) return;
+                var running = (state === 'running' || state === 'paused');
+                var isDownload = t.phase === 'download';
+                // 仅 download 阶段有「章节进度」；解析阶段（search/…）不显示百分比（防 100% 假象）
+                var total = isDownload && t.total > 0 ? t.total : 0;
+                var cur = isDownload ? (t.current || 0) : 0;
+                var pct = total > 0 ? Math.round(cur / total * 100) : 0;
+                if (pct > 100) pct = 100;
+                var title = t.title || tid;
+                // 分段进度条：每章一小段（大书自动聚合成 ≤500 段），前 cur 段绿、其余灰
+                var segHtml = '';
+                if (isDownload && total > 0) {
+                    var segN = Math.min(total, 500);
+                    var onN = Math.max(0, Math.min(segN, Math.round(cur / total * segN)));
+                    var segs = '';
+                    for (var _s = 0; _s < segN; _s++) {
+                        segs += '<span class="seg' + (_s < onN ? ' on' : '') + '"></span>';
+                    }
+                    segHtml = '<div class="cp-segs">' + segs + '</div>';
+                }
+                var stCls = state === 'running' ? 'st-running'
+                    : state === 'done' ? 'st-done'
+                    : state === 'error' ? 'st-error'
+                    : state === 'paused' ? 'st-paused'
+                    : state === 'cancelled' ? 'st-cancelled' : '';
+                // 状态图标 + 文案
+                var ic, phaseTxt;
+                if (state === 'running') { ic = '<span class="spin">⏳</span>'; phaseTxt = t.phase || '抓取中…'; }
+                else if (state === 'done') { ic = '✅'; phaseTxt = '已完成'; }
+                else if (state === 'error') { ic = '❌'; phaseTxt = '失败'; }
+                else if (state === 'paused') { ic = '⏸'; phaseTxt = '已暂停 · ' + (t.phase || ''); }
+                else if (state === 'cancelled') { ic = '⏹'; phaseTxt = '已停止'; }
+                else { ic = '•'; phaseTxt = t.phase || ''; }
+                if (state === 'running') runningCount++;
+                else if (state === 'done') doneCount++;
+                else if (state === 'error') errCount++;
+                var pausable = !!(t.extra && t.extra.pausable);
+                var actions = '';
+                if (running && pausable) {
+                    var pauseLabel = state === 'paused' ? '▶ 继续' : '⏸ 暂停';
+                    var pauseAct = state === 'paused' ? 'resume' : 'pause';
+                    var btnCls = state === 'paused' ? 'btn-resume' : 'btn-pause';
+                    // 控件走 data-act/data-task-id + 事件委托（杜绝把含引号的 tid 内联进 onclick 造成断 JS/注入）
+                    actions = '<div class="cp-actions">'
+                        + '<button class="small ' + btnCls + '" data-act="' + pauseAct + '" data-task-id="' + escapeHtml(tid) + '">' + pauseLabel + '</button>'
+                        + '<button class="small btn-cancel" data-act="cancel" data-task-id="' + escapeHtml(tid) + '">⏹ 停止</button>'
+                        + '</div>';
+                }
+                // 分步消息 → 左右两栏：左=所有源状态（镜像解析:/校对:/下载: 前缀按源名归类），右=操作消息
+                var srcMap = {};   // site -> {status, detail, phase}
+                var srcOrder = [];
+                var opSteps = [];
+                if (t.steps && t.steps.length) {
+                    t.steps.forEach(function(s) {
+                        var lb = s.label || '';
+                        var m = /^(镜像解析|校对|下载):(.+)$/.exec(lb);
+                        if (m) {
+                            var site = m[2].trim();
+                            var phase = m[1];
+                            if (!(site in srcMap)) { srcMap[site] = {}; srcOrder.push(site); }
+                            if (!srcMap[site].t0) srcMap[site].t0 = s.t0 || s.ts || 0;   // 该源最早出现时间（镜像解析起点，step 保留首见 t0）
+                            srcMap[site].ts = s.ts || srcMap[site].ts || 0;      // 该源最新步骤时间
+                            // 同源多次消息：running → ok 覆盖；镜像解析 → 校对 → 下载 逐级覆盖（显示最新阶段）
+                            if (!srcMap[site].status || srcMap[site].status !== 'ok'
+                                || s.status === 'running' || phase === '校对' || phase === '下载') {
+                                srcMap[site].status = s.status;
+                                srcMap[site].detail = s.detail || '';
+                                srcMap[site].phase = phase;
+                            }
+                            if (s.url) srcMap[site].url = s.url;   // 后端已携带书页/主页链接
+                        }
+                        // 解析/比对/下载 都算「操作」→ 全部进右栏时间线
+                        opSteps.push(s);
+                    });
+                }
+                // 源排序：下载中(任务running) > 比对通过(校对ok) > 搜索命中(镜像解析ok) >
+                //   比对未过(校对warn) > 进行中 > 失败/未找到
+                var srcRank = function(site) {
+                    var s = srcMap[site];
+                    var st = s.status || '';
+                    if (s.phase === '下载' && st === 'running' && state === 'running') return 0;
+                    if (s.phase === '下载' && st === 'running') return 1;   // 任务已结束，下载中→完成
+                    if (s.phase === '校对' && st === 'ok') return 2;
+                    if (s.phase === '镜像解析' && st === 'ok') return 3;
+                    if (s.phase === '校对' && st === 'warn') return 4;
+                    if (st === 'running') return 5;
+                    return 6;
+                };
+                srcOrder.sort(function(a, b) { return srcRank(a) - srcRank(b); });
+                // 左栏：所有源（70%）
+                var srcsHtml = '';
+                if (srcOrder.length) {
+                    srcsHtml = '<div class="cp-sources"><div class="cp-src-title">镜像源状态</div>';
+                    srcOrder.forEach(function(site) {
+                        var s = srcMap[site];
+                        var st = s.status || '';
+                        var dl = (s.phase === '下载' && st === 'running');
+                        var dlDone = dl && state !== 'running';   // 任务结束：下载中→显示完成 ✓
+                        var sCls = dl && !dlDone ? 's-dl'
+                            : st === 'ok' ? 's-ok' : st === 'error' ? 's-error'
+                            : st === 'warn' ? 's-warn' : st === 'running' ? 's-running' : '';
+                        // 下载中 → 转圈 icon + 「下载中 第N章」；任务结束的下载源 → ✓
+                        var sIc, det;
+                        if (dl && !dlDone) {
+                            sIc = '<span class="spin">⏳</span>';
+                            det = s.detail ? ('下载中 ' + s.detail) : '下载中…';
+                        } else if (dlDone) {
+                            sIc = '✓';
+                            det = s.detail ? ('已下载 ' + s.detail) : '已下载';
+                        } else if (s.phase === '校对') {
+                            // 左栏实时显示每个源的比对过程：running 显当前步骤 detail，
+                            // 完成显示完整明细（目录/题目/作者/前十章/广告）
+                            if (st === 'running') { sIc = '…'; det = s.detail || '比对中…'; }
+                            else if (st === 'ok') { sIc = '✓'; det = s.detail || '通过'; }
+                            else if (st === 'warn') { sIc = '!'; det = s.detail || '未通过'; }
+                            else { sIc = st === 'error' ? '✗' : '·'; det = s.detail || ''; }
+                        } else if (s.phase === '镜像解析') {
+                            sIc = st === 'ok' ? '✓' : st === 'warn' ? '!' : st === 'running' ? '…' : (st === 'error' ? '✗' : '·');
+                            det = s.detail || (st === 'running' ? '解析中…' : '');
+                        } else {
+                            sIc = st === 'ok' ? '✓' : st === 'error' ? '✗'
+                                : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
+                            det = s.detail || (st === 'running' ? '解析中…' : '');
+                        }
+                        var _dispName = _SITE_NAMES[site] || site;
+                        // 每源运行时间：进行中 → 该源从镜像解析起点已运行 X（now-t0，避免进度刷新导致 0s）；
+                        // 完成 → 总耗时（ts-t0）。t0 缺失时用 ts 兜底。
+                        var _tm = '';
+                        if ((s.ts || s.t0) && now > 0) {
+                            var _sec = 0;
+                            if (st === 'running' || (st === 'warn' && s.phase === '下载')) {
+                                _sec = (s.t0 ? now - s.t0 : now - s.ts);   // 进行中：该源总已运行时长
+                            } else if (s.t0) {
+                                _sec = s.ts - s.t0;   // 完成：该源总耗时
+                            }
+                            if (_sec >= 0 && _sec < 7200) {
+                                _tm = _sec < 60 ? (' ' + Math.round(_sec) + 's')
+                                    : (' ' + Math.floor(_sec / 60) + 'm' + Math.round(_sec % 60) + 's');
+                            }
+                        }
+                        // 左栏每源 = 超链接（新标签打开）：后端已携带该源书页 URL（搜到书）
+                        // 或该源主页 URL（解析中/未找到）；后端保证 url 非空，异常兜底 # 不跳内部页。
+                        var _href = s.url || '';
+                        if (!/^https?:\/\//i.test(_href)) _href = '#';   // 仅 http(s) 允许成链接（其余降级 #，防 javascript: 注入）
+                        srcsHtml += '<a class="cp-src ' + sCls + '" href="' + escapeHtml(_href)
+                            + '" target="_blank" rel="noopener"'
+                            + ' title="' + escapeHtml(_dispName + ' · ' + det + '（点击新标签打开该源页面）') + '">'
+                            + '<span class="s-ic">' + sIc + '</span>'
+                            + '<span class="s-name">' + escapeHtml(_dispName) + '</span>'
+                            + '<span class="s-det">' + escapeHtml(det) + '</span>'
+                            + (_tm ? '<span class="s-tm">' + _tm + '</span>' : '')
+                            + '</a>';
+                    });
+                    srcsHtml += '</div>';
+                }
+                // 右栏：操作消息
+                // 右栏：操作消息——源相关步骤（镜像解析/校对/下载）合并为一条统计，其余逐条
+                var opsHtml = '';
+                if (opSteps.length) {
+                    // 聚合统计
+                    var _agg = {mir: null, aud: null, dl: null};
+                    opSteps.forEach(function(s) {
+                        var _lm = /^(镜像解析|校对|下载):(.+)$/.exec(s.label || '');
+                        if (!_lm) return;
+                        var _ph = _lm[1];
+                        var _slot = _ph === '镜像解析' ? 'mir' : (_ph === '校对' ? 'aud' : 'dl');
+                        if (!_agg[_slot]) _agg[_slot] = {n: 0, ok: 0, running: 0, warn: 0, err: 0, detail: ''};
+                        var _g = _agg[_slot];
+                        _g.n++;
+                        if (s.status === 'ok') _g.ok++;
+                        else if (s.status === 'running') { _g.running++; _g.detail = s.detail || ''; }
+                        else if (s.status === 'warn') _g.warn++;
+                        else if (s.status === 'error') _g.err++;
+                    });
+                    // 合并条目渲染
+                    var _aggStep = function(phase, g, labelTxt) {
+                        if (!g) return '';
+                        var _st = g.err ? 'error' : (g.running ? 'running' : 'ok');
+                        var _sCls = _st === 'ok' ? 's-done' : _st === 'error' ? 's-error' : _st === 'running' ? 's-running' : '';
+                        var _sIc = _st === 'ok' ? '✓' : _st === 'error' ? '✗' : _st === 'running' ? '…' : '·';
+                        var _det = '';
+                        if (phase === 'mir') {
+                            // 镜像解析：共 N 个源，命中 X 个
+                            _det = g.n + ' 个源，命中 ' + g.ok + ' 个'
+                                + (g.running ? '（解析中）' : '');
+                        } else if (phase === 'aud') {
+                            // 正文比对：N 个源，通过 X 个
+                            _det = g.n + ' 个源，通过 ' + g.ok + ' 个'
+                                + (g.running ? '（比对中）' : '');
+                        } else { // dl
+                            // 下载：running 显当前章；ok/warn（无 running）显完成
+                            _det = g.running ? (g.detail ? ('当前 ' + g.detail) : '进行中…')
+                                : (g.err ? '下载失败' : '完成');
+                        }
+                        return '<div class="cp-step ' + _sCls + '"><span class="ic">' + _sIc + '</span>'
+                            + '<span>' + escapeHtml(labelTxt)
+                            + (_det ? '<span class="det">' + escapeHtml(_det) + '</span>' : '')
+                            + '</span></div>';
+                    };
+                    // 按出现顺序合并：先扫一遍确定「镜像解析/校对/下载」首次位置，插入合并条目
+                    var _shown = {mir: false, aud: false, dl: false};
+                    opsHtml = '<div class="cp-ops"><div class="cp-ops-title">操作</div><div class="cp-steps">';
+                    opSteps.forEach(function(s) {
+                        var _lm = /^(镜像解析|校对|下载):(.+)$/.exec(s.label || '');
+                        if (_lm) {
+                            var _ph = _lm[1];
+                            var _slot = _ph === '镜像解析' ? 'mir' : (_ph === '校对' ? 'aud' : 'dl');
+                            if (_shown[_slot]) return;   // 该阶段已合并显示过，跳过其余逐条
+                            _shown[_slot] = true;
+                            var _lbl = _ph === '镜像解析' ? '镜像解析' : (_ph === '校对' ? '正文比对' : '下载');
+                            opsHtml += _aggStep(_slot, _agg[_slot], _lbl);
+                            return;
+                        }
+                        // 非源步骤逐条
+                        var st = s.status || '';
+                        var sCls = st === 'ok' ? 's-done' : st === 'error' ? 's-error' : st === 'warn' ? 's-warn' : st === 'running' ? 's-running' : '';
+                        var sIc = st === 'ok' ? '✓' : st === 'error' ? '✗' : st === 'warn' ? '!' : st === 'running' ? '…' : '·';
+                        opsHtml += '<div class="cp-step ' + sCls + '"><span class="ic">' + sIc + '</span>'
+                            + '<span>' + escapeHtml(s.label || '')
+                            + (s.detail ? '<span class="det">' + escapeHtml(s.detail) + '</span>' : '')
+                            + '</span></div>';
+                    });
+                    opsHtml += '</div></div>';
+                }
+                var bodyHtml = '';
+                if (srcsHtml || opsHtml) {
+                    bodyHtml = '<div class="cp-body">' + srcsHtml + opsHtml + '</div>';
+                }
+                html += '<div class="cp-task ' + stCls + '" data-tid="' + escapeHtml(tid) + '">'
+                    + '<div class="cp-head">'
+                    +   '<div class="cp-title"><span class="cp-ic">' + ic + '</span><span class="ttl">' + escapeHtml(title) + '</span></div>'
+                    +   '<div class="cp-num">'
+                    +     '<div class="cp-pct ' + stCls + '">' + (isDownload && total > 0 ? pct + '%' : (state === 'done' ? '100%' : '…')) + '</div>'
+                    +     (isDownload && total > 0 ? '<div class="cp-count">' + cur + ' / ' + total + ' 章</div>' : '<div class="cp-count">' + phaseTxt + '</div>')
+                    +   '</div>'
+                    + '</div>'
+                    + (isDownload && total > 0 ? segHtml
+                        : '<div class="cp-bar-wrap"><div class="cp-bar ' + stCls + ' indeterminate"></div></div>')
+                    + (t.message ? '<div class="cp-msg">' + escapeHtml(t.message) + '</div>' : '')
+                    + bodyHtml
+                    + actions
+                    + '</div>';
+                anyVisible = true;
+                // 下载中：书库实时显示已落盘章节（节流，第一章落盘后即出现）
+                if (running && state === 'running' && t.phase === 'download') {
+                    var _n = Date.now();
+                    if (_n - _lastLibraryRefresh > 3000) {
+                        _lastLibraryRefresh = _n;
+                        loadNovels();
                     }
                 }
-                read();
             });
-        }
-        read();
-    }).catch(function(e) {
-        showToast('连接失败: ' + e.message, 'error');
-        document.getElementById('btn-scout').disabled = false;
-        document.getElementById('btn-scout').textContent = '🍅 开始抓取';
-    });
+            if (!anyVisible) {
+                box.style.display = 'none';
+                tarea.innerHTML = '';
+                return;
+            }
+            // 重建前保存各任务卡片的滚动容器位置（左栏源列表/右栏操作消息），重建后按 data-tid 恢复，
+            // 避免每秒轮询刷新把滚动框打回最上方
+            var _scSave = {};
+            var _cards0 = document.querySelectorAll('#cp-tasks .cp-task');
+            for (var _ci = 0; _ci < _cards0.length; _ci++) {
+                var _c0 = _cards0[_ci];
+                var _tid0 = _c0.getAttribute('data-tid');
+                if (!_tid0) continue;
+                var _s0 = _c0.querySelector('.cp-sources'), _o0 = _c0.querySelector('.cp-ops');
+                if (_s0 && _s0.scrollTop) { _scSave[_tid0] = _scSave[_tid0] || {}; _scSave[_tid0].src = _s0.scrollTop; }
+                if (_o0 && _o0.scrollTop) { _scSave[_tid0] = _scSave[_tid0] || {}; _scSave[_tid0].ops = _o0.scrollTop; }
+            }
+            box.style.display = '';
+            tarea.innerHTML = html;
+            // 恢复滚动位置
+            var _cards1 = document.querySelectorAll('#cp-tasks .cp-task');
+            for (var _ci2 = 0; _ci2 < _cards1.length; _ci2++) {
+                var _c1 = _cards1[_ci2];
+                var _tid1 = _c1.getAttribute('data-tid');
+                if (!_tid1 || !_scSave[_tid1]) continue;
+                var _sv = _scSave[_tid1];
+                if (_sv.src) { var _s1 = _c1.querySelector('.cp-sources'); if (_s1) _s1.scrollTop = _sv.src; }
+                if (_sv.ops) { var _o1 = _c1.querySelector('.cp-ops'); if (_o1) _o1.scrollTop = _sv.ops; }
+            }
+            // 汇总状态
+            var sum = document.getElementById('cp-summary');
+            if (sum) {
+                var parts = [];
+                if (runningCount) parts.push(runningCount + ' 进行中');
+                if (doneCount) parts.push(doneCount + ' 完成');
+                if (errCount) parts.push(errCount + ' 失败');
+                sum.textContent = parts.length ? parts.join(' · ') : '';
+            }
+        })
+        .catch(function() {});
+}
+setInterval(pollCrawlProgress, 1000);
+
+/* ─── 外部书库列表（已下载书；信息行可点击 → 去提取） ─── */
+function loadNovels() {
+    var el = document.getElementById('novels-list');
+    if (!el) return;
+    fetch('/api/scout/novels')
+        .then(function(r) { return r.json(); })
+        .then(function(novels) {
+            if (!novels || novels.length === 0) {
+                el.innerHTML = '<div class="empty" style="padding:40px"><div class="icon" style="font-size:36px">📂</div>'
+                    + '<p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p>'
+                    + '<p style="color:#484f58;font-size:12px;margin-top:6px">在上方「⬇️ 抓取下载」输入书名下载一本，即会出现在这里</p></div>';
+                return;
+            }
+            var html = '';
+            novels.forEach(function(n) {
+                var p = n.platform || 'fanqie';
+                html += '<div class="card" style="margin-bottom:12px;display:flex;gap:12px;align-items:flex-start">';
+                if (n.cover_url) html += '<img src="' + escapeHtml(n.cover_url) + '" alt="" loading="lazy" style="width:54px;height:72px;object-fit:cover;border-radius:4px;background:#21262d;flex-shrink:0" onerror="this.style.display=\'none\'">';
+                html += '<div style="flex:1;min-width:0">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;cursor:pointer" data-f="' + escapeHtml(n.folder) + '" onclick="toggleBookDetail(this)">';
+                html += '<div><strong>' + escapeHtml(n.title) + '</strong> <span class="tag">' + escapeHtml(n.author||'') + '</span></div>';
+                var _isExp = !!_expandedBooks[n.folder];
+                html += '<span style="font-size:12px;color:#8b949e">已下载 ' + (n.saved_chapters||0) + ' 章 <span class="book-detail-caret">' + (_isExp ? '▾' : '▸') + '</span></span>';
+                html += '</div>';
+                var srcTxt = escapeHtml(n.platform || p) + (n.site ? ' · 来源: ' + escapeHtml(n.site) : '');
+                html += '<p style="font-size:12px;color:#484f58;margin-top:4px">' + srcTxt + ' · 收录: ' + escapeHtml(n.downloaded_at||'') + '</p>';
+                // 折叠详情：简介全文 + 来源（番茄/镜像站 book_id + URL）；已展开的书恢复展开态
+                html += '<div class="book-detail" style="' + (_isExp ? 'display:block;' : 'display:none;') + 'margin-top:8px;padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:6px">';
+                html += '<p style="font-size:13px;color:#c9d1d9;font-weight:600">📖 简介</p>';
+                html += '<p style="font-size:13px;color:#8b949e;line-height:1.7;white-space:pre-line;margin-top:4px">' + escapeHtml(n.intro || '（无简介）') + '</p>';
+                html += '<p style="font-size:13px;color:#c9d1d9;font-weight:600;margin-top:10px">🔗 来源</p>';
+                html += '<div style="font-size:12px;color:#8b949e;margin-top:4px;line-height:1.9">';
+                var _sf = n.source_fanqie || null;
+                if (_sf && _sf.book_id) {
+                    html += '🍅 番茄：' + escapeHtml(_sf.book_id) + ' · <a href="' + escapeHtml(_sf.url||'') + '" target="_blank" rel="noopener">' + escapeHtml(_sf.url||'') + '</a><br>';
+                } else {
+                    html += '🍅 番茄：无<br>';
+                }
+                var _sw = n.source_web || null;
+                if (_sw && _sw.book_id) {
+                    html += '🌐 镜像站（' + escapeHtml(_sw.site||'') + '）：' + escapeHtml(_sw.book_id) + ' · <a href="' + escapeHtml(_sw.url||'') + '" target="_blank" rel="noopener">' + escapeHtml(_sw.url||'') + '</a>';
+                } else {
+                    html += '🌐 镜像站：无';
+                }
+                html += '</div></div>';
+                html += '<div class="novel-actions">';
+                html += '<button class="small" style="background:#1f6feb" data-f="' + escapeHtml(n.folder) + '" data-p="' + escapeHtml(p) + '" onclick="goExtractFrom(this)">🧪 分析提取</button>';
+                html += '<button class="small" style="background:#238636" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="readFrom(this)">📖 阅读</button>';
+                html += '<button class="small" style="background:#21262d;color:#f85149" data-p="' + escapeHtml(p) + '" data-f="' + escapeHtml(n.folder) + '" onclick="deleteFrom(this)">🗑 删除</button>';
+                html += '</div></div></div>';
+            });
+            el.innerHTML = html;
+        })
+        .catch(function() { el.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
 }
 
-function handleEvent(d) {
-    // 日志统一由后端 task_manager 驱动（pollStatus 渲染到右侧边栏），
-    // 前端 SSE 只负责更新按钮状态和结果卡片，不再写日志，避免双通道重复
-    if (d.event === 'log') { return; }
-    if (d.event === 'progress') {
-        return;
+/* 展开/收起书卡详情（简介全文 + 来源）；记录已展开书，避免下载中整表重渲染时自动闭合 */
+var _expandedBooks = {};
+function toggleBookDetail(head) {
+    var detail = head.parentElement.querySelector('.book-detail');
+    if (!detail) return;
+    var show = detail.style.display !== 'block';
+    detail.style.display = show ? 'block' : 'none';
+    var folder = head.getAttribute('data-f') || '';
+    if (folder) {
+        if (show) _expandedBooks[folder] = true;
+        else delete _expandedBooks[folder];
     }
-    if (d.event === 'found') {
-        // 后端已记录 task_manager.log，这里仅更新按钮状态
-        return;
-    }
-    if (d.event === 'fetch_done') {
-        document.getElementById('btn-scout').disabled = false;
-        document.getElementById('btn-scout').textContent = '🍅 开始抓取';
-        // 下载完成，日志由后端 task_manager 写入侧边栏
-        return;
-    }
-    if (d.event === 'cancelled') {
-        document.getElementById('btn-scout').disabled = false;
-        document.getElementById('btn-scout').textContent = '🍅 开始抓取';
-        return;
-    }
-    if (d.event === 'error') {
-        document.getElementById('btn-scout').disabled = false;
-        document.getElementById('btn-scout').textContent = '🍅 开始抓取';
-        return;
-    }
-    if (d.event === 'start') {
-        return;
-    }
+    var caret = head.querySelector('.book-detail-caret');
+    if (caret) caret.textContent = show ? '▾' : '▸';
 }
 
+/* 去提取：跳 /extract（书卡带 platform/folder 参数；提取页默认不预选书目） */
+function goExtractFrom(el) {
+    var folder = el.getAttribute('data-f') || '';
+    var platform = el.getAttribute('data-p') || 'fanqie';
+    if (!folder) return showToast('缺少小说信息', 'warning');
+    var url = '/extract?platform=' + encodeURIComponent(platform)
+            + '&folder=' + encodeURIComponent(folder);
+    if (typeof navigateTo === 'function') navigateTo(url);
+    else window.location.href = url;
+}
 
+/* 阅读：整页跳转到独立阅读页（懒加载章节正文）——阅读器需 reader.css（head）+ reader.js 顺序加载，不能用 SPA navigateTo */
+function readFrom(btn) {
+    var folder = btn.getAttribute('data-f') || '';
+    var platform = btn.getAttribute('data-p') || 'fanqie';
+    if (!folder) return showToast('缺少小说信息', 'warning');
+    window.location.href = '/novels/read?platform=' + encodeURIComponent(platform) + '&folder=' + encodeURIComponent(folder);
+}
 
-var _lastReviewData = null;
-
-function showReviewCards(d) {
-    _lastReviewData = d;
-    renderReviewCards(d, 'result-area');
-    var area = document.getElementById('result-area');
-    area.scrollIntoView({behavior:'smooth', block:'start'});
+function deleteFrom(btn) {
+    var folder = btn.getAttribute('data-f') || '';
+    var platform = btn.getAttribute('data-p') || 'fanqie';
+    if (!folder) return;
+    if (!confirm('确定删除已下载小说「' + folder + '」？删除后无法恢复（不影响已入库的五库素材）。')) return;
+    fetch('/api/scout/novels/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({platform: platform, folder: folder}),
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+          if (d.ok) { showToast('🗑 已删除', 'success'); loadNovels(); }
+          else showToast('❌ 删除失败: ' + (d.error||''), 'error');
+      })
+      .catch(function(e) { showToast('❌ 删除失败: ' + e.message, 'error'); });
 }
 </script>
 {% endblock %}

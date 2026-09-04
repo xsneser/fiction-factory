@@ -45,3 +45,27 @@ ui_server.log
 # 备份数据不入库
 books.bak*/
 *.bak
+
+# dsh 侧车技能联接(不入库)
+.dsh/
+
+# vendored dsh-ne：源码入库，依赖重建（npm install 生成，不入库）
+vendor/dsh-ne/node_modules/
+
+# 竞品调研克隆仓库（第三方源码，不入库）
+.research/
+
+# UI 截图产物（tools/*_shot*/verify 脚本输出，不入库）
+tools/shots_ux/
+tools/shots/
+
+# UI 视觉检测临时产物（浏览器走查截图 / artifact-preview 缓存）
+_ui_shots/
+.preview/
+
+# 服务运行日志（后台启动重定向输出，不入库）
+_srv_out.log
+_srv_err.log
+
+# Claude Code 文档区本地设置（不入库）
+docs/.claude/

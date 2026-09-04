@@ -25,9 +25,25 @@ from ui.web_blueprints import register_blueprints
 register_blueprints(app)
 
 
+@app.after_request
+def _no_html_cache(resp):
+    """HTML 页不缓存：浏览器加载模板改动后总是拿到新 DOM（防旧缓存导致布局错乱，
+    如步3 两栏在旧 DOM 里因缺 workspace.css 塌成一栏）。静态资源由 ?v= 版本参数控制。"""
+    if resp.content_type and resp.content_type.startswith("text/html"):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    return resp
+
+
 if __name__ == "__main__":
     os.makedirs("ui/templates", exist_ok=True)
     os.makedirs("ui/static", exist_ok=True)
+    from libraries.token_proxy import ensure_proxy
+    from libraries.dsh_bridge import clear_task_events
+    ensure_proxy()   # 拉起本地 LLM API 代理（token 流量检测器）
+    clear_task_events()   # 清空上次进程残留的 task-events：侧栏工具/debug 卡片只在当前进程内有效，
+                          # 否则重启后页面加载会重放旧事件（renderConversation 拉 /api/agent/task-events）
     # debug 由环境变量控制：开发用 NOVEL_DEBUG=1，默认关闭（避免 reloader 干扰自动化）
     debug = os.environ.get("NOVEL_DEBUG") == "1"
     host = os.environ.get("NOVEL_HOST", "127.0.0.1")

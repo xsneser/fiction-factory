@@ -60,8 +60,8 @@ assert_ok("桥段库-搜索", len(plot.search(category="开篇")) >= 2)
 assert_ok("桥段库-匹配", len(plot.match_for_chapter("主角在家族大会上被退婚，当众打脸立威", genre="爽文")) > 0)
 
 struct = StructureLibrary()
-assert_ok("大纲库-数量", len(struct.templates) >= 5)
-assert_ok("大纲库-搜索", len(struct.search(genre="玄幻")) >= 1)
+assert_ok("情节弧库-数量", len(struct.templates) >= 5)
+assert_ok("情节弧库-搜索", len(struct.search(tags=["玄幻"])) >= 1)
 
 gag = GagLibrary()
 assert_ok("笑点库-数量", len(gag.patterns) >= 10, f"{len(gag.patterns)} 模式")
@@ -83,11 +83,22 @@ assert_ok("内涵-不兼容桥段不挂", _pp.theme_hints == [], str(_pp.theme_h
 print("\n═══ Phase 2: 笔名档案 + 图书管理 ═══")
 
 pm = ProfileManager("profiles")
-assert_ok("档案-预设笔名", len(pm.list_all()) >= 3)
+assert_ok("档案-保留默认中英笔名", len(pm.list_all()) >= 2
+          and pm.get_by_name("枫落") is not None
+          and pm.get_by_name("Lunaris") is not None)
 
 profile = pm.get_by_name("枫落")
 assert_ok("档案-查找笔名", profile is not None, "枫落")
 assert_ok("档案-风格约束", len(profile.build_style_prompt()) > 100)
+assert_ok("档案-语言默认中文", profile.language == "zh", profile.language)
+from libraries.profiles import PenNameProfile as _PNP
+_en = _PNP(id="t_en", pen_name="t", language="en")
+_zh_hint = profile.build_language_hints()
+assert_ok("档案-语言提示中英不同", _en.build_language_hints() != _zh_hint
+          and _zh_hint.startswith("- 中文") and _en.build_language_hints().startswith("- 英文"))
+_wp = profile.build_writing_prompt()
+assert_ok("档案-生成前强注入", len(_wp) > 200 and "本笔名" in _wp and "通用写作纪律" in _wp
+          and "全局基线" not in _wp, f"{len(_wp)} 字符")
 
 bm = BookManager("books")
 # 清理残留：只删本测试曾创建的《系统修仙录》（title 唯一标识），绝不碰真实书
@@ -96,7 +107,7 @@ for b in bm.list_all():
         bm.delete(b.book_id)
 
 cfg = bm.create("系统修仙录", "枫落", genre="玄幻", sub_genre="系统流",
-                structure_template_id="struct_xuanhuan_01",
+                structure_template_id="arc_xuanhuan_01",
                 style_profile_id=profile.id)
 assert_ok("图书-创建", cfg.book_id.startswith("book_"))
 
@@ -104,7 +115,7 @@ bm.save_chapter(cfg.book_id, 1, "第一章", "测试正文内容")
 ch = bm.load_chapter(cfg.book_id, 1)
 assert_ok("图书-章节", ch is not None and ch["title"] == "第一章")
 
-bm.save_outline(cfg.book_id, {"structure": "struct_xuanhuan_01"})
+bm.save_outline(cfg.book_id, {"structure": "arc_xuanhuan_01"})
 assert_ok("图书-大纲", bm.get_outline(cfg.book_id) is not None)
 
 # ══════════════════════════════════════════════
@@ -117,11 +128,9 @@ from libraries.storyline_writer import opening_mode_active
 from libraries.prompt_harness import PromptHarness
 from libraries.storyline import OutlineSlot, PlotSlot
 
-title_p = build_title_prompt("玄幻", "系统流", "fanqie", "正文占位" * 50)
-assert_ok("书名-含流派", "玄幻" in title_p and "系统流" in title_p)
+title_p = build_title_prompt("", "", "fanqie", "正文占位" * 50)
 assert_ok("书名-含平台", "fanqie" in title_p)
-syn_p = build_synopsis_prompt("都市", "重生", "fanqie", "正文占位" * 50)
-assert_ok("简介-含流派", "都市" in syn_p and "重生" in syn_p)
+syn_p = build_synopsis_prompt("", "", "fanqie", "正文占位" * 50)
 pc = platform_constraints("fanqie")
 assert_ok("平台-番茄约束", "开篇前 500 字必须有冲突或危机" in pc)
 assert_ok("平台-未知平台", platform_constraints("xxx") == "")
@@ -147,7 +156,7 @@ assert_ok("非开场-不含铁律", "开场模式" not in normal_p)
 # ══════════════════════════════════════════════
 print("\n═══ Phase 3.5: 线程穿插 + 桥段拆分（无 LLM）═══")
 
-from libraries.storyline import BookStoryline, OutlineSlot, PlotSlot
+from libraries.storyline import BookStoryline, OutlineSlot, PlotSlot, structure_to_stages
 from libraries.storyline_writer import StorylineChapterWriter
 from libraries.outline_generator import OutlineGenerator
 
@@ -195,6 +204,88 @@ assert_ok("线程-分类兜底",
           _genB._default_thread_for_category("悬疑") == "伏笔阴谋线"
           and _genB._default_thread_for_category("情感") == "副线"
           and _genB._default_thread_for_category("爽文") == "主线")
+
+# 大纲=弧：parent_arc_id 弧树嵌套（2026-08-27 数据模型升级）
+_slD = BookStoryline()
+_slD.outlines = [
+    OutlineSlot(id="a1", template_id="t", name="顶层弧"),
+    OutlineSlot(id="a2", template_id="t", name="子弧", parent_arc_id="a1"),
+]
+assert_ok("弧-字段默认", OutlineSlot(id="a0", template_id="t", name="顶层").parent_arc_id == "")
+_dD = _slD.to_dict()
+assert_ok("弧-序列化含键", _dD["outlines"][1]["parent_arc_id"] == "a1")
+assert_ok("弧-往返一致", BookStoryline.from_dict(_dD).outlines[1].parent_arc_id == "a1")
+assert_ok("弧-旧数据兼容", BookStoryline.from_dict(
+    {"outlines": [{"id": "a3", "template_id": "t", "name": "旧数据"}]}).outlines[0].parent_arc_id == "")
+from libraries.structure import StageNode
+_stgTmpl = type("StubTmpl", (), {"stages": [
+    StageNode(name="阶段1", description="阶段描述", min_words=15000, max_words=45000,
+              key_events=["事件A", "事件B"], foreshadow_opportunities=["坑1"], themes=[])
+]})()
+_stgDict = structure_to_stages(_stgTmpl)[0]
+assert_ok("弧-阶段保留描述", _stgDict.get("description") == "阶段描述"
+          and _stgDict.get("foreshadow_opportunities") == ["坑1"])
+
+# 字数轴：弧章/字双坐标（2026-08-27 故事线纵轴=字数，落盘权威=start_word/end_word）
+_wtl = BookStoryline.from_dict({"words_per_chapter": 3000, "outlines": [
+    {"id": "w1", "template_id": "t", "name": "仅章", "start_chapter": 1, "end_chapter": 12}]})
+assert_ok("字轴-仅章推导", _wtl.outlines[0].start_word == 0 and _wtl.outlines[0].end_word == 36000)
+_wtl2 = BookStoryline.from_dict({"words_per_chapter": 3000, "outlines": [
+    {"id": "w2", "template_id": "t", "name": "仅字", "start_word": 500, "end_word": 1200}]})
+assert_ok("字轴-仅字推导章", _wtl2.outlines[0].start_chapter == 1 and _wtl2.outlines[0].end_chapter == 1)
+_wtl3 = BookStoryline.from_dict(BookStoryline.from_dict({"words_per_chapter": 3000, "outlines": [
+    {"id": "w3", "template_id": "t", "name": "无损", "start_word": 500, "end_word": 1200}]}).to_dict())
+assert_ok("字轴-往返无损", _wtl3.outlines[0].start_word == 500 and _wtl3.outlines[0].end_word == 1200)
+
+# 故事线校验工具 validate_storyline（弧树覆盖纵轴 + 桥段仅最底层弧）
+from agent_tools import validate_storyline, validate_world
+_v_invalid = validate_storyline(outlines=[
+    {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 10000},
+    {"id": "a2", "name": "弧2", "parent_arc_id": "", "start_word": 12000, "end_word": 20000},
+    {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 5000},
+], plots=[
+    {"id": "p1", "name": "桥1", "outline_id": "a1"},
+    {"id": "p2", "name": "桥2", "outline_id": "a1b"},
+])
+assert_ok("校验-叙事空白+非叶弧", _v_invalid["passed"] is False
+          and len(_v_invalid["coverage"]["gaps"]) == 1
+          and len(_v_invalid["leaf_arcs"]["violations"]) == 1)
+_v_valid = validate_storyline(outlines=[
+    {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 1000},
+    {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 1000},
+], plots=[{"id": "p1", "name": "桥1", "outline_id": "a1b"}])
+assert_ok("校验-合法通过", _v_valid["passed"] is True and _v_valid["issue_count"] == 0)
+
+# 弧内空白（arc_fill：跨度远超桥段 planned_words）
+_v_fill = validate_storyline(outlines=[
+    {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 80000},
+    {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 80000},
+], plots=[
+    {"id": "p1", "name": "桥1", "outline_id": "a1b"},
+    {"id": "p2", "name": "桥2", "outline_id": "a1b"},
+])
+assert_ok("校验-弧内空白", _v_fill["arc_fill"]["passed"] is False
+          and len(_v_fill["arc_fill"]["issues"]) == 1)
+# 收紧阈值：弧跨度 24k、桥段 16k（ratio 1.5，旧阈值放过）→ 弧内空白超一章即硬失败
+_v_fill2 = validate_storyline(outlines=[
+    {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 24000},
+    {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 24000},
+], plots=[{"id": "p%d" % i, "name": "桥%d" % i, "outline_id": "a1b", "cover_beats": 8} for i in range(10)])
+assert_ok("校验-跨度远超内容硬失败", _v_fill2["passed"] is False
+          and len(_v_fill2["arc_fill"]["issues"]) == 1)
+
+# 世界观校验（validate_world：势力重复/每势力配人物/孤儿人物）
+_v_world = validate_world(basic_info={
+    "world_building": {"factions": ["联邦远征军（人类主战力量）", "晨星财团（通敌）", "联邦议会（绥靖）"]},
+    "characters": [{"name": "林澈", "faction": "联邦远征军"}, {"name": "洛云深", "faction": "晨星财团"}],
+})
+assert_ok("校验-势力无人物", _v_world["passed"] is False
+          and "联邦议会" in _v_world["factions"]["without_characters"])
+_v_world_ok = validate_world(basic_info={
+    "world_building": {"factions": ["联邦远征军", "晨星财团"]},
+    "characters": [{"name": "林澈", "faction": "联邦远征军"}, {"name": "洛云深", "faction": "晨星财团"}],
+})
+assert_ok("校验-世界合法", _v_world_ok["passed"] is True and _v_world_ok["issue_count"] == 0)
 
 # ══════════════════════════════════════════════
 #  Phase 3.6: 叙事纪律 + 角色档案（无 LLM）
@@ -294,6 +385,48 @@ assert_ok("去AI-结果不同", result.processed != sample, "文本已变化")
 # 注入约束
 snippet = de_ai.build_deai_prompt_snippet()
 assert_ok("去AI-约束注入", len(snippet) > 100)
+
+# 风格规则库按笔名分：kind 合一（prefer=句式风格 / ban=禁止内容，词带替换=AI高频词）+ 空参兜底默认笔名
+from libraries.style_rules import StyleRuleLibrary as _SRL, StyleRule as _SR
+from libraries.de_ai import apply_word_replacements as _awr
+_s = _SRL()
+assert_ok("风格规则-默认笔名禁句/词表", len(_s.get_bans()) == 9 and len(_s.get_word_map()) == 23,
+          f"{len(_s.get_bans())} 禁句/{len(_s.get_word_map())} 词")
+assert_ok("风格规则-默认笔名句式规则", len([r for r in _s.rules_for("profile_001") if r.kind == "prefer"]) >= 6,
+          "枫落句式风格规则")
+_s.rules.append(_SR(id="t_ban_1", kind="ban", profile_id="profile_001", pattern="测试禁句", desc="笔名禁句"))
+_s.rules.append(_SR(id="t_word_1", kind="ban", profile_id="profile_001", pattern="测试专属词", replacements=["替换"]))
+_s.rules.append(_SR(id="t_prefer_1", kind="prefer", profile_id="profile_001", pattern="爱用（）做注释"))
+assert_ok("风格规则-笔名禁句", len(_s.get_bans("profile_001")) == 10, f"{len(_s.get_bans('profile_001'))} 禁句")  # 9 句式 + 1 笔名（带替换的词不计入禁句）
+assert_ok("风格规则-笔名词", "测试专属词" in _s.get_word_map("profile_001"))
+assert_ok("风格规则-空参兜底默认笔名", "测试专属词" in _s.get_word_map() and len(_s.get_word_map()) == 24)  # 默认笔名=profile_001
+_blk = _s.build_rules_block("profile_001")
+assert_ok("风格规则-注入块句式+禁止", "句式风格" in _blk and "禁止内容" in _blk and "爱用（）做注释" in _blk)
+_p = _SR.from_dict({"id": "x", "kind": "ban", "pattern": "p"})
+assert_ok("风格规则-旧条目无主", _p.profile_id == "")  # 老 jsonl 无 profile_id 兼容
+_rt, _rc = _awr("这是一个测试专属词。")
+assert_ok("风格规则-空参替换默认笔名词", "测试专属词" not in _rt and _rc >= 1, f"替换{_rc}处")
+# 清理：移除测试追加的规则，避免泄漏进后续 add_style_rule 的 _save()（会持久化全量 rules）
+_s.rules = [r for r in _s.rules if not r.id.startswith("t_")]
+
+# ── agent 传递层：get_pen_style（两路解析 + 结构化）+ add/delete_style_rule 往返 ──
+from agent_tools import (get_pen_style as _gps, add_style_rule as _asr,
+                         delete_style_rule as _dsr)
+_gp = _gps(profile_id="profile_001")
+assert_ok("传递-get_pen_style 结构化", _gp["pen_name"] == "枫落"
+          and any("句长偏短" in s for s in _gp["style"])
+          and any(w["word"] == "仿佛" for w in _gp["forbidden"]["words"])
+          and any("不是" in p["pattern"] for p in _gp["forbidden"]["patterns"])
+          and "句式风格" in _gp["style_rules"], f"{len(_gp['style_rules'])} 字 style_rules")
+assert_ok("传递-get_pen_style 英文笔名", _gps(profile_id="profile_006")["language"] == "en")
+_ad = _asr("profile_006", "prefer", "多用反问收尾")
+assert_ok("传递-add_style_rule 落库", _ad["ok"]
+          and "多用反问收尾" in _gps(profile_id="profile_006")["style"])
+assert_ok("传递-delete_style_rule 删除", _dsr(_ad["rule"]["id"])["ok"]
+          and "多用反问收尾" not in _gps(profile_id="profile_006")["style"])
+from libraries.profiles import ProfileManager as _PM
+_c = _PM("profiles").get_by_name("枫落").build_style_card()
+assert_ok("传递-style_card 精简", 50 <= len(_c) <= 220 and "笔名" in _c, f"{len(_c)} 字符")
 
 # ══════════════════════════════════════════════
 #  Phase 7: 角色状态机
@@ -434,7 +567,7 @@ try:
         _raised = True
     assert_ok("规划-无storyline报错", _raised)
 
-    _tl = BookStoryline(genre="玄幻")
+    _tl = BookStoryline()
     _tl.basic_info["world_building"]["description"] = "一句话种子"
     bm.save_storyline(_tbid, _tl)
     _eng = NovelEngine()
@@ -451,6 +584,50 @@ try:
     assert_ok("规划-有大纲建写作者", _eng2.storyline_writer is not None)
 finally:
     bm.delete(_tbid)
+
+# ══════════════════════════════════════════════
+#  Phase: 建书向导步门控（drive_ui + build_status）
+# ══════════════════════════════════════════════
+print("\n═══ Phase: 建书向导步门控（drive_ui + build_status）═══")
+import libraries.build_status as _bs_mod
+import libraries.nav_intent as _ni_mod
+from agent_tools import drive_ui as _drive_ui
+
+# build_status 盖章：真实上报（非空 state）→ updated_at 有值；空 state（测试清理）→ 不盖章（宽松阀）
+_bs_mod.set_build_status({"cur": 3, "bookId": ""})
+assert_ok("门控-真实上报盖章 updated_at", bool(_bs_mod.get_build_status().get("updated_at")))
+_bs_mod.set_build_status({})
+assert_ok("门控-空状态不盖章（宽松阀）", not (_bs_mod.get_build_status().get("updated_at")))
+
+# drive_ui 步门控：patch 掉入队（不写 storage/nav_intent.json），假 build_status 验拒绝/放行
+_orig_push = _ni_mod.push_ui_command
+_orig_get = _bs_mod.get_build_status
+_ni_mod.push_ui_command = lambda cmd, args=None: None
+def _gate_run(st, cmd, args):
+    _bs_mod.get_build_status = lambda: dict(st)
+    try:
+        _drive_ui(cmd, args)
+        return True, ""
+    except RuntimeError as _e:
+        return False, str(_e)
+_ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 2, "created": False},
+                   "set_world", {"world_building": {"core_conflict": "x"}})
+assert_ok("门控-错误步拒绝（步2≠步3）", not _ok)
+_ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 3, "created": False},
+                   "set_world", {"world_building": {"core_conflict": "x"}})
+assert_ok("门控-正确步放行", _ok)
+_ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 3, "created": True, "book_id": "book_x"},
+                   "set_outline", {"outlines": [{"id": "o1", "name": "n"}], "plots": []})
+assert_ok("门控-已建书拒绝", not _ok)
+_ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 3, "created": False},
+                   "set_field", {"field": "title", "value": "t"})
+assert_ok("门控-set_field 跨步放行", _ok)
+_ok, _ = _gate_run({"updated_at": "", "cur": 2, "created": False},
+                   "set_outline", {"outlines": [{"id": "o1", "name": "n"}], "plots": []})
+assert_ok("门控-宽松阀跳过（updated_at 空）", _ok)
+_ni_mod.push_ui_command = _orig_push
+_bs_mod.get_build_status = _orig_get
+_bs_mod.set_build_status({})   # 恢复空态，不残留真实向导状态
 
 # ══════════════════════════════════════════════
 #  汇总

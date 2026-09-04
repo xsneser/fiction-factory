@@ -141,16 +141,18 @@ def run_tests():
         ("Start New Book", "/books/start", ["启动新书", "form"]),
         ("Writing Desk", "/desk", ["书库"]),  # /desk 已 302 到书库（写作台按书进入）
         ("Plots", "/plots", ["桥段库", "plot"]),
-        ("Structures", "/structures", ["大纲库", "structure"]),
+        ("Structures", "/structures", ["情节弧库", "structure"]),
         ("Gags", "/gags", ["笑点库", "gag"]),
         ("Characters", "/characters", ["角色原型库", "char"]),
         ("Profiles", "/profiles", ["笔名档案", "profile"]),
-        ("New Profile", "/profiles/new", ["创建笔名", "form"]),
+        ("Style Rules Redirect", "/style-rules", ["笔名档案"]),  # 风格规则已并入笔名页，302→200
         ("Settings", "/settings", ["设置", "api"]),
-        ("Extract", "/extract", ["内容提取", "extract"]),
+        ("Extract", "/extract", ["提取", "入库"]),  # 步骤二·提取到数据库页
         ("DeAI Test", "/deai", ["去AI", "测试"]),
         ("Review Test", "/review-test", ["审查", "测试"]),
-        ("Scout", "/scout", ["抓取", "scout"]),
+        ("Scout", "/scout", ["侦察", "抓取"]),  # 步骤一·侦察抓取页
+        ("Novels", "/novels", ["外部书库", "novels"]),  # 外部书库独立页
+        ("Novels Read Redirect", "/novels/read", ["外部书库"]),  # 无 folder → 302→/novels
         ("Publish", "/publish", ["上架管理"]),
     ]
 
@@ -197,13 +199,13 @@ def run_tests():
         ("/books", "书库"),
         ("/publish", "上架管理"),
         ("/plots", "桥段库"),
-        ("/structures", "大纲库"),
+        ("/structures", "情节弧库"),
         ("/gags", "笑点库"),
         ("/characters", "角色原型库"),
-        ("/profiles", "笔名档案"),
+        ("/profiles", "笔名与风格"),
         ("/settings", "设置"),
-        ("/scout", "小说抓取"),
-        ("/extract", "内容提取"),
+        ("/scout", "侦察 · 提取"),
+        ("/novels", "外部书库"),
         ("/deai", "去AI测试"),
         ("/review-test", "审查测试"),
     ]
@@ -234,11 +236,12 @@ def run_tests():
                 check(f"Detail world form ({bid})",
                       'id="world-idea"' in r.text,
                       "world edit form not embedded in detail")
-                # 大纲已并入详情页：有故事线的书应含可编辑大纲卡片
-                if "📋 故事线大纲" in r.text:
-                    check(f"Detail outline cards ({bid})",
-                          'class="outline-card"' in r.text,
-                          "editable outline cards not in detail")
+                # 故事线已并入详情页：有故事线的书应含 Gantt 挂载点 + 客户端渲染接线（story_line.js）
+                if 'id="detail-storyline"' in r.text:
+                    check(f"Detail storyline gantt ({bid})",
+                          "window.StoryLine.init('detail-storyline'" in r.text
+                          and "/static/js/story_line.js" in r.text,
+                          "storyline Gantt not wired in detail")
                 # 顶部按钮行不再含跳转设定/大纲的按钮（设定=页内锚点 #world-edit）
                 check(f"Detail no world/outline jump ({bid})",
                       f'href="/books/{bid}/world"' not in r.text
@@ -270,47 +273,38 @@ def run_tests():
         check("Library ops has delete btn", "删除" in r.text,
               "library missing delete button")
 
-    # 书详情状态感知引导：planning 无章节书不应出现「🎬 生成书名/简介」按钮（需第1章）
+    # 书详情：原「🎬 生成书名/简介」按钮已删除，改为点击第一行书名就地编辑（id="book-title" + 回车/失焦保存）
     for bid in book_ids[:3] if book_ids else []:
         rd = get(f"/books/{bid}")
         if rd.status_code != 200:
             continue
-        btn = 'onclick="generateMeta()">🎬 生成书名/简介'
-        has_meta_btn = btn in rd.text
-        # 进度 "n/m 章" 从页面解析
-        import re as _re
-        m = _re.search(r'(\d+)\s*/\s*(\d+)\s*章', rd.text)
-        chapter = int(m.group(1)) if m else 0
-        if chapter == 0:
-            check(f"Planning book no generate-meta btn ({bid})", not has_meta_btn,
-                  "planning 书不应显示生成书名/简介按钮")
-        else:
-            check(f"Written book has generate-meta btn ({bid})", has_meta_btn,
-                  "已写书应显示生成书名/简介按钮")
+        check(f"Book detail no generate-meta btn ({bid})", 'generateMeta' not in rd.text,
+              "详情页不应再出现生成书名/简介按钮/脚本")
+        check(f"Book detail no meta btn label ({bid})", '🎬 生成书名/简介' not in rd.text,
+              "详情页不应再出现生成书名/简介文案")
+        check(f"Book detail title click-to-edit wired ({bid})", 'id="book-title"' in rd.text,
+              "详情页第一行书名应可点击编辑")
 
     # ═══ Storyline renderer consistency ═══
-    # 方案4：服务端 Jinja 渲染的桥段卡应与 JS 重绘（renderPlotList）字段一致，
-    # 必须包含 线程/收局/内涵 三个徽标，防止双份渲染漂移。
-    # 依赖数据：仅当页面实际渲染了桥段卡（该书有桥段）时校验，否则跳过。
+    # 故事线已改为客户端 Gantt（story_line.js 渲染，服务端只注入 JSON + 挂载点）：
+    # 校验写作台页的 Gantt 挂载/数据注入/脚本接线齐备，防止接线漂移后页面白屏。
     print("\n--- Storyline Renderer Consistency ---")
     tl_editor = None
     for cand in book_ids[:3] if book_ids else []:
         r = get(f"/storyline/{cand}/edit")
-        # 规划已并入统一写作台（/storyline/<id>/edit 重定向到写作台页）；用「✍️ 写作台」标记匹配
+        # /storyline/<id>/edit 302 到统一写作台；用「✍️ 写作台」标记匹配
         if r.status_code == 200 and "✍️ 写作台" in r.text:
             tl_editor = r
             break
     if tl_editor is None:
         print("  (no storyline editor page found - skipping renderer check)")
-    elif "plot-card" not in tl_editor.text:
-        print("  (no book with plots in library - skipping plot-card badge check)")
+    elif 'id="editor-storyline"' not in tl_editor.text:
+        print("  (write flow page missing storyline mount - check render path)")
     else:
-        for badge, label in [("线程:", "thread badge"),
-                             ("↪ 收局", "payoff badge"),
-                             ("💡 内涵", "theme badge")]:
-            check(f"Jinja plot card has {label}",
-                  badge in tl_editor.text,
-                  f"'{badge}' missing from server-rendered plot cards")
+        for marker, label in [("window.StoryLine.init('editor-storyline'", "gantt init wired"),
+                              ("window.__BOOK_STORYLINE__", "storyline data injected"),
+                              ("/static/js/story_line.js", "story_line.js loaded")]:
+            check(f"Write flow {label}", marker in tl_editor.text, f"'{marker}' missing")
 
     # ═══ CSS/JS consistency ═══
     print("\n--- Style Consistency ---")

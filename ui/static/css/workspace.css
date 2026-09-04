@@ -6,10 +6,25 @@ main { overflow: hidden; }
 /* 工作台高度 100%；下方折叠面板（基础设定）展开超出时整体可滚动，避免被裁切 */
 .tle-layout { display:flex; flex-direction:column; height:100%; min-height:0; overflow-y:auto; }
 .editor-split { flex:1; min-height:0; display:flex; gap:16px; align-items:stretch; }
-.editor-left { width:24%; min-width:260px; flex-shrink:0; display:flex; flex-direction:column; min-height:0; }
+.editor-left { width:50%; min-width:320px; max-width:70%; flex-shrink:0; display:flex; flex-direction:column; min-height:0; transition:width .22s ease, min-width .22s ease, max-width .22s ease; }
+/* 左栏折叠（P3-3）：正文区占满，展开按钮贴在左缘。
+ * 注：用 display:none 实现（此前 width/min-width:0 方案在 flex 布局下被 min-width 兜底到 320px 覆盖，display 最可靠） */
+.editor-left.collapsed { display:none; }
+.editor-split.collapsed-left .editor-divider { display:none; }
+.el-collapse-btn { background:none; border:1px solid var(--border-soft); color:var(--fg-dim); border-radius:6px;
+    padding:1px 7px; font-size:11px; cursor:pointer; margin-left:8px; transition:all .15s; }
+.el-collapse-btn:hover { color:var(--accent); border-color:var(--accent); }
+.el-expand-btn { position:absolute; left:0; top:50%; transform:translateY(-50%); z-index:50;
+    background:var(--bg-elev); border:1px solid var(--border-soft); border-left:none; color:var(--fg-muted);
+    border-radius:0 8px 8px 0; padding:10px 6px; font-size:11px; cursor:pointer; display:none; box-shadow:2px 0 8px rgba(0,0,0,.3); }
+.el-expand-btn:hover { color:var(--accent); }
+.editor-split.collapsed-left .el-expand-btn { display:block; }
 .editor-scroll { flex:1; min-height:0; overflow:hidden; }
-.editor-storyline { height:100%; min-height:0; background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); padding:12px; }
-.editor-mid { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding-right:4px; }
+.editor-storyline { height:100%; min-height:0; overflow:hidden; }
+.editor-mid { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; overflow:hidden; padding-right:4px; position:relative; }   /* relative：目录抽屉绝对定位在右栏内部 */
+/* 可拖拽分栏分隔条（拖拽调整故事线宽度，JS 持久化 localStorage） */
+.editor-divider { flex:0 0 4px; width:4px; cursor:col-resize; background:var(--border-soft); border-radius:2px; align-self:stretch; }
+.editor-divider:hover { background:#58a6ff; }
 
 /* 右栏：规划/生成折叠区（JS 从 view-plan 搬来，生成动态在右，中间只留正文） */
 .right-plan { border:1px solid var(--border-soft); border-radius:var(--radius); padding:10px 12px; margin-bottom:12px; background:var(--bg-elev); }
@@ -17,10 +32,13 @@ main { overflow: hidden; }
 .right-plan[open] summary { margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border-soft); }
 .right-plan-section { display:block; padding:0; margin:0; overflow:visible; }
 
-/* 中栏：章节正文（连续文本，不再按桥段分卡） */
+/* 中栏：章节正文（连续文本，不再按桥段分卡；桥段包 span.m-bridge 供点击高亮） */
 .manuscript { background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); padding:16px; font-size:15px; line-height:1.9; color:#c9d1d9; white-space:pre-wrap; word-break:break-word; min-height:0; }
 .manuscript .m-chapter-title { font-size:18px; font-weight:700; color:var(--fg-strong); margin:20px 0 12px; }
 .manuscript .m-chapter-divider { text-align:center; color:var(--fg-dim); font-size:12px; margin:20px 0; letter-spacing:2px; }
+/* 进行中草稿章节的辨识徽标（desk.py 追加的 draft 伪章节） */
+.manuscript .m-draft-tag { display:inline-block; vertical-align:middle; margin-left:10px; padding:1px 8px; font-size:12px; font-weight:600; color:#8b949e; border:1px dashed #30363d; border-radius:999px; }
+/* .m-bridge / .m-bridge-active / m-bridge-flash 已随阅读器组件统一到 reader.css */
 
 .info-bar { display:flex; gap:20px; padding:12px 16px; background:var(--bg-elev); border-radius:var(--radius); margin-bottom:20px; color:var(--fg-muted); font-size:13px; flex-wrap:wrap; }
 .info-bar strong { color:var(--fg-strong); }
@@ -39,3 +57,25 @@ main { overflow: hidden; }
 .gf-item.action-outline { border-left-color:#f97583; color:var(--fg-strong); }
 .gf-item.action-plot { border-left-color:#79c0ff; color:var(--fg-strong); }
 .gf-item.action-gag { border-left-color:var(--success-fg); color:var(--fg-strong); }
+
+/* ─── 写作台阅读器（按章 CSS-columns 书式分页 + 目录抽屉；类名 reader-* 隔离） ─── */
+/* 顶部：继续写正文大卡（原样式，右栏顶部） */
+.wf-skill-cards { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
+.wf-skill-card { background:#0d1117; border:1px solid #21262d; border-radius:8px;
+    padding:10px 12px; cursor:pointer; transition:all .2s; }
+.wf-skill-card:hover { border-color:#58a6ff; }
+.wf-skill-card .wsc-title { color:#58a6ff; font-weight:600; font-size:13px; margin-bottom:4px; }
+.wf-skill-card .wsc-sub { color:#8b949e; font-size:11px; line-height:1.6; }
+.wf-skill-card.running { opacity:.7; cursor:not-allowed; border-color:#f85149; }
+.wf-skill-card.running .wsc-title { color:#f85149; }
+.wf-skill-card.running .wsc-title::before { content:''; display:inline-block; width:11px; height:11px;
+    border:2px solid #f85149; border-top-color:transparent; border-radius:50%;
+    animation:wf-spin .8s linear infinite; margin-right:6px; vertical-align:-1px; }
+@keyframes wf-spin { to { transform: rotate(360deg); } }
+.wf-stop-btn { margin-top:8px; background:#21262d; border:1px solid #f85149; color:#f85149;
+    border-radius:6px; padding:4px 12px; font-size:12px; cursor:pointer; transition:all .15s; }
+.wf-stop-btn:hover { background:#f85149; color:#0d1117; }
+.wf-stop-btn:disabled { opacity:.5; cursor:default; }
+/* 阅读器共享组件样式已统一到 reader.css（本页 head 已加载 reader.css）。
+   此处只补写作台布局差异：工具栏在视口下方 → margin-top（外部阅读器在视口上方用 reader.css 的 margin-bottom） */
+.editor-mid .reader-toolbar { margin-top:8px; margin-bottom:0; }

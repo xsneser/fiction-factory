@@ -2,22 +2,25 @@
 {% block content %}
 <h1>🎭 角色原型库 <span style="font-size:14px;color:#8b949e">（{{ archetypes|length }} 原型）</span></h1>
 
-<div class="tabs" style="margin-bottom:16px">
+<div class="tabs char-tabs" style="margin-bottom:16px">
     <a href="/characters" class="{{ 'active' if not current_cat else '' }}">全部</a>
     {% for c in categories %}
     <a href="/characters?tag={{ c }}" class="{{ 'active' if c == current_cat else '' }}">{{ c }}</a>
     {% endfor %}
 </div>
 
+{% if archetypes %}
+<div class="char-grid">
 {% for a in archetypes %}
-<div class="accordion" id="char-{{ a.id }}" style="opacity:{{ '0.5' if not a.enabled else '1' }}">
+<div class="char-card accordion" id="char-{{ a.id }}" style="opacity:{{ '0.5' if not a.enabled else '1' }}">
     <div class="accordion-header">
-        <span>
-            <strong>{{ a.name }}</strong>
-            {% for t in a.tags %}<span class="tag blue">{{ t }}</span>{% endfor %}
+        <span class="cc-title">
+            <strong class="cc-name">{{ a.name }}</strong>
             {% if not a.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
+            <span class="cc-arrow" data-acc-hint>展开 ▸</span>
         </span>
-        <span style="color:#8b949e;font-size:12px">{{ a.personality }}</span>
+        <span class="cc-tags">{% for t in a.tags %}<span class="tag blue">{{ t }}</span>{% endfor %}</span>
+        <span class="cc-persona">{{ a.personality }}</span>
     </div>
     <div class="accordion-body">
         <p style="color:#c9d1d9">{{ a.description }}</p>
@@ -28,8 +31,8 @@
         {% if a.catchphrases %}
         <p><strong>口癖示例:</strong> {% for c in a.catchphrases %}<span class="tag yellow">「{{ c }}」</span>{% endfor %}</p>
         {% endif %}
-        {% if a.fit_genres %}
-        <p><strong>适配流派:</strong> {% for g in a.fit_genres %}<span class="tag green">{{ g }}</span>{% endfor %}</p>
+        {% if a.fit_tags %}
+        <p><strong>适配标签:</strong> {% for g in a.fit_tags %}<span class="tag green">{{ g }}</span>{% endfor %}</p>
         {% endif %}
         <p style="color:#484f58;font-size:11px">
             收录: {{ a.created_at }}
@@ -41,9 +44,11 @@
         </p>
     </div>
 </div>
+{% endfor %}
+</div>
 {% else %}
 <div class="empty"><div class="icon">🎭</div><p>还没有角色原型</p></div>
-{% endfor %}
+{% endif %}
 
 <script>
 async function toggleChar(id) {

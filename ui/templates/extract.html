@@ -1,227 +1,191 @@
 {% extends "base.html" %}
-{% block title %}内容提取 — NovelEngine{% endblock %}
+{% block title %}提取到数据库 — NovelEngine{% endblock %}
 {% block content %}
-<h1>📝 内容提取</h1>
-<p style="font-size:13px;color:#8b949e;margin-bottom:20px">从已下载的小说中提取资产库条目和写作风格</p>
+<script>window.__nePageReceiver = true; /* 声明本页可接收 agent 页面命令（set_review 等） */</script>
 
-<div class="tabs" style="margin-bottom:20px">
-    <a href="javascript:;" class="extract-tab active" data-tab="library" onclick="switchExtractTab('library')">🗂️ 资产库提取</a>
-    <a href="javascript:;" class="extract-tab" data-tab="style" onclick="switchExtractTab('style')">✍️ 写作风格提取</a>
+<h1>🧪 提取入库 <span style="font-size:14px;color:#8b949e">从「外部书库」选书跳入 → 交给 Agent 提炼五类素材 → 勾选确认入库五库</span></h1>
+
+{# ─── 书工作台：只聚焦一本书（已下载书列表唯一归属 /novels，本页不再全量列书） ─── #}
+<div class="scout-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <strong>📚 已下载小说</strong>
+        <select id="book-select" onchange="onBookSelect()" style="min-width:240px">
+            <option value="">加载中…</option>
+        </select>
+        <label style="font-size:13px;color:#8b949e">风格规则归属笔名</label>
+        <select id="extract-pen">
+            {% for p in profiles %}<option value="{{ p.id }}" data-name="{{ p.pen_name }}">{{ p.pen_name }}</option>{% endfor %}
+        </select>
+        <a class="btn" href="/scout" style="text-decoration:none;margin-left:auto">← 外部书库</a>
+    </div>
+    <div id="book-meta" style="margin-top:12px;font-size:13px;color:#c9d1d9">请选择一本书开始提取…</div>
+    <div id="book-actions" style="display:flex;gap:8px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid #30363d">
+        <button id="analyze-btn" class="btn-primary" onclick="analyzeFrom()" disabled>🧪 分析提取</button>
+    </div>
 </div>
 
-{# ─── 资产库提取 ─── #}
-<div id="extract-library" class="extract-panel">
-    <p style="font-size:13px;color:#8b949e;margin-bottom:12px">选中已下载的小说，分析并提取桥段/大纲/笑点到各库</p>
-    <div id="library-novels-list"></div>
+{# ─── Agent 忙碌指示 ─── #}
+<div id="agent-status" style="display:none;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:10px 14px;margin-top:12px">
+    <span>🤖 Agent 处理中…</span>
 </div>
+<div id="extract-progress" class="scout-card" style="display:none;margin-top:12px"></div>
 
-{# ─── 写作风格提取 ─── #}
-<div id="extract-style" class="extract-panel" style="display:none">
-    <p style="font-size:13px;color:#8b949e;margin-bottom:12px">分析已下载小说的写作风格，生成风格摘要并可关联到笔名档案</p>
-    <div id="style-novels-list"></div>
-</div>
-
-<div id="extract-result-area" style="display:none;margin-top:20px"></div>
+{# ─── 结果审查区（agent set_review 呈现候选；勾选后 library_review.js 入库） ─── #}
+<div id="review-area" style="display:none;margin-top:20px"></div>
 
 <style>
-.style-result { background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin-bottom:16px }
-.style-result h3 { color:#58a6ff;margin-bottom:12px }
-.style-result .field { margin-bottom:10px }
-.style-result .field-label { font-size:12px;color:#8b949e }
-.style-result .field-value { font-size:14px;margin-top:2px }
+.scout-card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:20px; margin-top:16px; }
+.btn-primary:disabled, .btn-primary:disabled:hover { background:#30363d; color:#8b949e; cursor:not-allowed; }
 </style>
 
 <script src="/static/js/library_review.js"></script>
 <script>
-// 单工具互斥代际计数器：新分析任务替代旧任务后，旧请求的返回结果被丢弃
-var _extractGen = 0;
+var currentPenId = '';
+var currentPenName = '';
+var _books = [];   // /api/scout/novels 返回的书列表（下拉 + 选中书详情共用）
 
-// 页面加载即加载默认 tab（资产库提取）的已下载小说列表，避免首屏空白
-(function(){ loadNovelsForExtract('library'); })();
+(function(){
+    var sel = document.getElementById('extract-pen');
+    if (sel && sel.options.length) { currentPenId = sel.value; currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name'); }
+    if (sel) sel.addEventListener('change', function(){
+        currentPenId = sel.value;
+        currentPenName = sel.options[sel.selectedIndex].getAttribute('data-name');
+    });
+    loadBooks();
+})();
 
-// 事件委托：列表卡片内的「提取资产库 / 重新提取 / 分析写作风格」按钮
-document.addEventListener('click', function(e) {
-    var libBtn = e.target.closest('.lib-btn');
-    if (libBtn) {
-        var p = libBtn.getAttribute('data-p');
-        var f = libBtn.getAttribute('data-f');
-        if (p && f) extractLibrary(p, f, libBtn);
-        return;
-    }
-    var styleBtn = e.target.closest('.style-btn');
-    if (styleBtn) {
-        var sp = styleBtn.getAttribute('data-p');
-        var sf = styleBtn.getAttribute('data-f');
-        if (sp && sf) extractStyle(sp, sf, styleBtn);
-        return;
-    }
-});
-
-function switchExtractTab(key) {
-    document.querySelectorAll('.extract-tab').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelectorAll('.extract-panel').forEach(function(p) { p.style.display = 'none'; });
-    var tab = document.querySelector('.extract-tab[data-tab="' + key + '"]');
-    if (tab) tab.classList.add('active');
-    var panel = document.getElementById('extract-' + key);
-    if (panel) panel.style.display = 'block';
-    if (key === 'library') loadNovelsForExtract('library');
-    if (key === 'style') loadNovelsForExtract('style');
-}
-
-function loadNovelsForExtract(mode) {
-    var el = document.getElementById(mode === 'library' ? 'library-novels-list' : 'style-novels-list');
-    el.innerHTML = '<div class="empty"><p style="color:#484f58">加载中...</p></div>';
-
+/* ─── 书下拉（仅列书名；完整列表/阅读/删除在 /novels） ─── */
+function loadBooks() {
     fetch('/api/scout/novels')
         .then(function(r) { return r.json(); })
         .then(function(novels) {
-            if (!novels || novels.length === 0) {
-                el.innerHTML = '<div class="empty" style="padding:40px"><div class="icon" style="font-size:36px">📂</div><p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p><p style="color:#484f58;font-size:12px;margin-top:6px">先去「小说抓取」下载几本</p></div>';
+            _books = novels || [];
+            var sel = document.getElementById('book-select');
+            var meta = document.getElementById('book-meta');
+            var analyzeBtn = document.getElementById('analyze-btn');
+            if (!sel || !meta) return;
+            if (!_books.length) {
+                sel.innerHTML = '<option value="">暂无已下载小说</option>';
+                meta.innerHTML = '<div class="empty" style="padding:40px;text-align:center"><div class="icon" style="font-size:36px">📂</div>'
+                    + '<p style="color:#8b949e;margin-top:12px">暂无已下载的小说</p>'
+                    + '<p style="color:#484f58;font-size:12px;margin-top:6px">去 <a href="/scout">外部书库</a> 抓取下载一本书，再从书库点「分析提取」跳回本页</p></div>';
+                if (analyzeBtn) analyzeBtn.disabled = true;
                 return;
             }
-            var html = '';
-            novels.forEach(function(n) {
-                html += '<div class="card" style="margin-bottom:12px">';
-                html += '<div style="display:flex;justify-content:space-between;align-items:center">';
-                html += '<div><strong>' + n.title + '</strong> <span class="tag">' + (n.author||'') + '</span></div>';
-                html += '<span style="font-size:12px;color:#8b949e">' + (n.saved_chapters||0) + '/' + (n.chapter_count||'?') + '章</span>';
-                html += '</div>';
-                html += '<p style="font-size:12px;color:#484f58;margin-top:6px">平台: ' + (n.platform||'') + ' · 收录: ' + (n.downloaded_at||'') + '</p>';
-                html += '<div style="margin-top:8px;display:flex;gap:8px">';
-
-                var p = n.platform, f = n.folder;
-                if (mode === 'library') {
-                    if (n.analyzed) {
-                        html += '<span class="tag green">✅ 已提取</span>';
-                        html += '<button class="small lib-btn" data-p="' + p + '" data-f="' + f + '">🔄 重新提取</button>';
-                    } else {
-                        html += '<button class="small lib-btn" data-p="' + p + '" data-f="' + f + '" style="background:#238636">🗂️ 提取资产库</button>';
-                    }
-                } else {
-                    if (n.analyzed) {
-                        html += '<span class="tag green">✅ 已分析</span>';
-                    }
-                    html += '<button class="small style-btn" data-p="' + p + '" data-f="' + f + '" style="background:#1f6feb">✍️ 分析写作风格</button>';
-                }
-
-                html += '</div></div>';
+            var html = '<option value="" selected>选择一本书…</option>';
+            _books.forEach(function(n, i) {
+                html += '<option value="' + i + '">'
+                    + escapeHtml(n.title) + '（' + (n.saved_chapters || 0) + ' 章）' + '</option>';
             });
-            el.innerHTML = html;
-        });
+            sel.innerHTML = html;
+            onBookSelect();
+        })
+        .catch(function() { var meta = document.getElementById('book-meta');
+            if (meta) meta.innerHTML = '<div class="empty"><p style="color:#484f58">加载失败</p></div>'; });
 }
 
-function extractLibrary(platform, folder, btn) {
-    // 单工具互斥：新任务替代旧任务，旧请求返回后不再渲染
-    var gen = ++_extractGen;
-    btn.disabled = true;
-    btn.textContent = '提取中...';
-    document.getElementById('extract-result-area').style.display = 'none';
-    readAnalyzeStream(gen, btn, '🗂️ 提取资产库', platform, folder, 'library');
+function selectedBook() {
+    var sel = document.getElementById('book-select');
+    var idx = parseInt(sel && sel.value);
+    return _books[idx] || null;
 }
 
-function extractStyle(platform, folder, btn) {
-    // 单工具互斥：新任务替代旧任务，旧请求返回后不再渲染
-    var gen = ++_extractGen;
-    btn.disabled = true;
-    btn.textContent = '分析中...';
-    document.getElementById('extract-result-area').style.display = 'none';
-    readAnalyzeStream(gen, btn, '✍️ 分析写作风格', platform, folder, 'style');
+function onBookSelect() {
+    var n = selectedBook();
+    var meta = document.getElementById('book-meta');
+    var analyzeBtn = document.getElementById('analyze-btn');
+    if (!n || !meta) {
+        if (meta) meta.innerHTML = '请选择一本书开始提取…';
+        if (analyzeBtn) analyzeBtn.disabled = true;
+        return;
+    }
+    var p = n.platform || 'fanqie';
+    meta.innerHTML = '<strong>' + escapeHtml(n.title) + '</strong>'
+        + ' <span class="tag">' + escapeHtml(n.author || '') + '</span>'
+        + '<span style="color:#8b949e"> · ' + (n.saved_chapters || 0) + ' 章 · 平台: ' + escapeHtml(p)
+        + ' · 收录: ' + escapeHtml(n.downloaded_at || '') + '</span>';
+    if (analyzeBtn) analyzeBtn.disabled = false;
 }
 
-// SSE 读取分析流：进度日志由后端 task_manager 驱动右侧状态栏，
-// 前端只等 done 事件渲染结果卡片
-function readAnalyzeStream(gen, btn, btnText, platform, folder, mode) {
-    fetch('/api/scout/analyze', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({platform: platform, folder: folder, mode: mode}),
-    })
-    .then(function(r) {
-        if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || ('HTTP ' + r.status)); });
-        var reader = r.body.getReader();
-        var decoder = new TextDecoder();
-        function read() {
-            return reader.read().then(function(res) {
-                if (res.done) return;
-                var raw = decoder.decode(res.value, {stream: true});
-                var lines = raw.split('\n');
-                for (var i = 0; i < lines.length; i++) {
-                    var line = lines[i].trim();
-                    if (line.startsWith('data: ')) {
-                        try {
-                            var d = JSON.parse(line.slice(6));
-                            if (d.event === 'done') {
-                                if (gen === _extractGen) {
-                                    if (mode === 'library') showReviewCards(d);
-                                    else showStyleResult(d);
-                                }
-                                return;
-                            }
-                            if (d.event === 'error') {
-                                if (gen === _extractGen) showToast('❌ 分析失败: ' + (d.message||'未知错误'), 'error');
-                                return;
-                            }
-                            if (d.event === 'cancelled') {
-                                // 被新任务替代，静默结束
-                                return;
-                            }
-                        } catch(e) {}
-                    }
-                }
-                return read();
-            });
+/* 分析提取：交给侧栏 Agent（folder 直达，agent 不再重复下载；契约在 novel-scout skill，此处只传书标识+笔名） */
+function analyzeFrom() {
+    if (typeof window.agentSendTask !== 'function') return showToast('侧栏 Agent 未就绪，请刷新页面', 'error');
+    var n = selectedBook();
+    if (!n) return showToast('请先选择一本书', 'warning');
+    var task = '对已下载小说《' + n.title + '》（platform=' + (n.platform || 'fanqie') + '，folder=' + n.folder
+        + '，已下载' + (n.saved_chapters || 0) + '章）：按 novel-scout 整本扫读协议，从头顺序逐章读全书'
+        + '（章节已下载，直接 read_crawled_novel 读，勿再 fetch_book 重复下载），读到可复用内容随手提炼五类'
+        + '（桥段/情节弧/笑点/角色 + 写作风格规则）；候选必须通过 drive_ui(set_review) 送入本页暂存区，'
+        + '禁止直接调用 ingest_library_assets；入库前先 query_arc_library/query_plots/query_gags/query_characters 比对库内已有，'
+        + '结构/机制高度近似的差异化或跳过；'
+        + '将成熟候选通过 drive_ui(set_review) 放入提取页暂存区，等待用户在页面勾选确认后入库；持续读完整本，'
+        + '不要按固定章节数停下或等待阶段报告；上下文变重时自行压缩已读内容并继续，直到读完置 status=done。'
+        + '风格规则归属笔名「' + (currentPenName || '') + '」。';
+    window.agentSendTask(task);
+    showToast('🤖 已交给 Agent 分析提炼', 'info');
+}
+
+/* ─── 统一暂存区渲染入口：SSE(oncommand) 与轮询(extract-progress) 都汇聚到这里，按数据签名去重 ─── */
+var lastReviewSignature = '';
+function renderReview(data, scroll) {
+    if (!data) return;
+    var sig = '';
+    try { sig = JSON.stringify(data); } catch (ignore) {}
+    if (sig && sig === lastReviewSignature) return;   // 同一批数据已渲染过，跳过
+    lastReviewSignature = sig;
+    renderReviewCards(data, 'review-area');
+    if (scroll) {
+        var area = document.getElementById('review-area');
+        if (area) area.scrollIntoView({behavior:'smooth', block:'start'});
+    }
+}
+
+/* ─── set_review 命令 → 立即渲染暂存区（SSE 实时路径；轮询兜底） ─── */
+window.onnecommand = function(e) {
+    var d = e && e.detail;
+    if (!d || d.cmd !== 'set_review' || !d.args) return;
+    renderReview(d.args, true);
+};
+
+/* 入库成功后（library_review.js 回调）：刷新下拉与选中书详情 */
+function refreshScoutUI() {
+    loadBooks();
+}
+
+// agent 忙碌指示（ne:agent-state 事件，agent_panel.js 派发）
+window.addEventListener('ne:agent-state', function(e) {
+    var busy = e && e.detail && e.detail.busy;
+    var el = document.getElementById('agent-status');
+    if (el) el.style.display = busy ? '' : 'none';
+});
+
+var extractProgressTimer = setInterval(loadExtractProgress, 2000);
+function loadExtractProgress() {
+    fetch('/api/scout/extract-progress').then(function(r) { return r.json(); }).then(function(d) {
+        var el = document.getElementById('extract-progress');
+        if (!el || !d || !d.folder || d.status === 'idle') return;
+        var selected = selectedBook();
+        // 只显示「当前选中书 == 进度书」的进度：未选书 / 选了其他书 → 隐藏（不残留陈旧任务进度）
+        if (!selected || !selected.folder || selected.folder !== d.folder) {
+            el.style.display = 'none';
+            return;
         }
-        return read();
-    })
-    .catch(function(e) { if (gen === _extractGen) showToast('❌ 请求失败: ' + e.message, 'error'); })
-    .finally(function() { if (gen === _extractGen) { btn.disabled = false; btn.textContent = btnText; } });
+        var s = d.staged || {}, c = d.committed || {};
+        var read = d.read_end ? ('正在阅读第 ' + d.read_start + '-' + d.read_end + ' 章') : (d.message || '处理中');
+        el.style.display = '';
+        el.innerHTML = '<strong>📖 提取进度</strong> <span class="tag">' + escapeHtml(d.title || d.folder) + '</span>'
+            + '<div style="margin-top:8px;color:#c9d1d9">' + escapeHtml(read) + '</div>'
+            + '<div style="margin-top:6px;color:#8b949e">桥段 ' + (s.plots || 0)
+            + ' · 弧 ' + (s.structures || 0) + ' · 笑点 ' + (s.gags || 0)
+            + ' · 人物 ' + (s.characters || 0) + ' <span style="color:#d29922">（暂存区）</span></div>'
+            + '<div style="margin-top:4px;color:#8b949e">已入库：桥段 ' + (c.plots || 0)
+            + ' · 弧 ' + (c.structures || 0) + ' · 笑点 ' + (c.gags || 0)
+            + ' · 人物 ' + (c.characters || 0) + ' · ' + escapeHtml(d.message || '') + '</div>';
+        if (d.review && (d.review.plots || d.review.structures || d.review.gags || d.review.characters || d.review.style_rules)) {
+            renderReview(d.review, false);
+        }
+    }).catch(function() {});
 }
-
-function showAlert(msg, type) {
-    // 不再使用右上角绿色弹框，日志统一走右侧状态栏（task_manager）
-}
-
-// ─── 审核入库（复用scout的逻辑） ───
-
-var _lastReviewData = null;
-var EXTRACT_RESULT_KEY = 'novelengine_extract_result';
-
-function showReviewCards(d) {
-    _lastReviewData = d;
-    // 持久化结果到 sessionStorage：切换页面后回来仍能查看
-    try { sessionStorage.setItem(EXTRACT_RESULT_KEY, JSON.stringify({mode:'library', data:d})); } catch(e) {}
-    renderReviewCards(d, 'extract-result-area');
-    var area = document.getElementById('extract-result-area');
-    area.scrollIntoView({behavior:'smooth', block:'start'});
-}
-
-function showStyleResult(d) {
-    // 持久化结果到 sessionStorage：切换页面后回来仍能查看
-    try { sessionStorage.setItem(EXTRACT_RESULT_KEY, JSON.stringify({mode:'style', data:d})); } catch(e) {}
-    renderStyleResult(d);
-    var area = document.getElementById('extract-result-area');
-    area.scrollIntoView({behavior:'smooth', block:'start'});
-}
-
-function renderStyleResult(d) {
-    var area = document.getElementById('extract-result-area');
-    area.style.display = 'block';
-    var s = d.writing_style || {};
-    var html = '<div class="style-result">';
-    html += '<h3>✍️ ' + d.title + ' — 写作风格分析</h3>';
-    html += '<div class="field"><div class="field-label">📝 风格概要</div><div class="field-value">' + (s.summary || '') + '</div></div>';
-    html += '<div class="field"><div class="field-label">句子节奏</div><div class="field-value">' + (s.sentence_rhythm || '') + '</div></div>';
-    html += '<div class="field"><div class="field-label">对话风格</div><div class="field-value">' + (s.dialogue_style || '') + '</div></div>';
-    html += '<div class="field"><div class="field-label">描写偏好</div><div class="field-value">' + (s.description_focus || '') + '</div></div>';
-    html += '<div class="field"><div class="field-label">情绪表达</div><div class="field-value">' + (s.emotional_expression || '') + '</div></div>';
-    if (s.common_words && s.common_words.length) html += '<div class="field"><div class="field-label">常用词</div><div class="field-value">' + s.common_words.join('、') + '</div></div>';
-    if (s.avoid_words && s.avoid_words.length) html += '<div class="field"><div class="field-label">禁用词</div><div class="field-value">' + s.avoid_words.join('、') + '</div></div>';
-    html += '<div class="field"><div class="field-label">叙事视角</div><div class="field-value">' + (s.narrative_perspective || '') + '</div></div>';
-    html += '<div class="field"><div class="field-label">开篇风格</div><div class="field-value">' + (s.opening_style || '') + '</div></div>';
-    html += '<div class="field"><div class="field-label">节奏把控</div><div class="field-value">' + (s.pacing || '') + '</div></div>';
-    html += '</div>';
-    area.innerHTML = html;
-}
-
+loadExtractProgress();
 </script>
 {% endblock %}

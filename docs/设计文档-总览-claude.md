@@ -5,7 +5,7 @@
 > `项目规划.md`（v0.6）· `交接文档.md` · `harness重构交接文档.md` · `新书创建-Harness架构与LLM提示词.md` · `优化方案-2026-08-04.md` · `优化方案核对-2026-08-04.md` · `待codex处理-2026-08-04.md` · `UX报告-2026-08-05.md` · `task-system-spec.md` · `ui-notes.md` · `novel-factory-timeline.html` · `设计文档.md`（另一会话合并版，v1.1 已并入并退役）
 >
 > **代码是最终真相**：本文档所有架构事实均以当前代码为准（HEAD `53cee50`）。若与代码冲突，以代码为准并回写本文档。
-> 测试基线：`python test_all.py` **94/94** 通过。
+> 测试基线：`python test_all.py` **87/87** 通过。
 
 ---
 
@@ -170,7 +170,7 @@ D:\NovelEngine/
 
 ### 3.2 OutlineSlot（大纲槽位）
 
-`template_id`（流派模板）、`name`、`start_chapter`/`end_chapter`、`stages[]`（`{name,min_ch,max_ch,events}`）、`transition_type`（sequential/overlap/merge）、`narrative`（chronological/flashback/interleaved）、`overlaps_with`（与哪些大纲重叠 id 列表）、`predecessor`/`successor`（前驱/后继大纲 id）。
+`template_id`（题材方向模板）、`name`、`start_chapter`/`end_chapter`、`stages[]`（`{name,min_ch,max_ch,events}`）、`transition_type`（sequential/overlap/merge）、`narrative`（chronological/flashback/interleaved）、`overlaps_with`（与哪些大纲重叠 id 列表）、`predecessor`/`successor`（前驱/后继大纲 id）。
 
 ### 3.3 PlotSlot（桥段槽位）
 
@@ -191,7 +191,7 @@ D:\NovelEngine/
 | 库 | 模块 | 数据文件 | 数量 | 用途 |
 |---|---|---|---|---|
 | 桥段库 | `plot.py` | `plots.jsonl` | 47 模板（12 内置 + 采集） | 桥段模板：category / template_structure / slots / fit_contexts；写作时作【桥段骨架】注入 |
-| 大纲库 | `structure.py` | `structures.jsonl` | 11 模板（5 内置 + 采集） | 卷→弧→章三级骨架，按流派搜索；阶段级内涵 |
+| 情节弧库 | `structure.py` | `structures.jsonl` | 11 模板（5 内置 + 采集） | 卷→弧→章三级骨架，按题材方向搜索；阶段级内涵 |
 | 笑点库 | `gag.py` | `gags.jsonl` | 24 模式（10 内置 + 采集） | 探测器候选池（不写进大纲） |
 | 角色原型库 | `character.py` | `characters.jsonl` | 10 原型 | 性格原型 + 代表人物；设定表单「从原型库选」 |
 
@@ -226,16 +226,18 @@ D:\NovelEngine/
 
 ### 4.2 新书创建（单页多步向导，v1.6）
 
-启动新书改为**单页 5 步向导**（`start_book.html`，横条步骤条 wz-steps，JS 切换）：
-1. **①一句话设定**（必填 + 笔名）。
-2. **②AI 候选挑世界观**：从一句话设定生成 **5 个**世界观方向（无书 `POST /api/world-builder/candidates`，`generate_candidates` count=5），挑一个（`one_liner` 并入一句话设定）；「从已有书借鉴」备选（`borrow-preview` 无书别名预览，`extract_seed`）；可「跳过，手动设定」。
-3. **③微调设定**：🌍 世界观置顶（只读同步一句话）→ 🏷️ 题材标签 chips（**50 标签 5 组**，`libraries/world_tags.py`，流派/题材一体，存入 `world_building.tags`）→ 📖 书名与主角（「🎲 根据世界观生成书名与主角候选」→ 无书 `POST /api/world-builder/title-protag` → **5 书名 + 3 主角**候选点选确定 → 可微调 + 每章字数）。
-4. **④创建并生成大纲**：③提交 JSON 建书（POST /books/start 双轨：JSON→book_id、form→302；**流派由 tags 经 `derive_genre` 推导**、平台默认 fanqie，留发布页调整）→ 内联跑 `WorldBuildingGenerator.generate`（SSE，tags 作硬约束注入 prompt）→ 世界 `done` 自动衔接 `generate-full`（`skip_analyze` 因 `_world_generated` 自动跳过 Phase 1）；世界失败可「跳过世界观」走 Phase 1 兜底（此时 tags 也注入 `_analyze_story`）。
-5. **⑤前三章撰写**：进入写作台（`/books/<id>/continue`，沿用桥段写作流程）。
+启动新书改为**单页 3 步向导**（`start_book.html`，横条步骤条 wz-steps，JS 切换；提交即入库跳书详情，不再有生成大纲/前三章步骤）：
+1. **①一句话设定**（必填 idea + 笔名 + 🏷️ 题材标签 chips——**50 标签 5 组**，`libraries/world_tags.py`，题材方向由题材标签推导，存入 `world_building.tags`）。
+2. **②挑选世界观**：受题材标签硬约束（`generate_candidates` 注入【题材标签（硬约束）】，genre 空时 `derive_genre(tags)` 推导），从一句话设定生成 **5 个**世界观方向（无书 `POST /api/world-builder/candidates`，count=5），挑一个（`one_liner` 并入一句话设定）；「从已有书借鉴」备选（`borrow-preview` 无书别名预览，`extract_seed`）；可「跳过，手动设定」（跳过按钮在步 2 导航区，与「已挑选完毕」并排）。
+3. **③世界观补全**：进入步 3 时**自动**调无书端点 `POST /api/world-builder/world-complete`（复用 `WorldBuildingGenerator.generate`，seed=候选 world_brief||一句话，标签硬约束 + 笔名风格档案），补全 **world_building 12 维 + 基调（tone/target_audience/pov/era_language）** 为可编辑表单；📖 书名（由②选中候选带入，可改）+ 每章字数；🎭 角色候选（外部 Agent 经 `generate_characters`/`set_characters` 填入，可手动编辑）。补全中 `submit` 被拦截；`drive_ui(fill_world)` 可重触发。
+4. **提交建书（③结束即入库）**：步 3 `submit` JSON 建书（POST /books/start 双轨：JSON→book_id、form→302；**题材方向由 tags 经 `derive_genre` 推导**、平台默认 fanqie，留发布页调整；**收客户端 `world_building` dict + tone/pov + `_outline_data`，`DEFAULT_WORLD_BUILDING` backfill 12 维，`basic_info_is_rich` 时打 `_world_generated`**），建书 phase=ready（带 `_outline_data` 即落库大纲；② 失败未带则 phase=config），成功后**直接跳书详情页**（入库成书目）。
+5. **建书后**：**大纲已随提交落库**（步 3 ② `generate_outline_preview` 推送的 `_outline_data`，书创建即 **phase=ready**）；② 失败时才由外部 Agent 经 MCP `generate_full_outline` 补生成（世界观已随提交落库，`generate_world` 仅兜底；世界观充实自动跳过 Phase 1 分析）。`phase=ready` 后进入写作台（`/books/<id>/continue`）写前三章。
 
-- 产出「设定圣经」维度：tags / description / era / power_system / factions / rules（数值语义写死，全书唯一口径）/ geography / culture / history / social_structure / core_conflict / world_summary（`DEFAULT_WORLD_BUILDING`）。
-- 已从向导删除：流派与平台（流派=题材标签，`TAG_GENRE_MAP` 推导 book.genre；平台留发布页）、世界观补充（世界观由一句话直接生成，不再追加）、模板选择、故事线描述、子类型。
-- 书详情页设定表单保留可编辑世界/人物/基调 + 保存/确认，保留「🚀 生成世界观」「🎲 示例候选」作存量书回退；借鉴已移入向导②。
+- **分阶段内容构建（步 3 工作台，内部 agent / skill 自主编排）**：步 3 顶部状态区徽标条已删（用户 2026-08-21）。工具（无书端点 + MCP）：`generate_core_conflict`（①核心矛盾）→ `generate_outline_preview`（②开篇大纲+桥段，阻塞数分钟）→ `generate_factions`（势力）→ `generate_characters(..., core_conflict, factions, outline_data=②)`（人物）→ `generate_rest_world`（其余维度，保留 core_conflict/factions）。② 由 `generate_outline_preview` **服务端直推 `set_outline` 进步 3 左栏「📋 故事线」Gantt 展示**（镜像 world_candidates→add_candidate：大纲载荷常 >8KB，经 dsh 工具结果裁剪（tool-result-pruner 8KB）后模型拿不到全量、无法经 `drive_ui(set_outline)` 回传，故由工具直接写 nav_intent、浏览器 busy 中也消费；`drive_ui` 的 `set_outline` 白名单保留作外部兼容）。**步3 为两栏布局（仿写作台，左栏可拖拽）**：左栏=「📋 故事线」（无大纲内容时空栏，不显示占位/按钮），右栏=世界观表单；故事线仅由 agent 生成的 set_outline 展示，无手动生成入口。任一段失败重试/跳过，部分构建可提交；② 失败则 submit 后 `generate_full_outline` 补生成；⑤ 未做则 `generate_full_outline` Phase 1 自动补齐。`drive_ui(set_world)` 将部分世界观 dict 合并进表单。
+
+- 产出「设定圣经」维度：tags / description / era / power_system / factions / rules（数值语义写死，全书唯一口径）/ geography / culture / history / social_structure / core_conflict / world_summary（`DEFAULT_WORLD_BUILDING`）+ 基调（tone / target_audience / pov / era_language）。
+- 已从向导删除：单独选题材方向与平台（题材方向由题材标签经 `TAG_GENRE_MAP` 推导 book.genre；平台留发布页）、模板选择、故事线描述、子类型。
+- 书详情页设定表单保留可编辑世界/人物/基调 + 保存/确认（存量书回退路径）；借鉴已移入向导②。
 - 全站单行「当前阶段 → 下一步」状态条（`flow_status` 宏）已删除（v1.4），仅新书向导保留步骤条；`status_badge` 徽标保留。
 
 ### 4.3 大纲生成引擎（`outline_generator.py`）
@@ -369,13 +371,13 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 | 编号 | 用途 | 调用点 | 流式 | temp | max_tokens | 关键输入 | 频率 |
 |---|---|---|---|---|---|---|---|
-| A | 故事分析 | `_analyze_story` | 非流式 | 0.7 | 2048 | 流派/子流派+笔名风格+用户想法 | 每新书 1 次 |
+| A | 故事分析 | `_analyze_story` | 非流式 | 0.7 | 2048 | 题材方向/题材细分+笔名风格+用户想法 | 每新书 1 次 |
 | B | 故事线规划 | `_ai_sequence` | 流式 | 0.7 | 8192 | 设定卡≤900 + 候选模板≤10 | 每新书 1 次 |
 | C | 桥段选择 | `_ai_select_plots` | 流式 | 0.5 | 8192 | 设定卡精简 + 候选≤12 | 每阶段 1 次 |
 | D | 线程与呼应 | `_plan_threads_and_splits` | 非流式 | 0.3 | **16384** | 设定卡+大纲+桥段≤60 | 每新书 1 次 |
 | E | 内涵复查(4.5) | `_review_theme_assignments` | 流式 | 0.3 | 8192 | 桥段快照≤20 | 每新书 1 次 |
 | F | 一致性验证 | `_validate_with_llm` | 流式 | 0.3 | 8192 | 大纲视图≤10 | 每新书 1 次 |
-| G | 书名生成 | `_generate_book_meta` | 非流式 | 0.8 | 1024 | 流派/平台+第1章前1000字 | 详情页手动触发 |
+| G | 书名生成 | `_generate_book_meta` | 非流式 | 0.8 | 1024 | 题材方向/平台+第1章前1000字 | 详情页手动触发 |
 | H | 简介生成 | `_generate_book_meta` | 非流式 | 0.8 | 1024 | 同 G | 同上 |
 | I | 桥段写作 | `StorylineChapterWriter._group_prompt` | 非流式 | 0.7 | **1600** | 设定卡精简+计划+摘要+前文窗口+命中提示 | 每短句组 |
 | J | 笑点探测器 | `GagInjector.detect` | 非流式 | 0.3 | 400 | ≤500 token（recent 450 字 + 池 4×60） | 每短句组（按频率） |
@@ -454,7 +456,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 | 测试 | 内容 | 基线 |
 |---|---|---|
-| `test_all.py` | 11 个 Phase 无 LLM 健全性（四大库/档案/写作核心统一/线程拆分/叙事纪律/成本/去AI/角色/审查/引擎路由/持久化/规划态） | **94/94** |
+| `test_all.py` | 11 个 Phase 无 LLM 健全性（四大库/档案/写作核心统一/线程拆分/叙事纪律/成本/去AI/角色/审查/引擎路由/持久化/规划态） | **87/87** |
 | `test_e2e_pages.py` | 端到端页面回归（自动起 58080 服务，`--no-start` 可复用） | ALL CHECKS PASSED |
 | `test_chapters.py` / `test_reader.py` | 章节生成 / 番茄解析 | — |
 | `tools/test_full_flow.py` | 真实 LLM E2E（约 30 分钟，自建自删测试书） | 手动 |
@@ -475,7 +477,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 | `libraries.py` | `/plots` `/structures` `/gags` `/profiles` `/profiles/new` + 启禁删除 API | 12 |
 | `publish.py` | `/publish` 发布索引、`/books/<id>/publish` 上架页 + check/mark-finished/export API | 7 |
 | `settings.py` | `/settings`（API Key/模型/预算/context_budget 配置 + 测试连接）、任务状态 API | 6 |
-| `tools.py` | `/scout` 番茄侦察兵、`/extract` 提取、`/review-test`、`/deai`、`/write` 兼容跳转 | 9 |
+| `tools.py` | `/scout` 侦察·提取合并页（agent 驱动：下载进度 `/api/crawl/progress`、MCP `fetch_novel` 共用 `storage/crawl_progress.json`；`/api/scout/ingest` 五库入库；原 `/extract` 302→`/scout`）、`/review-test`、`/deai`、`/write` 兼容跳转 | 10 |
 | `world_builder.py` | `/books/<id>/world` 世界观设定卡 + generate/candidates/borrow-preview/confirm | 5 |
 | `ctx.py` | 共享：全局服务、get_llm、引擎缓存、故事线统一存取、`sse_stream_response` | — |
 
@@ -492,7 +494,7 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 
 - 左侧 `story_line.js` 垂直甘特图（数据驱动）：大纲/桥段/笑点·内涵 + 🧵 线程横带 + 逐桥段高亮。
 - 中间只放正文（2026-08 布局重构后）；规划/生成面板与写作动态并入中栏折叠区。
-- 第三栏（写作助手/写作动态）已删去：全局右侧栏为 **Agent 聊天助手面板**（OpenClaw 式，`🤖 Agent`，见 §8.5）：用户在侧栏用自然语言对话，内置 Agent 通过 function calling 循环操作整个创作引擎，工具调用步骤（🔧 工具卡 + 结果摘要）在对话里展示，并可 `navigate` 切页、`canvas_command` 控制写作台故事线画布（滚动/高亮）。
+- 第三栏（写作助手/写作动态）已删去：全局右侧栏为 **Agent 聊天助手面板**（`🤖 Agent`，见 §8.5）：用户在侧栏用自然语言对话，后端转发 dsh-ne（`libraries/dsh_bridge.py`）驱动整个创作引擎，工具调用步骤在「工具日志」页签实时展示，并可 `navigate` 切页（`canvas_command` 已随内置 agent 删除）。
 - 基础设定唯一编辑面 = 世界观设定卡（`world_card.html`），写作台仅保留「🌍 设定」入口。
 
 ### 8.3 UX 8 方案（2026-08-05 全部落地）
@@ -516,24 +518,25 @@ detect(item, recent_text, humor_style, pool) → temp 0.3, max_tokens 400
 - **状态栏规范**（ui-notes 合并）：每工具单任务互斥；日志统一进右侧状态栏（showAlert/showToast 双通道已移除）；同工具替代时旧日志自动清除（data-task-id 标记）；body 固定 `height:100vh`，main/aside 内部滚动。
 - **v1.3 变更**（2026-08-18）：右侧栏改为 Agent 聊天面板（§8.5），**不再渲染任务卡片/日志区**；`task_manager` 的 agent 字段与各蓝图上报逻辑保留（供其他页面/SSE 旁路状态与 `/api/status/tasks` 兼容），`base.js` 的 `pollStatus` 已守卫空节点不启动轮询。
 
-### 8.5 Agent 接口与右侧栏聊天助手（2026-08-18）
+### 8.5 Agent 接口与右侧栏聊天助手（2026-08-18；2026-08-20 内置 agent 已删，大脑 = dsh-ne）
 
-把引擎全部操作暴露为**共享工具注册表**，供两个消费方使用：右侧栏**内置 Agent 聊天助手**（OpenClaw 式）与 **MCP 服务器**（Claude Code 等外部客户端）。
+把引擎全部操作暴露为**共享工具注册表**，供 **MCP 服务器**（Claude Code 外部客户端 + dsh-ne 侧栏大脑）消费。内置 Agent 循环（`plugins/agent_loop.py`）已删除——侧栏聊天经 `libraries/dsh_bridge.py` 转发 vendored `vendor/dsh-ne/` headless 子进程，经 MCP 驱动同一工具面。
 
-**共享工具注册表 `agent_tools.py`（29 个）**：
+**共享工具注册表 `agent_tools.py`（43 个）**：
 - 单一工具来源 `TOOL_REGISTRY = [{name, description, input_schema, func}]`，schema 用 `inspect.signature` 自动生成。复用 `ctx` 单例——Web 进程内与 UI 共享同一状态；MCP 独立进程各自一份，经 `books/` 文件协调。
-- 覆盖「创建→上架」全链路：只读/建书（`list_books`/`get_book_state`/`get_storyline`/`create_book`/`borrow_preview`）→ 规划（`save_basic_info`/`generate_title`/`generate_outlines`/`generate_full_outline`/`extend_outline`/`confirm_outlines`/`fill_plots`/`fill_gags`/`outline_agent`/`generate_world`/`world_candidates`/`confirm_world`）→ 写作（`write_next_bridge`/`write_chapter`/`generate_book_meta`）→ 上架（`publish_check`/`mark_finished`/`publish_book`/`export_book`）→ 审查/去AI（`review_text`/`deai_text`）→ 书管理（`delete_book`，默认拒绝需 `confirm=True`）→ 导航/画布（`navigate`/`canvas_command`，返回特殊标记由循环转 SSE 事件）。
-- 工具排序把 `navigate`/`canvas_command` 前置（flash 对列表前部工具更敏感，保证"打开X页"正确触发导航）。
+- 覆盖「创建→上架」全链路：只读/建书（`list_books`/`get_book_state`/`get_storyline`/`borrow_preview`/`query_*`）→ 规划（`save_basic_info`/`generate_core_conflict`/`generate_factions`/`generate_characters`/`generate_rest_world`/`generate_world`/`world_candidates`/`confirm_world`）→ 大纲（`generate_outlines`/`generate_full_outline`/`confirm_outlines`/`fill_plots`/`fill_gags`/`outline_agent`/`extend_outline`/`arc_material_candidates`）→ 写作（`write_next_bridge`/`write_chapter`/`generate_book_meta`/`tag_punch_points`/`diagnose_retention`）→ 上架（`publish_check`/`publish_book`/`mark_finished`/`export_book`）→ 审查/去AI（`review_text`/`deai_text`）→ 导航/向导（`navigate`/`drive_ui` 写意图队列）。护栏：直建/直删工具不存在（建书走系统向导、删书走书库页手动）。
+- 工具排序把 `navigate`/`drive_ui` 前置（flash 对列表前部工具更敏感，保证"打开X页"正确触发导航）。
+- 抓取/侦察（`plugins/fanqie_scout.py`）：`fetch_novel`（按书名/book_id 下载番茄小说章节到 `storage/novels/fanqie/`，纯抓取无需 LLM，进度写 `storage/crawl_progress.json`，`/scout` 页轮询 `/api/crawl/progress` 实时展示）+ `discover_hot`（热榜侦察）。读取侧 `list_crawled_novels`（列出已抓书库，复用 `novel_storage.list_novels`）/ `read_crawled_novel`（读章节目录或单章正文，复用 `novel_storage.load_novel`），供 agent 借鉴已抓参考书设定/写法。入库侧 `ingest_library_assets`（agent 读参考书后自主提炼桥段/大纲/笑点/角色，纯规则薄工具写入四库，复用 `FanqieScoutAgent.ingest_selected` 含角色原型库）。`/scout` web 表单抓取与 MCP 工具共用同一进度文件（`libraries/crawl_progress.py`）。
 
-**右侧栏 Agent 聊天面板（OpenClaw 式）**：
-- `base.html` 的 `aside#status-bar` 为纯对话：`#agent-chat` 消息区（用户/助手气泡 + 🔧 工具步骤卡，可展开参数）+ `#agent-input` 输入框；`ui/static/js/agent_panel.js` 用 fetch+getReader 手写解析消费 `/api/agent/chat` SSE。
-- **Agent 循环 `plugins/agent_loop.py`**：原生 function calling（`LLMClient.call_tools`，DeepSeek 兼容 OpenAI 格式），`MAX_ITERS=12`、temperature 0.1、max_tokens 8192（flash 推理余量）。系统提示词含「行动优先」原则（能调用工具就调用、禁止只给建议）与导航/破坏性规则。事件：`tool_start`/`tool_result`/`reply`/`navigate`/`canvas`/`error`/`done`。
-- **端点 `ui/web_blueprints/agent.py`**：`POST /api/agent/chat`（SSE），body 为浏览器持有的 user/assistant 消息历史（会话记忆 v1，无状态）。
-- **导航/画布**：`navigate` 事件 → 前端 `navigateTo(url)` 切页；`canvas_command` → `CustomEvent('ne:canvas')` → 写作台 `window.onnecanvas` 单槽位处理器（`story_line.js` 新增 `scrollTo`，`highlight` 已有），经 `__neCanvasReady__` 就绪标志轮询（≤5s）解决「导航后画布未初始化」时序。
+**右侧栏 Agent 聊天面板**：
+- `base.html` 的 `aside#status-bar` 为纯对话：`#agent-chat` 消息区（用户/助手气泡 + 🔧 工具步骤卡）+ `#agent-input` 输入框；`ui/static/js/agent_panel.js` 用 fetch+getReader 手写解析消费 `/api/agent/chat` SSE（`tool_start`/`reply`/`error`/`done`）。
+- **大脑 `libraries/dsh_bridge.py`**：`run_dsh_task(task, history)` 把浏览器消息历史拼成任务文本，`node vendor/dsh-ne/lib/bin.js --profile headless` 一次性子进程跑完，最终回复作为 `reply` 事件返回（无真流式；实时进度靠工具日志页签 3s 轮询 `source=mcp`）。护栏：`tool_policy.py` phase 门控 / `loop_guard.py` MCP 循环熔断 / 建书 reset。
+- **端点 `ui/web_blueprints/agent.py`**：`POST /api/agent/chat`（SSE，无条件走 dsh 桥）+ `/api/agent/tool-log` + `/api/agent/nav-intents`。
+- **导航**：`navigate` 经意图队列 → 浏览器 2.5s 轮询 `/api/agent/nav-intents` → `navigateTo(url)` 切页（`canvas_command`/`ne:canvas` 已随内置 agent 删除）。
 
 **MCP 服务器 `mcp_server.py`（适配层）**：从 `TOOL_REGISTRY` 逐个注册 FastMCP 工具（mcp SDK **1.x**，固定 `mcp>=1.2.0,<2.0`；**mcp 2.0 移除了 FastMCP API，勿升级**）。独立 stdio 进程，与 Web 并存；长操作阻塞式（`consume_dict_stream`/`consume_triple_stream`）。注册：`claude mcp add --scope project novel-engine -- python mcp_server.py`。
 
-**限制**：会话记忆 v1 = 浏览器内历史（服务端持久记忆后续参考开源 deepseek harness 再改）；资产库 CRUD 与 scout 工具留 v1.5；双进程勿同时操作同一本书。
+**限制**：会话记忆 v1 = 浏览器内历史；**系统内自主 agent v0.4 设计已废弃**——方向转向 dsh 核心替换内置 agent（见 `docs/架构文档-内置agent-dsh.md` 与 `docs/交接文档-2026-08-25-建书链路Agent修复.md`；v0.4 设计文档已删，ToolPolicy/LoopGuard 概念在 Phase 1 落地为 `libraries/tool_policy.py` / `loop_guard.py`）；资产库 CRUD 与 scout 工具留 v1.5；双进程勿同时操作同一本书。
 
 ---
 
@@ -568,7 +571,7 @@ python ui/web_ui.py      # 127.0.0.1:58080；NOVEL_DEBUG=1 开启 debug
 ### 10.2 测试
 
 ```bash
-python test_all.py       # 94/94 通过（无 LLM 健全性，含 Phase 3/3.5/3.6/9/11）
+python test_all.py       # 87/87 通过（无 LLM 健全性，含 Phase 3/3.5/3.6/9/11）
 python test_e2e_pages.py # 端到端页面回归
 python test_chapters.py / test_reader.py
 ```
@@ -580,7 +583,7 @@ python test_chapters.py / test_reader.py
 - **Windows 控制台 GBK**：脚本打印中文加 `sys.stdout.reconfigure(encoding="utf-8")`。
 - **flash max_tokens 余量**：任何新 LLM 调用，max_tokens 必须大于"纯正文+推理"之和（写作 1600 / 摘要·书名 1024 / 探测器 400）。
 - **测试会动数据**：`test_full_flow.py` 自建自删测试书；`books/`、`profiles/` 是真实数据，别删。
-- **删除类操作无回收站**：delete_book / storyline_delete 前先确认。
+- **删除类操作无回收站**：删除前先确认（直删工具不在工具面，删书走书库页手动）。
 - **合规**：番茄侦察兵仅限个人学习研究（SSR 采集 + PUA 解码），禁商业用途/大量下载传播正文；README 有完整声明。
 
 ---
@@ -620,14 +623,14 @@ python test_chapters.py / test_reader.py
 ### 13.2 远期（项目规划 Phase 4/5）
 
 - **Phase 4 质量体系**：全书优化诊断管线（reconcile.py 已删，需重建或放弃）、段落级修订 + diff 追踪、设定协调（改设定后自动调和章节）、审查规则库扩充（当前 reviewer 5 项）。
-- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（tool-calling loop 已落地 §8.5：右侧栏聊天面板 + 共享 29 工具 + navigate/canvas 控制；服务端持久记忆/自动多步编排仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
+- **Phase 5 批量生产**：队列式章节自动生产（多书并发定时）、AI 助理 Agent（已落地 §8.5：右侧栏聊天面板 + 共享 40 工具 + dsh-ne 驱动 + navigate 意图桥；服务端持久记忆/自动多步编排仍待做）、多平台发布适配器（publisher.py 已做上架检查 + 手动导出，自动发布未做）、发布统计面板（publish 页面已有基础）、PyInstaller 单文件打包。
 
 ### 13.3 文档回写清单
 
 - `docs/archive/项目规划.md` 仍描述 v0.5 架构，作为历史归档保留；本文档为唯一技术权威。
 - 改代码必须同步本文档。
 - v1.2（2026-08-18）：右侧栏运行状态 → Agent 活动面板（§8.2/§8.4）；新增 MCP 服务器（§8.5）；`requirements.txt` 增加 mcp。
-- v1.3（2026-08-18）：右侧栏 → OpenClaw 式 Agent 聊天助手（§8.2/§8.5）；`agent_tools.py` 共享 29 工具注册表（mcp_server 瘦身为适配层）；`LLMClient.call_tools` 原生 function calling；`/api/agent/chat` SSE + `story_line.js` 新增 `scrollTo` 画布控制。
+- v1.3（2026-08-18）：右侧栏 → OpenClaw 式 Agent 聊天助手（§8.2/§8.5）；`agent_tools.py` 共享 43 工具注册表（MCP 面 40，mcp_server 瘦身为适配层）；`LLMClient.call_tools` 原生 function calling；`/api/agent/chat` SSE + `story_line.js` 新增 `scrollTo` 画布控制。
 - v1.4（2026-08-18）：新书启动改单页 5 步向导（§4.2）；`world_building.tags` 题材标签 + `world_tags.py` 预置库 + prompt 硬约束；借鉴挪入向导②；删除全站 `flow_status` 单行状态条（§8.2）。
 - v1.5（2026-08-18）：向导②③去重 —— ②改 AI 候选（无书 candidates 端点，5 方向），③并入标签 + 流派；候选 3→5。
 - v1.6（2026-08-18）：标签库扩至 50 个 + `TAG_GENRE_MAP` 流派推导（删流派/平台 UI）；③精简为世界观置顶 + 标签 + 书名/主角候选生成（无书 `title-protag` 端点 5 书名 + 3 主角）；删模板选择/世界观补充/故事线描述；真实 LLM 冒烟 + smoke 断言补齐。
@@ -638,13 +641,17 @@ python test_chapters.py / test_reader.py
 
 ### 14.1 当前文档（docs/ 顶层）
 
-docs/ 顶层仅保留本文档（唯一主设计文档）与 `archive/`（全部历史文档归档）：
+docs/ 顶层当前文档（唯一主设计文档 = 本文档；交接/上手速查 = 架构总览；其余专项文档；`archive/` 为全部历史文档归档）：
 
 | 文档 | 定位 |
 |---|---|
 | `设计文档-总览-claude.md` | **唯一主设计文档**（本文档） |
-| `agent设计文档.md` | Agent 层专项（工具注册表/循环/Skill 调研，v0.1，2026-08-18，待并入本文档） |
-| `archive/` | 全部已合并/历史文档（设计稿、交接、优化、UX、任务系统、调研、审查报告等 19 份） |
+| `架构总览.md` | **交接/上手速查**（系统分层/工具面/双通道/管线入口/坑；2026-08-20 新增） |
+| `架构文档-内置agent-dsh.md` | 内置 agent（dsh）架构参考：进程/事件流/护栏链/skill 体系/建书驱动 |
+| `交接文档-2026-08-25-建书链路Agent修复.md` | 交接文档（2026-08-25）：建书链路 agent 参数契约/前端兜底/确认门/存量修复 + 坑 |
+| `交接文档-2026-08-25-小说抓取入库.md` | 交接文档（2026-08-25）：小说抓取/侦察/读取 + 入库工具 |
+| `skill设计思路，人工手写版本.md` | 早期 skill 设计语音草稿（原始想法，仅供参考） |
+| `archive/` | 全部已合并/历史文档（设计稿、交接、优化、UX、任务系统、调研、审查报告等 19 份，时间胶囊不改） |
 
 ### 14.2 归档文档（docs/archive/）
 

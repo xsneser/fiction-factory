@@ -1,22 +1,118 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>👤 笔名档案 <a href="/profiles/new" class="btn" style="float:right">+ 新笔名</a></h1>
-{% if profiles %}
-<div class="cards">
-{% for p in profiles %}
-<div class="card">
-    <div class="title">{{ p.pen_name }}</div>
-    <p style="font-size:13px;color:#8b949e">{{ p.description }}</p>
-    <div style="margin-top:8px">
-        <span class="tag">{{ p.style_fingerprint.get('humor_style','') }}</span>
-        <span class="tag blue">{{ p.style_fingerprint.get('sentence_length','') }}句</span>
-    </div>
-    {% if p.word_print.get('common_words') %}
-    <p style="font-size:11px;margin-top:8px;color:#484f58">常用词: {{ p.word_print.common_words|join(', ') }}</p>
+<h1>✍️ 笔名与风格 <span style="font-size:14px;color:#8b949e">（{{ profiles|length }} 笔名 · 当前：{{ scope_label }}）</span></h1>
+<!-- ═══ 顶部：显眼笔名切换按钮（删除操作移入抽屉底部） ═══ -->
+<div class="prof-toprow">
+    <button type="button" class="prof-pen-btn" id="prof-open-drawer" title="点击切换笔名">
+        <span class="prof-pen-avatar">{{ scope_label[0] }}</span>
+        <span class="prof-pen-name">{{ scope_label }}</span>
+        <span class="prof-pen-caret">▾</span>
+    </button>
+</div>
+
+<!-- ═══ 双标签主区 ═══ -->
+<div class="prof-tabs">
+    <button type="button" class="prof-tab active" data-tab="accounts">🌐 平台账号</button>
+    <button type="button" class="prof-tab" data-tab="style">✍️ 写作风格</button>
+</div>
+
+<!-- 标签1：平台账号（身份档案折叠区 + 各平台可展开注册卡，单一表单） -->
+<section class="prof-pane active" id="pane-accounts">
+    {% if is_new %}
+    <p class="hint">创建笔名：填好档案字段与平台账号点「创建笔名」。写作风格在创建后编辑。</p>
+    {% with form_action='/profiles/new', form_submit='创建笔名', profile=None %}
+    {% include "_profile_form.html" %}
+    {% endwith %}
+    {% elif selected %}
+    <p class="hint">平台账号为人工登记；正式上架前需在对应平台注册同名账号。</p>
+    {% with form_action='/profiles/' ~ selected.id ~ '/edit', form_submit='保存修改', profile=selected %}
+    {% include "_profile_form.html" %}
+    {% endwith %}
+    {% else %}
+    <p class="hint">暂无笔名，点上方笔名按钮 → 抽屉底部「+ 新建笔名」创建。</p>
     {% endif %}
-    <p style="font-size:11px;color:#484f58">关联: {{ p.assigned_books|length }} 本书</p>
-</div>
-{% endfor %}
-</div>
-{% else %}<div class="empty"><p>暂无笔名</p></div>{% endif %}
+</section>
+
+<!-- 标签2：写作风格（仿写句式 prefer 在上 + 禁止的词语句式 ban 在下） -->
+<section class="prof-pane" id="pane-style">
+    {% if is_new %}
+    <p class="hint">写作风格（仿写句式 / 禁止的词语句式）在笔名创建后编辑。请先在「平台账号」标签完成创建。</p>
+    {% elif selected %}
+    {% include "_style_rules_cards.html" %}
+    {% else %}
+    <p class="hint">暂无笔名，创建后才能编辑写作风格。</p>
+    {% endif %}
+</section>
+
+<!-- ═══ 抽屉（屏幕左侧滑出）：每个笔名下方带其专属风格摘要 ═══ -->
+<div class="prof-backdrop" id="prof-backdrop" hidden></div>
+<aside class="prof-drawer" id="prof-drawer" aria-hidden="true">
+    <div class="prof-drawer-inner">
+    <div class="prof-drawer-head">✍️ 选择笔名
+        <button type="button" class="prof-drawer-close" id="prof-drawer-close" title="关闭">×</button>
+    </div>
+    <div class="prof-drawer-body">
+        {% for lang, group in profiles|groupby('language') %}
+        <div class="prof-group">{{ '🇨🇳 中文笔名' if lang == 'zh' else '🇬🇧 英文笔名' }}</div>
+        {% for p in group %}
+        {% set sum = summaries.get(p.id) if summaries else None %}
+        <div class="prof-pen">
+            <div class="prof-item-row">
+                <a class="prof-item {{ 'active' if current_scope == p.id }}" href="/profiles?scope={{ p.id }}">{{ p.pen_name }}</a>
+                <form class="prof-del" method="POST" action="/profiles/{{ p.id }}/delete"
+                      onsubmit="return confirm('删除笔名「{{ p.pen_name }}」？其专属风格规则将一并清除。');">
+                    <button type="submit" class="small danger" title="删除笔名「{{ p.pen_name }}」">🗑</button>
+                </form>
+            </div>
+            {% if sum %}
+            <div class="prof-pen-summary">
+                <div>✍️ {{ sum.prefers_joined if sum.prefers_joined else '未设定句式' }}</div>
+                <div>🚫 {{ sum.ban_count }} 条{% if sum.bans_first %} · {{ sum.bans_first }}{% endif %}</div>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+        {% endfor %}
+        {% if not profiles %}
+        <div class="prof-empty">暂无笔名<br>点下方「+ 新建笔名」创建</div>
+        {% endif %}
+        <a class="prof-new" href="/profiles?scope=new">➕ 新建笔名</a>
+    </div>
+    </div>
+</aside>
+
+<script>
+(function () {
+    /* ── 抽屉开/关：点笔名按钮打开；点 × / backdrop / Esc 关闭 ── */
+    var drawer = document.getElementById('prof-drawer');
+    var backdrop = document.getElementById('prof-backdrop');
+    function openDrawer() {
+        if (drawer) drawer.classList.add('open');
+        if (backdrop) backdrop.hidden = false;
+        if (drawer) drawer.setAttribute('aria-hidden', 'false');
+    }
+    function closeDrawer() {
+        if (drawer) drawer.classList.remove('open');
+        if (backdrop) backdrop.hidden = true;
+        if (drawer) drawer.setAttribute('aria-hidden', 'true');
+    }
+    var openBtn = document.getElementById('prof-open-drawer');
+    if (openBtn) openBtn.addEventListener('click', openDrawer);
+    var closeBtn = document.getElementById('prof-drawer-close');
+    if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+    if (backdrop) backdrop.addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDrawer(); });
+
+    /* ── 标签切换：.prof-tab[data-tab] ↔ .prof-pane#pane-* 互切 .active ── */
+    var tabs = document.querySelectorAll('.prof-tab');
+    var panes = document.querySelectorAll('.prof-pane');
+    function activate(name) {
+        tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.tab === name); });
+        panes.forEach(function (p) { p.classList.toggle('active', p.id === 'pane-' + name); });
+    }
+    tabs.forEach(function (t) {
+        t.addEventListener('click', function () { activate(t.dataset.tab); });
+    });
+})();
+</script>
 {% endblock %}

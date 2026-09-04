@@ -35,6 +35,57 @@ def _compat_api_storyline_engine(rest):
     return redirect("/api/storyline-engine/" + rest, 307)
 
 
+def _chapters_from_disk(book_id: str, current_chapter: int):
+    """从磁盘构造「已写章节 + 进行中草稿」列表（跨进程 stale 免疫：MCP/dsh 子进程写盘后可见）。
+
+    MCP 是独立进程，save_chapter_text/save_bridge_draft 只写磁盘 book.json/chapters/、draft_chapter.json；
+    Web 进程缓存的 engine.book.current_chapter 可能滞后。这里全部从磁盘现读。"""
+    chapters = []
+    for n in range(1, current_chapter + 1):
+        ch = book_mgr.load_chapter(book_id, n)
+        if ch and ch.get("content"):
+            chapters.append({
+                "num": n,
+                "title": ch.get("title") or f"第{n}章",
+                "content": ch.get("content") or "",
+                "bridges": ch.get("bridges") or [],
+            })
+    # 进行中草稿（draft_chapter.json）：bridges 逐桥段 span.m-bridge，刚写完的桥段即时可见
+    dp = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
+    if os.path.exists(dp):
+        try:
+            with open(dp, encoding="utf-8") as f:
+                draft = json.load(f)
+            bridges = draft.get("bridges") or []
+            buffer = draft.get("buffer") or []
+            dn = int(draft.get("chapter_num") or 0)
+            if dn > current_chapter and (bridges or buffer):
+                chapters.append({
+                    "num": dn,
+                    "title": "（写作中）",
+                    "content": "\n\n".join((b.get("text") or "") for b in bridges) if bridges
+                               else "\n\n".join(buffer),
+                    "bridges": bridges,
+                    "draft": True,
+                })
+        except Exception as e:
+            logging.getLogger(__name__).warning("加载进行中草稿失败: %s", e)
+    return chapters
+
+
+@bp.route("/api/desk/chapters/<book_id>")
+def desk_chapters_api(book_id):
+    """写作台正文 JSON：从磁盘现读已写章节+草稿（供前端轮询刷新右侧，修「agent 写完不显示」）。"""
+    cur = 0
+    try:
+        d = json.load(open(os.path.join(str(book_mgr.dir), book_id, "book.json"), encoding="utf-8"))
+        cur = int(d.get("current_chapter") or 0)
+    except Exception:
+        pass
+    return jsonify({"book_id": book_id, "current_chapter": cur,
+                    "chapters": _chapters_from_disk(book_id, cur)})
+
+
 @bp.route("/books/storyline/write/<engine_id>")
 def storyline_write_flow(engine_id):
     """蓝图式写作流程页（新核心）"""
@@ -44,6 +95,15 @@ def storyline_write_flow(engine_id):
     # 已写章节（供中栏「章节正文」预载，作为书目内容连续展示）
     chapters = []
     book = getattr(engine, "book", None)
+    if book and book.book_id:
+        # 跨进程 stale：MCP/dsh 子进程写盘后，用磁盘 book.json 的最新 current_chapter 修正缓存
+        try:
+            d = json.load(open(os.path.join(str(book_mgr.dir), book.book_id, "book.json"), encoding="utf-8"))
+            cur = int(d.get("current_chapter") or 0)
+            if cur > 0:
+                book.current_chapter = cur
+        except Exception:
+            pass
     if book and (book.current_chapter or 0) >= 1:
         try:
             for n in range(1, book.current_chapter + 1):
@@ -53,14 +113,40 @@ def storyline_write_flow(engine_id):
                         "num": n,
                         "title": ch.get("title") or f"第{n}章",
                         "content": ch.get("content") or "",
+                        "bridges": ch.get("bridges") or [],
                     })
         except Exception as e:
             logger.warning("加载已写章节失败: %s", e)
+    # 进行中的章节草稿：与已固化章节同格式渲染（bridges 逐桥段 span.m-bridge），
+    # 让刚写完的桥段在写作台上即时可见、可点击高亮；切章固化（_clear_draft）后自动消失。
+    try:
+        draft = engine._load_draft() if hasattr(engine, "_load_draft") else None
+    except Exception as e:
+        draft = None
+        logger.warning("加载进行中草稿失败: %s", e)
+    if book and draft:
+        bridges = draft.get("bridges") or []
+        buffer = draft.get("buffer") or []
+        dn = int(draft.get("chapter_num") or 0)
+        # 已固化章节跳过（防陈旧草稿重复渲染）；旧草稿无 bridges 时回退 buffer 纯文本展示
+        if dn > (book.current_chapter or 0) and (bridges or buffer):
+            chapters.append({
+                "num": dn,
+                "title": "（写作中）",
+                "content": "\n\n".join((b.get("text") or "") for b in bridges) if bridges
+                           else "\n\n".join(buffer),
+                "bridges": bridges,
+                "draft": True,
+            })
     sl = getattr(engine, "storyline", None)
-    total_ch = 0
-    if sl:
+    # 字数轴：总章数优先用引擎已字数化的 state.total_chapters，否则由桥段 planned_words 推导
+    total_ch = getattr(getattr(engine, "state", None), "total_chapters", 0) or 0
+    if not total_ch and sl:
         try:
-            total_ch = max((o.end_chapter for o in sl.outlines), default=0)
+            from libraries.storyline_writer import planned_words
+            _w = sum(planned_words(p) for p in sl.plots) if sl.plots else 0
+            _wpc = (sl.words_per_chapter or 3000)
+            total_ch = max(1, (_w + _wpc - 1) // _wpc)
         except Exception:
             total_ch = 0
     from libraries.storyline import basic_info_world_done
@@ -100,12 +186,9 @@ def storyline_engine_step(engine_id):
         task_manager.ensure_single(task_name)
         task_manager.start(task_id, name=task_name,
                           title=engine.state.pen_name or "",
-                          agent="writing", book_id=book_id, book_title=book_title,
-                          step=f"写第{next_ch}章", total=max(total_ch, 1),
                           phase=f"第{next_ch}章...", url=flow_url)
     else:
         task_manager.progress(task_id, current=min(next_ch, total_ch), phase=f"第{next_ch}章...")
-        task_manager.set_step(task_id, step=f"写第{next_ch}章")
     task_manager.log(task_id, f"蓝图写作：第{next_ch}章", "info")
 
     # 全书完成（章节数到顶）
@@ -118,7 +201,6 @@ def storyline_engine_step(engine_id):
     if result.get("error"):
         task_manager.fail(task_id, str(result["error"]))
         return jsonify({"error": result["error"]}), 500
-    task_manager.llm_call(task_id)
     task_manager.log(task_id, f"第{next_ch}章完成 {result.get('word_count', 0)}字", "success")
 
     return jsonify({
@@ -155,15 +237,13 @@ def storyline_engine_write_chapter_sse(engine_id):
         task_id = f"writechap_{engine_id}_{int(time.time())}"
         task_manager.start(task_id, name="整章写作",
                            title=_book_title or "",
-                           agent="writing", book_id=_book_id, book_title=_book_title,
-                           step=f"写第{chapter_num}章", total=1, phase="写作中...",
                            url=flow_url)
         try:
             for evt in engine._write_storyline_chapter_stream(chapter_num):
                 if isinstance(evt, dict):
                     t = evt.get("type", "")
                     if t == "plot_chunk":
-                        task_manager.llm_call(task_id)
+                        pass
                     elif t == "chapter_done":
                         task_manager.done(task_id,
                                           message=f"第{evt.get('chapter', chapter_num)}章完成")
@@ -202,17 +282,15 @@ def storyline_engine_write_bridge_sse(engine_id):
         task_id = f"writebrg_{engine_id}_{int(time.time())}"
         task_manager.start(task_id, name="桥段写作",
                            title=_book_title or "",
-                           agent="writing", book_id=_book_id, book_title=_book_title,
-                           step="写下一个桥段", total=1, phase="写作中...",
                            url=flow_url)
         try:
             for evt in engine._write_next_bridge_stream():
                 if isinstance(evt, dict):
                     t = evt.get("type", "")
                     if t == "group_chunk":
-                        task_manager.llm_call(task_id)
+                        pass
                     elif t == "bridge_done":
-                        task_manager.set_step(task_id, step="桥段完成")
+                        pass
                     elif t in ("chapter_done", "complete"):
                         task_manager.done(task_id,
                                           message=f"第{evt.get('chapter', '')}章完成" if t == "chapter_done"

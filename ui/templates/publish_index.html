@@ -11,13 +11,14 @@
 {% set n_wait = books_info|rejectattr('book.status','equalto','published')|list|length %}
 
 <div class="cards" style="margin-bottom:20px">
-    <div class="card"><div class="label">总书目</div><div class="stat">{{ n_all }}</div></div>
-    <div class="card"><div class="label">已上架</div><div class="stat">{{ n_pub }}</div></div>
-    <div class="card"><div class="label">检查通过·可上架</div><div class="stat">{{ n_ok }}</div></div>
-    <div class="card"><div class="label">待处理</div><div class="stat">{{ n_wait }}</div></div>
+    <div class="card stat-card"><div class="label">总书目</div><div class="stat">{{ n_all }}</div></div>
+    <div class="card stat-card"><div class="label">已上架</div><div class="stat">{{ n_pub }}</div></div>
+    <div class="card stat-card"><div class="label">检查通过·可上架</div><div class="stat">{{ n_ok }}</div></div>
+    <div class="card stat-card"><div class="label">待处理</div><div class="stat">{{ n_wait }}</div></div>
 </div>
 
 {% if books_info %}
+<div class="table-scroll">
 <table>
     <thead><tr>
         <th>书名</th>
@@ -37,7 +38,7 @@
         <td><strong><a href="/books/{{ b.book_id }}" style="color:#58a6ff">{{ b.title or '(待定)' }}</a></strong></td>
         <td style="white-space:nowrap">{{ b.pen_name }} <span class="tag blue">{{ b.platform }}</span></td>
         <td>{{ status_badge(b.status) }}</td>
-        <td>{{ b.current_chapter }}/{{ b.chapter_count }} 章</td>
+        <td>已写 {{ b.current_chapter }} 章</td>
         <td>{{ rep.total_words }}</td>
         <td>
             {% if rep.can_publish %}
@@ -66,6 +67,7 @@
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
 <div class="empty" style="padding:60px">
     <div class="icon" style="font-size:48px">🚀</div>

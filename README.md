@@ -19,12 +19,12 @@
 | **引擎** (`libraries/engine.py`) | 新书启动 → 规划 → 逐章续写，全自动闭环 | ✅ |
 | **桥段写作** (`libraries/storyline_writer.py`) | 唯一写作核心：桥段驱动逐短句组增量生成 + 炸裂开场 | ✅ |
 | **桥段库** (`libraries/plot.py`) | 网文经典桥段的结构化模板（47 模板，内置+采集） | ✅ |
-| **大纲库** (`libraries/structure.py`) | 各流派卷/弧/章骨架 + **阶段级内涵**（11 模板） | ✅ |
+| **情节弧库** (`libraries/structure.py`) | 各题材方向卷/弧/章骨架 + **阶段级内涵**（11 模板） | ✅ |
 | **笑点库** (`libraries/gag.py`) | 搞笑模式模板 + 例句（24 模式，写作时探测器涌现注入） | ✅ |
 | **角色原型库** (`libraries/character.py`) | 人物性格原型 + 代表人物（10 原型，设定表单「从原型库选」） | ✅ 新 |
 | **内涵系统** | 母题跟随大纲阶段，阶段级 `themes` 带插入位置，写作 prompt 注入 | ✅ 新 |
 | **笔名档案** (`libraries/profiles.py`) | 风格指纹 + prompt 注入 | ✅ |
-| **右侧 Agent 助手** (`plugins/agent_loop.py` + `agent_tools.py`) | 侧栏对话，29 个工具全链路操作 + **工具调用日志页签** | ✅ 新 |
+| **右侧 Agent 助手** (`libraries/dsh_bridge.py` + `vendor/dsh-ne/`) | 侧栏对话（dsh-ne headless 驱动），全部 MCP 工具全链路操作 + **工具调用日志页签** | ✅ 新 |
 | **番茄侦察兵** (`plugins/fanqie_scout.py`) | 番茄小说搜索/下载/分析（桥段/大纲/笑点）入库 | ✅ |
 | **AI 降重** (`libraries/de_ai.py`) | 续写流程中的 AI 痕迹消除 | ✅ |
 | **审阅** (`libraries/reviewer.py`) | 自动审阅质量打分 | ✅ |
@@ -66,7 +66,7 @@ python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
 
 面板顶部有 **「💬 对话 / 🔧 工具日志」两个页签**：切到工具日志可实时看到 Agent 调用了哪些工具（工具名/时间/成败/耗时/参数/结果摘要，3 秒自动刷新），一目了然每个步骤在干什么。
 
-**MCP 接口**：同一套 29 个工具也暴露为 MCP，供 Claude Code 等外部 Agent 驱动：
+**MCP 接口**：全部注册工具暴露为 MCP（数量以 `tools/mcp_smoke.py` EXPECT_MCP_TOOLS 为准；护栏：直建/直删工具不存在，建书走系统向导、删书走书库页手动），供 Claude Code 等外部 Agent 驱动：
 
 ```bash
 claude mcp add --scope project novel-engine -- python mcp_server.py
@@ -81,17 +81,18 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 
 引擎支持双模式，由 `libraries/engine.py` 驱动：
 
-### 新书启动（单页 5 步向导）
+### 新书启动（单页 3 步向导）
 
-`/books/start` 为横条步骤条向导：**一句话设定 → AI 候选挑世界观（5 个方向，可借鉴）→ 微调设定（世界观置顶 + 50 题材标签 + 根据世界观生成书名/主角候选）→ 创建并生成大纲（内联世界观 + 完整大纲 SSE）→ 进入写作台写前三章**。
+`/books/start` 为横条步骤条向导：**一句话设定（含题材标签）→ 挑选世界观（5 个方向，受题材标签约束，可借鉴）→ 世界观补全（进入自动 AI 补全 12 维 + 基调，可编辑；提交即入库跳书详情）→ 完整大纲由外部 Agent 经 MCP `generate_full_outline` 生成 → 进入写作台写前三章**。
 
 ```
-一句话设定 → AI候选(5方向) → 标签 + 书名/主角候选 → 建书 → 世界生成 → 完整大纲 → 写作台（前三章）
+一句话设定（含题材标签）→ 挑选世界观 → 世界观补全（12维+基调）→ 角色 → 建书（入库）→ 完整大纲 → 写作台（前三章）
 ```
 
-- 题材标签存入 `world_building.tags`（预置 **50 标签 5 组** `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束。
-- 流派由标签推导（`TAG_GENRE_MAP`）；平台留到发布页。
-- 书名/主角候选走无书端点 `POST /api/world-builder/title-protag`（5 书名 + 3 主角）。
+- 题材标签在步 1 选择，存入 `world_building.tags`（预置 **50 标签 5 组** `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束，并约束步 2 候选生成。
+- 步 3「世界观补全」：进入时自动调无书端点 `POST /api/world-builder/world-complete` 补全 `world_building` 12 维 + 基调（tone/target_audience/pov/era_language），可手动编辑后随 `/books/start` 落库；`generate_world` 仅在世界观单薄时兜底。另提供**分阶段内容构建工具**（内部 agent / skill 自主编排，步 3 顶部状态区 5 徽标实时显示 ✅/未填）：`generate_core_conflict`（①核心矛盾）→ `query_arc_library`/`query_plots` + `set_picks`（②开篇大纲+桥段，落 `_outline_picks`）→ `generate_factions`（③势力）→ `generate_characters`（④主要人物，带核心矛盾/势力/大纲上下文）→ `generate_rest_world`（⑤其余维度，大纲确定后补）；`generate_full_outline` 自动消费 `_outline_picks`。
+- 题材方向由标签推导（`TAG_GENRE_MAP`）；平台留到发布页。
+- 角色由外部 Agent 从原型库生成（`generate_characters`）经 `drive_ui(set_characters)` 填入步 3，可手动编辑；书名由步 2 选中候选带入步 3 可改。
 
 ### 续写循环
 
@@ -133,9 +134,9 @@ PUA 字体解码器 `plugins/font_decoder.py` 内置 362 条映射表，支持�
 - 冲突：宗门/家族危机
 - 情感：英雄救美、修罗场/情感博弈
 
-### 大纲库 —— `libraries/structure.py`
+### 情节弧库 —— `libraries/structure.py`
 
-11 套流派模板，覆盖卷/弧/章三级骨架：玄幻、都市、悬疑、言情、穿越、科幻、修真等。**大纲模板自带阶段级内涵**（`StageNode.themes`：`{name, position, how}`），如"最终清算"阶段在结尾放置 复仇/热血；生成时从选中大纲带出书级内涵、挂到能承载的桥段、注入写作 prompt。
+11 套题材方向模板，覆盖卷/弧/章三级骨架：玄幻、都市、悬疑、言情、穿越、科幻、修真等。**大纲模板自带阶段级内涵**（`StageNode.themes`：`{name, position, how}`），如"最终清算"阶段在结尾放置 复仇/热血；生成时从选中大纲带出书级内涵、挂到能承载的桥段、注入写作 prompt。
 
 ### 笑点库 —— `libraries/gag.py`
 
@@ -143,7 +144,7 @@ PUA 字体解码器 `plugins/font_decoder.py` 内置 362 条映射表，支持�
 
 ### 角色原型库 —— `libraries/character.py`
 
-10 个性格原型 + 代表人物（高冷毒舌/沙雕谐星/温柔治愈/热血莽夫/腹黑军师/傲娇大小姐/忠犬伙伴/阴险反派/市侩商人/吐槽役青梅），带口癖示例与适配流派。设定表单里每张人物卡可「🎭 从原型库选」一键填充性格/口癖/简介。
+10 个性格原型 + 代表人物（高冷毒舌/沙雕谐星/温柔治愈/热血莽夫/腹黑军师/傲娇大小姐/忠犬伙伴/阴险反派/市侩商人/吐槽役青梅），带口癖示例与适配标签。设定表单里每张人物卡可「🎭 从原型库选」一键填充性格/口癖/简介。
 
 > 四大库数据存 `libraries/data/{plots,structures,gags,characters}.jsonl`（JSONL 一行一条；旧单 JSON 首次加载自动迁移）。
 
@@ -194,11 +195,10 @@ D:\NovelEngine/
 │   ├── publisher.py        # 上架检查/状态机
 │   ├── cost_tracker.py     # API 费用追踪
 │   ├── character_state.py  # 角色状态跟踪
-│   ├── world_tags.py       # 预置题材标签库（50 标签 + 流派推导）
+│   ├── world_tags.py       # 预置题材标签库（50 标签 + 题材方向推导）
 │   ├── base_library.py     # 资产库基类（JSONL 单例 + 读写）
-│   ├── reset_data.py       # 一键重置四大库
 │   ├── plot.py             # 桥段库（47 模板）
-│   ├── structure.py        # 大纲库（11 模板 + 阶段级内涵）
+│   ├── structure.py        # 情节弧库（11 模板 + 阶段级内涵）
 │   ├── gag.py              # 笑点库（24 模式）
 │   └── character.py        # 角色原型库（10 原型）
 │
@@ -212,7 +212,6 @@ D:\NovelEngine/
 │   ├── font_decoder.py     # PUA 字体解码器
 │   ├── novel_storage.py    # 已下载小说管理
 │   ├── style_analyzer.py   # 写作风格分析
-│   ├── agent_loop.py       # Agent 工具调用循环（function calling）
 │   └── task_manager.py     # 全局任务管理器
 │
 ├── ui/                     # Web 用户界面
@@ -222,11 +221,12 @@ D:\NovelEngine/
 │       ├── dashboard.html  # 仪表盘（统计+快捷入口+各书下一步横条）
 │       ├── books.html      # 图书列表
 │       ├── book_detail.html# 单书详情（设定/人物条目/大纲/章节）
-│       ├── start_book.html # 新书启动 5 步向导
+│       ├── start_book.html # 新书启动 3 步向导
 │       ├── storyline_write_flow.html # 写作台（两栏：故事线+正文/规划）
-│       ├── storyline_outline_card.html # 大纲卡片组件
 │       ├── publish.html / publish_index.html # 上架 / 导出
-│       ├── extract.html / scout.html # 内容提取 / 番茄侦察兵
+│       ├── scout.html # 侦察·提取合并页（agent 下载分析→候选确认入库五库；原 extract.html 已并入）
+│       ├── novels.html # 外部书库页（已下载小说，阅读 / 去侦察页分析 / 删除）
+│       ├── novel_reader.html # 外部书库单本阅读器（reader.css/js，章节懒加载）
 │       ├── settings.html / profiles.html / new_profile.html
 │       ├── plots.html / structures.html / gags.html / characters.html  # 四大库页
 │       ├── review_test.html / deai.html # 调试工具
@@ -255,14 +255,14 @@ D:\NovelEngine/
 ├── test_chapters.py        # 章节生成测试
 ├── test_e2e_pages.py       # 端到端页面测试（全部页面路由/侧栏/内容完整性）
 ├── test_reader.py          # 番茄阅读解析测试
-└── tools/                  # 运维/专项脚本（test_themes / test_world_builder / simulate_full_flow / shot_ui_pages …）
+└── tools/                  # 运维/专项脚本（test_themes / test_world_builder / simulate_full_flow 等）
 │
 ├── docs/                   # 文档
 │   ├── 设计文档-总览-claude.md  # 唯一主设计文档
-│   └── archive/            # 全部历史文档归档（设计稿/交接/优化/调研/审查报告等 19 份）
 │
 ├── requirements.txt
-├── agent_tools.py            # 共享 Agent 工具注册表（29 工具，全链路）
+├── agent_tools.py            # 共享 Agent 工具注册表（40 工具，全链路）
+├── vendor/dsh-ne/            # vendored dsh 精简核心（改名 dsh-ne；node_modules 不入库，npm install 重建）
 ├── mcp_server.py             # MCP 适配层（从 agent_tools 注册，claude mcp add 接入）
 └── LICENSE
 ```

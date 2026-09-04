@@ -2,10 +2,30 @@
 import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
+from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context, abort
 from .ctx import *
+from libraries.profiles import KNOWN_PLATFORMS, PLATFORM_LABELS  # noqa: E402
 
 bp = Blueprint("libraries", __name__)
+
+
+def _parse_platform_accounts(form):
+    """从表单解析 platform_accounts：每个已知平台 {registered, site_id, author_url, notes, last_published_at}。
+
+    未登记且其余字段全空 → 该平台条目不写入（保持档案干净）。
+    """
+    accounts = {}
+    for pl in KNOWN_PLATFORMS:
+        entry = {
+            "registered": form.get(f"{pl}_registered") == "on",
+            "site_id": form.get(f"{pl}_site_id", "").strip(),
+            "author_url": form.get(f"{pl}_author_url", "").strip(),
+            "notes": form.get(f"{pl}_notes", "").strip(),
+            "last_published_at": form.get(f"{pl}_last_published_at", "").strip(),
+        }
+        if entry["registered"] or any(entry[k] for k in ("site_id", "author_url", "notes", "last_published_at")):
+            accounts[pl] = entry
+    return accounts
 
 @bp.route("/plots")
 def plots():
@@ -31,6 +51,7 @@ _LIB_TABLE = {
     "structures": (struct_lib, "templates"),
     "gags": (gag_lib, "patterns"),
     "characters": (char_lib, "archetypes"),
+    "style_rules": (style_rules, "rules"),
 }
 
 
@@ -72,14 +93,24 @@ def struct_toggle(struct_id): return _lib_toggle("structures", struct_id)
 def struct_delete(struct_id): return _lib_delete("structures", struct_id)
 
 
-@bp.route("/api/structures/<struct_id>/stages/<int:idx>/themes", methods=["POST"])
-def struct_stage_themes(struct_id, idx):
-    """编辑某个阶段的阶段级内涵 [{name, position, how}]（含插入位置+表达手法）。"""
+@bp.route("/api/structures/<struct_id>/node/themes", methods=["POST"])
+def struct_stage_themes(struct_id):
+    """编辑某个弧/阶段节点的节点级内涵 [{name, position, how}]（含插入位置+表达手法）。
+    path 为沿 stages→children 的索引列表（如 [0,2] = 顶层第0个子弧的第2个孙弧），支持多层嵌套。"""
     t = struct_lib.get_by_id(struct_id)
     if not t:
         return jsonify({"ok": False, "error": "not found"}), 404
-    if not (0 <= idx < len(t.stages)):
-        return jsonify({"ok": False, "error": "stage index out of range"}), 400
+    path = (request.json or {}).get("path")
+    if not isinstance(path, list) or not path:
+        return jsonify({"ok": False, "error": "path must be non-empty list"}), 400
+    # 沿 stages→children 递归寻址目标节点
+    nodes = t.stages
+    node = None
+    for p in path:
+        if not isinstance(p, int) or not (0 <= p < len(nodes)):
+            return jsonify({"ok": False, "error": "path out of range"}), 400
+        node = nodes[p]
+        nodes = node.children
     themes = (request.json or {}).get("themes")
     if not isinstance(themes, list):
         return jsonify({"ok": False, "error": "themes must be list"}), 400
@@ -90,7 +121,7 @@ def struct_stage_themes(struct_id, idx):
         clean.append({"name": str(m["name"]).strip(),
                       "position": str(m.get("position", "") or "").strip(),
                       "how": str(m.get("how", "") or "").strip()})
-    t.stages[idx].themes = clean
+    node.themes = clean
     struct_lib._save()
     return jsonify({"ok": True, "themes": clean})
 
@@ -126,6 +157,76 @@ def characters_api():
     return jsonify([a.to_dict() for a in char_lib.archetypes if a.enabled])
 
 
+# ═══════════════════════════════════════════
+# 风格规则库（禁句式 + 去AI词表，可编辑）——竞品 promptWorkbench 简化
+# ═══════════════════════════════════════════
+
+@bp.route("/style-rules")
+def style_rules_page():
+    """风格规则已并入笔名档案页：302 重定向到 /profiles（兼容 ?profile= → ?scope=）。"""
+    scope = (request.args.get("profile") or request.args.get("scope") or "").strip()
+    return redirect(url_for("libraries.profile_list", scope=scope))
+
+
+def _next_rule_id(kind: str) -> str:
+    n = 1
+    existing = {r.id for r in style_rules.rules}
+    while f"{kind}_{n}" in existing:
+        n += 1
+    return f"{kind}_{n}"
+
+
+@bp.route("/api/style-rules", methods=["POST"])
+def style_rule_create():
+    """新建禁则/词条/偏好：{kind, pattern, desc, severity, replacements, profile_id}。"""
+    from libraries.style_rules import StyleRule
+    d = request.get_json(silent=True) or {}
+    kind = str(d.get("kind", "ban"))
+    pattern = str(d.get("pattern", "")).strip()
+    if kind not in ("ban", "prefer") or not pattern:
+        return jsonify({"ok": False, "error": "kind/pattern 必填（ban=禁止内容，prefer=句式风格）"}), 400
+    rule = StyleRule(id=_next_rule_id(kind), kind=kind,
+                     profile_id=str(d.get("profile_id", "") or "").strip(),
+                     pattern=pattern,
+                     desc=str(d.get("desc", "") or "").strip(),
+                     severity=str(d.get("severity", "warning")),
+                     replacements=[str(x) for x in (d.get("replacements") or []) if str(x).strip()])
+    style_rules.rules.append(rule)
+    style_rules._save()
+    return jsonify({"ok": True, "rule": rule.to_dict()})
+
+
+@bp.route("/api/style-rules/<rule_id>", methods=["POST"])
+def style_rule_update(rule_id):
+    """更新条目：可改 pattern/desc/severity/replacements/enabled。"""
+    d = request.get_json(silent=True) or {}
+    rule = next((r for r in style_rules.rules if r.id == rule_id), None)
+    if not rule:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if "pattern" in d:
+        rule.pattern = str(d.get("pattern", "")).strip()
+    if "desc" in d:
+        rule.desc = str(d.get("desc", "")).strip()
+    if "severity" in d:
+        rule.severity = str(d.get("severity", rule.severity))
+    if "replacements" in d:
+        rule.replacements = [str(x) for x in (d.get("replacements") or []) if str(x).strip()]
+    if "enabled" in d:
+        rule.enabled = bool(d.get("enabled", rule.enabled))
+    style_rules._save()
+    return jsonify({"ok": True, "rule": rule.to_dict()})
+
+
+@bp.route("/api/style-rules/<rule_id>/toggle", methods=["POST"])
+def style_rule_toggle(rule_id):
+    return _lib_toggle("style_rules", rule_id)
+
+
+@bp.route("/api/style-rules/<rule_id>/delete", methods=["POST"])
+def style_rule_delete(rule_id):
+    return _lib_delete("style_rules", rule_id)
+
+
 @bp.route("/structures")
 def structures():
     return render_template("structures.html", templates=struct_lib.templates)
@@ -138,26 +239,94 @@ def gags():
 
 @bp.route("/profiles")
 def profile_list():
-    return render_template("profiles.html", profiles=profiles.list_all())
+    """笔名档案 + 风格规则库合并页（master-detail）：?scope= 切换编辑面。
+    'new'=空档案表单；<id>=该笔名档案+专属规则；空/缺失=默认选中首个笔名（不再有全局基线）。
+    """
+    # Jinja groupby 不排序：handler 里先排序（zh 在前，组内按笔名），保证中英文分组有序
+    all_profiles = sorted(profiles.list_all(), key=lambda p: (p.language == "en", p.pen_name))
+    raw = (request.args.get("scope") or request.args.get("profile") or "").strip()
+    is_new = raw == "new"
+    selected = None
+    if is_new:
+        current_scope = "new"
+    elif raw and profiles.get(raw):
+        selected = profiles.get(raw)
+        current_scope = raw
+    else:
+        # 无 scope / 笔名不存在 → 默认选中首个笔名（枫落），不再有全局基线
+        selected = all_profiles[0] if all_profiles else None
+        current_scope = selected.id if selected else "new"
+
+    own = [] if is_new else (style_rules.rules_for(current_scope) if selected else [])
+    scope_label = ("新建笔名" if is_new else
+                   (selected.pen_name if selected else "新建笔名"))
+    # 抽屉内每个笔名下方展示其专属风格摘要（仅 enabled，精简单行）
+    summaries = {}
+    for p in all_profiles:
+        own_p = style_rules.rules_for(p.id)
+        pr = [r for r in own_p if r.kind == "prefer" and r.enabled]
+        bn = [r for r in own_p if r.kind == "ban" and r.enabled]
+        summaries[p.id] = {
+            "prefers_joined": (" · ".join(r.pattern for r in pr[:3]) + ("…" if len(pr) > 3 else "")) if pr else "",
+            "ban_count": len(bn),
+            "bans_first": "、".join(r.pattern for r in bn[:3]) if bn else "",
+        }
+    return render_template("profiles.html",
+        profiles=all_profiles, selected=selected, is_new=is_new,
+        current_scope=current_scope, scope_label=scope_label,
+        prefers=[r for r in own if r.kind == "prefer"],
+        bans=[r for r in own if r.kind == "ban"],
+        summaries=summaries,
+        platform_labels=PLATFORM_LABELS)
+
+
+@bp.route("/profiles/<profile_id>/delete", methods=["POST"])
+def delete_profile(profile_id):
+    """删除笔名档案 + 清理其专属风格规则（孤儿）。防空 rules 落盘覆盖内置种子。"""
+    profiles.delete(profile_id)
+    orphaned = [r for r in style_rules.rules if (r.profile_id or "").strip() == profile_id]
+    if orphaned:
+        style_rules.rules = [r for r in style_rules.rules
+                             if (r.profile_id or "").strip() != profile_id]
+        style_rules._save()
+    return redirect(url_for("libraries.profile_list"))
 
 
 @bp.route("/profiles/new", methods=["GET","POST"])
 def new_profile():
     if request.method == "POST":
-        wp = {}
-        if request.form.get("common_words"): wp["common_words"] = [w.strip() for w in request.form["common_words"].split(",")]
-        if request.form.get("avoid_words"): wp["avoid_words"] = [w.strip() for w in request.form["avoid_words"].split(",")]
-        profiles.create(
+        new_p = profiles.create(
             pen_name=request.form["pen_name"],
-            description=request.form["description"],
+            language=str(request.form.get("language") or "zh"),
+            description=request.form.get("description",""),
             style_fingerprint={
                 "humor_style": request.form.get("humor_style",""),
                 "action_style": request.form.get("action_style",""),
-                "sentence_length": request.form.get("sentence_length","medium"),
             },
-            word_print=wp,
+            platform_accounts=_parse_platform_accounts(request.form),
         )
-        return redirect(url_for("libraries.profile_list"))
-    return render_template("new_profile.html")
+        return redirect(url_for("libraries.profile_list", scope=new_p.id))  # 新建后自动选中
+    # GET：独立页已并入 /profiles，302 到合并页新建模式（旧书签/外链不 404）
+    return redirect(url_for("libraries.profile_list", scope="new"))
+
+
+@bp.route("/profiles/<profile_id>/edit", methods=["GET","POST"])
+def edit_profile(profile_id):
+    """编辑笔名档案：风格字段 + 平台账号注册（仅 UI 人工登记）。"""
+    p = profiles.get(profile_id)
+    if not p:
+        abort(404)
+    if request.method == "POST":
+        p.description = request.form.get("description","")
+        p.language = str(request.form.get("language") or "zh")
+        p.style_fingerprint = {
+            "humor_style": request.form.get("humor_style",""),
+            "action_style": request.form.get("action_style",""),
+        }
+        p.platform_accounts = _parse_platform_accounts(request.form)
+        profiles.update(p)
+        return redirect(url_for("libraries.profile_list", scope=profile_id))  # 保存后保持选中
+    # GET：独立页已并入 /profiles，302 到合并页该笔名（旧书签/外链不 404）
+    return redirect(url_for("libraries.profile_list", scope=profile_id))
 
 

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NovelEngine UI 视觉检测与优化方案</title>
+<style>
+  :root{
+    --bg:#0f1117; --elev:#161b22; --inset:#0d1117; --border:#30363d; --border-soft:#21262d;
+    --fg:#e1e4e8; --fg-strong:#f0f6fc; --muted:#8b949e; --dim:#6e7681;
+    --accent:#58a6ff; --success:#3fb950; --danger:#f85149; --warn:#d29922; --purple:#bc8cff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:-apple-system,'Microsoft YaHei','PingFang SC',sans-serif;background:var(--bg);color:var(--fg);line-height:1.75;font-size:15px;}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 28px 80px;}
+  header.hero{background:linear-gradient(135deg,#1f6feb22,#bc8cff22);border:1px solid var(--border);border-radius:16px;padding:36px 32px;margin-bottom:32px;}
+  header.hero h1{font-size:30px;color:var(--fg-strong);margin-bottom:10px;}
+  header.hero .sub{color:var(--muted);font-size:15px;}
+  .meta-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;}
+  .meta-chip{background:var(--inset);border:1px solid var(--border);border-radius:999px;padding:4px 14px;font-size:12px;color:var(--muted);}
+  .meta-chip b{color:var(--fg);}
+  h2{font-size:22px;color:var(--fg-strong);margin:44px 0 16px;padding-left:12px;border-left:4px solid var(--accent);}
+  h3{font-size:17px;color:var(--fg-strong);margin:26px 0 10px;}
+  p{color:var(--fg);margin:8px 0;}
+  .muted{color:var(--muted);}
+  .small{font-size:13px;}
+  .callout{background:var(--inset);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:10px;padding:16px 20px;margin:14px 0;}
+  .callout.danger{border-left-color:var(--danger);}
+  .callout.warn{border-left-color:var(--warn);}
+  .callout.success{border-left-color:var(--success);}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px;}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--border-soft);vertical-align:top;}
+  th{color:var(--muted);background:var(--elev);font-weight:600;white-space:nowrap;}
+  tr:hover td{background:var(--elev);}
+  .pill{display:inline-block;padding:1px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;}
+  .pill.p0{background:#330d0d;color:var(--danger);border:1px solid var(--danger);}
+  .pill.p1{background:#332b0d;color:var(--warn);border:1px solid var(--warn);}
+  .pill.p2{background:#0d1d33;color:var(--accent);border:1px solid var(--accent);}
+  .pill.p3{background:#1c1a12;color:var(--muted);border:1px solid var(--border);}
+  .score-bar{display:flex;align-items:center;gap:12px;margin:6px 0;}
+  .score-name{width:150px;font-size:13px;color:var(--fg);text-align:right;flex-shrink:0;}
+  .score-track{flex:1;height:14px;background:var(--inset);border:1px solid var(--border);border-radius:7px;overflow:hidden;}
+  .score-fill{height:100%;border-radius:7px;}
+  .score-val{width:38px;font-size:13px;color:var(--muted);flex-shrink:0;}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:760px){.grid-2{grid-template-columns:1fr;}.score-name{width:110px;font-size:12px;}}
+  code{background:var(--inset);border:1px solid var(--border);border-radius:5px;padding:1px 7px;font-family:Consolas,Menlo,monospace;font-size:13px;color:#79c0ff;}
+  pre{background:var(--inset);border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;font-size:12.5px;line-height:1.6;color:#c9d1d9;font-family:Consolas,Menlo,monospace;margin:12px 0;white-space:pre;}
+  pre .c{color:var(--dim);}
+  .stage{display:flex;gap:16px;margin:14px 0;}
+  .stage-num{flex-shrink:0;width:44px;height:44px;border-radius:12px;background:var(--elev);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:var(--accent);}
+  .stage-body{flex:1;}
+  .tag{display:inline-block;padding:1px 10px;background:#1f2937;border-radius:12px;font-size:11.5px;color:var(--muted);margin:2px;}
+  .footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--border);color:var(--dim);font-size:13px;}
+  ul,ol{padding-left:22px;margin:8px 0;}
+  li{margin:4px 0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>🎨 NovelEngine UI 视觉检测与优化方案</h1>
+  <div class="sub">基于真实浏览器逐页渲染的视觉走查报告 · 含根因分析与可执行优化清单</div>
+  <div class="meta-row">
+    <span class="meta-chip">检测方式：<b>浏览器实拍截图 + DOM/OCR 走查</b></span>
+    <span class="meta-chip">检测环境：<b>Flask :58080 · 视口 960×980</b></span>
+    <span class="meta-chip">覆盖页面：<b>16 个主页面</b></span>
+    <span class="meta-chip">检测日期：<b>2026-09-03</b></span>
+  </div>
+</header>
+
+<h2>一、检测结论摘要</h2>
+<div class="callout danger">
+  <b>一句话结论：</b>NovelEngine 的整体 UI 功能完整、信息密度高，但<b>在常见桌面窗口宽度下，主内容区被左导航（180px）+ 右 Agent 面板（360px）挤压到约 420px，导致大量表格、表单、卡片内容竖排变形、文字截断，多个页面接近不可用</b>。核心矛盾是「固定三栏布局 × 无响应式兜底」。
+</div>
+
+<p>检测共覆盖 16 个主页面，所有页面在 960px 视口下均出现不同程度的内容挤压。其中<b>设置页（3/10）、书库（4/10）、写作台（4/10）、上架管理（4/10）、外部书库（4/10）</b>问题最严重。根因集中在 <code>base.css</code> 的固定宽度布局：<code>nav{width:180px}</code> + <code>aside#status-bar{width:360px}</code> 为硬编码，全站仅 1 个 <code>@media</code> 断点（且仅作用于 <code>.world-edit .toolbar</code> 单一组件），没有针对内容区收缩的响应式规则。</p>
+
+<h2>二、页面健康度评分（视觉走查人工评分，1–10 分）</h2>
+<p class="muted small">评分依据：内容可读性 / 布局完整性 / 表单可用性 / 信息层级，10 分为理想状态。分数越低表示挤压越严重。</p>
+<div id="scores"></div>
+
+<h2>三、核心问题清单（按优先级）</h2>
+
+<h3>🔴 P0 — 阻断可用性（影响全部页面，须最先处理）</h3>
+<table>
+  <tr><th style="width:16%">问题</th><th style="width:26%">现象（检测证据）</th><th style="width:22%">根因</th><th>优化方向</th></tr>
+  <tr>
+    <td><span class="pill p0">P0-1</span> 主内容区被固定三栏挤压</td>
+    <td>960px 视口下 <code>main</code> 仅剩 ~420px（含 padding），内容区 ~360px；书库书名竖排 5 行、设置表单逐字竖排、统计卡"桥段模板"截断为"桥段模"。</td>
+    <td><code>nav 180px + aside 360px</code> 硬编码，<code>main{padding:30px}</code> 再吃 60px，无自适应收缩。</td>
+    <td>侧栏改可收缩 + 内容区最小宽度保护 + 断点降级。</td>
+  </tr>
+  <tr>
+    <td><span class="pill p0">P0-2</span> Agent 面板默认抢占 38% 宽度</td>
+    <td>360px/960px ≈ 38%；该面板在纯管理页（如设置/书库）也常驻，进一步挤压主内容。</td>
+    <td><code>aside#status-bar{width:360px}</code> 默认展开且不按页面类型区分。</td>
+    <td>窄窗口下默认折叠；管理类页面可完全隐藏；折叠状态持久化。</td>
+  </tr>
+  <tr>
+    <td><span class="pill p0">P0-3</span> 全站缺少响应式断点</td>
+    <td>全站仅 1 个 <code>@media (max-width:900px)</code> 且只作用于单一组件；任何窗口宽度下三栏结构不变。</td>
+    <td><code>base.css</code> 等样式表基本无媒体查询；表格/表单/卡片无窄容器降级规则。</td>
+    <td>建立 1440 / 1100 / 800 / 560 四级断点体系，窄屏逐级降级。</td>
+  </tr>
+</table>
+
+<h3>🟠 P1 — 高影响（表单与数据密集页）</h3>
+<table>
+  <tr><th style="width:16%">问题</th><th style="width:26%">现象</th><th style="width:22%">根因</th><th>优化方向</th></tr>
+  <tr>
+    <td><span class="pill p1">P1-1</span> 表格无法容纳 7 列</td>
+    <td>书库表（书名/笔名/题材/故事线/进度/状态/操作）在窄容器内书名竖排、列宽失衡。</td>
+    <td><code>table{width:100%}</code> 无 <code>min-width</code> 保护，列无自适应策略。</td>
+    <td>表格设 <code>min-width</code> + 横向滚动；或改卡片式列表；长文本列省略号。</td>
+  </tr>
+  <tr>
+    <td><span class="pill p1">P1-2</span> 表单逐字竖排</td>
+    <td>设置页 LLM 配置、新书向导、笔名档案的表单字段在窄容器内文字逐字换行，几乎不可填写。</td>
+    <td><code>.form-row{grid-template-columns:1fr 1fr}</code> 在窄容器下仍强行两列。</td>
+    <td>表单加最小宽度 / 窄容器改单列；label 与控件同行布局。</td>
+  </tr>
+  <tr>
+    <td><span class="pill p1">P1-3</span> 主按钮色与状态色语义冲突</td>
+    <td>主操作按钮用 <code>#238636</code>（绿=成功色），与"成功/已完成"状态同色；导航 logo 与链接又用蓝色。</td>
+    <td>全局 <code>button{background:#238636}</code>，设计令牌未区分「品牌强调色」与「语义色」。</td>
+    <td>引入品牌主色（建议保留蓝 <code>#58a6ff</code>）做主按钮，绿仅用于成功状态。</td>
+  </tr>
+</table>
+
+<h3>🟡 P2 — 中影响（体验与层级）</h3>
+<table>
+  <tr><th style="width:16%">问题</th><th style="width:26%">现象</th><th style="width:22%">根因</th><th>优化方向</th></tr>
+  <tr>
+    <td><span class="pill p2">P2-1</span> 统计/数字卡层级弱</td>
+    <td>仪表盘 4 张统计卡被压窄，数字 32px 与标签 11px 落差大、间距过近；卡片文字截断。</td>
+    <td><code>.cards{minmax(260px,1fr)}</code> 在窄区退化为单列但无最小宽度保护。</td>
+    <td>统计卡改横向指标条或 2×2 网格；数字/标签留白加大。</td>
+  </tr>
+  <tr>
+    <td><span class="pill p2">P2-2</span> 筛选标签密集换行</td>
+    <td>桥段库 14 个分类、角色库 30+ 标签在窄区挤压成密集换行，不可扫读。</td>
+    <td>标签区无横向滚动 / 无收起机制。</td>
+    <td>筛选区支持横向滚动（<code>overflow-x:auto</code>）或折叠"更多"。</td>
+  </tr>
+  <tr>
+    <td><span class="pill p2">P2-3</span> 页面标题与区块层级不清</td>
+    <td>h1 24px 与区块标题、卡片标题视觉差不足；部分页无面包屑层级。</td>
+    <td>全局 <code>h1/h2/h3</code> 样式简单，缺少辅助线/次级信息。</td>
+    <td>统一页头组件：标题 + 说明 + 主操作按钮同排。</td>
+  </tr>
+</table>
+
+<h3>🟢 P3 — 低影响（视觉精修）</h3>
+<table>
+  <tr><th style="width:16%">问题</th><th style="width:26%">现象</th><th style="width:22%">根因</th><th>优化方向</th></tr>
+  <tr>
+    <td><span class="pill p3">P3-1</span> 空状态与加载态缺失</td>
+    <td>空库、无书、无数据时仅简单文本，无引导 CTA。</td>
+    <td><code>.empty</code> 仅有图标+文字。</td>
+    <td>空状态加「去创建」引导按钮。</td>
+  </tr>
+  <tr>
+    <td><span class="pill p3">P3-2</span> 交互反馈平淡</td>
+    <td>按钮 hover 仅变色；无焦点态；Toast 已有但位置固定右上。</td>
+    <td>样式表对 <code>:focus-visible</code>、动效覆盖不足。</td>
+    <td>补焦点环、按钮按压态、卡片悬浮阴影。</td>
+  </tr>
+  <tr>
+    <td><span class="pill p3">P3-3</span> 写作台左右分栏不可读</td>
+    <td>写作台 <code>.editor-left{width:50%;min-width:320px}</code> 在窄 main 里两栏挤压，正文几乎不可读。</td>
+    <td><code>min-width:320px</code> 与容器冲突导致溢出/挤压。</td>
+    <td>写作台改为可折叠左栏或全屏切换模式。</td>
+  </tr>
+</table>
+
+<h2>四、分阶段实施路线</h2>
+
+<div class="stage">
+  <div class="stage-num">1</div>
+  <div class="stage-body">
+    <h3>阶段一 · 布局框架重构（1–2 天，解决 P0）</h3>
+    <ul>
+      <li>侧栏宽度改为可变量，<code>main</code> 设 <code>min-width:0</code> 与内容最小宽度保护（<code>min(960px, 100%)</code>）。</li>
+      <li>Agent 面板折叠态由 JS 持久化到 <code>localStorage</code>，窄窗口（&lt;1200px）默认折叠。</li>
+      <li>新增断点：<code>@media (max-width:1200px)</code> 折叠面板；<code>@media (max-width:1000px)</code> 导航收窄为图标列；<code>@media (max-width:720px)</code> 侧栏变抽屉。</li>
+      <li>所有 <code>table</code>/<code>form</code> 容器加 <code>min-width</code> + 外层横向滚动，杜绝内容竖排。</li>
+    </ul>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-num">2</div>
+  <div class="stage-body">
+    <h3>阶段二 · 数据密集页专项（2–3 天，解决 P1）</h3>
+    <ul>
+      <li>书库/上架/设置：表格改「自适应列 + 省略号 + 横向滚动」，或提供列表/卡片视图切换。</li>
+      <li>表单统一为「窄容器单列、宽容器两列」的 <code>.form-row</code> 栅格升级。</li>
+      <li>建立品牌色令牌 <code>--brand</code>（蓝），主按钮改品牌色；语义色（成功/警告/危险）严格分离。</li>
+      <li>写作台 <code>.editor-split</code> 增加折叠左栏按钮，正文区可切换全宽。</li>
+    </ul>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="stage-num">3</div>
+  <div class="stage-body">
+    <h3>阶段三 · 体验与视觉精修（1–2 天，解决 P2/P3）</h3>
+    <ul>
+      <li>统一页头组件（标题+说明+操作按钮）；统计卡改指标条布局。</li>
+      <li>筛选标签横向滚动；空状态加 CTA；补 <code>:focus-visible</code> 焦点环与按压态。</li>
+      <li>全站字体层级、卡片间距、圆角统一量化（间距 4/8/12/16/24 体系已具备，可复用）。</li>
+    </ul>
+  </div>
+</div>
+
+<h2>五、关键 CSS 优化示例</h2>
+<p class="muted small">以下为可直接落地的方向性示例（需按各模板实际类名微调）。</p>
+
+<h3>5.1 内容区最小宽度保护（P0-1）</h3>
+<pre><span class="c">/* base.css */</span>
+.main-wrapper { flex:1; min-width:0; }
+main { flex:1; min-width:0; padding:24px clamp(16px, 3vw, 32px); }
+<span class="c">/* 数据容器不塌缩：窄时外层横向滚动而非内容竖排 */</span>
+.table-scroll, .form-scroll { overflow-x:auto; }
+.table-scroll table, .form-scroll form { min-width:640px; }</pre>
+
+<h3>5.2 侧栏自适应与面板折叠（P0-1 / P0-2）</h3>
+<pre><span class="c">/* 窄窗口默认折叠 Agent 面板 */</span>
+@media (max-width:1200px){ aside#status-bar{ width:0; padding:0; border-left:none; } }
+<span class="c">/* 更窄时导航收窄为图标列 */</span>
+@media (max-width:1000px){
+  nav{ width:56px; }
+  nav a{ padding:12px 0; text-align:center; font-size:0; }
+  nav a::first-letter{ font-size:16px; } <span class="c">/* 保留 emoji 图标 */</span>
+  nav .section, nav .logo{ font-size:0; }
+}
+<span class="c">/* JS：折叠状态持久化 */</span>
+localStorage.setItem('statusBarCollapsed', '1');</pre>
+
+<h3>5.3 表格列自适应（P1-1）</h3>
+<pre>.table-scroll table{ width:100%; min-width:760px; }
+th,td{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+td.book-title{ max-width:220px; }  <span class="c">/* 长书名省略号，不再竖排 */</span></pre>
+
+<h3>5.4 表单窄容器单列（P1-2）</h3>
+<pre>.form-row{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; }
+@media (max-width:760px){ .form-row{ grid-template-columns:1fr; } }</pre>
+
+<h3>5.5 品牌色与语义色分离（P1-3）</h3>
+<pre>:root{
+  --brand:#1f6feb; <span class="c">/* 主按钮 / 链接 / 激活态 */</span>
+  --success:#238636; --success-fg:#3fb950; <span class="c">/* 仅成功状态 */</span>
+  --danger:#da3633; --warn:#d29922;
+}
+button, .btn-primary{ background:var(--brand); }
+.pill.ok, .badge-done{ background:var(--success); }</pre>
+
+<h2>六、各页面检测明细</h2>
+<table>
+  <tr><th>页面</th><th>路由</th><th>健康度</th><th>主要问题</th></tr>
+  <tr><td>仪表盘</td><td><code>/</code></td><td><span class="pill p2">5/10</span></td><td>统计卡文字截断、快捷入口拥挤、卡片层级弱</td></tr>
+  <tr><td>书库</td><td><code>/books</code></td><td><span class="pill p1">4/10</span></td><td>7 列表格书名竖排、列宽失衡</td></tr>
+  <tr><td>书籍详情</td><td><code>/books/:id</code></td><td><span class="pill p2">5/10</span></td><td>封面卡书名竖排、信息折叠面板首屏不可见</td></tr>
+  <tr><td>写作台</td><td><code>/books/:id/continue</code></td><td><span class="pill p1">4/10</span></td><td>左右分栏挤压、正文几乎不可读</td></tr>
+  <tr><td>新书启动</td><td><code>/books/start</code></td><td><span class="pill p2">5/10</span></td><td>50 个题材标签挤压、选择器窄</td></tr>
+  <tr><td>桥段库</td><td><code>/plots</code></td><td><span class="pill p2">5/10</span></td><td>14 个筛选标签密集换行、卡片窄</td></tr>
+  <tr><td>情节弧库</td><td><code>/structures</code></td><td><span class="pill p2">5/10</span></td><td>嵌套弧层级缩进显示不全</td></tr>
+  <tr><td>笑点库</td><td><code>/gags</code></td><td><span class="pill p2">5/10</span></td><td>卡片窄、标签挤压</td></tr>
+  <tr><td>角色原型库</td><td><code>/characters</code></td><td><span class="pill p2">5/10</span></td><td>30+ 分类标签无法扫读</td></tr>
+  <tr><td>笔名与风格</td><td><code>/profiles</code></td><td><span class="pill p2">5/10</span></td><td>档案表单压缩、平台卡窄</td></tr>
+  <tr><td>上架管理</td><td><code>/publish</code></td><td><span class="pill p1">4/10</span></td><td>统计卡+数据表在窄区、首屏只有标题</td></tr>
+  <tr><td>外部书库</td><td><code>/scout</code></td><td><span class="pill p1">4/10</span></td><td>热榜卡片变形、书籍简介截断</td></tr>
+  <tr><td>设置</td><td><code>/settings</code></td><td><span class="pill p0">3/10</span></td><td>LLM 表单逐字竖排、几乎不可用</td></tr>
+  <tr><td>去AI味</td><td><code>/deai</code></td><td><span class="pill p2">6/10</span></td><td>简单页面，但输入区仍偏窄</td></tr>
+  <tr><td>提取入库</td><td><code>/extract</code></td><td><span class="pill p2">5/10</span></td><td>表单下拉挤压、引导文字截断</td></tr>
+</table>
+
+<h2>七、检测方法与可信度说明</h2>
+<ul class="small">
+  <li><b>方法：</b>启动 Flask 服务（:58080）后，用浏览器逐页导航，截图 + DOM 文本 + OCR 三重走查；结合 <code>base.css / workspace.css / story_line.css / reader.css</code> 源码定位根因。</li>
+  <li><b>评分性质：</b>页面健康度评分为基于视觉走查的人工评估（示意口径），用于横向对比优先级，非精确度量。</li>
+  <li><b>覆盖范围：</b>16 个主管理页面；书籍详情/写作台等依赖真实数据，检测基于现有示例书 book_001。</li>
+  <li><b>已知限制：</b>截图视口固定为 960×980（浏览器窗口默认尺寸），未覆盖 1440+ 宽屏表现；Agent 面板交互态、弹出抽屉等未逐一展开检测。</li>
+</ul>
+
+<div class="footer">
+  NovelEngine UI 视觉检测与优化方案 · 2026-09-03 · 检测基于当前代码库（ui/static/css + ui/templates）
+</div>
+
+</div>
+
+<script>
+  // 页面健康度评分可视化（纯 CSS 条形，无外部依赖）
+  var data = [
+    ["仪表盘 /", 5], ["书库 /books", 4], ["书籍详情", 5], ["写作台", 4],
+    ["新书启动", 5], ["桥段库", 5], ["情节弧库", 5], ["笑点库", 5],
+    ["角色库", 5], ["笔名风格", 5], ["上架管理", 4], ["外部书库", 4],
+    ["设置 /settings", 3], ["去AI味", 6], ["提取入库", 5]
+  ];
+  var root = document.getElementById('scores');
+  function color(v){ if(v<=3) return '#f85149'; if(v<=4) return '#d29922'; return '#3fb950'; }
+  data.forEach(function(d){
+    var row = document.createElement('div'); row.className = 'score-bar';
+    var n = document.createElement('div'); n.className = 'score-name'; n.textContent = d[0];
+    var t = document.createElement('div'); t.className = 'score-track';
+    var f = document.createElement('div'); f.className = 'score-fill';
+    f.style.width = (d[1]*10) + '%'; f.style.background = color(d[1]);
+    t.appendChild(f);
+    var v = document.createElement('div'); v.className = 'score-val'; v.textContent = d[1] + '/10';
+    row.appendChild(n); row.appendChild(t); row.appendChild(v);
+    root.appendChild(row);
+  });
+</script>
+</body>
+</html>

@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
 from .ctx import *
+from libraries.world_tags import genre_from_tags
 
 bp = Blueprint("storyline", __name__)
 
@@ -25,11 +26,25 @@ def storyline_detail(storyline_id):
     return redirect(url_for("books.book_detail", book_id=storyline_id))
 
 
+@bp.route("/api/storyline/<book_id>", methods=["GET"])
+def api_storyline_get(book_id):
+    """返回书的故事线 JSON（供建书向导第 4 步轮询渲染 Gantt）。
+
+    必须直接从磁盘 load（不能用 ctx 缓存 _resolve_storyline）——外部 agent 是独立进程，
+    经文件落盘，web 进程缓存会过期。agent 生成世界观/大纲时逐步落盘，轮询即见实时填充。
+    """
+    from libraries.storyline import load_storyline
+    tl = load_storyline(_storyline_filepath(book_id))
+    if tl is None:
+        return jsonify({"ok": False, "error": f"书 {book_id} 无故事线"}), 404
+    return jsonify({"ok": True, "storyline": tl.to_dict()})
+
+
 def _build_next_arc(builder, tl, mode="rule"):
     """在故事线末尾追加下一段大纲弧。rule=确定性模板循环；ai=单弧 LLM 再锚定。"""
     if mode == "ai":
         seq = builder.build_outline_sequence(
-            genre=tl.genre, sub_genre=tl.sub_genre,
+            genre=genre_from_tags(tl),
             custom_context=tl.basic_info.get("world_building", {}).get("description", ""),
             max_outlines=1, mode="ai")
         if not seq:
@@ -44,15 +59,16 @@ def _build_next_arc(builder, tl, mode="rule"):
             tl.outlines[-1].successor = arc.id
         return arc
 
-    # rule：按流派模板循环取下一个
-    structs = struct_lib.search(genre=tl.genre) or struct_lib.templates
+    # rule：按书题材标签匹配模板循环取下一个
+    _tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
+    structs = struct_lib.search(tags=_tags) or struct_lib.templates
     if not structs:
         return None
     idx = len(tl.outlines) % len(structs)
     tmpl = structs[idx]
     max_end = max((o.end_chapter for o in tl.outlines), default=0)
     start = max_end + 1
-    span = min(tmpl.total_chapters, 60)
+    span = min(max(1, tmpl.total_words // 3000), 60)
     from libraries.storyline import OutlineSlot
     arc = OutlineSlot(
         id=builder._next_id("outline"),
@@ -61,8 +77,11 @@ def _build_next_arc(builder, tl, mode="rule"):
         start_chapter=start,
         end_chapter=start + span - 1,
         stages=[
-            {"name": s.name, "min_ch": s.min_chapters, "max_ch": s.max_chapters,
-             "events": s.key_events[:5]}
+            {"name": s.name,
+             "min_ch": max(1, s.min_words // 3000), "max_ch": max(1, s.max_words // 3000),
+             "events": s.key_events[:5],
+             "description": getattr(s, "description", ""),
+             "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or [])}
             for s in tmpl.stages
         ],
         predecessor=tl.outlines[-1].id if tl.outlines else "",
@@ -124,12 +143,9 @@ def extend_outline(storyline_id):
     tid = f"extend_{storyline_id}_{int(time.time())}"
     task_manager.start(tid, name="扩展故事线",
                        title=tl.book_title or tl.pen_name or "",
-                       agent="outline", book_id=storyline_id,
-                       book_title=tl.book_title or "",
-                       step=f"追加弧「{new_arc.name}」", total=1,
                        phase="完成", url=f"/storyline/{storyline_id}/edit")
     if mode == "ai":
-        task_manager.llm_call(tid)
+        pass
     task_manager.log(tid, f"扩展故事线：新弧「{new_arc.name}」第{new_arc.start_chapter}-{new_arc.end_chapter}章 +{len(added)}桥段", "success")
     task_manager.done(tid, message="扩展完成")
 
@@ -158,15 +174,12 @@ def generate_title(storyline_id):
     tid = f"title_{storyline_id}_{int(time.time())}"
     task_manager.start(tid, name="AI 生成书名",
                        title=tl.book_title or tl.pen_name or "",
-                       agent="title", book_id=storyline_id,
-                       book_title=tl.book_title or "",
-                       step="构思书名候选", total=1, phase="调用 LLM...",
                        url=f"/storyline/{storyline_id}/edit")
 
     bi = tl.basic_info or {}
     protag = get_mc(bi)
     world = bi.get("world_building") or {}
-    ctx = f"流派：{tl.genre}{'/' + tl.sub_genre if tl.sub_genre else ''}"
+    ctx = f"题材标签：{','.join((tl.basic_info or {}).get('world_building', {}).get('tags') or [])}"
     if protag.get("name"):
         ctx += f"；主角：{protag.get('name')}（{protag.get('identity','')}）"
     if world.get("description"):
@@ -192,7 +205,6 @@ def generate_title(storyline_id):
         task_manager.fail(tid, "书名生成失败")
         return jsonify({"ok": False, "error": "书名生成失败"}), 500
 
-    task_manager.llm_call(tid)
     task_manager.log(tid, f"选书名「{titles[0]}」（共 {len(titles)} 候选）", "success")
     task_manager.done(tid, message="书名生成完成")
 
@@ -225,22 +237,18 @@ def api_generate_outlines(storyline_id):
     tid = f"genout_{storyline_id}_{int(time.time())}"
     task_manager.start(tid, name="大纲序列生成",
                        title=tl.book_title or tl.pen_name or "",
-                       agent="outline", book_id=storyline_id,
-                       book_title=tl.book_title or "",
-                       step="生成大纲序列", total=1, phase="规划中...",
                        url=f"/storyline/{storyline_id}/edit")
 
     mode = request.args.get("mode", "ai")
     try:
         if mode == "rule":
-            tl.outlines = builder.build_outline_sequence(genre=tl.genre, mode="rule")
+            tl.outlines = builder.build_outline_sequence(genre=genre_from_tags(tl), mode="rule")
         else:
             tl.outlines = builder.build_outline_sequence(
-                genre=tl.genre, sub_genre=tl.sub_genre,
+                genre=genre_from_tags(tl),
                 custom_context=tl.basic_info.get("world_building", {}).get("description", ""),
                 mode="ai",
             )
-            task_manager.llm_call(tid)
     except Exception as e:
         task_manager.fail(tid, str(e))
         raise
@@ -284,9 +292,6 @@ def api_fill_plots(storyline_id):
     tid = f"fillplots_{storyline_id}_{int(time.time())}"
     task_manager.start(tid, name="桥段编排",
                        title=tl.book_title or tl.pen_name or "",
-                       agent="outline", book_id=storyline_id,
-                       book_title=tl.book_title or "",
-                       step="按大纲填充桥段", total=len(tl.outlines) or 1,
                        phase="编排中...", url=f"/storyline/{storyline_id}/edit")
 
     new_plots = []
@@ -294,7 +299,6 @@ def api_fill_plots(storyline_id):
         for i, o in enumerate(tl.outlines, 1):
             task_manager.progress(tid, current=i, phase=f"桥段填充 · {o.name or '大纲'}{i}...")
             new_plots.extend(builder.fill_plots_for_outline(o, tl))
-        task_manager.llm_call(tid, max(len(tl.outlines), 1))
     except Exception as e:
         task_manager.fail(tid, str(e))
         raise
@@ -331,9 +335,6 @@ def api_fill_gags(storyline_id):
     tid = f"fillgags_{storyline_id}_{int(time.time())}"
     task_manager.start(tid, name="加料注入",
                        title=tl.book_title or tl.pen_name or "",
-                       agent="outline", book_id=storyline_id,
-                       book_title=tl.book_title or "",
-                       step="挂载内涵+吸睛", total=1, phase="注入中...",
                        url=f"/storyline/{storyline_id}/edit")
 
     builder.fill_themes_and_hooks(tl.plots, tl)
@@ -373,22 +374,34 @@ def api_update_outline(storyline_id):
     oid = data.get("id", "")
     field = data.get("field", "")
     val = data.get("value", 0)
-    # 字段白名单：只允许改章节范围，避免任意字段被客户端 setattr
-    if field not in ("start_chapter", "end_chapter"):
+    # 字段白名单：章节/字数量程，避免任意字段被客户端 setattr
+    if field not in ("start_chapter", "end_chapter", "start_word", "end_word"):
         return jsonify({"ok": False, "error": "非法字段"}), 400
     try:
         val = int(val)
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "章节号必须是整数"}), 400
-    if val < 1:
-        return jsonify({"ok": False, "error": "章节号必须 ≥ 1"}), 400
+        return jsonify({"ok": False, "error": "数值必须是整数"}), 400
+    min_val = 0 if field.endswith("_word") else 1
+    if val < min_val:
+        return jsonify({"ok": False, "error": f"数值必须 ≥ {min_val}"}), 400
     for o in tl.outlines:
         if o.id == oid:
-            if field == "end_chapter" and val < o.start_chapter:
+            if field == "end_chapter" and val < (o.start_chapter or 1):
                 return jsonify({"ok": False, "error": "结束章节不能小于起始章节"}), 400
             if field == "start_chapter" and o.end_chapter and val > o.end_chapter:
                 return jsonify({"ok": False, "error": "起始章节不能大于结束章节"}), 400
+            if field == "end_word" and val < (o.start_word or 0):
+                return jsonify({"ok": False, "error": "结束字数不能小于起始字数"}), 400
+            if field == "start_word" and o.end_word and val > o.end_word:
+                return jsonify({"ok": False, "error": "起始字数不能大于结束字数"}), 400
             setattr(o, field, val)
+            # 改一轴 → 清对轴 → 幂等 reconcile（保证章/字双坐标同步）
+            if field in ("start_chapter", "end_chapter"):
+                o.start_word = o.end_word = None
+            else:
+                o.start_chapter = o.end_chapter = None
+            from libraries.storyline import reconcile_outline
+            reconcile_outline(o, tl.words_per_chapter or 3000)
             break
     _save_storyline(tl, storyline_id)
     return jsonify({"ok": True})
@@ -599,9 +612,6 @@ def api_generate_full(storyline_id):
     task_id = f"genfull_{storyline_id}_{int(time.time())}"
     task_manager.start(task_id, name="完整大纲生成",
                        title=tl.pen_name or "",
-                       agent="outline", book_id=storyline_id,
-                       book_title=tl.book_title or "",
-                       step="一键完整大纲", sub_step="故事分析...",
                        total=6, phase="故事分析...",
                        url=f"/storyline/{storyline_id}/edit")
 
@@ -610,7 +620,7 @@ def api_generate_full(storyline_id):
 
         try:
             for event_type, message, data_dict in gen.generate(
-                genre=tl.genre, sub_genre=tl.sub_genre,
+                genre=genre_from_tags(tl),
                 custom_context=custom_context, pen_name=tl.pen_name,
                 words_per_chapter=tl.words_per_chapter,
                 storyline=tl,                       # 原地累加，可逐步落盘
@@ -629,11 +639,9 @@ def api_generate_full(storyline_id):
                 if event_type == "phase" and data_dict:
                     task_manager.progress(task_id, current=data_dict.get("phase", 0),
                                           phase=message or "")
-                    task_manager.set_step(task_id, sub_step=message or "")
                 if event_type == "phase_done" and data_dict:
                     task_manager.progress(task_id, current=data_dict.get("phase", 0),
                                           phase="完成", message=message)
-                    task_manager.set_step(task_id, sub_step=message or "")
                     task_manager.log(task_id, message, "success")
                 # 快照：内容已变化的 SSE 事件附带 storyline，前端据此逐条实时刷新左侧故事线
                 if event_type in ("outline_added", "outline_plots", "plot_added",
@@ -642,7 +650,6 @@ def api_generate_full(storyline_id):
 
                 # 每个决策写进右侧栏日志（用户能看到"确定了哪个大纲/桥段/笑点"）
                 if event_type == "decision" and data_dict:
-                    task_manager.llm_call(task_id)
                     task_manager.log(task_id,
                                      _decision_log_message(data_dict.get("kind", "decision"), data_dict),
                                      "success")
@@ -703,11 +710,7 @@ def api_storyline_agent(storyline_id):
     task_id = f"agent_{storyline_id}"
     try:
         task_manager.start(task_id, name="大纲助手", title=tl.pen_name or "",
-                           agent="outline_agent", book_id=storyline_id,
-                           book_title=tl.book_title or "",
-                           step="解析指令", total=1, phase="调整故事线",
                            url=f"/storyline/{storyline_id}/edit")
-        task_manager.llm_call(task_id)
         task_manager.log(task_id, f"🎙 {message}", "info")
         for line in result.get("summary", []):
             task_manager.log(task_id, line, "success")

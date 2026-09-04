@@ -32,34 +32,35 @@
         }
         function restoreStatusBar() {
             try {
-                if (localStorage.getItem('ne_status_collapsed') === '1') {
-                    setStatusCollapsed(true);
+                var locked = localStorage.getItem('ne_status_locked');
+                var collapsed = localStorage.getItem('ne_status_collapsed');
+                if (locked === '1') {
+                    setStatusCollapsed(collapsed === '1');
+                } else {
+                    // 未锁定：窄窗口（<1200px）默认折叠，把空间让给内容区；宽窗口默认展开
+                    setStatusCollapsed(window.innerWidth < 1200);
                 }
             } catch(e) {}
         }
-        // 空闲自动折叠：无运行任务且无日志时收起右栏（未手动锁定过偏好才生效），
-        // 有任务出现时自动展开——右栏当前仅承载任务/日志，为未来 Harness 预留。
-        function maybeAutoCollapse(tasks) {
-            var bar = document.getElementById('status-bar');
-            var el = document.getElementById('status-tasks');
-            if (!bar || !el) return;   // 右侧已改为 Agent 聊天面板，不再自动折叠
-            try {
-                if (localStorage.getItem('ne_status_locked') === '1') return;
-            } catch(e) {}
-            var logList = document.getElementById('task-log-list');
-            var hasLogs = !!(logList && logList.children.length > 0);
-            var busy = !!(tasks && tasks.length > 0);
-            var collapsed = bar.classList.contains('collapsed');
-            if (busy && collapsed) {
-                setStatusCollapsed(false);
-            } else if (!busy && !hasLogs && !collapsed) {
-                setStatusCollapsed(true);
-            }
+        // 未锁定时随窗口宽度实时折叠/展开（用户手动锁过则尊重其偏好）
+        var _neResizeInit = false;
+        function _neInitStatusResize() {
+            if (_neResizeInit) return;
+            _neResizeInit = true;
+            window.addEventListener('resize', function() {
+                try {
+                    if (localStorage.getItem('ne_status_locked') === '1') return;
+                    var bar = document.getElementById('status-bar');
+                    if (!bar) return;
+                    setStatusCollapsed(window.innerWidth < 1200);
+                } catch(e) {}
+            });
         }
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', restoreStatusBar);
+            document.addEventListener('DOMContentLoaded', function(){ restoreStatusBar(); _neInitStatusResize(); });
         } else {
             restoreStatusBar();
+            _neInitStatusResize();
         }
 
 // 全局 toast：showToast 即时弹出；flashToast 存 sessionStorage，配合 location.reload() 在下次加载后弹出。
@@ -74,7 +75,7 @@
             setTimeout(function() {
                 t.classList.add('toast-out');
                 setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 350);
-            }, 3400);
+            }, 5000);
         }
         function flashToast(msg, type) {
             try { sessionStorage.setItem('ne_toast', JSON.stringify({m: msg, t: type || 'success'})); } catch(e) {}
@@ -90,12 +91,19 @@
             } catch(e) {}
         })();
 
-// Accordion toggle（事件委托：SPA 换入新内容后依然生效，也避免重复绑定）
+// Accordion toggle（事件委托：SPA 换入新内容后依然生效，也避免重复绑定）。
+// accordionSet 挂全局供页面编程展开；header 内带 [data-acc-hint] 时同步翻转「展开 ▸ / 收起 ▾」标签。
+        function accordionSet(header, open) {
+            var body = header && header.nextElementSibling;
+            if (!body) return;
+            var show = (open === undefined) ? !body.classList.contains('show') : !!open;
+            body.classList.toggle('show', show);
+            var hint = header.querySelector('[data-acc-hint]');
+            if (hint) hint.textContent = show ? '收起 ▾' : '展开 ▸';
+        }
         document.addEventListener('click', function(e) {
             var h = e.target.closest('.accordion-header');
-            if (h && h.nextElementSibling) {
-                h.nextElementSibling.classList.toggle('show');
-            }
+            if (h) accordionSet(h);
         });
 
         // ─── SPA 导航：拦截侧边栏链接，避免整页重刷 ───
@@ -114,95 +122,7 @@
             location.reload();
         });
 
-        // 运行状态轮询：所有任务卡片统一在 status-tasks 渲染，日志独立追加
-        // 日志计数持久化到 sessionStorage，切换 SPA 页面不丢失
-        var prevLogCount = JSON.parse(sessionStorage.getItem('novelengine_logcount') || '{}');
-        window.addEventListener('beforeunload', function() {
-            sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
-        });
-        var STATUS_EMPTY = '<div class="status-empty">🤖 空闲 · 暂无 Agent 活动</div>';
-        function clearLogs() {
-            var list = document.getElementById('task-log-list');
-            if (list) list.innerHTML = '';
-            prevLogCount = {};
-            sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
-        }
-        
-        function closeTask(taskId) {
-            fetch('/api/status/tasks/close', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id: taskId})
-            }).then(function() {
-                var card = document.querySelector('#status-tasks .agent-card[data-id="' + CSS.escape(taskId || '') + '"]');
-                if (card) card.remove();
-                if (!document.querySelector('#status-tasks .agent-card')) {
-                    document.getElementById('status-tasks').innerHTML = STATUS_EMPTY;
-                }
-            });
-        }
-
-        // Agent 角色 → 徽标文案/配色映射（与后端 task_manager.agent 字段对应）
-        var AGENT_META = {
-            writing:       {label: '✍️ 写作',     cls: 'badge-writing'},
-            outline:       {label: '📋 大纲',     cls: 'badge-outline'},
-            world:         {label: '🌍 世界观',   cls: 'badge-world'},
-            title:         {label: '🏷️ 书名',     cls: 'badge-title'},
-            outline_agent: {label: '🤖 大纲助手', cls: 'badge-outline-agent'},
-            scout:         {label: '🔍 侦察兵',   cls: 'badge-scout'},
-            '':            {label: '🤖 Agent',   cls: 'badge-default'}
-        };
-        var AGENT_STATUS_TEXT = {
-            running: 'running', done: 'done', failed: 'failed',
-            cancelled: 'cancelled'
-        };
-
-        function renderAgentCards(taskArray) {
-            if (!taskArray || taskArray.length === 0) {
-                return STATUS_EMPTY;
-            }
-            var html = '';
-            for (var i = 0; i < taskArray.length; i++) {
-                var t = taskArray[i];
-                var pct = t.total > 0 ? Math.round((t.current/t.total)*100) : 0;
-                var safeId = escapeHtml(t.id || '');
-                var safeUrl = escapeHtml(t.url || '');
-                var meta = AGENT_META[t.agent] || AGENT_META[''];
-                var statusCls = AGENT_STATUS_TEXT[t.status] || 'running';
-                // 步骤（step）+ 阶段（phase_display）拼接为"当前动作"
-                var stepTxt = t.step || t.phase || '';
-                var subTxt = t.sub_step && t.sub_step !== stepTxt ? t.sub_step : '';
-                html += '<div class="agent-card" data-id="' + safeId + '">';
-                // 头：角色徽标 + 状态点 + 关闭
-                html += '<div class="agent-head">';
-                html += '<span class="agent-badge ' + meta.cls + '">' + meta.label + '</span>';
-                html += '<span class="agent-status ' + statusCls + '" title="' + escapeHtml(t.status || '') + '"></span>';
-                html += '<button onclick="closeTask(this.dataset.id)" data-id="' + safeId + '" class="agent-close" title="关闭">✕</button>';
-                html += '</div>';
-                // 书上下文
-                if (t.book_title || t.book_id) {
-                    html += '<div class="agent-book">' + escapeHtml(t.book_title || '')
-                        + (t.book_id ? ' <i>' + escapeHtml(t.book_id) + '</i>' : '') + '</div>';
-                } else if (t.name) {
-                    html += '<div class="agent-book">' + escapeHtml(t.name) + '</div>';
-                }
-                // 当前步骤 / 子步骤
-                if (stepTxt) html += '<div class="agent-step">' + escapeHtml(stepTxt) + '</div>';
-                if (subTxt) html += '<div class="agent-substep">' + escapeHtml(subTxt) + '</div>';
-                // 元信息：LLM 次数 + 进度文本
-                html += '<div class="agent-meta">';
-                if (t.llm_calls > 0) html += '<span class="agent-llm">📡 LLM ×' + escapeHtml(t.llm_calls) + '</span>';
-                if (t.total > 0) html += '<span class="agent-progress-text">' + escapeHtml(t.current) + '/' + escapeHtml(t.total) + '</span>';
-                if (t.time) html += '<span class="agent-time">' + escapeHtml(t.time) + '</span>';
-                html += '</div>';
-                if (t.total > 0) html += '<div class="task-progress"><div class="task-progress-fill" style="width:' + pct + '%"></div></div>';
-                if (t.url) html += '<div class="agent-actions"><button onclick="navigateTo(this.dataset.url)" data-url="' + safeUrl + '" title="去查看">查看</button></div>';
-                html += '</div>';
-            }
-            return html;
-        }
-        
-        // SPA 导航（供侧边栏“查看”按钮复用）
+        // SPA 导航（侧边栏点击拦截 + 各页"查看"按钮复用）
         function navigateTo(target) {
             if (!target || target === location.pathname) return;
             fetch(target)
@@ -245,66 +165,6 @@
                 .catch(function() { location.href = target; });
         }
         
-        function pollStatus() {
-            var el = document.getElementById('status-tasks');
-            if (!el) return;   // 右侧已改为 Agent 聊天面板，无任务卡片区
-            fetch('/api/status/tasks')
-                .then(function(r) { return r.json(); })
-                .then(function(tasks) {
-                    var logArea = document.getElementById('task-log');
-                    var logList = document.getElementById('task-log-list');
-                    
-                    // 渲染 Agent 卡片（完整替换，保持最新的进度数据）
-                    var newHtml = renderAgentCards(tasks);
-                    if (el.innerHTML !== newHtml) {
-                        el.innerHTML = newHtml;
-                    }
-                    
-                    // 日志只追加不清除（任务卡片和日志各自独立，符合 task-system-spec）
-                    // 新任务替代旧任务时，旧日志保留供回溯
-                    
-                    // 日志增量追加（独立于卡片，不受卡片替换影响）
-                    if (tasks && tasks.length > 0 && logArea && logList) {
-                        var anyNew = false;
-                        for (var ti = 0; ti < tasks.length; ti++) {
-                            var t = tasks[ti];
-                            if (t.logs && t.logs.length > 0) {
-                                // 用 id+启动时间戳做 key：同名任务重启后日志计数不混淆
-                                var logKey = t.id + ':' + (t.started_at_ts || 0);
-                                var prev = prevLogCount[logKey] || 0;
-                                if (t.logs.length > prev) {
-                                    for (var i = prev; i < t.logs.length; i++) {
-                                        var l = t.logs[i];
-                                        var div = document.createElement('div');
-                                        div.setAttribute('data-task-id', t.id);
-                                        div.style.cssText = 'padding:2px 0;border-left:2px solid ' + (l.level==='error'?'#f85149':l.level==='success'?'#3fb950':'#30363d') + ';padding-left:6px;margin:1px 0;font-size:11px';
-                                        div.textContent = l.time + ' ' + l.message;
-                                        logList.appendChild(div);
-                                    }
-                                    prevLogCount[logKey] = t.logs.length;
-                                    // 每次追加后同步到 sessionStorage
-                                    sessionStorage.setItem('novelengine_logcount', JSON.stringify(prevLogCount));
-                                    anyNew = true;
-                                }
-                            }
-                        }
-                        if (anyNew) {
-                            logArea.style.display = 'block';
-                            // 容量上限：最多保留 300 条，超出删除最旧的
-                            while (logList.children.length > 300) {
-                                logList.removeChild(logList.firstChild);
-                            }
-                            logList.scrollTop = logList.scrollHeight;
-                        }
-                    }
-                    maybeAutoCollapse(tasks);
-                }).catch(function() {});
-        }
-        pollStatus();
-        if (document.getElementById('status-tasks')) {
-            setInterval(pollStatus, 2000);
-        }
-
 /* ─── 设定卡共享解析（world_card.html 与 storyline_write_flow.html 共用）─── */
 function parseFactionLines(txt) {
     /* "名:立场" 一行/逗号 → [{name, stance}] 或 [str] */

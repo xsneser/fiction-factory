@@ -25,6 +25,7 @@ from .storyline import (
 from .prompt_harness import (
     PromptHarness, WORLD_BUILD_SYSTEM, WORLD_BUILD_STRUCT_SYSTEM, WORLD_CANDIDATES_SYSTEM,
 )
+from .world_tags import genre_from_tags
 
 
 _WORLD_SCALAR_KEYS = ("description", "era", "power_system", "geography", "culture",
@@ -143,12 +144,11 @@ class WorldBuildingGenerator:
         事件: phase/progress/thinking/world_summary/phase_done/done/error
         """
         tl = storyline if storyline is not None else BookStoryline(
-            genre=genre or "", sub_genre=sub_genre or "",
             pen_name=pen_name or "", platform=platform or "fanqie",
         )
         self.harness.storyline = tl
-        g = genre or tl.genre
-        sg = sub_genre or tl.sub_genre
+        g = genre or genre_from_tags(tl)
+        sg = sub_genre or ""
         pn = pen_name or tl.pen_name
         pf = platform or tl.platform or "fanqie"
         bi = tl.basic_info or {}
@@ -198,18 +198,23 @@ class WorldBuildingGenerator:
     # ═══════════════════════════════════════════
 
     def generate_candidates(self, genre: str = "", sub_genre: str = "",
-                            idea: str = "", count: int = 5) -> list:
-        """示例候选：一次产出 count 个差异化世界观候选（非流式 JSON 端点，失败重试≤3）。"""
+                            idea: str = "", count: int = 5, tags=None) -> list:
+        """示例候选：一次产出 count 个差异化世界观候选（非流式 JSON 端点，失败重试≤3）。
+
+        tags 为题材标签（硬约束）；genre 为空时由调用方按 tags 经 derive_genre 推导。
+        """
         if not self.llm:
             return []
         prompt = self.harness.render_world_candidates_prompt(
-            idea=idea, genre=genre or "", sub_genre=sub_genre or "", count=count)
+            idea=idea, count=count, tags=tags)
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
-                # 推理型模型：max_tokens 留足推理+内容余量（同 outline_generator 用 8192）
+                # 推理型模型：max_tokens 留足推理+内容余量——flash 先推理再输出，
+                # 复杂结构化 prompt 推理可达上万 token（实测 8192 会被吃满致 content 空，
+                # 同 outline_generator 大输出用 16384 实测稳定）
                 raw = self.llm.call(WORLD_CANDIDATES_SYSTEM, prompt,
-                                    temperature=0.9, max_tokens=8192)
+                                    temperature=0.9, max_tokens=16384)
                 data = json.loads(extract_json(raw))
                 cands = [c for c in (data.get("candidates") or [])
                          if isinstance(c, dict) and c.get("one_liner")][:count]
@@ -219,23 +224,55 @@ class WorldBuildingGenerator:
                 pass
         return []
 
+    def generate_candidate(self, genre: str = "", sub_genre: str = "",
+                           idea: str = "", tags=None, existing_candidates=None) -> dict:
+        """增量式候选：一次只产出 **1 个**与已有候选差异明显的新世界观方向（非流式，失败重试≤3）。
+
+        existing_candidates 为已生成的候选（title/one_liner/world_brief...），用于去重与差异化；
+        逐个生成给足 LLM 单候选的思考空间（质量优先于数量）。返回单条候选 dict 或 None。
+        """
+        if not self.llm:
+            return None
+        prompt = self.harness.render_world_candidates_prompt(
+            idea=idea, count=1, tags=tags, existing_candidates=existing_candidates or [])
+        from core.llm_client import extract_json
+        for attempt in range(3):
+            try:
+                # 单候选但给足推理余量：flash 先推理再输出，推理链长不截断
+                raw = self.llm.call(WORLD_CANDIDATES_SYSTEM, prompt,
+                                    temperature=0.9, max_tokens=16384)
+                data = json.loads(extract_json(raw))
+                cands = [c for c in (data.get("candidates") or [])
+                         if isinstance(c, dict) and c.get("one_liner")]
+                if cands:
+                    return cands[0]
+            except Exception:
+                pass
+        return None
+
     def generate_characters(self, idea: str, genre: str = "", sub_genre: str = "",
-                            tags=None, title: str = "", archetypes=None) -> dict:
+                            tags=None, title: str = "", archetypes=None,
+                            core_conflict: str = "", factions=None,
+                            outline_preview: str = "") -> dict:
         """根据世界观（一句话+标签+书名+原型库）生成角色候选（非流式，失败重试≤3）。
 
+        分阶段构建④可带已定核心矛盾/势力/开篇大纲桥段上下文，让角色与之自洽。
         角色从原型库挑选 archetype_id 并适配到本书；统一字段含 importance。
         返回 {"protagonists": [...], "supporting_cast": [...]}。
         """
         if not self.llm:
             return None
         prompt = self.harness.render_characters_prompt(
-            idea=idea, genre=genre or "", sub_genre=sub_genre or "",
-            tags=tags, title=title, archetypes=archetypes)
+            idea=idea, tags=tags, title=title, archetypes=archetypes,
+            core_conflict=core_conflict or "", factions=factions or [],
+            outline_preview=outline_preview or "")
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
+                # 角色输出 8 人×14 字段，flash 推理链实测吃满 8192 致 content 空（JSONDecodeError）；
+                # 16384 实测稳定（推理 ~12k + 正文 ~4k，finish_reason=stop）
                 raw = self.llm.call("你只返回 JSON。", prompt,
-                                    temperature=0.8, max_tokens=8192)
+                                    temperature=0.8, max_tokens=16384)
                 data = json.loads(extract_json(raw))
                 protags = [p for p in (data.get("protagonists") or [])
                            if isinstance(p, dict) and str(p.get("name", "") or "").strip()][:3]
@@ -247,6 +284,108 @@ class WorldBuildingGenerator:
                 pass
         return None
 
+    def generate_core_conflict(self, genre: str = "", sub_genre: str = "",
+                               idea: str = "", tags=None, pen_name: str = "") -> str:
+        """分阶段构建①：从一句话设定+题材标签推导主线核心矛盾（纯文本 1-2 句）。失败重试≤3。"""
+        if not self.llm:
+            return ""
+        prompt = self.harness.render_core_conflict_prompt(
+            idea=idea, tags=tags, profile=self.profile)
+        for attempt in range(3):
+            try:
+                raw = (self.llm.call("你只返回核心矛盾一句话。", prompt,
+                                     temperature=0.7, max_tokens=1024) or "").strip()
+                text = raw.strip('" \n')
+                if text.startswith("```"):
+                    text = text.strip("`").strip(" \n").strip('"')
+                if text and len(text) > 4:
+                    return text
+            except Exception:
+                pass
+        return ""
+
+    def generate_factions(self, genre: str = "", sub_genre: str = "",
+                          idea: str = "", core_conflict: str = "",
+                          tags=None, outline_preview: str = "") -> list:
+        """分阶段构建③：从一句话+核心矛盾发散 2-4 个势力派系（name/stance/desc）。失败重试≤3。
+
+        outline_preview：已生成的大纲+桥段预览文本（可选），让势力与已定故事线自洽。
+        """
+        if not self.llm:
+            return []
+        prompt = self.harness.render_factions_prompt(
+            idea=idea, core_conflict=core_conflict or "",
+            tags=tags,
+            outline_preview=outline_preview or "")
+        from core.llm_client import extract_json
+        for attempt in range(3):
+            try:
+                raw = self.llm.call("你只返回 JSON。", prompt,
+                                    temperature=0.7, max_tokens=2048)
+                data = json.loads(extract_json(raw))
+                factions = [f for f in (data.get("factions") or [])
+                            if isinstance(f, dict) and str(f.get("name", "") or "").strip()][:4]
+                if factions:
+                    return factions
+            except Exception:
+                pass
+        return []
+
+    def generate_rest_world(self, genre: str = "", sub_genre: str = "",
+                            idea: str = "", world_brief: str = "",
+                            core_conflict: str = "", factions=None,
+                            outline_preview: str = "", tags=None,
+                            pen_name: str = "") -> dict:
+        """分阶段构建⑤：大纲确定后补全其余世界观维度 + 基调，保留已定的 core_conflict/factions。
+
+        复用 self.generate() 2 链：seed 一个含 core_conflict/factions/description/tags 的
+        BookStoryline，merge_basic_info 保留种子填其余；outline 拼接进 seed 文本流经 prompt。
+        返回 {world_building:{era,power_system,geography,culture,history,social_structure,
+        rules,world_summary}, tone, target_audience, pov, era_language}——
+        **不含 core_conflict/factions/characters**（防覆盖 ①③④）。
+        """
+        if not self.llm:
+            return {}
+        from libraries.storyline import BookStoryline
+        seed = world_brief or idea
+        desc = str(seed or "").strip()
+        outline_txt = str(outline_preview or "").strip()
+        if desc and outline_txt:
+            desc = desc + "\n【已选开篇大纲与桥段】" + outline_txt
+        elif outline_txt:
+            desc = outline_txt
+        tl = BookStoryline(pen_name=pen_name or "", platform="fanqie",
+                           basic_info={"characters": [],
+                                       "world_building": {
+                                           "description": desc,
+                                           "tags": list(tags or []),
+                                           "core_conflict": core_conflict or "",
+                                           "factions": list(factions or []),
+                                       },
+                                       "tone": "", "target_audience": "",
+                                       "pov": "第三人称", "era_language": ""})
+        done_basic_info = None
+        try:
+            for event_type, message, data_dict in self.generate(
+                    idea=desc,
+                    pen_name=pen_name or "", platform="fanqie", storyline=tl):
+                if event_type == "done":
+                    done_basic_info = data_dict.get("basic_info") or tl.basic_info
+                elif event_type == "error":
+                    break
+        except Exception:
+            done_basic_info = None
+        if not done_basic_info:
+            return {}
+        wb = done_basic_info.get("world_building") or {}
+        keep = ["era", "power_system", "geography", "culture", "history",
+                "social_structure", "rules", "world_summary"]
+        return {"world_building": {k: wb.get(k) for k in keep if k in wb},
+                "tone": done_basic_info.get("tone", ""),
+                "target_audience": done_basic_info.get("target_audience", ""),
+                "pov": done_basic_info.get("pov", ""),
+                "era_language": done_basic_info.get("era_language", "")}
+
     # ═══════════════════════════════════════════
     # 内部：2 次链式 LLM 调用
     # ═══════════════════════════════════════════
@@ -255,8 +394,7 @@ class WorldBuildingGenerator:
                              platform: str, seed_basic_info):
         """Call A：一句话 → 世界观设定短文（流式转发 thinking，返回短文全文）。失败重试≤3。"""
         prompt = self.harness.render_world_build_draft_prompt(
-            idea=idea, genre=genre, sub_genre=sub_genre,
-            seed_basic_info=seed_basic_info, platform=platform)
+            idea=idea, seed_basic_info=seed_basic_info, platform=platform)
         last_err = None
         for attempt in range(3):
             collected = []
@@ -282,8 +420,7 @@ class WorldBuildingGenerator:
         from core.llm_client import extract_json
         for attempt in range(3):
             prompt = self.harness.render_world_build_struct_prompt(
-                world_summary=summary, idea=idea, genre=genre, sub_genre=sub_genre,
-                seed_basic_info=seed_basic_info, profile=self.profile)
+                world_summary=summary, idea=idea, seed_basic_info=seed_basic_info, profile=self.profile)
             collected = []
             try:
                 # 推理型模型：max_tokens 留足推理+大 JSON 余量（同 outline_generator 用 8192）

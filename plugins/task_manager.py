@@ -15,6 +15,8 @@ _lock = threading.Lock()
 _tasks: dict[str, dict] = {}
 # 每个任务关联一个取消事件，worker 线程定期检查
 _cancel_events: dict[str, threading.Event] = {}
+# 每个任务关联一个暂停事件（set=运行，未 set=暂停），worker 在章节边界检查
+_pause_events: dict[str, threading.Event] = {}
 
 
 def _now() -> str:
@@ -22,18 +24,11 @@ def _now() -> str:
 
 
 def start(task_id: str, name: str = "", title: str = "",
-           total: int = 0, phase: str = "准备中", url: str = "",
-           agent: str = "", book_id: str = "", book_title: str = "",
-           step: str = "", sub_step: str = "", llm_calls: int = 0):
+           total: int = 0, phase: str = "准备中", url: str = ""):
     """注册一个新任务（url: 任务对应页面的跳转地址，供侧边栏“查看”按钮使用）。
 
-    agent 系列字段供右侧栏「Agent 活动面板」使用：
-      agent      — 角色（writing/outline/world/title/outline_agent/scout）
-      book_id    — 操作对象书 id
-      book_title — 书标题（展示用）
-      step       — 当前步骤（如「写桥段·第3章」）
-      sub_step   — 子步骤（如「笑点探测器命中」）
-      llm_calls  — 已发起的 LLM 调用次数（展示级近似计数，非计费）
+    内置 agent 已删，agent/book_id/step/llm_calls 等展示字段一并移除；任务核心
+    生命周期（status/current/total/logs/phase/url）保留。
     """
     with _lock:
         _tasks[task_id] = {
@@ -48,12 +43,6 @@ def start(task_id: str, name: str = "", title: str = "",
             "started_at_ts": time.time(),
             "status": "running",
             "url": url,
-            "agent": agent,
-            "book_id": book_id,
-            "book_title": book_title,
-            "step": step,
-            "sub_step": sub_step,
-            "llm_calls": llm_calls,
         }
 
 
@@ -77,14 +66,17 @@ def ensure_single(name: str):
                         evt.set()  # 通知旧 worker 线程停止
                 _tasks.pop(tid, None)
                 _cancel_events.pop(tid, None)
+                _pause_events.pop(tid, None)
                 replaced = tid
         return replaced
 
 
 def register_cancel(task_id: str):
-    """注册一个取消事件，供 worker 线程检查"""
+    """注册取消 + 暂停事件，供 worker 线程检查"""
     with _lock:
         _cancel_events[task_id] = threading.Event()
+        _pause_events[task_id] = threading.Event()
+        _pause_events[task_id].set()  # 默认运行态
 
 
 def cancel(task_id: str):
@@ -98,6 +90,7 @@ def cancel(task_id: str):
             t["ended_at"] = _now()
             t["ended_at_ts"] = time.time()
         evt = _cancel_events.get(task_id)
+        _pause_events.pop(task_id, None)   # 取消即终止，不再有暂停状态
     if evt:
         evt.set()  # 通知 worker 线程停止
 
@@ -107,6 +100,35 @@ def is_cancelled(task_id: str) -> bool:
     with _lock:
         evt = _cancel_events.get(task_id)
     return evt is not None and evt.is_set()
+
+
+def pause(task_id: str):
+    """暂停任务：worker 在下一章节边界等待，暂停中仍可取消。"""
+    with _lock:
+        t = _tasks.get(task_id)
+        if t and t["status"] == "running":
+            t["phase_display"] = "⏸ 已暂停"
+        evt = _pause_events.get(task_id)
+    if evt:
+        evt.clear()
+
+
+def resume(task_id: str):
+    """恢复被暂停的任务。"""
+    with _lock:
+        t = _tasks.get(task_id)
+        if t and t["status"] == "running":
+            t["phase_display"] = ""
+        evt = _pause_events.get(task_id)
+    if evt:
+        evt.set()
+
+
+def is_paused(task_id: str) -> bool:
+    """检查任务是否被暂停（worker 线程调用）"""
+    with _lock:
+        evt = _pause_events.get(task_id)
+    return evt is not None and not evt.is_set()
 
 
 def progress(task_id: str, current: int = 0, total: int = 0,
@@ -125,27 +147,6 @@ def progress(task_id: str, current: int = 0, total: int = 0,
         if message:
             pass  # message is used for display, store in phase for now
         t["phase_display"] = message or phase
-
-
-def llm_call(task_id: str, n: int = 1):
-    """记录 LLM 调用次数 +n（右侧栏 Agent 卡片展示用近似计数）。"""
-    with _lock:
-        t = _tasks.get(task_id)
-        if not t:
-            return
-        t["llm_calls"] = t.get("llm_calls", 0) + n
-
-
-def set_step(task_id: str, step=None, sub_step=None):
-    """更新当前步骤/子步骤。step/sub_step 为 None 表示不修改，空串表示清空。"""
-    with _lock:
-        t = _tasks.get(task_id)
-        if not t:
-            return
-        if step is not None:
-            t["step"] = step
-        if sub_step is not None:
-            t["sub_step"] = sub_step
 
 
 def get(task_id: str):
@@ -182,6 +183,7 @@ def done(task_id: str, message: str = "完成"):
         t["current"] = t["total"]
         t["ended_at"] = _now()
         t["ended_at_ts"] = time.time()
+        _pause_events.pop(task_id, None)
 
 
 def fail(task_id: str, message: str = "失败"):
@@ -195,6 +197,7 @@ def fail(task_id: str, message: str = "失败"):
         t["phase_display"] = f"❌ {message}"
         t["ended_at"] = _now()
         t["ended_at_ts"] = time.time()
+        _pause_events.pop(task_id, None)
 
 
 def get_tasks() -> list[dict]:
@@ -214,12 +217,6 @@ def get_tasks() -> list[dict]:
                 "started_at_ts": t.get("started_at_ts", 0),
                 "url": t.get("url", ""),
                 "logs": t.get("logs", [])[-10:],  # 最近10条
-                "agent": t.get("agent", ""),
-                "book_id": t.get("book_id", ""),
-                "book_title": t.get("book_title", ""),
-                "step": t.get("step", ""),
-                "sub_step": t.get("sub_step", ""),
-                "llm_calls": t.get("llm_calls", 0),
             })
         return result
 
@@ -237,9 +234,11 @@ def clear_old(keep_seconds: int = 60):
         for tid in to_remove:
             _tasks.pop(tid, None)
             _cancel_events.pop(tid, None)
+            _pause_events.pop(tid, None)
 
 def remove(task_id: str):
     """手动移除指定任务"""
     with _lock:
         _tasks.pop(task_id, None)
         _cancel_events.pop(task_id, None)
+        _pause_events.pop(task_id, None)

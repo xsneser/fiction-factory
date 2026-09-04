@@ -7,67 +7,31 @@ import random
 from dataclasses import dataclass
 
 
-# ─── AI 高频词替换表 ───
-AI_WORD_MAP = {
-    # 连词/转折词
-    "然而": ["但", "可", "不过"],
-    "此外": ["另外", "还有", "再说"],
-    "因此": ["所以", "于是"],
-    "总之": ["一句话", "说白了"],
-    "尽管如此": ["话虽如此", "即便如此"],
-
-    # 修饰词（过度使用）
-    "仿佛": ["像", "好像", "跟……似的"],
-    "似乎": ["好像", "感觉", "看着像"],
-    "不禁": ["忍不住", "下意识地", "不由自主地"],
-    "不由得": ["忍不住", "下意识"],
-    "只见": ["看到", "眼前", ""],
-    "但见": ["看到", ""],
-
-    # 情感描写
-    "微微一笑": ["笑了笑", "嘴角一扬", "淡笑"],
-    "心中一动": ["心里一跳", "心念一动", "怔了一下"],
-    "眼中闪过一丝": ["眼里闪过", "目光中带着"],
-    "不由得倒吸一口凉气": ["倒吸一口气", "吸了口冷气"],
-    "心中暗道": ["心想", "暗想", "心里嘀咕"],
-
-    # 动作描写套路
-    "缓缓": ["慢慢", "轻轻", "逐渐"],
-    "忽然": ["突然", "一下子", "猛地"],
-    "顿时": ["立刻", "马上", "瞬间"],
-    "竟然": ["居然", "真就", "愣是"],
-
-    # 场景过渡
-    "与此同时": ["另一边", "同一时间", "这个时候"],
-    "就在这时": ["正想着", "刚说完", "话没落"],
-    "转眼间": ["很快", "没多久", "过了一阵"],
-}
-
-# ─── 句式模板（AI 最爱用的）───
-SENTENCE_PATTERNS = [
-    # (正则, 替换策略: "shorten"|"split"|"reorder"|"remove")
-    (r"不仅如此，.{0,20}也.{0,30}", "shorten"),
-    (r"更重要的是，.{0,30}", "shorten"),
-    (r"这意味着.{0,30}", "remove"),
-    (r"可以说，.{0,30}", "remove"),
-    (r"从某种(程度|意义)上说", "remove"),
-    (r"值得(一提|注意)的是", "remove"),
-]
-
+# ─── AI 高频词替换表（已迁移到 style_rules 库可编辑；AI_WORD_MAP 保留为内置种子兼容导出）───
+from .style_rules import WORD_SEED
+AI_WORD_MAP = dict(WORD_SEED)
 
 def apply_word_replacements(text: str) -> tuple[str, int]:
-    """规则层：替换 AI 高频词 → (替换后文本, 替换次数)"""
+    """规则层：替换 AI 高频词 → (替换后文本, 替换次数)。
+
+    词表读 style_rules 库（用户编辑后生效）；空词表 = 跳过替换。
+    """
+    from .style_rules import StyleRuleLibrary
+    word_map = StyleRuleLibrary().get_word_map()
+    if not word_map:
+        return text, 0
     count = 0
     result = text
-    for old, options in AI_WORD_MAP.items():
-        if old in result:
-            replacement = random.choice(options)
-            # 只替换部分出现（不是全部）
-            occurrences = result.count(old)
-            replace_count = max(1, occurrences // 2)
-            for _ in range(replace_count):
-                result = result.replace(old, replacement, 1)
-                count += 1
+    for old, options in word_map.items():
+        if not options or old not in result:
+            continue
+        replacement = random.choice(options)
+        # 只替换部分出现（不是全部）
+        occurrences = result.count(old)
+        replace_count = max(1, occurrences // 2)
+        for _ in range(replace_count):
+            result = result.replace(old, replacement, 1)
+            count += 1
     return result, count
 
 
@@ -162,14 +126,16 @@ class DeAIEngine:
         result.processed = processed
         return result
 
-    def build_deai_prompt_snippet(self) -> str:
-        """生成可注入写作 prompt 的去 AI 味约束"""
+    def build_deai_prompt_snippet(self, profile=None) -> str:
+        """生成可注入写作 prompt 的去 AI 味约束。
+        （禁止内容规则——禁句/AI 词——已并入本笔名 build_writing_prompt，这里只留通用纪律。）"""
+        ban_line = "- 禁止使用：仿佛、似乎、不禁、不由得、只见、但见、缓缓、顿时、竟然"
         return (
             "\n【去AI味约束——写作时必须遵守】\n"
-            "- 禁止使用：仿佛、似乎、不禁、不由得、只见、但见、缓缓、顿时、竟然\n"
-            "- 对话用日常语气，不要文绉绉\n"
-            "- 每段 2-3 句，不要大段描写\n"
-            "- 内心独白可以口语化（如：靠、淦、这TM...）\n"
-            "- 不要所有句子主谓宾完整——偶尔留半截话\n"
-            "- 动作描写不要每句都带修饰副词\n"
+            + ban_line + "\n"
+            + "- 对话用日常语气，不要文绉绉\n"
+            + "- 每段 2-3 句，不要大段描写\n"
+            + "- 内心独白可以口语化（如：靠、淦、这TM...）\n"
+            + "- 不要所有句子主谓宾完整——偶尔留半截话\n"
+            + "- 动作描写不要每句都带修饰副词\n"
         )
