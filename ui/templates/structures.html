@@ -16,7 +16,11 @@
         </span>
     </div>
     <p style="font-size:12px;color:#8b949e;margin:6px 0 4px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        {% if c.min_words and c.min_words == c.max_words %}
+        <span class="tag" style="font-size:11px">约 {{ c.max_words }} 字</span>
+        {% elif c.min_words or c.max_words %}
         <span class="tag" style="font-size:11px">({{ c.min_words }}-{{ c.max_words }}字)</span>
+        {% endif %}
         {% if c.tags %}{% for tag in c.tags %}<span class="tag green" style="font-size:11px">{{ tag }}</span>{% endfor %}{% endif %}
         {% if c.created_at %}<span style="font-size:11px">收录 {{ c.created_at }}</span>{% endif %}
         {% if c.source %}<span style="font-size:11px">来源 {{ c.source }}</span>{% endif %}
