@@ -31,8 +31,11 @@ def _parse_platform_accounts(form):
 def plots():
     cat = request.args.get("category","")
     templates = plot_lib.search(category=cat) if cat else plot_lib.templates
+    # 分类页签只保留仍有内容的（其余几库同规则，统一角色库式样）
+    cats = [c for c in plot_lib.categories()
+            if any(t.category == c for t in plot_lib.templates)]
     return render_template("plots.html",
-        templates=templates, categories=plot_lib.categories(),
+        templates=templates, categories=cats,
         current_cat=cat)
 
 
@@ -141,8 +144,14 @@ def character_delete(char_id): return _lib_delete("characters", char_id)
 def characters():
     cat = request.args.get("tag", "")
     archetypes = char_lib.search(tag=cat) if cat else char_lib.archetypes
+    # 分类页签只保留仍有内容的
+    counts: dict = {}
+    for a in char_lib.archetypes:
+        for tg in (a.tags or []):
+            counts[tg] = counts.get(tg, 0) + 1
+    cats = [c for c in char_lib.categories() if counts.get(c, 0) > 0]
     return render_template("characters.html",
-        archetypes=archetypes, categories=char_lib.categories(),
+        archetypes=archetypes, categories=cats,
         current_cat=cat)
 
 
@@ -237,7 +246,13 @@ def structures():
 
 @bp.route("/gags")
 def gags():
-    return render_template("gags.html", patterns=gag_lib.patterns)
+    cat = (request.args.get("category") or "").strip()
+    patterns = [p for p in gag_lib.patterns
+                if (p.category or "").strip() == cat] if cat else list(gag_lib.patterns)
+    cats = sorted({(p.category or "").strip() for p in gag_lib.patterns if (p.category or "").strip()})
+    return render_template("gags.html",
+        patterns=patterns, categories=cats,
+        current_cat=cat)
 
 
 @bp.route("/profiles")

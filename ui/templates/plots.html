@@ -2,7 +2,7 @@
 {% block content %}
 <h1>🧩 桥段库 <span style="font-size:14px;color:#8b949e">（{{ templates|length }} 模板）</span></h1>
 
-<div class="tabs">
+<div class="tabs char-tabs">
     <a href="/plots" class="{{ 'active' if not current_cat else '' }}">全部</a>
     {% for cat in categories %}
     <a href="/plots?category={{ cat }}" class="{{ 'active' if current_cat==cat else '' }}">{{ cat }}</a>

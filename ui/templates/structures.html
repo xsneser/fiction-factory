@@ -5,7 +5,7 @@
    顶栏「全部 + 各题材标签」页签过滤（类桥段库）。 #}
 <h1>📋 情节弧库 <span style="font-size:14px;color:#8b949e">（共 {{ total }} 弧 · 当前 {{ arc_cards|length }} 条）</span></h1>
 
-<div class="tabs">
+<div class="tabs char-tabs">
     <a href="/structures" class="{{ 'active' if not current_tag else '' }}">全部</a>
     {% for cat in categories %}
     <a href="/structures?tag={{ cat }}" class="{{ 'active' if current_tag==cat else '' }}">{{ cat }}</a>
