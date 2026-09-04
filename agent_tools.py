@@ -2029,7 +2029,10 @@ def extract_state(folder: str = "", action: str = "load",
 def ingest_library_assets(plots: list | None = None, structures: list | None = None,
                           gags: list | None = None, characters: list | None = None,
                           source: str = "fanqie", gate: bool = True) -> dict:
-    """提取入库：把 agent 从参考书/已抓取书提炼的桥段/弧/笑点/角色写入四库。
+    """提取入库底层工具：把已审查确认的桥段/弧/笑点/角色写入四库。
+
+    novel-scout 流程禁止 agent 直接调用本工具；必须先用 drive_ui(set_review)
+    呈现候选，由用户在 /extract 页面确认后再由页面调用入库接口。
 
     纯规则落盘、无 LLM（复用 FanqieScoutAgent.ingest_selected，角色走新增
     _add_character）。字段格式——plot {name, category, sub_category, structure,

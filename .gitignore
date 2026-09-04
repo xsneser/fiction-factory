@@ -66,3 +66,6 @@ _ui_shots/
 # 服务运行日志（后台启动重定向输出，不入库）
 _srv_out.log
 _srv_err.log
+
+# Claude Code 文档区本地设置（不入库）
+docs/.claude/

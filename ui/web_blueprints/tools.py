@@ -51,6 +51,13 @@ def extract_page():
     return render_template("extract.html", profiles=profiles.list_all())
 
 
+@bp.route("/api/scout/extract-progress")
+def scout_extract_progress():
+    """提取工作台实时进度（由 dsh 工具事件自动更新）。"""
+    from libraries.extract_progress import read_extract_progress
+    return jsonify({"ok": True, **read_extract_progress()})
+
+
 @bp.route("/novels")
 def novels_page():
     """外部书库已并入 /scout 合并页；保留路由作兼容别名（阅读器返回链接/书签），302 跳转"""
@@ -500,6 +507,7 @@ def scout_ingest():
     characters = data.get("characters", [])
     style_rules_in = data.get("style_rules", [])
     profile_id = data.get("profile_id", "")   # 风格规则归属笔名（空则落默认笔名）
+    folder = data.get("folder", "")
 
     if not any([plots, structures, gags, characters, style_rules_in]):
         return jsonify({"ok": False, "error": "参数为空"}), 400
@@ -552,6 +560,17 @@ def scout_ingest():
     task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
                               f"+{stats['gags']}笑点 +{stats['characters']}角色 "
                               f"+{stats['style_rules']}风格规则", "success")
+    if folder:
+        from libraries.extract_progress import read_extract_progress, update_extract_progress
+        old = read_extract_progress().get("committed") or {}
+        committed = {k: int(old.get(k, 0) or 0) + int(stats.get(k, 0) or 0)
+                     for k in ("plots", "structures", "gags", "characters")}
+        remaining = data.get("remaining_review") or {}
+        staged = {k: len(remaining.get(k) or [])
+                  for k in ("plots", "structures", "gags", "characters")}
+        update_extract_progress(folder=folder, committed=committed, review=remaining,
+                                staged=staged, status="reading", active=True,
+                                message="已确认选中候选，未选内容仍保留在暂存区")
 
     return jsonify({
         "ok": True,
@@ -630,4 +649,3 @@ def scout_novel_chapter():
     if not ch:
         return jsonify({"ok": False, "error": f"第 {chapter} 章不存在"}), 404
     return jsonify({"ok": True, "chapter": ch})
-

@@ -150,14 +150,21 @@ async function ingestAll() {
     var items = getAllItems();
     var total = _countItems(items);
     if (total === 0) return showToast('没有可入库的条目', 'warning');
-    await doIngest(items);
+    await doIngest(items, {plots:[], structures:[], gags:[], characters:[], style_rules:[]});
 }
 
 async function ingestSelected() {
     var items = getCheckedItems();
     var total = _countItems(items);
     if (total === 0) return showToast('请勾选要入库的条目', 'warning');
-    await doIngest(items);
+    var all = getAllItems();
+    var remaining = {plots:[], structures:[], gags:[], characters:[], style_rules:[]};
+    REVIEW_CATS.forEach(function(c) {
+        remaining[c.field] = (all[c.field] || []).filter(function(item) {
+            return (items[c.field] || []).indexOf(item) < 0;
+        });
+    });
+    await doIngest(items, remaining);
 }
 
 function _countItems(items) {
@@ -165,7 +172,7 @@ function _countItems(items) {
          + (items.characters||[]).length + (items.style_rules||[]).length;
 }
 
-async function doIngest(items) {
+async function doIngest(items, remaining) {
     var d = window._lastReviewData || {};
     var btn = document.querySelector('.btn-primary');
     var orig = btn ? btn.textContent : '';
@@ -184,6 +191,7 @@ async function doIngest(items) {
                 gags: items.gags || [],
                 characters: items.characters || [],
                 style_rules: items.style_rules || [],
+                remaining_review: remaining || {},
             }),
         });
         var dd = await r.json();
@@ -191,10 +199,16 @@ async function doIngest(items) {
             var n = _countItems(items);
             showToast('✅ 已入库 ' + n + ' 条', 'success');
             if (typeof window.refreshScoutUI === 'function') window.refreshScoutUI();
-            // 入库成功：分析信息不残留，清空审查区并复位状态
-            window._lastReviewData = null;
-            var ra = document.getElementById('review-area');
-            if (ra) { ra.style.display = 'none'; ra.innerHTML = ''; }
+            // 仅移除已确认条目，未勾选候选继续留在暂存区
+            if (_countItems(remaining || {}) > 0) {
+                var next = Object.assign({}, d, remaining);
+                window._lastReviewData = null;
+                renderReviewCards(next, 'review-area');
+            } else {
+                window._lastReviewData = null;
+                var ra = document.getElementById('review-area');
+                if (ra) { ra.style.display = 'none'; ra.innerHTML = ''; }
+            }
         } else {
             showToast('❌ 入库失败: ' + (dd.error||''), 'error');
         }

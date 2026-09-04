@@ -431,6 +431,52 @@ def _zh_tool_summary(name, args, msg):
     return text.strip()
 
 
+def _update_extract_progress(name, args, msg, ok):
+    """把阅读/提取工具结果转成 /extract 可轮询的轻量状态。"""
+    if name not in ("read_crawled_novel", "ingest_library_assets", "extract_state"):
+        return
+    from libraries.extract_progress import read_extract_progress, update_extract_progress
+    args = args if isinstance(args, dict) else {}
+    folder = args.get("folder", "") or read_extract_progress().get("folder", "")
+    if not folder:
+        return
+    raw = _extract_result_text(msg)
+    try:
+        result = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        result = {}
+    if name == "read_crawled_novel":
+        chapters = result.get("chapters") or []
+        if chapters:
+            lo = chapters[0].get("index", 0)
+            hi = chapters[-1].get("index", 0)
+        else:
+            lo = hi = 0
+        update_extract_progress(
+            folder=folder, title=result.get("title", ""),
+            active=True, status="reading", read_start=lo, read_end=hi,
+            cursor=hi, last_tool=name,
+            message=f"正在阅读第 {lo}-{hi} 章" if hi else "正在读取章节",
+        )
+    elif name == "ingest_library_assets" and ok:
+        stats = result.get("stats") or result
+        old = read_extract_progress().get("committed") or {}
+        committed = {k: int(old.get(k, 0) or 0) + int(stats.get(k, 0) or 0)
+                     for k in ("plots", "structures", "gags", "characters")}
+        update_extract_progress(
+            folder=folder, active=True, status="staging", committed=committed,
+            last_tool=name, message="候选已通过闸门并存入暂存区",
+        )
+    elif name == "extract_state" and ok and args.get("action") == "save":
+        state = args.get("state") or {}
+        update_extract_progress(
+            folder=folder, active=state.get("status", "running") != "done",
+            status="done" if state.get("status") == "done" else "paused",
+            cursor=state.get("cursor", 0), last_tool=name,
+            message="整本提取完成" if state.get("status") == "done" else "已保存阅读记忆",
+        )
+
+
 def _map_dsh_event(evt: dict, pending: dict):
     """一行 NDJSON 事件 → SSE 事件（生成器，可产 0..N 条）。
 
@@ -449,6 +495,27 @@ def _map_dsh_event(evt: dict, pending: dict):
         call_id = data.get("callId", "")
         args = _parse_args(data.get("arguments"))
         pending[call_id] = {"name": name, "callId": call_id, "args": args}
+        if name in ("read_crawled_novel", "ingest_library_assets"):
+            try:
+                from libraries.extract_progress import read_extract_progress, update_extract_progress
+                folder = (args or {}).get("folder", "") or read_extract_progress().get("folder", "")
+                if folder and name == "read_crawled_novel":
+                    lo = int((args or {}).get("start_chapter") or (args or {}).get("chapter") or 0)
+                    hi = int((args or {}).get("end_chapter") or lo)
+                    update_extract_progress(
+                        folder=folder, active=True, status="reading",
+                        read_start=lo, read_end=hi, last_tool=name,
+                        message=f"正在阅读第 {lo}-{hi} 章" if hi else "正在读取章节",
+                    )
+                elif folder:
+                    staged = {k: len((args or {}).get(k) or [])
+                              for k in ("plots", "structures", "gags", "characters")}
+                    update_extract_progress(
+                        folder=folder, active=True, status="staging",
+                        staged=staged, last_tool=name, message="候选正在进入暂存区",
+                    )
+            except Exception:
+                pass
         yield {"type": "tool_call", "name": name, "args": args, "callId": call_id,
                "usage": data.get("usage")}   # dsh agent 该工具调用的真实 token 用量（events-runner 转发）
         if name == "navigate":
@@ -460,6 +527,20 @@ def _map_dsh_event(evt: dict, pending: dict):
             # 与 nav-intent 通道（push_ui_command 存内层 args）保持一致；否则浏览器
             # 拿到整参（含 cmd 键），set_candidates/set_world 等带参命令 args 全部落空。
             inner = args.get("args") if isinstance(args, dict) and isinstance(args.get("args"), dict) else {}
+            if args.get("cmd") == "set_review":
+                try:
+                    from libraries.extract_progress import update_extract_progress
+                    review = dict(inner)
+                    staged = {k: len(review.get(k) or [])
+                              for k in ("plots", "structures", "gags", "characters")}
+                    update_extract_progress(
+                        folder=review.get("folder", ""),
+                        title=review.get("title", ""), active=True, status="staging",
+                        review=review, staged=staged, last_tool="set_review",
+                        message="候选已存入暂存区，等待确认入库",
+                    )
+                except (ImportError, OSError, TypeError, ValueError):
+                    pass
             yield {"type": "ui_command",
                    "cmd": args.get("cmd") if isinstance(args, dict) else "",
                    "args": inner}
@@ -470,6 +551,10 @@ def _map_dsh_event(evt: dict, pending: dict):
         p = pending.pop(call_id, {}) or {}
         name = p.get("name") or ""
         ok = not data.get("error") and not _result_error(msg)
+        try:
+            _update_extract_progress(name, p.get("args"), msg, ok)
+        except (ImportError, OSError, TypeError, ValueError):
+            pass
         yield {"type": "tool_result",
                "name": name,
                "callId": call_id or p.get("callId") or "",
