@@ -60,15 +60,16 @@ assert_ok("桥段库-搜索", len(plot.search(category="开篇")) >= 2)
 assert_ok("桥段库-匹配", len(plot.match_for_chapter("主角在家族大会上被退婚，当众打脸立威", genre="爽文")) > 0)
 
 struct = StructureLibrary()
-assert_ok("情节弧库-弧数", len(struct.roots()) >= 45)
-assert_ok("情节弧库-搜索", len(struct.search(tags=["玄幻"])) >= 1)
-# v3 平级独立：全行同键集(无 parent)、children_of 恒空、原深层弧已独立且带根 tags
+assert_ok("情节弧库-精选弧数", len(struct.roots()) == 16)
+assert_ok("情节弧库-搜索", len(struct.search(tags=["玄幻"])) >= 3)
+# 精选库 = 平级独立弧：全行同键集(无 parent)、无 min==max 单点、每弧带题材 tags
 _arc_keys = set(struct.templates[0].to_dict().keys())
 assert_ok("弧-存储统一键集(无parent)", all(set(t.to_dict().keys()) == _arc_keys for t in struct.templates)
           and "parent_arc_id" not in _arc_keys)
-assert_ok("弧-平级无父子", struct.children_of("arc_scifi_01") == [])
-assert_ok("弧-原深层弧独立可搜", any(t.id == "arc_scifi_01::2::1::0"
-                                and "科幻" in (t.tags or []) for t in struct.templates))
+assert_ok("弧-平级无父子", struct.children_of("arc_reborn_business") == [])
+assert_ok("弧-精选真实区间无单点", all(t.min_words and t.max_words and t.min_words < t.max_words
+                                  for t in struct.templates))
+assert_ok("弧-每弧带题材tags", all(t.tags for t in struct.templates))
 
 gag = GagLibrary()
 assert_ok("笑点库-数量", len(gag.patterns) >= 10, f"{len(gag.patterns)} 模式")

@@ -224,10 +224,15 @@ def style_rule_delete(rule_id):
 
 @bp.route("/structures")
 def structures():
-    """情节弧库页：全库**平级独立弧**，每弧一张统一卡（无父子层级），每卡自带 ⏸/🗑。"""
+    """情节弧库页：**平级独立弧**；顶栏「全部 + 各题材标签」页签过滤（类桥段库）。"""
+    tag = (request.args.get("tag") or "").strip()
     lib = struct_lib
+    all_arcs = list(lib.templates)
+    cats = sorted({x for t in all_arcs for x in (t.tags or [])})
+    arcs = all_arcs if not tag else [t for t in all_arcs if tag in (t.tags or [])]
     return render_template("structures.html",
-                           arc_cards=[n.to_dict() for n in lib.templates])
+                           arc_cards=[n.to_dict() for n in arcs],
+                           categories=cats, current_tag=tag, total=len(all_arcs))
 
 
 @bp.route("/gags")

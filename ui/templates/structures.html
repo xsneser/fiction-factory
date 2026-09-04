@@ -1,8 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
 {# 情节弧库：全库 = 平级独立弧模板（每行一弧，无父子层级）。
-   每个弧一张完全一样的卡，标题右 ⏸/🗑 每张都有、只作用于该弧自己。 #}
-<h1>📋 情节弧库 <span style="font-size:14px;color:#8b949e">（{{ arc_cards|length }} 弧 · 每行一弧，无父子层级）</span></h1>
+   每个弧一张完全一样的卡，标题右 ⏸/🗑 每张都有、只作用于该弧自己。
+   顶栏「全部 + 各题材标签」页签过滤（类桥段库）。 #}
+<h1>📋 情节弧库 <span style="font-size:14px;color:#8b949e">（共 {{ total }} 弧 · 当前 {{ arc_cards|length }} 条）</span></h1>
+
+<div class="tabs">
+    <a href="/structures" class="{{ 'active' if not current_tag else '' }}">全部</a>
+    {% for cat in categories %}
+    <a href="/structures?tag={{ cat }}" class="{{ 'active' if current_tag==cat else '' }}">{{ cat }}</a>
+    {% endfor %}
+</div>
+
 {% for c in arc_cards %}
 <div class="card" style="margin-bottom:10px;opacity:{{ '0.6' if not c.enabled else '1' }}">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">

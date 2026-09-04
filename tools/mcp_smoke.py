@@ -8,13 +8,13 @@
 建书走系统向导 UI（drive_ui 驱动），删书走书库页手动。因此：
   - setup/teardown 用 BookManager 直建直删临时书（文件级，不走 MCP）
   - MCP 面断言 create_book/delete_book **不存在**（护栏验收）
-  - 往返测 save_basic_info → save_outlines → fill_gags → get_book_detail
+  - 往返测 save_basic_info → save_outlines → get_book_detail
   - drive_ui 命令桥意图断言
 
 断言：
   1) MCP 工具数 = EXPECT_MCP_TOOLS；navigate/drive_ui/query_plots/query_profiles 在列；
      create_book/delete_book 不存在（护栏）
-  2) 对临时书 save_basic_info → rule 大纲 → confirm → fill_gags → get_book_detail 全往返成功
+  2) 对临时书 save_basic_info → save_outlines → get_book_detail 全往返成功
   3) navigate 与 drive_ui 分别写入 storage/nav_intent.json（kind=navigate / kind=ui_command）
   4) storage/tool_log.jsonl 出现 source="mcp" 调用条目（含 drive_ui）
 
@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 40  # 对齐 agent_tools._build_registry 实收（此前滞后为 39）
+EXPECT_MCP_TOOLS = 39  # 对齐 agent_tools._build_registry 实收（fill_gags 已随翻 ready 收敛移除）
 PASS, FAIL = [], []
 
 
@@ -98,6 +98,7 @@ async def main():
                       len(names) == EXPECT_MCP_TOOLS, f"(实际 {len(names)})")
                 check("create_book 工具不存在（护栏：建书走系统向导）", "create_book" not in names)
                 check("delete_book 工具不存在（护栏：删书走书库页手动）", "delete_book" not in names)
+                check("fill_gags 工具不存在（ready 只由书详情页确认触发）", "fill_gags" not in names)
                 check("drive_ui 在列（建书向导命令桥）", "drive_ui" in names)
                 check("navigate 在列（外部经意图桥驱动浏览器）", "navigate" in names)
                 for t in ("query_plots", "query_profiles",
@@ -121,9 +122,6 @@ async def main():
                                      "plots": [{"name": "穿越开局", "outline_id": "outline_0001"}]})
                 check("save_outlines OK", r.get("ok") and r.get("outlines") == 1,
                       f"{r}")
-                ok_gags = (await call_json(
-                    session, "fill_gags", {"book_id": bid})).get("ok")
-                check("fill_gags OK", bool(ok_gags))
                 detail = await call_json(session, "get_book_detail", {"book_id": bid})
                 check("get_book_detail title/主角 正确",
                       detail.get("title") == "MCP冒烟"
