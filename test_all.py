@@ -228,7 +228,7 @@ assert_ok("弧-旧数据兼容", BookStoryline.from_dict(
 from libraries.structure import ArcNode
 _stgNode = ArcNode(id="n1", name="阶段1", description="阶段描述",
                    min_words=15000, max_words=45000,
-                   key_events=["事件A", "事件B"], foreshadow_opportunities=["坑1"], themes=[])
+                   key_events=["事件A", "事件B"], foreshadow_opportunities=["坑1"])
 _stgDict = structure_to_stages([_stgNode])[0]
 assert_ok("弧-阶段保留描述", _stgDict.get("description") == "阶段描述"
           and _stgDict.get("foreshadow_opportunities") == ["坑1"])

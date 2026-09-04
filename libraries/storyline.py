@@ -468,7 +468,7 @@ def structure_to_stages(stage_nodes, words_per_chapter: int = 3000) -> list[dict
          "events": s.key_events[:5],
          "description": getattr(s, "description", ""),
          "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or []),
-         "themes": list(s.themes or [])}
+         "themes": []}
         for s in (stage_nodes or [])
     ]
 

@@ -36,7 +36,7 @@
 ### 母题（内涵）
 - **母题（内涵）= 全文反复出现、可被读者反复「尝到」的主题意义**，与笑点无关（笑点机制见桥段库 gag 的 `pattern_description`）。
 - 平台常用母题词汇：公平（Justice）/ 成长的代价（Cost of Growth）/ 身份与伪装（Identity & Disguise）/ 牺牲（Sacrifice）/ 归属感（Belonging）/ 传承与突破（Legacy & Breakthrough），可扩。
-- 落点：弧库每个弧（ArcNode，**平级独立、无父子层级**）都可带 `themes:[{name, position(开头/中段/结尾), how(靠哪类事件让读者尝到)}]`；平台书内 plot 级经 `theme_hints/theme_moments` 传导（自动化挂载目前只覆盖内置 plot_dating 模板）。
+- 落点：母题（内涵）由**平台书运行时**承载——`theme_hints/theme_moments` 传导（自动化挂载目前只覆盖内置 plot_dating 模板）、`OutlineSlot.stages[].themes` 在深化/写作时由 agent 直接写；**弧库模板自 2026-09 起不再带 themes 字段**。
 
 ### 章节
 - **章节 = 字数大致相等的可发布文本段**
@@ -99,7 +99,7 @@
 ### 其他工具
 - `query_arc_library` / `arc_material_candidates`：从情节弧库选弧模板作参考（tags/关键词命中；**库 = 平级独立弧模板**——每行一个弧、无父子层级，每个弧都自带 tags/描述/内涵，可单独挑选）。
 - `ingest_library_assets`：把 agent **整本扫读**提炼的资产写入四库（纯规则落盘；**默认 gate=True** 入库前自动过 `judge_extraction` 判断闸门——结构不完整/库内机制级近似/自评书级专用的候选不写入，返回 `judge` 报告，据此处理；`gate=False` 维持仅 id 去重旧行为；方法见 novel-scout skill）——plot `{name,category,sub_category,structure,slots[{name,options}],notes,word_range}`；
-  structure 载荷为**平级独立弧**：每个元素 = 一条独立的可复用弧 dict，字段统一 `{name, description, min_words, max_words, key_events?, foreshadow_opportunities?, themes?, tags}`——**无父子层级、无 parent 类字段**，逐条判定/去重/入库；只表述字数：`min_words/max_words`=该弧在书里实际占用的字数区间（整段壳大弧与几章的小弧都可收，**绝不=全书**），粒度按真实可复用的「弧」定、**不要求均匀**；
+  structure 载荷为**平级独立弧**：每个元素 = 一条独立的可复用弧 dict，字段统一 `{name, description, min_words, max_words, key_events?, foreshadow_opportunities?, tags}`——**无父子层级、无 parent 类字段**，逐条判定/去重/入库；只表述字数：`min_words/max_words`=该弧在书里实际占用的字数区间（整段壳大弧与几章的小弧都可收，**绝不=全书**），粒度按真实可复用的「弧」定、**不要求均匀**；
   gag `{name,category,pattern_description,fit_scenes,examples}`；
   character `{name,personality,description,archetypes,examples,catchphrases,tags,fit_tags}`。
 - `list_rankings` / `discover_hot` / `fetch_novel` / `list_crawled_novels` / `read_crawled_novel`：查榜单/分类清单 / 侦察热榜（`discover_hot(platform, key, count)`——key 为榜单分类 id 或题材中文名，空=聚合综合热榜）/ 抓取下载（`fetch_novel(title 或 book_id, chapters, start_chapter?, end_chapter?)`——按真实章号区间下载，如 start_chapter=100,end_chapter=130；只给 chapters 时从 start_chapter 缺省 1 起）/ 读已抓书库 / 读已下载小说——**`chapter=0` 目录一次、`chapter>0` 只回该章正文（不再回带整份目录）、`start_chapter`+`end_chapter` 成批顺序读窗口**（整本扫读分窗用；不改书）。

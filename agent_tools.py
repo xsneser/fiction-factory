@@ -2013,7 +2013,7 @@ def ingest_library_assets(plots: list | None = None, structures: list | None = N
     _add_character）。字段格式——plot {name, category, sub_category, structure,
     slots[{name, options}], notes, word_range}；structure 为**平级独立弧**（每条 = 一个
     弧 dict，字段 {name, description, min_words, max_words, key_events, foreshadow_
-    opportunities, themes, tags}，无父子层级、逐条判定去重入库）；
+    opportunities, tags}，无父子层级、逐条判定去重入库）；
     gag {name, category, pattern_description, fit_scenes, examples}；character {name,
     personality, description, archetypes, examples, catchphrases, tags, fit_tags}。
 

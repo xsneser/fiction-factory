@@ -19,7 +19,7 @@
 | **引擎** (`libraries/engine.py`) | 新书启动 → 规划 → 逐章续写，全自动闭环（双写通道：桥段驱动 / 通用） | ✅ |
 | **桥段写作** (`libraries/storyline_writer.py`) | 唯一写作核心：桥段驱动逐短句组增量生成 + 炸裂开场 | ✅ |
 | **桥段库** (`libraries/plot.py` + `data/plots.jsonl`) | 网文经典桥段结构化模板，写作时按场景匹配注入 | ✅ |
-| **情节弧库** (`libraries/structure.py` + `data/structures.jsonl`) | 各题材方向弧模板；**平级独立弧**（每行一弧，无父子层级，自带 tags/描述/内涵 `ArcNode.themes`） | ✅ |
+| **情节弧库** (`libraries/structure.py` + `data/structures.jsonl`) | 各题材方向弧模板；**平级独立弧**（每行一弧，无父子层级，自带 tags/描述） | ✅ |
 | **笑点库** (`libraries/gag.py` + `gag_injector.py`) | 搞笑模式模板 + 探测器实时涌现注入 | ✅ |
 | **角色库** (`libraries/character.py` + `data/characters.jsonl`) | 性格原型 + 代表人物，设定表单「从原型库选」一键填充 | ✅ |
 | **风格规则库** (`libraries/style_rules.py` + `data/style_rules.jsonl`) | `prefer`（句式偏好）/ `ban`（禁用+`replacements` 去 AI 味替换），按笔名归属 | ✅ 新 |
@@ -146,7 +146,7 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 
 ### 情节弧库 —— `libraries/structure.py`（当前 9 棵根弧，扁平节点行）
 
-题材方向弧骨架。**平级独立弧存储**：每个弧（整段壳大弧与几章的小弧都可收）统一字段（`id/name/description/min_words/max_words/key_events/foreshadow_opportunities/themes/tags/…`），**无父子层级**、每弧自带 tags/描述/内涵（`themes`：`{name, position, how}`）。旧分层（原树各层节点）迁移时各自成为独立弧，tags 平铺到每弧。
+题材方向弧骨架。**平级独立弧存储**：每个弧（整段壳大弧与几章的小弧都可收）统一字段（`id/name/description/min_words/max_words/key_events/foreshadow_opportunities/tags/…`，**不再含 themes 内涵字段**），**无父子层级**、每弧自带 tags/描述。旧分层（原树各层节点）迁移时各自成为独立弧，tags 平铺到每弧。
 
 ### 笑点库 —— `libraries/gag.py`（当前 34 条）
 

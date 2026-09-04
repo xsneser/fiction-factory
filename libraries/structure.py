@@ -4,10 +4,11 @@
 
 存储模型（2026-09 v3 平级独立）：
   每行 = 一个**平级独立弧模板**（ArcNode），无父子层级、无 parent_arc_id；
-  每个弧自带完整内容：字数区间 / 描述(本弧情节怎么发展) / key_events / themes /
+  每个弧自带完整内容：字数区间 / 描述(本弧情节怎么发展) / key_events /
   tags(题材) / source / created_at / enabled。原树中的「整段壳」与各层子弧在
   迁移/内置构造时都各自成为独立弧，tags/来源/收录 从原树根平铺到每个独立弧。
   兼容别名 StructureTemplate = ArcNode（旧引用/类型注解可继续用）。
+  2026-09 起弧库**已删除「内涵/themes」字段**（不再在弧模板上承载母题）。
 """
 import re
 from dataclasses import dataclass, field
@@ -30,7 +31,6 @@ class ArcNode:
     max_words: int = 0
     key_events: list[str] = field(default_factory=list)
     foreshadow_opportunities: list[str] = field(default_factory=list)  # 埋坑机会
-    themes: list = field(default_factory=list)   # 内涵 [{name, position, how}]，含插入位置
     tags: list[str] = field(default_factory=list)              # 题材标签（每弧可搜）
     opening_patterns: list[str] = field(default_factory=list)  # 开篇桥段模板引用
     climax_patterns: list[str] = field(default_factory=list)   # 高潮桥段模板引用
@@ -51,7 +51,6 @@ class ArcNode:
             "min_words": self.min_words, "max_words": self.max_words,
             "key_events": self.key_events,
             "foreshadow_opportunities": self.foreshadow_opportunities,
-            "themes": self.themes,
             "tags": self.tags,
             "opening_patterns": self.opening_patterns,
             "climax_patterns": self.climax_patterns,
@@ -72,7 +71,6 @@ class ArcNode:
             min_words=mn, max_words=mx,
             key_events=list(d.get("key_events") or []),
             foreshadow_opportunities=list(d.get("foreshadow_opportunities") or []),
-            themes=list(d.get("themes") or []),
             tags=list(d.get("tags") or []),
             opening_patterns=list(d.get("opening_patterns") or []),
             climax_patterns=list(d.get("climax_patterns") or []),

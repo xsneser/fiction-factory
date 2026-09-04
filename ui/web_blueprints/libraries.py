@@ -102,28 +102,6 @@ def struct_delete(struct_id):
     return jsonify({"ok": True, "removed": removed})
 
 
-@bp.route("/api/structures/<node_id>/node/themes", methods=["POST"])
-def struct_stage_themes(node_id):
-    """编辑**任意**弧节点（根或任意深度子弧，统一按 id 寻址）的节点级内涵
-    [{name, position, how}]（含插入位置+表达手法）。扁平库每节点一行独立可编辑。"""
-    node = struct_lib.get_by_id(node_id)
-    if not node:
-        return jsonify({"ok": False, "error": "not found"}), 404
-    themes = (request.json or {}).get("themes")
-    if not isinstance(themes, list):
-        return jsonify({"ok": False, "error": "themes must be list"}), 400
-    clean = []
-    for m in themes:
-        if not isinstance(m, dict) or not str(m.get("name", "") or "").strip():
-            continue
-        clean.append({"name": str(m["name"]).strip(),
-                      "position": str(m.get("position", "") or "").strip(),
-                      "how": str(m.get("how", "") or "").strip()})
-    node.themes = clean
-    struct_lib._save()
-    return jsonify({"ok": True, "themes": clean})
-
-
 @bp.route("/api/gags/<gag_id>/toggle", methods=["POST"])
 def gag_toggle(gag_id): return _lib_toggle("gags", gag_id)
 

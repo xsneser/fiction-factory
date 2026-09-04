@@ -40,56 +40,10 @@
     {% if c.key_events %}
     <p style="font-size:12px;color:#a5b3c2;margin:2px 0">事件：{{ c.key_events | join(' / ') }}</p>
     {% endif %}
-    <details class="stage-themes" style="margin:6px 0;font-size:12px" {% if not c.themes %}open{% endif %}>
-      <summary style="cursor:pointer;color:#8b949e">🎭 {{ c.name }} 内涵{% if c.themes %}<span class="tag yellow" style="margin-left:6px">{{ c.themes|length }}</span>{% endif %}</summary>
-      <div class="stage-theme-editor" data-node-id="{{ c.id }}" style="padding:6px 0 2px 12px">
-        {% for m in (c.themes or []) %}
-        <div class="st-row" style="display:flex;gap:6px;margin:4px 0;align-items:center">
-          <input class="st-name" placeholder="内涵名（如：复仇（Revenge））" value="{{ m.name }}" style="flex:1;min-width:0">
-          <input class="st-position" placeholder="位置（开头/中段/结尾）" value="{{ m.position }}" style="width:130px">
-          <input class="st-how" placeholder="表达手法" value="{{ m.how }}" style="flex:1.2;min-width:0">
-          <button type="button" class="small" onclick="removeStageTheme(this)">✕</button>
-        </div>
-        {% endfor %}
-        <button type="button" class="small" onclick="addStageTheme(this)">➕ 内涵</button>
-        <button type="button" class="small" onclick="saveStageThemes(this)">💾 保存节点内涵</button>
-      </div>
-    </details>
 </div>
 {% endfor %}
 
 <script>
-function addStageTheme(btn) {
-    var ed = btn.closest('.stage-theme-editor');
-    var row = document.createElement('div');
-    row.className = 'st-row';
-    row.style.cssText = 'display:flex;gap:6px;margin:4px 0;align-items:center';
-    row.innerHTML = '<input class="st-name" placeholder="内涵名（如：复仇（Revenge））" style="flex:1;min-width:0">'
-        + '<input class="st-position" placeholder="位置（开头/中段/结尾）" style="width:130px">'
-        + '<input class="st-how" placeholder="表达手法" style="flex:1.2;min-width:0">'
-        + '<button type="button" class="small" onclick="removeStageTheme(this)">✕</button>';
-    ed.insertBefore(row, btn);
-}
-function removeStageTheme(btn) { btn.closest('.st-row').remove(); }
-async function saveStageThemes(btn) {
-    var ed = btn.closest('.stage-theme-editor');
-    var themes = [];
-    ed.querySelectorAll('.st-row').forEach(function(row) {
-        var name = row.querySelector('.st-name').value.trim();
-        var position = row.querySelector('.st-position').value.trim();
-        var how = row.querySelector('.st-how').value.trim();
-        if (name) themes.push({name: name, position: position, how: how});
-    });
-    var nodeId = ed.dataset.nodeId || '';
-    if (!nodeId) { showToast('缺少节点 id', 'error'); return; }
-    const r = await fetch('/api/structures/' + nodeId + '/node/themes', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({themes: themes})
-    });
-    const d = await r.json();
-    if (d.ok) { showToast('✅ 节点内涵已保存', 'success'); location.reload(); }
-    else showToast('保存失败: ' + (d.error||''), 'error');
-}
 async function toggleStruct(id) {
     const r = await fetch('/api/structures/' + id + '/toggle', {method:'POST'});
     const d = await r.json();

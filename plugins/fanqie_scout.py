@@ -894,7 +894,7 @@ class NovelAnalyzer:
   - description: 这个弧做什么 / 本弧内情节怎么发展（关键：能被复用的内容主体）
   - min_words / max_words: 该弧在书里实际占用的字数区间（按每章约 3000 字估算；大弧
     （如跨十几章）与小弧（如几章的小目标）都可以收，粒度为真实可复用的那个「弧」）
-  - key_events: 关键事件；foreshadow_opportunities: 埋坑机会；themes: 弧级内涵
+  - key_events: 关键事件；foreshadow_opportunities: 埋坑机会
   - tags: 题材/可复用场景标签（每弧都要给，便于入库后按题材检索）
 长度/粒度按书里真实结构定、**不要求均匀**。
 
@@ -906,11 +906,11 @@ class NovelAnalyzer:
   {{"name":"重生复仇弧","description":"被夺权者蛰伏反杀，当众清算并夺回一切的一整段弧：藏拙→串联旧部→在清算场合翻盘",
     "min_words":30000,"max_words":45000,
     "key_events":["蛰伏示弱","收买旧部","当众反杀"],"foreshadow_opportunities":["幕后黑手另有其人"],
-    "themes":[],"tags":["复仇","爽文"]}},
+    "tags":["复仇","爽文"]}},
   {{"name":"末日囤货开局","description":"灾变前用先知囤物资、抢住所，抢在秩序崩塌前站稳脚跟的小弧",
     "min_words":6000,"max_words":12000,
     "key_events":["变卖资产","扫货","加固住所"],"foreshadow_opportunities":[],
-    "themes":[],"tags":["末世","求生"]}}
+    "tags":["末世","求生"]}}
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的小说结构分析师。只返回JSON。",
@@ -1031,7 +1031,7 @@ class LibraryIngestor:
         """把**一条平级独立弧 dict** 写入情节弧库（每行一弧）。
 
         id = scout_{source}_{清洗名}（精确去重，已存在则跳过）。data 各字段
-        （name/description/min/max_words/key_events/themes/tags/…）即 ArcNode 字段。
+        （name/description/min/max_words/key_events/tags/…）即 ArcNode 字段。
         """
         from datetime import datetime
         from libraries.structure import ArcNode, make_root_id
