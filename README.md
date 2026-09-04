@@ -19,7 +19,7 @@
 | **引擎** (`libraries/engine.py`) | 新书启动 → 规划 → 逐章续写，全自动闭环（双写通道：桥段驱动 / 通用） | ✅ |
 | **桥段写作** (`libraries/storyline_writer.py`) | 唯一写作核心：桥段驱动逐短句组增量生成 + 炸裂开场 | ✅ |
 | **桥段库** (`libraries/plot.py` + `data/plots.jsonl`) | 网文经典桥段结构化模板，写作时按场景匹配注入 | ✅ |
-| **情节弧库** (`libraries/structure.py` + `data/structures.jsonl`) | 各题材方向弧骨架；**扁平行存储**（每行一个弧节点，任意深度统一字段 + `parent_arc_id` 关联）+ 节点级内涵（`ArcNode.themes`） | ✅ |
+| **情节弧库** (`libraries/structure.py` + `data/structures.jsonl`) | 各题材方向弧模板；**平级独立弧**（每行一弧，无父子层级，自带 tags/描述/内涵 `ArcNode.themes`） | ✅ |
 | **笑点库** (`libraries/gag.py` + `gag_injector.py`) | 搞笑模式模板 + 探测器实时涌现注入 | ✅ |
 | **角色库** (`libraries/character.py` + `data/characters.jsonl`) | 性格原型 + 代表人物，设定表单「从原型库选」一键填充 | ✅ |
 | **风格规则库** (`libraries/style_rules.py` + `data/style_rules.jsonl`) | `prefer`（句式偏好）/ `ban`（禁用+`replacements` 去 AI 味替换），按笔名归属 | ✅ 新 |
@@ -133,7 +133,7 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 
 - **五类资产**：桥段 / 弧 / 笑点 / 角色 + 写作风格规则（风格归属笔名，`prefer` 3–8 条 + `ban` 5–15 条）。
 - **断点续读**：上下文变重时 `extract_state` 把已读前缀压缩进记忆落盘（`storage/extract_work/`），同一任务继续读下一窗，长书不中断。
-- **入库闸门** `extract_judge.py`：结构完整（桥段需 `structure`+`slots`、弧按根判定需根+≥1 子阶段…）、库内近似查重（bigram + `_mechanism_key` 骨架键）、书级专用候选记 `book_archive` 不进库。
+- **入库闸门** `extract_judge.py`：结构完整（桥段需 `structure`+`slots`、弧需可复用 `description`…）、库内近似查重（bigram + `_mechanism_key` 骨架键）、书级专用候选记 `book_archive` 不进库。
 - **进度实时**：`extract_progress.py` 与 dsh 桥事件联动，进度卡实时显示当前读到哪。
 
 ---
@@ -146,7 +146,7 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 
 ### 情节弧库 —— `libraries/structure.py`（当前 9 棵根弧，扁平节点行）
 
-题材方向弧骨架。**扁平行存储**：每个弧节点（根/任意深度子弧）统一字段（`id/name/description/min_words/max_words/key_events/foreshadow_opportunities/themes/parent_arc_id/tags/…`），父子用 `parent_arc_id` 关联、子弧不内嵌；每节点可带内涵（`themes`：`{name, position, how}`）。生成时取根弧首层子节点展成书弧内部阶段、带出节点级内涵挂到能承载的桥段、注入写作 prompt。
+题材方向弧骨架。**平级独立弧存储**：每个弧（整段壳大弧与几章的小弧都可收）统一字段（`id/name/description/min_words/max_words/key_events/foreshadow_opportunities/themes/tags/…`），**无父子层级**、每弧自带 tags/描述/内涵（`themes`：`{name, position, how}`）。旧分层（原树各层节点）迁移时各自成为独立弧，tags 平铺到每弧。
 
 ### 笑点库 —— `libraries/gag.py`（当前 34 条）
 

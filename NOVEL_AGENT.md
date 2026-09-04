@@ -36,7 +36,7 @@
 ### 母题（内涵）
 - **母题（内涵）= 全文反复出现、可被读者反复「尝到」的主题意义**，与笑点无关（笑点机制见桥段库 gag 的 `pattern_description`）。
 - 平台常用母题词汇：公平（Justice）/ 成长的代价（Cost of Growth）/ 身份与伪装（Identity & Disguise）/ 牺牲（Sacrifice）/ 归属感（Belonging）/ 传承与突破（Legacy & Breakthrough），可扩。
-- 落点：弧库每个弧节点（ArcNode，根/任意深度子弧统一结构）都可带 `themes:[{name, position(开头/中段/结尾), how(靠哪类事件让读者尝到)}]`；平台书内 plot 级经 `theme_hints/theme_moments` 传导（自动化挂载目前只覆盖内置 plot_dating 模板）。
+- 落点：弧库每个弧（ArcNode，**平级独立、无父子层级**）都可带 `themes:[{name, position(开头/中段/结尾), how(靠哪类事件让读者尝到)}]`；平台书内 plot 级经 `theme_hints/theme_moments` 传导（自动化挂载目前只覆盖内置 plot_dating 模板）。
 
 ### 章节
 - **章节 = 字数大致相等的可发布文本段**
@@ -96,14 +96,14 @@
 - `save_book_meta`：保存书名+简介。
 
 ### 其他工具
-- `query_arc_library` / `arc_material_candidates`：从情节弧库选弧模板作参考（tags/关键词命中；**存储为扁平行**——每行一个弧节点，子弧独立成行、用 `parent_arc_id` 关联；返回的 `stages` 是按 parent 即时组装的嵌套展示树仅供阅读，**每个节点都带 `id`+`parent_arc_id`**，可对任意深度节点单独引用）。
+- `query_arc_library` / `arc_material_candidates`：从情节弧库选弧模板作参考（tags/关键词命中；**库 = 平级独立弧模板**——每行一个弧、无父子层级，每个弧都自带 tags/描述/内涵，可单独挑选）。
 - `ingest_library_assets`：把 agent **整本扫读**提炼的资产写入四库（纯规则落盘；**默认 gate=True** 入库前自动过 `judge_extraction` 判断闸门——结构不完整/库内机制级近似/自评书级专用的候选不写入，返回 `judge` 报告，据此处理；`gate=False` 维持仅 id 去重旧行为；方法见 novel-scout skill）——plot `{name,category,sub_category,structure,slots[{name,options}],notes,word_range}`；
-  structure 载荷为**扁平行**：每个弧/子弧一个节点 dict，字段统一 `{id?(批内唯一), name, description, min_words, max_words, key_events?, foreshadow_opportunities?, themes?, tags?(根), parent_arc_id}`，子节点 `parent_arc_id` 指向父节点 id、**不内嵌**；根节点 `parent_arc_id` 空/省略。**判定/去重按「一棵根弧 = 一棵树」**（需根 + ≥1 子阶段）；只表述字数：`min_words/max_words`=该弧在书里实际占用的字数区间（约1.5万-4万为整弧跨度，**绝不=全书**），深度/分支按书里真实结构定、**不要求均匀**；
+  structure 载荷为**平级独立弧**：每个元素 = 一条独立的可复用弧 dict，字段统一 `{name, description, min_words, max_words, key_events?, foreshadow_opportunities?, themes?, tags}`——**无父子层级、无 parent 类字段**，逐条判定/去重/入库；只表述字数：`min_words/max_words`=该弧在书里实际占用的字数区间（整段壳大弧与几章的小弧都可收，**绝不=全书**），粒度按真实可复用的「弧」定、**不要求均匀**；
   gag `{name,category,pattern_description,fit_scenes,examples}`；
   character `{name,personality,description,archetypes,examples,catchphrases,tags,fit_tags}`。
 - `list_rankings` / `discover_hot` / `fetch_novel` / `list_crawled_novels` / `read_crawled_novel`：查榜单/分类清单 / 侦察热榜（`discover_hot(platform, key, count)`——key 为榜单分类 id 或题材中文名，空=聚合综合热榜）/ 抓取下载（`fetch_novel(title 或 book_id, chapters, start_chapter?, end_chapter?)`——按真实章号区间下载，如 start_chapter=100,end_chapter=130；只给 chapters 时从 start_chapter 缺省 1 起）/ 读已抓书库 / 读已下载小说——**`chapter=0` 目录一次、`chapter>0` 只回该章正文（不再回带整份目录）、`start_chapter`+`end_chapter` 成批顺序读窗口**（整本扫读分窗用；不改书）。
 - `extract_state`：读/存「整本扫读」断点记忆（`storage/extract_work/<folder>.json`，纯规则）——上下文变重时 `action=save`（`cursor`+压缩记忆 `memory{digest,open_segments,people,unresolved}`+`committed` 已入库名）落盘，并在同一任务继续读下一窗口；任务中断后用 `action=load`（`mode=summary`）从断点续读，`action=clear` 重扫。压缩阈值不是固定章数，不应每 60 章停下等待报告。
-- `judge_extraction`：入库判断闸门**预检**（只判不写库）——对候选返回 `decision ∈ four_lib / duplicate / incomplete / book_archive` + `reasons` + `overlap_with`：结构完整（桥段需 `structure`+`slots`、**弧按根判定需根 + ≥1 子阶段**、笑点需 `pattern_description`、角色需 `personality`）、库内 bigram 机制级近似、自评书级专用（候选带 `_book_specific=true` / `_reusable=false`）。语义级同骨架去重靠候选带 `_mechanism_key`（规范化骨架键）精确命中。`ingest_library_assets` 的 gate 复用同一闸门。
+- `judge_extraction`：入库判断闸门**预检**（只判不写库）——对候选返回 `decision ∈ four_lib / duplicate / incomplete / book_archive` + `reasons` + `overlap_with`：结构完整（桥段需 `structure`+`slots`、**弧需可复用内容 `description`**、笑点需 `pattern_description`、角色需 `personality`）、库内 bigram 机制级近似、自评书级专用（候选带 `_book_specific=true` / `_reusable=false`）。语义级同骨架去重靠候选带 `_mechanism_key`（规范化骨架键）精确命中。`ingest_library_assets` 的 gate 复用同一闸门。
 - 侦察/提取默认走 `novel-scout` skill：给小说 id/书名 → 下载 → **由 agent 编排顺序逐章通读全书**（可读一章即提取，也可自行读数章后统一处理；分窗读、随手提炼五类：桥段/弧/笑点/角色 + 写作风格规则，风格归属用户所选笔名）→ 候选成熟后经 `drive_ui(set_review)` 放入 `/extract` 暂存区 → 用户在页面勾选确认 → 页面 POST `/api/scout/ingest` 复用确认代码落库；持续读完全书，不按固定章节数停下。
 - `publish_check` / `publish_book` / `mark_finished` / `export_book`：上架检查 / 发布 / 完本 / 导出投稿包。
 
