@@ -205,7 +205,8 @@ if (h1El) h1El.addEventListener('click', function() {
     var newDraft = new URLSearchParams(location.search).get('newdraft') === '1';
 
     function deepenTaskText() {
-        return '《{{ (book.title or '') }}》是刚建的新书，弧+桥段处于 plots 草案（phase=plots，尚未 ready）。'
+        var t = (typeof __BOOK_TITLE__ !== 'undefined' && __BOOK_TITLE__) || BOOK_ID;
+        return '《' + t + '》是刚建的新书，弧+桥段处于 plots 草案（phase=plots，尚未 ready）。'
             + '请按 novel-build 提交后段做一次研究式深化：先审差异化命题（核心冲突是否反模板、有独特卖点），'
             + '调 validate_storyline(book_id=...) 按 decision_points 回改弧/桥段（至少一轮；过得了就把差异写足即停，不堆回合），'
             + '落盘后产出故事线蓝图汇报（弧树/字数/线程/设局收局 + passed + decision_points），等用户在书详情页确认。';
