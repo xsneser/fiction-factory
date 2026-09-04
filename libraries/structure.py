@@ -303,8 +303,8 @@ class StructureLibrary(JsonLibrary):
             self._save()
 
     # ── 查询（扁平世界的新/旧接口） ──
-    def roots(self, include_disabled: bool = False) -> list:
-        """全部根弧（一棵模板树一个根），文件顺序。"""
+    def roots(self, include_disabled: bool = True) -> list:
+        """全部根弧（一棵模板树一个根），文件顺序。默认含已禁用（与原 .templates 全量语义一致）。"""
         return [t for t in self.templates if t.parent_arc_id == ""
                 and (include_disabled or t.enabled)]
 

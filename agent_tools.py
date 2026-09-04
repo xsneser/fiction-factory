@@ -264,23 +264,29 @@ def get_build_status() -> dict:
 
 
 def _stage_tree(s):
-    """把弧模板的 StageNode（可 children 嵌套）压成紧凑 dict 树供 agent 参考（单弧可多层，字数表述）"""
+    """把弧库某个弧节点压成紧凑 dict 树供 agent 参考（节点带 id/parent_arc_id；
+    children 由库 parent 指针即时组装——存储扁平，此处仅展示用，非存储嵌套）"""
     node = {
+        "id": s.id,
+        "parent_arc_id": s.parent_arc_id,
         "name": s.name,
         "description": (s.description or "")[:120],
         "min_words": s.min_words,
         "max_words": s.max_words,
         "key_events": (s.key_events or [])[:4],
     }
-    if s.children:
-        node["children"] = [_stage_tree(c) for c in s.children]
+    kids = struct_lib.children_of(s.id)[:12]
+    if kids:
+        node["children"] = [_stage_tree(c) for c in kids]
     return node
 
 
 def query_arc_library(keyword: str = "", tags: str = "") -> dict:
-    """查情节弧库：按标签/关键词（名称）返回模板清单（标签逗号/空格分隔，任一命中）。
-    模板=单弧可多层：stages 即其子弧（可 children 嵌套，深度/分支按书定、不要求均匀）。
-    注意 total_chapters 为模板参考章节数（非强制弧跨度），不要直接 × 每章字数当弧的 start_word/end_word。"""
+    """查情节弧库：按标签（任一命中）/关键词（名称）返回**根弧**模板清单。
+    存储为扁平（每行一个弧节点，子弧独立成行、用 parent_arc_id 关联）；返回的 stages
+    是按 parent 即时组装的嵌套展示树，仅供 agent 阅读。每节点都带 id/parent_arc_id，
+    可对任意深度节点单独引用。total_words = 该根弧整段字数量（根节点 min/max 跨度），
+    别直接 × 每章字数当弧的 start_word/end_word。"""
     kw = (keyword or "").strip()
     tag_list = [x.strip() for x in (tags or "").replace("，", " ").replace(",", " ").split() if x.strip()]
     rows = struct_lib.search(tags=tag_list)
@@ -289,7 +295,7 @@ def query_arc_library(keyword: str = "", tags: str = "") -> dict:
     return {"templates": [{
         "id": t.id, "name": t.name, "tags": t.tags,
         "total_words": t.total_words,
-        "stages": [_stage_tree(s) for s in (t.stages or [])[:8]],
+        "stages": [_stage_tree(c) for c in struct_lib.children_of(t.id)[:8]],
     } for t in rows[:20]]}
 
 
@@ -784,18 +790,18 @@ def save_book_meta(book_id: str, title: str = "", synopsis: str = "") -> dict:
 
 
 def arc_material_candidates(book_id: str) -> dict:
-    """选材决策点候选池：情节弧库模板 + 桥段库（供外部 agent 预选弧模板作参考，再在自身上下文生成弧+桥段）。
+    """选材决策点候选池：情节弧库根弧模板 + 桥段库（供外部 agent 预选弧模板作参考，再在自身上下文生成弧+桥段）。
 
-    返回 {templates, plots}：templates 为弧级模板清单（单弧可多层，stages 含 children 层级），
-    plots 为桥段库候选（{id,name,category,sub_category}）。"""
+    返回 {templates, plots}：templates 为根弧清单（stages 是按 parent 即时组装的嵌套展示树，
+    每节点带 id/parent_arc_id），plots 为桥段库候选（{id,name,category,sub_category}）。"""
     tl = _require_tl(book_id)
     _tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
     candidates = struct_lib.search(tags=_tags)
     if not candidates:
-        candidates = struct_lib.templates[:5]
+        candidates = struct_lib.roots()[:5]
     templates = [{
         "id": t.id, "name": t.name, "total_words": t.total_words,
-        "stages": [_stage_tree(s) for s in (t.stages or [])[:8]],
+        "stages": [_stage_tree(c) for c in struct_lib.children_of(t.id)[:8]],
     } for t in (candidates or [])[:10]]
     plots = [{
         "id": t.id, "name": t.name, "category": t.category,
@@ -2036,12 +2042,12 @@ def ingest_library_assets(plots: list | None = None, structures: list | None = N
 
     纯规则落盘、无 LLM（复用 FanqieScoutAgent.ingest_selected，角色走新增
     _add_character）。字段格式——plot {name, category, sub_category, structure,
-    slots[{name, options}], notes, word_range}；structure {name, total_words,
-    tags?, description?, stages[{name, description, min_words, max_words,
-    key_events, children?[{…}]}]}（弧模板=单弧，stages 为子弧，可 children 嵌套多层，
-    深度/分支按书里真实结构定、不要求均匀；只表述字数，不含章数）；gag {name, category,
-    pattern_description, fit_scenes, examples}；character {name, personality,
-    description, archetypes, examples, catchphrases, tags, fit_tags}。
+    slots[{name, options}], notes, word_range}；structure 为**扁平行**（每个弧/子弧
+    一个节点 dict，字段统一 {id?, name, description, min_words, max_words, key_events,
+    foreshadow_opportunities, themes, parent_arc_id, tags?}，子节点 parent_arc_id 指向
+    父节点 id，不内嵌）——判定/去重按「一棵根弧 = 一棵树」进行（库内与根弧比对）；
+    gag {name, category, pattern_description, fit_scenes, examples}；character {name,
+    personality, description, archetypes, examples, catchphrases, tags, fit_tags}。
 
     gate=True（默认）：入库前经 extract_judge 闸门——结构不完整 / 库内机制级近似 /
     自评书级专用的候选**不写入四库**，返回 judge 报告（incomplete 缺字段 /
@@ -2056,9 +2062,12 @@ def ingest_library_assets(plots: list | None = None, structures: list | None = N
         raise RuntimeError("至少提供 plots/structures/gags/characters 之一")
     from plugins.fanqie_scout import FanqieScoutAgent
     from libraries.extract_judge import judge_all, split_by_decision
+    from libraries.structure import normalize_structures
 
     cands = {"plots": plots or [], "structures": structures or [],
              "gags": gags or [], "characters": characters or []}
+    if cands["structures"]:
+        cands["structures"] = normalize_structures(cands["structures"])
     filtered = cands
     report = {}
     if gate:
@@ -2097,12 +2106,16 @@ def judge_extraction(plots: list | None = None, structures: list | None = None,
     book_archive（自评书级专用，不进四库，可记 extract_state）。附 reasons 与
     overlap_with（与库内哪条近似）。
 
-    判据：①结构完整性（桥段需 structure 箭头骨架 + slots、弧需 stages、笑点需
+    判据：①结构完整性（桥段需 structure 箭头骨架 + slots、弧按根需有 ≥1 子阶段、笑点需
     pattern_description、角色需 personality）②库内 bigram 机制级近似（含本批
     已过闸候选）③候选自评 `_book_specific=true` / `_reusable=false`。
+    structures 传**扁平行**（每行一个弧节点，parent_arc_id 关联），判定按「根弧一棵树」归一后逐棵判。
     纯规则无 LLM。入库请用 ingest_library_assets（gate=True 应用同一闸门自动过滤）。
     """
     from libraries.extract_judge import judge_all
+    from libraries.structure import normalize_structures
+    if structures is not None:
+        structures = normalize_structures(structures)
     return {"ok": True, **judge_all(plots=plots, structures=structures,
                                     gags=gags, characters=characters,
                                     plot_lib=plot_lib, struct_lib=struct_lib,

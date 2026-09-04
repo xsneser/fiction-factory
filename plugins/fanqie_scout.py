@@ -877,7 +877,8 @@ class NovelAnalyzer:
             return []
 
     def extract_structure(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
-        """提取大纲结构模式（多层弧树：每模板 = 单个可复用弧，stages 可嵌套 children）"""
+        """提取大纲结构模式（**扁平行**：structures 数组每行 = 一个弧/子弧节点，
+        父子关系用 parent_arc_id 关联，不内嵌；入库按行落盘）"""
         text = self._build_sample_text(samples, 2000)
         ch_count = novel.chapter_count or len(samples) * 10
 
@@ -885,29 +886,36 @@ class NovelAnalyzer:
 从书中识别出**若干个典型的、可复用的叙事弧**（每个弧是一个有明确目标/方向的剧情单元，
 如 重生复仇弧、试炼扬名弧、误会和解弧）。
 
-每个弧都要拆成**多层的弧树**（大弧 → 子弧 → 阶段）：深度与各层分支数按书里真实结构定，
-**不要均匀**——有的弧只有一层（直接平铺几个阶段），有的弧两层，有的子弧内还要再拆到三层。
-子弧/阶段的 min_words/max_words 按它在书里实际占用的**字数区间**填（如 3000~6000 字，按每章约 3000 字估算）。
+每个叙事弧 = 一棵「根弧 + 任意深度子弧」的树。请把整棵树按**扁平行**输出：
+structures 数组里**每一行 = 一个弧节点**（根/子/孙弧结构完全一致），父子关系用
+parent_arc_id 指向父节点 id；**绝不要**把子弧内嵌在父节点里。
+
+每个弧节点字段统一：
+  - id: 本批内唯一的节点标识（如 s1/s1a/s1a0）；子节点把父的 id 填到 parent_arc_id
+  - name / description: 节点名 / 这个弧做什么
+  - min_words / max_words: 该节点在书里实际占用的字数区间（按每章约 3000 字估算）
+  - key_events: 关键事件；foreshadow_opportunities: 埋坑机会；themes: 节点级内涵
+  - parent_arc_id: 父节点 id；根节点填空或省略
+  - tags: 仅根节点填题材/可复用场景标签；opening_patterns / climax_patterns 根节点可选
+深度与各层分支数按书里真实结构定，**不要均匀**——有的弧只一层（平铺几个直接子弧），
+有的两层，有的子弧内还要拆到三层。
 
 【小说内容样本】
 {text}
 
-返回 JSON：
+返回 JSON（扁平节点行数组）：
 {{"structures": [
-  {{"name":"弧名（如 重生复仇弧）",
-   "total_words":{ch_count * 3000},
-   "tags":["题材标签","可复用场景"],
-   "description":"这个弧做什么、适合什么情境",
-   "stages":[
-     {{"name":"子弧名","description":"这个子弧做什么",
-       "min_words":30000,"max_words":60000,
-       "key_events":["事件1","事件2"],
-       "children":[
-         {{"name":"孙弧/阶段名","description":"...",
-           "min_words":9000,"max_words":24000,
-           "key_events":["事件1","事件2"]}}
-       ]}}
-   ]}}
+  {{"id":"s1","name":"重生复仇弧","description":"这个弧做什么、适合什么情境",
+    "min_words":30000,"max_words":40000,"key_events":[],"foreshadow_opportunities":[],
+    "themes":[],"tags":["复仇","爽文"],"opening_patterns":[],"climax_patterns":[],
+    "parent_arc_id":""}},
+  {{"id":"s1a","name":"确认处境","description":"这个子弧做什么",
+    "min_words":3000,"max_words":6000,"key_events":["事件1","事件2"],
+    "foreshadow_opportunities":["埋坑1"],"themes":[],
+    "tags":[],"opening_patterns":[],"climax_patterns":[],"parent_arc_id":"s1"}},
+  {{"id":"s1b","name":"布局","description":"...","min_words":9000,"max_words":15000,
+    "key_events":["事件1"],"foreshadow_opportunities":[],"themes":[],
+    "tags":[],"opening_patterns":[],"climax_patterns":[],"parent_arc_id":"s1"}}
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的小说结构分析师。只返回JSON。",
@@ -989,9 +997,10 @@ class LibraryIngestor:
                 self._add_plot(plot, source)
                 stats["plots"] += 1
 
-        for struct in analysis.get("structures", []):
+        from libraries.structure import normalize_structures
+        for tree in normalize_structures(analysis.get("structures", [])):
             if self.struct_lib:
-                self._add_structure(struct, source)
+                self._add_structure(tree, source)
                 stats["structures"] += 1
 
         for gag in analysis.get("gags", []):
@@ -1025,37 +1034,21 @@ class LibraryIngestor:
         self.plot_lib.templates.append(template)
 
     def _add_structure(self, data: dict, source: str):
-        from libraries.structure import StageNode, StructureTemplate
-        sid = f"scout_{source}_{data.get('name','unknown')}"
+        """把一棵根弧树 dict（含 stages）摊平成**扁平节点行**写入情节弧库。
+
+        data 须为单棵树（调用方先经 normalize_structures 把扁平行/嵌套归一成树）。
+        根 id = scout_{source}_{清洗名}；子节点 id = '{根}::{序}' 链（由 flatten 生成）。
+        """
+        from datetime import datetime
+        from libraries.structure import ArcNode, flatten_nested_tree, make_root_id
+        sid = make_root_id(data.get("name", ""), source)
         for t in self.struct_lib.templates:
             if t.id == sid:
-                return
+                return  # 已存在整棵跳过
 
-        def _node(s) -> StageNode:
-            if isinstance(s, str):
-                return StageNode(name=s, description="")
-            return StageNode(
-                name=s.get("name",""), description=s.get("description",""),
-                # 兼容旧数据 min_chapters/max_chapters → ×3000
-                min_words=s.get("min_words", s.get("min_chapters", 10) * 3000),
-                max_words=s.get("max_words", s.get("max_chapters", 20) * 3000),
-                key_events=s.get("key_events",[]),
-                foreshadow_opportunities=s.get("foreshadow_opportunities",[]),
-                themes=s.get("themes",[]),
-                children=[_node(c) for c in s.get("children", [])],
-            )
-
-        template = StructureTemplate(
-            id=sid, name=data.get("name",""),
-            description=data.get("description",""),
-            # 兼容旧 total_chapters（×3000 估字数，与 structure.py from_dict 口径一致）
-            total_words=data.get("total_words", data.get("total_chapters", 500) * 3000),
-            stages=[_node(s) for s in data.get("stages", [])],
-            tags=data.get("tags", []),
-            source=source,
-            created_at=data.get("created_at", ""),
-        )
-        self.struct_lib.templates.append(template)
+        created = str(data.get("created_at") or "") or datetime.now().strftime("%Y-%m-%d %H:%M")
+        rows = flatten_nested_tree(data, root_id=sid, source=source, created_at=created)
+        self.struct_lib.templates.extend(ArcNode.from_dict(r) for r in rows)
 
     def _add_gag(self, data: dict, source: str):
         from libraries.gag import GagPattern
@@ -1375,10 +1368,10 @@ class FanqieScoutAgent:
             self.plot_lib._save()
 
         if structures and self.struct_lib:
-            for item in structures:
-                item["source"] = source
-                item["created_at"] = now
-                self.ingestor._add_structure(item, source)
+            from libraries.structure import normalize_structures
+            trees = normalize_structures(structures)
+            for tree in trees:
+                self.ingestor._add_structure(tree, source)
                 stats["structures"] += 1
             if on_progress:
                 on_progress("ingest", 1, 1, f"大纲已入库 {stats['structures']}个")

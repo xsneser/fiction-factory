@@ -61,7 +61,7 @@ def _build_next_arc(builder, tl, mode="rule"):
 
     # rule：按书题材标签匹配模板循环取下一个
     _tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
-    structs = struct_lib.search(tags=_tags) or struct_lib.templates
+    structs = struct_lib.search(tags=_tags) or struct_lib.roots()
     if not structs:
         return None
     idx = len(tl.outlines) % len(structs)
@@ -82,7 +82,7 @@ def _build_next_arc(builder, tl, mode="rule"):
              "events": s.key_events[:5],
              "description": getattr(s, "description", ""),
              "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or [])}
-            for s in tmpl.stages
+            for s in struct_lib.children_of(tmpl.id)
         ],
         predecessor=tl.outlines[-1].id if tl.outlines else "",
         transition_type="sequential",

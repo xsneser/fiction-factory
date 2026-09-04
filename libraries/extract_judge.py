@@ -226,7 +226,13 @@ def judge_all(plots: Optional[list] = None, structures: Optional[list] = None,
         entries = getattr(plot_lib, "templates", []) if plot_lib else []
         result["plots"] = judge_batch("plot", plots, entries, thresholds)
     if structures is not None:
-        entries = getattr(struct_lib, "templates", []) if struct_lib else []
+        # 情节弧库扁平存储：structure 判定/去重单元 = 一棵根弧（根 + 子弧）。候选须已按根
+        # 归一成树 dict（libraries.structure.normalize_structures / rows_to_tree_dicts），
+        # 池 = 库内根弧（不拿子弧当独立模板比对）。
+        if struct_lib is not None and hasattr(struct_lib, "roots"):
+            entries = struct_lib.roots()
+        else:
+            entries = getattr(struct_lib, "templates", []) if struct_lib else []
         result["structures"] = judge_batch("structure", structures, entries, thresholds)
     if gags is not None:
         entries = getattr(gag_lib, "patterns", []) if gag_lib else []
