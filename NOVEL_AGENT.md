@@ -53,6 +53,7 @@
 - **全书规模口径**：建书默认全书 **30~60 章 ≈ 9万~18万字**；每个顶层弧建议 ≤10 章 / ≤3 万字。
 - **先按桥段内容设计弧字数跨度**（跨度 ≈ 该弧桥段 `planned_words` 之和），**不要先拍全书总字数再让桥段去够**；给桥段设 `cover_beats`（决定 `planned_words` = cover_beats×200 封顶 1200），避免默认 4 节拍导致内容被低估。
 - **生成/修改后必须校验**：调 `validate_storyline`（book_id 或内联 outlines/plots，含 arc_fill 弧内空白）+ `validate_world`（book_id 或内联 basic_info，势力/人物一致性），按 `decision_points` 反复修正直到通过或如实说明。
+- **差异化命题 + 每弧 notes（存盘反模板）**：动手排弧前想清「本书与同类/所查模板的差异点」，最核心一条写进 `core_conflict`，完整论述在书已建（phase=plots）后经 `save_basic_info` 存 `world_building.differentiation`；**每条弧 `notes` 必含「本弧目标 + 偏离库模板 X 的点」**（落库可复核，供蓝图/用户过目）。
 
 ### drive_ui 命令（驱动「启动新书」向导；建书必须走向导，不能绕路直建）
 - `set_field`：`{field, value}`，field ∈ idea/pen/title/words/borrow_source/borrow_tweak。**`words` = 每章字数（words_per_chapter，默认 3000），不是全书总字数**；全书总字数由弧的 `end_word` 决定，无需单独填。
@@ -90,7 +91,7 @@
   确认后由**页面** POST `/api/scout/ingest` 落库，agent **不要**再自行 `ingest_library_assets` 重复入库。
 
 ### 落盘工具
-- `save_outlines`：保存 outlines/plots/threads/themes → 落盘 → `fill_gags` 到 ready（弧的字数跨度、桥段叶弧规则见 1.2 故事线数据规则）。
+- `save_outlines`：保存 outlines/plots/threads/themes → 落盘。含 plots 则 phase=plots（草案待确认）否则 outlines；**已 ready 书追加弧保持 ready**（续写/扩写不降级）。**ready 只由用户在书详情页「确认弧+桥段」触发**（/api/book/&lt;id&gt;/confirm-storyline——agent 无 fill_gags/confirm_outlines 等翻 ready 工具）。弧的字数跨度、桥段叶弧规则见 1.2 故事线数据规则；**每条弧 `notes` 存「本弧目标 + 偏离库模板的点」**（落库可复核，供蓝图/用户过目）。
 - `save_bridge_draft`：逐桥段落盘进行中草稿（断点续写保底）。
 - `save_chapter_text`：整章落盘（summary 由你生成；内部做规则去 AI 味/审查/角色状态/承诺台账并清草稿）。
 - `save_book_meta`：保存书名+简介。
@@ -112,6 +113,7 @@
 # 第二部分：护栏
 
 - 建书必须 drive_ui 驱动浏览器向导；删书必须 navigate /books 让用户手动删 —— 直建/直删工具不在工具面。
+- **ready 只由用户确认**：plots 草案书（建书 submit / 深化后 / config 补弧后）一律由用户在书详情页点「✅ 确认弧+桥段，开始写作」翻 ready——agent 无 fill_gags/confirm_outlines 等翻 ready 工具，**不得臆造翻转**；深化在 plots 内用 `validate_storyline(book_id)` + `save_outlines` 迭代。
 - 工具被 phase 门控拒绝或抛 `BookBusyError` 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即循环，应停止并如实汇报。
 - 预算/额度触发 `budget_paused` 时停下，向用户如实汇报，不继续烧额度。
 - 薄工具（`save_outlines` / `save_chapter_text`）可能阻塞数分钟属正常，等待结果，不要反复同参重查。
