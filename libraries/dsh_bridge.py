@@ -575,13 +575,14 @@ def _map_dsh_event(evt: dict, pending: dict):
         yield {"type": "done"}
 
 
-def run_dsh_task(task: str, history: list | None = None,
-                 timeout_s: int = 900, debug: bool = False):
+def run_dsh_task(task: str, history: list | None = None, debug: bool = False):
     """跑一次 dsh headless 任务，实时产出 SSE 事件 dict。
 
     事件序列（由 events-runner 的 NDJSON 流实时驱动）：tool_call / tool_result /
     navigate / ui_command …… → reply（最终回复）→ done。
     失败/异常/被打断：error + done。task 为最新用户消息，history 为浏览器持有的消息列表。
+    任务不受整任务时长限制：跑到完成（stdout EOF 自然收尾）或被 /api/agent/chat/cancel
+    打断为止；单工具调用超时由运行期 overlay 的 toolCallTimeoutMs 独立兜底。
 
     全服务单任务：本任务启动前先 interrupt_current_task() 打断任何正在跑的 dsh；
     本任务也可被后续任务 / `/api/agent/chat/cancel` 打断（被打断则 error+done 收尾）。
@@ -657,14 +658,8 @@ def run_dsh_task(task: str, history: list | None = None,
             try:
                 kind, payload = q.get(timeout=0.5)
             except queue.Empty:
-                # 子进程退出后 stdout 关闭，reader 必发 eof；此处只做超时兜底
-                if time.time() - started > timeout_s:
-                    _log.warning("dsh task timeout after %ss", timeout_s)
-                    proc.kill()
-                    yield {"type": "error",
-                           "message": f"dsh 任务超时（>{timeout_s}s），请拆分任务或稍后重试"}
-                    yield {"type": "done"}
-                    return
+                # 子进程退出后 stdout 关闭，reader 必发 eof；此处无事件仅空转限速，
+                # 不做整任务时长兜底（长任务可能远超 15 分钟，靠 cancel / eof 收尾）
                 continue
             if kind == "line":
                 line = payload.strip()
