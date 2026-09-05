@@ -380,9 +380,7 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
                          for r in rules if r.kind == "ban" and not r.replacements and r.pattern],
         },
         "language_hint": profile.build_language_hints(),
-        "discipline": "【通用写作纪律】对话用日常语气，不要文绉绉，也不出粗口脏话；每段 1-3 句，"
-                     "一句一段是正常节奏，不大段堆砌描写；内心独白克制直白，不堆感叹词，情绪交给动作与短句；"
-                     "偶尔留半截话或断在省略号，不要所有句子主谓宾完整；动作描写用准确动词，不要每句都带修饰副词。",
+        "discipline": "【通用写作纪律】" + "；".join(profile.discipline_items()),
     }
 
 

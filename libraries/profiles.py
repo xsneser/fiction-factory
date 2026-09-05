@@ -16,6 +16,20 @@ PLATFORM_LABELS = {
 # 已知平台顺序（编辑表单按此渲染）
 KNOWN_PLATFORMS = ["fanqie", "qidian", "jinjiang", "web"]
 
+# ─── 语言习惯 / 通用写作纪律默认值（可被 PenNameProfile.language_hint / discipline 字段覆写，
+#     字段空 = 回退这些默认。字段值由 styles/<pen>.json 经 tools/pen_style_sync.py sync 写入。）
+DEFAULT_LANGUAGE_HINT_ZH = ("- 中文写作习惯：标点用全角；短句为骨、善用省略号留白与设问推进推理；"
+                            "避免欧化长句、翻译腔与口语化感叹（不写「卧槽/靠/淦」类粗口）；正文不用圆括号作括注。")
+DEFAULT_LANGUAGE_HINT_EN = ("- 英文笔名风格：句式长短交错，时态/主谓一致，缩写与口语自然；"
+                            "避免过度从句嵌套，对话标签多用常见词（said/asked 等）。")
+DEFAULT_DISCIPLINES = [
+    "对话用日常语气，不要文绉绉，也不出粗口脏话",
+    "每段 1-3 句，一句一段是正常节奏，不写大段堆砌描写",
+    "内心独白克制直白，不堆感叹词，情绪交给动作与短句",
+    "偶尔留半截话或断在省略号，不要所有句子主谓宾完整",
+    "动作描写用准确动词，不要每句都带修饰副词",
+]
+
 
 @dataclass
 class PenNameProfile:
@@ -88,6 +102,9 @@ class PenNameProfile:
     description: str = ""
     created_at: str = ""
     updated_at: str = ""
+    # 语言习惯 / 通用写作纪律覆写源（styles/<pen>.json sync 写入；空 = 用 DEFAULT_* 默认）
+    language_hint: str = ""
+    discipline: list[str] = field(default_factory=list)
 
     def is_registered_on(self, platform: str) -> bool:
         """该笔名是否已在某平台登记注册账号。"""
@@ -108,6 +125,8 @@ class PenNameProfile:
             "platform_accounts": self.platform_accounts,
             "description": self.description,
             "created_at": self.created_at, "updated_at": self.updated_at,
+            "language_hint": self.language_hint,
+            "discipline": self.discipline,
         }
 
     @classmethod
@@ -124,6 +143,8 @@ class PenNameProfile:
             description=d.get("description", ""),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
+            language_hint=d.get("language_hint", ""),
+            discipline=list(d.get("discipline") or []),
         )
 
     def build_style_prompt(self) -> str:
@@ -153,13 +174,17 @@ class PenNameProfile:
         return "\n".join(parts) + "\n"
 
     def build_language_hints(self) -> str:
-        """按笔名语言给出写作习惯提示（中文/英文笔名分开；注入到风格约束尾部）。"""
+        """按笔名语言给出写作习惯提示（注入到风格约束尾部）。
+
+        优先用 profile.language_hint（由 styles/<pen>.json sync 写入）；为空才按语言回退默认。"""
+        if (self.language_hint or "").strip():
+            return self.language_hint
         lang = (self.language or "zh").lower()
-        if lang == "en":
-            return ("- 英文笔名风格：句式长短交错，时态/主谓一致，缩写与口语自然；"
-                    "避免过度从句嵌套，对话标签多用常见词（said/asked 等）。")
-        return ("- 中文写作习惯：标点用全角；短句为骨、善用省略号留白与设问推进推理；"
-                "避免欧化长句、翻译腔与口语化感叹（不写「卧槽/靠/淦」类粗口）；正文不用圆括号作括注。")
+        return DEFAULT_LANGUAGE_HINT_EN if lang == "en" else DEFAULT_LANGUAGE_HINT_ZH
+
+    def discipline_items(self) -> list[str]:
+        """通用写作纪律条目：优先 profile.discipline；为空回退默认。"""
+        return list(self.discipline) or list(DEFAULT_DISCIPLINES)
 
     def build_writing_prompt(self) -> str:
         """生成前强注入全文本（get_writing_context 使用）：
@@ -173,12 +198,7 @@ class PenNameProfile:
         if lines:
             parts.append("\n".join(lines))
         parts.append(
-            "【通用写作纪律】"
-            "\n- 对话用日常语气，不要文绉绉，也不出粗口脏话"
-            "\n- 每段 1-3 句，一句一段是正常节奏，不写大段堆砌描写"
-            "\n- 内心独白克制直白，不堆感叹词，情绪交给动作与短句"
-            "\n- 偶尔留半截话或断在省略号，不要所有句子主谓宾完整"
-            "\n- 动作描写用准确动词，不要每句都带修饰副词"
+            "【通用写作纪律】" + "\n" + "\n".join(f"- {d}" for d in self.discipline_items())
         )
         return "\n".join(parts) + "\n"
 
@@ -262,6 +282,21 @@ class ProfileManager:
         profile.updated_at = datetime.now().isoformat()
         self._cache[profile.id] = profile
         self._save(profile)
+
+    def upsert(self, profile: PenNameProfile, *, created: bool = False) -> PenNameProfile:
+        """按显式 id 覆盖/新建(给 sync 从 styles/<pen>.json 重建用,避免 create() 的自增 id)。
+
+        profile 已存在 → 覆盖缓存并落盘;不存在 → 补 created_at 后落盘。统一刷新 updated_at。
+        保留字段的合并(platform_accounts 等运营元数据)由调用方在构造 profile 前完成。"""
+        from datetime import datetime
+        now = datetime.now().isoformat()
+        existed = profile.id in self._cache
+        if not existed and not profile.created_at:
+            profile.created_at = now
+        profile.updated_at = now
+        self._cache[profile.id] = profile
+        self._save(profile)
+        return profile
 
     def _save(self, profile: PenNameProfile):
         path = self.dir / f"{profile.id}.json"
