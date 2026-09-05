@@ -1,6 +1,6 @@
 ---
 name: novel-story
-description: 弧+写作阶段。生成弧/排故事线/深化弧/确认弧/续写扩写/写正文/写下一章/写桥段/一键写完整章。流程:阶段一 弧+桥段自主生成 save_outlines 落盘(phase=plots 草案,ready 由用户确认) → 阶段二 逐桥段写正文 save_bridge_draft → 章满 save_chapter_text → 规则质检。前置:phase=config(先排弧)或 plots(深化确认后)或 ready(写作)。
+description: 弧+写作阶段。写正文/写下一章/写桥段/续写扩写/一键写完整章/排故事线/config补弧。流程:先看 phase——ready(含新书提交即 ready)=逐桥段写正文(save_bridge_draft → 章满 save_chapter_text → 规则质检)；config/plots=兜底补弧排故事线(save_outlines 深化式落盘,每弧 notes+validate 回打,参考 novel-build 步3)→用户在书详情确认进 ready；已 ready 追加弧保持 ready。深化已并入建书步3,新书提交即 ready,本 skill 不再承担常规深化段。
 ---
 
 # 弧 + 写作（novel-story）— 排故事线到写正文一体
@@ -10,12 +10,12 @@ description: 弧+写作阶段。生成弧/排故事线/深化弧/确认弧/续�
 > 定义与契约（弧/桥段/线程/设局收局/章节/故事线数据规则）见 NOVEL_AGENT.md 1.1 / 1.2。
 
 ## 前置检查（必做）
-- `get_book_state(book_id)`：`phase=config` → 先走**阶段一**（弧+桥段）；`phase=plots` → 弧+桥段已落（草案），走**深化→确认**；`phase=ready` → 直接走**阶段二**（写作）；看 current_chapter 与草稿定位续写点。
+- `get_book_state(book_id)`：`phase=ready` → 直接走**阶段二**（写作）——新书经建书步3 深化式生成、用户提交即 ready，正常都是 ready；`phase=config`/`phase=plots` → 弧+桥段没随 submit 带上（step3 ②失败/仅 outline 无 plots 的兜底），先走**阶段一**补弧排故事线；看 current_chapter 与草稿定位续写点。
 
-## 阶段一：弧 + 桥段（生成弧 / 深化弧 / 排故事线 / 选桥段）
-- 自主生成 outlines/plots/threads/themes → `save_outlines` 落盘（phase=plots 草案；**已 ready 书追加弧保持 ready**）。
-- **弧/桥段深化（研究式，非一次出稿）**：调 `validate_storyline(book_id=…)`（含 arc_fill）→ 按 decision_points 回改 ≥1 轮 → 直到 passed 或列残留决策点；每条顶层弧 `notes` 记「弧目标+偏离库模板点」。
-- **ready 由用户确认**：书停在 phase=plots（新书或 config 补弧后）→ 汇报蓝图（弧树/字数/桥段/线程/设局收局 + passed + decision_points），引导用户在书详情页点「✅ 确认弧+桥段」进 ready；**agent 无翻 ready 工具，不得臆造翻转**。已 ready → 直接进阶段二。
+## 阶段一：补弧 / 排故事线（config/plots 兜底、ready 追加弧用；深化已在建书步3 内联完成）
+- 自主生成 outlines/plots/threads/themes（含每条弧 `notes`「弧目标+偏离库模板点」）→ `save_outlines` 落盘（config/plots 书 → phase=plots 待用户确认；**已 ready 书追加弧保持 ready**）。
+- **校验回打（≥1 轮）**：调 `validate_storyline(book_id=…)`（含 arc_fill）→ 按 decision_points 回改 ≥1 轮 → 直到 passed 或列残留决策点。
+- **非 ready 书由用户确认**：书停在 phase=plots → 汇报蓝图（弧树/字数/桥段/线程/设局收局 + passed + decision_points），引导用户在书详情页点「✅ 确认弧+桥段」进 ready；**agent 无翻 ready 工具，不得臆造翻转**。已 ready → 直接进阶段二。
 - 弧（定义见 NOVEL_AGENT.md 1.1）：每弧有明确方向/目标（写进 `notes` 或 `narrative_target`），用 `start_word/end_word` 标**字数跨度**
   （0 基，start 含/end 不含），不设固定章数；可 `parent_arc_id` 套子弧；**桥段仅挂最底层弧**（不包含其他弧的弧）。
 - **顶层弧覆盖**：故事线纵轴任意点都要有顶层弧占据；续写/扩写追加弧时，上一弧的 `end_word` 应接续到新弧的 `start_word`（除非有意留白并说明）；**生成后调 `validate_storyline` 校验**（含 arc_fill 弧内空白），不要靠肉眼读 get_storyline 检查。

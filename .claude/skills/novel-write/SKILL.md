@@ -16,7 +16,7 @@ description: >-
 ## 前置检查（必做）
 1. `mcp__novel-engine__get_book_state(book_id)`：
    - `phase=config`（缺弧）→ 提示先经建书向导/dsh 落弧（本 skill 不排弧）。
-   - `phase=plots`（弧+桥段草案待确认）→ 提示用户在书详情页「✅ 确认弧+桥段」进 ready 再写（agent 无翻 ready 工具）。
+   - `phase=plots`（config 补弧后/遗留恢复；正常新书提交即 ready，不经此）→ 提示用户在书详情页「✅ 确认弧+桥段」进 ready 再写（agent 无翻 ready 工具）。
    - `phase=ready` → 继续；看 `current_chapter` 与进行中草稿（draft）定位续写点。
 2. `mcp__novel-engine__get_storyline(book_id)` → 当前弧、下一个待写桥段（plot_id/名称/写在哪章）。
 
