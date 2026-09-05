@@ -683,6 +683,26 @@ assert_ok("validate-差异化不报软提示",
           and _r_v.get("structure_hints", {}).get("uniform_bridge_words") is False
           and len(_r_v.get("suggestions", [])) == 0,
           str(_r_v.get("structure_hints")))
+# 深拆软提示：两层 + 大叶弧(span≥3×wpc=9000) → deep_split_suggested=True 且 passed 不受影响
+_out_big = [_mkout("tb", "顶层B2", 0, 12000), _mkout("lb", "大叶弧", 0, 12000, "tb")]
+_pl_big = [{"id": "big%d" % i, "name": "桥B%d" % i, "outline_id": "lb", "order": i, "words": 1500}
+           for i in range(8)]
+_r_big = _at.validate_storyline(outlines=_out_big, plots=_pl_big, words_per_chapter=3000)
+assert_ok("validate-大叶弧提示可拆第三层",
+          _r_big.get("structure_hints", {}).get("max_arc_depth") == 2
+          and _r_big.get("structure_hints", {}).get("deep_split_suggested") is True
+          and _r_big.get("structure_hints", {}).get("deep_leaf_ids") == ["lb"],
+          str(_r_big.get("structure_hints")))
+assert_ok("validate-深拆软提示不改passed", _r_big.get("passed") is True)
+# 已三层 → 不再提示深拆（即便叶弧大）
+_out_3l = [_mkout("A", "顶层A3", 0, 12000), _mkout("A1", "中弧", 0, 12000, "A"), _mkout("A1a", "叶A3", 0, 12000, "A1")]
+_pl_3l = [{"id": "t3%d" % i, "name": "桥T%d" % i, "outline_id": "A1a", "order": i, "words": 1500}
+          for i in range(8)]
+_r_3l = _at.validate_storyline(outlines=_out_3l, plots=_pl_3l, words_per_chapter=3000)
+assert_ok("validate-已三层不再提示深拆",
+          _r_3l.get("structure_hints", {}).get("max_arc_depth") == 3
+          and _r_3l.get("structure_hints", {}).get("deep_split_suggested") is False,
+          str(_r_3l.get("structure_hints")))
 
 # ══════════════════════════════════════════════
 #  汇总
