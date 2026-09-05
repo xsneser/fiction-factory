@@ -26,7 +26,7 @@ description: >-
 3. **逐桥段循环里每轮只重取一次 `get_writing_context`**（draft/written_chapter 会变）；**不要**再单独调 `get_book_detail` / `get_storyline`（它们是 get_writing_context 的子集/重叠）。
 
 ## 写作规则（生成时内嵌到你的思考）
-- **笔名风格强约束（必读必遵）**：动笔前先 `mcp__novel-engine__get_pen_style(book_id)` 拿该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），逐条遵守；每轮 `get_writing_context` 返回的 `style_card` 是**精简风格提醒（必读，防风格漂移）**。**未拿到风格不得写正文**；被裁剪/信息不足时用 `get_pen_style` 重读（独立薄工具，不纠缠全量上下文）。
+- **笔名风格强约束（必读必遵）**：动笔前先 `mcp__novel-engine__get_pen_style(book_id)` 拿该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），逐条遵守；每轮 `get_writing_context` 返回的 `style_card` 是**精简风格提醒（必读，防风格漂移）**。**未拿到风格不得写正文**；被裁剪/信息不足时用 `get_pen_style` 重读（独立薄工具，不纠缠全量上下文）。若 `get_pen_style` 的 `style_rules` 内含 `STYLE REFERENCE` 人工样本段，它是**最高风格来源**：直接参考其语言惯性/叙述距离/信息组织/对白衔接继续创作，**不总结、不抽公式、不套模板**；md 原则与规则只作负约束。
 - **一致性铁律**：人名/系统绑定/数值/设定不得与已写冲突；前后呼应伏笔。
 - **视角铁律**：全书统一（默认第三人称），不漂移。
 - **语言纪律**：禁 AI 味句式（仿佛/似乎/不禁/只见 堆叠），少用破折号，对话占比自然——以 `get_pen_style` 拿到的笔名规则（句式风格/禁止内容）为准。

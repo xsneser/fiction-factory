@@ -33,6 +33,7 @@ from libraries.storyline import OutlineSlot, annotate_plot_roles, \
     get_mc, get_characters, normalize_basic_info  # noqa: E402
 from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
 from libraries.tool_policy import _wrap_phase_gate  # noqa: E402
+from libraries import style_md  # noqa: E402  # 样本驱动:styles/<pen>.md 与 STYLE REFERENCE 样本
 
 
 # ─── 基础辅助 ───
@@ -367,18 +368,35 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
     if profile is None:
         raise RuntimeError("没有可用的笔名档案")
     rules = [r for r in StyleRuleLibrary().rules_for(profile.id) if r.enabled]
-    return {
-        "pen_name": profile.pen_name,
-        "language": profile.language or "zh",
-        "profile_id": profile.id,
-        "style_rules": profile.build_writing_prompt(),
-        "style": [r.pattern for r in rules if r.kind == "prefer" and r.pattern],
-        "forbidden": {
+    # 样本驱动:存在 styles/<pen>.md → style_rules = 该 md(负约束/原则);
+    # 其后若存在 storage/style_refs/<pen>.reference.txt → 追加为 STYLE REFERENCE 人工样本(最高风格来源)。
+    # 无 md → 回退规则拼装(legacy,数组照旧)。每次现读文件,手改 md/样本即刻生效。
+    style_md_text = style_md.read_style_md(profile)
+    ref_text = style_md.read_ref(profile)
+    sample_driven = style_md_text is not None
+    if sample_driven:
+        style_rules = style_md_text
+        if ref_text:
+            style_rules = style_rules + "\n\n" + ref_text
+        # md 模式结构性数组清空:① 与「不建禁词表/不机械规避」哲学一致;② 使本工具结果 <8KB
+        # 免被 dsh 裁剪(否则 md+样本+大数组超限,style_rules 中段被裁)。非 md 笔名不受影响。
+        style_list, forbidden = [], {"words": [], "patterns": []}
+    else:
+        style_rules = profile.build_writing_prompt()
+        style_list = [r.pattern for r in rules if r.kind == "prefer" and r.pattern]
+        forbidden = {
             "words": [{"word": r.pattern, "replacement": "、".join(r.replacements or []), "desc": r.desc}
                       for r in rules if r.kind in ("ban", "word") and r.replacements and r.pattern],
             "patterns": [{"pattern": r.pattern, "desc": r.desc, "severity": r.severity}
                          for r in rules if r.kind == "ban" and not r.replacements and r.pattern],
-        },
+        }
+    return {
+        "pen_name": profile.pen_name,
+        "language": profile.language or "zh",
+        "profile_id": profile.id,
+        "style_rules": style_rules,
+        "style": style_list,
+        "forbidden": forbidden,
         "language_hint": profile.build_language_hints(),
         "discipline": "【通用写作纪律】" + "；".join(profile.discipline_items()),
     }
