@@ -264,13 +264,18 @@
     var bodyW = outlineBody.clientWidth, bodyH = outlineBody.clientHeight;
     if (!bodyH || bodyH < 40) bodyH = 400;
 
-    // 弧树层级：沿 parent（parent_arc_id）递归，父缺失→0 防环
-    function getArcLevel(o, cache) {
+    // 弧树层级：沿 parent（parent_arc_id）递归，父缺失→0 防环；
+    // stack 记录求深中的祖先 id，parent_arc_id 成环（异常数据）时在此截断为 0，避免无限递归栈溢出
+    function getArcLevel(o, cache, stack) {
       if (cache[o.id] !== undefined) return cache[o.id];
+      stack = stack || {};
+      if (stack[o.id]) return (cache[o.id] = 0);
       if (!o.parent) return (cache[o.id] = 0);
       var parent = null;
       for (var i = 0; i < outlines.length; i++) { if (outlines[i].id === o.parent) { parent = outlines[i]; break; } }
-      cache[o.id] = parent ? getArcLevel(parent, cache) + 1 : 0;
+      stack[o.id] = true;
+      cache[o.id] = parent ? getArcLevel(parent, cache, stack) + 1 : 0;
+      delete stack[o.id];
       return cache[o.id];
     }
     var levels = {};

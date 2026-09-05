@@ -1345,8 +1345,34 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
     _uniform_bridge = len(_plots) >= 6 and len(_bridge_words) == 1
     if _uniform_bridge:
         _lattice.append(f"桥段目标字数全相同（{len(_plots)} 个桥段均 {_bridge_words[0]} 字，常见=全默认 cover_beats=4→800），疑似模板印刷，建议按场景浓淡差异化（words 300~2500）")
+
+    # ⑤ 深度下探建议（可选，不强制、不改 passed）：两层树 + 存在 ≥3×wpc 的大叶弧 → 提示可拆第三层
+    _by_arc_id = {(getattr(a, "id", "") or ""): a for a in _arcs}
+
+    def _arc_depth(aid, seen=None):
+        if not aid or aid not in _by_arc_id:
+            return 1
+        par = getattr(_by_arc_id[aid], "parent_arc_id", "") or ""
+        if not par:
+            return 1
+        seen = seen or set()
+        if aid in seen:      # 防环（异常数据）：环上按 1 截断
+            return 1
+        return 1 + _arc_depth(par, seen | {aid})
+
+    _max_depth = max((_arc_depth(getattr(a, "id", "") or "") for a in _arcs), default=0)
+    _big_leaves = []
+    if _max_depth == 2:
+        for a in leaf_arcs:
+            _span = (getattr(a, "end_word", 0) or 0) - (getattr(a, "start_word", 0) or 0)
+            if _span >= 3 * wpc:
+                _big_leaves.append({"id": getattr(a, "id", ""), "name": getattr(a, "name", ""), "span": _span})
+        _big_leaves = _big_leaves[:5]
     structure_hints = {"uniform_leaf_spans": _uniform_leaf, "uniform_bridge_words": _uniform_bridge,
-                       "leaf_spans_set": leaf_spans[:10], "bridge_words_set": _bridge_words[:10]}
+                       "leaf_spans_set": leaf_spans[:10], "bridge_words_set": _bridge_words[:10],
+                       "max_arc_depth": _max_depth,
+                       "deep_split_suggested": bool(_big_leaves),
+                       "deep_leaf_ids": [b["id"] for b in _big_leaves]}
     if _lattice:
         for h in _lattice:
             suggestions.append(h)
@@ -1358,6 +1384,11 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
         if _uniform_bridge:
             _tags.append("桥段字数均一")
         parts.append("结构提示：" + "、".join(_tags) + "（软提示，见 suggestions/decision_points）")
+    if _big_leaves:
+        _big_names = "、".join(f"「{b['name']}」({b['span']}字≈{max(1, round(b['span'] / wpc))}章)"
+                               for b in _big_leaves)
+        suggestions.append(f"叶弧 {_big_names} 跨度较大：若内含 2+ 可独立排序的子目标，可拆出第三层（中弧→小叶弧）；"
+                           f"无则保持两层即可——可选，不强制（structure_hints.deep_split_suggested）")
     return {
         "ok": True, "book_id": book_id, "passed": passed,
         "issue_count": len(_cov_issues) + len(_leaf_issues) + len(_fill_issues),
