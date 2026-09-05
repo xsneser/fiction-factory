@@ -18,12 +18,12 @@
 </div>
 
 {% if storyline and storyline.phase == 'plots' %}
+{# plots 现仅 config/补弧失败兜底恢复用（正常新书提交即 ready，不出现此横幅）；深化已并入步3，无深化按钮 #}
 <div class="card" style="border:1px solid #d29922;background:rgba(210,153,34,.08);padding:12px 16px;margin-bottom:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
-        <div style="color:#d29922;font-weight:600">📐 故事线草案待确认 <span style="color:#8b949e;font-weight:400">（弧+桥段已落盘，确认后才解锁写作）</span></div>
+        <div style="color:#d29922;font-weight:600">📐 故事线待确认 <span style="color:#8b949e;font-weight:400">（补弧落盘，确认后才解锁写作）</span></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button type="button" class="small" onclick="var h=document.getElementById('sl-toggle');if(h){var t=h.nextElementSibling;if(t){t.classList.toggle('show');window.initStoryline&&window.initStoryline();}}">🔍 预览故事线</button>
-            <button type="button" class="small" id="deepen-storyline-btn">🔄 让 agent 深化弧+桥段</button>
             <button type="button" class="small" style="background:#238636;color:#fff" id="confirm-storyline-btn">✅ 确认弧+桥段，开始写作</button>
         </div>
     </div>
@@ -199,33 +199,8 @@ if (h1El) h1El.addEventListener('click', function() {
 </script>
 {% if storyline and storyline.phase == 'plots' %}
 <script>
-/* 故事线草案（plots）：深化任务 / 确认门 / 新书自动深化一次 */
+/* plots 兜底恢复（config/补弧后）：确认门——挂内涵并翻 ready；正常新书提交即 ready，无自动深化 */
 (function () {
-    var deepenKey = 'storyline-deep-' + BOOK_ID;
-    var newDraft = new URLSearchParams(location.search).get('newdraft') === '1';
-
-    function deepenTaskText() {
-        var t = (typeof __BOOK_TITLE__ !== 'undefined' && __BOOK_TITLE__) || BOOK_ID;
-        return '《' + t + '》是刚建的新书，弧+桥段处于 plots 草案（phase=plots，尚未 ready）。'
-            + '请按 novel-build 提交后段做一次研究式深化：先审差异化命题（核心冲突是否反模板、有独特卖点），'
-            + '调 validate_storyline(book_id=...) 按 decision_points 回改弧/桥段（至少一轮；过得了就把差异写足即停，不堆回合），'
-            + '落盘后产出故事线蓝图汇报（弧树/字数/线程/设局收局 + passed + decision_points），等用户在书详情页确认。';
-    }
-    function sendDeepen() {
-        var f = window.agentSendTask;
-        if (typeof f !== 'function') return false;
-        try { f(deepenTaskText(), {card: true}); return true; } catch (e) { return false; }
-    }
-    function markSent() { sessionStorage.setItem(deepenKey, '1'); }
-
-    var deepenBtn = document.getElementById('deepen-storyline-btn');
-    if (deepenBtn) deepenBtn.addEventListener('click', function () {
-        if (!sendDeepen()) { window.showToast && showToast('侧栏 agent 未就绪', 'error'); return; }
-        markSent();
-        deepenBtn.disabled = true;
-        var m = document.getElementById('storyline-confirm-msg');
-        if (m) m.textContent = '🔄 已派发深化任务，侧栏正在推进…（也可直接确认当前草案）';
-    });
     var confirmBtn = document.getElementById('confirm-storyline-btn');
     if (confirmBtn) confirmBtn.addEventListener('click', function () {
         confirmBtn.disabled = true;
@@ -239,15 +214,6 @@ if (h1El) h1El.addEventListener('click', function() {
             })
             .catch(function (e) { window.showToast && showToast('确认失败：' + e, 'error'); confirmBtn.disabled = false; });
     });
-    /* 新书提交后自动深化一次（?newdraft=1；sessionStorage 防重发/防刷新重发） */
-    if (newDraft && !sessionStorage.getItem(deepenKey)) {
-        var tries = 0;
-        var iv = setInterval(function () {
-            if (sessionStorage.getItem(deepenKey)) { clearInterval(iv); return; }
-            if (sendDeepen()) { markSent(); clearInterval(iv); }
-            else if (++tries > 24) { clearInterval(iv); }
-        }, 500);
-    }
 })();
 </script>
 {% endif %}

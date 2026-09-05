@@ -994,6 +994,7 @@ var WZ = {
         return {
             description: (this.state.world_building || {}).description || '',   // 一句话设定保留在 state，步3 不展示/编辑
             tags: Array.isArray(this.state.tags) ? this.state.tags : [],
+            differentiation: (this.state.world_building || {}).differentiation || '',  // 反模板差异化完整论述：只存不编辑（随 set_world 并入 state，透传落库）
             era: this.el('wz-wb-era').value.trim(),
             power_system: this.el('wz-wb-power_system').value.trim(),
             geography: this.el('wz-wb-geography').value.trim(),

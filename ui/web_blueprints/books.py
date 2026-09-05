@@ -184,8 +184,8 @@ def book_detail(book_id):
 def api_confirm_storyline(book_id):
     """用户确认弧+桥段（plots 草案 → ready）：挂内涵/吸睛 + phase=ready。
 
-    这是 plots→ready 的唯一翻转（agent 工具面已删 fill_gags/confirm_outlines），
-    只能由用户在书详情页点「确认弧+桥段，开始写作」触发，agent 无此工具。
+    2026-09-05 起正常新书提交即 ready（深化并入步3），本端点仅剩 config/补弧失败兜底
+    恢复用（agent 工具面已删 fill_gags/confirm_outlines，agent 无翻 ready 工具）。
     """
     tl = book_mgr.load_storyline(book_id)
     if tl is None:
@@ -197,7 +197,7 @@ def api_confirm_storyline(book_id):
                         "error": f"仅 plots 草案可确认（当前 phase={tl.phase}）"}), 400
     if not tl.plots:
         return jsonify({"ok": False,
-                        "error": "尚无桥段，请先让 agent 深化弧+桥段落盘再确认"}), 400
+                        "error": "尚无桥段，请先补弧落盘再确认"}), 400
     builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
                                gag_lib=gag_lib)
     builder.fill_themes_and_hooks(tl.plots, tl)
