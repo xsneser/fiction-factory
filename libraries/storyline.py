@@ -275,6 +275,7 @@ class PlotSlot:
     # 位置信息（用于故事线展示）
     order: int = 0                 # 阶段内排序
     cover_beats: int = 4           # 预计覆盖多少个节拍
+    words: int | None = None       # 目标字数（agent 按内容浓淡给的规划字数；0/None=回退 cover_beats×200）
     template_structure: str = ""   # 桥段模板结构字符串（箭头流程）
     slots: list = field(default_factory=list)  # 变量槽位
 
@@ -365,6 +366,7 @@ class BookStoryline:
                 "parent_plot_id": p.parent_plot_id,
                 "children_plot_ids": p.children_plot_ids,
                 "order": p.order, "cover_beats": p.cover_beats,
+                "words": p.words,
                 "template_structure": p.template_structure,
                 "slots": p.slots,
                 "gag_ids": p.gag_ids, "theme_hints": p.theme_hints,
@@ -433,6 +435,7 @@ class BookStoryline:
             parent_plot_id=p.get("parent_plot_id", ""),
             children_plot_ids=p.get("children_plot_ids", []),
             order=p.get("order", 0), cover_beats=p.get("cover_beats", 4),
+            words=p.get("words"),
             template_structure=p.get("template_structure", ""),
             slots=p.get("slots", []),
             gag_ids=p.get("gag_ids", []),

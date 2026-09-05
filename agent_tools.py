@@ -380,8 +380,9 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
                          for r in rules if r.kind == "ban" and not r.replacements and r.pattern],
         },
         "language_hint": profile.build_language_hints(),
-        "discipline": "【通用写作纪律】对话用日常语气，不要文绉绉；每段 2-3 句，不大段堆砌描写；"
-                     "内心独白可口语化；偶尔留半截话，不要所有句子主谓宾完整；动作描写不要每句都带修饰副词。",
+        "discipline": "【通用写作纪律】对话用日常语气，不要文绉绉，也不出粗口脏话；每段 1-3 句，"
+                     "一句一段是正常节奏，不大段堆砌描写；内心独白克制直白，不堆感叹词，情绪交给动作与短句；"
+                     "偶尔留半截话或断在省略号，不要所有句子主谓宾完整；动作描写用准确动词，不要每句都带修饰副词。",
     }
 
 
@@ -1256,9 +1257,18 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
     _leaf_passed = not _leaf_issues
 
     # ③ 弧内覆盖：顶层弧跨度 vs 其叶弧后代桥段 planned_words 之和（warning 级，不计硬失败）
+    # 口径与 libraries/storyline_writer.planned_words 一致：plot.words(agent 目标字数) 优先，
+    # 未给回退 cover_beats×200 封顶 1200（两处同步，勿单改）。
     def _pw_of(p):
-        beats = 4
-        beats = int(p.get("cover_beats") or 4) if isinstance(p, dict) else int(getattr(p, "cover_beats", 4) or 4)
+        words = 0
+        if isinstance(p, dict):
+            words = int(p.get("words") or 0)
+            beats = int(p.get("cover_beats") or 4)
+        else:
+            words = int(getattr(p, "words", 0) or 0)
+            beats = int(getattr(p, "cover_beats", 4) or 4)
+        if words > 0:
+            return max(200, min(words, 3000))
         beats = max(beats, 2)
         return min(beats * 200, 1200)
 

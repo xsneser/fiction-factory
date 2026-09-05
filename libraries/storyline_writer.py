@@ -21,7 +21,8 @@ from .style_ban import LANGUAGE_DISCIPLINE, build_style_ban_prompt
 from core.text_utils import count_prose_units
 
 CHARS_PER_BEAT = 200          # 每个节拍预计写多少个汉字（用于桥段字数规划）
-MAX_BRIDGE_WORDS = 1200       # 单个桥段字数上限（与 frontend story_line.js 共用同一公式）
+MAX_BRIDGE_WORDS = 1200       # 节拍制单个桥段字数上限（与 frontend story_line.js 共用同一公式）
+MAX_PLAN_WORDS = 3000         # agent 直接给的目标字数 plot.words 的上限（≈一章上限级，防单桥虚高）
 WRITER_MAX_TOKENS = 1600      # 桥段写作输出上限：3-5 短句正文 + flash 推理余量
                               # （flash 先推理再输出，推理过长会吃掉 max_tokens 导致 content 为空）
 WRITER_EMPTY_RETRIES = 2      # 写作空响应重试次数（模型偶发返回空内容）
@@ -52,8 +53,14 @@ def opening_mode_active(chapter_num: int, chapter_words: int, written_count: int
 
 
 def planned_words(plot) -> int:
-    """桥段预计字数 = cover_beats × 每拍字数，封顶。
-    前端 story_line.js 用同一公式渲染，保证「预计 = 实际」。"""
+    """桥段预计字数（规划/预估，实际正文仍按书写自然浮动）。
+
+    优先 agent 按内容浓淡给的目标字数 plot.words（clamp [200, MAX_PLAN_WORDS]）；
+    未给（0/None）回退节拍制 cover_beats × CHARS_PER_BEAT 封顶 MAX_BRIDGE_WORDS。
+    前端 story_line.js plannedWords() 与 agent_tools validate 用同一口径（words 覆盖 + beat 兜底）。"""
+    words = int(getattr(plot, "words", 0) or 0)
+    if words > 0:
+        return max(200, min(words, MAX_PLAN_WORDS))
     beats = max(int(getattr(plot, "cover_beats", 0) or 0), 2)
     return min(beats * CHARS_PER_BEAT, MAX_BRIDGE_WORDS)
 

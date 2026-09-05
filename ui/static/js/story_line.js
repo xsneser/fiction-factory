@@ -10,7 +10,7 @@
 
   var TOTAL_WORDS = 0;
   var WPC = 3000;
-  var CHARS_PER_BEAT = 200, MAX_BRIDGE_WORDS = 1200;   // 与后端 storyline_writer.py:23-24 同一公式
+  var CHARS_PER_BEAT = 200, MAX_BRIDGE_WORDS = 1200, MAX_PLAN_WORDS = 3000;   // 与后端 storyline_writer.py 同一公式/口径
   var outlines = [], plots = [], threads = [];
   var promises = [], promiseByPlot = {};   // 读者承诺台账：桥段id → [{kind:setup/payoff, pr}]
   var setupIds = {};                       // 设局桥段 id 集合（被 resolves_plot_id 引用的桥段）
@@ -43,8 +43,13 @@
   function fmtW(w) {
     return (w >= 1000) ? (Math.round(w / 1000 * 10) / 10) + 'k' : String(Math.round(w));
   }
-  /* 桥段预计字数 = cover_beats × 200，封顶 1200（与后端 storyline_writer.planned_words 同一公式） */
+  /* 桥段预计字数（规划/预估）：plot.words 优先（agent 目标字数，clamp 3000），否则节拍制 cover_beats×200 封顶 1200
+     ——与后端 storyline_writer.planned_words 同一口径（words 覆盖 + beat 兜底） */
   function plannedWords(p) {
+    if (p) {
+      var w = parseInt((p && p.words) || 0, 10) || 0;
+      if (w > 0) return Math.max(200, Math.min(w, MAX_PLAN_WORDS));
+    }
     var beats = Math.max(parseInt((p && p.cover_beats) || 0, 10) || 0, 2);
     return Math.min(beats * CHARS_PER_BEAT, MAX_BRIDGE_WORDS);
   }
