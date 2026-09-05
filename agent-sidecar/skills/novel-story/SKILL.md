@@ -13,7 +13,7 @@ description: 弧+写作阶段。写正文/写下一章/写桥段/续写扩写/�
 - `get_book_state(book_id)`：`phase=ready` → 直接走**阶段二**（写作）——新书经建书步3 深化式生成、用户提交即 ready，正常都是 ready；`phase=config`/`phase=plots` → 弧+桥段没随 submit 带上（step3 ②失败/仅 outline 无 plots 的兜底），先走**阶段一**补弧排故事线；看 current_chapter 与草稿定位续写点。
 
 ## 阶段一：补弧 / 排故事线（config/plots 兜底、ready 追加弧用；深化已在建书步3 内联完成）
-- 自主生成 outlines/plots/threads/themes（含每条弧 `notes`「弧目标+偏离库模板点」；**每桥段 `words` 按内容浓淡 300~2500、弧跨度=其 words 之和、勿按章均分**——口径同 novel-build 步3）→ `save_outlines` 落盘（config/plots 书 → phase=plots 待用户确认；**已 ready 书追加弧保持 ready**）。
+- 自主生成 outlines/plots/threads/themes（含每条弧 `notes`「弧目标+偏离库模板点」；**每桥段 `words` 按内容浓淡 300~2500、弧跨度=其 words 之和、勿按章均分；≥3章且内含 2+ 可独立排序子目标的目标块拆第三层（判据见 NOVEL_AGENT 1.1），无则保持两层**——口径同 novel-build 步3）→ `save_outlines` 落盘（config/plots 书 → phase=plots 待用户确认；**已 ready 书追加弧保持 ready**）。
 - **校验回打（≥1 轮）**：调 `validate_storyline(book_id=…)`（含 arc_fill）→ 按 decision_points 回改 ≥1 轮 → 直到 passed 或列残留决策点；若报 `structure_hints`（叶弧跨度均一/桥段字数全同）**须消除或说明**。
 - **非 ready 书由用户确认**：书停在 phase=plots → 汇报蓝图（弧树/字数/桥段/线程/设局收局 + passed + decision_points），引导用户在书详情页点「✅ 确认弧+桥段」进 ready；**agent 无翻 ready 工具，不得臆造翻转**。已 ready → 直接进阶段二。
 - 弧（定义见 NOVEL_AGENT.md 1.1）：每弧有明确方向/目标（写进 `notes` 或 `narrative_target`），用 `start_word/end_word` 标**字数跨度**
