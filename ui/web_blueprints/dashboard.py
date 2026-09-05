@@ -177,8 +177,10 @@ def start_new_book():
             phase="config",
         )
 
-        # 新流程：步 3 ②生成的大纲+桥段随书落库 → 书创建即 phase=plots（草案）
-        # ready 只由用户在书详情页「确认弧+桥段」给出（深化+确认门，见 /api/book/<id>/confirm-storyline）
+        # 深化并入步3（2026-09-05）：步 3 深化式生成的大纲+桥段随书落库，
+        # 用户浏览器点提交即 phase=ready（解锁写作，无书详情二次确认/深化段）。
+        # ready 前在此补齐原 confirm-storyline 职责（挂内涵+角色标注）；仅 outlines 无 plots
+        # 则留 plots（config/补弧兜底恢复，需用户在书详情确认，见 /api/book/<id>/confirm-storyline）。
         if outline_data and isinstance(outline_data.get("outlines"), list) and outline_data["outlines"]:
             from libraries.storyline import BookStoryline as _BS, annotate_plot_roles
             _tmp = _BS.from_dict({
@@ -191,8 +193,13 @@ def start_new_book():
             storyline.plots = _tmp.plots
             storyline.threads = _tmp.threads
             storyline.themes = _tmp.themes
-            storyline.phase = "plots"
             storyline.generated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+            if _tmp.plots:
+                StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
+                                 gag_lib=gag_lib).fill_themes_and_hooks(storyline.plots, storyline)
+                storyline.phase = "ready"
+            else:
+                storyline.phase = "plots"  # 兜底：无桥段不 ready（config/补弧 → 用户书详情确认恢复）
             annotate_plot_roles(storyline)
 
         # 直接建正式书（规划书=书目录内的书；草稿目录已废弃）
@@ -209,12 +216,11 @@ def start_new_book():
         book_mgr.save_storyline(book.book_id, storyline)
 
         # 向导（JSON）返回 book_id 供前端接续生成；旧 form 入口保留 302
-        # newdraft=1：书详情页据此自动给 agent 发「深化弧+桥段」任务（plots 草案期）
+        # 深化已并入步3、提交即 ready → 跳书详情不再带 ?newdraft=1（无自动深化派发）
         if is_json:
             return jsonify({"ok": True, "book_id": book.book_id,
-                            "redirect": url_for("books.book_detail", book_id=book.book_id,
-                                                newdraft=1)})
-        return redirect(url_for("books.book_detail", book_id=book.book_id, newdraft=1))
+                            "redirect": url_for("books.book_detail", book_id=book.book_id)})
+        return redirect(url_for("books.book_detail", book_id=book.book_id))
 
     from libraries.world_tags import WORLD_TAG_GROUPS
     return render_template("start_book.html",
