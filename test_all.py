@@ -637,6 +637,54 @@ _bs_mod.get_build_status = _orig_get
 _bs_mod.set_build_status({})   # 恢复空态，不残留真实向导状态
 
 # ══════════════════════════════════════════════
+#  Phase: 桥段目标字数 plot.words（反印刷感）
+# ══════════════════════════════════════════════
+print("\n═══ Phase: 桥段目标字数 plot.words（反印刷感）═══")
+from libraries.storyline import BookStoryline as _BS2, PlotSlot as _PS2
+from libraries.storyline_writer import planned_words as _pw
+
+_r = _BS2.from_dict({"plots": [{"id": "w1", "name": "桥", "outline_id": "a1", "words": 1100, "cover_beats": 6}]})
+assert_ok("words-往返落库", _r.plots[0].words == 1100 and _r.plots[0].cover_beats == 6
+          and _r.to_dict()["plots"][0].get("words") == 1100)
+assert_ok("words-缺省为None", _BS2.from_dict({"plots": [{"id": "w0", "name": "桥", "outline_id": "a1"}]}).plots[0].words is None)
+assert_ok("planned-words覆盖", _pw(_PS2(id="a", template_id="t", name="n", outline_id="o", words=1500)) == 1500)
+assert_ok("planned-words上限3000", _pw(_PS2(id="a", template_id="t", name="n", outline_id="o", words=6000)) == 3000)
+assert_ok("planned-words下限200", _pw(_PS2(id="a", template_id="t", name="n", outline_id="o", words=80)) == 200)
+assert_ok("planned-缺省beat兜底800", _pw(_PS2(id="a", template_id="t", name="n", outline_id="o")) == 800)
+assert_ok("planned-beat按cover_beats", _pw(_PS2(id="a", template_id="t", name="n", outline_id="o", cover_beats=2)) == 400)
+
+import agent_tools as _at
+def _mkout(_id, _n, _sw, _ew, _parent=""):
+    return {"id": _id, "name": _n, "start_word": _sw, "end_word": _ew,
+            **({"parent_arc_id": _parent} if _parent else {})}
+# 均匀样例：3 叶弧各 3000、桥段 words 全 1000 → structure_hints 双 True 且 passed 不受影响
+_out_u = [_mkout("top", "顶层A", 0, 9000),
+          _mkout("l1", "叶1", 0, 3000, "top"), _mkout("l2", "叶2", 3000, 6000, "top"), _mkout("l3", "叶3", 6000, 9000, "top")]
+_pl_u = [{"id": "p%d" % i, "name": "桥%d" % i, "outline_id": ["l1", "l1", "l1", "l2", "l2", "l2", "l3", "l3", "l3"][i],
+          "order": i % 3 + 1, "words": 1000} for i in range(9)]
+_r_u = _at.validate_storyline(outlines=_out_u, plots=_pl_u, words_per_chapter=3000)
+assert_ok("validate-均匀叶弧/全同字数报软提示",
+          _r_u.get("structure_hints", {}).get("uniform_leaf_spans") is True
+          and _r_u.get("structure_hints", {}).get("uniform_bridge_words") is True,
+          str(_r_u.get("structure_hints")))
+assert_ok("validate-软提示不改passed", _r_u.get("passed") is True)
+# 差异化样例：叶弧跨度 2000/3000/4000、桥段 words 不同 → 双 False、无 suggestion
+_out_v = [_mkout("top", "顶层B", 0, 9000),
+          _mkout("d1", "叶B1", 0, 2000, "top"), _mkout("d2", "叶B2", 2000, 5000, "top"), _mkout("d3", "叶B3", 5000, 9000, "top")]
+_wv = {"d1": [1200, 800], "d2": [1000, 1000, 1000], "d3": [600, 800, 1000, 600]}
+_pl_v, _idx = [], 0
+for _leaf, _ws in _wv.items():
+    for _w in _ws:
+        _idx += 1
+        _pl_v.append({"id": "q%d" % _idx, "name": "桥V%d" % _idx, "outline_id": _leaf, "order": _idx, "words": _w})
+_r_v = _at.validate_storyline(outlines=_out_v, plots=_pl_v, words_per_chapter=3000)
+assert_ok("validate-差异化不报软提示",
+          _r_v.get("structure_hints", {}).get("uniform_leaf_spans") is False
+          and _r_v.get("structure_hints", {}).get("uniform_bridge_words") is False
+          and len(_r_v.get("suggestions", [])) == 0,
+          str(_r_v.get("structure_hints")))
+
+# ══════════════════════════════════════════════
 #  汇总
 # ══════════════════════════════════════════════
 print(f"\n{'='*55}")

@@ -119,7 +119,8 @@ async def main():
                 r = await call_json(session, "save_outlines",
                                     {"book_id": bid, "outlines": [{"name": "开篇", "start_chapter": 1,
                                                                    "end_chapter": 30}],
-                                     "plots": [{"name": "穿越开局", "outline_id": "outline_0001"}]})
+                                     "plots": [{"name": "穿越开局", "outline_id": "outline_0001",
+                                                "cover_beats": 6, "words": 1400}]})
                 check("save_outlines OK", r.get("ok") and r.get("outlines") == 1,
                       f"{r}")
                 detail = await call_json(session, "get_book_detail", {"book_id": bid})
@@ -127,6 +128,21 @@ async def main():
                       detail.get("title") == "MCP冒烟"
                       and (detail.get("protagonist") or {}).get("name") == "王小明",
                       f"phase={detail.get('phase')}")
+                # save_outlines 须透传 cover_beats/words（config/补弧路径勿静默重置默认 4）
+                def _find_val(obj, key, val):
+                    if isinstance(obj, dict):
+                        for k, v in obj.items():
+                            if k == key and v == val:
+                                return True
+                            if isinstance(v, (dict, list)) and _find_val(v, key, val):
+                                return True
+                    elif isinstance(obj, list):
+                        return any(_find_val(x, key, val) for x in obj if isinstance(x, (dict, list)))
+                    return False
+                sl = await call_json(session, "get_storyline", {"book_id": bid})
+                check("save_outlines 保留 cover_beats/words",
+                      _find_val(sl, "words", 1400) and _find_val(sl, "cover_beats", 6),
+                      "桥段 words=1400/cover_beats=6 应落库")
                 ctx = await call_json(session, "get_writing_context", {"book_id": bid})
                 sc = (ctx.get("style_card") or "")
                 check("get_writing_context style_card 非空（无笔名也注入默认笔名精简卡）",
