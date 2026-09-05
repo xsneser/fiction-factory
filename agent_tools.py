@@ -741,6 +741,8 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 outline_id=p.get("outline_id", ""),
                 stage_index=int(p.get("stage_index") or 0),
                 order=int(p.get("order") or 0),
+                cover_beats=int(p.get("cover_beats") or 4),
+                words=int(p.get("words")) if p.get("words") is not None else None,
                 thread_id=p.get("thread_id", "主线"),
                 resolves_plot_id=p.get("resolves_plot_id", ""),
                 resolves_name=p.get("resolves_name", ""),
@@ -1327,6 +1329,35 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
     for f in _fill_arcs[:5]:
         if f["gap_words"] > wpc:
             suggestions.append(f"顶层弧「{f['name']}」跨度 {f['span']} 字但桥段仅 {f['planned_words']} 字，拆出足够子弧/桥段填满，或把 end_word 缩到与内容匹配")
+
+    # ④ 结构软提示（uniform/印刷感，不改 passed——只作决策点供 agent/步3 L2 消除或说明）
+    _lattice = []
+    leaf_arcs = [a for a in _arcs
+                 if (getattr(a, "id", "") or "") not in parents
+                 and getattr(a, "start_word", None) is not None
+                 and getattr(a, "end_word", None) is not None]
+    leaf_spans = sorted({(getattr(a, "end_word", 0) or 0) - (getattr(a, "start_word", 0) or 0)
+                         for a in leaf_arcs})
+    _uniform_leaf = len(leaf_arcs) >= 3 and len(leaf_spans) == 1
+    if _uniform_leaf:
+        _lattice.append(f"叶弧跨度全相等（{len(leaf_arcs)} 个叶弧均 {leaf_spans[0]} 字，常见=按章/words_per_chapter 均分），疑似把叶弧=章而非剧情结构，建议按各弧目标重排跨度")
+    _bridge_words = sorted({_pw_of(p) for p in _plots})
+    _uniform_bridge = len(_plots) >= 6 and len(_bridge_words) == 1
+    if _uniform_bridge:
+        _lattice.append(f"桥段目标字数全相同（{len(_plots)} 个桥段均 {_bridge_words[0]} 字，常见=全默认 cover_beats=4→800），疑似模板印刷，建议按场景浓淡差异化（words 300~2500）")
+    structure_hints = {"uniform_leaf_spans": _uniform_leaf, "uniform_bridge_words": _uniform_bridge,
+                       "leaf_spans_set": leaf_spans[:10], "bridge_words_set": _bridge_words[:10]}
+    if _lattice:
+        for h in _lattice:
+            suggestions.append(h)
+            decision_points.append({"check": "structure", "severity": "info", "description": h[:120],
+                                    "location": "", "suggestion": "消除或向用户说明"})
+        _tags = []
+        if _uniform_leaf:
+            _tags.append("叶弧跨度均一")
+        if _uniform_bridge:
+            _tags.append("桥段字数均一")
+        parts.append("结构提示：" + "、".join(_tags) + "（软提示，见 suggestions/decision_points）")
     return {
         "ok": True, "book_id": book_id, "passed": passed,
         "issue_count": len(_cov_issues) + len(_leaf_issues) + len(_fill_issues),
@@ -1338,6 +1369,7 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
                      "gaps": _gaps, "issues": _cov_issues},
         "leaf_arcs": {"passed": _leaf_passed, "violations": _viol, "issues": _leaf_issues},
         "arc_fill": {"passed": _fill_passed, "arcs": _fill_arcs, "issues": _fill_issues},
+        "structure_hints": structure_hints,
         "decision_points": decision_points,
         "suggestions": suggestions,
     }
@@ -1493,9 +1525,10 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
       outlines 每项 {id, name, start_word, end_word, parent_arc_id?, notes, stages?}（id 唯一必填、备注用 notes 非
       description、start_word/end_word 为 0 基字数坐标（start 含/end 不含，权威；可同时传 start_chapter/end_chapter
       兼容）、parent_arc_id 指向父弧 id 支持弧树嵌套）；弧=树状目标节点（定义见 NOVEL_AGENT.md 1.1），
-      字数跨度由剧情结构决定、不设固定章数；仅最底层弧可拥有桥段；
-      plots 每项 {id, name, outline_id, order, category?, thread_id?, roles?, template_structure?}
-      （id 唯一必填、outline_id 必填指向所属弧 id（须为最底层弧）、order 弧内序号）——缺 id/outline_id 故事线桥段不显示
+      字数跨度由剧情结构决定、不设固定章数、叶弧不要求=1 章（可跨多章、同父下不必相等）；仅最底层弧可拥有桥段；
+      plots 每项 {id, name, outline_id, order, category?, thread_id?, roles?, words?, cover_beats?, template_structure?}
+      （id 唯一必填、outline_id 必填指向所属弧 id（须为最底层弧）、order 弧内序号；words=该桥段目标字数
+      0 基整数、按场景浓淡给（300~2500，同弧/全书不要全部相等），未给回退 cover_beats×200；cover_beats=节拍数 2~6 可选）——缺 id/outline_id 故事线桥段不显示
     - set_review: {title, platform?, folder?, downloaded_chapters?, profile_id?, profile_name?,
       plots?, structures?, gags?, characters?, style_rules?}   **侦察/提取合并页**：把 agent 提炼的五库候选
       呈现成可勾选审查卡（drive_ui 命令，非建书命令，不套步门控）。至少一类非空才可提交；
