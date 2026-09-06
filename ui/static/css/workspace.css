@@ -32,7 +32,7 @@ main { overflow: hidden; }
 .right-plan[open] summary { margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border-soft); }
 .right-plan-section { display:block; padding:0; margin:0; overflow:visible; }
 
-/* 中栏：章节正文（连续文本，不再按桥段分卡；桥段包 span.m-bridge 供点击高亮） */
+/* 中栏：章节正文（连续文本，不再按情节段分卡；情节段包 span.m-bridge 供点击高亮） */
 .manuscript { background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius); padding:16px; font-size:15px; line-height:1.9; color:#c9d1d9; white-space:pre-wrap; word-break:break-word; min-height:0; }
 .manuscript .m-chapter-title { font-size:18px; font-weight:700; color:var(--fg-strong); margin:20px 0 12px; }
 .manuscript .m-chapter-divider { text-align:center; color:var(--fg-dim); font-size:12px; margin:20px 0; letter-spacing:2px; }

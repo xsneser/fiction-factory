@@ -153,12 +153,137 @@ def get_book_state(book_id: str) -> dict:
     }
 
 
+# ─── PlotRunContext：把「写这一个情节段」所需输入收敛成一个块 ───
+def _draft_plot_ids(draft):
+    """当前草稿里已写入的情节段 id 集合（draft 段落键兼容 bridges/plots）。"""
+    segs = []
+    if draft:
+        segs = draft.get("plots")
+        if segs is None:
+            segs = draft.get("bridges")
+    return {str(s.get("plot_id")) for s in (segs or []) if (s or {}).get("plot_id")}
+
+
+def _outline_name_chain(tl, oid):
+    """弧路径（顶层→叶）名称串，供 agent 感知本情节段所处弧位。"""
+    by = {o.id: o for o in tl.outlines}
+    names, cur, guard = [], by.get(oid), 0
+    while cur and guard < 8:
+        names.append(cur.name or "")
+        cur = by.get(cur.parent_arc_id) if getattr(cur, "parent_arc_id", "") else None
+        guard += 1
+    return " / ".join(x for x in reversed(names) if x)
+
+
+def _build_plot_run(tl, p):
+    """组装一次情节段运行 plot_run：plot 全量 + 弧目标 + 线程状态 + 承诺 + 字数余量。
+
+    全从已 load 的 tl 内存对象现算，不新增磁盘读；样文/场景判定不在此（走 get_pen_style）。
+    """
+    run = {
+        "plot": {
+            "id": p.id, "name": p.name, "category": p.category or "",
+            "sub_category": getattr(p, "sub_category", "") or "",
+            "words": getattr(p, "words", None),
+            "cover_beats": getattr(p, "cover_beats", 0) or 0,
+            "template_structure": getattr(p, "template_structure", "") or "",
+            "thread_id": getattr(p, "thread_id", "") or "",
+            "order": getattr(p, "order", 0) or 0,
+            "resolves_plot_id": getattr(p, "resolves_plot_id", "") or "",
+            "resolves_name": getattr(p, "resolves_name", "") or "",
+            "hook_points": list(getattr(p, "hook_points", None) or []),
+            "theme_hints": list(getattr(p, "theme_hints", None) or []),
+            "roles": list(getattr(p, "roles", None) or []),
+            "outline_id": getattr(p, "outline_id", "") or "",
+            "written_chapter": getattr(p, "written_chapter", 0) or 0,
+            "is_payoff": bool(getattr(p, "resolves_plot_id", "") or ""),
+        }
+    }
+    # 弧目标
+    arc = next((o for o in tl.outlines if o.id == getattr(p, "outline_id", "")), None)
+    arc_goal = {"arc_id": "", "name": "", "notes": "", "arc_path": "",
+                "stage_index": 0, "stage_name": "", "stage_desc": "", "stage_events": [],
+                "word_span": [], "words_left_in_arc": 0}
+    if arc:
+        arc_goal.update(arc_id=arc.id, name=arc.name or "", notes=getattr(arc, "notes", "") or "",
+                        arc_path=_outline_name_chain(tl, arc.id),
+                        word_span=[getattr(arc, "start_word", 0) or 0,
+                                   getattr(arc, "end_word", 0) or 0])
+        si = int(getattr(p, "stage_index", 0) or 0)
+        stages = list(getattr(arc, "stages", None) or [])
+        if stages and 0 <= si < len(stages):
+            st = stages[si]
+            arc_goal["stage_index"] = si
+            arc_goal["stage_name"] = st.get("name", "") if isinstance(st, dict) else ""
+            arc_goal["stage_desc"] = (st.get("description", "") if isinstance(st, dict) else "")
+            arc_goal["stage_events"] = list(st.get("events") or []) if isinstance(st, dict) else []
+        oid = arc.id
+        left = 0
+        for q in tl.plots:
+            if getattr(q, "outline_id", "") == oid and not (getattr(q, "written_chapter", 0) or 0):
+                left += int(getattr(q, "words", None) or 0) or 0
+        arc_goal["words_left_in_arc"] = left
+    run["arc_goal"] = arc_goal
+    # 线程状态
+    tid = getattr(p, "thread_id", "") or ""
+    tdef = {}
+    for x in (tl.threads or []):
+        xid = x.get("id") if isinstance(x, dict) else getattr(x, "id", "")
+        if xid == tid:
+            tdef = x if isinstance(x, dict) else {}
+            break
+    written, unwritten = [], []
+    for q in tl.plots:
+        if (getattr(q, "thread_id", "") or "") != tid:
+            continue
+        qc = getattr(q, "written_chapter", 0) or 0
+        if qc:
+            role = "收局" if (getattr(q, "resolves_plot_id", "") or "") else ""
+            if not role:
+                role = "设局" if any((getattr(r, "resolves_plot_id", "") or "") == q.id for r in tl.plots) else ""
+            written.append({"id": q.id, "name": q.name or "", "chapter": int(qc), "role": role})
+        else:
+            unwritten.append(q.id)
+    written.sort(key=lambda x: x["chapter"])
+    run["thread"] = {
+        "id": tid, "name": tdef.get("name", "") if isinstance(tdef, dict) else "",
+        "desc": tdef.get("desc", "") if isinstance(tdef, dict) else "",
+        "same_thread_written": written,
+        "same_thread_unwritten": unwritten,
+        "chain_note": f"{tid or '主线'} 已写 {len(written)} 条 / 未写 {len(unwritten)} 条",
+    }
+    # 承诺状态（只列设局/收局指向本情节段的项）
+    prom = []
+    for it in (tl.promises or []):
+        if isinstance(it, dict) and (it.get("setup_plot_id") == p.id or it.get("payoff_plot_id") == p.id):
+            prom.append({k: it.get(k) for k in ("id", "type", "desc", "status", "op",
+                                                "setup_plot_id", "payoff_plot_id", "deadline_chapter")
+                         if k in it})
+    run["promise_state"] = prom
+    run["scene_hint_tags"] = []  # 场景/样文判定归 agent（get_pen_style query），此处不给硬提示
+    return run
+
+
+def _next_plot(tl, draft):
+    """第一个未写情节段（written_chapter==0 且不在当前草稿内）——draft-aware，防章中途重复返回同一首。"""
+    indraft = _draft_plot_ids(draft)
+    for p in tl.plots:
+        if getattr(p, "written_chapter", 0) or 0:
+            continue
+        if p.id in indraft:
+            continue
+        return p
+    return None
+
+
 def get_writing_context(book_id: str) -> dict:
     """[薄工具] 一次返回写正文所需的完整上下文（书配置+故事线+角色/世界观+弧+最近章摘要+草稿）。
 
     复用 get_book_state 全量 payload（get_storyline / get_book_detail 是其子集/重叠），
     追加就地提取的扁平字段：synopsis（outline）、protagonist（get_mc）、
-    next_plot（第一个未写情节段 written_chapter==0，含 plot_id/name/roles/outline_id）。
+    next_plot（第一个未写且不在草稿内的情节段，draft-aware，含 plot_id/name/roles/outline_id）、
+    plot_run（该次情节段运行的收敛上下文：plot 全量/所在弧目标/线程状态/承诺/字数余量——
+    场景判定与样文仍走 get_pen_style(query, k=1)，此处不替 agent 判场景、不带样文正文）。
     agent 逐情节段循环每轮只调本工具一次，避免重复读上下文。
     style_card = 本笔名精简风格提醒（位于 payload 尾部，必读，防风格漂移）；
     完整风格用 get_pen_style 按需取。
@@ -173,17 +298,19 @@ def get_writing_context(book_id: str) -> dict:
     if tl and tl.basic_info:
         protagonist = get_mc(tl.basic_info)
     payload["protagonist"] = protagonist
-    # next_plot：第一个未写情节段（written_chapter==0）
-    next_plot = None
-    if tl:
-        for p in tl.plots:
-            if not (getattr(p, "written_chapter", 0) or 0):
-                next_plot = {
-                    "plot_id": p.id, "name": p.name, "roles": list(getattr(p, "roles", None) or []),
-                    "outline_id": getattr(p, "outline_id", "") or "",
-                }
-                break
-    payload["next_plot"] = next_plot
+    # next_plot：第一个未写情节段（draft-aware：written_chapter==0 且不在当前草稿内，防章中途重复返回同一首）
+    draft = payload.get("draft") or {}
+    next_p = _next_plot(tl, draft) if tl else None
+    if next_p is not None:
+        payload["next_plot"] = {
+            "plot_id": next_p.id, "name": next_p.name,
+            "roles": list(getattr(next_p, "roles", None) or []),
+            "outline_id": getattr(next_p, "outline_id", "") or "",
+        }
+        payload["plot_run"] = _build_plot_run(tl, next_p)
+    else:
+        payload["next_plot"] = None
+        payload["plot_run"] = None
     # next_chapter：进行中草稿的章号优先，否则 current_chapter + 1（供写作任务卡显示「该写第几章」）
     book = payload.get("book") or {}
     draft = payload.get("draft")
@@ -383,7 +510,9 @@ def get_pen_style(book_id: str = "", profile_id: str = "", query: dict = None,
     style_md_text = style_md.read_style_md(profile)
     # STYLE REFERENCE:全局词条库。给 query → 加权随机抽 ≤k 条(自动近期避重);无 query → 多样封顶。
     # md 单独保留、不参与裁剪;无 JSON → 旧文件兜底。
-    _avoid = [x for x in (list(avoid or []) + list(_STYLE_RECENT)) if x]
+    # 近期避重 = 进程内(_STYLE_RECENT, dsh 单任务内) ∪ 持久化历史(按笔名,跨任务/会话);去重保序
+    _persist = style_samples.load_pick_history(profile.id)
+    _avoid = list(dict.fromkeys([x for x in (list(avoid or []) + list(_STYLE_RECENT) + _persist) if x]))
     ref_text, ref_meta = style_samples.build_ref_text_for_profile(
         profile, query=query, k=int(k or 3), avoid=_avoid)
     if query and ref_meta and ref_meta.get("mode") == "pick":
@@ -391,6 +520,7 @@ def get_pen_style(book_id: str = "", profile_id: str = "", query: dict = None,
             if _sid not in _STYLE_RECENT:
                 _STYLE_RECENT.append(_sid)
         del _STYLE_RECENT[:-_STYLE_RECENT_MAX]
+        style_samples.record_pick_history(profile.id, ref_meta.get("selected") or [])
     sample_driven = style_md_text is not None
     if sample_driven:
         style_rules = style_md_text
@@ -1192,7 +1322,7 @@ def chapter_quality_gate(book_id: str, chapter_num: int = 0, recent_n: int = 5) 
     n = int(chapter_num or 0) or cur
     if n < 1 or n > cur:
         if cur < 1:
-            raise RuntimeError("尚无已写章节，请先 write_next_bridge / write_chapter 写作")
+            raise RuntimeError("尚无已写章节，请先逐情节段写正文（save_plot_draft → 章满 save_chapter_text）")
         raise RuntimeError(f"第 {n} 章不存在（当前写到第 {cur} 章）")
     ch = book_mgr.load_chapter(book_id, n)
     content = (ch or {}).get("content") or ""

@@ -364,43 +364,60 @@ def _want_list(value):
     return value if isinstance(value, (list, tuple, set)) else [value]
 
 
-def pick_samples(samples, query=None, k=3, avoid=None, rng=None):
+def pick_samples(samples, query=None, k=3, avoid=None, rng=None, temperature=1.0):
     """加权随机取 k 条样文(硬过滤 → 软加权 → 加权随机 → 近期避重)。
 
     - query: {字段: 值|列表},只认 SEL_WEIGHTS 里的维;样本缺某维 = 通配(不过滤也不加分)。
     - 硬过滤:query 声明、样本已填且不匹配 → 排除。
-    - 软加权:权重命中求和;avoid 里的样本 ×0.5(软避重,不绝对禁止)。
-    - 命中为空 → 回退:池内随机选 k(仍避重加权),meta.fallback=True。
+    - temperature(命中窗放宽):精确命中为空时,允许沿**最低权重声明维**逐级丢弃最多
+      int(temperature) 个再试(0=不放开)——让候选留在「同场景附近」(scene 权重最高,最后才丢),
+      而非命中集外无差别随机;全放开仍空 → 才走整池兜底(_fallback_pick)。
+    - 软加权:命中权重求和;avoid 里的样本 ×0.5(软避重,不绝对禁止)。
     - rng 可注入(random.Random(seed))便于测试复现。
     返回 (picked:list, meta)。"""
     rng = rng or random
     query = query or {}
     avoid = set(avoid or [])
-    scored = []  # (sample, score)
-    for s in samples:
-        ok = True
-        score = 0
-        for f, w in SEL_WEIGHTS.items():
-            want = _want_list(query.get(f))
-            if not want:
-                continue
-            have = (s.dims or {}).get(f)
-            if have is None or have == "" or have == []:
-                continue  # 样本缺维 → 通配
-            if f in _MULTI_DIMS:
-                inter = len(set(have) & set(want))
-                if inter == 0:
-                    ok = False
-                    break
-                score += w * inter
-            else:
-                if have in want:
-                    score += w
+    declared = [(f, w) for f, w in SEL_WEIGHTS.items() if _want_list(query.get(f))]
+
+    def _score_with(kept_dims):
+        out = []
+        for s in samples:
+            ok, score = True, 0
+            for f, w in kept_dims:
+                want = _want_list(query.get(f))
+                have = (s.dims or {}).get(f)
+                if have is None or have == "" or have == []:
+                    continue  # 样本缺维 → 通配
+                if f in _MULTI_DIMS:
+                    inter = len(set(have) & set(want))
+                    if inter == 0:
+                        ok = False
+                        break
+                    score += w * inter
                 else:
-                    ok = False
-                    break
-        if ok:
-            scored.append((s, score))
+                    if have in want:
+                        score += w
+                    else:
+                        ok = False
+                        break
+            if ok:
+                out.append((s, score))
+        return out
+
+    scored = _score_with(declared)
+    relaxed = []
+    if not scored and declared and len(declared) > 1 and int(max(0, temperature or 0)) >= 1:
+        order = sorted(range(len(declared)), key=lambda i: declared[i][1])  # 低→高权重下标
+        for d in range(1, min(int(max(0, temperature)), len(declared) - 1) + 1):
+            kept = [declared[i] for i in order[d:]]  # 丢最低 d 个,保高权重维
+            if not kept:
+                break
+            hit = _score_with(kept)
+            if hit:
+                scored = hit
+                relaxed = [declared[i][0] for i in order[:d]]
+                break
     if not scored:
         return _fallback_pick(samples, k, avoid, rng)
 
@@ -428,7 +445,8 @@ def pick_samples(samples, query=None, k=3, avoid=None, rng=None):
     meta = {"mode": "pick", "query": {f: query[f] for f in SEL_WEIGHTS if query.get(f) is not None},
             "count": len(picked), "total": len(samples),
             "chars": sum(count_text_chars(s.text) for s in picked),
-            "selected": [s.id for s in picked], "fallback": False}
+            "selected": [s.id for s in picked], "fallback": False,
+            "relaxed_dims": relaxed}
     return picked, meta
 
 
@@ -446,6 +464,47 @@ def _fallback_pick(samples, k, avoid, rng):
             "chars": sum(count_text_chars(s.text) for s in picked),
             "selected": [s.id for s in picked], "fallback": True}
     return picked, meta
+
+
+# ─── 近期避重历史(按笔名持久化,跨 dsh 任务/会话生效) ───
+
+def _pick_history_path(profile_id):
+    return os.path.join(_LIB, "pick_history", f"{profile_id}.json")
+
+
+def load_pick_history(profile_id: str) -> list:
+    """读某笔名近期注入过的样文 id(旧→新);无文件/异常 → []。"""
+    if not profile_id:
+        return []
+    p = _pick_history_path(profile_id)
+    if not os.path.exists(p):
+        return []
+    try:
+        from core.json_store import read_json
+        data = read_json(p) or {}
+        return [str(x) for x in (data.get("entries") or [])]
+    except Exception:
+        return []
+
+
+def record_pick_history(profile_id: str, sample_ids: list, max_hist: int = 10) -> None:
+    """把本次注入的样文 id 记入该笔名近期历史(去重置尾),跨任务避重;失败静默降级。"""
+    if not profile_id:
+        return
+    cur = load_pick_history(profile_id)
+    for sid in (sample_ids or []):
+        if sid in cur:
+            cur.remove(sid)
+        cur.append(sid)
+    cur = cur[-max_hist:]
+    try:
+        p = _pick_history_path(profile_id)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        from core.json_store import process_file_lock, write_json_atomic
+        with process_file_lock(p, timeout=1.0):
+            write_json_atomic(p, {"profile_id": profile_id, "entries": cur})
+    except Exception:
+        pass  # 抢锁/写失败 → 本次不持久化,不阻断注入
 
 
 def estimate_budget_for(style_md_text, guide_chars=None):

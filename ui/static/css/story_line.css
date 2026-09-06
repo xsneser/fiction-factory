@@ -1,5 +1,5 @@
 /* ─── 故事线（Story Line）组件样式 ─── */
-/* 垂直 Gantt：字数轴 + 大纲/桥段/线程通道。所有类以 sl- 前缀隔离，避免与 base 冲突。
+/* 垂直 Gantt：字数轴 + 大纲/情节段/线程通道。所有类以 sl- 前缀隔离，避免与 base 冲突。
    全部颜色/字体/圆角/间距对齐 base.css 设计令牌（GitHub Dark）。 */
 
 .sl-root {
@@ -101,7 +101,7 @@
 .sl-bar.sl-flashback { border: 1px solid var(--sl-flashback-border); box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
 .sl-bar.sl-interleaved { border: 1px dashed var(--sl-interleaved-border); box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
 
-/* ─── 桥段层级（JS 内联覆盖 left/width/z-index，此处兜底） ─── */
+/* ─── 情节段层级（JS 内联覆盖 left/width/z-index，此处兜底） ─── */
 .sl-bar-plot.level-0 { left: 0; right: 8px; z-index: 3; }
 .sl-bar-plot.level-1 { left: 14px; right: 4px; z-index: 4; }
 .sl-bar-plot.level-2 { left: 28px; right: 0; z-index: 5; }
@@ -110,7 +110,7 @@
 .sl-bar-outline.level-1 { left: 10px; right: 6px; z-index: 11; }
 .sl-bar-outline.level-2 { left: 20px; right: 4px; z-index: 12; }
 
-/* ─── 叙事线程横带 + 桥段线程/收局/设局徽标 ─── */
+/* ─── 叙事线程横带 + 情节段线程/收局/设局徽标 ─── */
 .sl-bar-thread { border: 1px solid rgba(255,255,255,.08); overflow: visible; }
 .sl-payoff-badge { position: absolute; bottom: 2px; right: 3px; font-size: 9px; color: var(--danger-fg); font-weight: 700; pointer-events: none; }
 .sl-setup-badge { position: absolute; top: 2px; right: 3px; font-size: 9px; color: var(--warn); font-weight: 700; pointer-events: none; }
@@ -126,7 +126,7 @@
 /* ─── 图例：设局→收局连线样例（琥珀虚线，与设局线一致） ─── */
 .sl-legend-swatch.payoff-line { background: transparent; border: 1px dashed var(--warn); }
 
-/* ─── 读者承诺标记：设局⏳待兑现(黄) / 收局✅已兑现(绿)，叠在桥段条右下 ─── */
+/* ─── 读者承诺标记：设局⏳待兑现(黄) / 收局✅已兑现(绿)，叠在情节段条右下 ─── */
 .sl-promise { position: absolute; bottom: 2px; left: 3px; font-size: 9px; line-height: 1; pointer-events: none; padding: 1px 2px; border-radius: 3px; }
 .sl-promise.pending { background: var(--sl-promise-pending-bg); border: 1px solid var(--warn); }
 .sl-promise.ok { background: var(--sl-promise-ok-bg); border: 1px solid var(--success); }

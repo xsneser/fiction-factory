@@ -26,7 +26,7 @@ description: >-
 3. **逐情节段循环里每轮只重取一次 `get_writing_context`**（draft/written_chapter 会变）；**不要**再单独调 `get_book_detail` / `get_storyline`（它们是 get_writing_context 的子集/重叠）。
 
 ## 写作规则（生成时内嵌到你的思考）
-- **笔名风格强约束（必读必遵）**：动笔前先 `mcp__novel-engine__get_pen_style(book_id)` 拿该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），逐条遵守；每轮 `get_writing_context` 返回的 `style_card` 是**精简风格提醒（必读，防风格漂移）**。**未拿到风格不得写正文**；被裁剪/信息不足时用 `get_pen_style` 重读（独立薄工具，不纠缠全量上下文）。若 `get_pen_style` 的 `style_rules` 内含 `STYLE REFERENCE` 人工样本段，它是**最高风格来源**：直接参考其语言惯性/叙述距离/信息组织/对白衔接继续创作，**不总结、不抽公式、不套模板**；md 原则与规则只作负约束。样文 = 全局样文库（多维权表：scene/dramatic_state/narrative_action/cast/dialogue_density/information_density/pace/pov，英文键存）。**动笔前按当前桥段判断 dims 组成 `query` 传给 `get_pen_style(book_id, query=query, k=3)`**：对话多→ `{"scene":["dialogue"],"cast":"small_group","dialogue_density":"high"}`；破解/查证→ `"scene":["investigation"]`；对峙/危险→ `"scene":["confrontation","danger"]`；死伤→ `"scene":["death"]`；规则/设定→ `"scene":["revelation","planning"]`；独自心绪→ `"scene":["quiet"],"cast":"solo"`；平和日常→ `"scene":["quiet","transition"]`；反转揭底→ `"scene":["revelation"]`。服务端按 query 硬过滤→软加权→加权随机→近期避重抽 ≤k 条，命中每条前标 `# 场景:…`；不传 query=多样封顶。`samples` 给 id/title/dims（无正文），想细看某条用 `get_style_sample` 拉全文。
+- **笔名风格强约束（必读必遵）**：动笔前先 `mcp__novel-engine__get_pen_style(book_id)` 拿该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），逐条遵守；每轮 `get_writing_context` 返回的 `style_card` 是**精简风格提醒（必读，防风格漂移）**。**未拿到风格不得写正文**；被裁剪/信息不足时用 `get_pen_style` 重读（独立薄工具，不纠缠全量上下文）。若 `get_pen_style` 的 `style_rules` 内含 `STYLE REFERENCE` 人工样本段，它是**最高风格来源**：直接参考其语言惯性/叙述距离/信息组织/对白衔接继续创作，**不总结、不抽公式、不套模板**；md 原则与规则只作负约束。样文 = 全局样文库（多维权表：scene/dramatic_state/narrative_action/cast/dialogue_density/information_density/pace/pov，英文键存）。**动笔前按当前情节段判断 dims 组成 `query` 传给 `get_pen_style(book_id, query=query, k=1)`（每次情节段运行只注入 1 篇样文，语言参考随运行自然漂移；该场景其余可 `get_style_sample` 拉全文备查）**：对话多→ `{"scene":["dialogue"],"cast":"small_group","dialogue_density":"high"}`；破解/查证→ `"scene":["investigation"]`；对峙/危险→ `"scene":["confrontation","danger"]`；死伤→ `"scene":["death"]`；规则/设定→ `"scene":["revelation","planning"]`；独自心绪→ `"scene":["quiet"],"cast":"solo"`；平和日常→ `"scene":["quiet","transition"]`；反转揭底→ `"scene":["revelation"]`。服务端按 query 硬过滤→软加权→加权随机→近期避重抽 ≤k 条，命中每条前标 `# 场景:…`；不传 query=多样封顶。`samples` 给 id/title/dims（无正文），想细看某条用 `get_style_sample` 拉全文。
 - **一致性铁律**：人名/系统绑定/数值/设定不得与已写冲突；前后呼应伏笔。
 - **视角铁律**：全书统一（默认第三人称），不漂移。
 - **语言纪律**：禁 AI 味句式（仿佛/似乎/不禁/只见 堆叠），少用破折号，对话占比自然——以 `get_pen_style` 拿到的笔名规则（句式风格/禁止内容）为准。
@@ -37,7 +37,7 @@ description: >-
 ## 生成 → 落盘（逐情节段）
 1. 用 `get_writing_context` 的 `next_plot`（第一个未写情节段）→ **你自主生成该情节段正文**
    （你的 LLM 直接产出，上下文连续）。
-2. 生成完调用 `mcp__novel-engine__save_bridge_draft(book_id, chapter_num=N, plot_id=..., plot_name=..., text=...)`
+2. 生成完调用 `mcp__novel-engine__save_plot_draft(book_id, chapter_num=N, plot_id=..., plot_name=..., text=...)`
    落盘到进行中草稿（断点续写保底）。
 3. 继续下一情节段；每写完一情节段按需自我核查（语气连贯/伏笔/错词），有问题就地重写再落盘。
 
