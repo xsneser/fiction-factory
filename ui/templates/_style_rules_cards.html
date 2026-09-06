@@ -14,27 +14,62 @@
     </div>
 </div>
 
-<!-- ② 样文 · STYLE REFERENCE：人工样本（多条可添加） -->
-<h2 class="sr-sec-title">✍️ 样文 · STYLE REFERENCE</h2>
+<!-- ② 样文 · STYLE REFERENCE：样文库（多条，各带 场景标签/来源/字数/备注；原文勿润色） -->
+<h2 class="sr-sec-title">✍️ 样文 · STYLE REFERENCE <span>逐条元数据；注入时系统按预算自动选样</span></h2>
+<details class="sr-help">
+    <summary>📐 选样方法论 —— 怎么挑一份好样文（点击展开）</summary>
+    <ul class="sr-help-list">
+        <li>喂「<b>完整连续场景</b>」——不要拆成 金句 / 比喻 / 对白 / 动作 之类的技巧样本。</li>
+        <li>单条<b>约 1500~3000 字</b>为佳；低于 800 字多半只是片段（单句金句尤其不要）。</li>
+        <li>不同条目覆盖<b>不同场景类型</b>（如 场景开场 / 推理观察 / 多人对白 / 冲突·威胁 / 规则·死亡 / 过渡·日常 / 独处·心理…），让模型看到同一作者在不同情况下怎么写。</li>
+        <li><b>原文照搬、不要润色</b>：重复、普通句、解释段、略显笨拙的地方都是作者的稳定语言惯性，保留——这是「去 AI 味」的关键。</li>
+        <li>不要只喂最刺激的高潮段落，否则模型会以为每一段都得越来越紧张。</li>
+        <li>「场景标签」填<b>这类场景</b>（推理段填「推理观察」），不是角色名；标签自由可扩展。顺序即注入优先级。</li>
+    </ul>
+</details>
 <div class="card sr-card">
     <div id="ref-list">
     {% for s in samples %}
-    <div class="sr-sample-item">
-        <textarea class="sr-textarea sr-ref-editor" spellcheck="false" placeholder="# 样文条目（完整连续场景，3000-8000 字）">{{ s }}</textarea>
-        <button type="button" class="small danger" onclick="delSample(this)">🗑</button>
+    <div class="sr-sample-item" data-id="{{ s.id }}">
+        <div class="sr-sample-head">
+            <span class="sr-no">#{{ loop.index }}</span>
+            <input class="sr-title" placeholder="标题（如：开场·众人苏醒）" value="{{ s.title }}" spellcheck="false">
+            <input class="sr-tags" placeholder="场景标签（顿号/逗号分隔，自由）" value="{{ s.scene_tags|join('、') }}" spellcheck="false">
+            <span class="sr-wc">约 {{ s.word_count }} 字</span>
+            <span class="sr-btns">
+                <button type="button" class="small" title="前移（注入优先级↑）" onclick="moveSample(this,-1)">↑</button>
+                <button type="button" class="small" title="后移（注入优先级↓）" onclick="moveSample(this,1)">↓</button>
+                <button type="button" class="small danger" onclick="delSample(this)">🗑</button>
+            </span>
+        </div>
+        <input class="sr-source" placeholder="来源（如：《十日终焉》第1章 · 开场→苏醒）" value="{{ s.source }}" spellcheck="false">
+        <input class="sr-note-in" placeholder="备注（为何选这段 / 学习重点；留空可）" value="{{ s.note }}" spellcheck="false">
+        <textarea class="sr-textarea sr-ref-editor" spellcheck="false" placeholder="# 完整连续场景原文（1500-3000 字；勿润色）">{{ s.text }}</textarea>
     </div>
     {% endfor %}
     {% if not samples %}
-    <div class="sr-sample-item">
-        <textarea class="sr-textarea sr-ref-editor" spellcheck="false" placeholder="# 样文条目（完整连续场景，3000-8000 字）"></textarea>
-        <button type="button" class="small danger" onclick="delSample(this)">🗑</button>
+    <div class="sr-sample-item" data-id="">
+        <div class="sr-sample-head">
+            <span class="sr-no">#1</span>
+            <input class="sr-title" placeholder="标题（如：开场·众人苏醒）" spellcheck="false">
+            <input class="sr-tags" placeholder="场景标签（顿号/逗号分隔，自由）" spellcheck="false">
+            <span class="sr-wc">约 0 字</span>
+            <span class="sr-btns">
+                <button type="button" class="small" title="前移（注入优先级↑）" onclick="moveSample(this,-1)">↑</button>
+                <button type="button" class="small" title="后移（注入优先级↓）" onclick="moveSample(this,1)">↓</button>
+                <button type="button" class="small danger" onclick="delSample(this)">🗑</button>
+            </span>
+        </div>
+        <input class="sr-source" placeholder="来源（如：《十日终焉》第1章 · 开场→苏醒）" spellcheck="false">
+        <input class="sr-note" placeholder="备注（为何选这段 / 学习重点；留空可）" spellcheck="false">
+        <textarea class="sr-textarea sr-ref-editor" spellcheck="false" placeholder="# 完整连续场景原文（1500-3000 字；勿润色）"></textarea>
     </div>
     {% endif %}
     </div>
     <div class="sr-toolbar">
         <button type="button" class="small" onclick="addSample()">➕ 添加样文</button>
-        <span class="sr-note"></span>
-        <button type="button" class="small" onclick="saveRef()">💾 保存样文</button>
+        <span class="sr-note" id="ref-count"></span>
+        <button type="button" class="small" onclick="saveRef()">💾 保存样文库</button>
     </div>
 </div>
 
@@ -94,30 +129,119 @@ async function saveMd() {
     else showToast('保存失败: ' + (d.error||''), 'error');
 }
 
-/* ② 样文：添加/删除条目，保存时拼 <sample> 块写回文件 */
+/* ② 样文库：逐条记录(标题/场景标签/来源/备注/正文) → POST /samples */
+function sampleRowHTML(id, data) {
+    data = data || {};
+    var esc = function(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
+    var head =
+        '<div class="sr-sample-head">' +
+          '<span class="sr-no">#</span>' +
+          '<input class="sr-title" placeholder="标题（如：开场·众人苏醒）" value="' + esc(data.title) + '" spellcheck="false">' +
+          '<input class="sr-tags" placeholder="场景标签（顿号/逗号分隔，自由）" value="' + esc((data.scene_tags||[]).join('、')) + '" spellcheck="false">' +
+          '<span class="sr-wc">约 ' + (data.word_count||0) + ' 字</span>' +
+          '<span class="sr-btns">' +
+            '<button type="button" class="small" title="前移（注入优先级↑）" onclick="moveSample(this,-1)">↑</button>' +
+            '<button type="button" class="small" title="后移（注入优先级↓）" onclick="moveSample(this,1)">↓</button>' +
+            '<button type="button" class="small danger" onclick="delSample(this)">🗑</button>' +
+          '</span>' +
+        '</div>' +
+        '<input class="sr-source" placeholder="来源（如：《十日终焉》第1章 · 开场→苏醒）" value="' + esc(data.source) + '" spellcheck="false">' +
+        '<input class="sr-note-in" placeholder="备注（为何选这段 / 学习重点；留空可）" value="' + esc(data.note) + '" spellcheck="false">' +
+        '<textarea class="sr-textarea sr-ref-editor" spellcheck="false" placeholder="# 完整连续场景原文（1500-3000 字；勿润色）"></textarea>';
+    return '<div class="sr-sample-item" data-id="' + esc(id||'') + '">' + head + '</div>';
+}
 function addSample() {
     var list = document.getElementById('ref-list');
     var div = document.createElement('div');
-    div.className = 'sr-sample-item';
-    div.innerHTML = '<textarea class="sr-textarea sr-ref-editor" spellcheck="false" placeholder="# 样文条目（完整连续场景，3000-8000 字）"></textarea>' +
-        '<button type="button" class="small danger" onclick="delSample(this)">🗑</button>';
-    list.appendChild(div);
+    div.innerHTML = sampleRowHTML('');
+    list.appendChild(div.firstChild);
+    renumber();
 }
 function delSample(btn) {
     var item = btn.closest('.sr-sample-item');
-    var all = document.querySelectorAll('.sr-sample-item');
-    if (all.length <= 1) { item.querySelector('textarea').value = ''; return; }
+    var all = document.querySelectorAll('#ref-list .sr-sample-item');
+    if (all.length <= 1) {  // 最后一条：清空正文与元数据，保留行（避免误删整条）
+        item.querySelector('textarea').value = '';
+        item.querySelector('.sr-title').value = '';
+        item.querySelector('.sr-tags').value = '';
+        item.querySelector('.sr-source').value = '';
+        item.querySelector('.sr-note-in').value = '';
+        item.querySelector('.sr-wc').textContent = '约 0 字';
+        return;
+    }
     item.remove();
+    renumber();
+}
+function moveSample(btn, dir) {
+    var item = btn.closest('.sr-sample-item');
+    var list = item.parentNode;
+    var kids = list.children;
+    var idx = Array.prototype.indexOf.call(kids, item);
+    var nidx = idx + dir;
+    if (nidx < 0 || nidx >= kids.length) return;
+    if (dir < 0) list.insertBefore(item, kids[nidx]);
+    else list.insertBefore(item, kids[nidx].nextSibling);
+    renumber();
+}
+function renumber() {
+    var items = document.querySelectorAll('#ref-list .sr-sample-item');
+    items.forEach(function(it, i) {
+        var no = it.querySelector('.sr-no');
+        if (no) no.textContent = '#' + (i + 1);
+    });
+    var c = document.getElementById('ref-count');
+    if (c) c.textContent = items.length + ' 条';
+}
+function wcOf(t) {
+    if (!t) return 0;
+    var s = t.replace(/\s+/g, '');
+    var cjk = (s.match(/[㐀-鿿]/g) || []).length;
+    var rest = s.replace(/[㐀-鿿]/g, ' ').trim();
+    var words = rest ? rest.split(/\s+/).length : 0;
+    return cjk + words;  // ≈ count_prose_units（服务端为准）
+}
+function readSamples() {
+    return [].map.call(document.querySelectorAll('#ref-list .sr-sample-item'), function(item) {
+        var txt = item.querySelector('.sr-ref-editor').value.trim();
+        if (!txt) return null;
+        var tags = (item.querySelector('.sr-tags').value || '').split(/[、，,]/)
+                       .map(function(s){ return s.trim(); }).filter(Boolean);
+        return {id: item.dataset.id || '', title: item.querySelector('.sr-title').value.trim(),
+                scene_tags: tags, source: item.querySelector('.sr-source').value.trim(),
+                note: item.querySelector('.sr-note-in').value.trim(), text: txt};
+    }).filter(Boolean);
 }
 async function saveRef() {
-    var blocks = [].map.call(document.querySelectorAll('.sr-ref-editor'), function(t){ return t.value.trim(); })
-                   .filter(function(v){ return v; });
-    var content = blocks.map(function(b){ return '<sample>\n' + b + '\n</sample>'; }).join('\n\n');
-    const r = await fetch('/api/profile/' + currentScope + '/reference', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({content: content})});
+    var records = readSamples();
+    if (!records.length) { showToast('没有可保存的样文（正文为空）', 'error'); return; }
+    const r = await fetch('/api/profile/' + currentScope + '/samples', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({samples: records})});
     const d = await r.json();
-    if (d.ok) showToast('✅ 样文已保存（' + blocks.length + ' 条）', 'success');
-    else showToast('保存失败: ' + (d.error||''), 'error');
+    if (!d.ok) { showToast('保存失败: ' + (d.error||''), 'error'); return; }
+    showToast('✅ 样文库已保存（' + d.saved + ' 条）', 'success');
+    (d.warnings || []).forEach(function(w) { showToast('⚠️ ' + w, 'warning'); });
+    // 用服务端权威 id/字数刷新（id 缺省时回填 sN）
+    var items = document.querySelectorAll('#ref-list .sr-sample-item');
+    (d.samples || []).forEach(function(s, i) {
+        if (!items[i]) return;
+        items[i].dataset.id = s.id;
+        var wc = items[i].querySelector('.sr-wc');
+        if (wc) wc.textContent = '约 ' + s.word_count + ' 字';
+    });
+    renumber();
 }
+(function bindRefLive() {
+    var list = document.getElementById('ref-list');
+    if (list) list.addEventListener('input', function(ev) {
+        var t = ev.target;
+        if (t && t.classList.contains('sr-ref-editor')) {
+            var item = t.closest('.sr-sample-item');
+            var wc = item && item.querySelector('.sr-wc');
+            if (wc) wc.textContent = '约 ' + wcOf(t.value) + ' 字';
+        }
+    });
+    renumber();
+})();
 
 /* ③ 禁词/禁句式行编辑 */
 async function saveRow(btn) {

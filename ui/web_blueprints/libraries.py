@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context, abort
 from .ctx import *
 from libraries.profiles import KNOWN_PLATFORMS, PLATFORM_LABELS  # noqa: E402
+from libraries import style_samples  # noqa: E402  # 笔名样文库 samples.json(收敛 <sample> 解析于此处)
 
 bp = Blueprint("libraries", __name__)
 
@@ -45,13 +46,31 @@ def _read_text_file(path):
 
 
 def _parse_samples(content):
-    """把样文文件拆成多条样本：<sample>…</sample> 块各自成条；无标签则整体一条。"""
-    if not content:
-        return []
-    blocks = re.findall(r'<sample>(.*?)</sample>', content, re.S)
-    if blocks:
-        return [b.strip() for b in blocks if b.strip()]
-    return [content.strip()] if content.strip() else []
+    """(兼容壳)把样文文本拆成多条样本；解析实现已收敛到 libraries/style_samples。"""
+    return style_samples.parse_blocks(content)
+
+
+def _load_profile_samples(scope_label):
+    """读笔名样文库(权威源 samples.json → 带元数据记录);无 JSON → 旧 reference.txt 兜底拆块,
+    id 占位 s1..sN(title/标签留空),一旦编辑保存即迁入 samples.json。"""
+    recs = style_samples.load_samples(scope_label)
+    if recs is not None:
+        return [s.to_dict() for s in recs]
+    raw = _read_text_file(os.path.join(_project_root(), "storage", "style_refs", scope_label + ".reference.txt"))
+    return [{"id": f"s{i + 1}", "title": "", "scene_tags": [], "source": "",
+             "note": "", "word_count": style_samples.count_word_units(b), "text": b}
+            for i, b in enumerate(style_samples.parse_blocks(raw))]
+
+
+def _warn_short(samples):
+    """单条字数软预警：<800 字可能只是金句/片段(选样方法论:完整连续场景,1500~3000 为佳)。"""
+    out = []
+    for s in samples:
+        if s.word_count and s.word_count < 800:
+            label = s.title or s.id
+            out.append(f"样文 {label} 约 {s.word_count} 字,<800 可能只是金句/片段——"
+                       "建议改喂一段「完整连续场景」")
+    return out
 
 @bp.route("/plots")
 def plots():
@@ -295,11 +314,10 @@ def profile_list():
             "ban_count": len(bn),
             "bans_first": (_bf[:60] + "…" if len(_bf) > 60 else _bf),
         }
-    # 样本驱动三件套：风格 MD（styles/<笔名>.md）+ 人工样文（storage/style_refs/<笔名>.reference.txt）
+    # 样本驱动三件套：风格 MD（styles/<笔名>.md）+ 样文库（storage/style_refs/<笔名>.samples.json）
     _root = _project_root()
     md_content = _read_text_file(os.path.join(_root, "styles", scope_label + ".md")) if (selected and not is_new) else ""
-    reference_content = _read_text_file(os.path.join(_root, "storage", "style_refs", scope_label + ".reference.txt")) if (selected and not is_new) else ""
-    samples = _parse_samples(reference_content)
+    samples = _load_profile_samples(scope_label) if (selected and not is_new) else []
     return render_template("profiles.html",
         profiles=all_profiles, selected=selected, is_new=is_new,
         current_scope=current_scope, scope_label=scope_label,
@@ -307,7 +325,7 @@ def profile_list():
         bans=[r for r in own if r.kind == "ban"],
         summaries=summaries,
         platform_labels=PLATFORM_LABELS,
-        md_content=md_content, reference_content=reference_content, samples=samples)
+        md_content=md_content, samples=samples)
 
 
 @bp.route("/api/profile/<profile_id>/md", methods=["POST"])
@@ -324,20 +342,53 @@ def profile_md_save(profile_id):
     return jsonify({"ok": True, "path": path})
 
 
+@bp.route("/api/profile/<profile_id>/samples", methods=["POST"])
+def profile_samples_save(profile_id):
+    """整体保存笔名样文库(权威源 samples.json + 再生 reference.txt 镜像)。
+
+    入参 {samples: [{id?, title, scene_tags[], source, note, text}]};缺 id 自动补 sN。
+    返回 {ok, saved, warnings, samples}——warnings = 短块(<800 字)/重复子段软提示,不阻断保存。
+    """
+    p = profiles.get(profile_id)
+    if not p:
+        return jsonify({"ok": False, "error": "笔名不存在"}), 404
+    d = request.get_json(silent=True) or {}
+    records = d.get("samples")
+    if not isinstance(records, list):
+        return jsonify({"ok": False, "error": "samples 须为数组"}), 400
+    pen = (p.pen_name or "").strip()
+    if not pen:
+        return jsonify({"ok": False, "error": "笔名缺少 pen_name"}), 400
+    style_samples.save_samples(pen, records)
+    final = style_samples.load_samples(pen) or []
+    warnings = _warn_short(final) + [
+        f"样文 {w['id']} 与 {w['dup_of']} 内容重复(子段)——浪费预算,建议去重"
+        for w in style_samples.duplicate_warnings(final)]
+    return jsonify({"ok": True, "saved": len(final), "warnings": warnings,
+                    "samples": [s.to_dict() for s in final]})
+
+
 @bp.route("/api/profile/<profile_id>/reference", methods=["POST"])
 def profile_reference_save(profile_id):
-    """保存人工样文到 storage/style_refs/<笔名>.reference.txt。"""
+    """(兼容)保存人工样文——旧整包 <sample> 文本入口。
+
+    内容按 <sample> 块拆成记录走 samples.json 权威保存(编辑即迁入样文库结构),
+    再整体写 storage/style_refs/<笔名>.reference.txt 镜像。旧调用不受影响。
+    """
     p = profiles.get(profile_id)
     if not p:
         return jsonify({"ok": False, "error": "笔名不存在"}), 404
     d = request.get_json(silent=True) or {}
     content = str(d.get("content") or "")
+    blocks = style_samples.parse_blocks(content)
+    records = [{"id": "", "title": "", "scene_tags": [], "source": "",
+                "note": "", "text": b} for b in blocks]
+    pen = (p.pen_name or "").strip()
     ref_dir = os.path.join(_project_root(), "storage", "style_refs")
     os.makedirs(ref_dir, exist_ok=True)
-    path = os.path.join(ref_dir, p.pen_name + ".reference.txt")
-    with open(path, "w", encoding="utf-8", newline="") as f:
-        f.write(content)
-    return jsonify({"ok": True, "path": path})
+    path = os.path.join(ref_dir, pen + ".reference.txt")
+    style_samples.save_samples(pen, records)
+    return jsonify({"ok": True, "path": path, "saved": len(blocks)})
 
 
 @bp.route("/profiles/<profile_id>/delete", methods=["POST"])
