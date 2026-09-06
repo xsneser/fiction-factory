@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 39  # 对齐 agent_tools._build_registry 实收（fill_gags 已随翻 ready 收敛移除）
+EXPECT_MCP_TOOLS = 43  # 39 + 4 样文库工具(add/delete/list/get_style_sample)。对齐 _build_registry 实收
 PASS, FAIL = [], []
 
 
@@ -83,6 +83,15 @@ async def main():
     bm, bid = _make_test_book()
     print(f"[setup] 临时书 {bid}（BookManager 直建，护栏：create_book 工具不存在）")
 
+    # 临时笔名(样文库工具往返用;MCP 子进程与父进程共享 profiles/ 目录 → 落盘即可见)
+    _tmp_pen = {"pid": "", "pen": ""}
+    try:
+        from libraries.profiles import ProfileManager
+        _tp = ProfileManager().create(pen_name="冒烟样文库", description="mcp_smoke 临时笔名")
+        _tmp_pen = {"pid": _tp.id, "pen": _tp.pen_name}
+    except Exception as _e:  # 无权限/目录异常 → 跳过样文库往返,不阻塞主链路
+        print(f"[setup] 临时笔名创建失败，跳过样文库往返: {_e}")
+
     params = StdioServerParameters(
         command=sys.executable, args=["mcp_server.py"], cwd=_ROOT)
     try:
@@ -106,7 +115,8 @@ async def main():
                           "fetch_book", "fetch_novel", "fetch_webnovel", "discover_hot", "list_rankings",
                           "list_crawled_novels", "read_crawled_novel", "extract_state", "ingest_library_assets",
                           "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
-                          "get_writing_context", "get_pen_style", "add_style_rule", "delete_style_rule"):
+                          "get_writing_context", "get_pen_style", "add_style_rule", "delete_style_rule",
+                          "add_style_sample", "delete_style_sample", "list_style_samples", "get_style_sample"):
                     check(f"工具 {t} 在列", t in names)
 
                 # ── 2. 对临时书做 MCP 往返 ──
@@ -151,6 +161,31 @@ async def main():
                 check("get_pen_style 返回风格权威（style_rules/forbidden 非空）",
                       bool((ps.get("style_rules") or "")) and bool(ps.get("forbidden")),
                       f"{ps.get('pen_name')} style_rules {len(ps.get('style_rules') or '')} 字符")
+
+                # ── 2.5 样文库工具往返(add/list/get/delete,临时笔名)──
+                if _tmp_pen["pid"]:
+                    _sm_text = ("这是一段用于样文库冒烟测试的连续场景文本，不含任何版权内容，"
+                                "仅用于验证样文库的落盘、镜像渲染与预算注入链路是否可用。")
+                    sa = await call_json(session, "add_style_sample", {
+                        "profile_id": _tmp_pen["pid"], "text": _sm_text,
+                        "title": "冒烟场景", "scene_tags": ["冒烟", "测试"]})
+                    check("add_style_sample OK（落库 1 条 s1）",
+                          sa.get("ok") and sa.get("total") == 1 and (sa.get("sample") or {}).get("id") == "s1",
+                          f"{sa}")
+                    sl = await call_json(session, "list_style_samples", {"profile_id": _tmp_pen["pid"]})
+                    check("list_style_samples 元数据在列（不含正文）",
+                          sl.get("count") == 1 and not (sl.get("samples") or [{}])[0].get("text"),
+                          f"{sl.get('count')} 条")
+                    gs = await call_json(session, "get_style_sample", {
+                        "profile_id": _tmp_pen["pid"], "sample_id": "s1"})
+                    check("get_style_sample 取回全文",
+                          (gs.get("sample") or {}).get("text", "").startswith("这是一段"),
+                          f"len={len((gs.get('sample') or {}).get('text') or '')}")
+                    sd = await call_json(session, "delete_style_sample", {
+                        "profile_id": _tmp_pen["pid"], "sample_id": "s1"})
+                    sl2 = await call_json(session, "list_style_samples", {"profile_id": _tmp_pen["pid"]})
+                    check("delete_style_sample OK（库清空）",
+                          sd.get("ok") and sl2.get("count") == 0, f"{sd}")
 
                 # drive_ui 步校验的宽松阀：写默认 build_status（updated_at 空 = 无真实向导状态），
                 # 使 set_outline 等步敏感命令的步校验跳过，测试不依赖 live 向导状态。
@@ -252,6 +287,18 @@ async def main():
             os.remove(os.path.join(_ROOT, "storage", "extract_work", "冒烟扫读书.json"))
         except Exception:
             pass
+        # 样文库临时笔名清理：删 profile + style_refs 文件（删库不留痕）
+        if _tmp_pen["pen"]:
+            try:
+                from libraries.profiles import ProfileManager
+                ProfileManager().delete(_tmp_pen["pid"])
+            except Exception:
+                pass
+            for _ext in (".samples.json", ".reference.txt"):
+                try:
+                    os.remove(os.path.join(_ROOT, "storage", "style_refs", _tmp_pen["pen"] + _ext))
+                except Exception:
+                    pass
 
     print("\n" + "=" * 50)
     print(f"  MCP 冒烟验收: {len(PASS)} 通过 / {len(FAIL)} 失败")

@@ -34,6 +34,7 @@ from libraries.storyline import OutlineSlot, annotate_plot_roles, \
 from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
 from libraries.tool_policy import _wrap_phase_gate  # noqa: E402
 from libraries import style_md  # noqa: E402  # 样本驱动:styles/<pen>.md 与 STYLE REFERENCE 样本
+from libraries import style_samples  # noqa: E402  # 样文库 samples.json + 预算选样注入
 
 
 # ─── 基础辅助 ───
@@ -372,7 +373,9 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
     # 其后若存在 storage/style_refs/<pen>.reference.txt → 追加为 STYLE REFERENCE 人工样本(最高风格来源)。
     # 无 md → 回退规则拼装(legacy,数组照旧)。每次现读文件,手改 md/样本即刻生效。
     style_md_text = style_md.read_style_md(profile)
-    ref_text = style_md.read_ref(profile)
+    # STYLE REFERENCE 样文:权威源 samples.json(预算选样渲染,保 style_rules < dsh 8192 字符阈值、
+    # 免中段被裁);无 JSON → 旧 reference.txt 兜底。md 单独保留、不参与裁剪。
+    ref_text, ref_meta = style_samples.build_ref_text_for_profile(profile)
     sample_driven = style_md_text is not None
     if sample_driven:
         style_rules = style_md_text
@@ -381,6 +384,7 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
         # md 模式结构性数组清空:① 与「不建禁词表/不机械规避」哲学一致;② 使本工具结果 <8KB
         # 免被 dsh 裁剪(否则 md+样本+大数组超限,style_rules 中段被裁)。非 md 笔名不受影响。
         style_list, forbidden = [], {"words": [], "patterns": []}
+        ref_summary = _ref_summary(ref_meta)
     else:
         style_rules = profile.build_writing_prompt()
         style_list = [r.pattern for r in rules if r.kind == "prefer" and r.pattern]
@@ -390,6 +394,7 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
             "patterns": [{"pattern": r.pattern, "desc": r.desc, "severity": r.severity}
                          for r in rules if r.kind == "ban" and not r.replacements and r.pattern],
         }
+        ref_summary = ""
     return {
         "pen_name": profile.pen_name,
         "language": profile.language or "zh",
@@ -399,7 +404,26 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
         "forbidden": forbidden,
         "language_hint": profile.build_language_hints(),
         "discipline": "【通用写作纪律】" + "；".join(profile.discipline_items()),
+        # 注入观测:预算内实际注入哪些样文/共多少条。被截断时写作 agent 可用
+        # list/get_style_sample 按场景拉指定样本(工作文件 §11 预算注入已落地)。
+        "ref_summary": ref_summary,
     }
+
+
+def _ref_summary(meta) -> str:
+    """把样文注入 meta 压成一行,供 agent 观测预算使用情况。"""
+    if not meta:
+        return ""
+    mode = meta.get("mode", "")
+    sel = meta.get("selected") or []
+    total = meta.get("total", 0)
+    chars = meta.get("chars", 0)
+    max_chars = meta.get("max_chars")
+    if mode == "samples":
+        ids = ",".join(sel) if sel else "-"
+        budget = f"预算≤{max_chars}" if max_chars else "不限"
+        return f"STYLE REFERENCE: 注入样文 {len(sel)}/{total} 条 [{ids}] ≈{chars} 字符 {budget}"
+    return f"STYLE REFERENCE(legacy 旧文件): 注入 {meta.get('count', 0)}/{total} 段 ≈{chars} 字符"
 
 
 def add_style_rule(profile_id: str, kind: str, pattern: str, desc: str = "",
@@ -437,6 +461,85 @@ def delete_style_rule(rule_id: str) -> dict:
         return {"ok": False, "error": f"规则 {rule_id} 不存在"}
     srl._save()
     return {"ok": True, "deleted": rule_id}
+
+
+def _samples_ctx(profile_id: str):
+    """解析笔名档案 + 其样文库(无记录返回 []),供样文读写工具复用。"""
+    profile = profiles.get(profile_id)
+    if profile is None:
+        raise RuntimeError(f"笔名 {profile_id} 不存在")
+    pen = (getattr(profile, "pen_name", "") or "").strip()
+    cur = style_samples.load_samples(pen) or []
+    return profile, pen, cur
+
+
+def add_style_sample(profile_id: str, text: str, title: str = "", scene_tags: list = None,
+                     source: str = "", note: str = "", replace_id: str = "") -> dict:
+    """给笔名加/替换一条 STYLE REFERENCE 人工样文。
+
+    供 agent 把参考书里的**完整连续场景**按段截取入库(不拆技巧、不润色、保留普通解释句;
+    别单喂金句/纯高潮)。scene_tags=自由场景标签(如 场景开场/推理观察/多人对白/冲突·威胁/
+    规则·死亡/过渡·日常/独处·心理,可扩展);note 记为何选这段/学习重点。replace_id 给出则替换
+    该条,否则追加。服务端算字数并再生 reference.txt 镜像;预算注入由系统负责(见 ref_summary)。"""
+    profile, pen, cur = _samples_ctx(profile_id)
+    txt = (text or "").strip()
+    if not txt:
+        raise RuntimeError("样文文本不能为空(应是一段完整连续场景原文)")
+    records = [s.to_dict() for s in cur]
+    meta = {"title": (title or "").strip(),
+            "scene_tags": [str(t).strip() for t in (scene_tags or []) if str(t).strip()],
+            "source": (source or "").strip(), "note": (note or "").strip()}
+    rid = (replace_id or "").strip()
+    if rid:
+        for r in records:
+            if r.get("id") == rid:
+                r.update(meta)
+                r["text"] = txt
+                break
+        else:
+            meta.update({"id": rid, "text": txt})
+            records.append(meta)
+    else:
+        meta["text"] = txt
+        records.append(meta)
+    style_samples.save_samples(pen, records)
+    final = style_samples.load_samples(pen) or []
+    target = next((s.to_dict() for s in final if s.id == (rid or final[-1].id)), None)
+    return {"ok": True, "sample": target, "total": len(final),
+            "warnings": style_samples.duplicate_warnings(final)}
+
+
+def delete_style_sample(profile_id: str, sample_id: str) -> dict:
+    """删除笔名的一条 STYLE REFERENCE 样文(按样文 id,如 s1)。"""
+    profile, pen, cur = _samples_ctx(profile_id)
+    if not cur or not any(s.id == sample_id for s in cur):
+        return {"ok": False, "error": f"样文 {sample_id} 不存在"}
+    cur = [s for s in cur if s.id != sample_id]
+    style_samples.save_samples(pen, cur)
+    return {"ok": True, "deleted": sample_id, "total": len(cur)}
+
+
+def list_style_samples(profile_id: str) -> dict:
+    """列笔名样文库**元数据**(id/标题/场景标签/字数/来源/备注,不含正文,保持薄)。
+
+    供 agent 看当前有哪些样文、各属什么场景;预算注入被截断时按需调 get_style_sample 取正文。"""
+    profile, pen, cur = _samples_ctx(profile_id)
+    rows = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
+             "source": s.source, "note": s.note, "word_count": s.word_count} for s in cur]
+    return {"ok": True, "pen_name": profile.pen_name, "count": len(rows), "samples": rows}
+
+
+def get_style_sample(profile_id: str, sample_id: str = "") -> dict:
+    """取笔名一条样文**全文**;sample_id 空则只回目录(与 list 同)。预算注入截断后拉指定场景样本用。"""
+    profile, pen, cur = _samples_ctx(profile_id)
+    if not sample_id:
+        return {"ok": True, "pen_name": profile.pen_name, "count": len(cur),
+                "samples": [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
+                             "word_count": s.word_count} for s in cur]}
+    for s in cur:
+        if s.id == sample_id:
+            return {"ok": True, "sample": s.to_dict()}
+    return {"ok": False, "error": f"样文 {sample_id} 不存在"}
 
 
 def query_characters(keyword: str = "", tag: str = "") -> dict:
@@ -2191,6 +2294,7 @@ def _build_registry():
         # 写作 / 元数据（薄工具：agent 生成后落盘）
         save_bridge_draft, save_chapter_text,
         add_style_rule, delete_style_rule,
+        add_style_sample, delete_style_sample, list_style_samples, get_style_sample,
         # 上架 / 质量门禁 / 校验
         publish_check, mark_finished, publish_book, export_book,
         chapter_quality_gate, validate_storyline, validate_world,
