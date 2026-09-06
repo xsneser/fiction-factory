@@ -27,6 +27,7 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 import time
 
@@ -256,7 +257,10 @@ def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
         "  config:\n"
         "    serverName: novelengine\n"
         "    transport: stdio\n"
-        "    command: python\n"
+        # 钉到服务进程自身解释器(sys.executable):若裸 `python` 从 PATH 解析到未装
+        # mcp 的解释器,mcp_server.py import 失败 → 工具服务器起不来 → dsh 任务零工具,
+        # 模型只能猜 mcp__novelengine__* 名字 → 满屏 unknown tool(2026-09-06 实测)。
+        f"    command: '{sys.executable}'\n"
         "    # --source dsh：mcp_server 据此把工具日志 source 记为 dsh（不写 JSONL），\n"
         "    # 右侧「工具日志」页签只展示外部 agent（source=mcp）调用，内部 dsh 不混入\n"
         "    args: ['mcp_server.py', '--source', 'dsh']\n"
