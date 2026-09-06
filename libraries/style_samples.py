@@ -364,6 +364,87 @@ def _want_list(value):
     return value if isinstance(value, (list, tuple, set)) else [value]
 
 
+def _score_samples(samples, query, kept_dims):
+    """对样本按声明维打分:返回 [(sample, score, hit_list)],只保留全部命中者。
+
+    - hit_list: [(字段, 命中的 query 值), ...] 供 UI 展示「这维命中在哪」。
+    - 样本缺某维 = 通配(不过滤也不加分);多选维按命中数计权。
+    """
+    out = []
+    for s in samples:
+        ok, score, hit = True, 0, []
+        for f, w in kept_dims:
+            want = _want_list(query.get(f))
+            have = (s.dims or {}).get(f)
+            if have is None or have == "" or have == []:
+                continue  # 样本缺维 → 通配
+            if f in _MULTI_DIMS:
+                inter = sorted(set(have) & set(want))
+                if not inter:
+                    ok = False
+                    break
+                score += w * len(inter)
+                hit.append((f, inter))
+            else:
+                if have in want:
+                    score += w
+                    hit.append((f, [have]))
+                else:
+                    ok = False
+                    break
+        if ok:
+            out.append((s, score, hit))
+    return out
+
+
+def _scored_with_relax(samples, query, declared, temperature):
+    """_score_samples + 命中窗放宽:精确命中为空时沿最低权重声明维逐级丢弃再试。
+
+    返回 (scored, relaxed_dims);全空 → (None, None)。"""
+    scored = _score_samples(samples, query, declared)
+    relaxed = []
+    if not scored and declared and len(declared) > 1 and int(max(0, temperature or 0)) >= 1:
+        order = sorted(range(len(declared)), key=lambda i: declared[i][1])  # 低→高权重下标
+        for d in range(1, min(int(max(0, temperature)), len(declared) - 1) + 1):
+            kept = [declared[i] for i in order[d:]]  # 丢最低 d 个,保高权重维
+            if not kept:
+                break
+            hit = _score_samples(samples, query, kept)
+            if hit:
+                scored = hit
+                relaxed = [declared[i][0] for i in order[:d]]
+                break
+    return scored or None, relaxed
+
+
+def _weighted_wheel(scored, avoid, k, rng):
+    """加权随机轮盘,不放回;avoid 里近期用过的 ×0.5(软避重,不绝对禁止)。
+
+    返回 (picked:[StyleSample], weights:[{id,score,weight}]);weights 与 picked 顺序一致(去重后)。"""
+    avoid = set(avoid or [])
+    work = []
+    for s, sc, hit in scored:
+        w = sc + 0.5
+        if s.id in avoid:
+            w *= 0.5
+        work.append({"s": s, "score": sc, "weight": w, "hit": hit})
+    picked = []
+    for _ in range(min(k, len(work))):
+        total = sum(x["weight"] for x in work)
+        r = rng.uniform(0.0, total)
+        acc, chosen = 0.0, None
+        for x in work:
+            acc += x["weight"]
+            if r <= acc:
+                chosen = x
+                break
+        if chosen is None:
+            chosen = work[-1]
+        picked.append(chosen["s"])
+        work = [x for x in work if x["s"].id != chosen["s"].id]
+    return picked, work
+
+
 def pick_samples(samples, query=None, k=3, avoid=None, rng=None, temperature=1.0):
     """加权随机取 k 条样文(硬过滤 → 软加权 → 加权随机 → 近期避重)。
 
@@ -380,74 +461,61 @@ def pick_samples(samples, query=None, k=3, avoid=None, rng=None, temperature=1.0
     avoid = set(avoid or [])
     declared = [(f, w) for f, w in SEL_WEIGHTS.items() if _want_list(query.get(f))]
 
-    def _score_with(kept_dims):
-        out = []
-        for s in samples:
-            ok, score = True, 0
-            for f, w in kept_dims:
-                want = _want_list(query.get(f))
-                have = (s.dims or {}).get(f)
-                if have is None or have == "" or have == []:
-                    continue  # 样本缺维 → 通配
-                if f in _MULTI_DIMS:
-                    inter = len(set(have) & set(want))
-                    if inter == 0:
-                        ok = False
-                        break
-                    score += w * inter
-                else:
-                    if have in want:
-                        score += w
-                    else:
-                        ok = False
-                        break
-            if ok:
-                out.append((s, score))
-        return out
-
-    scored = _score_with(declared)
-    relaxed = []
-    if not scored and declared and len(declared) > 1 and int(max(0, temperature or 0)) >= 1:
-        order = sorted(range(len(declared)), key=lambda i: declared[i][1])  # 低→高权重下标
-        for d in range(1, min(int(max(0, temperature)), len(declared) - 1) + 1):
-            kept = [declared[i] for i in order[d:]]  # 丢最低 d 个,保高权重维
-            if not kept:
-                break
-            hit = _score_with(kept)
-            if hit:
-                scored = hit
-                relaxed = [declared[i][0] for i in order[:d]]
-                break
+    scored, relaxed = _scored_with_relax(samples, query, declared, temperature)
     if not scored:
         return _fallback_pick(samples, k, avoid, rng)
 
-    # 加权随机轮盘,不放回;avoid 里近期用过的 ×0.5(软避重,不绝对禁止)
-    work = []
-    for s, sc in scored:
-        w = sc + 0.5
-        if s.id in avoid:
-            w *= 0.5
-        work.append((s, w))
-    picked = []
-    for _ in range(min(k, len(work))):
-        total = sum(w for _, w in work)
-        r = rng.uniform(0.0, total)
-        acc, chosen = 0.0, None
-        for s, w in work:
-            acc += w
-            if r <= acc:
-                chosen = s
-                break
-        if chosen is None:
-            chosen = work[-1][0]
-        picked.append(chosen)
-        work = [(s, w) for s, w in work if s.id != chosen.id]
+    picked, _ = _weighted_wheel(scored, avoid, k, rng)
     meta = {"mode": "pick", "query": {f: query[f] for f in SEL_WEIGHTS if query.get(f) is not None},
             "count": len(picked), "total": len(samples),
             "chars": sum(count_text_chars(s.text) for s in picked),
             "selected": [s.id for s in picked], "fallback": False,
             "relaxed_dims": relaxed}
     return picked, meta
+
+
+def preview_pick(samples, query=None, k=3, avoid=None, rng=None, temperature=1.0):
+    """pick_samples 的可视化版本:同一条决策链,但把候选池/命中明细一并返回。
+
+    UI 用它展示「一个情节的维度 → 硬过滤后候选 → 命中分/选中权重 → 加权随机 → 近期避重」,
+    保证展示的就是实际注入用的那套逻辑(pick_samples 与其共用评分/轮盘)。
+
+    返回 (picked, meta, candidates);candidates 按权重降序:
+    [{id, title, scene, score, weight, hit:{字段:命中值}, avoid_penalty:bool}]。
+    """
+    rng = rng or random
+    query = query or {}
+    avoid = set(avoid or [])
+    declared = [(f, w) for f, w in SEL_WEIGHTS.items() if _want_list(query.get(f))]
+
+    scored, relaxed = _scored_with_relax(samples, query, declared, temperature)
+    if not scored:
+        picked, meta = _fallback_pick(samples, k, avoid, rng)
+        return picked, meta, []
+
+    picked, _ = _weighted_wheel(scored, avoid, k, rng)
+    picked_ids = {s.id for s in picked}
+    candidates = []
+    for s, sc, hit in scored:
+        pen = s.id in avoid
+        candidates.append({
+            "id": s.id,
+            "title": s.title or s.id,
+            "scene": [dim_label("scene", v) for v in _scene_dims(s)],
+            "word_count": s.word_count,
+            "score": sc,
+            "weight": round((sc + 0.5) * (0.5 if pen else 1.0), 3),
+            "hit": {DIM_FIELD_ZH.get(f, f): [dim_label(f, v) for v in vs] for f, vs in hit},
+            "avoid_penalty": pen,
+            "picked": s.id in picked_ids,
+        })
+    candidates.sort(key=lambda c: -c["weight"])
+    meta = {"mode": "pick", "query": {f: query[f] for f in SEL_WEIGHTS if query.get(f) is not None},
+            "count": len(picked), "total": len(samples),
+            "chars": sum(count_text_chars(s.text) for s in picked),
+            "selected": [s.id for s in picked], "fallback": False,
+            "relaxed_dims": relaxed, "weights": dict(SEL_WEIGHTS)}
+    return picked, meta, candidates
 
 
 def _fallback_pick(samples, k, avoid, rng):
@@ -521,6 +589,24 @@ def estimate_budget_for(style_md_text, guide_chars=None):
     return max(1000, budget)
 
 
+def pool_for(profile) -> list:
+    """样文库词条池,收窄到该笔名所选词条(profile.sample_ids);未选 → 全库。
+
+    供 build_ref_text_for_profile 与 pick_plot_sample 共用同一「当前笔名可用池」语义。
+    返回 [] 表示无全局样文库(samples.json 不存在/损坏)。
+    """
+    samples = load_samples()
+    if samples is None:
+        return []
+    chosen_ids = [x for x in (getattr(profile, "sample_ids", None) or []) if x]
+    if chosen_ids:
+        by_id = {s.id: s for s in samples}
+        narrowed = [by_id[i] for i in chosen_ids if i in by_id]
+        if narrowed:
+            return narrowed
+    return samples
+
+
 def build_ref_text_for_profile(profile, max_chars=None, query=None, k=3, avoid=None):
     """组注入用 STYLE REFERENCE 文本(权威源 JSON → 加权随机 query 取样 / 预算多样 → 渲染)。
 
@@ -531,21 +617,15 @@ def build_ref_text_for_profile(profile, max_chars=None, query=None, k=3, avoid=N
     - 无 samples.json 但有旧 reference.txt:legacy 兜底;两者皆无返回 (None, None)。
     """
     from . import style_md as _sm
-    samples = load_samples()  # 全局样文库(不分笔名)
-    if samples is not None:
-        # 笔名已选样文 → 池子收窄到所选词条;未选 → 全库(向后兼容)
-        chosen_ids = [x for x in (getattr(profile, "sample_ids", None) or []) if x]
-        if chosen_ids:
-            by_id = {s.id: s for s in samples}
-            narrowed = [by_id[i] for i in chosen_ids if i in by_id]
-            if narrowed:
-                samples = narrowed
+    pen_chosen = [x for x in (getattr(profile, "sample_ids", None) or []) if x]
+    samples = pool_for(profile)  # 全局样文库词条池,已收窄到笔名所选
+    if samples:
         if query:
             picked, meta = pick_samples(samples, query=query, k=k, avoid=avoid)
             if not picked:
                 return None, None
             meta["max_chars"] = None
-            meta["pen_selected"] = bool(chosen_ids)
+            meta["pen_selected"] = bool(pen_chosen)
             return render_reference(picked), meta
         if max_chars is None:
             md_text = (_sm.read_style_md(profile) or "") if profile is not None else ""
@@ -556,7 +636,7 @@ def build_ref_text_for_profile(profile, max_chars=None, query=None, k=3, avoid=N
             return None, None
         meta["mode"] = "samples"
         meta["max_chars"] = max_chars
-        meta["pen_selected"] = bool(chosen_ids)
+        meta["pen_selected"] = bool(pen_chosen)
         return render_reference(selected), meta
 
     # legacy:旧扁平 reference.txt 兜底(仅全局库尚不存在时,迁移期参照;非权威)

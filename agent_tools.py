@@ -260,7 +260,10 @@ def _build_plot_run(tl, p):
                                                 "setup_plot_id", "payoff_plot_id", "deadline_chapter")
                          if k in it})
     run["promise_state"] = prom
-    run["scene_hint_tags"] = []  # 场景/样文判定归 agent（get_pen_style query），此处不给硬提示
+    # 场景/样文 query：服务端按当前情节段内容字段确定性推导（plot_dims.infer_plot_query），
+    # 写作 agent 直接据此选样（pick_plot_sample），不再每轮手判。线程/承诺不参与推导。
+    from libraries.plot_dims import infer_plot_query
+    run["style_query"] = infer_plot_query(p, tl) if tl is not None else {}
     return run
 
 
@@ -478,18 +481,9 @@ _STYLE_RECENT = []   # 进程内近期已注入的样文 id(自动避重,dsh 单
 _STYLE_RECENT_MAX = 12
 
 
-def get_pen_style(book_id: str = "", profile_id: str = "", query: dict = None,
-                  k: int = 3, avoid: list = None) -> dict:
-    """读一个笔名的完整写作风格（句式风格+禁止内容+语言习惯+通用纪律），写作 agent 动笔前必读。
-
-    book_id 与 profile_id 至少其一：book_id 优先按书绑定的笔名解析；否则按 profile_id；
-    都无则默认笔名（枫落）。query=多维权表(英文键)，如 {"scene":["investigation"],
-    "cast":"solo","dramatic_state":"uneasy"}：给则 STYLE REFERENCE 用加权随机从词条池抽 ≤k 条
-    (硬过滤→软加权→加权随机→自动避重，k 默认 3)；不给则多样封顶注入。avoid 可追加指定避开 id。
-    返回 prose style_rules（权威）+ 结构化 style/forbidden 列表 + samples(维度视图)，
-    供逐条遵守/精确引用。信息不足时优先用本工具重读（独立薄工具，不纠缠全量上下文）。
-    """
-    from libraries.style_rules import StyleRuleLibrary, DEFAULT_PROFILE_ID
+def _resolve_profile(book_id: str = "", profile_id: str = ""):
+    """book_id(按书绑笔名) 优先 → profile_id → 默认笔名(枫落)；无可用则抛错。"""
+    from libraries.style_rules import DEFAULT_PROFILE_ID
     profile = None
     if book_id:
         try:
@@ -503,24 +497,59 @@ def get_pen_style(book_id: str = "", profile_id: str = "", query: dict = None,
         profile = profiles.get(DEFAULT_PROFILE_ID)
     if profile is None:
         raise RuntimeError("没有可用的笔名档案")
+    return profile
+
+
+def _load_avoid(profile_id: str, extra=None) -> list:
+    """近期避重 = 进程内(_STYLE_RECENT, 单任务内) ∪ 持久化历史(按笔名,跨任务/会话);去重保序。"""
+    _persist = style_samples.load_pick_history(profile_id)
+    return list(dict.fromkeys([x for x in (list(extra or []) + list(_STYLE_RECENT) + _persist) if x]))
+
+
+def _record_pick(profile_id: str, sample_ids) -> None:
+    """把**实际注入过**的样文记入进程内近期 + 持久化历史。
+
+    任一注入路径都记(不只 query 取样):多样封顶/legacy/兜底若真实注入了词条,同样进避重,
+    否则「最常见的注入方式」会绕过近期避重,同篇反复被灌。
+    """
+    sample_ids = [x for x in (sample_ids or []) if x]
+    if not sample_ids:
+        return
+    for _sid in sample_ids:
+        if _sid not in _STYLE_RECENT:
+            _STYLE_RECENT.append(_sid)
+    del _STYLE_RECENT[:-_STYLE_RECENT_MAX]
+    style_samples.record_pick_history(profile_id, sample_ids)
+
+
+def get_pen_style(book_id: str = "", profile_id: str = "", query: dict = None,
+                  k: int = 3, avoid: list = None, no_ref: bool = False) -> dict:
+    """读一个笔名的完整写作风格（句式风格+禁止内容+语言习惯+通用纪律），写作 agent 动笔前必读。
+
+    book_id 与 profile_id 至少其一：book_id 优先按书绑定的笔名解析；否则按 profile_id；
+    都无则默认笔名（枫落）。query=多维权表(英文键)，如 {"scene":["investigation"],
+    "cast":"solo","dramatic_state":"uneasy"}：给则 STYLE REFERENCE 用加权随机从词条池抽 ≤k 条
+    (硬过滤→软加权→加权随机→自动避重，k 默认 3)；不给则多样封顶注入。avoid 可追加指定避开 id。
+    no_ref=True 只取 md/rules、不注入任何样文（写作流程每 Plot Run 的**唯一**样文请用
+    pick_plot_sample，避免多样预注入与单篇并存稀释「每段只参考一篇」）。任何真实注入都会记避重历史。
+    返回 prose style_rules（权威）+ 结构化 style/forbidden 列表 + samples(维度视图)，
+    供逐条遵守/精确引用。信息不足时优先用本工具重读（独立薄工具，不纠缠全量上下文）。
+    """
+    from libraries.style_rules import StyleRuleLibrary
+    profile = _resolve_profile(book_id, profile_id)
     rules = [r for r in StyleRuleLibrary().rules_for(profile.id) if r.enabled]
     # 样本驱动:存在 styles/<pen>.md → style_rules = 该 md(负约束/原则);
     # 其后若存在 storage/style_refs/<pen>.reference.txt → 追加为 STYLE REFERENCE 人工样本(最高风格来源)。
     # 无 md → 回退规则拼装(legacy,数组照旧)。每次现读文件,手改 md/样本即刻生效。
     style_md_text = style_md.read_style_md(profile)
-    # STYLE REFERENCE:全局词条库。给 query → 加权随机抽 ≤k 条(自动近期避重);无 query → 多样封顶。
-    # md 单独保留、不参与裁剪;无 JSON → 旧文件兜底。
-    # 近期避重 = 进程内(_STYLE_RECENT, dsh 单任务内) ∪ 持久化历史(按笔名,跨任务/会话);去重保序
-    _persist = style_samples.load_pick_history(profile.id)
-    _avoid = list(dict.fromkeys([x for x in (list(avoid or []) + list(_STYLE_RECENT) + _persist) if x]))
-    ref_text, ref_meta = style_samples.build_ref_text_for_profile(
-        profile, query=query, k=int(k or 3), avoid=_avoid)
-    if query and ref_meta and ref_meta.get("mode") == "pick":
-        for _sid in (ref_meta.get("selected") or []):
-            if _sid not in _STYLE_RECENT:
-                _STYLE_RECENT.append(_sid)
-        del _STYLE_RECENT[:-_STYLE_RECENT_MAX]
-        style_samples.record_pick_history(profile.id, ref_meta.get("selected") or [])
+    ref_text = ref_meta = None
+    if not no_ref:
+        # STYLE REFERENCE:全局词条库。给 query → 加权随机抽 ≤k 条(自动近期避重);无 query → 多样封顶。
+        # md 单独保留、不参与裁剪;无 JSON → 旧文件兜底。有注入即记避重(见 _record_pick)。
+        ref_text, ref_meta = style_samples.build_ref_text_for_profile(
+            profile, query=query, k=int(k or 3), avoid=_load_avoid(profile.id, avoid))
+        if ref_meta and ref_meta.get("selected"):
+            _record_pick(profile.id, ref_meta.get("selected") or [])
     sample_driven = style_md_text is not None
     if sample_driven:
         style_rules = style_md_text
@@ -563,6 +592,43 @@ def get_pen_style(book_id: str = "", profile_id: str = "", query: dict = None,
         # 视图(id/title/scene_tags/字数,无正文),想聚焦某场景再 get_style_sample 取全文。
         "ref_summary": ref_summary,
         "samples": meta_samples,
+    }
+
+
+def pick_plot_sample(book_id: str = "", query: dict = None, profile_id: str = "") -> dict:
+    """[Plot Run] 给「当前这一个情节段」抽**恰好 1 篇**样文并记避重历史。
+
+    服务端确定性链路：_next_plot(第一个未写且不在草稿内) → plot_run.style_query
+    (plot_dims.infer_plot_query 按情节段内容推导，见 _build_plot_run) → 加权随机 k=1 →
+    _record_pick。query 可显式覆盖（缺省用推导值）。线程/承诺只作上下文、不参与选样。
+
+    写作 agent 每情节段运行调一次，text 就是本段唯一 STYLE REFERENCE 单篇样文（已含
+    `# 场景:` 头 + 引导语），语言参考随运行自然漂移；同场景其余样文用 get_style_sample 备查。
+    """
+    tl = _require_tl(book_id)
+    draft = _draft_read(book_id)
+    p = _next_plot(tl, draft)
+    if p is None:
+        return {"ok": False, "error": "没有待写的情节段（已全部写完，或全部落在进行中草稿里）。"}
+    run = _build_plot_run(tl, p)
+    q = dict(query) if query else (run.get("style_query") or {})
+    profile = _resolve_profile(book_id, profile_id)
+    pool = style_samples.pool_for(profile)
+    if not pool:
+        return {"ok": False, "error": "全局样文库无词条，无法单篇取样；请先在 /samples 入库人工样文。"}
+    picked, meta = style_samples.pick_samples(pool, query=q, k=1, avoid=_load_avoid(profile.id))
+    # 注：空 query 时 _score_samples 对全池同分(declared 空) → 轮盘在整池上随机 1 条，不落多样分支。
+    if not picked:
+        return {"ok": False, "error": "k=1 取样为空（无可取样本）。"}
+    _record_pick(profile.id, meta.get("selected") or [s.id for s in picked])
+    s = picked[0]
+    return {
+        "ok": True,
+        "plot": {"id": p.id, "name": p.name},
+        "query": q,
+        "sample": {"id": s.id, "title": s.title or s.id, "word_count": s.word_count},
+        "text": style_samples.render_reference([s]),
+        "ref_summary": _ref_summary(meta),
     }
 
 
@@ -2452,7 +2518,7 @@ def _build_registry():
         # 只读摸底
         list_books, get_book_state, get_writing_context, get_storyline,
         get_book_detail, get_build_status, query_arc_library, query_plots, query_gags, query_profiles, query_characters,
-        get_pen_style,
+        get_pen_style, pick_plot_sample,
         # 规划（薄工具：agent 生成后落盘；旧工具内 LLM 生成已由 agent 自主生成接管）
         save_basic_info,
         save_outlines, save_book_meta,
