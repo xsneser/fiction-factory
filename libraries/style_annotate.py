@@ -30,8 +30,8 @@ _TENSE = "对峙|冷|瞪|威胁|针锋|沉默|冷汗|紧绷|剑拔弩张|颤抖"
 _UNEASY = "奇怪|诡异|不安|怀疑|不对劲|心|难道|不禁"
 _CALM = "平静|日常|笑|吃饭|喝酒|啤酒|安静|散步|太阳|温暖|牛奶|唱歌"
 _INFO = "规则|为什么|因为|也就是说|这意味着|真相|解释|答案|原来是|应该|推理|线索|证据|证明|所以"
-_REVEAL = "真相|原来|居然|竟然|发现|揭穿|承认|说明|其实"
-_DEDUCE = "推理|猜|推测|应该|难道|意味着|证明|线索|证据|所以|八成|想必"
+_REVEAL = "真相|揭穿|承认|实情|居然是|竟然是|原来如此|瞒不住|供出|坦白|水落石出"
+_DEDUCE = "推理|推断|推测|八成|想必|意味着|线索|证据|证明|据此|不难猜|猜到|想通"
 
 
 def _speakers(text):
@@ -41,8 +41,6 @@ def _speakers(text):
 def _cast_from_speakers(n, legacy_cast=None, legacy_tags=None):
     if legacy_cast:
         return legacy_cast
-    if legacy_tags and "独处·心理" in legacy_tags:
-        return "solo"
     if n >= 8:
         return "crowd"
     if n >= 5:
@@ -53,9 +51,13 @@ def _cast_from_speakers(n, legacy_cast=None, legacy_tags=None):
         return "duo"
     if n == 1:
         return "solo"
+    # n==0(独白/旁白):只有 legacy 给强信号才猜,否则留空=通配——避免所有无对白文本
+    # 都被硬猜成 small_group(0 人说话不代表群像,会把单人样文塞进群像池)。
+    if legacy_tags and "独处·心理" in legacy_tags:
+        return "solo"
     if legacy_tags and any("群像" in t for t in legacy_tags):
         return "large_group"
-    return "small_group"  # 兜底
+    return ""
 
 
 def _dialogue_density(text):
@@ -73,34 +75,39 @@ def _dialogue_density(text):
     return "high"
 
 
+_PACE_FAST = re.compile(r"逃命|追杀|突围|扑向|冲向|爆发|拔刀|血战|火并|疾驰|冲杀|突入|炸开")
+_PACE_SLOW = re.compile(r"发呆|沉思|独处|漫步|入睡|安安静静|缓缓|慢慢|收拾|整理|平静下来|发怔|出神")
+
+
 def _pace(text):
-    body = re.sub(r"\s", "", text)
-    if not body:
-        return "medium"
-    sents = re.findall(r"[。！？…]+", body)
-    n = max(1, len(sents))
-    avg = len(body) / n
-    if avg < 11:
+    # 用动作/静止词汇信号判快慢,不再用平均句长公式——长文本永远算出 slow,
+    # 会让全场 pace 塌缩成同一值(见 P2 诊断)。无强信号 → 空(通配),交给场景邻近随机。
+    body = text or ""
+    fast = len(_PACE_FAST.findall(body))
+    slow = len(_PACE_SLOW.findall(body))
+    if fast and fast >= slow:
         return "fast"
-    if avg > 20:
+    if slow and slow >= 2 and slow > fast:
         return "slow"
-    return "medium"
+    return ""
 
 
 def _dramatic(text, legacy=None):
-    body = text
+    body = text or ""
     scores = {"crisis": len(re.findall(_CRISIS, body)),
               "escalating": len(re.findall(_ESC, body)),
               "tense": len(re.findall(_TENSE, body)),
               "uneasy": len(re.findall(_UNEASY, body)),
               "calm": len(re.findall(_CALM, body))}
     best = max(scores, key=scores.get)
-    if scores[best] == 0:
-        return "uneasy" if "独处·心理" in (legacy or []) else "calm"
+    if scores[best] < 2:
+        # 信号太弱就不标——避免普通叙述只因带个「笑/难道」就被打成 calm/uneasy,
+        # 全场戏剧状态塌缩。legacy(旧中文标签)给的强推断仍由 suggest_dims 的 dram_g 补。
+        return "uneasy" if "独处·心理" in (legacy or []) else ""
     # 平静词与不安词并现 → 取更高;crisis 词极少时不抬
     if best == "calm" and scores.get("uneasy", 0) >= 2 and scores["calm"] <= 1:
         return "uneasy"
-    return best if scores[best] >= 1 else ("calm")
+    return best
 
 
 def _info_density(text):
@@ -114,6 +121,8 @@ def _info_density(text):
 
 def _narrative(text, legacy=None):
     acts = set()
+    # 收紧:旧 _REVEAL/_DEDUCE 混入「原来/发现/所以/应该/难道」等高频词 → 几乎每篇都带
+    # deduce/reveal,全池向量雷同。现用窄标记(reveal/deduce 各 ≥2 命中强词才记)。
     if len(re.findall(_REVEAL, text)) >= 2:
         acts.add("reveal")
     if len(re.findall(_DEDUCE, text)) >= 2:
@@ -174,15 +183,23 @@ def suggest_dims(text, legacy_tags=None):
     return ss._clean_dims(dims)
 
 
-def annotate_samples(samples):
-    """对 StyleSample 列表预标:合并进现有 dims(已有值保留,空维补建议)。"""
+def annotate_samples(samples, force=False):
+    """对 StyleSample 列表预标。
+
+    - force=False(默认,安全):合并进现有 dims,已有值保留、只补空维——旧的过度默认标签
+      不会被动清除;
+    - force=True(重标/审计用):整条按新规则重算覆盖(治理低区分度时先 force 预览再人工微调)。
+    """
     out = []
     for s in samples:
-        cur = dict(s.dims or {})
         sug = suggest_dims(s.text or "", legacy_tags=getattr(s, "scene_tags", None))
-        for f, v in sug.items():
-            if f not in cur or not cur[f]:
-                cur[f] = v
-        s.dims = cur
+        if force:
+            s.dims = sug
+        else:
+            cur = dict(s.dims or {})
+            for f, v in sug.items():
+                if f not in cur or not cur[f]:
+                    cur[f] = v
+            s.dims = cur
         out.append(s)
     return out
