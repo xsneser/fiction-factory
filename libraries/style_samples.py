@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-"""笔名「样文库」—— STYLE REFERENCE 人工样本的结构化管理与预算注入。
+"""全局「样文库」—— STYLE REFERENCE 人工样本(词条)的结构化管理与注入。
 
-样文从「扁平 <sample> 文本文件」升级为**带元数据的记录库**,解决:
-- 无条目元数据 / 无逐条增删 / agent 无法写样文;
-- get_pen_style 全量注入逼近 dsh 8192 字符阈值会裁掉中段(工作文件 §11「不一次全塞」)。
+样文从「扁平 <sample> 文本文件 / 每笔名 samples.json」升为**全局一份带元数据的词条库**,
+解决:词条可按场景分类浏览/添加、各笔名写作时共享同一 STYLE REFERENCE(用户 2026-09-06 拍板)。
 
 存储(全部 gitignored,版权样本不入库):
-  - storage/style_refs/<笔名>.samples.json  : 权威源,记录数组(每条 id/title/scene_tags/
-    source/word_count/note/text),UI 与 MCP 工具读写它。
-  - storage/style_refs/<笔名>.reference.txt : **镜像**,由权威源再生成(# STYLE REFERENCE
-    标题 + §6 引导语 + <sample> 块),供人读 / 旧 style_md.read_ref 兜底。
+  - storage/style_samples/samples.json : 权威源,词条数组(每条 id/title/scene_tags/
+    source/word_count/note/text/no_warn),UI 与 MCP 工具读写它。
+  - storage/style_samples/reference.txt : **镜像**,由权威源再生成(# STYLE REFERENCE
+    标题 + §6 引导语 + 每条前 `# 场景:…` + <sample> 块),供人读/注入兜底。
+  - 旧 storage/style_refs/<笔名>.samples.json 保留作迁移参照,不再是读写源。
 
 字数口径(易混,务必区分):
   - word_count(展示/落库)= count_prose_units(中文字 + 英文词),对齐平台字数语义;
@@ -18,13 +18,15 @@
 
 选择策略(select_for_budget):保序 + **跨场景标签多样化优先** —— 预算内尽量每种
 scene_tag 先取最早 1 条,再按原序补足;宁可少塞不超限;保证至少返回首条(不空)。
+pruner 默认已关 → 预算 0 = 全量注入全部词条。
 """
 import os
 import re
 from dataclasses import dataclass, field, asdict
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_REFS = os.path.join(_ROOT, "storage", "style_refs")
+_LIB = os.path.join(_ROOT, "storage", "style_samples")   # 全局样文库(权威源 + 镜像)
+_LEGACY_REFS = os.path.join(_ROOT, "storage", "style_refs")  # 旧每笔名文件(迁移/回滚参照)
 
 _SAMPLE_RE = re.compile(r"<sample>(.*?)</sample>", re.S)
 _WS_RE = re.compile(r"\s+")
@@ -42,12 +44,20 @@ def tool_prune_enabled() -> bool:
     return bool(os.environ.get("NE_KEEP_TOOL_PRUNE"))
 
 
-def samples_path(pen_name: str) -> str:
-    return os.path.join(_REFS, f"{pen_name}.samples.json")
+def samples_path(pen_name: str = "") -> str:
+    """全局样文库权威源路径(不分笔名;pen_name 仅兼容占位)。"""
+    return os.path.join(_LIB, "samples.json")
 
 
-def reference_path(pen_name: str) -> str:
-    return os.path.join(_REFS, f"{pen_name}.reference.txt")
+def reference_path(pen_name: str = "") -> str:
+    """全局样文库镜像路径(不分笔名)。"""
+    return os.path.join(_LIB, "reference.txt")
+
+
+def legacy_pen_path(pen_name: str) -> tuple:
+    """旧每笔名文件路径(迁移/回滚参照用):(samples.json, reference.txt)。"""
+    return (os.path.join(_LEGACY_REFS, f"{pen_name}.samples.json"),
+            os.path.join(_LEGACY_REFS, f"{pen_name}.reference.txt"))
 
 
 def count_text_chars(text: str) -> int:
@@ -117,9 +127,9 @@ class StyleSample:
 
 # ─── 读写 ───
 
-def load_samples(pen_name: str):
-    """读权威源 samples.json;无文件/损坏 → None(由调用方走 legacy 兜底)。"""
-    path = samples_path(pen_name)
+def load_samples(pen_name: str = ""):
+    """读全局样文库词条;无文件/损坏 → None。pen_name 仅兼容占位(不分笔名)。"""
+    path = samples_path()
     if not os.path.exists(path):
         return None
     try:
@@ -142,11 +152,12 @@ def _next_id(existing_ids):
     return f"s{n}"
 
 
-def save_samples(pen_name: str, samples: list) -> dict:
-    """把记录列表整体落权威源(缺 id 自动补),并再生 reference.txt 镜像。
+def save_samples(pen_name: str = "", samples: list = None) -> dict:
+    """把词条列表整体落**全局**权威源(缺 id 自动补),并再生 reference.txt 镜像。
 
-    返回 {ok, saved, path}。records 里元素可为 StyleSample / dict。
+    返回 {ok, saved, path}。records 里元素可为 StyleSample / dict。pen_name 仅兼容占位。
     """
+    samples = samples or []
     normalized = []
     existing = set()
     for x in samples:
@@ -161,11 +172,11 @@ def save_samples(pen_name: str, samples: list) -> dict:
         s.word_count = count_word_units(s.text)
         normalized.append(s)
 
-    os.makedirs(_REFS, exist_ok=True)
-    path = samples_path(pen_name)
+    os.makedirs(_LIB, exist_ok=True)
+    path = samples_path()
     payload = {
         "version": 2,
-        "pen_name": pen_name,
+        "scope": "global",
         "samples": [s.to_dict() for s in normalized],
     }
     with open(path, "w", encoding="utf-8", newline="") as fh:
@@ -173,7 +184,7 @@ def save_samples(pen_name: str, samples: list) -> dict:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
     # 镜像 reference.txt = 全量渲染(注入时才按预算选,镜像保留完整给人读/兜底)
     ref = render_reference(normalized)
-    with open(reference_path(pen_name), "w", encoding="utf-8", newline="") as fh:
+    with open(reference_path(), "w", encoding="utf-8", newline="") as fh:
         fh.write(ref)
     return {"ok": True, "saved": len(normalized), "path": path}
 
@@ -272,14 +283,10 @@ def build_ref_text_for_profile(profile, max_chars=None):
     - 两者皆无:返回 (None, None)。
     """
     from . import style_md as _sm
-    pen = (getattr(profile, "pen_name", "") or "").strip()
-    if not pen:
-        return None, None
-
-    samples = load_samples(pen)
+    samples = load_samples()  # 全局样文库(不分笔名)
     if samples is not None:
         if max_chars is None:
-            md_text = _sm.read_style_md(profile) or ""
+            md_text = (_sm.read_style_md(profile) or "") if profile is not None else ""
             guide_chars = count_text_chars("# STYLE REFERENCE\n\n{0}\n\n".format(_REFERENCE_GUIDE))
             max_chars = estimate_budget_for(md_text, guide_chars)
         selected, meta = select_for_budget(samples, max_chars)
@@ -289,7 +296,9 @@ def build_ref_text_for_profile(profile, max_chars=None):
         meta["max_chars"] = max_chars
         return render_reference(selected), meta
 
-    # legacy:旧扁平 reference.txt(无 JSON)→ 原文返回,能解析成块则按预算截断保底
+    # legacy:旧扁平 reference.txt 兜底(仅全局库尚不存在时,迁移期参照;非权威)
+    if profile is None:
+        return None, None
     raw = _sm.read_ref(profile)
     if not raw:
         return None, None

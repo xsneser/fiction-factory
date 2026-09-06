@@ -399,7 +399,7 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
     # 场景标签结构化视图(无正文,保持薄):写作 agent 按 id/title/scene_tags 就近参考
     # 对应场景的样本(正文已全量注入;需要单条全文用 get_style_sample)。
     meta_samples = []
-    _cur = style_samples.load_samples((profile.pen_name or "").strip())
+    _cur = style_samples.load_samples()  # 全局样文库词条
     if _cur:
         meta_samples = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
                          "word_count": s.word_count, "source": s.source} for s in _cur]
@@ -472,28 +472,23 @@ def delete_style_rule(rule_id: str) -> dict:
     return {"ok": True, "deleted": rule_id}
 
 
-def _samples_ctx(profile_id: str):
-    """解析笔名档案 + 其样文库(无记录返回 []),供样文读写工具复用。"""
-    profile = profiles.get(profile_id)
-    if profile is None:
-        raise RuntimeError(f"笔名 {profile_id} 不存在")
-    pen = (getattr(profile, "pen_name", "") or "").strip()
-    cur = style_samples.load_samples(pen) or []
-    return profile, pen, cur
+def _samples_ctx(profile_id: str = ""):
+    """(兼容壳)样文库现为**全局词条库**(不分笔名);profile_id 仅占位,不再按笔名解析文件。"""
+    return None, None, style_samples.load_samples() or []
 
 
 def add_style_sample(profile_id: str, text: str, title: str = "", scene_tags: list = None,
                      source: str = "", note: str = "", replace_id: str = "",
                      no_warn: bool = None) -> dict:
-    """给笔名加/替换一条 STYLE REFERENCE 人工样文。
+    """给**全局样文库**加/替换一个词条(STYLE REFERENCE 人工样文,不分笔名,各笔名写作共享)。
 
     供 agent 把参考书里的**完整连续场景**按段截取入库(不拆技巧、不润色、保留普通解释句;
-    别单喂金句/纯高潮)。scene_tags=自由场景标签(如 场景开场/推理观察/多人对白/冲突·威胁/
-    规则·死亡/过渡·日常/独处·心理,可扩展);note 记为何选这段/学习重点。replace_id 给出则替换
-    该条,否则追加。no_warn=True 标「人工确认保留」(该条短或与其它条整段重叠也接受,不弹预警,
-    如从推理里截的对白聚焦样本)。服务端算字数并再生 reference.txt 镜像;注入全量由系统负责。
-    """
-    profile, pen, cur = _samples_ctx(profile_id)
+    别单喂金句/纯高潮)。scene_tags=自由场景标签(顶部分类按钮即各词条标签并集,如 开场/群像/
+    推理/多人对白/规则·死亡/冲突·威胁/过渡·日常/独处·心理,一个词条可多标签);note 记为何选
+    这段/学习重点;replace_id 给出则替换该条否则追加;no_warn=True 标「人工确认保留」(短或与
+    其它条整段重叠也不预警,如从推理里截的对白聚焦样本)。profile_id 仅向后兼容占位。
+    服务端算字数并再生 reference.txt 镜像;注入全量由系统负责。"""
+    cur = style_samples.load_samples() or []
     txt = (text or "").strip()
     if not txt:
         raise RuntimeError("样文文本不能为空(应是一段完整连续场景原文)")
@@ -517,38 +512,38 @@ def add_style_sample(profile_id: str, text: str, title: str = "", scene_tags: li
     else:
         meta["text"] = txt
         records.append(meta)
-    style_samples.save_samples(pen, records)
-    final = style_samples.load_samples(pen) or []
+    style_samples.save_samples(samples=records)
+    final = style_samples.load_samples() or []
     target = next((s.to_dict() for s in final if s.id == (rid or final[-1].id)), None)
     return {"ok": True, "sample": target, "total": len(final),
             "warnings": style_samples.duplicate_warnings(final)}
 
 
 def delete_style_sample(profile_id: str, sample_id: str) -> dict:
-    """删除笔名的一条 STYLE REFERENCE 样文(按样文 id,如 s1)。"""
-    profile, pen, cur = _samples_ctx(profile_id)
+    """删除全局样文库的一个词条(按 id,如 s1)。"""
+    cur = style_samples.load_samples() or []
     if not cur or not any(s.id == sample_id for s in cur):
         return {"ok": False, "error": f"样文 {sample_id} 不存在"}
     cur = [s for s in cur if s.id != sample_id]
-    style_samples.save_samples(pen, cur)
+    style_samples.save_samples(samples=cur)
     return {"ok": True, "deleted": sample_id, "total": len(cur)}
 
 
-def list_style_samples(profile_id: str) -> dict:
-    """列笔名样文库**元数据**(id/标题/场景标签/字数/来源/备注,不含正文,保持薄)。
+def list_style_samples(profile_id: str = "") -> dict:
+    """列全局样文库**元数据**(id/标题/场景标签/字数/来源/备注,不含正文,保持薄)。
 
-    供 agent 看当前有哪些样文、各属什么场景;预算注入被截断时按需调 get_style_sample 取正文。"""
-    profile, pen, cur = _samples_ctx(profile_id)
+    供 agent 看当前有哪些词条、各属什么场景;想聚焦某场景时调 get_style_sample 取全文。"""
+    cur = style_samples.load_samples() or []
     rows = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
              "source": s.source, "note": s.note, "word_count": s.word_count} for s in cur]
-    return {"ok": True, "pen_name": profile.pen_name, "count": len(rows), "samples": rows}
+    return {"ok": True, "scope": "global", "count": len(rows), "samples": rows}
 
 
-def get_style_sample(profile_id: str, sample_id: str = "") -> dict:
-    """取笔名一条样文**全文**;sample_id 空则只回目录(与 list 同)。预算注入截断后拉指定场景样本用。"""
-    profile, pen, cur = _samples_ctx(profile_id)
+def get_style_sample(profile_id: str = "", sample_id: str = "") -> dict:
+    """取全局样文库一个词条**全文**;sample_id 空则只回目录(与 list 同)。"""
+    cur = style_samples.load_samples() or []
     if not sample_id:
-        return {"ok": True, "pen_name": profile.pen_name, "count": len(cur),
+        return {"ok": True, "scope": "global", "count": len(cur),
                 "samples": [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
                              "word_count": s.word_count} for s in cur]}
     for s in cur:

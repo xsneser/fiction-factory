@@ -41,6 +41,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 | 角色库 | `/characters` | 否 | — |
 | 情节弧库 | `/structures` | 否 | — |
 | 笑点库 | `/gags` | 否 | — |
+| 样文库（全局词条，场景分类） | `/samples`（写作风格注入的 STYLE REFERENCE；样文已从 `/profiles` 拆出，`/profiles` 只留风格 MD + AI 禁词） | 否 | — |
 | 笔名档案 | `/profiles` | 否 | — |
 | 新建笔名 | `/profiles/new` | 否 | — |
 | 写作工具 | `/write` | 否 | 302→`/books` |

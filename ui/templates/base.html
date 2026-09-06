@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}NovelEngine — 小说工厂{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v30">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v31">
     <script src="{{ url_for('static', filename='js/base.js') }}?v2"></script>
     {% block head %}{% endblock %}
 </head>
@@ -21,6 +21,7 @@
         <a href="/structures" class="{{ 'active' if request.path == '/structures' or request.path.startswith('/structures/') else '' }}">📋 情节弧库</a>
         <a href="/gags" class="{{ 'active' if request.path == '/gags' or request.path.startswith('/gags/') else '' }}">😂 笑点库</a>
         <a href="/characters" class="{{ 'active' if request.path == '/characters' or request.path.startswith('/characters/') else '' }}">🎭 角色原型库</a>
+        <a href="/samples" class="{{ 'active' if request.path == '/samples' or request.path.startswith('/samples/') else '' }}">📝 样文库</a>
         <div class="section">管理</div>
         <a href="/profiles" class="{{ 'active' if request.path == '/profiles' or request.path.startswith('/profiles/') else '' }}">✍️ 笔名与风格</a>
         <a href="/settings" class="{{ 'active' if request.path == '/settings' else '' }}">⚙️ 设置</a>

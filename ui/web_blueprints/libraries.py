@@ -50,16 +50,56 @@ def _parse_samples(content):
     return style_samples.parse_blocks(content)
 
 
-def _load_profile_samples(scope_label):
-    """读笔名样文库(权威源 samples.json → 带元数据记录);无 JSON → 旧 reference.txt 兜底拆块,
-    id 占位 s1..sN(title/标签留空),一旦编辑保存即迁入 samples.json。"""
-    recs = style_samples.load_samples(scope_label)
-    if recs is not None:
-        return [s.to_dict() for s in recs]
-    raw = _read_text_file(os.path.join(_project_root(), "storage", "style_refs", scope_label + ".reference.txt"))
-    return [{"id": f"s{i + 1}", "title": "", "scene_tags": [], "source": "",
-             "note": "", "word_count": style_samples.count_word_units(b), "text": b}
-            for i, b in enumerate(style_samples.parse_blocks(raw))]
+def _samples_all():
+    """全局样文库词条(StyleSample 列表);无文件 → []。"""
+    return style_samples.load_samples() or []
+
+
+def _samples_categories():
+    """样文库顶部分类按钮 = 全部词条 scene_tags 并集(去重、按首现序)。"""
+    seen, out = set(), []
+    for s in _samples_all():
+        for t in s.scene_tags or []:
+            if t and t not in seen:
+                seen.add(t)
+                out.append(t)
+    return out
+
+
+def _samples_upsert(records):
+    """把记录(含 id)合并进全局样文库:有 id 覆盖、无 id 追加、空正文跳过;保存并再生镜像。
+
+    返回 (final_list, warnings)。records 元素为 dict(缺省字段兼容)。"""
+    items = [s.to_dict() for s in _samples_all()]
+    for r0 in records or []:
+        if not isinstance(r0, dict):
+            continue
+        txt = (r0.get("text") or "").strip()
+        if not txt:
+            continue
+        rid = (r0.get("id") or "").strip()
+        rec = {"id": rid,
+               "title": (r0.get("title") or "").strip(),
+               "scene_tags": [str(t).strip() for t in (r0.get("scene_tags") or []) if str(t).strip()],
+               "source": (r0.get("source") or "").strip(),
+               "note": (r0.get("note") or "").strip(),
+               "text": txt,
+               "no_warn": bool(r0.get("no_warn"))}
+        hit = False
+        if rid:
+            for i, it in enumerate(items):
+                if it["id"] == rid:
+                    items[i] = rec
+                    hit = True
+                    break
+        if not hit:
+            items.append(rec)
+    style_samples.save_samples(samples=items)
+    final = _samples_all()
+    warnings = _warn_short(final) + [
+        f"样文 {w['id']} 与 {w['dup_of']} 内容重复(子段)——浪费预算,建议去重"
+        for w in style_samples.duplicate_warnings(final)]
+    return final, warnings
 
 
 def _warn_short(samples):
@@ -317,10 +357,9 @@ def profile_list():
             "ban_count": len(bn),
             "bans_first": (_bf[:60] + "…" if len(_bf) > 60 else _bf),
         }
-    # 样本驱动三件套：风格 MD（styles/<笔名>.md）+ 样文库（storage/style_refs/<笔名>.samples.json）
+    # 写作风格页只留 风格 MD（styles/<笔名>.md）;样文已拆到独立全局样文库页 /samples
     _root = _project_root()
     md_content = _read_text_file(os.path.join(_root, "styles", scope_label + ".md")) if (selected and not is_new) else ""
-    samples = _load_profile_samples(scope_label) if (selected and not is_new) else []
     return render_template("profiles.html",
         profiles=all_profiles, selected=selected, is_new=is_new,
         current_scope=current_scope, scope_label=scope_label,
@@ -328,7 +367,7 @@ def profile_list():
         bans=[r for r in own if r.kind == "ban"],
         summaries=summaries,
         platform_labels=PLATFORM_LABELS,
-        md_content=md_content, samples=samples)
+        md_content=md_content)
 
 
 @bp.route("/api/profile/<profile_id>/md", methods=["POST"])
@@ -345,53 +384,82 @@ def profile_md_save(profile_id):
     return jsonify({"ok": True, "path": path})
 
 
+@bp.route("/samples")
+def samples_page():
+    """样文库(全局词条库)独立页:顶部场景分类按钮(tag 筛选) + 词条卡 + 新增/编辑/删除。"""
+    tag = (request.args.get("tag") or "").strip()
+    samples = _samples_all()
+    if tag:
+        samples = [s for s in samples if tag in (s.scene_tags or [])]
+    return render_template("samples.html",
+        samples=[s.to_dict() for s in samples],
+        tags=_samples_categories(), current_tag=tag,
+        total=len(_samples_all()))
+
+
+@bp.route("/api/samples")
+def samples_list_api():
+    """列全局样文库词条元数据(id/title/场景标签/字数/来源/备注,不含正文)。"""
+    rows = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
+             "source": s.source, "note": s.note, "word_count": s.word_count}
+            for s in _samples_all()]
+    return jsonify({"ok": True, "count": len(rows), "samples": rows})
+
+
+@bp.route("/api/samples", methods=["POST"])
+def samples_save_api():
+    """新增/编辑样文库词条(全局):入参 {samples:[…]} 或 {sample:{…}};有 id 覆盖、无 id 追加。
+
+    返回 {ok, saved, warnings, samples};warnings = 短块/重复子段软提示(no_warn 条除外),不阻断。
+    """
+    d = request.get_json(silent=True) or {}
+    if "sample" in d and isinstance(d["sample"], dict):
+        records = [d["sample"]]
+    elif isinstance(d.get("samples"), list):
+        records = d["samples"]
+    else:
+        return jsonify({"ok": False, "error": "入参须为 {samples:[...]} 或 {sample:{...}}"}), 400
+    final, warnings = _samples_upsert(records)
+    return jsonify({"ok": True, "saved": len(records), "warnings": warnings,
+                    "samples": [s.to_dict() for s in final]})
+
+
+@bp.route("/api/samples/<sample_id>/delete", methods=["POST"])
+def samples_delete_api(sample_id):
+    """删除样文库一个词条(按 id)。"""
+    cur = _samples_all()
+    if not any(s.id == sample_id for s in cur):
+        return jsonify({"ok": False, "error": f"词条 {sample_id} 不存在"}), 404
+    cur = [s for s in cur if s.id != sample_id]
+    style_samples.save_samples(samples=cur)
+    return jsonify({"ok": True, "deleted": sample_id, "total": len(cur)})
+
+
+# ── 兼容(旧 /profiles 样文端点 → 全局词条库;写作风格页已不含样文)──
+
 @bp.route("/api/profile/<profile_id>/samples", methods=["POST"])
 def profile_samples_save(profile_id):
-    """整体保存笔名样文库(权威源 samples.json + 再生 reference.txt 镜像)。
-
-    入参 {samples: [{id?, title, scene_tags[], source, note, text}]};缺 id 自动补 sN。
-    返回 {ok, saved, warnings, samples}——warnings = 短块(<800 字)/重复子段软提示,不阻断保存。
-    """
-    p = profiles.get(profile_id)
-    if not p:
-        return jsonify({"ok": False, "error": "笔名不存在"}), 404
+    """(兼容)样文已拆为全局词条库;此端点把入参整体 upsert 进全局(不再按笔名键)。"""
     d = request.get_json(silent=True) or {}
     records = d.get("samples")
     if not isinstance(records, list):
         return jsonify({"ok": False, "error": "samples 须为数组"}), 400
-    pen = (p.pen_name or "").strip()
-    if not pen:
-        return jsonify({"ok": False, "error": "笔名缺少 pen_name"}), 400
-    style_samples.save_samples(pen, records)
-    final = style_samples.load_samples(pen) or []
-    warnings = _warn_short(final) + [
-        f"样文 {w['id']} 与 {w['dup_of']} 内容重复(子段)——浪费预算,建议去重"
-        for w in style_samples.duplicate_warnings(final)]
-    return jsonify({"ok": True, "saved": len(final), "warnings": warnings,
+    final, warnings = _samples_upsert(records)
+    return jsonify({"ok": True, "saved": len(records), "warnings": warnings,
                     "samples": [s.to_dict() for s in final]})
 
 
 @bp.route("/api/profile/<profile_id>/reference", methods=["POST"])
 def profile_reference_save(profile_id):
-    """(兼容)保存人工样文——旧整包 <sample> 文本入口。
-
-    内容按 <sample> 块拆成记录走 samples.json 权威保存(编辑即迁入样文库结构),
-    再整体写 storage/style_refs/<笔名>.reference.txt 镜像。旧调用不受影响。
-    """
-    p = profiles.get(profile_id)
-    if not p:
-        return jsonify({"ok": False, "error": "笔名不存在"}), 404
+    """(兼容)旧整包 <sample> 文本 → 拆块追加进全局样文库。"""
     d = request.get_json(silent=True) or {}
     content = str(d.get("content") or "")
     blocks = style_samples.parse_blocks(content)
     records = [{"id": "", "title": "", "scene_tags": [], "source": "",
                 "note": "", "text": b} for b in blocks]
-    pen = (p.pen_name or "").strip()
-    ref_dir = os.path.join(_project_root(), "storage", "style_refs")
-    os.makedirs(ref_dir, exist_ok=True)
-    path = os.path.join(ref_dir, pen + ".reference.txt")
-    style_samples.save_samples(pen, records)
-    return jsonify({"ok": True, "path": path, "saved": len(blocks)})
+    final, _w = _samples_upsert(records)
+    return jsonify({"ok": True, "saved": len(records), "total": len(final),
+                    "samples": [s.to_dict() for s in final]})
 
 
 @bp.route("/profiles/<profile_id>/delete", methods=["POST"])
