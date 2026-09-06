@@ -37,6 +37,7 @@
 {% for s in samples %}
 <div class="card accordion smp-card">
     <div class="smp-head" onclick="toggleCard(this)" style="cursor:pointer">
+        <span class="smp-id">#{{ s.id }}</span>
         <span class="smp-title">{{ s.title or ('词条 ' ~ s.id) }}</span>
         {% if s.scene_tags %}
         <span class="smp-tags">{% for t in s.scene_tags %}<span class="chip">{{ t }}</span>{% endfor %}</span>

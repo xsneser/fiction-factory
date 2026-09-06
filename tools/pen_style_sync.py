@@ -236,7 +236,8 @@ def cmd_sync(spec: str, no_md: bool = False, backup: bool = False) -> int:
     existed = pm.get(pid)
     carry = {}
     if existed:
-        for k in ("word_print", "style_assets", "platform_accounts", "assigned_books", "created_at"):
+        for k in ("word_print", "style_assets", "platform_accounts", "assigned_books",
+                  "sample_ids", "created_at"):
             v = getattr(existed, k)
             if v:
                 carry[k] = v

@@ -14,6 +14,7 @@
 <div class="prof-tabs">
     <button type="button" class="prof-tab active" data-tab="accounts">🌐 平台账号</button>
     <button type="button" class="prof-tab" data-tab="style">✍️ 写作风格</button>
+    <button type="button" class="prof-tab" data-tab="samples">📚 样文库</button>
 </div>
 
 <!-- 标签1：平台账号（身份档案折叠区 + 各平台可展开注册卡，单一表单） -->
@@ -44,6 +45,50 @@
     {% endif %}
 </section>
 
+<!-- 标签3：样文库（全局词条按场景分类；笔名按 id 勾选绑定 → AI 写作时只注入所选） -->
+<section class="prof-pane" id="pane-samples">
+    {% if is_new %}
+    <p class="hint">样文库（写作风格注入的 STYLE REFERENCE 词条）在笔名创建后选择。</p>
+    {% elif selected %}
+    <div class="pfs-head">
+        <div class="pfs-summary">
+            <strong>📚 当前笔名「{{ scope_label }}」已选 <span id="pfs-count">{{ selected_sample_ids|length }}</span> 条样文</strong>
+            <div class="pfs-chosen" id="pfs-chosen">
+                {% for sid in selected_sample_ids %}
+                {% set s = all_samples|selectattr('id','equalto',sid)|first %}
+                {% if s %}
+                <span class="pfs-chip" data-id="{{ sid }}"><b>#{{ sid }}</b> {{ s.title or ('词条 ' ~ sid) }}</span>
+                {% endif %}
+                {% endfor %}
+                {% if not selected_sample_ids %}<span class="pfs-empty">尚未选择样文 —— 下方按场景勾选，AI 写作时只注入所选词条</span>{% endif %}
+            </div>
+        </div>
+        <button type="button" class="btn btn-primary" onclick="PFS.save()">💾 保存样文选择</button>
+    </div>
+    <p class="hint" style="margin-bottom:12px">未选择时回退全量样文注入；勾选后按笔名注入对应词条（含其场景标签引导）。</p>
+    <div class="tabs char-tabs" id="pfs-tabs">
+        <a class="active" data-tag="" onclick="PFS.filter(this)">全部</a>
+        {% for t in sample_tags %}
+        <a data-tag="{{ t }}" onclick="PFS.filter(this)">{{ t }}</a>
+        {% endfor %}
+    </div>
+    <div class="pfs-list" id="pfs-list">
+        {% for s in all_samples %}
+        <label class="pfs-item{% if s.id in selected_sample_ids %} checked{% endif %}" data-tags="{{ s.scene_tags|join('|') }}">
+            <input type="checkbox" class="pfs-check" value="{{ s.id }}"
+                   {% if s.id in selected_sample_ids %}checked{% endif %}>
+            <span class="pfs-id">#{{ s.id }}</span>
+            <span class="smp-title">{{ s.title or ('词条 ' ~ s.id) }}</span>
+            {% for t in s.scene_tags %}<span class="chip">{{ t }}</span>{% endfor %}
+            <span class="smp-wc">约 {{ s.word_count }} 字</span>
+        </label>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="hint">暂无笔名，创建后才能选择样文。</p>
+    {% endif %}
+</section>
+
 <!-- ═══ 抽屉（屏幕左侧滑出）：每个笔名下方带其专属风格摘要 ═══ -->
 <div class="prof-backdrop" id="prof-backdrop" hidden></div>
 <aside class="prof-drawer" id="prof-drawer" aria-hidden="true">
@@ -64,10 +109,11 @@
                     <button type="submit" class="small danger" title="删除笔名「{{ p.pen_name }}」">🗑</button>
                 </form>
             </div>
-            {% if sum %}
+            {% if sum or p.sample_ids %}
             <div class="prof-pen-summary">
-                <div>✍️ {{ sum.prefers_joined if sum.prefers_joined else '未设定句式' }}</div>
-                <div>🚫 {{ sum.ban_count }} 条{% if sum.bans_first %} · {{ sum.bans_first }}{% endif %}</div>
+                <div>✍️ {{ sum.prefers_joined if sum and sum.prefers_joined else '未设定句式' }}</div>
+                {% if sum %}<div>🚫 {{ sum.ban_count }} 条{% if sum.bans_first %} · {{ sum.bans_first }}{% endif %}</div>{% endif %}
+                {% if p.sample_ids %}<div>📚 已选样文 {{ p.sample_ids|length }} 条</div>{% endif %}
             </div>
             {% endif %}
         </div>
@@ -114,5 +160,81 @@
         t.addEventListener('click', function () { activate(t.dataset.tab); });
     });
 })();
+
+/* ── 样文库标签：场景分类过滤 + 按 id 勾选 + 已选展示 + 保存 ── */
+var PFS = {
+    profileId: {{ selected.id|tojson if selected and not is_new else '""' }},
+    samples: {{ all_samples|tojson }},
+    selected: {{ selected_sample_ids|tojson }},
+    byId: {},
+    init: function () {
+        var self = this;
+        this.samples.forEach(function (s) { self.byId[s.id] = s; });
+        var list = document.getElementById('pfs-list');
+        if (!list) return;
+        list.addEventListener('change', function (e) {
+            var cb = e.target;
+            if (cb.classList.contains('pfs-check')) self.toggle(cb);
+        });
+    },
+    toggle: function (cb) {
+        var id = cb.value;
+        var item = cb.closest('.pfs-item');
+        if (item) item.classList.toggle('checked', cb.checked);
+        var idx = this.selected.indexOf(id);
+        if (cb.checked && idx === -1) this.selected.push(id);
+        if (!cb.checked && idx !== -1) this.selected.splice(idx, 1);
+        this.renderChosen();
+    },
+    renderChosen: function () {
+        var box = document.getElementById('pfs-chosen');
+        var count = document.getElementById('pfs-count');
+        if (!box) return;
+        var self = this;
+        box.innerHTML = '';
+        this.selected.forEach(function (id) {
+            var s = self.byId[id];
+            if (!s) return;
+            var chip = document.createElement('span');
+            chip.className = 'pfs-chip';
+            chip.setAttribute('data-id', id);
+            var b = document.createElement('b');
+            b.textContent = '#' + id;
+            chip.appendChild(b);
+            chip.appendChild(document.createTextNode(' ' + (s.title || ('词条 ' + id))));
+            box.appendChild(chip);
+        });
+        if (!this.selected.length) {
+            var empty = document.createElement('span');
+            empty.className = 'pfs-empty';
+            empty.textContent = '尚未选择样文 —— 下方按场景勾选，AI 写作时只注入所选词条';
+            box.appendChild(empty);
+        }
+        if (count) count.textContent = this.selected.length;
+    },
+    filter: function (a) {
+        var tag = a.getAttribute('data-tag');
+        document.querySelectorAll('#pfs-tabs a').forEach(function (t) {
+            t.classList.toggle('active', t === a);
+        });
+        document.querySelectorAll('#pfs-list .pfs-item').forEach(function (item) {
+            var tags = (item.getAttribute('data-tags') || '').split('|');
+            item.style.display = (!tag || tags.indexOf(tag) !== -1) ? '' : 'none';
+        });
+    },
+    save: function () {
+        var self = this;
+        if (!this.profileId) { showToast('❌ 无笔名可保存', 'error'); return; }
+        fetch('/api/profile/' + this.profileId + '/samples/select', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sample_ids: this.selected })
+        }).then(function (r) { return r.json(); }).then(function (d) {
+            if (d.ok) showToast('✅ 已保存笔名样文选择（' + d.sample_ids.length + ' 条）', 'success');
+            else showToast('❌ 保存失败: ' + (d.error || ''), 'error');
+        }).catch(function (e) { showToast('❌ 请求失败: ' + e.message, 'error'); });
+    }
+};
+PFS.init();
 </script>
 {% endblock %}

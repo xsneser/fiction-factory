@@ -37,6 +37,9 @@ _WS_RE = re.compile(r"\s+")
 DSH_RESULT_THRESHOLD_CHARS = 8192
 # style_rules 里 md/引导语/字段杂项之外留给样文的保底;md 越大留给样文越少。
 _SAFETY_CHARS = 512
+# pruner 关闭时的**多样封顶**(库已 10 类×≥3 ≈ 25 条,不能每章全量灌几十 k 字符);
+# 未传 scene_tags 时用 select_for_budget 按此上限选跨场景多样子集。
+DEFAULT_REF_CHARS = 12000
 
 
 def tool_prune_enabled() -> bool:
@@ -263,37 +266,61 @@ def select_for_budget(samples: list, max_chars):
 def estimate_budget_for(style_md_text, guide_chars=None):
     """估算 style_rules 里留给样文的预算。
 
-    - 默认(dsh pruner 已关):返回 0 = 不限 → select_for_budget 全量放行,四条样文都注入;
+    - 默认(dsh pruner 已关):返回 DEFAULT_REF_CHARS 多样封顶(库 ~25 条不再全量);
     - 设 NE_KEEP_TOOL_PRUNE=1(保留 pruner):阈值 − md − 引导语 − 安全边距,下限 1000,
       让 md+样文整体 ≤ dsh 8192 字符阈值免被裁中段。
     """
     if not tool_prune_enabled():
-        return 0
+        return DEFAULT_REF_CHARS
     md_len = count_text_chars(style_md_text)
     budget = DSH_RESULT_THRESHOLD_CHARS - md_len - _SAFETY_CHARS - (guide_chars or 0)
     return max(1000, budget)
 
 
-def build_ref_text_for_profile(profile, max_chars=None):
-    """组注入用 STYLE REFERENCE 文本(权威源 JSON → 预算选样 → 渲染)。
+def build_ref_text_for_profile(profile, max_chars=None, scene_tags=None):
+    """组注入用 STYLE REFERENCE 文本(权威源 JSON → 按场景/预算选样 → 渲染)。
 
-    - 有 samples.json:预算选样渲染;返回 (text, meta{mode:"samples",…})。
-    - 无 samples.json 但有旧 reference.txt:按 <sample> 块预算截断(legacy 兜底),
-      返回 (text, meta{mode:"legacy",…});原样保留无标题旧文件时 text 为其原文。
-    - 两者皆无:返回 (None, None)。
+    - 笔名在样文库选了词条(profile.sample_ids) → 先收窄到所选词条;
+    - scene_tags 给定 → 只注入标签命中的词条(mode:"scene"),命中为空则回退多样封顶;
+    - 未给 scene_tags → select_for_budget 多样封顶(pruner 关=DEFAULT_REF_CHARS,不再全量);
+    - 有 samples.json:返回 (text, meta{mode:"samples"|"scene",…});
+    - 无 samples.json 但有旧 reference.txt:legacy 兜底;两者皆无返回 (None, None)。
     """
     from . import style_md as _sm
     samples = load_samples()  # 全局样文库(不分笔名)
     if samples is not None:
+        # 笔名已选样文 → 只注入所选;未选 → 全量(向后兼容)
+        chosen_ids = [x for x in (getattr(profile, "sample_ids", None) or []) if x]
+        if chosen_ids:
+            by_id = {s.id: s for s in samples}
+            picked = [by_id[i] for i in chosen_ids if i in by_id]
+            if picked:
+                samples = picked
+        # 按场景过滤:命中 → 全给该场景词条(量小);未命中 → 落到下方预算多样兜底
+        scene = [str(t).strip() for t in (scene_tags or []) if str(t).strip()]
+        scene_mode = False
+        if scene:
+            hit = [s for s in samples if set(s.scene_tags or []) & set(scene)]
+            if hit:
+                samples = hit
+                scene_mode = True
         if max_chars is None:
             md_text = (_sm.read_style_md(profile) or "") if profile is not None else ""
             guide_chars = count_text_chars("# STYLE REFERENCE\n\n{0}\n\n".format(_REFERENCE_GUIDE))
             max_chars = estimate_budget_for(md_text, guide_chars)
+        if scene_mode:
+            chars = sum(count_text_chars(s.text) for s in samples)
+            meta = {"mode": "scene", "scene_tags": scene, "count": len(samples),
+                    "total": len(samples), "chars": chars,
+                    "selected": [s.id for s in samples], "max_chars": max_chars,
+                    "pen_selected": bool(chosen_ids)}
+            return render_reference(samples), meta
         selected, meta = select_for_budget(samples, max_chars)
         if not selected:
             return None, None
         meta["mode"] = "samples"
         meta["max_chars"] = max_chars
+        meta["pen_selected"] = bool(chosen_ids)
         return render_reference(selected), meta
 
     # legacy:旧扁平 reference.txt 兜底(仅全局库尚不存在时,迁移期参照;非权威)

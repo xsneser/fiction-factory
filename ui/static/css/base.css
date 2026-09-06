@@ -359,6 +359,28 @@
         .prof-new { display:block; margin-top:10px; padding:9px 10px; border:1px dashed var(--border);
                     border-radius:6px; color:var(--accent); text-decoration:none; text-align:center; font-size:13px; }
         .prof-new:hover { border-color:var(--accent); background:rgba(31,111,235,.08); }
+        /* ── 笔名与风格 · 样文库标签（场景分类 + 按 id 勾选 + 已选展示）── */
+        .pfs-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:14px; }
+        .pfs-summary { flex:1; min-width:280px; }
+        .pfs-summary strong { font-size:14px; color:var(--fg-strong); }
+        .pfs-chosen { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+        .pfs-chip { display:inline-flex; align-items:center; gap:4px; background:rgba(31,111,235,.12);
+            border:1px solid rgba(31,111,235,.35); color:var(--accent); border-radius:12px; padding:2px 10px;
+            font-size:12px; }
+        .pfs-chip b { font-family:Consolas,Menlo,monospace; font-weight:600; }
+        .pfs-empty { font-size:12px; color:var(--fg-dim); }
+        .pfs-list { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+        .pfs-item { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 12px;
+            border:1px solid var(--border); border-radius:8px; background:var(--bg-elev);
+            cursor:pointer; transition:border-color .15s, background .15s; }
+        .pfs-item:hover { border-color:var(--accent); }
+        .pfs-item.checked { border-color:var(--success-fg); background:rgba(63,185,80,.07); }
+        .pfs-check { accent-color:var(--success-fg); margin:0; flex-shrink:0; }
+        .pfs-id { font-family:Consolas,Menlo,monospace; font-size:12px; color:var(--accent);
+            background:rgba(31,111,235,.12); border-radius:4px; padding:1px 7px; flex-shrink:0; }
+        /* 样文库页词条卡 id 徽章 */
+        .smp-id { font-family:Consolas,Menlo,monospace; font-size:12px; color:var(--accent);
+            background:rgba(31,111,235,.12); border-radius:4px; padding:1px 7px; flex-shrink:0; }
         .hint { color:#8b949e; font-size:13px; margin-bottom:12px; }
         /* 仪表盘「已有书目」紧凑横条（每书一条：书名/元信息左，状态徽标右） */
         .book-strip-list { display:flex; flex-direction:column; gap:8px; margin-bottom:24px; }
@@ -596,7 +618,7 @@
         .sr-sample-item .small { margin-top:0; }
 
         /* ─── 样文库独立页(/samples：分类按钮 + 词条卡 + 编辑器) ─── */
-        .smp-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:12px; margin-top:6px; }
+        .smp-list { display:grid; grid-template-columns:1fr; gap:12px; margin-top:6px; }  /* 单栏词条 */
         .smp-card { margin:0; }
         .smp-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
         .smp-title { font-weight:600; color:#e6edf3; }

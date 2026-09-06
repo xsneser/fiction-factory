@@ -360,6 +360,8 @@ def profile_list():
     # 写作风格页只留 风格 MD（styles/<笔名>.md）;样文已拆到独立全局样文库页 /samples
     _root = _project_root()
     md_content = _read_text_file(os.path.join(_root, "styles", scope_label + ".md")) if (selected and not is_new) else ""
+    # 样文库词条(全量,含 id/场景标签) + 场景分类 + 当前笔名已选 id —— 供「样文库」标签勾选/展示
+    all_samples = [s.to_dict() for s in _samples_all()]
     return render_template("profiles.html",
         profiles=all_profiles, selected=selected, is_new=is_new,
         current_scope=current_scope, scope_label=scope_label,
@@ -367,7 +369,10 @@ def profile_list():
         bans=[r for r in own if r.kind == "ban"],
         summaries=summaries,
         platform_labels=PLATFORM_LABELS,
-        md_content=md_content)
+        md_content=md_content,
+        all_samples=all_samples,
+        sample_tags=_samples_categories(),
+        selected_sample_ids=list(selected.sample_ids or []) if selected else [])
 
 
 @bp.route("/api/profile/<profile_id>/md", methods=["POST"])
@@ -460,6 +465,30 @@ def profile_reference_save(profile_id):
     final, _w = _samples_upsert(records)
     return jsonify({"ok": True, "saved": len(records), "total": len(final),
                     "samples": [s.to_dict() for s in final]})
+
+
+@bp.route("/api/profile/<profile_id>/samples/select", methods=["POST"])
+def profile_samples_select(profile_id):
+    """保存笔名在样文库的选择(词条 id 列表)——AI 写作时按此注入对应样文。
+
+    入参 {sample_ids:[...]} 全量覆盖;只保留库中真实存在的 id,顺序按入参去重保留。
+    """
+    p = profiles.get(profile_id)
+    if not p:
+        return jsonify({"ok": False, "error": "笔名不存在"}), 404
+    d = request.get_json(silent=True) or {}
+    ids = d.get("sample_ids")
+    if not isinstance(ids, list):
+        return jsonify({"ok": False, "error": "sample_ids 须为数组"}), 400
+    valid = {s.id for s in _samples_all()}
+    clean = []
+    for i in ids:
+        i = str(i).strip()
+        if i and i in valid and i not in clean:
+            clean.append(i)
+    p.sample_ids = clean
+    profiles.update(p)
+    return jsonify({"ok": True, "profile_id": profile_id, "sample_ids": clean})
 
 
 @bp.route("/profiles/<profile_id>/delete", methods=["POST"])

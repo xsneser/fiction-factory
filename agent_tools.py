@@ -347,12 +347,14 @@ def query_profiles(keyword: str = "") -> dict:
     } for p in rows[:30]]}
 
 
-def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
+def get_pen_style(book_id: str = "", profile_id: str = "", scene_tags: list = None) -> dict:
     """读一个笔名的完整写作风格（句式风格+禁止内容+语言习惯+通用纪律），写作 agent 动笔前必读。
 
     book_id 与 profile_id 至少其一：book_id 优先按书绑定的笔名解析；否则按 profile_id；
-    都无则默认笔名（枫落）。返回 prose style_rules（权威）+ 结构化 style/forbidden 列表，
-    供逐条遵守/精确引用。被 dsh 裁剪/信息不足时优先用本工具重读（独立薄工具，不纠缠全量上下文）。
+    都无则默认笔名（枫落）。scene_tags=可选场景标签列表（如 ["推理"] / ["多人对白"]）：给出则
+    STYLE REFERENCE 只注入命中该场景的词条(mode=scene,命中空则多样兜底);不给则多样封顶注入。
+    返回 prose style_rules（权威）+ 结构化 style/forbidden 列表 + samples(场景标签视图)，
+    供逐条遵守/精确引用。信息不足时优先用本工具重读（独立薄工具，不纠缠全量上下文）。
     """
     from libraries.style_rules import StyleRuleLibrary, DEFAULT_PROFILE_ID
     profile = None
@@ -373,10 +375,9 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
     # 其后若存在 storage/style_refs/<pen>.reference.txt → 追加为 STYLE REFERENCE 人工样本(最高风格来源)。
     # 无 md → 回退规则拼装(legacy,数组照旧)。每次现读文件,手改 md/样本即刻生效。
     style_md_text = style_md.read_style_md(profile)
-    # STYLE REFERENCE 样文:权威源 samples.json(dsh tool-result-pruner 默认已关 → 预算 0 = 全量
-    # 注入全部样文,不被 8192 裁中段;设 NE_KEEP_TOOL_PRUNE=1 保留时回到预算选样)。
-    # 无 JSON → 旧 reference.txt 兜底。md 单独保留、不参与裁剪。
-    ref_text, ref_meta = style_samples.build_ref_text_for_profile(profile)
+    # STYLE REFERENCE 样文:全局词条库(10 类×≥3)。默认多样封顶(DEFAULT_REF_CHARS);
+    # 传 scene_tags=[场景] → 只注入该场景词条。md 单独保留、不参与裁剪;无 JSON → 旧文件兜底。
+    ref_text, ref_meta = style_samples.build_ref_text_for_profile(profile, scene_tags=scene_tags)
     sample_driven = style_md_text is not None
     if sample_driven:
         style_rules = style_md_text
@@ -397,12 +398,15 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
         }
         ref_summary = ""
     # 场景标签结构化视图(无正文,保持薄):写作 agent 按 id/title/scene_tags 就近参考
-    # 对应场景的样本(正文已全量注入;需要单条全文用 get_style_sample)。
+    # 对应场景的样本(正文已注入;需要单条全文用 get_style_sample)。
+    # 笔名已选样文 → 只列所选;未选 → 全量(兼容旧行为)。
     meta_samples = []
     _cur = style_samples.load_samples()  # 全局样文库词条
     if _cur:
+        _sel_ids = [x for x in (getattr(profile, 'sample_ids', None) or []) if x]
+        _meta_cur = [s for s in _cur if (not _sel_ids or s.id in _sel_ids)]
         meta_samples = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
-                         "word_count": s.word_count, "source": s.source} for s in _cur]
+                         "word_count": s.word_count, "source": s.source} for s in _meta_cur]
     return {
         "pen_name": profile.pen_name,
         "language": profile.language or "zh",
@@ -428,9 +432,14 @@ def _ref_summary(meta) -> str:
     total = meta.get("total", 0)
     chars = meta.get("chars", 0)
     max_chars = meta.get("max_chars")
+    if mode == "scene":
+        ids = ",".join(sel) if sel else "-"
+        tags = "/".join(meta.get("scene_tags") or [])
+        return (f"STYLE REFERENCE(场景 {tags}): 注入 {len(sel)} 条 [{ids}] "
+                f"≈{chars} 字符（库中该类共 {total}）")
     if mode == "samples":
         ids = ",".join(sel) if sel else "-"
-        budget = "全量(pruner 关)" if not max_chars else f"预算≤{max_chars}"
+        budget = "多样封顶≤{0}".format(max_chars) if max_chars else "多样(不限)"
         return f"STYLE REFERENCE: 注入样文 {len(sel)}/{total} 条 [{ids}] ≈{chars} 字符 {budget}"
     return f"STYLE REFERENCE(legacy 旧文件): 注入 {meta.get('count', 0)}/{total} 段 ≈{chars} 字符"
 
