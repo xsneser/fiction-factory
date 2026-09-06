@@ -38,8 +38,65 @@ DSH_RESULT_THRESHOLD_CHARS = 8192
 # style_rules 里 md/引导语/字段杂项之外留给样文的保底;md 越大留给样文越少。
 _SAFETY_CHARS = 512
 # pruner 关闭时的**多样封顶**(库已 10 类×≥3 ≈ 25 条,不能每章全量灌几十 k 字符);
-# 未传 scene_tags 时用 select_for_budget 按此上限选跨场景多样子集。
+# 未传 query 时用 select_for_budget 按此上限选跨场景多样子集。
 DEFAULT_REF_CHARS = 12000
+
+# ─── 多维权表(英文枚举键存储,UI/渲染中文展示)─────────────────────────────
+# scene / narrative_action 可多选(list);其余单选(str)。词条缺某维 = 通配(选择器不过滤、不加分)。
+DIM_CHOICES = {
+    "scene": ["opening", "exploration", "investigation", "dialogue", "confrontation",
+              "negotiation", "discovery", "revelation", "action", "danger", "death",
+              "aftermath", "transition", "quiet", "planning"],
+    "dramatic_state": ["calm", "uneasy", "tense", "escalating", "crisis", "aftermath", "relief"],
+    "narrative_action": ["establish", "introduce", "investigate", "deduce", "mislead",
+                         "reveal", "escalate", "obstruct", "resolve", "transition",
+                         "foreshadow", "pay_off", "relationship", "decision", "consequence"],
+    "cast": ["solo", "protagonist_duo", "duo", "small_group", "large_group", "crowd"],
+    "dialogue_density": ["none", "low", "medium", "high"],
+    "information_density": ["low", "medium", "high"],
+    "pace": ["slow", "medium", "fast"],
+    "pov": ["close_character", "medium_character", "external", "omniscient"],
+}
+# 维度字段中文名(UI 标题用)
+DIM_FIELD_ZH = {
+    "scene": "场景", "dramatic_state": "戏剧状态", "narrative_action": "叙事动作",
+    "cast": "人物组织", "dialogue_density": "对话密度", "information_density": "信息密度",
+    "pace": "节奏", "pov": "视角",
+}
+# 取值 → 中文(单选/多选共用)
+DIM_LABELS = {
+    "scene": {"opening": "场景开场", "exploration": "探索·调查", "investigation": "推理·查证",
+              "dialogue": "多人对话", "confrontation": "冲突·对峙", "negotiation": "谈判·交涉",
+              "discovery": "发现信息", "revelation": "真相·揭示", "action": "行动·战斗·追逐",
+              "danger": "危险逼近", "death": "死亡·重伤", "aftermath": "事件余波",
+              "transition": "场景过渡", "quiet": "平静·日常", "planning": "谋划·部署"},
+    "dramatic_state": {"calm": "平静", "uneasy": "不安", "tense": "紧绷", "escalating": "升级",
+                       "crisis": "危机", "aftermath": "余波", "relief": "释然"},
+    "narrative_action": {"establish": "建立", "introduce": "引入", "investigate": "获取信息",
+                         "deduce": "得出判断", "mislead": "制造误判", "reveal": "揭示信息",
+                         "escalate": "提高危险", "obstruct": "设置阻碍", "resolve": "解决问题",
+                         "transition": "状态过渡", "foreshadow": "埋设伏笔", "pay_off": "回收伏笔",
+                         "relationship": "推进关系", "decision": "做出决定", "consequence": "展示后果"},
+    "cast": {"solo": "单人", "protagonist_duo": "主角+一人", "duo": "两人",
+             "small_group": "3-4人", "large_group": "5人以上", "crowd": "群体"},
+    "dialogue_density": {"none": "无", "low": "低", "medium": "中", "high": "高"},
+    "information_density": {"low": "低", "medium": "中", "high": "高"},
+    "pace": {"slow": "慢", "medium": "中", "fast": "快"},
+    "pov": {"close_character": "近焦角色", "medium_character": "中焦", "external": "外景/旁观", "omniscient": "全知"},
+}
+
+
+def _clean_dim(field, value):
+    """校验单值;非法/空 → ''。"""
+    return value if value in DIM_CHOICES.get(field, []) else ""
+
+
+def _clean_dim_list(field, values):
+    return [v for v in (values or []) if v in DIM_CHOICES.get(field, [])]
+
+
+def dim_label(field, value) -> str:
+    return DIM_LABELS.get(field, {}).get(value, value)
 
 
 def tool_prune_enabled() -> bool:
@@ -90,20 +147,48 @@ def parse_blocks(content: str):
     return [content.strip()] if content.strip() else []
 
 
+def _clean_dims(raw):
+    """清洗多维权表 dict:只留合法字段/合法值;空值丢弃。scene/narrative_action 为 list,其余单值。"""
+    raw = raw or {}
+    out = {}
+    for f, choices in DIM_CHOICES.items():
+        if f in ("scene", "narrative_action"):
+            v = _clean_dim_list(f, raw.get(f))
+        else:
+            v = _clean_dim(f, raw.get(f))
+        if v:
+            out[f] = v
+    return out
+
+
+def _scene_dims(s):
+    """返回样本的 scene 维度枚举值(scene_tags 过渡期也折算进来,仅当 dims 没有 scene 时)。"""
+    dims = getattr(s, "dims", None) or {}
+    scene = dims.get("scene") or []
+    if not scene:
+        # legacy:旧中文 scene_tags → 折算到英文 scene(用样式注释映射由迁移脚本做;这里仅直取已有 scene_tags 的英文兜底)
+        scene = [t for t in (getattr(s, "scene_tags", None) or []) if t in DIM_CHOICES["scene"]]
+    return scene
+
+
 @dataclass
 class StyleSample:
     id: str
     text: str
     title: str = ""
-    scene_tags: list = field(default_factory=list)
+    scene_tags: list = field(default_factory=list)   # 过渡期保留;迁移后弃用,由 dims.scene 取代
     source: str = ""
     note: str = ""
     word_count: int = 0
     # 人工确认保留:该条短(<800)或与其它条整段重叠也接受 → 保存不弹对应软预警
     no_warn: bool = False
+    # 多维权表(英文枚举键,缺=通配):scene[]/dramatic_state/narrative_action[]/cast/
+    # dialogue_density/information_density/pace/pov
+    dims: dict = field(default_factory=dict)
 
     def __post_init__(self):
         self.scene_tags = [t for t in (self.scene_tags or []) if (t or "").strip()]
+        self.dims = _clean_dims(self.dims)
         self.id = (self.id or "").strip()
         self.text = (self.text or "").strip()
         if not self.word_count:
@@ -125,6 +210,7 @@ class StyleSample:
             note=str(d.get("note") or "").strip(),
             word_count=int(d.get("word_count") or 0),
             no_warn=bool(d.get("no_warn") or False),
+            dims=_clean_dims(d.get("dims")),
         )
 
 
@@ -216,8 +302,8 @@ def render_reference(samples: list) -> str:
         return ""
     blocks = []
     for s in samples:
-        tags = s.scene_tags or []
-        head = ("# 场景:" + " · ".join(tags) + "\n") if tags else ""
+        tags = _scene_dims(s)
+        head = ("# 场景:" + " · ".join(dim_label("scene", v) for v in tags) + "\n") if tags else ""
         blocks.append("{0}<sample>\n{1}\n</sample>".format(head, s.text))
     return "# STYLE REFERENCE\n\n{0}\n\n{1}".format(_REFERENCE_GUIDE, "\n\n".join(blocks))
 
@@ -238,7 +324,7 @@ def select_for_budget(samples: list, max_chars):
 
     tag_first = {}
     for i, s in enumerate(samples):
-        tags = s.scene_tags or [""]
+        tags = _scene_dims(s) or [""]
         for t in tags:
             if t not in tag_first:
                 tag_first[t] = i
