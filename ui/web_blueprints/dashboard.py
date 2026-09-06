@@ -60,7 +60,7 @@ def start_new_book():
         data = request.get_json(silent=True) or {} if is_json else {}
         src = data if is_json else request.form
 
-        # 新流程：步 3 ②生成的大纲+桥段（generate_outline_preview 产出，set_outline 存入）
+        # 新流程：步 3 ②生成的大纲+情节段（generate_outline_preview 产出，set_outline 存入）
         outline_data = data.get("_outline_data") if is_json else None
         if not isinstance(outline_data, dict):
             outline_data = None
@@ -137,7 +137,7 @@ def start_new_book():
             from libraries.outline_generator import basic_info_is_rich
             if basic_info_is_rich(basic_info):
                 basic_info["_world_generated"] = True
-            # 分阶段构建②选定的开篇大纲/桥段（generate_full_outline picks=None 时自动消费）
+            # 分阶段构建②选定的开篇大纲/情节段（generate_full_outline picks=None 时自动消费）
             picks = data.get("_outline_picks")
             if isinstance(picks, dict) and (picks.get("templates") or picks.get("plots")):
                 basic_info["_outline_picks"] = picks
@@ -177,7 +177,7 @@ def start_new_book():
             phase="config",
         )
 
-        # 深化并入步3（2026-09-05）：步 3 深化式生成的大纲+桥段随书落库，
+        # 深化并入步3（2026-09-05）：步 3 深化式生成的大纲+情节段随书落库，
         # 用户浏览器点提交即 phase=ready（解锁写作，无书详情二次确认/深化段）。
         # ready 前在此补齐原 confirm-storyline 职责（挂内涵+角色标注）；仅 outlines 无 plots
         # 则留 plots（config/补弧兜底恢复，需用户在书详情确认，见 /api/book/<id>/confirm-storyline）。
@@ -199,7 +199,7 @@ def start_new_book():
                                  gag_lib=gag_lib).fill_themes_and_hooks(storyline.plots, storyline)
                 storyline.phase = "ready"
             else:
-                storyline.phase = "plots"  # 兜底：无桥段不 ready（config/补弧 → 用户书详情确认恢复）
+                storyline.phase = "plots"  # 兜底：无情节段不 ready（config/补弧 → 用户书详情确认恢复）
             annotate_plot_roles(storyline)
 
         # 直接建正式书（规划书=书目录内的书；草稿目录已废弃）

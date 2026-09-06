@@ -5,7 +5,7 @@ description: >-
   (start a new novel, build world and characters, borrow from an existing book, pick a title)。
   建书必须走「启动新书」界面：navigate /books/start → drive_ui 填表单 → 点下一步 → 由系统创建（护栏：
   agent 不直建书，只能驱动向导）。内含前三章开篇钩子规则（指令层）。
-  前置：书不存在或 phase=config。步 3 深化式生成弧+桥段（差异化命题 core_conflict+world_building.differentiation 随 set_world 落库、每弧 notes 目标+偏离模板点、内联 validate 回打≥1轮）→ 用户提交建书即 phase=ready（无书详情二次确认/深化段；config 兜底补弧 → save_outlines → 用户在书详情确认）。
+  前置：书不存在或 phase=config。步 3 深化式生成弧+情节段（差异化命题 core_conflict+world_building.differentiation 随 set_world 落库、每弧 notes 目标+偏离模板点、内联 validate 回打≥1轮）→ 用户提交建书即 phase=ready（无书详情二次确认/深化段；config 兜底补弧 → save_outlines → 用户在书详情确认）。
 ---
 # 建书阶段（novel-build）
 
@@ -17,7 +17,7 @@ description: >-
 1. `mcp__novel-engine__list_books` 看目标书是否已存在。
 2. 已存在 → `mcp__novel-engine__get_book_detail` 看 `phase`：
    - `config` → 继续本 skill（已有基本盘，补设定即可，跳过已完成的步骤）。
-   - `plots`（config 补弧后/遗留恢复；正常新书提交即 ready，不经此）→ 弧+桥段已落未 ready：引导用户在书详情「✅ 确认弧+桥段」进 ready，不要重复建书；`ready` → 引导 `novel-write`。
+   - `plots`（config 补弧后/遗留恢复；正常新书提交即 ready，不经此）→ 弧+情节段已落未 ready：引导用户在书详情「✅ 确认弧+情节段」进 ready，不要重复建书；`ready` → 引导 `novel-write`。
 3. 不存在 → `mcp__novel-engine__navigate(url="/books/start")` 把浏览器切到建书向导页。
 
 ## 决策点（必须停下问用户；选择类问题务必给编号选项，不要开放式空问）
@@ -64,22 +64,22 @@ description: >-
 4. **世界观候选（必须完成，见上）**：**agent 自身上下文生成 3~5 个候选，逐个 `drive_ui(add_candidate, {candidate:{title, one_liner, world_brief}})` 填入步 2**（无需 `set_candidates`）→ 用户在平台点选候选卡（高亮、可换）→ 用户点「已挑选完毕」进步 3（**页面自动把建书任务交给 dsh 驱动步 3**；Claude Code 不重复驱动）。不想选 → `drive_ui(skip_candidates)`。
 5. **进步 3 = 内容构建工作台（默认已交棒 dsh；Claude Code 仅手动驱动时才走）**：用户在步 2 点「已挑选完毕」后步 3 默认由 **dsh（novel-build）分阶段驱动**（页面 `_agentDriving` 已抑制浏览器一键补全）。**Claude Code 不要与页面 task2 同时驱动步 3**——只在用户明确要求「由 Claude 直接驱动步 3」且页面未自动发任务时，才按下列规范逐段驱动（每段由**你自主生成**后经 `drive_ui` 落进表单）：
    ① **核心矛盾**：你基于一句话设定 + 候选简述 + tags 自主生成 1-2 句 → `drive_ui(set_world, {world_building:{core_conflict:"..."}})`。
-   ② **弧+桥段（步3内先生成）**：可先 `query_arc_library`/`arc_material_candidates` 选最匹配弧模板作参考（与 dsh 侧 NOVEL_AGENT 步3① 口径一致），再在**自身上下文生成** `{outlines, plots, threads, themes, basic_info}` → `drive_ui(set_outline, {outlines, plots, threads, themes, basic_info})`（**你在自身上下文生成，不受 dsh 8KB 裁剪**；submit 随书落库 phase=ready）。**不再单独 `set_picks`**（旧选材→generate_full_outline 机制已删，generate_full_outline 工具亦已删除）。
-   ③ **势力**（根据②桥段分析）：你自主生成 2-4 个势力 `{name, stance, desc}` → `drive_ui(set_world, {world_building:{factions:[...]}})`。
+   ② **弧+情节段（步3内先生成）**：可先 `query_arc_library`/`arc_material_candidates` 选最匹配弧模板作参考（与 dsh 侧 NOVEL_AGENT 步3① 口径一致），再在**自身上下文生成** `{outlines, plots, threads, themes, basic_info}` → `drive_ui(set_outline, {outlines, plots, threads, themes, basic_info})`（**你在自身上下文生成，不受 dsh 8KB 裁剪**；submit 随书落库 phase=ready）。**不再单独 `set_picks`**（旧选材→generate_full_outline 机制已删，generate_full_outline 工具亦已删除）。
+   ③ **势力**（根据②情节段分析）：你自主生成 2-4 个势力 `{name, stance, desc}` → `drive_ui(set_world, {world_building:{factions:[...]}})`。
    ④ **主要人物**（依据②+③）：你自主生成角色列表（**全 14 字段**：`name/identity/personality/catchphrase/importance/golden_finger/relation/archetype_id/gender/brief/title/age/death_year/role`，主角 importance=1、配角补 relation）→ `drive_ui(set_characters, {characters:[...]})`。
    ⑤ **其余世界观维度**：你自主生成 `{world_building:{era,power_system,geography,culture,history,social_structure,rules,world_summary}, tone, target_audience, pov, era_language}` → `drive_ui(set_world, {...})`。
-   ⑤.5 **差异化命题 + 校验（深化并入步3）**：动手排弧前把「本书与同类/所查模板差异」完整论述写进 `set_world` 的 `world_building.differentiation`（2026-09-05 起向导透传该键随 submit 落库；core_conflict 压最核心一条）；每条弧 `notes` 必写「弧目标+偏离库模板点」；**每桥段 `words`(300~2500) 按内容浓淡给、弧跨度=其 words 之和、勿按章均分/勿全同；≥3章且内含 2+ 可独立排序子目标的目标块拆第三层(判据见 NOVEL_AGENT 1.1)、无则保持两层勿硬凑**；提交前调内联 `validate_storyline(outlines=…, plots=…, words_per_chapter=…)` + `validate_world(basic_info=…)`，按 decision_points 回打 ≥1 轮直到 `passed=true`（若报 `structure_hints` 叶弧跨度均一/桥段字数全同须消除或说明），残留逐条报给用户。submit 随书落库 phase=ready。
+   ⑤.5 **差异化命题 + 校验（深化并入步3）**：动手排弧前把「本书与同类/所查模板差异」完整论述写进 `set_world` 的 `world_building.differentiation`（2026-09-05 起向导透传该键随 submit 落库；core_conflict 压最核心一条）；每条弧 `notes` 必写「弧目标+偏离库模板点」；**每情节段 `words`(300~2500) 按内容浓淡给、弧跨度=其 words 之和、勿按章均分/勿全同；≥3章且内含 2+ 可独立排序子目标的目标块拆第三层(判据见 NOVEL_AGENT 1.1)、无则保持两层勿硬凑**；提交前调内联 `validate_storyline(outlines=…, plots=…, words_per_chapter=…)` + `validate_world(basic_info=…)`，按 decision_points 回打 ≥1 轮直到 `passed=true`（若报 `structure_hints` 叶弧跨度均一/情节段字数全同须消除或说明），残留逐条报给用户。submit 随书落库 phase=ready。
    失败/跳过：任一段生成失败重试一次，仍失败跳过该段继续（已填内容保留、部分构建可提交）；② 失败 → submit 后书在 config 需补弧（`save_outlines` 落盘→plots→用户书详情确认）；⑤ 未做则 `_world_generated` 不置位。书名已由候选带入步 3，想改才 `drive_ui(set_field title=...)`。
 6. 用户在浏览器可编辑/删角色行后继续。
-7. **submit**：无需等一键补全，随时 `drive_ui(submit)`（步 3 仅拦进行中的 `fillWorld` 兜底）。**系统** `POST /books/start` 建书——步 3 分阶段构建的各段内容 + ②生成的弧+桥段（`_outline_data`）已随 submit 落库，**书创建即 phase=ready**（不再 submit 后手动 generate_full_outline）。
+7. **submit**：无需等一键补全，随时 `drive_ui(submit)`（步 3 仅拦进行中的 `fillWorld` 兜底）。**系统** `POST /books/start` 建书——步 3 分阶段构建的各段内容 + ②生成的弧+情节段（`_outline_data`）已随 submit 落库，**书创建即 phase=ready**（不再 submit 后手动 generate_full_outline）。
 
 ## submit 后：向导已入库跳书详情——深化已并入步3，提交即 phase=ready（无二次确认/深化段）
-- `drive_ui(submit)` 建书成功后，**向导直接跳转书详情页**——3 步建书结束，步 3 深化式构建的各段内容（差异化命题/核心矛盾/弧+桥段/势力/人物/其余维度）已随 submit 落库，**书创建即 phase=ready**（正常；深化在步 3 内联完成，页面无自动深化任务）。Claude 只做只读轮询收尾，**不要抢着驱动弧深化/翻 ready**。
+- `drive_ui(submit)` 建书成功后，**向导直接跳转书详情页**——3 步建书结束，步 3 深化式构建的各段内容（差异化命题/核心矛盾/弧+情节段/势力/人物/其余维度）已随 submit 落库，**书创建即 phase=ready**（正常；深化在步 3 内联完成，页面无自动深化任务）。Claude 只做只读轮询收尾，**不要抢着驱动弧深化/翻 ready**。
 - 用只读工具轮询定位新书：
   1. `list_books` → 找到新书 `book_id`。
   2. `get_book_detail(book_id)` 检查世界观是否已充实（`basic_info.world_building` 各维非空）。通常已是——步 3 各段已随 submit 落库；仅当单薄（如 ⑤ 未做或生成失败用户仍提交）才兜底你自主生成 → `save_basic_info`。
   2.5 **保真度校验（必做）**：核对 `tags` 与用户设定一致（`genre` 由标签推导、随标签同步，无需单核）；漂移 → `navigate("/books/start")` + `drive_ui(reset)` + 重填 set_field/set_tags 重走批处理（最多重试 1 次，仍漂移则如实汇报停止）。
-  3. `get_book_detail(book_id)` 确认 `phase`：`ready` 且 outlines/plots 非空 → 正常，可直接进写作台；`config`（② 弧没带上）→ 兜底补弧（save_outlines 落盘→plots）→ 引导用户在书详情点「✅ 确认弧+桥段」进 ready。
+  3. `get_book_detail(book_id)` 确认 `phase`：`ready` 且 outlines/plots 非空 → 正常，可直接进写作台；`config`（② 弧没带上）→ 兜底补弧（save_outlines 落盘→plots）→ 引导用户在书详情点「✅ 确认弧+情节段」进 ready。
   4. phase=ready 后 `navigate(url="/books/<book_id>/continue")` 进写作台。
 - 建书后**不要在向导页再 `drive_ui(next)`**（向导已跳书详情，命令桥守卫 bookId 已拦）。
 
@@ -94,8 +94,8 @@ description: >-
 - **落地检查**：写完章节后用 `mcp__novel-engine__chapter_quality_gate`（审查/连续性/追读/伏笔/爽点 五项门禁）核验；不合格 → 引导到 `novel-write` 重写该章。不加新工具，靠现有规则层检查。
 
 ## 退出状态
-- 成功：向导跑完世界观+深化式弧+桥段，用户提交建书即 `phase=ready`。用 `get_book_detail` 复核（主角名 + 世界观非空 + phase=ready）。
-- 下一步自然衔接：`novel-write`（写前三章）；config 兜底补弧落 plots → 用户在书详情「确认弧+桥段」进 ready；ready 后调整/扩弧经 save_outlines 追加（保持 ready）。
+- 成功：向导跑完世界观+深化式弧+情节段，用户提交建书即 `phase=ready`。用 `get_book_detail` 复核（主角名 + 世界观非空 + phase=ready）。
+- 下一步自然衔接：`novel-write`（写前三章）；config 兜底补弧落 plots → 用户在书详情「确认弧+情节段」进 ready；ready 后调整/扩弧经 save_outlines 追加（保持 ready）。
 
 ## 失败处置
 - 「LLM 未配置」→ 提示到设置页或 `api.json` 配 key 后重试。

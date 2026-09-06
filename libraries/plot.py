@@ -1,6 +1,6 @@
 """
-桥段库（Plot Device Library）
-网文经典桥段的结构化模板 — 模板 + 变量槽位 + 变体
+情节段库（Plot Device Library）
+网文经典情节段的结构化模板 — 模板 + 变量槽位 + 变体
 """
 from dataclasses import dataclass, field
 from typing import Optional
@@ -10,7 +10,7 @@ from .base_library import JsonLibrary
 
 @dataclass
 class PlotSlot:
-    """变量槽位 — 决定桥段的具体呈现"""
+    """变量槽位 — 决定情节段的具体呈现"""
     name: str           # 槽位名，如 "主角身份"
     description: str    # 说明，如 "主角在此时的公众认知状态"
     options: list[str]  # 可选值列表
@@ -19,13 +19,13 @@ class PlotSlot:
 
 @dataclass
 class PlotTemplate:
-    """单个桥段模板"""
+    """单个情节段模板"""
     id: str
     name: str
     category: str                    # 分类：爽文/悬念/情感/战斗...
     sub_category: str = ""           # 子分类：身份反转/扮猪吃虎/...
     description: str = ""
-    template_structure: str = ""     # 桥段结构骨架
+    template_structure: str = ""     # 情节段结构骨架
     slots: list[PlotSlot] = field(default_factory=list)
     variants: list[str] = field(default_factory=list)
     fit_contexts: list[str] = field(default_factory=list)
@@ -76,7 +76,7 @@ class PlotTemplate:
 
 
 class PlotLibrary(JsonLibrary):
-    """桥段库管理器（进程内单例，避免每实例重复读 JSON）"""
+    """情节段库管理器（进程内单例，避免每实例重复读 JSON）"""
     _instance = None
     _list_attr = "templates"
     _key = "templates"
@@ -117,7 +117,7 @@ class PlotLibrary(JsonLibrary):
 
     def match_for_chapter(self, chapter_context: str,
                           genre: str = "") -> list[PlotTemplate]:
-        """根据章节上下文匹配桥段（轻量语义：bigram 相似度 + 分类多样性）。
+        """根据章节上下文匹配情节段（轻量语义：bigram 相似度 + 分类多样性）。
 
         相比纯子串包含，bigram 能捕捉"线索/调查/真凶"这类近义表达，
         再按分类轮询返回多样候选池，供上层 AI 二次挑选，避免候选单一。
@@ -170,13 +170,13 @@ class PlotLibrary(JsonLibrary):
         return sorted(cats)
 
 
-# ─── 内置桥段模板 ───
+# ─── 内置情节段模板 ───
 
 BUILTIN_PLOTS = [
     PlotTemplate(
         id="plot_dating_001", name="退婚打脸",
         category="爽文", sub_category="身份反转",
-        description="经典废柴逆袭桥段：被退婚后展露真正实力",
+        description="经典废柴逆袭情节段：被退婚后展露真正实力",
         template_structure="[当众羞辱]→[主角沉默/隐忍]→[关键时刻展现实力]→[全场震惊]→[对方后悔]",
         slots=[
             PlotSlot("主角身份", "主角在此场景中的公众认知",

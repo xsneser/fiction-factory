@@ -18,7 +18,7 @@ PHASE_GATES = {
     # 薄工具（agent 生成后落盘；无 LLM）
     "save_outlines": {"config", "outlines", "plots", "ready"},
     "save_book_meta": {"ready"},
-    "save_bridge_draft": {"ready"},
+    "save_plot_draft": {"ready"},
     "save_chapter_text": {"ready"},
     # 建书规划 —— config 落基本盘；plots 草案期放行（深化弧/补差异化命题时改 basic_info，ready 后禁）
     "save_basic_info": {"config", "plots"},

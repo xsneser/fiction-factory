@@ -3,11 +3,11 @@
 设计文档《外部书目提取-顺序通读式提取.md》§10 定义了入库决策与去重协议，
 但那是 agent 协议（靠 LLM 自觉 + query_* 自查），代码侧 ingest 没有闸门：
 - ingest_library_assets / LibraryIngestor._add_* 只做 scout_{source}_{name} 精确 id 去重；
-- 结构不完整（桥段无箭头骨架/无 slots、弧无 stages…）与机制级近似（同骨架换皮）照收，
+- 结构不完整（情节段无箭头骨架/无 slots、弧无 stages…）与机制级近似（同骨架换皮）照收，
   导致库里堆满不可复用 / 重复模板 —— 即「判断什么能进四库完全不准确」。
 
 本模块把判断落成确定性规则（无 LLM）：
-1. 结构完整性（deterministic）：桥段要有箭头骨架 structure + 变量槽 slots、弧要有 stages、
+1. 结构完整性（deterministic）：情节段要有箭头骨架 structure + 变量槽 slots、弧要有 stages、
    笑点要有机制描述 pattern_description、角色要有 personality —— 缺则 decision=incomplete
    （不进库，reasons 说明缺什么，供 agent 补全或落书级档案）。
 2. 库内近似去重（骨架优先 bigram）：候选 vs 现有库条目 + 本批已过闸候选。
@@ -61,7 +61,7 @@ def _field(obj: Any, name: str, default: Any = "") -> Any:
 # 各类型进四库的结构前提：字段名 → 缺它意味着什么
 _REQUIRED = {
     "plot":      (["structure", "slots"],
-                  "桥段需箭头流程骨架 structure + 至少一个变量槽 slots（否则不可迁移复用）"),
+                  "情节段需箭头流程骨架 structure + 至少一个变量槽 slots（否则不可迁移复用）"),
     "structure": (["description"],
                   "弧模板需有可复用内容描述 description（否则是空壳不可复用）"),
     "gag":       (["pattern_description"],

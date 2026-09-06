@@ -108,7 +108,7 @@ async def main():
                           "query_characters", "chapter_quality_gate",
                           "fetch_book", "fetch_novel", "fetch_webnovel", "discover_hot", "list_rankings",
                           "list_crawled_novels", "read_crawled_novel", "extract_state", "ingest_library_assets",
-                          "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
+                          "save_chapter_text", "save_plot_draft", "save_outlines", "save_book_meta",
                           "get_writing_context", "get_pen_style", "add_style_rule", "delete_style_rule",
                           "add_style_sample", "delete_style_sample", "list_style_samples", "get_style_sample"):
                     check(f"工具 {t} 在列", t in names)
@@ -146,7 +146,7 @@ async def main():
                 sl = await call_json(session, "get_storyline", {"book_id": bid})
                 check("save_outlines 保留 cover_beats/words",
                       _find_val(sl, "words", 1400) and _find_val(sl, "cover_beats", 6),
-                      "桥段 words=1400/cover_beats=6 应落库")
+                      "情节段 words=1400/cover_beats=6 应落库")
                 ctx = await call_json(session, "get_writing_context", {"book_id": bid})
                 sc = (ctx.get("style_card") or "")
                 check("get_writing_context style_card 非空（无笔名也注入默认笔名精简卡）",
@@ -198,7 +198,7 @@ async def main():
                 # set_review（侦察/提取页呈现五库候选）：title 必填、五类至少一类非空
                 dui3 = await call_json(session, "drive_ui", {"cmd": "set_review",
                     "args": {"title": "冒烟测试书", "platform": "fanqie", "folder": "冒烟测试书",
-                             "plots": [{"name": "测试桥段", "category": "测试", "structure": "测试"}],
+                             "plots": [{"name": "测试情节段", "category": "测试", "structure": "测试"}],
                              "style_rules": [{"kind": "prefer", "pattern": "句长偏短"}]}})
                 check("drive_ui set_review 返回 __ui_command__", dui3.get("__ui_command__") == "set_review")
                 # 负例：缺 title 应被拒（工具抛错或返回错误文本都算拒绝）

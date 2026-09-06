@@ -32,8 +32,8 @@ class ArcNode:
     key_events: list[str] = field(default_factory=list)
     foreshadow_opportunities: list[str] = field(default_factory=list)  # 埋坑机会
     tags: list[str] = field(default_factory=list)              # 题材标签（每弧可搜）
-    opening_patterns: list[str] = field(default_factory=list)  # 开篇桥段模板引用
-    climax_patterns: list[str] = field(default_factory=list)   # 高潮桥段模板引用
+    opening_patterns: list[str] = field(default_factory=list)  # 开篇情节段模板引用
+    climax_patterns: list[str] = field(default_factory=list)   # 高潮情节段模板引用
     source: str = ""               # 来源
     created_at: str = ""           # 收录时间
     enabled: bool = True           # 启用状态

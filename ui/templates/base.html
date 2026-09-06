@@ -17,7 +17,7 @@
         <a href="/books" class="{{ 'active' if (request.path == '/books' or request.path.startswith('/books/') and request.path != '/books/start' or request.path.startswith('/storyline/')) else '' }}">📚 书库</a>
         <a href="/publish" class="{{ 'active' if request.path == '/publish' or request.path.startswith('/publish/') or request.path.startswith('/books/') and '/publish' in request.path else '' }}">🚀 上架管理</a>
         <div class="section">资产库</div>
-        <a href="/plots" class="{{ 'active' if request.path == '/plots' or request.path.startswith('/plots/') else '' }}">🧩 桥段库</a>
+        <a href="/plots" class="{{ 'active' if request.path == '/plots' or request.path.startswith('/plots/') else '' }}">🧩 情节段库</a>
         <a href="/structures" class="{{ 'active' if request.path == '/structures' or request.path.startswith('/structures/') else '' }}">📋 情节弧库</a>
         <a href="/gags" class="{{ 'active' if request.path == '/gags' or request.path.startswith('/gags/') else '' }}">😂 笑点库</a>
         <a href="/characters" class="{{ 'active' if request.path == '/characters' or request.path.startswith('/characters/') else '' }}">🎭 角色原型库</a>

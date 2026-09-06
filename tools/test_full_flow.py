@@ -64,9 +64,9 @@ def main():
         print("❌ 未得到大纲"); return 1
     n_outlines = len(result.get("outlines", []))
     n_plots = len(result.get("plots", []))
-    print(f"✅ 大纲生成完成：{n_outlines} 条大纲 / {n_plots} 个桥段")
+    print(f"✅ 大纲生成完成：{n_outlines} 条大纲 / {n_plots} 个情节段")
 
-    # 裁剪成 5 章小书（控制写作成本），保留大纲的阶段与桥段；
+    # 裁剪成 5 章小书（控制写作成本），保留大纲的阶段与情节段；
     # 续写第 4 章仍在大纲范围内，可验证"故事线上下文"分支
     for o in result["outlines"]:
         o["end_chapter"] = min(o["end_chapter"], o["start_chapter"] + 4)
@@ -76,7 +76,7 @@ def main():
     print(f"→ 裁剪为 {len(sl.outlines)} 条大纲，总章数 "
           f"{max(o.end_chapter for o in sl.outlines)}（供写作测试）")
 
-    # ═══ ② 新书写作：撰写 + 文本填充（StorylineChapterWriter：按桥段生成→满章切分→落盘）═══
+    # ═══ ② 新书写作：撰写 + 文本填充（StorylineChapterWriter：按情节段生成→满章切分→落盘）═══
     stage("撰写 + 文本填充", "create + save_storyline → StorylineChapterWriter")
     from libraries.book_manager import BookManager
     bm = BookManager("books")
@@ -98,7 +98,7 @@ def main():
         r = engine.execute(inst)
         wc = r.get("word_count", 0)
         bp = r.get("blueprint", {})
-        print(f"  第{ch}章: {wc}字 | 桥段: {len(bp.get('plots', []) or [])} 大纲: {len(bp.get('outlines', []) or [])}")
+        print(f"  第{ch}章: {wc}字 | 情节段: {len(bp.get('plots', []) or [])} 大纲: {len(bp.get('outlines', []) or [])}")
         if r.get("status") != "chapter_written":
             print("  ⚠️", r); return 1
 
@@ -106,8 +106,8 @@ def main():
     engine.book.current_chapter = 3
     engine.book_mgr.update(engine.book)
 
-    # ═══ ③ 续写：continue_book → 桥段级写第 4 章（唯一写作核心）═══
-    stage("续写", "continue_book → _exec_write_storyline_chapter（桥段级）")
+    # ═══ ③ 续写：continue_book → 情节段级写第 4 章（唯一写作核心）═══
+    stage("续写", "continue_book → _exec_write_storyline_chapter（情节段级）")
     engine2 = NovelEngine(llm_client=llm)
     engine2.continue_book(book_id)
     r = engine2._exec_write_storyline_chapter(Instruction(Op.WRITE_STORYLINE_CHAPTER, 4))

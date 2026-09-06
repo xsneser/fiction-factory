@@ -29,7 +29,7 @@
 <div class="editor-split" id="editor-split" style="position:relative">
     <button type="button" class="el-expand-btn" id="el-expand-btn" title="展开故事线" onclick="toggleStorylinePanel()">▶ 故事线</button>
     <div class="editor-left" id="editor-left">
-        <div class="gen-split-title">📋 故事线（点击桥段高亮对应正文）<button type="button" class="el-collapse-btn" title="折叠故事线" onclick="toggleStorylinePanel()">◀</button></div>
+        <div class="gen-split-title">📋 故事线（点击情节段高亮对应正文）<button type="button" class="el-collapse-btn" title="折叠故事线" onclick="toggleStorylinePanel()">◀</button></div>
         <div class="editor-scroll"><div id="editor-storyline" class="editor-storyline"></div></div>
     </div>
 
@@ -40,11 +40,11 @@
         <div class="wf-skill-cards">
             <div class="wf-skill-card" id="wf-continue-card" onclick="runWritingTask()">
                 <div class="wsc-title">✍️ 继续写正文</div>
-                <div class="wsc-sub">侧栏 Agent 逐桥段续写本章，实时汇报进度/字数/切章</div>
+                <div class="wsc-sub">侧栏 Agent 逐情节段续写本章，实时汇报进度/字数/切章</div>
                 <button type="button" class="wf-stop-btn" id="wf-stop-btn" style="display:none" onclick="stopWritingTask(event)">⏹ 停止</button>
             </div>
         </div>
-        {# ─── 正文：当前章单章渲染，CSS columns 分页，桥段包 span.m-bridge 供点击高亮 ───#}
+        {# ─── 正文：当前章单章渲染，CSS columns 分页，情节段包 span.m-bridge 供点击高亮 ───#}
         <div class="reader-viewport" id="reader-viewport">
             <div class="reader-pages" id="reader-pages"></div>
             <div class="reader-pages reader-pages-next" id="reader-pages-next" aria-hidden="true"></div>
@@ -86,7 +86,7 @@ function toggleStorylinePanel() {
     }
 }
 </script>
-<script>/* ═══ 阅读器（共享分页核心 ReaderCore）+ 写作台专属：桥段渲染/高亮/轮询 ═══ */
+<script>/* ═══ 阅读器（共享分页核心 ReaderCore）+ 写作台专属：情节段渲染/高亮/轮询 ═══ */
 function _ms_esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
@@ -96,15 +96,15 @@ function _ms_esc(s) {
 function _selEsc(s) {
     return String(s == null ? '' : s).replace(/["\\]/g, '\\$&');
 }
-/* 字数：桥段优先（sum text），否则 content */
+/* 字数：情节段优先（sum text），否则 content */
 function _wordCount(ch) {
     if (ch && ch.bridges && ch.bridges.length) return ch.bridges.reduce(function (n, b) { return n + (b.text || '').length; }, 0);
     return (ch && ch.content) ? ch.content.length : 0;
 }
 
-var _activePid = '';   // 当前高亮桥段（轮询重渲染后恢复）
+var _activePid = '';   // 当前高亮情节段（轮询重渲染后恢复）
 
-/* ─── 共享分页核心实例化：写作台章节注入（含桥段），双容器推入动画；目录/持久化/键盘滚轮由核心负责 ─── */
+/* ─── 共享分页核心实例化：写作台章节注入（含情节段），双容器推入动画；目录/持久化/键盘滚轮由核心负责 ─── */
 var __WRITER_CHS = (window.__BOOK_CHAPTERS__ || []).map(function (ch) {
     if (ch.word_count == null) ch.word_count = _wordCount(ch);
     return ch;
@@ -115,7 +115,7 @@ var Reader = ReaderCore.create({
     pagesNext: 'reader-pages-next',        // 双容器推入动画
     chapters: __WRITER_CHS,
     persistKey: 'ne_reader_' + (window.__STORYLINE_ID__ || ''),
-    /* 渲染：桥段包 span.m-bridge（data-bridge 供高亮），草稿加徽标 */
+    /* 渲染：情节段包 span.m-bridge（data-bridge 供高亮），草稿加徽标 */
     renderChapter: function (ch, content, container) {
         if (!container) return;
         if (!ch) { container.innerHTML = ''; return; }
@@ -136,7 +136,7 @@ var Reader = ReaderCore.create({
     getChapterContent: function (ch, cb) { cb(ch && ch.content); },
 });
 
-/* ═══ 桥段点击 → 高亮右侧对应正文（事件来自 story_line.js 的 sl:plot-click / sl:outline-click） ═══ */
+/* ═══ 情节段点击 → 高亮右侧对应正文（事件来自 story_line.js 的 sl:plot-click / sl:outline-click） ═══ */
 (function bindBridgeHighlight() {
     var mount = document.getElementById('editor-storyline');
     if (!mount) return;
@@ -163,14 +163,14 @@ function highlightBridgeContent(pid) {
     if (!pid) return;
     var ci = _chapterIdxOfPlot(pid);
     if (ci < 0) {
-        // 未写桥段：阅读器无对应内容，清掉上一处高亮与 activePid（否则旧高亮残留不消失、轮询还会恢复它）
+        // 未写情节段：阅读器无对应内容，清掉上一处高亮与 activePid（否则旧高亮残留不消失、轮询还会恢复它）
         if (window.StoryLine) window.StoryLine.highlight({ plot_id: pid });
         _clearBridgeActive();
         _activePid = '';
         return;
     }
     if (ci !== Reader.idx()) Reader.goToChapter(ci, { page: 0 });
-    var root = document.getElementById('reader-pages');   // 只查主容器：防未清理副容器内同 plot_id 桥段被双份匹配/页码算错
+    var root = document.getElementById('reader-pages');   // 只查主容器：防未清理副容器内同 plot_id 情节段被双份匹配/页码算错
     var el = root ? root.querySelector('.m-bridge[data-bridge="' + _selEsc(pid) + '"]') : null;
     _clearBridgeActive();
     // 只高亮第一处匹配：同一 plot_id 重复（重写/修订）不再全文亮起
@@ -190,7 +190,7 @@ function highlightOutlineContent(oid) {
         for (var j = 0; j < br.length; j++) { if (pids.indexOf(br[j].plot_id) >= 0) { ci = i; break; } }
     }
     if (ci < 0) {
-        // 该弧的桥段都未写：阅读器无对应内容，清掉上一处高亮（防残留）
+        // 该弧的情节段都未写：阅读器无对应内容，清掉上一处高亮（防残留）
         if (window.StoryLine) window.StoryLine.highlight({ outline_id: oid });
         _clearBridgeActive();
         _activePid = '';
@@ -296,8 +296,8 @@ function _resolveNextChapterAndSend(bid, title, pen) {
         var task = '请继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：写下一章（第' + nextCh + '章）正文。'
             + '本章目标约 ' + wpc + ' 字，未写满会被门禁拦下（save_chapter_text 会拒收短章）。'
             + '写正文前先 get_writing_context 读风格规则（style_rules）并严格遵守。'
-            + '逐桥段写：每写完一个桥段场景就 save_bridge_draft；写完本章全部未写桥段、累计字数达标后再 save_chapter_text，'
-            + '且 bridge_segments 必须列出本章每个桥段（缺一即正文丢失）。'
+            + '逐情节段写：每写完一个情节段场景就 save_plot_draft；写完本章全部未写情节段、累计字数达标后再 save_chapter_text，'
+            + '且 plot_segments 必须列出本章每个情节段（缺一即正文丢失）。'
             + '章末跑 chapter_quality_gate 门禁汇报。';
         if (task && window.agentSendTask) {
             window.agentSendTask(task, { card: true, cardLabel: '📝 写作任务 · 第' + nextCh + '章' });
@@ -324,7 +324,7 @@ function stopWritingTask(e) {
 
 
 
-/* ═══ 正文实时刷新：轮询 /api/desk/chapters/<bid>，agent 写完桥段/章节即重渲染（保留当前章/页/高亮） ═══ */
+/* ═══ 正文实时刷新：轮询 /api/desk/chapters/<bid>，agent 写完情节段/章节即重渲染（保留当前章/页/高亮） ═══ */
 (function pollReader() {
     var bid = window.__STORYLINE_ID__;
     if (!bid) return;
@@ -358,7 +358,7 @@ function stopWritingTask(e) {
                 var wasPage = Reader.getState().page;
                 // 核心 setChapters：瞬时落位（无动画、不打断翻页）+ 重分页/目录/持久化
                 Reader.setChapters(chs, ni, wasPage);
-                // 重渲染后恢复高亮桥段（只高亮单处，同 plot_id 重复不再全文亮起）
+                // 重渲染后恢复高亮情节段（只高亮单处，同 plot_id 重复不再全文亮起）
                 if (_activePid) {
                     var ap = _activePid;
                     var root = document.getElementById('reader-pages');

@@ -337,7 +337,7 @@ var WZ = {
         if (this.cur === 2 && this._picked && !this._task2Fired) {
             this._task2Fired = true;
             this._agentDriving = true;
-            var task = '请继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」），自主生成填写步 3 内容表单及故事线：挑选弧 → 构建核心矛盾core_conflict → 创建势力 → 挑选桥段 → 创建各势力人物适配 → 补全其余表单 → 评判合理性及阅读吸引力并修改。填完表单后停下，向用户汇报设定概要并等待确认；用户明确确认后再提交建书。';
+            var task = '请继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」），自主生成填写步 3 内容表单及故事线：挑选弧 → 构建核心矛盾core_conflict → 创建势力 → 挑选情节段 → 创建各势力人物适配 → 补全其余表单 → 评判合理性及阅读吸引力并修改。填完表单后停下，向用户汇报设定概要并等待确认；用户明确确认后再提交建书。';
             if (typeof window.agentSendTask === 'function') {
                 window.agentSendTask(task, { card: true });
             } else if (typeof showToast === 'function') {
@@ -754,7 +754,7 @@ var WZ = {
             return c;
         });
     },
-    /* 弧/桥段结构归一化（防 agent 漏 id/notes/outline_id/order，导致故事线渲染空/桥段丢失）：
+    /* 弧/情节段结构归一化（防 agent 漏 id/notes/outline_id/order，导致故事线渲染空/情节段丢失）：
        outline 补 id（缺省 outline_N）、notes（description 兼容）；plot 补 id（plot_N）、order（按序）、
        outline_id（缺省时按序均分到各弧，保持先后）。返回 {outlines, plots} 新数组，不改入参。 */
     normalizeOutlineData: function(outlines, plots) {
@@ -1107,7 +1107,7 @@ var WZ = {
             self.bookId = d.book_id;
             self.reportStatus();   // 上报 bookId → agent get_build_status 拿到建书结果
             try { sessionStorage.removeItem(self.PERSIST_KEY); } catch (e) {}   // 建书成功清空草稿
-            // 3 步建书结束：直接入库 → 跳书详情；世界观/弧/桥段/人物已在步 3 分阶段构建
+            // 3 步建书结束：直接入库 → 跳书详情；世界观/弧/情节段/人物已在步 3 分阶段构建
             // 并随 submit 落库（书创建即 phase=ready），直接进入写作台。
             // SPA 跳转（navigateTo 失败自动 fallback 整页）：不卸载页面，保留进行中的
             // SSE 事件流会话，使 dsh 的最终 reply 与工具卡不因页面刷新而丢失
@@ -1345,7 +1345,7 @@ window.onnecommand = function(e) {
         if (st) st.textContent = '✅ Agent 分阶段已填入，可编辑';
         if (typeof showToast === 'function') showToast('世界观内容已更新，可直接编辑', 'success');
     } else if (cmd === 'set_picks') {
-        // 开篇弧/桥段选择（分阶段②）：存 _outline_picks（扁平 id 列表），submit 后由 generate_full_outline 消费
+        // 开篇弧/情节段选择（分阶段②）：存 _outline_picks（扁平 id 列表），submit 后由 generate_full_outline 消费
         // 支持 {id,name} 对象或纯 id 字符串
         var tplNames = [], tplIds = [];
         (args.templates || []).forEach(function(x) {
@@ -1359,10 +1359,10 @@ window.onnecommand = function(e) {
         });
         WZ.state._outline_picks = { templates: tplIds, plots: plotIds };
         WZ.state._outline_picks_names = { templates: tplNames, plots: plotNames };
-        if (typeof showToast === 'function') showToast('已记录开篇弧/桥段选择', 'success');
+        if (typeof showToast === 'function') showToast('已记录开篇弧/情节段选择', 'success');
     } else if (cmd === 'set_outline') {
-        // 步3②生成的弧+桥段（generate_outline_preview 产出）：先归一化结构（补 id/notes/outline_id/order），
-        // 存 state，submit 时随 POST 落库——否则 StoryLine 按 outline_id 归组会因缺 id 丢桥段
+        // 步3②生成的弧+情节段（generate_outline_preview 产出）：先归一化结构（补 id/notes/outline_id/order），
+        // 存 state，submit 时随 POST 落库——否则 StoryLine 按 outline_id 归组会因缺 id 丢情节段
         var _norm = WZ.normalizeOutlineData(args.outlines, args.plots);
         WZ.state._outline_data = {
             outlines: _norm.outlines,
@@ -1375,7 +1375,7 @@ window.onnecommand = function(e) {
         WZ.persist();   // 存草稿（刷新后 restore 也能渲染故事线）
         if (typeof showToast === 'function') {
             showToast('故事线已生成：' + WZ.state._outline_data.outlines.length
-                + ' 条弧 / ' + WZ.state._outline_data.plots.length + ' 个桥段', 'success');
+                + ' 条弧 / ' + WZ.state._outline_data.plots.length + ' 个情节段', 'success');
         }
     } else if (cmd === 'next') { WZ.next(); }
     else if (cmd === 'prev') { WZ.prev(); }

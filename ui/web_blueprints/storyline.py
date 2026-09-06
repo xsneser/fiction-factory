@@ -94,7 +94,7 @@ def _build_next_arc(builder, tl, mode="rule"):
 
 @bp.route("/api/storyline/<storyline_id>/extend-outline", methods=["POST"])
 def extend_outline(storyline_id):
-    """续写时扩展故事线：末尾追加新大纲弧 + 填充桥段 + 加料（book_* 与 tl_* 通用）。"""
+    """续写时扩展故事线：末尾追加新大纲弧 + 填充情节段 + 加料（book_* 与 tl_* 通用）。"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -146,7 +146,7 @@ def extend_outline(storyline_id):
                        phase="完成", url=f"/storyline/{storyline_id}/edit")
     if mode == "ai":
         pass
-    task_manager.log(tid, f"扩展故事线：新弧「{new_arc.name}」第{new_arc.start_chapter}-{new_arc.end_chapter}章 +{len(added)}桥段", "success")
+    task_manager.log(tid, f"扩展故事线：新弧「{new_arc.name}」第{new_arc.start_chapter}-{new_arc.end_chapter}章 +{len(added)}情节段", "success")
     task_manager.done(tid, message="扩展完成")
 
     return jsonify({
@@ -262,7 +262,7 @@ def api_generate_outlines(storyline_id):
 @bp.route("/api/storyline/<storyline_id>/confirm-outlines", methods=["POST"])
 # 已废弃（老路径收敛）：phase 翻转统一走 books 蓝图 /api/book/<id>/confirm-storyline（plots→ready，仅 UI 确认）；agent 不可达本路由。
 def api_confirm_outlines(storyline_id):
-    """确认大纲配置，进入桥段编排阶段"""
+    """确认大纲配置，进入情节段编排阶段"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -273,7 +273,7 @@ def api_confirm_outlines(storyline_id):
 
 @bp.route("/api/storyline/<storyline_id>/fill-plots", methods=["POST"])
 def api_fill_plots(storyline_id):
-    """给每个大纲填充桥段"""
+    """给每个大纲填充情节段"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -285,20 +285,20 @@ def api_fill_plots(storyline_id):
         structure_lib=struct_lib, plot_lib=plot_lib,
         gag_lib=gag_lib, llm_client=llm,
     )
-    # seed 计数器，避免新桥段 id 与已有桥段撞号（否则去重会静默丢弃）
+    # seed 计数器，避免新情节段 id 与已有情节段撞号（否则去重会静默丢弃）
     _seed_builder_counter(builder, [p.id for p in tl.plots])
 
     from plugins import task_manager
-    task_manager.ensure_single("桥段编排")
+    task_manager.ensure_single("情节段编排")
     tid = f"fillplots_{storyline_id}_{int(time.time())}"
-    task_manager.start(tid, name="桥段编排",
+    task_manager.start(tid, name="情节段编排",
                        title=tl.book_title or tl.pen_name or "",
                        phase="编排中...", url=f"/storyline/{storyline_id}/edit")
 
     new_plots = []
     try:
         for i, o in enumerate(tl.outlines, 1):
-            task_manager.progress(tid, current=i, phase=f"桥段填充 · {o.name or '大纲'}{i}...")
+            task_manager.progress(tid, current=i, phase=f"情节段填充 · {o.name or '大纲'}{i}...")
             new_plots.extend(builder.fill_plots_for_outline(o, tl))
     except Exception as e:
         task_manager.fail(tid, str(e))
@@ -313,8 +313,8 @@ def api_fill_plots(storyline_id):
     from libraries.storyline import annotate_plot_roles
     annotate_plot_roles(tl)
     _save_storyline(tl, storyline_id)
-    task_manager.log(tid, f"共填充 {len(new_plots)} 个桥段（累计 {len(tl.plots)}）", "success")
-    task_manager.done(tid, message="桥段编排完成")
+    task_manager.log(tid, f"共填充 {len(new_plots)} 个情节段（累计 {len(tl.plots)}）", "success")
+    task_manager.done(tid, message="情节段编排完成")
     return jsonify({"ok": True, "plots_added": len(new_plots),
                     "total_plots": len(tl.plots)})
 
@@ -344,14 +344,14 @@ def api_fill_gags(storyline_id):
     annotate_plot_roles(tl)
     tl.phase = "ready" if tl.plots else "gags"
     _save_storyline(tl, storyline_id)
-    task_manager.log(tid, f"内涵/吸睛已挂载（{len(tl.plots)} 桥段）", "success")
+    task_manager.log(tid, f"内涵/吸睛已挂载（{len(tl.plots)} 情节段）", "success")
     task_manager.done(tid, message="加料注入完成")
     return jsonify({"ok": True, "phase": tl.phase})
 
 
 @bp.route("/api/storyline/<storyline_id>/plot-confirm", methods=["POST"])
 def api_plot_confirm(storyline_id):
-    """切换单个桥段的确认状态"""
+    """切换单个情节段的确认状态"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -455,7 +455,7 @@ def api_move_outline(storyline_id):
 
 @bp.route("/api/storyline/<storyline_id>/delete-outline", methods=["POST"])
 def api_delete_outline(storyline_id):
-    """删除一个大纲（同时删除其下的桥段）"""
+    """删除一个大纲（同时删除其下的情节段）"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -541,8 +541,8 @@ def _decision_log_message(kind: str, data: dict) -> str:
         else:
             names = []
         if names:
-            return f"🧩 桥段选择[{step}]：候选 {cands} → 选中「{'、'.join(names)}」"
-        return f"🧩 桥段选择[{step}]：候选 {cands}"
+            return f"🧩 情节段选择[{step}]：候选 {cands} → 选中「{'、'.join(names)}」"
+        return f"🧩 情节段选择[{step}]：候选 {cands}"
     if kind == "theme_review":
         themes = "、".join((chosen.get("themes") or [])[:3]) or "无"
         return f"🎭 内涵挂载[{step}]：内涵 {themes}"
@@ -561,7 +561,7 @@ def api_generate_full(storyline_id):
     """一键生成完整大纲（5 阶段 OutlineGenerator，SSE 流式），原地累加并逐步落盘。
 
     - 生成器直接操作当前 storyline 对象（storyline=tl），每阶段结束 on_save 落盘，
-      实现"大纲→桥段→笑点/内涵挨个步骤写进配置文件"。
+      实现"大纲→情节段→笑点/内涵挨个步骤写进配置文件"。
     - 新增 SSE 事件：thinking（AI 流式思考 token）、decision（候选→选中→理由），
       前端右侧"AI 思考过程"面板展示；decision 同时写入右侧栏任务日志。
     - phase_done 附带 storyline 快照，前端据此实时刷新左侧故事线视图。
@@ -650,19 +650,19 @@ def api_generate_full(storyline_id):
                                   "theme_injected", "phase_done", "done"):
                     payload["storyline"] = tl.to_dict()
 
-                # 每个决策写进右侧栏日志（用户能看到"确定了哪个大纲/桥段/笑点"）
+                # 每个决策写进右侧栏日志（用户能看到"确定了哪个大纲/情节段/笑点"）
                 if event_type == "decision" and data_dict:
                     task_manager.log(task_id,
                                      _decision_log_message(data_dict.get("kind", "decision"), data_dict),
                                      "success")
-                    # 决策后也落一次盘（桥段/加料已变化）
+                    # 决策后也落一次盘（情节段/加料已变化）
                     _save_storyline(tl, storyline_id)
 
                 if event_type == "done":
                     _save_storyline(tl, storyline_id)
                     payload["storyline"] = tl.to_dict()
                     task_manager.done(task_id, message="完整大纲生成完成")
-                    # 大纲已变化：失效续写引擎缓存，让前端 reload 后重建（含桥段写作者）
+                    # 大纲已变化：失效续写引擎缓存，让前端 reload 后重建（含情节段写作者）
                     _engines.pop(f"cont_{storyline_id}", None)
 
                 yield "data: " + _json.dumps(payload, ensure_ascii=False) + "\n\n"
@@ -679,7 +679,7 @@ def api_generate_full(storyline_id):
 
 @bp.route("/api/storyline/<storyline_id>/agent", methods=["POST"])
 def api_storyline_agent(storyline_id):
-    """大纲助手：用自然语言调整故事线配置（改桥段/加笑点/改大纲/增删桥段等）。
+    """大纲助手：用自然语言调整故事线配置（改情节段/加笑点/改大纲/增删情节段等）。
 
     由前端右侧「大纲助手」聊天面板调用；改动直接落盘，返回最新 storyline 供前端重绘。
     """

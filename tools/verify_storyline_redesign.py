@@ -5,7 +5,7 @@
   - /books/book_002  书详情页内嵌 Gantt（默认折叠，需点 #sl-toggle 展开后渲染）
   - /books/book_002/continue  写作台 Gantt（页面加载即渲染）
 
-断言：Gantt 渲染成功、大纲/桥段条数量、无 .sl-chapter 节点、图例无「章节」、
+断言：Gantt 渲染成功、大纲/情节段条数量、无 .sl-chapter 节点、图例无「章节」、
 字数轴存在、点击 dispatch sl:plot-click、StoryLine.highlight/setZoom 可用、无 console 错误。
 产物：tools/shots_ux/verify_book_detail.png、verify_write_flow.png
 """

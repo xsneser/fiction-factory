@@ -46,18 +46,18 @@ console.log('[agent-panel] v28 events-stream');
     var TOOL_ZH = {
         drive_ui: '驱动建书向导',
         export_book: '导出投稿包', extend_outline: '续写故事线',
-        fill_plots: '填充桥段', generate_book_meta: '生成书名+简介', generate_characters: '生成角色',
+        fill_plots: '填充情节段', generate_book_meta: '生成书名+简介', generate_characters: '生成角色',
         generate_core_conflict: '生成核心矛盾', generate_factions: '生成势力', generate_full_outline: '生成完整大纲',
         generate_outlines: '生成大纲序列', generate_rest_world: '补全其余世界观', generate_title: '生成书名',
         generate_world: '生成世界观', get_book_detail: '读取书详情', get_book_state: '读取书状态',
         get_build_status: '读取建书状态', get_storyline: '读取故事线', list_books: '列出书库',
         mark_finished: '标记完本', navigate: '页面跳转', outline_agent: '大纲助手',
         arc_material_candidates: '取选材候选', publish_book: '上架', publish_check: '上架检查',
-        query_characters: '查角色原型', query_gags: '查笑点库', query_plots: '查桥段库',
+        query_characters: '查角色原型', query_gags: '查笑点库', query_plots: '查情节段库',
         query_profiles: '查笔名档案', query_arc_library: '查情节弧库',
         save_basic_info: '保存基础设定', world_candidates: '生成世界观候选',
-        write_chapter: '写章节', write_next_bridge: '写下一桥段',
-        save_bridge_draft: '保存桥段', save_chapter_text: '保存整章',
+        write_chapter: '写章节', write_next_bridge: '写下一情节段',
+        save_plot_draft: '保存情节段', save_chapter_text: '保存整章',
         save_outlines: '保存大纲', save_book_meta: '保存书名简介',
         skill: '技能', chapter_quality_gate: '章节质量门禁',
         discover_hot: '侦察热榜', list_rankings: '榜单分类', fetch_novel: '抓取小说',
@@ -85,7 +85,7 @@ console.log('[agent-panel] v28 events-stream');
         world_building: '世界观', cmd: '命令', __ui_command__: '命令', book: '书', chapter: '章节',
         words_per_chapter: '每章字数', archetype_id: '原型', age: '年龄', death_year: '去世年份',
         gender: '性别', borrow: '借鉴', tweak: '微调', category: '分类', keyword: '关键词',
-        mode: '模式', plot: '桥段', plots: '桥段', structure: '结构', structures: '模板',
+        mode: '模式', plot: '情节段', plots: '情节段', structure: '结构', structures: '模板',
         gag: '梗', gags: '梗', count: '数量', total: '总计', storyline: '时间线',
         outlines: '大纲', timeline: '时间线', source: '来源', id: 'ID', pen: '笔名',
         url: '地址', words: '字数', word_count: '字数', target_words: '目标字数',
@@ -894,7 +894,7 @@ console.log('[agent-panel] v28 events-stream');
     function renderConversation() {
         chat.innerHTML = '';
         renderedCallIds = {};   // 全量重建：清掉断线补渲染用的防重记录
-        addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个桥段」\n· 「打开书库看看」');
+        addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个情节段」\n· 「打开书库看看」');
         fetch('/api/agent/task-events').then(function(r) { return r.json(); }).then(function(ld) {
             var cards = (ld && ld.ok && ld.events) ? ld.events : [];
             var items = [];

@@ -4,7 +4,7 @@
 统一出口：
   · 书级设定卡（Book Bible）：主角/世界观/配角/基调/内涵/风格 压缩成紧凑 bullet，
     在全书开始前确立统一的写作风格与世界观，注入所有写作与弧决策。
-  · render_bridge_prompt   ：桥段写作（取代 storyline_writer._group_prompt 的内联拼装）
+  · render_bridge_prompt   ：情节段写作（取代 storyline_writer._group_prompt 的内联拼装）
   · render_detector_prompt ：笑点探测器（gag_injector 用；笑点完全涌现，不写入弧）
   · render_summary_prompt  ：章节语义摘要（长程记忆）
   · render_outline_context ：弧各 phase 前置设定卡
@@ -19,7 +19,7 @@ from .storyline import BookStoryline, get_characters, get_mc, relation_to_mc
 from .promise_ledger import promise_op
 
 
-# 桥段 category → 适合的笑点 fit_scene 关键词（免费规则，不写进弧）
+# 情节段 category → 适合的笑点 fit_scene 关键词（免费规则，不写进弧）
 CATEGORY_GAG_SCENES = {
     "爽文": ["打脸后", "身份揭示", "多人场景"],
     "开篇": ["身份揭示", "日常对话"],
@@ -92,7 +92,7 @@ AUTHORITY_CANON = (
     "OPTIONAL（吸睛点/内涵/灵机一动，仅文风参考）"
 )
 
-# 前文上下文块预算：各块已自带安全帽（本桥段300/本章900/上一章150/角色态500/摘要600），
+# 前文上下文块预算：各块已自带安全帽（本情节段300/本章900/上一章150/角色态500/摘要600），
 # 预算与各块上限之和同量级 → 常规不触发裁剪；收紧此值即启用「超预算丢低优先级块」
 _CONTEXT_BUDGET = 2450
 
@@ -115,9 +115,9 @@ def _assemble_blocks(blocks, budget=_CONTEXT_BUDGET):
     return lines, dropped
 
 
-# 炸裂开场（第一章前 N 桥段强制）—— 番茄/飞卢式冷开场铁律
-# 素材来源：beat_writer 危机/悬念开场、build_chapter1_prompt、番茄平台约束、开篇桥段 usage_notes
-OPENING_MODE_RULES = """【开场模式 — 炸裂开场（第一章开篇桥段强制）】
+# 炸裂开场（第一章前 N 情节段强制）—— 番茄/飞卢式冷开场铁律
+# 素材来源：beat_writer 危机/悬念开场、build_chapter1_prompt、番茄平台约束、开篇情节段 usage_notes
+OPENING_MODE_RULES = """【开场模式 — 炸裂开场（第一章开篇情节段强制）】
 1. 冷开场铁律：前三句直接进入冲突/反转/对话，禁止铺垫环境、天气、世界观、人物背景。
 2. 第一句话就要制造悬念或冲击，让读者立刻想知道「接下来会怎样」。
 3. 前 200 字必须有强烈钩子；开篇前 500 字必须有冲突或危机（番茄要求）。
@@ -460,7 +460,7 @@ class PromptHarness:
         return self._join_sections(self._bible_sections(condensed=True), max_chars)
 
     # ═══════════════════════════════════════════
-    # 场景 B：桥段写作 prompt（取代 _group_prompt 内联拼装）
+    # 场景 B：情节段写作 prompt（取代 _group_prompt 内联拼装）
     # ═══════════════════════════════════════════
 
     def render_bridge_prompt(self, item, chapter_buffer: str, prev_ending: str,
@@ -475,8 +475,8 @@ class PromptHarness:
         """返回 user prompt 字符串（system 沿用 storyline_writer 的铁律，不在本方法内）。
 
         item = {"outline": OutlineSlot, "stage": dict, "plot": PlotSlot}
-        is_opening=True 时注入炸裂开场铁律（第一章前 N 桥段）。
-        review_hint：上一章规则审查（reviewer）未过的修复提示，一次性注入首个桥段。
+        is_opening=True 时注入炸裂开场铁律（第一章前 N 情节段）。
+        review_hint：上一章规则审查（reviewer）未过的修复提示，一次性注入首个情节段。
         chapter_num：当前写作章节号（读者承诺台账判断逾期用）。
         """
         o = item["outline"]
@@ -493,17 +493,17 @@ class PromptHarness:
                 for s in p.slots[:4])
 
         # 吸睛点（mount_themes_and_hooks 已生成，此前从未进写作 prompt）：
-        # 把桥段的最强爽点/悬念落地为读者可见的 payoff。
+        # 把情节段的最强爽点/悬念落地为读者可见的 payoff。
         hook_block = ""
         hooks = list(getattr(p, "hook_points", None) or [])
         if hooks:
-            hook_block = ("\n【OPTIONAL｜本桥段吸睛点】" + "、".join(hooks[:2])
+            hook_block = ("\n【OPTIONAL｜本情节段吸睛点】" + "、".join(hooks[:2])
                           + "\n（写出实感：用具体画面/结果把这几个吸睛点做成读者想看的爽点/悬念/反转，不直白点破、不加括号注解）")
 
         # 前文上下文：按 dropOrder 预算组装（权威分级见 AUTHORITY_CANON；超预算丢低优先级块）
         context_blocks = []
         if bridge_text:
-            context_blocks.append((0, "canon", "【本桥段已写】", bridge_text[-300:]))
+            context_blocks.append((0, "canon", "【本情节段已写】", bridge_text[-300:]))
         if chapter_buffer:
             context_blocks.append((1, "canon", "【本章已写正文】", chapter_buffer[-900:]))
         if prev_ending:
@@ -517,7 +517,7 @@ class PromptHarness:
         if dropped:
             context_text += "\n（上下文超预算，已省略低优先级块：" + "、".join(dropped) + "）"
 
-        # 内涵跟随桥段：从情节自然流露，不点破。阶段级 theme_moments 优先（含位置/手法）。
+        # 内涵跟随情节段：从情节自然流露，不点破。阶段级 theme_moments 优先（含位置/手法）。
         theme_block = ""
         moments = list(getattr(p, "theme_moments", None) or [])
         if moments:
@@ -534,13 +534,13 @@ class PromptHarness:
                     seg += f"：{m['how']}"
                 lines.append(seg)
             if lines:
-                theme_block = ("\n【OPTIONAL｜本桥段要自然体现的内涵（含插入位置）】\n"
+                theme_block = ("\n【OPTIONAL｜本情节段要自然体现的内涵（含插入位置）】\n"
                                + "\n".join(lines)
                                + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
         else:
             themes = list(getattr(p, "theme_hints", None) or [])
             if themes:
-                theme_block = ("\n【OPTIONAL｜本桥段要自然体现的内涵】\n"
+                theme_block = ("\n【OPTIONAL｜本情节段要自然体现的内涵】\n"
                                + "、".join(themes[:3])
                                + "\n（从情节自然流露、用结果说话，不要直白点题、不要加括号注解）")
 
@@ -549,18 +549,18 @@ class PromptHarness:
         if inspiration_hint:
             inspiration_block = "\n【OPTIONAL｜灵机一动】顺势落地\n" + inspiration_hint.strip()
 
-        # 收局槽位：解决/呼应更早埋下的设局钩子（桥段拆分）
+        # 收局槽位：解决/呼应更早埋下的设局钩子（情节段拆分）
         payoff_block = ""
         if getattr(p, "resolves_plot_id", ""):
             rname = getattr(p, "resolves_name", "") or "前文埋下的钩子"
-            payoff_block = ("\n【本桥段收束】解决/呼应『" + rname +
+            payoff_block = ("\n【本情节段收束】解决/呼应『" + rname +
                             "』（其钩子在更早处埋下），给出结果/反转，补上闭环。")
-        # 设局槽位：为某收局桥段埋钩子
+        # 设局槽位：为某收局情节段埋钩子
         setup_block = ""
         if item.get("resolver_name"):
-            setup_block = ("\n【设局桥段】为『" + str(item.get("resolver_name")) +
+            setup_block = ("\n【设局情节段】为『" + str(item.get("resolver_name")) +
                            "』埋钩子，结尾留一个明确未解决的悬念。")
-        # 读者承诺合同：本章必达 / 本桥段收束 / 已逾期 / 必出场角色 / 读者可见变化（免费规则）
+        # 读者承诺合同：本章必达 / 本情节段收束 / 已逾期 / 必出场角色 / 读者可见变化（免费规则）
         promises_block = self._promises_block(p, chapter_num, events) if chapter_num else ""
         # 写前编辑诊断：本节要达到什么（读者欲望/爽点/敌人损失/追更理由）
         diag_block = self._pre_write_diagnosis(p, stage_name)
@@ -574,16 +574,16 @@ class PromptHarness:
         else:
             pov_block = "【视角铁律】全篇统一人称，禁止第一/第三人称混用。\n\n"
 
-        # 本桥段出场人物（性格/性别/口头禅，防"她"字错误、保持声线）
+        # 本情节段出场人物（性格/性别/口头禅，防"她"字错误、保持声线）
         roles_block = self._roles_block(p) if getattr(p, "roles", None) else ""
-        # 分角色态势表：本桥段每个出场角色的行动方向/去向/内心/语气（规则层，零成本）
+        # 分角色态势表：本情节段每个出场角色的行动方向/去向/内心/语气（规则层，零成本）
         roles_status_block = self._roles_status_block(item) if getattr(p, "roles", None) else ""
 
-        # 本章参与者（本弧其余桥段出场角色并集）——防逐桥段重复注入、防漏写后续才出场的人
+        # 本章参与者（本弧其余情节段出场角色并集）——防逐情节段重复注入、防漏写后续才出场的人
         chapter_participants_block = ""
         if chapter_participants:
             chapter_participants_block = ("\n【本章参与者】" + chapter_participants
-                                          + "\n（本章/本弧出场的全部角色，硬事实同样适用；本桥段精确出场见上）")
+                                          + "\n（本章/本弧出场的全部角色，硬事实同样适用；本情节段精确出场见上）")
 
         bible = self.build_book_bible_condensed()
         bible_block = f"【CANON｜书级设定（简）】\n{bible}\n\n" if bible else ""
@@ -606,8 +606,8 @@ class PromptHarness:
 
 {authority_block}{bible_block}{opening_block}{consistency_block}{platform_block}{review_block}{pov_block}【所属弧】{o.name}（第{o.start_chapter}-{o.end_chapter}章）
 【当前阶段】{stage_name}
-【本桥段要推动的事件】{'、'.join(events[:4]) if events else '按弧自然推进'}
-【桥段骨架】{structure}
+【本情节段要推动的事件】{'、'.join(events[:4]) if events else '按弧自然推进'}
+【情节段骨架】{structure}
 【变量槽位】{slots_text or '跟随上下文自由发挥'}
 {diag_block}
 {hook_block}
@@ -627,10 +627,10 @@ class PromptHarness:
 1. 只输出下一段正文：3-5 个句子（总共约 150-250 个汉字），一句一行；短句为基干，句长需长短交错（8-15字为主、穿插25-45字），避免全文句式单一。
 2. 画面优先：用动作、对话、感官细节推进，不要堆形容词、不要抽象抒情。
 3. 每组至少含一句对话或一个动作；对话独立成段并带简短神态/动作。
-4. 围绕上方的"要推动的事件"制造推进感：埋冲突、留张力，组尾留一个"接下来会怎样"的悬念钩子（本桥段最后一组可自然收束）。
+4. 围绕上方的"要推动的事件"制造推进感：埋冲突、留张力，组尾留一个"接下来会怎样"的悬念钩子（本情节段最后一组可自然收束）。
 5. 必须紧接上文继续，人物、视角、设定保持一致，视角始终跟随主角；绝不重开新故事、不换主角。
 6. 严禁出现：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。
-7. 不写章节标题、不标注步骤、不加解释性文字。本桥段还剩约 {budget_remaining} 字预算，控制篇幅。"""
+7. 不写章节标题、不标注步骤、不加解释性文字。本情节段还剩约 {budget_remaining} 字预算，控制篇幅。"""
 
     def _pre_write_diagnosis(self, p, stage_name: str = "") -> str:
         """写前编辑诊断：这一节要达到什么（读者欲望/最强爽点/敌人损失/章尾追更理由）。
@@ -656,7 +656,7 @@ class PromptHarness:
         )
 
     def _promises_block(self, p, chapter_num: int, events=None) -> str:
-        """读者承诺合同块：本章必达 / 本桥段收束 / 已逾期 / 必出场角色 / 读者可见变化。
+        """读者承诺合同块：本章必达 / 本情节段收束 / 已逾期 / 必出场角色 / 读者可见变化。
 
         竞品借鉴：AI-NWA obligation_contract + reader_experience（简化版）。
         免费规则，从 storyline.promises 现算——模拟人类作者的"伏笔账本"：
@@ -689,7 +689,7 @@ class PromptHarness:
             lines.append("【伏笔·兑现】本章必达：兑现「" + (must_hit[0].get("desc", "") or "前文钩子")
                          + "」，本章内必须让读者看到结果/推进。")
         if resolving:
-            lines.append("【伏笔·兑现】本桥段收束：兑现读者承诺「" + (resolving[0].get("desc", "") or "前文钩子")
+            lines.append("【伏笔·兑现】本情节段收束：兑现读者承诺「" + (resolving[0].get("desc", "") or "前文钩子")
                          + "」，给出结果/反转、补上闭环。")
         if overdue:
             lines.append("【伏笔·施压】已逾期读者承诺（本章内请推进或兑现其一）："
@@ -698,13 +698,13 @@ class PromptHarness:
             op = promise_op(q, chapter_num)
             tag = _OP_TAG.get(op, "touch")
             lines.append(f"【伏笔·{tag}】{q.get('desc', '') or '钩子'}（可择机自然推进）")
-        # 必出场角色：承诺 desc 里提到的本桥段角色（兑现承诺的关键人物）
+        # 必出场角色：承诺 desc 里提到的本情节段角色（兑现承诺的关键人物）
         required_roles = [r for r in (p.roles or [])
                           if any(r in (q.get("desc", "") or "") for q in active)]
         if required_roles:
             lines.append("必出场角色：" + "、".join(required_roles[:3])
                          + "（兑现承诺的关键人物，本章必须出场）")
-        # 读者可见变化（netChange）：本桥段读者应看到什么变了
+        # 读者可见变化（netChange）：本情节段读者应看到什么变了
         net_change = self._net_change_block(p, events)
         if net_change:
             lines.append("读者可见变化：" + net_change)
@@ -713,7 +713,7 @@ class PromptHarness:
         return "【读者承诺台账】\n" + "\n".join(lines) + "\n\n"
 
     def _net_change_block(self, p, events=None) -> str:
-        """读者可见变化（netChange）：本桥段读者应看到什么变了。
+        """读者可见变化（netChange）：本情节段读者应看到什么变了。
 
         从 stage events + p.hook_points 推导（免费规则，不调 LLM）。
         """
@@ -733,7 +733,7 @@ class PromptHarness:
         return "、".join(hard), "、".join(soft)
 
     def _roles_block(self, p) -> str:
-        """本桥段出场人物：硬事实（身份/势力/境界/位置）+ 软倾向（性格/口头禅/简介）。
+        """本情节段出场人物：硬事实（身份/势力/境界/位置）+ 软倾向（性格/口头禅/简介）。
 
         竞品借鉴：AI-NWA character_hard_facts——软倾向只作语气参考，
         不写成旁白确认的事实（防「她字错误/身份穿帮」）。
@@ -777,11 +777,11 @@ class PromptHarness:
                 lines.append(seg)
         if not lines:
             return ""
-        return ("\n【STATE｜本桥段出场人物——硬事实不得写反；软倾向只作语气参考，不写成旁白确认的事实】\n"
+        return ("\n【STATE｜本情节段出场人物——硬事实不得写反；软倾向只作语气参考，不写成旁白确认的事实】\n"
                 + "\n".join(lines))
 
     def _roles_status_block(self, item) -> str:
-        """分角色态势表：本桥段每个出场角色的行动方向/去向/内心/语气。
+        """分角色态势表：本情节段每个出场角色的行动方向/去向/内心/语气。
 
         规则层零成本：主角占主导推进位、配角按性格反应；每个角色给独立声线，
         避免多角色同质化（设计文档 §2.3 设计 A）。
@@ -809,7 +809,7 @@ class PromptHarness:
                 continue
             if rname == mc_name:
                 lines.append(
-                    f"- 「{rname}」（主角）：本桥段{event_txt}的主角位——主动行动/决断/推进剧情；"
+                    f"- 「{rname}」（主角）：本情节段{event_txt}的主角位——主动行动/决断/推进剧情；"
                     f"内心可流露但克制，视角锁定主角；语气："
                     f"{str(protag.get('personality', ''))[:30] or '果断、干练'}")
             else:
@@ -914,7 +914,7 @@ class PromptHarness:
     # ═══════════════════════════════════════════
 
     def prescreen_gag_pool(self, plot, book_id: str = "") -> list:
-        """按桥段 category → fit_scene 关键词，从笑点库预筛 ≤6 个候选模式。
+        """按情节段 category → fit_scene 关键词，从笑点库预筛 ≤6 个候选模式。
 
         过滤 enabled==False 与本 book 的 banned_in，按 usage_count 升序（少用优先）。
         """
@@ -1053,7 +1053,7 @@ class PromptHarness:
 
         题材标签在向导步 1 选择、书名由步 2 选中候选带入步 3；角色从原型库挑选
         archetype_id 并适配到本书，输出统一字段（姓名/身份/性格/口癖/重要度/金手指(主角)/关系(其他)）。
-        可带已定核心矛盾/势力/开篇弧桥段上下文（分阶段构建的 ①③② 阶段产出），让角色与之自洽。
+        可带已定核心矛盾/势力/开篇弧情节段上下文（分阶段构建的 ①③② 阶段产出），让角色与之自洽。
         """
         tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
         parts = [
@@ -1074,7 +1074,7 @@ class PromptHarness:
             if _fl:
                 parts.append("【已定势力】" + "、".join(_fl))
         if outline_preview:
-            parts.append(f"【已选开篇弧与桥段】{outline_preview}")
+            parts.append(f"【已选开篇弧与情节段】{outline_preview}")
         if archetypes:
             lines = []
             for a in archetypes[:10]:
@@ -1126,7 +1126,7 @@ class PromptHarness:
             style,
             "【任务】你是网文故事架构师。思考这本书的主线应该由什么样的核心矛盾驱动——"
             "这是贯穿全书的根本冲突（人物目标 × 世界阻力 × 无法两全），1-2 句说清，"
-            "要具体可驱动后续势力/人物/桥段，不要空泛（例：'主角的复制异能每升级一次就吞噬一段记忆，"
+            "要具体可驱动后续势力/人物/情节段，不要空泛（例：'主角的复制异能每升级一次就吞噬一段记忆，"
             "他必须在变强与找回自己之间抉择，而幕后组织正等着他失去自我'）。",
             "只返回核心矛盾一句话，不要解释、不要多余内容。",
         ])
@@ -1134,7 +1134,7 @@ class PromptHarness:
     def render_factions_prompt(self, idea: str, core_conflict: str = "",
                                genre: str = "", sub_genre: str = "",
                                tags=None, outline_preview: str = "") -> str:
-        """分阶段构建③：基于一句话设定 + 核心矛盾 + 题材标签 + 已定弧桥段，发散世界里的主要势力派系。
+        """分阶段构建③：基于一句话设定 + 核心矛盾 + 题材标签 + 已定弧情节段，发散世界里的主要势力派系。
 
         返回 JSON list，供 generate_factions 使用。
         """
@@ -1145,7 +1145,7 @@ class PromptHarness:
             f"【题材标签】{'、'.join(tags) if tags else '（未选）'}（硬约束，必须契合）",
         ]
         if outline_preview:
-            parts.append(f"【已定弧与桥段】\n{outline_preview}")
+            parts.append(f"【已定弧与情节段】\n{outline_preview}")
         parts += [
             "【任务】你是网文世界观架构师。思考这个世界应该存在哪些势力/派系（2-4 个），"
             "它们围绕【核心矛盾】各自持什么立场、追求什么，彼此冲突或结盟。每个势力给出："

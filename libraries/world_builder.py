@@ -256,7 +256,7 @@ class WorldBuildingGenerator:
                             outline_preview: str = "") -> dict:
         """根据世界观（一句话+标签+书名+原型库）生成角色候选（非流式，失败重试≤3）。
 
-        分阶段构建④可带已定核心矛盾/势力/开篇大纲桥段上下文，让角色与之自洽。
+        分阶段构建④可带已定核心矛盾/势力/开篇大纲情节段上下文，让角色与之自洽。
         角色从原型库挑选 archetype_id 并适配到本书；统一字段含 importance。
         返回 {"protagonists": [...], "supporting_cast": [...]}。
         """
@@ -309,7 +309,7 @@ class WorldBuildingGenerator:
                           tags=None, outline_preview: str = "") -> list:
         """分阶段构建③：从一句话+核心矛盾发散 2-4 个势力派系（name/stance/desc）。失败重试≤3。
 
-        outline_preview：已生成的大纲+桥段预览文本（可选），让势力与已定故事线自洽。
+        outline_preview：已生成的大纲+情节段预览文本（可选），让势力与已定故事线自洽。
         """
         if not self.llm:
             return []
@@ -351,7 +351,7 @@ class WorldBuildingGenerator:
         desc = str(seed or "").strip()
         outline_txt = str(outline_preview or "").strip()
         if desc and outline_txt:
-            desc = desc + "\n【已选开篇大纲与桥段】" + outline_txt
+            desc = desc + "\n【已选开篇大纲与情节段】" + outline_txt
         elif outline_txt:
             desc = outline_txt
         tl = BookStoryline(pen_name=pen_name or "", platform="fanqie",

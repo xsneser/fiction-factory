@@ -28,7 +28,7 @@ class GagInjector:
         self.llm = llm
         self.harness = harness
         self.gag_lib = gag_lib
-        # 桥段内最近命中（供 SSE gag_hit 事件 / 日志）
+        # 情节段内最近命中（供 SSE gag_hit 事件 / 日志）
         self._last_hits: list[dict] = []
 
     def prescreen_pool(self, plot, book_id: str = "") -> list:

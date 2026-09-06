@@ -33,12 +33,12 @@ plot_ok = {"name": "规则揭晓·人人自危", "category": "冲突", "sub_cate
            "structure": "[揭晓规则]→[人人自危]→[主角冷眼旁观]",
            "slots": [{"name": "惩罚", "options": ["杀人", "逐出", "扣分"]}]}
 d = judge_candidate("plot", plot_ok, [])
-check("桥段完整无近似 → four_lib", d["decision"] == "four_lib", str(d["decision"]))
+check("情节段完整无近似 → four_lib", d["decision"] == "four_lib", str(d["decision"]))
 
 # 结构不完整（无 slots）→ incomplete
 plot_bad = {"name": "规则揭晓", "category": "冲突", "structure": "[揭晓规则]→[人人自危]"}
 d = judge_candidate("plot", plot_bad, [])
-check("桥段缺 slots → incomplete", d["decision"] == "incomplete",
+check("情节段缺 slots → incomplete", d["decision"] == "incomplete",
       f"reasons={d['reasons']}")
 
 # 真实污染场景：同名骨架逐字相同、只改名称 → duplicate（骨架高重合）
@@ -113,7 +113,7 @@ try:
     r = agent_tools.ingest_library_assets(
         plots=[plot_ok], source="test", gate=True)
     after = len(tl.templates)
-    check("闸门放行完整桥段并入库(临时库 +1)",
+    check("闸门放行完整情节段并入库(临时库 +1)",
           after == before + 1 and r.get("plots") == 1,
           f"before={before} after={after} stats={r.get('plots')}")
 

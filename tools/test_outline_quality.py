@@ -107,13 +107,13 @@ def main():
         for s in stages[:3]:
             evs = "、".join(s.get("events", [])[:3])
             print(f"      · {s.get('name')}（{s.get('min_ch')}-{s.get('max_ch')}章）: {evs}")
-    print(f"桥段 {len(plots)} 个:")
+    print(f"情节段 {len(plots)} 个:")
     by_outline = {}
     for p in plots:
         by_outline.setdefault(p.get("outline_id"), []).append(p)
     for o in outlines:
         pl = by_outline.get(o.get("id"), [])
-        print(f"  - {o.get('name')}: {len(pl)} 个桥段")
+        print(f"  - {o.get('name')}: {len(pl)} 个情节段")
         for p in pl[:4]:
             print(f"      · {p.get('name')} [{p.get('category')}] 笑点{len(p.get('gag_ids',[]))} 内涵{p.get('theme_hints')}")
     total_gags = sum(len(p.get("gag_ids", [])) for p in plots)
@@ -135,7 +135,7 @@ def main():
     if max_end < 10:
         probs.append(f"全书仅覆盖 {max_end} 章，偏短")
     if not plots:
-        probs.append("没有任何桥段")
+        probs.append("没有任何情节段")
     for o in outlines:
         if not o.get("stages"):
             probs.append(f"大纲「{o.get('name')}」没有阶段")
@@ -144,7 +144,7 @@ def main():
     if probs:
         print("⚠️ ", "；".join(probs))
     else:
-        print("✅ 大纲=故事线结构完整（大纲→阶段→桥段→笑点/内涵）")
+        print("✅ 大纲=故事线结构完整（大纲→阶段→情节段→笑点/内涵）")
     return 0
 
 

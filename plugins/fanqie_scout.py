@@ -3,14 +3,14 @@
 从番茄平台爬取热榜小说 → LLM拆解 → 沉淀到四大库
 
 流程：
-  热榜发现 → 下载前N章 → 逐书分析 → 提取桥段/大纲/笑点/内涵 → 入库
+  热榜发现 → 下载前N章 → 逐书分析 → 提取情节段/大纲/笑点/内涵 → 入库
 
 ⚠️ 合规声明：
   本模块仅供个人学习、研究网文结构技巧使用。请遵守目标网站的服务条款与
   相关法律法规：
   - 番茄小说等内容平台的服务协议普遍禁止自动化数据采集，请勿用于商业用途
   - 请勿大量下载并二次传播受著作权保护的正文内容，分析应以「模式/结构/
-    桥段」等抽象技巧为主，避免全文存储与转载
+    情节段」等抽象技巧为主，避免全文存储与转载
   - PUA 字体解码属于对技术保护措施的绕过，请仅用于个人学习研究
   使用本模块产生的任何法律风险由使用者自行承担。
 """
@@ -822,7 +822,7 @@ class NovelAnalyzer:
         result = {}
 
         if on_progress:
-            on_progress("analyze", 1, 4, "提取桥段...")
+            on_progress("analyze", 1, 4, "提取情节段...")
         result["plots"] = self.extract_plots(novel, samples)
 
         if on_progress:
@@ -844,24 +844,24 @@ class NovelAnalyzer:
         return [chapters[i] for i in indices if 0 <= i < len(chapters)]
 
     def extract_plots(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
-        """提取桥段模式"""
+        """提取情节段模式"""
         text = self._build_sample_text(samples, 3000)
 
         prompt = f"""分析以下番茄小说《{novel.title}》（{novel.genre}/{novel.sub_genre}）的前几章，
-提取出 3-5 个可复用的桥段模式。
+提取出 3-5 个可复用的情节段模式。
 
-每个桥段需要：
-1. 桥段名称（如"退婚打脸""系统激活""拍卖会捡漏"）
-2. 桥段结构骨架（用箭头表示流程，如 [挑衅]→[隐忍]→[爆发]→[震惊全场]）
+每个情节段需要：
+1. 情节段名称（如"退婚打脸""系统激活""拍卖会捡漏"）
+2. 情节段结构骨架（用箭头表示流程，如 [挑衅]→[隐忍]→[爆发]→[震惊全场]）
 3. 关键变量槽位（如 主角身份、对手身份、冲突起因、反转方式）
-4. 使用该桥段时的注意事项
+4. 使用该情节段时的注意事项
 
 【小说内容样本】
 {text}
 
 返回 JSON：
 {{"plots": [
-  {{"name":"桥段名", "category":"爽文", "sub_category":"打脸/反转/...",
+  {{"name":"情节段名", "category":"爽文", "sub_category":"打脸/反转/...",
    "structure":"[步骤1]→[步骤2]→...",
    "slots":[{{"name":"变量名","options":["选项1","选项2"]}}],
    "notes":"使用注意", "word_range":[800,2500], "quality_rating":4}}
@@ -974,7 +974,7 @@ class NovelAnalyzer:
 # ═══════════════════════════════════════════
 
 class LibraryIngestor:
-    """将分析结果导入各库（桥段/大纲/笑点）"""
+    """将分析结果导入各库（情节段/大纲/笑点）"""
 
     def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None,
                  char_lib=None):
@@ -1361,7 +1361,7 @@ class FanqieScoutAgent:
                 self.ingestor._add_plot(item, source)
                 stats["plots"] += 1
             if on_progress:
-                on_progress("ingest", stats["plots"], len(plots), f"桥段已入库 {stats['plots']}/{len(plots)}")
+                on_progress("ingest", stats["plots"], len(plots), f"情节段已入库 {stats['plots']}/{len(plots)}")
             self.plot_lib._save()
 
         if structures and self.struct_lib:

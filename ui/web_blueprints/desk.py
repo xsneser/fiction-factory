@@ -1,4 +1,4 @@
-"""写作台引擎（按桥段撰写/续写） — 蓝图（自 ui/web_ui.py 按域拆分）。"""
+"""写作台引擎（按情节段撰写/续写） — 蓝图（自 ui/web_ui.py 按域拆分）。"""
 import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -38,7 +38,7 @@ def _compat_api_storyline_engine(rest):
 def _chapters_from_disk(book_id: str, current_chapter: int):
     """从磁盘构造「已写章节 + 进行中草稿」列表（跨进程 stale 免疫：MCP/dsh 子进程写盘后可见）。
 
-    MCP 是独立进程，save_chapter_text/save_bridge_draft 只写磁盘 book.json/chapters/、draft_chapter.json；
+    MCP 是独立进程，save_chapter_text/save_plot_draft 只写磁盘 book.json/chapters/、draft_chapter.json；
     Web 进程缓存的 engine.book.current_chapter 可能滞后。这里全部从磁盘现读。"""
     chapters = []
     for n in range(1, current_chapter + 1):
@@ -50,7 +50,7 @@ def _chapters_from_disk(book_id: str, current_chapter: int):
                 "content": ch.get("content") or "",
                 "bridges": ch.get("bridges") or [],
             })
-    # 进行中草稿（draft_chapter.json）：bridges 逐桥段 span.m-bridge，刚写完的桥段即时可见
+    # 进行中草稿（draft_chapter.json）：bridges 逐情节段 span.m-bridge，刚写完的情节段即时可见
     dp = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
     if os.path.exists(dp):
         try:
@@ -117,8 +117,8 @@ def storyline_write_flow(engine_id):
                     })
         except Exception as e:
             logger.warning("加载已写章节失败: %s", e)
-    # 进行中的章节草稿：与已固化章节同格式渲染（bridges 逐桥段 span.m-bridge），
-    # 让刚写完的桥段在写作台上即时可见、可点击高亮；切章固化（_clear_draft）后自动消失。
+    # 进行中的章节草稿：与已固化章节同格式渲染（bridges 逐情节段 span.m-bridge），
+    # 让刚写完的情节段在写作台上即时可见、可点击高亮；切章固化（_clear_draft）后自动消失。
     try:
         draft = engine._load_draft() if hasattr(engine, "_load_draft") else None
     except Exception as e:
@@ -139,7 +139,7 @@ def storyline_write_flow(engine_id):
                 "draft": True,
             })
     sl = getattr(engine, "storyline", None)
-    # 字数轴：总章数优先用引擎已字数化的 state.total_chapters，否则由桥段 planned_words 推导
+    # 字数轴：总章数优先用引擎已字数化的 state.total_chapters，否则由情节段 planned_words 推导
     total_ch = getattr(getattr(engine, "state", None), "total_chapters", 0) or 0
     if not total_ch and sl:
         try:
@@ -217,9 +217,9 @@ def storyline_engine_step(engine_id):
 
 @bp.route("/api/storyline-engine/<engine_id>/write-chapter", methods=["POST"])
 def storyline_engine_write_chapter_sse(engine_id):
-    """蓝图引擎：流式写一章（SSE）。逐桥段下发 plot_start / plot_done / chapter_done。
+    """蓝图引擎：流式写一章（SSE）。逐情节段下发 plot_start / plot_done / chapter_done。
 
-    前端据此在右侧逐桥段展示步骤与正文，并高亮左侧故事线对应的大纲/桥段。
+    前端据此在右侧逐情节段展示步骤与正文，并高亮左侧故事线对应的大纲/情节段。
     """
     import json as _json
     from plugins import task_manager
@@ -262,10 +262,10 @@ def storyline_engine_write_chapter_sse(engine_id):
 
 @bp.route("/api/storyline-engine/<engine_id>/write-bridge", methods=["POST"])
 def storyline_engine_write_bridge_sse(engine_id):
-    """蓝图引擎：流式写「一个」桥段（SSE，新核心·按桥段撰写）。
+    """蓝图引擎：流式写「一个」情节段（SSE，新核心·按情节段撰写）。
 
     事件：bridge_start / group_chunk / bridge_done / chapter_done / complete。
-    写一个桥段即返回；连续点击则继续写下一个未写桥段，本章满字数自动切章。
+    写一个情节段即返回；连续点击则继续写下一个未写情节段，本章满字数自动切章。
     """
     import json as _json
     from plugins import task_manager
@@ -278,13 +278,13 @@ def storyline_engine_write_bridge_sse(engine_id):
     _book_title = getattr(_book, "title", "") or ""
 
     def generate():
-        task_manager.ensure_single("桥段写作")
+        task_manager.ensure_single("情节段写作")
         task_id = f"writebrg_{engine_id}_{int(time.time())}"
-        task_manager.start(task_id, name="桥段写作",
+        task_manager.start(task_id, name="情节段写作",
                            title=_book_title or "",
                            url=flow_url)
         try:
-            for evt in engine._write_next_bridge_stream():
+            for evt in engine._write_next_plot_stream():
                 if isinstance(evt, dict):
                     t = evt.get("type", "")
                     if t == "group_chunk":

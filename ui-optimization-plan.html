@@ -88,7 +88,7 @@
   <tr><th style="width:16%">问题</th><th style="width:26%">现象（检测证据）</th><th style="width:22%">根因</th><th>优化方向</th></tr>
   <tr>
     <td><span class="pill p0">P0-1</span> 主内容区被固定三栏挤压</td>
-    <td>960px 视口下 <code>main</code> 仅剩 ~420px（含 padding），内容区 ~360px；书库书名竖排 5 行、设置表单逐字竖排、统计卡"桥段模板"截断为"桥段模"。</td>
+    <td>960px 视口下 <code>main</code> 仅剩 ~420px（含 padding），内容区 ~360px；书库书名竖排 5 行、设置表单逐字竖排、统计卡"情节段模板"截断为"情节段模"。</td>
     <td><code>nav 180px + aside 360px</code> 硬编码，<code>main{padding:30px}</code> 再吃 60px，无自适应收缩。</td>
     <td>侧栏改可收缩 + 内容区最小宽度保护 + 断点降级。</td>
   </tr>
@@ -140,7 +140,7 @@
   </tr>
   <tr>
     <td><span class="pill p2">P2-2</span> 筛选标签密集换行</td>
-    <td>桥段库 14 个分类、角色库 30+ 标签在窄区挤压成密集换行，不可扫读。</td>
+    <td>情节段库 14 个分类、角色库 30+ 标签在窄区挤压成密集换行，不可扫读。</td>
     <td>标签区无横向滚动 / 无收起机制。</td>
     <td>筛选区支持横向滚动（<code>overflow-x:auto</code>）或折叠"更多"。</td>
   </tr>
@@ -265,7 +265,7 @@ button, .btn-primary{ background:var(--brand); }
   <tr><td>书籍详情</td><td><code>/books/:id</code></td><td><span class="pill p2">5/10</span></td><td>封面卡书名竖排、信息折叠面板首屏不可见</td></tr>
   <tr><td>写作台</td><td><code>/books/:id/continue</code></td><td><span class="pill p1">4/10</span></td><td>左右分栏挤压、正文几乎不可读</td></tr>
   <tr><td>新书启动</td><td><code>/books/start</code></td><td><span class="pill p2">5/10</span></td><td>50 个题材标签挤压、选择器窄</td></tr>
-  <tr><td>桥段库</td><td><code>/plots</code></td><td><span class="pill p2">5/10</span></td><td>14 个筛选标签密集换行、卡片窄</td></tr>
+  <tr><td>情节段库</td><td><code>/plots</code></td><td><span class="pill p2">5/10</span></td><td>14 个筛选标签密集换行、卡片窄</td></tr>
   <tr><td>情节弧库</td><td><code>/structures</code></td><td><span class="pill p2">5/10</span></td><td>嵌套弧层级缩进显示不全</td></tr>
   <tr><td>笑点库</td><td><code>/gags</code></td><td><span class="pill p2">5/10</span></td><td>卡片窄、标签挤压</td></tr>
   <tr><td>角色原型库</td><td><code>/characters</code></td><td><span class="pill p2">5/10</span></td><td>30+ 分类标签无法扫读</td></tr>
@@ -295,7 +295,7 @@ button, .btn-primary{ background:var(--brand); }
   // 页面健康度评分可视化（纯 CSS 条形，无外部依赖）
   var data = [
     ["仪表盘 /", 5], ["书库 /books", 4], ["书籍详情", 5], ["写作台", 4],
-    ["新书启动", 5], ["桥段库", 5], ["情节弧库", 5], ["笑点库", 5],
+    ["新书启动", 5], ["情节段库", 5], ["情节弧库", 5], ["笑点库", 5],
     ["角色库", 5], ["笔名风格", 5], ["上架管理", 4], ["外部书库", 4],
     ["设置 /settings", 3], ["去AI味", 6], ["提取入库", 5]
   ];

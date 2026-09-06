@@ -3,7 +3,7 @@ name: novel-write
 description: >-
   写作阶段。Use when the user wants to 写正文/写下一章/继续写/写情节段/把第 N 章写出来/写开头几章/
   一键写完整章/写完整章/一键完整章节/完整章节构建
-  (write the next bridge or chapter, build a complete chapter in one shot)。
+  (write the next plot (情节段) or chapter, build a complete chapter in one shot)。
   流程：渐进式披露组装上下文（书详情→故事线→当前情节段出场角色→最近已写）→ **agent 自主生成情节段
   正文**（保持完整上下文连续）→ save_plot_draft 落盘 → 章满 save_chapter_text → 规则质检。前置：phase=ready。
 ---

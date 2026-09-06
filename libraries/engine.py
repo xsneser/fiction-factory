@@ -119,12 +119,12 @@ class EngineState:
 
 class NovelEngine:
     """
-    小说工厂总引擎 v2.0 — 唯一写作核心 = 桥段写作（storyline_writer）
+    小说工厂总引擎 v2.0 — 唯一写作核心 = 情节段写作（storyline_writer）
 
     入口：
-        engine.continue_book(book_id) → 从书的故事线恢复并进入桥段写作
+        engine.continue_book(book_id) → 从书的故事线恢复并进入情节段写作
 
-    流程：故事线按桥段逐章写作（大纲=故事线）→ 第1章写完自动生成书名/简介。
+    流程：故事线按情节段逐章写作（大纲=故事线）→ 第1章写完自动生成书名/简介。
     """
 
     def __init__(self, llm_client=None):
@@ -230,7 +230,7 @@ class NovelEngine:
             self.state.chapters = outline.get("chapters", [])
             self.state.phase = Phase.WRITING
 
-        # 恢复组装计划（桥段/笑点/内涵注入），保证重启后旧书写作不丢失
+        # 恢复组装计划（情节段/笑点/内涵注入），保证重启后旧书写作不丢失
         plan_path = self._books_dir / book_id / "assembler_plan.json"
         if plan_path.exists():
             try:
@@ -244,7 +244,7 @@ class NovelEngine:
             except Exception as e:
                 logger.warning("恢复组装计划失败 (%s): %s", plan_path, e)
 
-        # 加载故事线（唯一写作核心 = 桥段写作）：无 storyline 直接报错
+        # 加载故事线（唯一写作核心 = 情节段写作）：无 storyline 直接报错
         tl = self.book_mgr.load_storyline(book_id)
         if tl is None:
             raise ValueError(
@@ -253,14 +253,14 @@ class NovelEngine:
 
         if tl.outlines:
             self._derive_chapters_from_storyline(tl)
-            # 总章节数按桥段真实规划重算（让书库/详情/写作台进度与实际写作计划一致）
+            # 总章节数按情节段真实规划重算（让书库/详情/写作台进度与实际写作计划一致）
             planned_total = self._planned_total_chapters()
             if planned_total:
                 self.state.total_chapters = planned_total
                 if self.book and self.book.chapter_count != planned_total:
                     self.book.chapter_count = planned_total
                     self.book_mgr.update(self.book)
-            # 故事线书：创建桥段驱动的写作者（撰写/续写统一同一套，支持断点续写）
+            # 故事线书：创建情节段驱动的写作者（撰写/续写统一同一套，支持断点续写）
             if self.storyline_writer is None:
                 from .storyline_writer import StorylineChapterWriter
                 self.harness = PromptHarness(storyline=tl, profile=self.profile,
@@ -303,7 +303,7 @@ class NovelEngine:
         """从 BookStoryline 维护"章节 → (大纲, 阶段)"索引，供续写定位使用。
 
         大纲本身就是故事线配置（storyline.json），不在这里拍平成"每章一段文本"；
-        每章写作时由 _storyline_chapter_context 直接从故事线现算大纲/桥段/笑点。
+        每章写作时由 _storyline_chapter_context 直接从故事线现算大纲/情节段/笑点。
         """
         max_end = max((o.end_chapter for o in tl.outlines), default=0)
         chapters = []
@@ -345,7 +345,7 @@ class NovelEngine:
         return max(0, len(stages) - 1), (stages[-1] if stages else {})
 
     def _storyline_chapter_context(self, chapter_num: int):
-        """从故事线配置定位本章覆盖的大纲/阶段/桥段/笑点/内涵。
+        """从故事线配置定位本章覆盖的大纲/阶段/情节段/笑点/内涵。
 
         返回 dict（outline/stage_index/stage/plots/gags/themes/hooks），
         无 storyline 或章节无覆盖时返回 None。
@@ -399,7 +399,7 @@ class NovelEngine:
                 if p.template_structure:
                     seg += f"（{p.template_structure[:80]}）"
                 lines.append(seg)
-            parts.append(f"【本章桥段】{'；'.join(lines)}")
+            parts.append(f"【本章情节段】{'；'.join(lines)}")
         if ctx.get("gags"):
             parts.append(f"【可注入笑点】{'、'.join(ctx['gags'][:5])}")
         if ctx.get("themes"):
@@ -412,7 +412,7 @@ class NovelEngine:
 
     def route(self) -> Instruction:
         """
-        纯函数路由：统一走续写路由（唯一写作核心 = 桥段写作）
+        纯函数路由：统一走续写路由（唯一写作核心 = 情节段写作）
         """
         return self._route_continue()
 
@@ -438,7 +438,7 @@ class NovelEngine:
 
     @staticmethod
     def _review_to_hint(review) -> str:
-        """把审查问题压成一句句修复提示（注入下一桥段写作 prompt）。"""
+        """把审查问题压成一句句修复提示（注入下一情节段写作 prompt）。"""
         issues = [i for i in (getattr(review, "issues", None) or [])
                   if i.severity in ("error", "warning")]
         hints = [i.description.strip() for i in issues[:3] if (i.description or "").strip()]
@@ -446,7 +446,7 @@ class NovelEngine:
 
     @staticmethod
     def _promise_type(category: str) -> str:
-        """桥段 category → 承诺类型（免费规则）。"""
+        """情节段 category → 承诺类型（免费规则）。"""
         c = category or ""
         if any(k in c for k in ("悬疑", "阴谋", "诡计", "调查")):
             return "mystery"
@@ -459,7 +459,7 @@ class NovelEngine:
         return "hook"
 
     def _estimate_bridge_chapter(self, plot) -> int:
-        """估算桥段所在章节：大纲起始 + 前面各阶段 max_ch 累计（免费规则，粗略即可）。"""
+        """估算情节段所在章节：大纲起始 + 前面各阶段 max_ch 累计（免费规则，粗略即可）。"""
         o = next((x for x in self.storyline.outlines if x.id == plot.outline_id),
                  None) if self.storyline else None
         if not o:
@@ -472,7 +472,7 @@ class NovelEngine:
         return acc
 
     def _build_promise_from_setup(self, p) -> dict:
-        """为设局桥段生成读者承诺条目（免费规则）：desc 从桥段名+吸睛点推导，deadline 用收局桥段估算章。"""
+        """为设局情节段生成读者承诺条目（免费规则）：desc 从情节段名+吸睛点推导，deadline 用收局情节段估算章。"""
         payoff = next((q for q in self.storyline.plots if q.resolves_plot_id == p.id), None)
         desc = f"「{p.name}」埋下的钩子"
         if getattr(p, "hook_points", None):
@@ -491,7 +491,7 @@ class NovelEngine:
         }
 
     def _update_promises_ledger(self, chapter_num: int) -> None:
-        """桥段写完后的免费规则承诺登记：设局桥段 → 新增 pending；收局桥段 → 标记 fulfilled。
+        """情节段写完后的免费规则承诺登记：设局情节段 → 新增 pending；收局情节段 → 标记 fulfilled。
 
         模拟人类作者的"伏笔账本"：埋了记下，还了勾销；逾期由 render_bridge_prompt 注入提醒。
         """
@@ -511,7 +511,7 @@ class NovelEngine:
                 by_setup[rpid]["payoff_plot_id"] = p.id
                 by_setup[rpid]["payoff_chapter"] = chapter_num
                 changed = True
-            # 设局：被收局桥段引用且未登记 → 新增 pending 承诺
+            # 设局：被收局情节段引用且未登记 → 新增 pending 承诺
             if (not rpid and p.id not in by_setup
                     and any(q.resolves_plot_id == p.id for q in self.storyline.plots if q.id != p.id)):
                 promises.append(self._build_promise_from_setup(p))
@@ -580,7 +580,7 @@ class NovelEngine:
     # ─── 通用 ───
 
     def _exec_complete(self, inst: Instruction) -> dict:
-        # 防御性完本标记（完整链路正常由 _write_next_bridge_stream 触发）
+        # 防御性完本标记（完整链路正常由 _write_next_plot_stream 触发）
         if self.book:
             try:
                 if self.book.status != "published":
@@ -596,14 +596,14 @@ class NovelEngine:
     def _exec_pause(self, inst: Instruction) -> dict:
         return {"status": "paused", "reason": inst.reason}
     def _exec_write_chapter(self, inst: Instruction) -> dict:
-        """写一章（唯一写作核心 = 桥段写作）。
+        """写一章（唯一写作核心 = 情节段写作）。
 
-        统一委托给桥段驱动的 storyline_writer（按桥段生成、满章切分）；
-        无故事线桥段时报错（需先在故事线编辑器生成并确认桥段）。
+        统一委托给情节段驱动的 storyline_writer（按情节段生成、满章切分）；
+        无故事线情节段时报错（需先在故事线编辑器生成并确认情节段）。
         """
         if not (self.storyline_writer and self.storyline and self.storyline.plots):
             raise RuntimeError(
-                "该书未生成故事线桥段（storyline.plots 为空）。请先在故事线编辑器生成并确认桥段，再进行写作。")
+                "该书未生成故事线情节段（storyline.plots 为空）。请先在故事线编辑器生成并确认情节段，再进行写作。")
         return self._exec_write_storyline_chapter(inst)
 
     def _prepare_chapter_context(self, chapter_num: int):
@@ -655,7 +655,7 @@ class NovelEngine:
     def _summarize_chapter(self, chapter_num: int, full_text: str, ctx=None) -> str:
         """为刚写完的一章生成 80-150 字语义摘要（跨章长程记忆）。
 
-        ctx：_storyline_chapter_context 的结果（含本桥段名），可为 None。
+        ctx：_storyline_chapter_context 的结果（含本情节段名），可为 None。
         输入 ≤500 token、输出 ≤256、temperature 0.3；失败返回空串。
         """
         if not self.llm or not full_text or not self.harness:
@@ -747,12 +747,12 @@ class NovelEngine:
         return {"status": "book_meta_generated", "title": best, "synopsis": synopsis}
 
     def _finalize_written_chapter(self, chapter_num: int, result: dict) -> dict:
-        """桥段写完后的收尾：持久化进度/角色/章节/成本。"""
+        """情节段写完后的收尾：持久化进度/角色/章节/成本。"""
         full_text = result["text"]
         # storyline 路径补一次免费规则层去AI味（词替换+段落节奏），与节拍路径行为一致；
-        # 仅在桥段写完落盘前处理，word_count 仍以写作时统计为准。
-        # 若桥段元数据完整（bridges 逐段 join 后能无损重建整段正文），则改为逐桥段去AI味，
-        # 并把 per-bridge segments 随章节落盘（供写作台点击桥段→高亮对应正文）；
+        # 仅在情节段写完落盘前处理，word_count 仍以写作时统计为准。
+        # 若情节段元数据完整（bridges 逐段 join 后能无损重建整段正文），则改为逐情节段去AI味，
+        # 并把 per-bridge segments 随章节落盘（供写作台点击情节段→高亮对应正文）；
         # 否则回退整段去AI味（旧草稿无 bridges 时兜底，不丢数据）。
         bridges = result.get("bridges") or []
         if (isinstance(bridges, list) and bridges
@@ -763,7 +763,7 @@ class NovelEngine:
                 try:
                     seg_text = self.de_ai.process_rule_based(seg_text).processed
                 except Exception as e:
-                    logger.warning("去AI味(桥段)失败: %s", e)
+                    logger.warning("去AI味(情节段)失败: %s", e)
                 segments.append({"plot_id": b.get("plot_id"),
                                  "plot_name": b.get("plot_name"), "text": seg_text})
             full_text = "\n\n".join(s["text"] for s in segments)
@@ -786,7 +786,7 @@ class NovelEngine:
             except Exception as e:
                 logger.warning("更新图书进度失败: %s", e)
 
-        # 持久化桥段写入进度（written_chapter），供断点续写
+        # 持久化情节段写入进度（written_chapter），供断点续写
         try:
             if self.book and self.storyline:
                 self.book_mgr.save_storyline(self.state.book_id, self.storyline)
@@ -813,7 +813,7 @@ class NovelEngine:
             logger.warning("生成章节摘要失败: %s", e)
 
         # 章节门禁：规则审查（免费规则层，不调 LLM）。失败不阻断（不加写完重写），
-        # 只把修复提示注入下一桥段写作 prompt，让模型带着教训继续写。
+        # 只把修复提示注入下一情节段写作 prompt，让模型带着教训继续写。
         review = None
         review_hint = ""
         try:
@@ -862,7 +862,7 @@ class NovelEngine:
         }
 
     def _write_storyline_chapter_stream(self, chapter_num: int):
-        """流式写一章（生成器）：逐桥段 yield bridge_start/group_chunk/bridge_done 事件，
+        """流式写一章（生成器）：逐情节段 yield bridge_start/group_chunk/bridge_done 事件，
         结束 yield chapter_done。供 SSE 写作端点（批处理/整章）使用。"""
         if not self.storyline_writer:
             raise RuntimeError("蓝图写作器未初始化，请先调用 continue_book()")
@@ -884,7 +884,7 @@ class NovelEngine:
         except StopIteration as si:
             result = si.value
 
-        # 预算耗尽 = 暂停待续：本批次已写内容存为草稿（不固化），与桥段端点行为一致
+        # 预算耗尽 = 暂停待续：本批次已写内容存为草稿（不固化），与情节段端点行为一致
         if last_skip.get("code") == "budget_exhausted":
             if result and result.get("text"):
                 self._save_draft(chapter_num, result["text"].split("\n\n"),
@@ -894,7 +894,7 @@ class NovelEngine:
                    "message": last_skip.get("reason", "预算耗尽，暂停写作")}
             return
 
-        # 无剩余桥段 → 全书完成
+        # 无剩余情节段 → 全书完成
         if not result or not result.get("text") or result["text"].startswith("["):
             if self.book:
                 try:
@@ -904,7 +904,7 @@ class NovelEngine:
                         self.book_mgr.update(self.book)
                 except Exception as e:
                     logger.warning("标记完本失败: %s", e)
-            yield {"type": "complete", "message": "没有更多桥段可写（全书完成）",
+            yield {"type": "complete", "message": "没有更多情节段可写（全书完成）",
                    "book_id": self.state.book_id,
                    "status": getattr(self.book, "status", "") or "finished"}
             return
@@ -919,17 +919,17 @@ class NovelEngine:
                "promises": self.storyline.promises if self.storyline else None,
                "cost": final.get("cost")}
 
-    def _write_next_bridge_stream(self):
-        """流式写「一个」桥段（生成器）— 新核心：按桥段撰写。
+    def _write_next_plot_stream(self):
+        """流式写「一个」情节段（生成器）— 新核心：按情节段撰写。
 
         事件：bridge_start / group_chunk / bridge_done / chapter_done / complete。
-        - 桥段写完：持久化 storyline（written_chapter）+ 章节草稿 draft_chapter.json；
+        - 情节段写完：持久化 storyline（written_chapter）+ 章节草稿 draft_chapter.json；
         - 若本章累计字数达标：合成全文落盘为章节、清草稿、yield chapter_done。
         """
         if not self.storyline_writer:
             raise RuntimeError("蓝图写作器未初始化，请先调用 continue_book()")
         # current_chapter 语义 = 最后「已完成」章节；进行中的章节不递增，
-        # 这样下一桥段仍回到本章累计（draft_chapter.json 恢复）。切章时才由
+        # 这样下一情节段仍回到本章累计（draft_chapter.json 恢复）。切章时才由
         # _finalize_written_chapter 更新 current_chapter。
         chapter_num = self.state.current_chapter + 1
         total_ch = self.state.total_chapters or self.storyline_writer._total_chapters
@@ -948,7 +948,7 @@ class NovelEngine:
             return
         prev_ending, char_states, buffer, words, summaries, draft_bridges = self._prepare_chapter_context(chapter_num)
 
-        gen = self.storyline_writer.write_bridge_stepwise(
+        gen = self.storyline_writer.write_plot_stepwise(
             chapter_num, prev_ending, char_states,
             chapter_buffer="\n\n".join(buffer), chapter_words=words,
             summaries_context=summaries)
@@ -979,7 +979,7 @@ class NovelEngine:
             self._finalize_leftover_draft()
             return
 
-        # 持久化桥段进度 + 进行中章节草稿（bridges 随草稿落盘，跨断点续写保留桥段↔正文映射）
+        # 持久化情节段进度 + 进行中章节草稿（bridges 随草稿落盘，跨断点续写保留情节段↔正文映射）
         self.book_mgr.save_storyline(self.state.book_id, self.storyline)
         buffer = buffer + [result["text"]]
         new_bridges = list(draft_bridges) + [{
@@ -1048,7 +1048,7 @@ class NovelEngine:
         self.cost_tracker.save(str(book_dir / "cost.json"))
 
     # ═══════════════════════════════════════════
-    # 章节草稿持久化（按桥段撰写：跨 HTTP 调用/重启恢复进行中的章节）
+    # 章节草稿持久化（按情节段撰写：跨 HTTP 调用/重启恢复进行中的章节）
     # ═══════════════════════════════════════════
 
     def _draft_path(self) -> Optional[Path]:
@@ -1089,7 +1089,7 @@ class NovelEngine:
                 pass
 
     def _finalize_leftover_draft(self):
-        """把进行中的章节草稿固化为最后一章（全书桥段写完/本章已满时的收尾）。"""
+        """把进行中的章节草稿固化为最后一章（全书情节段写完/本章已满时的收尾）。"""
         draft = self._load_draft()
         if not draft or not draft.get("buffer"):
             return
@@ -1117,8 +1117,8 @@ class NovelEngine:
         self._clear_draft()
 
     def _planned_total_chapters(self) -> Optional[int]:
-        """按桥段真实规划字数重算全书章节数（让"进度 X/Y 章"与写作计划一致）。
-        无 storyline/桥段时返回 None（沿用原章节数）。"""
+        """按情节段真实规划字数重算全书章节数（让"进度 X/Y 章"与写作计划一致）。
+        无 storyline/情节段时返回 None（沿用原章节数）。"""
         if not (self.storyline and self.storyline.plots):
             return None
         try:

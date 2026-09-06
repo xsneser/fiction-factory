@@ -196,7 +196,7 @@ window.ReaderCore = (function () {
             if (token !== R._flipToken) { _abortAnim(); return; }
             R._anim = null;
             _swapContentInstant(function () {
-                pages.innerHTML = sec.innerHTML;   // 桥段纯 HTML span + data，无监听器，安全
+                pages.innerHTML = sec.innerHTML;   // 情节段纯 HTML span + data，无监听器，安全
                 R.idx = targetIdx;
                 R.page = targetPage;
                 paginate();
@@ -300,7 +300,7 @@ window.ReaderCore = (function () {
             return Math.max(0, Math.floor(x / (colW + PAGE_GAP)));
         }
 
-        /* 外部更新章节（写作台轮询：agent 写完桥段/章节后整体替换章节数据并重渲染当前章） */
+        /* 外部更新章节（写作台轮询：agent 写完情节段/章节后整体替换章节数据并重渲染当前章） */
         function setChapters(chs, targetIdx, page) {
             R._flipToken++;
             _abortAnim();

@@ -1,10 +1,10 @@
 """
-书籍故事线（Book Storyline）— 多大纲序列 + 桥段嵌套配置
+书籍故事线（Book Storyline）— 多大纲序列 + 情节段嵌套配置
 
 核心理念：
   一本书不是一个大纲走到头，而是多个大纲按故事线串接，
   大纲之间可以重叠交叉（A 还没结束 B 已经开始），
-  桥段在大纲阶段内可以嵌套、包含、重叠。
+  情节段在大纲阶段内可以嵌套、包含、重叠。
 """
 from dataclasses import dataclass, field
 from typing import Optional
@@ -244,7 +244,7 @@ class OutlineSlot:
     start_word: Optional[int] = None  # 0-based inclusive 字数，权威；None=由 chapter 推导
     end_word: Optional[int] = None    # exclusive 字数，权威；None=由 chapter 推导
     stages: list = field(default_factory=list)   # 从模板展开的阶段 [{name,min_ch,max_ch,events,description,foreshadow_opportunities,themes}]
-    expanded: bool = False         # 是否已展开填充了桥段
+    expanded: bool = False         # 是否已展开填充了情节段
     notes: str = ""                # 用户备注
 
     # 与其他大纲的关系
@@ -261,7 +261,7 @@ class OutlineSlot:
 
 @dataclass
 class PlotSlot:
-    """一个桥段在大纲阶段内的位置"""
+    """一个情节段在大纲阶段内的位置"""
     id: str                        # 唯一标识
     template_id: str               # 对应 PlotLibrary 里的模板
     name: str                      # 显示名称
@@ -269,14 +269,14 @@ class PlotSlot:
     sub_category: str = ""         # 子分类
     outline_id: str = ""           # 属于哪个大纲
     stage_index: int = 0           # 属于哪个阶段（outline.stages 的索引）
-    parent_plot_id: str = ""       # 嵌套：父桥段 id，空=顶级
-    children_plot_ids: list[str] = field(default_factory=list)  # 子桥段
+    parent_plot_id: str = ""       # 嵌套：父情节段 id，空=顶级
+    children_plot_ids: list[str] = field(default_factory=list)  # 子情节段
 
     # 位置信息（用于故事线展示）
     order: int = 0                 # 阶段内排序
     cover_beats: int = 4           # 预计覆盖多少个节拍
     words: int | None = None       # 目标字数（agent 按内容浓淡给的规划字数；0/None=回退 cover_beats×200）
-    template_structure: str = ""   # 桥段模板结构字符串（箭头流程）
+    template_structure: str = ""   # 情节段模板结构字符串（箭头流程）
     slots: list = field(default_factory=list)  # 变量槽位
 
     # 注入的加料
@@ -291,10 +291,10 @@ class PlotSlot:
     # 叙事线程（主线/副线/伏笔线；主角可多线并存）
     thread_id: str = "主线"          # 所属线程
     thread_seq: int = 0              # 线程内序号（组内 tie-break）
-    resolves_plot_id: str = ""       # 收局槽位：解决/呼应哪个设局桥段 id（非空=收局）
-    resolves_name: str = ""          # 冗余存设局桥段名，供 prompt/前端免查
+    resolves_plot_id: str = ""       # 收局槽位：解决/呼应哪个设局情节段 id（非空=收局）
+    resolves_name: str = ""          # 冗余存设局情节段名，供 prompt/前端免查
 
-    # 出场人物（主角恒在；配角按名规则匹配到桥段事件/骨架/槽位）
+    # 出场人物（主角恒在；配角按名规则匹配到情节段事件/骨架/槽位）
     roles: list[str] = field(default_factory=list)
 
 
@@ -476,9 +476,9 @@ def structure_to_stages(stage_nodes, words_per_chapter: int = 3000) -> list[dict
     ]
 
 
-# 内涵→桥段兼容映射（免费规则，替代 theme_lib.compatible_plots）
-# 由内置内涵 compatible_plots 反查：桥段模板 id → 可承载内涵名（保留完整名，与 tl.themes 一致）。
-# 删除 theme_lib 后此常量是「内涵跟随桥段」的唯一数据源。
+# 内涵→情节段兼容映射（免费规则，替代 theme_lib.compatible_plots）
+# 由内置内涵 compatible_plots 反查：情节段模板 id → 可承载内涵名（保留完整名，与 tl.themes 一致）。
+# 删除 theme_lib 后此常量是「内涵跟随情节段」的唯一数据源。
 THEME_PLOT_COMPAT = {
     "plot_dating_001": ["公平（Justice）", "身份与伪装（Identity & Disguise）"],
     "plot_dating_003": ["归属感（Belonging）", "传承与突破（Legacy & Breakthrough）"],
@@ -492,10 +492,10 @@ THEME_PLOT_COMPAT = {
 
 
 def mount_themes_and_hooks(plot: "PlotSlot", storyline_themes: list) -> None:
-    """给桥段挂载内涵并标注吸睛点 —— StorylineBuilder/OutlineGenerator 共用，单一实现防漂移。
+    """给情节段挂载内涵并标注吸睛点 —— StorylineBuilder/OutlineGenerator 共用，单一实现防漂移。
 
     内涵来源优先级：
-      1) 桥段已从所属阶段继承 theme_moments（阶段级内涵，含位置/手法）→ theme_hints 取其名
+      1) 情节段已从所属阶段继承 theme_moments（阶段级内涵，含位置/手法）→ theme_hints 取其名
       2) 否则按 THEME_PLOT_COMPAT 命中书级内涵（免费规则兜底），不强挂
     未命中的内涵仍作为书级可用线索随「书级设定卡」注入写作；笑点完全涌现，不在此分配。
     """
@@ -522,7 +522,7 @@ def mount_themes_and_hooks(plot: "PlotSlot", storyline_themes: list) -> None:
 
 
 class StorylineBuilder:
-    """根据题材方向和用户需求，生成大纲故事线 + 桥段配置"""
+    """根据题材方向和用户需求，生成大纲故事线 + 情节段配置"""
 
     def __init__(self, structure_lib=None, plot_lib=None, gag_lib=None, llm_client=None):
         self.structures = structure_lib
@@ -677,9 +677,9 @@ class StorylineBuilder:
         self, outline: OutlineSlot, storyline: BookStoryline,
     ) -> list[PlotSlot]:
         """
-        给一个大纲的每个阶段填充桥段。
+        给一个大纲的每个阶段填充情节段。
 
-        支持嵌套：第一个桥段作为"框"，后续桥段嵌入其中。
+        支持嵌套：第一个情节段作为"框"，后续情节段嵌入其中。
         """
         if not self.plots:
             return []
@@ -689,7 +689,7 @@ class StorylineBuilder:
             stage_name = stage.get("name", "")
             events = stage.get("events", [])
 
-            # 匹配桥段：阶段名+事件描述+题材方向
+            # 匹配情节段：阶段名+事件描述+题材方向
             context = f"{outline.name} {stage_name} {' '.join(events)}"
             candidates = self.plots.match_for_chapter(context, genre_from_tags(storyline))
             if not candidates:
@@ -697,7 +697,7 @@ class StorylineBuilder:
                 if not candidates:
                     candidates = self.plots.templates[:1]
 
-            # 取 1-3 个桥段（支持嵌套）
+            # 取 1-3 个情节段（支持嵌套）
             selected = candidates[:min(3, len(candidates))]
             parent_id = ""
             for pi, tmpl in enumerate(selected):
@@ -720,18 +720,18 @@ class StorylineBuilder:
                 )
                 new_plots.append(p)
                 if parent_id:
-                    # 找到父桥段并添加子关系
+                    # 找到父情节段并添加子关系
                     for existing in storyline.plots + new_plots:
                         if existing.id == parent_id:
                             existing.children_plot_ids.append(pid)
                             break
-                parent_id = pid  # 链式嵌套（每个桥段包下一个）
+                parent_id = pid  # 链式嵌套（每个情节段包下一个）
 
         outline.expanded = True
         return new_plots
 
     def fill_themes_and_hooks(self, plots: list[PlotSlot], storyline: BookStoryline):
-        """给桥段挂载内涵（跟随桥段）并标注吸睛点（委托共享 mount_themes_and_hooks）。"""
+        """给情节段挂载内涵（跟随情节段）并标注吸睛点（委托共享 mount_themes_and_hooks）。"""
         for p in plots:
             mount_themes_and_hooks(p, storyline.themes)
 
@@ -874,8 +874,8 @@ _ROLE_STOPWORDS = {
     "他们", "我们", "你们", "老板", "经理", "同事", "身份", "金手指",
 }
 
-# 分类启发式兜底：桥段模板文本是泛化的，名字规则匹配常落空；
-# 按桥段 category 推断该出现的配角类型（凭 role/relation 关键词匹配）
+# 分类启发式兜底：情节段模板文本是泛化的，名字规则匹配常落空；
+# 按情节段 category 推断该出现的配角类型（凭 role/relation 关键词匹配）
 _CATEGORY_RELATION = {
     "职场": ("同事", "上司", "老板", "主管", "员工", "老员工"),
     "爽文": ("同事", "上司", "老板", "主管"),
@@ -890,9 +890,9 @@ _CATEGORY_RELATION = {
 
 
 def annotate_plot_roles(tl: BookStoryline) -> int:
-    """规则标注每个桥段的出场人物（主角恒在首位；配角名出现在桥段事件/骨架/槽位/吸睛文本 → 出场）。
+    """规则标注每个情节段的出场人物（主角恒在首位；配角名出现在情节段事件/骨架/槽位/吸睛文本 → 出场）。
 
-    幂等：重跑覆盖。返回标注到出场人物的桥段数。
+    幂等：重跑覆盖。返回标注到出场人物的情节段数。
     """
     if not tl or not tl.plots:
         return 0
@@ -934,7 +934,7 @@ def annotate_plot_roles(tl: BookStoryline) -> int:
         for n in names:
             if n != protag_name and n in text:
                 roles.append(n)
-        # 2. 分类启发式兜底：名字没命中时，按桥段 category 推断出场配角
+        # 2. 分类启发式兜底：名字没命中时，按情节段 category 推断出场配角
         if len(roles) <= 1:
             rel_kws = _CATEGORY_RELATION.get(str(getattr(p, "category", "") or ""), ())
             for n, c in cast_map.items():

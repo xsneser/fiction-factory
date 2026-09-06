@@ -1,12 +1,12 @@
 # NovelEngine — AI 小说工厂
 
-> **全自动网文量产系统**：AI 拟人写作 × 桥段驱动生成 × 侦察兵采集 × 人工审查入库
+> **全自动网文量产系统**：AI 拟人写作 × 情节段驱动生成 × 侦察兵采集 × 人工审查入库
 
 ---
 
 ## 核心理念
 
-每个笔名 = 一个独立的 AI 作家，有自己的记忆、风格、桥段库和创作习惯。
+每个笔名 = 一个独立的 AI 作家，有自己的记忆、风格、情节段库和创作习惯。
 
 不是"一个生成器生成多本书"，而是"一群 AI 作家同时开工"。
 
@@ -16,9 +16,9 @@
 
 | 模块 | 说明 | 状态 |
 |------|------|------|
-| **引擎** (`libraries/engine.py`) | 新书启动 → 规划 → 逐章续写，全自动闭环（双写通道：桥段驱动 / 通用） | ✅ |
-| **桥段写作** (`libraries/storyline_writer.py`) | 唯一写作核心：桥段驱动逐短句组增量生成 + 炸裂开场 | ✅ |
-| **桥段库** (`libraries/plot.py` + `data/plots.jsonl`) | 网文经典桥段结构化模板，写作时按场景匹配注入 | ✅ |
+| **引擎** (`libraries/engine.py`) | 新书启动 → 规划 → 逐章续写，全自动闭环（双写通道：情节段驱动 / 通用） | ✅ |
+| **情节段写作** (`libraries/storyline_writer.py`) | 唯一写作核心：情节段驱动逐短句组增量生成 + 炸裂开场 | ✅ |
+| **情节段库** (`libraries/plot.py` + `data/plots.jsonl`) | 网文经典情节段结构化模板，写作时按场景匹配注入 | ✅ |
 | **情节弧库** (`libraries/structure.py` + `data/structures.jsonl`) | 各题材方向弧模板；**平级独立弧**（每行一弧，无父子层级，自带 tags/描述） | ✅ |
 | **笑点库** (`libraries/gag.py` + `gag_injector.py`) | 搞笑模式模板 + 探测器实时涌现注入 | ✅ |
 | **角色库** (`libraries/character.py` + `data/characters.jsonl`) | 性格原型 + 代表人物，设定表单「从原型库选」一键填充 | ✅ |
@@ -93,7 +93,7 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 ```
 
 - 题材标签在步 1 选择（预置 **50 标签 5 组** `libraries/world_tags.py`），作为世界观/大纲/写作 prompt 的硬约束。
-- 步 3 提供**分阶段内容构建**（顶部状态区 5 徽标实时显示 ✅/未填）：`generate_core_conflict`（核心矛盾）→ `query_arc_library`/`query_plots` + `set_picks`（开篇大纲+桥段）→ `generate_factions`（势力）→ `generate_characters`（主要人物，从角色库/原型生成）→ `generate_rest_world`（其余维度）。
+- 步 3 提供**分阶段内容构建**（顶部状态区 5 徽标实时显示 ✅/未填）：`generate_core_conflict`（核心矛盾）→ `query_arc_library`/`query_plots` + `set_picks`（开篇大纲+情节段）→ `generate_factions`（势力）→ `generate_characters`（主要人物，从角色库/原型生成）→ `generate_rest_world`（其余维度）。
 - 角色经 `drive_ui(set_characters)` 填入步 3，可手动编辑；书名可改。
 
 ### 续写循环
@@ -102,9 +102,9 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
 写 → 审 → 去AI → 修正 → 继续写
 ```
 
-每个章节由**桥段写作**（`storyline_writer.py`）逐桥段、逐短句组增量生成：
-- 桥段是生成单元：每个桥段按短句组流式续写，累计满 `words_per_chapter` 自动切章。
-- 第 1 章前 800 字 / 前 3 桥段强制"炸裂开场"（番茄式冷开场：前三句不铺垫、前 200 字钩子）。
+每个章节由**情节段写作**（`storyline_writer.py`）逐情节段、逐短句组增量生成：
+- 情节段是生成单元：每个情节段按短句组流式续写，累计满 `words_per_chapter` 自动切章。
+- 第 1 章前 800 字 / 前 3 情节段强制"炸裂开场"（番茄式冷开场：前三句不铺垫、前 200 字钩子）。
 - 写完后：灵机一动探测器注入笑点 → 章节语义摘要 → 第 1 章写完自动生成书名/简介。
 - 角色状态 / 伏笔（`promise_ledger`）/ 连续性（`continuity`）跨章跟踪，写入上下文。
 
@@ -131,18 +131,18 @@ claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
   → 用户勾选 → 页面 POST /api/scout/ingest 落库（agent 无权直调 ingest）
 ```
 
-- **五类资产**：桥段 / 弧 / 笑点 / 角色 + 写作风格规则（风格归属笔名，`prefer` 3–8 条 + `ban` 5–15 条）。
+- **五类资产**：情节段 / 弧 / 笑点 / 角色 + 写作风格规则（风格归属笔名，`prefer` 3–8 条 + `ban` 5–15 条）。
 - **断点续读**：上下文变重时 `extract_state` 把已读前缀压缩进记忆落盘（`storage/extract_work/`），同一任务继续读下一窗，长书不中断。
-- **入库闸门** `extract_judge.py`：结构完整（桥段需 `structure`+`slots`、弧需可复用 `description`…）、库内近似查重（bigram + `_mechanism_key` 骨架键）、书级专用候选记 `book_archive` 不进库。
+- **入库闸门** `extract_judge.py`：结构完整（情节段需 `structure`+`slots`、弧需可复用 `description`…）、库内近似查重（bigram + `_mechanism_key` 骨架键）、书级专用候选记 `book_archive` 不进库。
 - **进度实时**：`extract_progress.py` 与 dsh 桥事件联动，进度卡实时显示当前读到哪。
 
 ---
 
 ## 五大资产库
 
-### 桥段库 —— `libraries/plot.py`（当前 64 条）
+### 情节段库 —— `libraries/plot.py`（当前 64 条）
 
-按场景分类（爽文/开篇/战斗/成长/冲突/情感…），写作时由 `assembler` 按活跃桥段匹配注入，支持嵌套。
+按场景分类（爽文/开篇/战斗/成长/冲突/情感…），写作时由 `assembler` 按活跃情节段匹配注入，支持嵌套。
 
 ### 情节弧库 —— `libraries/structure.py`（当前 9 棵根弧，扁平节点行）
 
@@ -198,7 +198,7 @@ D:\NovelEngine\
 ├── libraries/               # 核心业务逻辑
 │   ├── engine.py            # 引擎（新书/续写双模式总调度，Op 指令分发）
 │   ├── storyline.py         # 故事线数据模型（角色统一 characters）+ StorylineBuilder
-│   ├── storyline_writer.py  # 桥段驱动逐章增量写作（唯一写作核心）
+│   ├── storyline_writer.py  # 情节段驱动逐章增量写作（唯一写作核心）
 │   ├── outline_generator.py # 大纲 LLM 管线
 │   ├── outline_agent.py     # 大纲助手（自然语言调整故事线）
 │   ├── prompt_harness.py    # 集中式 prompt（书级设定卡 + 场景渲染器）
@@ -208,7 +208,7 @@ D:\NovelEngine\
 │   ├── de_ai.py             # AI 降重（联动风格规则 replacements）
 │   ├── reviewer.py          # 审阅模块
 │   ├── publisher.py         # 上架检查/状态机
-│   ├── assembler.py         # 桥段装配（活跃桥段匹配/嵌套 → 注入写作）
+│   ├── assembler.py         # 情节段装配（活跃情节段匹配/嵌套 → 注入写作）
 │   ├── gag_injector.py      # 笑点探测器/注入器
 │   ├── promise_ledger.py    # 伏笔账本（跨章跟踪兑现）
 │   ├── continuity.py        # 连续性检查（前后文一致）
@@ -340,7 +340,7 @@ NovelEngine 的开发参考了以下开源项目：
 `plugins/fanqie_scout.py` 及配套的 `font_decoder.py` 仅供**个人学习、研究网文结构技巧**使用。使用前请注意：
 
 - 番茄小说等内容平台的服务协议普遍禁止自动化数据采集，请勿用于商业用途或大规模抓取
-- 请勿大量下载并二次传播受著作权保护的正文内容；分析应以「模式/结构/桥段」等抽象技巧为主，避免全文存储与转载
+- 请勿大量下载并二次传播受著作权保护的正文内容；分析应以「模式/结构/情节段」等抽象技巧为主，避免全文存储与转载
 - PUA 字体解码属于对技术保护措施的绕过，请仅用于个人学习研究
 - 爬虫模块默认开启 TLS 证书校验（`verify=True`）；如遇旧证书环境可显式传 `verify=False`
 - 使用本模块产生的任何法律风险由使用者自行承担

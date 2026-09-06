@@ -11,7 +11,7 @@
 
 // 五分类字段映射：key(tab) → 数据源字段（兼容新旧键名）
 var REVIEW_CATS = [
-    { key: 'plot',       label: '🧩 桥段',   field: 'plots',       src: function(d){ return d.plots || d.plot_details || []; } },
+    { key: 'plot',       label: '🧩 情节段',   field: 'plots',       src: function(d){ return d.plots || d.plot_details || []; } },
     { key: 'structure',  label: '📋 情节弧', field: 'structures',  src: function(d){ return d.structures || d.structure_details || []; } },
     { key: 'gag',        label: '😂 笑点',   field: 'gags',        src: function(d){ return d.gags || d.gag_details || []; } },
     { key: 'character',  label: '🎭 角色',   field: 'characters',  src: function(d){ return d.characters || d.character_details || []; } },
@@ -112,7 +112,7 @@ function renderReviewCards(d, areaId) {
                     itemHtml += '<label class="char-card review-card">';
                     itemHtml += '<input type="checkbox" class="review-cb" data-cat="' + c.key + '" data-idx="' + uidx + '" checked>';
                     if (c.key === 'plot') {
-                        itemHtml += '<span class="cc-head"><span class="cc-title"><code class="tag blue">' + escapeHtml(item.category||'桥段') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></span></span>';
+                        itemHtml += '<span class="cc-head"><span class="cc-title"><code class="tag blue">' + escapeHtml(item.category||'情节段') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></span></span>';
                         itemHtml += '<div class="rc-desc">' + escapeHtml(item.description||'') + '</div>';
                         if (item.structure) itemHtml += '<div class="rc-meta">结构: ' + escapeHtml(item.structure) + '</div>';
                     } else if (c.key === 'structure') {

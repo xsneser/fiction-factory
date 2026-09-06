@@ -140,7 +140,7 @@ def run_tests():
         ("Books", "/books", ["书库", "book"]),
         ("Start New Book", "/books/start", ["启动新书", "form"]),
         ("Writing Desk", "/desk", ["书库"]),  # /desk 已 302 到书库（写作台按书进入）
-        ("Plots", "/plots", ["桥段库", "plot"]),
+        ("Plots", "/plots", ["情节段库", "plot"]),
         ("Structures", "/structures", ["情节弧库", "structure"]),
         ("Gags", "/gags", ["笑点库", "gag"]),
         ("Characters", "/characters", ["角色原型库", "char"]),
@@ -198,7 +198,7 @@ def run_tests():
         ("/books/start", "启动新书"),
         ("/books", "书库"),
         ("/publish", "上架管理"),
-        ("/plots", "桥段库"),
+        ("/plots", "情节段库"),
         ("/structures", "情节弧库"),
         ("/gags", "笑点库"),
         ("/characters", "角色原型库"),

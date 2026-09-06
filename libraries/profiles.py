@@ -208,7 +208,7 @@ class PenNameProfile:
         return "\n".join(parts) + "\n"
 
     def build_style_card(self) -> str:
-        """精简风格卡（~220 字，一行）：每桥段注入 get_writing_context 的 style_card 提醒。
+        """精简风格卡（~220 字，一行）：每情节段注入 get_writing_context 的 style_card 提醒。
         只取身份/调性 + 前 3 句式 + 前 5 禁词 + 前 3 禁句式，防 dsh 尾部裁剪、防风格漂移；
         完整规则用 get_pen_style 取 build_writing_prompt。"""
         from .style_rules import StyleRuleLibrary

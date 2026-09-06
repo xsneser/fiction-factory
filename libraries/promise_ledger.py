@@ -52,7 +52,7 @@ def _seen_in_recent(chapters, keywords, current_chapter, recent_n):
 
 # 读者承诺六操作分级（AI-NWA payoff_directives，规则层，零 LLM）
 # seed=刚埋设保持存在感；touch=活跃维持/轻提；pressure=临期/逾期施压；
-# partial_reveal=部分揭示留悬念；payoff=已兑现/本桥段收束；forbid=明确不兑现（暂不自动标）
+# partial_reveal=部分揭示留悬念；payoff=已兑现/本情节段收束；forbid=明确不兑现（暂不自动标）
 _PARTIAL_REVEAL_HINTS = ("半", "部分", "露出一角", "一角", "线索", "碎屑", "片段")
 
 
@@ -129,7 +129,7 @@ def scan_promises(tl, chapters, current_chapter, recent_n: int = 10) -> dict:
     if stalled:
         suggestions.append(f"{len(stalled)} 条承诺近期无推进，注意别让伏笔冷掉。")
     if not promises:
-        suggestions.append("尚无读者承诺台账（大纲设局/收局桥段会生成）。")
+        suggestions.append("尚无读者承诺台账（大纲设局/收局情节段会生成）。")
     return {"overdue": overdue, "advanced": advanced, "stalled": stalled,
             "fulfilled_recently": fulfilled_recently, "counts": counts,
             "suggestions": suggestions}

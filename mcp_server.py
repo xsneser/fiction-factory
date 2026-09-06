@@ -62,7 +62,7 @@ def _mcp_summary(result) -> str:
         if isinstance(cand, dict) and cand.get("title") and total:
             return f"候选{total}：{cand['title']}"
         # 动态进度字段优先于 status：write_next_bridge 同参但字数/章节增长时摘要须不同，
-        # 否则 status 常量会让 LoopGuard 把正常推进误判为无进展循环（桥段写作被熔断）。
+        # 否则 status 常量会让 LoopGuard 把正常推进误判为无进展循环（情节段写作被熔断）。
         for k in ("ok", "words", "word_count", "chapter", "count", "phase",
                   "status", "plots_added", "total_plots", "total_chapters",
                   "passed", "score", "chosen", "book_id", "deleted", "cmd",

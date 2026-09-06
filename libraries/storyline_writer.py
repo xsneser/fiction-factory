@@ -1,14 +1,14 @@
 """
-蓝图式写作引擎 v3 — 桥段驱动的逐章增量写作
+蓝图式写作引擎 v3 — 情节段驱动的逐章增量写作
 
 架构约定（用户明确）：
-  · 左→右 = 层次顺序：弧 → 阶段 → 桥段
-  · 上→下 = 故事顺序：沿故事线逐桥段推进
-  · 桥段是生成单元：每个桥段写完后累计字数，满 words_per_chapter 即切成一章
-  · 短句组生成：每个桥段内逐「短句组」调用 LLM（每次 1-3 个短句，约 50-100 字），
+  · 左→右 = 层次顺序：弧 → 阶段 → 情节段
+  · 上→下 = 故事顺序：沿故事线逐情节段推进
+  · 情节段是生成单元：每个情节段写完后累计字数，满 words_per_chapter 即切成一章
+  · 短句组生成：每个情节段内逐「短句组」调用 LLM（每次 1-3 个短句，约 50-100 字），
     组与组之间用空行分隔成独立段落（网文短段风格）；每次调用都携带
-    「本章已写全部前文 + 上一章结尾 + 本桥段已写」，保证桥段之间故事连贯。
-  · 每段/每章写完立即落盘（桥段 written_chapter 写入 storyline，章节正文由 engine 保存）
+    「本章已写全部前文 + 上一章结尾 + 本情节段已写」，保证情节段之间故事连贯。
+  · 每段/每章写完立即落盘（情节段 written_chapter 写入 storyline，章节正文由 engine 保存）
 
 旧"整本先写全文再分章"（BlueprintWritingPipeline）已废弃删除。
 """
@@ -20,15 +20,15 @@ from .storyline import BookStoryline
 from .style_ban import LANGUAGE_DISCIPLINE, build_style_ban_prompt
 from core.text_utils import count_prose_units
 
-CHARS_PER_BEAT = 200          # 每个节拍预计写多少个汉字（用于桥段字数规划）
-MAX_BRIDGE_WORDS = 1200       # 节拍制单个桥段字数上限（与 frontend story_line.js 共用同一公式）
+CHARS_PER_BEAT = 200          # 每个节拍预计写多少个汉字（用于情节段字数规划）
+MAX_BRIDGE_WORDS = 1200       # 节拍制单个情节段字数上限（与 frontend story_line.js 共用同一公式）
 MAX_PLAN_WORDS = 3000         # agent 直接给的目标字数 plot.words 的上限（≈一章上限级，防单桥虚高）
-WRITER_MAX_TOKENS = 1600      # 桥段写作输出上限：3-5 短句正文 + flash 推理余量
+WRITER_MAX_TOKENS = 1600      # 情节段写作输出上限：3-5 短句正文 + flash 推理余量
                               # （flash 先推理再输出，推理过长会吃掉 max_tokens 导致 content 为空）
 WRITER_EMPTY_RETRIES = 2      # 写作空响应重试次数（模型偶发返回空内容）
 REPAIR_STALL_THRESHOLD = 3    # 连续失败阈值：空响应/重写无改善累计达此值 → repair_stalled 主动停
 OPENING_WORD_LIMIT = 800      # 炸裂开场：第一章前 800 字
-OPENING_MAX_BRIDGES = 3       # 且最多前 3 个桥段
+OPENING_MAX_BRIDGES = 3       # 且最多前 3 个情节段
 
 WRITER_SYSTEM = ("你是一位专业的中文网络小说作者，擅长对话、动作驱动的快节奏网文，正在逐段续写一章正文。"
                  "每轮只输出 3-5 个句子（约 150-250 个汉字），只输出正文，不要任何解释。"
@@ -46,14 +46,14 @@ SELF_CHECK_MAX_TOKENS = 2048  # 自检输出小（≤150字），留 flash 推�
 
 
 def opening_mode_active(chapter_num: int, chapter_words: int, written_count: int) -> bool:
-    """炸裂开场判定：第 1 章、本章未写满 800 字、且已消耗桥段 < 3。"""
+    """炸裂开场判定：第 1 章、本章未写满 800 字、且已消耗情节段 < 3。"""
     return (chapter_num == 1
             and chapter_words < OPENING_WORD_LIMIT
             and written_count < OPENING_MAX_BRIDGES)
 
 
 def planned_words(plot) -> int:
-    """桥段预计字数（规划/预估，实际正文仍按书写自然浮动）。
+    """情节段预计字数（规划/预估，实际正文仍按书写自然浮动）。
 
     优先 agent 按内容浓淡给的目标字数 plot.words（clamp [200, MAX_PLAN_WORDS]）；
     未给（0/None）回退节拍制 cover_beats × CHARS_PER_BEAT 封顶 MAX_BRIDGE_WORDS。
@@ -138,13 +138,13 @@ def _typo_issue(text: str) -> str:
 
 class StorylineChapterWriter:
     """
-    章节级蓝图写作器 — 桥段驱动的逐章增量写作。
+    章节级蓝图写作器 — 情节段驱动的逐章增量写作。
 
-    架构约定（用户明确）：桥段是生成单元。
-      · 左→右 = 层次顺序：弧 → 阶段 → 桥段
-      · 上→下 = 故事顺序：沿故事线逐桥段推进
-    每个桥段写完累计字数，达到 words_per_chapter 即切成一章；
-    桥段 written_chapter 写入 storyline 便于断点续写，章节正文由调用方立即落盘。
+    架构约定（用户明确）：情节段是生成单元。
+      · 左→右 = 层次顺序：弧 → 阶段 → 情节段
+      · 上→下 = 故事顺序：沿故事线逐情节段推进
+    每个情节段写完累计字数，达到 words_per_chapter 即切成一章；
+    情节段 written_chapter 写入 storyline 便于断点续写，章节正文由调用方立即落盘。
     """
 
     def __init__(self, storyline: BookStoryline, llm_client=None,
@@ -165,20 +165,20 @@ class StorylineChapterWriter:
         self.detector_frequency = detector_frequency
         self._repair_failures = 0  # 连续失败计数（空响应/重写无改善）；达 REPAIR_STALL_THRESHOLD → repair_stalled
         self.budget_checker = budget_checker  # 预算门控：callable 返回剩余预算（元），None=不限制
-        self.review_hint = ""  # 上一章规则审查（reviewer）未过的修复提示：一次性注入首个桥段，用完即清
-        # 本章输入 prompt 累计（供成本计量）；跨桥段累计、跨章重置
+        self.review_hint = ""  # 上一章规则审查（reviewer）未过的修复提示：一次性注入首个情节段，用完即清
+        # 本章输入 prompt 累计（供成本计量）；跨情节段累计、跨章重置
         self._input_chapter = 0
         self._input_texts: list = []
-        # 章节轴→字数轴：总章数由桥段预计字数推导（ceil(总字数/每章字数)），不再读弧的 end_chapter
+        # 章节轴→字数轴：总章数由情节段预计字数推导（ceil(总字数/每章字数)），不再读弧的 end_chapter
         self._total_chapters = 0
         if storyline:
             wpc = getattr(storyline, "words_per_chapter", None) or 3000
             _w = sum(planned_words(p) for p in storyline.plots) if storyline.plots else 0
             self._total_chapters = max(1, (_w + wpc - 1) // wpc)
 
-    # ── 桥段按故事顺序（上→下）与层次（左→右：弧→阶段→桥段）排列 ──
+    # ── 情节段按故事顺序（上→下）与层次（左→右：弧→阶段→情节段）排列 ──
     def _threaded_ordered_plots(self):
-        """按叙事线程轮流排列桥段（主线加权 2:1，副线/伏笔线各 1）。
+        """按叙事线程轮流排列情节段（主线加权 2:1，副线/伏笔线各 1）。
 
         线程内按 (弧, stage, order, thread_seq) 排序；主线每轮取 2 个、其他线程各 1 个。
         向后兼容：全部 thread_id="主线" 时退化为原严格顺序（单组顺序取）。
@@ -237,7 +237,7 @@ class StorylineChapterWriter:
         return result
 
     def _find_resolver_name(self, plot_id: str) -> str:
-        """返回引用 plot_id 的收局桥段名（设局提示用），无则空。"""
+        """返回引用 plot_id 的收局情节段名（设局提示用），无则空。"""
         if not self.storyline:
             return ""
         for q in self.storyline.plots:
@@ -246,7 +246,7 @@ class StorylineChapterWriter:
         return ""
 
     def _bridge_gag_names(self, item) -> list:
-        """解析桥段挂载的笑点 id → 名称（用于注入写作 prompt）。"""
+        """解析情节段挂载的笑点 id → 名称（用于注入写作 prompt）。"""
         p = item["plot"]
         gags = []
         for gid in (p.gag_ids or []):
@@ -255,10 +255,10 @@ class StorylineChapterWriter:
         return gags
 
     def _chapter_participants(self, item) -> str:
-        """本章/本弧参与者：当前弧内所有桥段出场角色并集（紧凑名串，≤6 个）。
+        """本章/本弧参与者：当前弧内所有情节段出场角色并集（紧凑名串，≤6 个）。
 
         竞品借鉴：AI-NWA participant_subset——「按本章出场角色精准筛选」，
-        避免逐桥段重复注入、也覆盖本弧后续才出场的人。免费规则，零 LLM。
+        避免逐情节段重复注入、也覆盖本弧后续才出场的人。免费规则，零 LLM。
         """
         if not self.storyline:
             return ""
@@ -288,7 +288,7 @@ class StorylineChapterWriter:
         if self.harness:
             review_hint = self.review_hint or ""
             if review_hint:
-                self.review_hint = ""   # 一次性：只在上一章未过审查后的首个桥段注入，用完即清
+                self.review_hint = ""   # 一次性：只在上一章未过审查后的首个情节段注入，用完即清
             return self.harness.render_bridge_prompt(
                 item, chapter_buffer, prev_ending, bridge_text, budget_remaining,
                 character_states=character_states,
@@ -307,7 +307,7 @@ class StorylineChapterWriter:
         if chapter_buffer:
             ctx.append("【本章已写正文】" + chapter_buffer[-2000:])
         if bridge_text:
-            ctx.append("【本桥段已写】" + bridge_text[-600:])
+            ctx.append("【本情节段已写】" + bridge_text[-600:])
         context_text = "\n".join(ctx) if ctx else "（本章开头，尚无前文）"
 
         opening_block = ""
@@ -320,7 +320,7 @@ class StorylineChapterWriter:
 
         return f"""你是一位专业的中文网络小说作者，正在逐段续写正文。每轮只输出 3-5 个短句（约 150-250 个汉字），一句一行。
 
-{opening_block}【桥段】{p.name}
+{opening_block}【情节段】{p.name}
 【前文上下文】
 {context_text}
 
@@ -328,10 +328,10 @@ class StorylineChapterWriter:
 1. 画面优先，用动作、对话、感官细节推进；短句为基干、句长长短交错。
 2. 每组至少含一句对话或一个动作；组尾留一个"接下来会怎样"的悬念。
 3. 严禁出现：然而、不禁、仿佛、似乎、瞬间、顿时、缓缓、微微、眼中闪过、心中一动、微微一笑、嘴角勾起、与此同时、就在这时。
-4. 只输出正文，不写标题、不加解释。本桥段还剩约 {budget_remaining} 字预算，控制篇幅。"""
+4. 只输出正文，不写标题、不加解释。本情节段还剩约 {budget_remaining} 字预算，控制篇幅。"""
 
     def _complete_unnatural_end(self, text: str, item, max_continues: int = 2) -> str:
-        """桥段组末尾未自然收束（被 max_tokens 截断）时，追加续写直到自然收尾。
+        """情节段组末尾未自然收束（被 max_tokens 截断）时，追加续写直到自然收尾。
 
         竞品借鉴：deep-novel-system「截断检测续写（append≤3次）」；受次数硬上限与
         预算约束（追加内容会计入 bridge_words），仍不收束则原样返回，不无限循环。
@@ -358,20 +358,20 @@ class StorylineChapterWriter:
     def _write_plot_segment_groups(self, item, chapter_buffer, prev_ending,
                                    budget, character_states="", summaries_context="",
                                    is_opening=False, chapter_num=0):
-        """生成一个桥段正文：逐短句组调用 LLM，直到桥段字数预算用尽。
+        """生成一个情节段正文：逐短句组调用 LLM，直到情节段字数预算用尽。
 
         yield (text, words)：text 为 1-3 句的一组（可能是被拆分的短句）。
         组与组之间由调用方用空行连接成独立段落。
         每写完一组跑一次"灵机一动"探测器：命中 → 把提示注入下一组写作 prompt。
         """
         if not self.llm:
-            yield "group", f"[桥段:{item['plot'].name} - LLM未配置]", 0
+            yield "group", f"[情节段:{item['plot'].name} - LLM未配置]", 0
             return
         bridge_text = ""
         bridge_words = 0
         max_groups = max(4, int(budget / 100) + 4)  # 保护：最多调用次数（每轮约150-250字，实际4-5次即可达到）
 
-        # 探测环状态：候选笑点池每桥段算一次；近 3 组正文供探测器读
+        # 探测环状态：候选笑点池每情节段算一次；近 3 组正文供探测器读
         pool = []
         humor_style = ""
         if self.gag_injector:
@@ -502,10 +502,10 @@ class StorylineChapterWriter:
             return {"score": 10, "rewrite": False, "reason": "", "quote": ""}
         p = item.get("plot")
         bridge_name = getattr(p, "name", "") if p else ""
-        prompt = (f"你是小说审校编辑。为下面这段网文正文打分（这是「{bridge_name}」桥段的一小段，"
+        prompt = (f"你是小说审校编辑。为下面这段网文正文打分（这是「{bridge_name}」情节段的一小段，"
                   f"约150-250字）。\n\n【正文】\n{text}\n\n"
                   f"【检查要点】1) 有无AI腔/模板词（然而/不禁/仿佛/瞬间/顿时/缓缓/微微等）；"
-                  f"2) 是否画面感强、靠动作/对话推进；3) 是否与桥段目标契合；"
+                  f"2) 是否画面感强、靠动作/对话推进；3) 是否与情节段目标契合；"
                   f"4) 有无重复啰嗦/多角色同质化。\n"
                   f"若 rewrite=true，必须指出具体问题句（quote：从正文摘录 20-50 字原文，"
                   f"供定点重写）。\n"
@@ -542,10 +542,10 @@ class StorylineChapterWriter:
                         f"【原正文】\n{text}\n\n"
                         f"【问题句引文】{quote}\n\n"
                         f"请只重写引文所在的那一句/几句，保留其余部分不变，"
-                        f"仍写桥段「{bridge_name}」的正文，一句一行，只输出正文。")
+                        f"仍写情节段「{bridge_name}」的正文，一句一行，只输出正文。")
             else:
                 user = (f"上一段正文经审校未达标：{reason}\n\n【原正文】\n{text}\n\n"
-                        f"请重写这一段：改进上述问题，仍写桥段「{bridge_name}」的正文，"
+                        f"请重写这一段：改进上述问题，仍写情节段「{bridge_name}」的正文，"
                         f"3-5 个句子（约150-250字），一句一行，只输出正文。")
             raw = self.llm.call(WRITER_SYSTEM, user,
                                 temperature=0.7, max_tokens=WRITER_MAX_TOKENS)
@@ -556,30 +556,30 @@ class StorylineChapterWriter:
         except Exception:
             return text
 
-    # ── 写一个桥段（新核心：按桥段撰写）──
-    def write_bridge_stepwise(self, chapter_num: int, prev_ending: str = "",
+    # ── 写一个情节段（新核心：按情节段撰写）──
+    def write_plot_stepwise(self, chapter_num: int, prev_ending: str = "",
                               character_states: str = "",
                               chapter_buffer: str = "", chapter_words: int = 0,
                               summaries_context: str = ""):
-        """写「一个」桥段（生成器）：沿故事顺序取下一个未写桥段。
+        """写「一个」情节段（生成器）：沿故事顺序取下一个未写情节段。
 
         事件：
-            - bridge_start   ：开始写某桥段（含预计字数 planned_words）
+            - bridge_start   ：开始写某情节段（含预计字数 planned_words）
             - group_chunk    ：一组短句正文（流式）
-            - bridge_done    ：桥段完成（含本桥段字数/预计、本章累计字数、是否切章）
+            - bridge_done    ：情节段完成（含本情节段字数/预计、本章累计字数、是否切章）
             - bridge_skip    ：本章已满无法再写（由引擎切章后重试）
-            - complete       ：没有剩余桥段可写（全书完成）
+            - complete       ：没有剩余情节段可写（全书完成）
 
         返回（StopIteration.value）：
             {"text", "words", "planned_words", "cut_chapter", "chapter_words"}
         """
         if not self.storyline or not self.storyline.plots:
-            yield {"type": "complete", "message": "没有桥段可写"}
+            yield {"type": "complete", "message": "没有情节段可写"}
             return
         queue = [q for q in self._story_ordered_plots()
                  if (q["plot"].written_chapter or 0) <= 0]
         if not queue:
-            yield {"type": "complete", "message": "没有剩余桥段可写（全书完成）"}
+            yield {"type": "complete", "message": "没有剩余情节段可写（全书完成）"}
             return
         item = queue[0]
         if chapter_num != self._input_chapter:
@@ -588,18 +588,18 @@ class StorylineChapterWriter:
         o = item["outline"]
         p = item["plot"]
         stage = item["stage"] or {}
-        # 炸裂开场：第 1 章前 800 字 / 前 3 个桥段命中开场模式
+        # 炸裂开场：第 1 章前 800 字 / 前 3 个情节段命中开场模式
         written_count = len(self._story_ordered_plots()) - len(queue)
         is_opening = opening_mode_active(chapter_num, chapter_words, written_count)
         target = self.storyline.words_per_chapter or 3000
         planned = planned_words(p)
-        # 预算裁剪：一章内不超写（最后一桥段可能被压缩以贴合字数）
+        # 预算裁剪：一章内不超写（最后一情节段可能被压缩以贴合字数）
         budget = min(planned, max(target - chapter_words, 0))
         if budget <= 0:
             yield {"type": "bridge_skip", "plot_id": p.id, "reason": "本章已满"}
             return
 
-        # 预算门控：LLM 费用预算耗尽时跳过本桥段（engine 侧由 cost_tracker.remaining() 提供）
+        # 预算门控：LLM 费用预算耗尽时跳过本情节段（engine 侧由 cost_tracker.remaining() 提供）
         if self.budget_checker is not None and self.budget_checker() <= 0:
             yield {"type": "bridge_skip", "plot_id": p.id,
                    "code": "budget_exhausted",
@@ -642,11 +642,11 @@ class StorylineChapterWriter:
                    "bridge_words": seg_words, "planned_words": planned}
         seg = "\n\n".join(seg_parts)
         seg_wc = count_prose_units(seg)
-        # 空响应保护：桥段没写出内容时**不消耗**（不置 written_chapter），
-        # 本章到此结束、下一章重试该桥段，避免全书被空桥段吞掉导致"章节 0 字"。
+        # 空响应保护：情节段没写出内容时**不消耗**（不置 written_chapter），
+        # 本章到此结束、下一章重试该情节段，避免全书被空情节段吞掉导致"章节 0 字"。
         if seg_wc <= 0:
             yield {"type": "bridge_skip", "plot_id": p.id,
-                   "reason": "LLM 空响应未产出内容，保留桥段待重试"}
+                   "reason": "LLM 空响应未产出内容，保留情节段待重试"}
             return None
         p.written_chapter = chapter_num
         new_chapter_words = chapter_words + seg_wc
@@ -666,23 +666,23 @@ class StorylineChapterWriter:
             "input_text": "\n".join(self._input_texts),
         }
 
-    # ── 写一章（兼容：循环桥段直至满章，供批处理/自动跑）──
+    # ── 写一章（兼容：循环情节段直至满章，供批处理/自动跑）──
     def write_chapter_stepwise(self, chapter_num: int,
                                previous_chapter_ending: str = "",
                                character_states: str = "",
                                chapter_buffer: str = "", chapter_words: int = 0,
                                summaries_context: str = "",
                                bridge_meta: list | None = None):
-        """写一章（生成器版）：沿故事顺序逐桥段生成，直到本章字数达标。
+        """写一章（生成器版）：沿故事顺序逐情节段生成，直到本章字数达标。
 
         兼容旧接口：yield bridge_start/group_chunk/bridge_done 事件，
-        所有桥段完成后 return 章节结果 dict（通过 StopIteration.value 取回）。
-        chapter_buffer/chapter_words：进行中章节草稿（按桥段撰写中断后续写）。
-        bridge_meta：草稿里已写的桥段元数据 [{plot_id, plot_name, text}]，
-        与本次新写桥段合并进返回的 "bridges"，供引擎落盘 per-bridge segments。
+        所有情节段完成后 return 章节结果 dict（通过 StopIteration.value 取回）。
+        chapter_buffer/chapter_words：进行中章节草稿（按情节段撰写中断后续写）。
+        bridge_meta：草稿里已写的情节段元数据 [{plot_id, plot_name, text}]，
+        与本次新写情节段合并进返回的 "bridges"，供引擎落盘 per-bridge segments。
         """
         if not self.storyline or not self.storyline.plots:
-            return {"text": f"[第{chapter_num}章无桥段可写]",
+            return {"text": f"[第{chapter_num}章无情节段可写]",
                     "word_count": 0, "beats": 0, "beat_details": [],
                     "blueprint": {"chapter_title": f"第{chapter_num}章",
                                   "total_chapters": self._total_chapters}}
@@ -693,12 +693,12 @@ class StorylineChapterWriter:
         written = [dict(x) for x in (bridge_meta or [])
                    if isinstance(x, dict) and x.get("text")]
         while True:
-            sub = yield from self.write_bridge_stepwise(
+            sub = yield from self.write_plot_stepwise(
                 chapter_num, previous_chapter_ending, character_states,
                 chapter_buffer="\n\n".join(buffer), chapter_words=words,
                 summaries_context=summaries_context)
             if sub is None:
-                break  # complete / 无剩余桥段
+                break  # complete / 无剩余情节段
             buffer.append(sub["text"])
             words = sub["chapter_words"]
             consumed.append(sub)
@@ -735,8 +735,8 @@ class StorylineChapterWriter:
                       chapter_buffer: str = "", chapter_words: int = 0,
                       summaries_context: str = "",
                       on_step=None, bridge_meta: list | None = None) -> dict:
-        """写一章（同步版）：内部用 write_chapter_stepwise 逐桥段推进，
-        若传了 on_step 则每个桥段写前/写后回调一次（供 UI 展示与高亮）。"""
+        """写一章（同步版）：内部用 write_chapter_stepwise 逐情节段推进，
+        若传了 on_step 则每个情节段写前/写后回调一次（供 UI 展示与高亮）。"""
         gen = self.write_chapter_stepwise(
             chapter_num, previous_chapter_ending, character_states,
             chapter_buffer=chapter_buffer, chapter_words=chapter_words,

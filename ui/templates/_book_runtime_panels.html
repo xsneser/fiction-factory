@@ -210,7 +210,7 @@ function runPunchPoints(n){
     /* ⏳ 读者承诺台账 */
     fetch('/api/book/'+BOOK+'/promises').then(function(r){ return r.json(); }).then(function(d){
         var el = document.getElementById('rp-promises'); if(!el) return;
-        if(!d || !(d.counts||{}).total){ el.innerHTML = '<div class="empty">还没有读者承诺（大纲设局/收局桥段会生成）</div>'; return; }
+        if(!d || !(d.counts||{}).total){ el.innerHTML = '<div class="empty">还没有读者承诺（大纲设局/收局情节段会生成）</div>'; return; }
         var OP = {seed:'刚埋设', touch:'维持', pressure:'施压', partial_reveal:'部分揭示', payoff:'兑现'};
         function rows(list){
             return list.map(function(q){

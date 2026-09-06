@@ -1,6 +1,6 @@
 /*
  * 故事线（Story Line）组件 — 垂直 Gantt
- * 从 BookStoryline dict 渲染：字数轴 + 弧/桥段/线程通道。
+ * 从 BookStoryline dict 渲染：字数轴 + 弧/情节段/线程通道。
  * 支持叙事手法视觉区分：顺叙(chronological)/倒叙(flashback)/插叙(interleaved)。
  *
  * 用法：StoryLine.init('mount-id', bookStorylineDict, {currentChapter: N})
@@ -12,8 +12,8 @@
   var WPC = 3000;
   var CHARS_PER_BEAT = 200, MAX_BRIDGE_WORDS = 1200, MAX_PLAN_WORDS = 3000;   // 与后端 storyline_writer.py 同一公式/口径
   var outlines = [], plots = [], threads = [];
-  var promises = [], promiseByPlot = {};   // 读者承诺台账：桥段id → [{kind:setup/payoff, pr}]
-  var setupIds = {};                       // 设局桥段 id 集合（被 resolves_plot_id 引用的桥段）
+  var promises = [], promiseByPlot = {};   // 读者承诺台账：情节段id → [{kind:setup/payoff, pr}]
+  var setupIds = {};                       // 设局情节段 id 集合（被 resolves_plot_id 引用的情节段）
   var PALETTE = ['#f97583', '#79c0ff', '#56d364', '#e3b341', '#d2a8ff', '#ffa657', '#c084fc', '#7ee787'];
   var THREAD_PALETTE = ['#ffa657', '#79c0ff', '#d2a8ff', '#56d364', '#e3b341', '#ff7b72', '#7ee787'];
 
@@ -43,7 +43,7 @@
   function fmtW(w) {
     return (w >= 1000) ? (Math.round(w / 1000 * 10) / 10) + 'k' : String(Math.round(w));
   }
-  /* 桥段预计字数（规划/预估）：plot.words 优先（agent 目标字数，clamp 3000），否则节拍制 cover_beats×200 封顶 1200
+  /* 情节段预计字数（规划/预估）：plot.words 优先（agent 目标字数，clamp 3000），否则节拍制 cover_beats×200 封顶 1200
      ——与后端 storyline_writer.planned_words 同一口径（words 覆盖 + beat 兜底） */
   function plannedWords(p) {
     if (p) {
@@ -68,7 +68,7 @@
     return THREAD_PALETTE[h % THREAD_PALETTE.length];
   }
 
-  /* ─── 数据适配：BookStoryline → 平铺数组（桥段按真实规划字数定位，预计=实际） ───
+  /* ─── 数据适配：BookStoryline → 平铺数组（情节段按真实规划字数定位，预计=实际） ───
      legacy 书 outline/plot/thread 缺 id：在此合成稳定 id + 建 raw→syn 映射，
      保证泳道/连线/徽标/高亮全自洽，前端不崩。 */
   function adapt(bt) {
@@ -87,7 +87,7 @@
       if (o.id) rawOutlineToSyn[String(o.id)] = syn;
     });
 
-    // Pass 2：桥段按所属弧分组（syn outline id 作键；空/dangling outline_id 按位置均分保序）
+    // Pass 2：情节段按所属弧分组（syn outline id 作键；空/dangling outline_id 按位置均分保序）
     var byOutline = {};
     rawPlots.forEach(function (p, i) {
       var synPid = p.id ? String(p.id) : '__plot_' + (i + 1);
@@ -147,7 +147,7 @@
       if (o.end > TOTAL_WORDS) TOTAL_WORDS = o.end;
     });
 
-    // 桥段 → 在弧内按序比例均分章节段（弧 [s,e] 内 n 个桥段均分）
+    // 情节段 → 在弧内按序比例均分章节段（弧 [s,e] 内 n 个情节段均分）
     plots = [];
     var outlineById = {};
     outlines.forEach(function (o) { outlineById[o.id] = o; });
@@ -158,7 +158,7 @@
       var o = outlineById[key];
       if (!o) return;
       var rootColor = outlineColorById[key] || '#79c0ff';
-      // 桥段按 planned_words 在弧内累计定位（字数轴，与后端 storyline_writer.planned_words 同公式）
+      // 情节段按 planned_words 在弧内累计定位（字数轴，与后端 storyline_writer.planned_words 同公式）
       var cursor = o.start;
       list.forEach(function (x) {
         var p = x.p;
@@ -169,7 +169,7 @@
         cursor = e;
         var parentSyn = resolvePlotId(p.parent_plot_id);
         var resolvesSyn = resolvePlotId(p.resolves_plot_id);
-        if (resolvesSyn) setupIds[resolvesSyn] = true;   // 设局桥段登记（供设局徽标/设局→收局线）
+        if (resolvesSyn) setupIds[resolvesSyn] = true;   // 设局情节段登记（供设局徽标/设局→收局线）
         plots.push({
           id: x.synPid, name: p.name,
           oid: key,
@@ -215,7 +215,7 @@
       if (t.start === Infinity) { t.start = 0; t.end = Math.max(t.end, 1); }
     });
 
-    // 读者承诺台账：设局桥段→⏳待兑现，收局桥段→✅已兑现；按 syn id 映射（legacy 书不错位）
+    // 读者承诺台账：设局情节段→⏳待兑现，收局情节段→✅已兑现；按 syn id 映射（legacy 书不错位）
     promises = (bt.promises || []);
     promiseByPlot = {};
     promises.forEach(function (pr) {
@@ -369,7 +369,7 @@
       outlineBody.appendChild(bar);
     });
 
-    // 父子弧连线（SVG 贝塞尔，复用桥段父子线的 px/py/barCenterX 机制）
+    // 父子弧连线（SVG 贝塞尔，复用情节段父子线的 px/py/barCenterX 机制）
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
     svg.style.position = 'absolute'; svg.style.top = '0'; svg.style.left = '0';
@@ -403,12 +403,12 @@
     outlineBody.appendChild(svg);
   }
 
-  /* ─── 渲染：桥段（嵌套 + 通道 + SVG 连线） ─── */
+  /* ─── 渲染：情节段（嵌套 + 通道 + SVG 连线） ─── */
   function renderPlots(plotBody, tooltip, showTooltip, moveTooltip, hideTooltip) {
     plotBody.innerHTML = '';
     var bodyW = plotBody.clientWidth, bodyH = plotBody.clientHeight;
     if (!bodyH || bodyH < 40) bodyH = 400;
-    var contentH = zoomHeight();   // 可滚动内容区高度：桥段条实际像素高 = height% × contentH / 100（标签阈值按像素判断）
+    var contentH = zoomHeight();   // 可滚动内容区高度：情节段条实际像素高 = height% × contentH / 100（标签阈值按像素判断）
     var plotById = {};
     plots.forEach(function (p) { plotById[p.id] = p; });
 
@@ -462,7 +462,7 @@
       bar.style.width = 'calc(' + barW + '% - ' + (li.totalLanes * gap) + 'px)';
       bar.style.right = 'auto';
       bar.style.zIndex = 5 + level;
-      var barColor = threadColor(p.thread);   // 桥段条颜色 = 所属线程色（去右上角色点后，条本身颜色即线程标识）
+      var barColor = threadColor(p.thread);   // 情节段条颜色 = 所属线程色（去右上角色点后，条本身颜色即线程标识）
       if (level === 0) {
         bar.style.background = 'linear-gradient(135deg,' + barColor + ',' + barColor + 'cc)';
         bar.style.border = '1px solid rgba(255,255,255,.2)';
@@ -484,13 +484,13 @@
       bar.dataset.tooltip = JSON.stringify({
         title: p.name,
         rows: [
-          ['层级', level === 0 ? '主桥段' : '子桥段 L' + level],
+          ['层级', level === 0 ? '主情节段' : '子情节段 L' + level],
           ['字数', fmtW(p.start) + '—' + fmtW(p.end)],
           ['线程', p.thread || '主线'],
           p.resolves ? ['收局', '解决「' + p.resolves_name + '」'] : null,
           (p.roles && p.roles.length) ? ['出场', p.roles.join('、')] : null,
         ].filter(Boolean).concat(promiseRows),
-        tag: '桥段',
+        tag: '情节段',
       });
       if ((height / 100) * contentH >= 12) {   // 实际像素高 ≥12px 才显示名称：默认4x缩放下 1%≈28px 可显示；缩小到薄条时自动隐藏避免重叠
         var label = document.createElement('span');
@@ -505,15 +505,15 @@
         pbadge.textContent = '↪ 收局';
         bar.appendChild(pbadge);
       }
-      // 设局徽标：被其他桥段 resolves_plot_id 引用的桥段（top-right，与收局徽标并存）
+      // 设局徽标：被其他情节段 resolves_plot_id 引用的情节段（top-right，与收局徽标并存）
       if (setupIds[p.id]) {
         var sbadge = document.createElement('span');
         sbadge.className = 'sl-setup-badge';
         sbadge.textContent = '◉ 设局';
-        sbadge.title = '设局桥段：被后续桥段收束';
+        sbadge.title = '设局情节段：被后续情节段收束';
         bar.appendChild(sbadge);
       }
-      // 读者承诺标记：设局⏳(待兑现) / 收局✅(已兑现)，直接画在桥段条上
+      // 读者承诺标记：设局⏳(待兑现) / 收局✅(已兑现)，直接画在情节段条上
       pms.forEach(function (pm) {
         var badge = document.createElement('span');
         badge.className = 'sl-promise ' + (pm.kind === 'payoff' ? 'ok' : 'pending');
@@ -564,7 +564,7 @@
       svg.appendChild(path);
     });
 
-    // 设局→收局连线：resolves_plot_id 指向的设局桥段 → 本收局桥段的语义色虚线（与父子实线区分）
+    // 设局→收局连线：resolves_plot_id 指向的设局情节段 → 本收局情节段的语义色虚线（与父子实线区分）
     plots.forEach(function (p) {
       if (!p.resolves) return;
       var target = plotById[p.resolves];
@@ -618,7 +618,7 @@
       band.style.right = 'auto';
       band.style.background = 'linear-gradient(135deg,' + t.color + '44,' + t.color + '22)';
       band.style.borderLeft = '2px solid ' + t.color;
-      // 成员列表：哪几个桥段构成这条线、哪处设局哪处收局
+      // 成员列表：哪几个情节段构成这条线、哪处设局哪处收局
       var memberRows = (t.members || []).map(function (m) {
         var tag = m.setup ? '设局' : (m.resolves ? '收局' : '');
         return tag ? [m.name, tag] : [m.name, ''];
@@ -646,7 +646,7 @@
         label.style.borderRadius = '3px';
         band.appendChild(label);
       }
-      // 设局/收局点：在横带上标出成员桥段位置（设局琥珀 / 收局绿）
+      // 设局/收局点：在横带上标出成员情节段位置（设局琥珀 / 收局绿）
       var bandH = wordToPercent(t.end - t.start);
       (t.members || []).forEach(function (m) {
         var point = document.createElement('span');
@@ -733,18 +733,18 @@
         '<div class="sl-root">' +
         '<div class="sl-header"><h1><span class="dot"></span>故事线</h1>' +
         '<div class="sl-header-right">' + zoomHtml +
-        '<div class="sl-meta">总字数 <span>' + fmtW(TOTAL_WORDS) + '</span> · 预计 <span>' + Math.max(1, Math.ceil(TOTAL_WORDS / Math.max(WPC, 1))) + '</span> 章 · 每章约 <span>' + WPC + '</span> 字 · 弧 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
+        '<div class="sl-meta">总字数 <span>' + fmtW(TOTAL_WORDS) + '</span> · 预计 <span>' + Math.max(1, Math.ceil(TOTAL_WORDS / Math.max(WPC, 1))) + '</span> 章 · 每章约 <span>' + WPC + '</span> 字 · 弧 <span>' + outlines.length + '</span> · 情节段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
         '<div class="sl-main">' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
         '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
         '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">📋 弧</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
-        '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">🔗 桥段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
+        '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">🔗 情节段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
         '<div class="sl-lane" style="flex:2"><div class="sl-lane-header">🧵 线程</div><div class="sl-lane-body" id="' + mountId + '-tb"></div></div>' +
         '</div></div>' +
         '<div class="sl-legend">' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#f97583"></span> 弧</div>' +
-        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#79c0ff"></span> 主桥段</div>' +
-        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#a5d6ff"></span> 子桥段</div>' +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#79c0ff"></span> 主情节段</div>' +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#a5d6ff"></span> 子情节段</div>' +
         threadLegendHtml +
         '<div class="sl-legend-item"><span class="sl-legend-swatch payoff-line"></span> ◉设局 → ↪收局</div>' +
         (narrCount.flashback ? '<div class="sl-legend-item"><span class="sl-legend-swatch flashback"></span> 倒叙</div>' : '') +
@@ -791,7 +791,7 @@
       renderAll();
     },
 
-    /* 高亮：按 outline_id / plot_id 给故事线里对应的弧/桥段条加高亮并滚动到可见位置。
+    /* 高亮：按 outline_id / plot_id 给故事线里对应的弧/情节段条加高亮并滚动到可见位置。
        写作流页面在 plot_start / plot_done 时调用。 */
     highlight: function (target) {
       var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
@@ -800,7 +800,7 @@
       var prev = mount.querySelectorAll('.sl-bar.sl-highlight');
       for (var i = 0; i < prev.length; i++) prev[i].classList.remove('sl-highlight');
       var sel = [];
-      // 用类限定：弧条只匹配 sl-bar-outline；桥段条只匹配 sl-bar-plot（避免 data-oid 把整个弧的桥段全点亮）
+      // 用类限定：弧条只匹配 sl-bar-outline；情节段条只匹配 sl-bar-plot（避免 data-oid 把整个弧的情节段全点亮）
       if (target && target.outline_id) sel.push('.sl-bar-outline[data-oid="' + target.outline_id + '"]');
       if (target && target.plot_id) sel.push('.sl-bar-plot[data-pid="' + target.plot_id + '"]');
       if (!sel.length) return;
@@ -815,7 +815,7 @@
       }
     },
 
-    /* 纯滚动：把故事线滚动到目标弧/桥段条可见（不改变高亮状态）。
+    /* 纯滚动：把故事线滚动到目标弧/情节段条可见（不改变高亮状态）。
        Agent 画布控制 scroll_to_plot / scroll_to_outline 使用。 */
     scrollTo: function (target) {
       var mount = _lastMountId ? document.getElementById(_lastMountId) : null;

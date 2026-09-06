@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>🧩 桥段库 <span style="font-size:14px;color:#8b949e">（{{ templates|length }} 模板）</span></h1>
+<h1>🧩 情节段库 <span style="font-size:14px;color:#8b949e">（{{ templates|length }} 模板）</span></h1>
 
 <div class="tabs char-tabs">
     <a href="/plots" class="{{ 'active' if not current_cat else '' }}">全部</a>
@@ -56,7 +56,7 @@ async function togglePlot(id) {
     else showToast('操作失败: ' + (d.error||''), 'error');
 }
 async function deletePlot(id) {
-    if (!confirm('确认删除桥段「' + id + '」？')) return;
+    if (!confirm('确认删除情节段「' + id + '」？')) return;
     const r = await fetch('/api/plots/' + id + '/delete', {method:'POST'});
     const d = await r.json();
     if (d.ok) location.reload();

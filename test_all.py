@@ -54,10 +54,10 @@ def assert_ok(test_name, condition, detail=""):
 print("\n═══ Phase 1: 四大核心库 ═══")
 
 plot = PlotLibrary()
-assert_ok("桥段库-数量", len(plot.templates) >= 12, f"{len(plot.templates)} 模板")
-assert_ok("桥段库-分类", len(plot.categories()) >= 6, f"{len(plot.categories())} 分类")
-assert_ok("桥段库-搜索", len(plot.search(category="开篇")) >= 2)
-assert_ok("桥段库-匹配", len(plot.match_for_chapter("主角在家族大会上被退婚，当众打脸立威", genre="爽文")) > 0)
+assert_ok("情节段库-数量", len(plot.templates) >= 12, f"{len(plot.templates)} 模板")
+assert_ok("情节段库-分类", len(plot.categories()) >= 6, f"{len(plot.categories())} 分类")
+assert_ok("情节段库-搜索", len(plot.search(category="开篇")) >= 2)
+assert_ok("情节段库-匹配", len(plot.match_for_chapter("主角在家族大会上被退婚，当众打脸立威", genre="爽文")) > 0)
 
 struct = StructureLibrary()
 assert_ok("情节弧库-精选弧数", len(struct.roots()) == 16)
@@ -77,13 +77,13 @@ assert_ok("笑点库-搜索", len(gag.search(scene="日常")) > 0)
 
 # 内涵跟随 = 免费规则 THEME_PLOT_COMPAT（theme_lib 移除后的唯一数据源）
 from libraries.storyline import PlotSlot as _PS, mount_themes_and_hooks as _mth, THEME_PLOT_COMPAT as _tpc
-assert_ok("内涵-映射非空", len(_tpc) >= 6, f"{len(_tpc)} 个桥段模板")
+assert_ok("内涵-映射非空", len(_tpc) >= 6, f"{len(_tpc)} 个情节段模板")
 _pc = _PS(id="c", template_id="plot_dating_001", name="退婚", category="爽文", outline_id="o", stage_index=0)
 _mth(_pc, ["公平（Justice）", "牺牲（Sacrifice）"])
-assert_ok("内涵-兼容桥段可挂", _pc.theme_hints == ["公平（Justice）"], str(_pc.theme_hints))
+assert_ok("内涵-兼容情节段可挂", _pc.theme_hints == ["公平（Justice）"], str(_pc.theme_hints))
 _pp = _PS(id="d", template_id="plot_dating_007", name="擂台", category="战斗", outline_id="o", stage_index=0)
 _mth(_pp, ["公平（Justice）"])
-assert_ok("内涵-不兼容桥段不挂", _pp.theme_hints == [], str(_pp.theme_hints))
+assert_ok("内涵-不兼容情节段不挂", _pp.theme_hints == [], str(_pp.theme_hints))
 
 # ══════════════════════════════════════════════
 #  Phase 2: 笔名档案 + 图书管理
@@ -127,7 +127,7 @@ bm.save_outline(cfg.book_id, {"structure": "arc_xuanhuan_01"})
 assert_ok("图书-大纲", bm.get_outline(cfg.book_id) is not None)
 
 # ══════════════════════════════════════════════
-#  Phase 3: 写作核心统一（桥段写作 + 书名简介 + 开场模式，无 LLM）
+#  Phase 3: 写作核心统一（情节段写作 + 书名简介 + 开场模式，无 LLM）
 # ══════════════════════════════════════════════
 print("\n═══ Phase 3: 写作核心统一（无 LLM）═══")
 
@@ -143,15 +143,15 @@ pc = platform_constraints("fanqie")
 assert_ok("平台-番茄约束", "开篇前 500 字必须有冲突或危机" in pc)
 assert_ok("平台-未知平台", platform_constraints("xxx") == "")
 
-assert_ok("开场-第1章前3桥段内", opening_mode_active(1, 0, 0) is True)
+assert_ok("开场-第1章前3情节段内", opening_mode_active(1, 0, 0) is True)
 assert_ok("开场-超800字关闭", opening_mode_active(1, 800, 0) is False)
-assert_ok("开场-超3桥段关闭", opening_mode_active(1, 0, 3) is False)
+assert_ok("开场-超3情节段关闭", opening_mode_active(1, 0, 3) is False)
 assert_ok("开场-非第1章关闭", opening_mode_active(2, 0, 0) is False)
 
 h = PromptHarness(storyline=None, profile=None)
 _o = OutlineSlot(id="o1", template_id="struct_urban_01", name="开篇",
                  start_chapter=1, end_chapter=3, stages=[{"name": "开局", "events": ["x"]}])
-_p = PlotSlot(id="p1", template_id="plot_dating_011", name="开篇桥段", category="开篇",
+_p = PlotSlot(id="p1", template_id="plot_dating_011", name="开篇情节段", category="开篇",
               outline_id="o1", stage_index=0)
 _item = {"outline": _o, "stage": {"name": "开局", "events": ["x"]}, "plot": _p}
 open_p = h.render_bridge_prompt(_item, "", "", "", 300, is_opening=True)
@@ -160,9 +160,9 @@ normal_p = h.render_bridge_prompt(_item, "", "", "", 300, is_opening=False)
 assert_ok("非开场-不含铁律", "开场模式" not in normal_p)
 
 # ══════════════════════════════════════════════
-#  Phase 3.5: 线程穿插 + 桥段拆分（无 LLM）
+#  Phase 3.5: 线程穿插 + 情节段拆分（无 LLM）
 # ══════════════════════════════════════════════
-print("\n═══ Phase 3.5: 线程穿插 + 桥段拆分（无 LLM）═══")
+print("\n═══ Phase 3.5: 线程穿插 + 情节段拆分（无 LLM）═══")
 
 from libraries.storyline import BookStoryline, OutlineSlot, PlotSlot, structure_to_stages
 from libraries.storyline_writer import StorylineChapterWriter
@@ -244,7 +244,7 @@ _wtl3 = BookStoryline.from_dict(BookStoryline.from_dict({"words_per_chapter": 30
     {"id": "w3", "template_id": "t", "name": "无损", "start_word": 500, "end_word": 1200}]}).to_dict())
 assert_ok("字轴-往返无损", _wtl3.outlines[0].start_word == 500 and _wtl3.outlines[0].end_word == 1200)
 
-# 故事线校验工具 validate_storyline（弧树覆盖纵轴 + 桥段仅最底层弧）
+# 故事线校验工具 validate_storyline（弧树覆盖纵轴 + 情节段仅最底层弧）
 from agent_tools import validate_storyline, validate_world
 _v_invalid = validate_storyline(outlines=[
     {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 10000},
@@ -263,7 +263,7 @@ _v_valid = validate_storyline(outlines=[
 ], plots=[{"id": "p1", "name": "桥1", "outline_id": "a1b"}])
 assert_ok("校验-合法通过", _v_valid["passed"] is True and _v_valid["issue_count"] == 0)
 
-# 弧内空白（arc_fill：跨度远超桥段 planned_words）
+# 弧内空白（arc_fill：跨度远超情节段 planned_words）
 _v_fill = validate_storyline(outlines=[
     {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 80000},
     {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 80000},
@@ -273,7 +273,7 @@ _v_fill = validate_storyline(outlines=[
 ])
 assert_ok("校验-弧内空白", _v_fill["arc_fill"]["passed"] is False
           and len(_v_fill["arc_fill"]["issues"]) == 1)
-# 收紧阈值：弧跨度 24k、桥段 16k（ratio 1.5，旧阈值放过）→ 弧内空白超一章即硬失败
+# 收紧阈值：弧跨度 24k、情节段 16k（ratio 1.5，旧阈值放过）→ 弧内空白超一章即硬失败
 _v_fill2 = validate_storyline(outlines=[
     {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 24000},
     {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 24000},
@@ -637,9 +637,9 @@ _bs_mod.get_build_status = _orig_get
 _bs_mod.set_build_status({})   # 恢复空态，不残留真实向导状态
 
 # ══════════════════════════════════════════════
-#  Phase: 桥段目标字数 plot.words（反印刷感）
+#  Phase: 情节段目标字数 plot.words（反印刷感）
 # ══════════════════════════════════════════════
-print("\n═══ Phase: 桥段目标字数 plot.words（反印刷感）═══")
+print("\n═══ Phase: 情节段目标字数 plot.words（反印刷感）═══")
 from libraries.storyline import BookStoryline as _BS2, PlotSlot as _PS2
 from libraries.storyline_writer import planned_words as _pw
 
@@ -657,7 +657,7 @@ import agent_tools as _at
 def _mkout(_id, _n, _sw, _ew, _parent=""):
     return {"id": _id, "name": _n, "start_word": _sw, "end_word": _ew,
             **({"parent_arc_id": _parent} if _parent else {})}
-# 均匀样例：3 叶弧各 3000、桥段 words 全 1000 → structure_hints 双 True 且 passed 不受影响
+# 均匀样例：3 叶弧各 3000、情节段 words 全 1000 → structure_hints 双 True 且 passed 不受影响
 _out_u = [_mkout("top", "顶层A", 0, 9000),
           _mkout("l1", "叶1", 0, 3000, "top"), _mkout("l2", "叶2", 3000, 6000, "top"), _mkout("l3", "叶3", 6000, 9000, "top")]
 _pl_u = [{"id": "p%d" % i, "name": "桥%d" % i, "outline_id": ["l1", "l1", "l1", "l2", "l2", "l2", "l3", "l3", "l3"][i],
@@ -668,7 +668,7 @@ assert_ok("validate-均匀叶弧/全同字数报软提示",
           and _r_u.get("structure_hints", {}).get("uniform_bridge_words") is True,
           str(_r_u.get("structure_hints")))
 assert_ok("validate-软提示不改passed", _r_u.get("passed") is True)
-# 差异化样例：叶弧跨度 2000/3000/4000、桥段 words 不同 → 双 False、无 suggestion
+# 差异化样例：叶弧跨度 2000/3000/4000、情节段 words 不同 → 双 False、无 suggestion
 _out_v = [_mkout("top", "顶层B", 0, 9000),
           _mkout("d1", "叶B1", 0, 2000, "top"), _mkout("d2", "叶B2", 2000, 5000, "top"), _mkout("d3", "叶B3", 5000, 9000, "top")]
 _wv = {"d1": [1200, 800], "d2": [1000, 1000, 1000], "d3": [600, 800, 1000, 600]}

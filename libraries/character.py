@@ -1,7 +1,7 @@
 """
 角色原型库（Character Library）— 网文高频人物性格原型 + 代表人物
 
-与桥段/大纲/笑点三库同构（全局 JsonLibrary 单例，libraries/data/characters.jsonl）。
+与情节段/大纲/笑点三库同构（全局 JsonLibrary 单例，libraries/data/characters.jsonl）。
 供「设定表单从原型库选」与后续生成注入使用；每本书的人物仍存各自 basic_info.characters。
 """
 from dataclasses import dataclass, field
