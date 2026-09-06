@@ -14,6 +14,8 @@ bp = Blueprint("dashboard", __name__)
 def dashboard():
     rows = _book_rows()
     pen_names = profiles.list_all()
+    from libraries import style_samples
+    _ss = style_samples.load_samples()
     return render_template("dashboard.html",
         books=rows, pen_names=pen_names,
         plot_count=len(plot_lib.templates),
@@ -21,6 +23,7 @@ def dashboard():
         gag_count=len(gag_lib.patterns),
         char_count=len(char_lib.archetypes),
         style_rule_count=len(style_rules.rules),
+        sample_count=len(_ss) if _ss is not None else 0,
         engine_count=len(_engines),
     )
 
@@ -226,8 +229,8 @@ def start_new_book():
     return render_template("start_book.html",
         pen_names=profiles.list_all(),
         structures=struct_lib.display_trees(),
-        openings=plot_lib.search(category="开篇"),
-        golden_fingers=plot_lib.search(category="成长") + plot_lib.search(category="爽文"),
+        openings=plot_lib.search(category="开篇引入"),
+        golden_fingers=plot_lib.search(category="战斗历练") + plot_lib.search(category="谋划布局"),
         borrow_books=_borrow_books(),
         world_tags=WORLD_TAG_GROUPS,
     )

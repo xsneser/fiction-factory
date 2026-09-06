@@ -339,9 +339,9 @@ PRESET_PROFILES = [
             "action_beats": ["眯眼", "挑眉", "咂嘴", "不动声色地"],
         },
         "tropes": {
-            "preferred_plots": ["plot_dating_001", "plot_dating_005", "plot_dating_008"],
+            "preferred_plots": ["plot_confront_001", "plot_reveal_001", "plot_action_001"],
             "preferred_gags": ["gag_001", "gag_003", "gag_007"],
-            "avoid_plots": ["plot_dating_006"],
+            "avoid_plots": ["plot_danger_003"],
             "chapter_hook_style": "断在最精彩处，每章留钩子",
             "scene_pacing": "快节奏（每章必有爽点）",
         },

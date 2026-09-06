@@ -479,15 +479,15 @@ def structure_to_stages(stage_nodes, words_per_chapter: int = 3000) -> list[dict
 # 内涵→情节段兼容映射（免费规则，替代 theme_lib.compatible_plots）
 # 由内置内涵 compatible_plots 反查：情节段模板 id → 可承载内涵名（保留完整名，与 tl.themes 一致）。
 # 删除 theme_lib 后此常量是「内涵跟随情节段」的唯一数据源。
+# 2026-09-06 段库种子从零重编(id 换新),旧 plot_dating_* 键一并迁移到新功能类种子。
 THEME_PLOT_COMPAT = {
-    "plot_dating_001": ["公平（Justice）", "身份与伪装（Identity & Disguise）"],
-    "plot_dating_003": ["归属感（Belonging）", "传承与突破（Legacy & Breakthrough）"],
-    "plot_dating_004": ["成长的代价（Cost of Growth）", "传承与突破（Legacy & Breakthrough）"],
-    "plot_dating_005": ["公平（Justice）"],
-    "plot_dating_006": ["成长的代价（Cost of Growth）", "牺牲（Sacrifice）"],
-    "plot_dating_008": ["身份与伪装（Identity & Disguise）"],
-    "plot_dating_010": ["公平（Justice）", "成长的代价（Cost of Growth）",
-                        "牺牲（Sacrifice）", "归属感（Belonging）"],
+    "plot_confront_001": ["公平（Justice）", "身份与伪装（Identity & Disguise）"],
+    "plot_reveal_001": ["身份与伪装（Identity & Disguise）", "公平（Justice）"],
+    "plot_reveal_003": ["公平（Justice）", "身份与伪装（Identity & Disguise）"],
+    "plot_rel_001": ["归属感（Belonging）"],
+    "plot_rel_003": ["归属感（Belonging）"],
+    "plot_action_003": ["牺牲（Sacrifice）", "成长的代价（Cost of Growth）"],
+    "plot_after_001": ["成长的代价（Cost of Growth）", "牺牲（Sacrifice）", "归属感（Belonging）"],
 }
 
 
@@ -556,16 +556,12 @@ class StorylineBuilder:
         if not self.structures:
             return []
 
-        # 题材方向→常见弧模板序列
-        genre_map = {
-            "玄幻": ["arc_xuanhuan_01", "arc_xuanhuan_01"],  # 试炼扬名×2
-            "都市": ["arc_dushi_01", "arc_dushi_01"],
-            "言情": ["arc_tianwen_01", "arc_tianwen_01"],
-            "悬疑": ["arc_xuanyi_01", "arc_xuanyi_01"],
-            "穿越": ["arc_chuanyue_01", "arc_xuanhuan_01"],
-        }
-
-        template_ids = genre_map.get(genre, ["arc_xuanhuan_01"])
+        # 题材方向→弧模板序列：按 tags 首词匹配 genre；无匹配则取库前 2 条。
+        # （旧 genre_map 硬编码 arc_xuanhuan_01 等 id 已不存在，属死路径；2026-09-06 重编种子后改为现取）
+        roots = self.structures.roots()
+        by_tag = [t for t in roots if (t.tags or [""])[0] == genre]
+        pick = (by_tag or roots)[:2]
+        template_ids = [t.id for t in pick]
         outlines = []
         ch = 1
         for i, tid in enumerate(template_ids):

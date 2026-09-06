@@ -41,7 +41,12 @@ _SCENE_KEYWORDS = [
 ]
 
 # category 兜底(仅关键词扫不到时用;只放可信映射)
+# 2026-09-06 段库种子重编后采用 12 功能分类,先放长分类名(精确命中优先),再保留旧词兼容。
 _CATEGORY_SCENE = {
+    "对峙冲突": "confrontation", "谈判交涉": "negotiation", "对白交锋": "dialogue",
+    "情感羁绊": "dialogue", "推理查证": "investigation", "揭秘真相": "revelation",
+    "战斗历练": "action", "危机求生": "danger", "余波收尾": "aftermath",
+    "谋划布局": "planning", "平静日常": "quiet", "开篇引入": "transition",
     "战斗": "action", "打斗": "action", "热血": "action",
     "悬念": "revelation", "悬疑": "investigation", "惊悚": "danger", "恐怖": "death",
     "推理": "investigation", "反转": "revelation", "解谜": "investigation",
