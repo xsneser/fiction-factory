@@ -15,7 +15,7 @@
 </div>
 
 <!-- ② 样文 · STYLE REFERENCE：样文库（多条，各带 场景标签/来源/字数/备注；原文勿润色） -->
-<h2 class="sr-sec-title">✍️ 样文 · STYLE REFERENCE <span>逐条元数据；注入时系统按预算自动选样</span></h2>
+<h2 class="sr-sec-title">✍️ 样文 · STYLE REFERENCE <span>逐条元数据；全量注入（dsh 裁剪已关，不裁中段）</span></h2>
 <details class="sr-help">
     <summary>📐 选样方法论 —— 怎么挑一份好样文（点击展开）</summary>
     <ul class="sr-help-list">
@@ -30,12 +30,13 @@
 <div class="card sr-card">
     <div id="ref-list">
     {% for s in samples %}
-    <div class="sr-sample-item" data-id="{{ s.id }}">
+    <div class="sr-sample-item" data-id="{{ s.id }}" data-nowarn="{{ '1' if s.no_warn else '0' }}">
         <div class="sr-sample-head">
             <span class="sr-no">#{{ loop.index }}</span>
             <input class="sr-title" placeholder="标题（如：开场·众人苏醒）" value="{{ s.title }}" spellcheck="false">
             <input class="sr-tags" placeholder="场景标签（顿号/逗号分隔，自由）" value="{{ s.scene_tags|join('、') }}" spellcheck="false">
             <span class="sr-wc">约 {{ s.word_count }} 字</span>
+            <label class="sr-nowarn" title="该条短或与其它条整段重叠也接受（人工确认保留），保存不弹预警"><input type="checkbox" class="sr-nowarn-cb">不预警</label>
             <span class="sr-btns">
                 <button type="button" class="small" title="前移（注入优先级↑）" onclick="moveSample(this,-1)">↑</button>
                 <button type="button" class="small" title="后移（注入优先级↓）" onclick="moveSample(this,1)">↓</button>
@@ -54,6 +55,7 @@
             <input class="sr-title" placeholder="标题（如：开场·众人苏醒）" spellcheck="false">
             <input class="sr-tags" placeholder="场景标签（顿号/逗号分隔，自由）" spellcheck="false">
             <span class="sr-wc">约 0 字</span>
+            <label class="sr-nowarn" title="该条短或与其它条整段重叠也接受（人工确认保留），保存不弹预警"><input type="checkbox" class="sr-nowarn-cb">不预警</label>
             <span class="sr-btns">
                 <button type="button" class="small" title="前移（注入优先级↑）" onclick="moveSample(this,-1)">↑</button>
                 <button type="button" class="small" title="后移（注入优先级↓）" onclick="moveSample(this,1)">↓</button>
@@ -139,6 +141,7 @@ function sampleRowHTML(id, data) {
           '<input class="sr-title" placeholder="标题（如：开场·众人苏醒）" value="' + esc(data.title) + '" spellcheck="false">' +
           '<input class="sr-tags" placeholder="场景标签（顿号/逗号分隔，自由）" value="' + esc((data.scene_tags||[]).join('、')) + '" spellcheck="false">' +
           '<span class="sr-wc">约 ' + (data.word_count||0) + ' 字</span>' +
+          '<label class="sr-nowarn" title="该条短或与其它条整段重叠也接受（人工确认保留），保存不弹预警"><input type="checkbox" class="sr-nowarn-cb"' + (data.no_warn?' checked':'') + '>不预警</label>' +
           '<span class="sr-btns">' +
             '<button type="button" class="small" title="前移（注入优先级↑）" onclick="moveSample(this,-1)">↑</button>' +
             '<button type="button" class="small" title="后移（注入优先级↓）" onclick="moveSample(this,1)">↓</button>' +
@@ -148,7 +151,7 @@ function sampleRowHTML(id, data) {
         '<input class="sr-source" placeholder="来源（如：《十日终焉》第1章 · 开场→苏醒）" value="' + esc(data.source) + '" spellcheck="false">' +
         '<input class="sr-note-in" placeholder="备注（为何选这段 / 学习重点；留空可）" value="' + esc(data.note) + '" spellcheck="false">' +
         '<textarea class="sr-textarea sr-ref-editor" spellcheck="false" placeholder="# 完整连续场景原文（1500-3000 字；勿润色）"></textarea>';
-    return '<div class="sr-sample-item" data-id="' + esc(id||'') + '">' + head + '</div>';
+    return '<div class="sr-sample-item" data-id="' + esc(id||'') + '" data-nowarn="' + (data.no_warn?'1':'0') + '">' + head + '</div>';
 }
 function addSample() {
     var list = document.getElementById('ref-list');
@@ -206,9 +209,11 @@ function readSamples() {
         if (!txt) return null;
         var tags = (item.querySelector('.sr-tags').value || '').split(/[、，,]/)
                        .map(function(s){ return s.trim(); }).filter(Boolean);
+        var nw = item.querySelector('.sr-nowarn-cb');
         return {id: item.dataset.id || '', title: item.querySelector('.sr-title').value.trim(),
                 scene_tags: tags, source: item.querySelector('.sr-source').value.trim(),
-                note: item.querySelector('.sr-note-in').value.trim(), text: txt};
+                note: item.querySelector('.sr-note-in').value.trim(), text: txt,
+                no_warn: !!(nw && nw.checked)};
     }).filter(Boolean);
 }
 async function saveRef() {
@@ -239,6 +244,11 @@ async function saveRef() {
             var wc = item && item.querySelector('.sr-wc');
             if (wc) wc.textContent = '约 ' + wcOf(t.value) + ' 字';
         }
+    });
+    // 初始勾选「不预警」(no_warn 由服务端渲染进 data-nowarn)
+    if (list) list.querySelectorAll('.sr-sample-item').forEach(function(it) {
+        var cb = it.querySelector('.sr-nowarn-cb');
+        if (cb && it.dataset.nowarn === '1') cb.checked = true;
     });
     renumber();
 })();

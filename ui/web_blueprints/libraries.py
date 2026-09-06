@@ -63,9 +63,12 @@ def _load_profile_samples(scope_label):
 
 
 def _warn_short(samples):
-    """单条字数软预警：<800 字可能只是金句/片段(选样方法论:完整连续场景,1500~3000 为佳)。"""
+    """单条字数软预警：<800 字可能只是金句/片段(选样方法论:完整连续场景,1500~3000 为佳)。
+    no_warn(人工确认保留,如天然短的开场/对白聚焦)不预警。"""
     out = []
     for s in samples:
+        if getattr(s, "no_warn", False):
+            continue
         if s.word_count and s.word_count < 800:
             label = s.title or s.id
             out.append(f"样文 {label} 约 {s.word_count} 字,<800 可能只是金句/片段——"

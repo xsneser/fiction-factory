@@ -373,8 +373,9 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
     # 其后若存在 storage/style_refs/<pen>.reference.txt → 追加为 STYLE REFERENCE 人工样本(最高风格来源)。
     # 无 md → 回退规则拼装(legacy,数组照旧)。每次现读文件,手改 md/样本即刻生效。
     style_md_text = style_md.read_style_md(profile)
-    # STYLE REFERENCE 样文:权威源 samples.json(预算选样渲染,保 style_rules < dsh 8192 字符阈值、
-    # 免中段被裁);无 JSON → 旧 reference.txt 兜底。md 单独保留、不参与裁剪。
+    # STYLE REFERENCE 样文:权威源 samples.json(dsh tool-result-pruner 默认已关 → 预算 0 = 全量
+    # 注入全部样文,不被 8192 裁中段;设 NE_KEEP_TOOL_PRUNE=1 保留时回到预算选样)。
+    # 无 JSON → 旧 reference.txt 兜底。md 单独保留、不参与裁剪。
     ref_text, ref_meta = style_samples.build_ref_text_for_profile(profile)
     sample_driven = style_md_text is not None
     if sample_driven:
@@ -421,7 +422,7 @@ def _ref_summary(meta) -> str:
     max_chars = meta.get("max_chars")
     if mode == "samples":
         ids = ",".join(sel) if sel else "-"
-        budget = f"预算≤{max_chars}" if max_chars else "不限"
+        budget = "全量(pruner 关)" if not max_chars else f"预算≤{max_chars}"
         return f"STYLE REFERENCE: 注入样文 {len(sel)}/{total} 条 [{ids}] ≈{chars} 字符 {budget}"
     return f"STYLE REFERENCE(legacy 旧文件): 注入 {meta.get('count', 0)}/{total} 段 ≈{chars} 字符"
 
@@ -474,13 +475,16 @@ def _samples_ctx(profile_id: str):
 
 
 def add_style_sample(profile_id: str, text: str, title: str = "", scene_tags: list = None,
-                     source: str = "", note: str = "", replace_id: str = "") -> dict:
+                     source: str = "", note: str = "", replace_id: str = "",
+                     no_warn: bool = None) -> dict:
     """给笔名加/替换一条 STYLE REFERENCE 人工样文。
 
     供 agent 把参考书里的**完整连续场景**按段截取入库(不拆技巧、不润色、保留普通解释句;
     别单喂金句/纯高潮)。scene_tags=自由场景标签(如 场景开场/推理观察/多人对白/冲突·威胁/
     规则·死亡/过渡·日常/独处·心理,可扩展);note 记为何选这段/学习重点。replace_id 给出则替换
-    该条,否则追加。服务端算字数并再生 reference.txt 镜像;预算注入由系统负责(见 ref_summary)。"""
+    该条,否则追加。no_warn=True 标「人工确认保留」(该条短或与其它条整段重叠也接受,不弹预警,
+    如从推理里截的对白聚焦样本)。服务端算字数并再生 reference.txt 镜像;注入全量由系统负责。
+    """
     profile, pen, cur = _samples_ctx(profile_id)
     txt = (text or "").strip()
     if not txt:
@@ -488,11 +492,14 @@ def add_style_sample(profile_id: str, text: str, title: str = "", scene_tags: li
     records = [s.to_dict() for s in cur]
     meta = {"title": (title or "").strip(),
             "scene_tags": [str(t).strip() for t in (scene_tags or []) if str(t).strip()],
-            "source": (source or "").strip(), "note": (note or "").strip()}
+            "source": (source or "").strip(), "note": (note or "").strip(),
+            "no_warn": bool(no_warn)}
     rid = (replace_id or "").strip()
     if rid:
         for r in records:
             if r.get("id") == rid:
+                if no_warn is None:
+                    meta.pop("no_warn")  # 替换但未指定 → 保留原 no_warn
                 r.update(meta)
                 r["text"] = txt
                 break

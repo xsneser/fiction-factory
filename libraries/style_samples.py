@@ -29,11 +29,17 @@ _REFS = os.path.join(_ROOT, "storage", "style_refs")
 _SAMPLE_RE = re.compile(r"<sample>(.*?)</sample>", re.S)
 _WS_RE = re.compile(r"\s+")
 
-# dsh tool-result-pruner 阈值(vendor/dsh-ne/config/agent-presets/*/agent.cordis.yml:
-# thresholdChars: 8192,字符)。get_pen_style 把 md+样文拼进 style_rules,整体须留余地。
+# dsh tool-result-pruner 阈值(headless profile 实际生效源 = dsh-base bundle:
+# vendor/dsh-ne/node_modules/@deepseek-ai/dsh-base/cordis.patch.yml thresholdChars:
+# 8192,字符)。dsh_bridge overlay 默认把 pruner disabled;设 NE_KEEP_TOOL_PRUNE=1 保留。
 DSH_RESULT_THRESHOLD_CHARS = 8192
 # style_rules 里 md/引导语/字段杂项之外留给样文的保底;md 越大留给样文越少。
 _SAFETY_CHARS = 512
+
+
+def tool_prune_enabled() -> bool:
+    """dsh tool-result-pruner 是否保留(默认关→样文可全量注入;设 NE_KEEP_TOOL_PRUNE=1 保留)。"""
+    return bool(os.environ.get("NE_KEEP_TOOL_PRUNE"))
 
 
 def samples_path(pen_name: str) -> str:
@@ -80,6 +86,8 @@ class StyleSample:
     source: str = ""
     note: str = ""
     word_count: int = 0
+    # 人工确认保留:该条短(<800)或与其它条整段重叠也接受 → 保存不弹对应软预警
+    no_warn: bool = False
 
     def __post_init__(self):
         self.scene_tags = [t for t in (self.scene_tags or []) if (t or "").strip()]
@@ -103,6 +111,7 @@ class StyleSample:
             source=str(d.get("source") or "").strip(),
             note=str(d.get("note") or "").strip(),
             word_count=int(d.get("word_count") or 0),
+            no_warn=bool(d.get("no_warn") or False),
         )
 
 
@@ -233,10 +242,14 @@ def select_for_budget(samples: list, max_chars):
 
 
 def estimate_budget_for(style_md_text, guide_chars=None):
-    """估算 style_rules 里留给样文的预算:阈值 − md − 引导语 − 安全边距。
+    """估算 style_rules 里留给样文的预算。
 
-    下限 1000 字符(至少够短样本);md 过大时不再挤兑,宁让整体超一点。
+    - 默认(dsh pruner 已关):返回 0 = 不限 → select_for_budget 全量放行,四条样文都注入;
+    - 设 NE_KEEP_TOOL_PRUNE=1(保留 pruner):阈值 − md − 引导语 − 安全边距,下限 1000,
+      让 md+样文整体 ≤ dsh 8192 字符阈值免被裁中段。
     """
+    if not tool_prune_enabled():
+        return 0
     md_len = count_text_chars(style_md_text)
     budget = DSH_RESULT_THRESHOLD_CHARS - md_len - _SAFETY_CHARS - (guide_chars or 0)
     return max(1000, budget)
@@ -301,14 +314,17 @@ def build_ref_text_for_profile(profile, max_chars=None):
 def duplicate_warnings(samples: list) -> list:
     """近似重复检测:某条归一化文本整段包含于另一条 → 短者报「重复(子段)」。
 
-    把当前 ②③ 这类「样文③是样文②子段」的冗余暴露出来(UI/MCP 保存后提示,不硬拦)。
+    把「样文③是样文②子段」这类冗余暴露出来(UI/MCP 保存后提示,不硬拦)。
+    任一方标 no_warn(人工确认保留,如对白是从推理里截的聚焦样本)则跳过该对。
     """
-    norm = {}
+    norm, no_warn = {}, {}
     for s in samples:
         t = (s.text or "").strip()
         if not t:
             continue
         norm[s.id] = _WS_RE.sub("", t)
+        if s.no_warn:
+            no_warn[s.id] = True
     warns = []
     ids = [s.id for s in samples if (s.text or "").strip()]
     for i in range(len(ids)):
@@ -316,6 +332,8 @@ def duplicate_warnings(samples: list) -> list:
             if i == j:
                 continue
             a, b = ids[i], ids[j]
+            if no_warn.get(a) or no_warn.get(b):
+                continue  # 任一方人工确认保留 → 不提示重复
             na, nb = norm.get(a, ""), norm.get(b, "")
             # 只报较短者是较长者的子段(明显冗余);两条均不短到失去意义
             if len(na) >= 80 and len(na) <= len(nb) and na in nb:

@@ -588,6 +588,8 @@
         .sr-source { flex:2; min-width:220px; }
         .sr-wc { font-size:11px; color:#8b949e; white-space:nowrap; }
         .sr-btns { display:flex; gap:4px; }
+        .sr-nowarn { display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#d29922; white-space:nowrap; cursor:pointer; }
+        .sr-nowarn input { accent-color:#d29922; margin:0; }
         .sr-note-in { width:100%; margin:0 0 8px; color:#8b949e; }
         .sr-title:focus, .sr-tags:focus, .sr-source:focus, .sr-note-in:focus { outline:none; border-color:#58a6ff; }
         .sr-sample-item .sr-ref-editor { flex:1; min-height:240px; }

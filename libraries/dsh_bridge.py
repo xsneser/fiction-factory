@@ -325,6 +325,13 @@ def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
         "      config:\n"
         "        task: !!js ctx.headlessStartup.task\n"
     )
+    if not os.environ.get("NE_KEEP_TOOL_PRUNE"):
+        # 关 tool 结果裁剪(2026-09-06):get_pen_style 全量注入 md+四条样文也不被裁中段。
+        # 逃生口:NE_KEEP_TOOL_PRUNE=1 时不注入该条(保留 dsh-base 默认 8192 阈值裁剪)。
+        yaml_text += (
+            "- id: tool-result-pruner\n"
+            "  disabled: true\n"
+        )
     os.makedirs(os.path.dirname(_OVERLAY_PATH), exist_ok=True)
     with open(_OVERLAY_PATH, "w", encoding="utf-8") as f:
         f.write(yaml_text)
