@@ -27,6 +27,22 @@ def _parse_platform_accounts(form):
             accounts[pl] = entry
     return accounts
 
+
+def _project_root():
+    """项目根目录（libraries.py 在 ui/web_blueprints/ 下，上溯三层）。"""
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _read_text_file(path):
+    """读取文本文件；不存在/异常返回空串（样文/MD 等可选文件）。"""
+    try:
+        if path and os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+    except Exception:
+        pass
+    return ""
+
 @bp.route("/plots")
 def plots():
     cat = request.args.get("category","")
@@ -262,18 +278,55 @@ def profile_list():
         own_p = style_rules.rules_for(p.id)
         pr = [r for r in own_p if r.kind == "prefer" and r.enabled]
         bn = [r for r in own_p if r.kind == "ban" and r.enabled]
+        _pj = (" · ".join(r.pattern for r in pr[:3]) + ("…" if len(pr) > 3 else "")) if pr else ""
+        _bf = "、".join(r.pattern for r in bn[:3]) if bn else ""
         summaries[p.id] = {
-            "prefers_joined": (" · ".join(r.pattern for r in pr[:3]) + ("…" if len(pr) > 3 else "")) if pr else "",
+            "prefers_joined": (_pj[:140] + "…" if len(_pj) > 140 else _pj),
             "ban_count": len(bn),
-            "bans_first": "、".join(r.pattern for r in bn[:3]) if bn else "",
+            "bans_first": (_bf[:60] + "…" if len(_bf) > 60 else _bf),
         }
+    # 样本驱动三件套：风格 MD（styles/<笔名>.md）+ 人工样文（storage/style_refs/<笔名>.reference.txt）
+    _root = _project_root()
+    md_content = _read_text_file(os.path.join(_root, "styles", scope_label + ".md")) if (selected and not is_new) else ""
+    reference_content = _read_text_file(os.path.join(_root, "storage", "style_refs", scope_label + ".reference.txt")) if (selected and not is_new) else ""
     return render_template("profiles.html",
         profiles=all_profiles, selected=selected, is_new=is_new,
         current_scope=current_scope, scope_label=scope_label,
         prefers=[r for r in own if r.kind == "prefer"],
         bans=[r for r in own if r.kind == "ban"],
         summaries=summaries,
-        platform_labels=PLATFORM_LABELS)
+        platform_labels=PLATFORM_LABELS,
+        md_content=md_content, reference_content=reference_content)
+
+
+@bp.route("/api/profile/<profile_id>/md", methods=["POST"])
+def profile_md_save(profile_id):
+    """保存笔名风格 MD 到 styles/<笔名>.md（直接覆盖；后续 sync 可能按手写源回写）。"""
+    p = profiles.get(profile_id)
+    if not p:
+        return jsonify({"ok": False, "error": "笔名不存在"}), 404
+    d = request.get_json(silent=True) or {}
+    content = str(d.get("content") or "")
+    path = os.path.join(_project_root(), "styles", p.pen_name + ".md")
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+    return jsonify({"ok": True, "path": path})
+
+
+@bp.route("/api/profile/<profile_id>/reference", methods=["POST"])
+def profile_reference_save(profile_id):
+    """保存人工样文到 storage/style_refs/<笔名>.reference.txt。"""
+    p = profiles.get(profile_id)
+    if not p:
+        return jsonify({"ok": False, "error": "笔名不存在"}), 404
+    d = request.get_json(silent=True) or {}
+    content = str(d.get("content") or "")
+    ref_dir = os.path.join(_project_root(), "storage", "style_refs")
+    os.makedirs(ref_dir, exist_ok=True)
+    path = os.path.join(ref_dir, p.pen_name + ".reference.txt")
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+    return jsonify({"ok": True, "path": path})
 
 
 @bp.route("/profiles/<profile_id>/delete", methods=["POST"])
