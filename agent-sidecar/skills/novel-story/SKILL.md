@@ -26,7 +26,7 @@ description: 弧+写作阶段。写正文/写下一章/写桥段/续写扩写/�
 ### 上下文组装（单次读取）
 - **一次** `get_writing_context(book_id)` → 书(tags)+故事线+弧+章节摘要+draft+next_bridge+style_card，一次拿全。
 - 整理成「写 next_bridge + 出场角色 + 风格 + 前文语气」，**自己生成正文**。逐桥段循环每轮只重取一次；**不要**再单独调 get_book_detail/get_storyline。
-- **笔名风格强约束（必读必遵）**：动笔前先 `get_pen_style(book_id)` 拿该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），逐条遵守；每轮 `get_writing_context` 的 `style_card` 是**精简风格提醒（必读，防风格漂移）**。**未拿到风格不得写正文**；被裁剪/信息不足时用 `get_pen_style` 重读（独立薄工具，不纠缠全量上下文）。若 `get_pen_style` 的 `style_rules` 内含 `STYLE REFERENCE` 人工样本段，它是**最高风格来源**：直接参考其语言惯性/叙述距离/信息组织/对白衔接继续创作，**不总结、不抽公式、不套模板**；md 原则与规则只作负约束。样文全量注入（dsh 工具结果裁剪已关，不截中段）；想就某场景聚焦时用 `list_style_samples` 看库、`get_style_sample` 拉该条全文。
+- **笔名风格强约束（必读必遵）**：动笔前先 `get_pen_style(book_id)` 拿该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），逐条遵守；每轮 `get_writing_context` 的 `style_card` 是**精简风格提醒（必读，防风格漂移）**。**未拿到风格不得写正文**；被裁剪/信息不足时用 `get_pen_style` 重读（独立薄工具，不纠缠全量上下文）。若 `get_pen_style` 的 `style_rules` 内含 `STYLE REFERENCE` 人工样本段，它是**最高风格来源**：直接参考其语言惯性/叙述距离/信息组织/对白衔接继续创作，**不总结、不抽公式、不套模板**；md 原则与规则只作负约束。样文全量注入（dsh 工具结果裁剪已关，不截中段）；注入文本里每条样文前标 `# 场景:…`，`get_pen_style.samples` 给 id/title/scene_tags（无正文）——写某场景就就近参考对应标签样本，想聚焦再用 `get_style_sample` 拉全文。
 
 ### 生成 → 落盘（逐桥段）
 - 用 next_bridge（第一个未写桥段）→ **你自主生成正文** → `save_bridge_draft(book_id, chapter_num=N, plot_id, plot_name, text)` 落草稿。

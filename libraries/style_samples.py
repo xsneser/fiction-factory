@@ -193,11 +193,19 @@ _REFERENCE_GUIDE = (
 
 
 def render_reference(samples: list) -> str:
-    """渲染 STYLE REFERENCE 文本:标题 + §6 引导语 + <sample> 块(供镜像与注入)。"""
+    """渲染 STYLE REFERENCE 文本:标题 + §6 引导语 + 每条样文(前带 `# 场景:…` 标签行)。
+
+    标签行在 `<sample>` 块**外**(解析正文不受影响),只让模型知道这段对应什么场景,
+    写对应场景时可就近参考。无 scene_tags 的条目不产标签行。
+    """
     if not samples:
         return ""
-    blocks = "\n\n".join("<sample>\n{0}\n</sample>".format(s.text) for s in samples)
-    return "# STYLE REFERENCE\n\n{0}\n\n{1}".format(_REFERENCE_GUIDE, blocks)
+    blocks = []
+    for s in samples:
+        tags = s.scene_tags or []
+        head = ("# 场景:" + " · ".join(tags) + "\n") if tags else ""
+        blocks.append("{0}<sample>\n{1}\n</sample>".format(head, s.text))
+    return "# STYLE REFERENCE\n\n{0}\n\n{1}".format(_REFERENCE_GUIDE, "\n\n".join(blocks))
 
 
 def select_for_budget(samples: list, max_chars):

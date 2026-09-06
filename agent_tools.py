@@ -396,6 +396,13 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
                          for r in rules if r.kind == "ban" and not r.replacements and r.pattern],
         }
         ref_summary = ""
+    # 场景标签结构化视图(无正文,保持薄):写作 agent 按 id/title/scene_tags 就近参考
+    # 对应场景的样本(正文已全量注入;需要单条全文用 get_style_sample)。
+    meta_samples = []
+    _cur = style_samples.load_samples((profile.pen_name or "").strip())
+    if _cur:
+        meta_samples = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
+                         "word_count": s.word_count, "source": s.source} for s in _cur]
     return {
         "pen_name": profile.pen_name,
         "language": profile.language or "zh",
@@ -405,9 +412,10 @@ def get_pen_style(book_id: str = "", profile_id: str = "") -> dict:
         "forbidden": forbidden,
         "language_hint": profile.build_language_hints(),
         "discipline": "【通用写作纪律】" + "；".join(profile.discipline_items()),
-        # 注入观测:预算内实际注入哪些样文/共多少条。被截断时写作 agent 可用
-        # list/get_style_sample 按场景拉指定样本(工作文件 §11 预算注入已落地)。
+        # 注入观测:实际注入哪些样文/共多少条(ref_summary);samples = 场景标签结构化
+        # 视图(id/title/scene_tags/字数,无正文),想聚焦某场景再 get_style_sample 取全文。
         "ref_summary": ref_summary,
+        "samples": meta_samples,
     }
 
 

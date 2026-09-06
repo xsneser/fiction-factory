@@ -123,7 +123,7 @@
 - 工具被 phase 门控拒绝或抛 `BookBusyError` 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即循环，应停止并如实汇报。
 - 预算/额度触发 `budget_paused` 时停下，向用户如实汇报，不继续烧额度。
 - 薄工具（`save_outlines` / `save_chapter_text`）可能阻塞数分钟属正常，等待结果，不要反复同参重查。
-- **笔名风格强约束**：写作/续写前先 `get_pen_style(book_id)` 读该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），动笔必须逐条遵守，不得以任何理由绕过；每轮 `get_writing_context` 的 `style_card` 是精简提醒（必读，防风格漂移）。未拿到风格不得写正文。样文（STYLE REFERENCE 人工样本）在 `get_pen_style` 中**全量注入**（dsh 工具结果裁剪已关，不再截中段；`ref_summary` 标注本次注入条数）。想就某场景聚焦时用 `list_style_samples` 看库、`get_style_sample` 拉该条全文。可 `add_style_rule` / `delete_style_rule` 维护句式/禁词规则；可 `add_style_sample` / `delete_style_sample` 把参考书**完整连续场景**（勿拆技巧样本/勿润色/勿单喂金句与纯高潮，单条约 1500-3000 字，scene_tags 填场景类型）入库为样文。
+- **笔名风格强约束**：写作/续写前先 `get_pen_style(book_id)` 读该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律），动笔必须逐条遵守，不得以任何理由绕过；每轮 `get_writing_context` 的 `style_card` 是精简提醒（必读，防风格漂移）。未拿到风格不得写正文。样文（STYLE REFERENCE 人工样本）在 `get_pen_style` 中**全量注入**（dsh 工具结果裁剪已关，不再截中段；`ref_summary` 标注本次注入条数）。注入文本里每条样文前标 `# 场景:…`，`get_pen_style` 另返 `samples`（id/title/scene_tags，无正文）——写某场景就就近参考对应标签样本；想聚焦某场景用 `get_style_sample` 拉该条全文。可 `add_style_rule` / `delete_style_rule` 维护句式/禁词规则；可 `add_style_sample` / `delete_style_sample` 把参考书**完整连续场景**（勿拆技巧样本/勿润色/勿单喂金句与纯高潮，单条约 1500-3000 字，scene_tags 填场景类型）入库为样文。
 - 工具结果可能被 dsh 裁剪（>8KB 只保留头尾）：`style_card` 位于 payload 尾部结构性幸存；信息不足时用 `get_pen_style` / `get_writing_context` / `get_book_state` 复读或按桥段增量推进，**不要臆测「spill 文件」**（本环境禁用了文件工具，不存在可读的 spill 文件）。
 - **故事线完整性**：用 `validate_storyline(book_id)` 校验「顶层弧覆盖故事线纵轴（无叙事空白）」与「桥段仅挂最底层弧」两条硬规则；发现不合规如实汇报，不要静默硬写。
 - **「删书」无 skill**——`navigate('/books')` 让用户手动点删除（直删工具不在工具面）。
