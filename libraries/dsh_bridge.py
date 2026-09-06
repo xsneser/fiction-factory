@@ -233,6 +233,44 @@ def _events_runner_url() -> str:
     return "file:///" + runner.replace(os.sep, "/")
 
 
+_PY_WITH_MCP = None  # 进程内缓存：可 import mcp 的解释器（mcp_server 子进程用它拉起）
+
+
+def _python_with_mcp():
+    """挑一个能 `import mcp` 的 python 解释器，供 overlay 里 mcp_server 子进程使用。
+
+    背景(2026-09-06 实测)：本机存在双运行时——全局 Python310 装了 mcp，而 Doubao
+    沙箱 python 没装。overlay 若写死 `python`(靠 PATH)或只写 `sys.executable`，一旦
+    服务器跑在无 mcp 的解释器上，mcp_server import 失败 → 工具服务器起不来 → dsh 任务
+    零工具 → 模型猜 mcp__novelengine__* 名字 → 满屏 unknown tool。
+    这里优先 sys.executable(与服务器同环境)，不行再回退到已装 mcp 的 Python310 / PATH
+    python；都不可用就仍用 sys.executable(至少与服务器一致，错误也一致可诊断)。
+    """
+    global _PY_WITH_MCP
+    if _PY_WITH_MCP:
+        return _PY_WITH_MCP
+
+    def _ok(py):
+        if not py:
+            return False
+        try:
+            r = subprocess.run([py, "-c", "import mcp"], capture_output=True,
+                               timeout=20)
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    for cand in (sys.executable,
+                 r"C:\Users\lenovo\AppData\Local\Programs\Python\Python310\python.exe",
+                 shutil.which("python")):
+        if _ok(cand):
+            _PY_WITH_MCP = cand
+            break
+    if not _PY_WITH_MCP:
+        _PY_WITH_MCP = sys.executable
+    return _PY_WITH_MCP
+
+
 def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
     """写运行期 overlay（storage/dsh_runtime.yml）：长工具超时 + 事件流 runner。
 
@@ -257,10 +295,10 @@ def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
         "  config:\n"
         "    serverName: novelengine\n"
         "    transport: stdio\n"
-        # 钉到服务进程自身解释器(sys.executable):若裸 `python` 从 PATH 解析到未装
-        # mcp 的解释器,mcp_server.py import 失败 → 工具服务器起不来 → dsh 任务零工具,
-        # 模型只能猜 mcp__novelengine__* 名字 → 满屏 unknown tool(2026-09-06 实测)。
-        f"    command: '{sys.executable}'\n"
+        # 钉到「能 import mcp」的解释器(_python_with_mcp):若裸 `python` 从 PATH 或服务
+        # 进程解释器未装 mcp,mcp_server.py import 失败 → 工具服务器起不来 → dsh 任务
+        # 零工具,模型只能猜 mcp__novelengine__* 名字 → 满屏 unknown tool(2026-09-06 实测)。
+        f"    command: '{_python_with_mcp()}'\n"
         "    # --source dsh：mcp_server 据此把工具日志 source 记为 dsh（不写 JSONL），\n"
         "    # 右侧「工具日志」页签只展示外部 agent（source=mcp）调用，内部 dsh 不混入\n"
         "    args: ['mcp_server.py', '--source', 'dsh']\n"
