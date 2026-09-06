@@ -158,8 +158,8 @@ def get_writing_context(book_id: str) -> dict:
 
     复用 get_book_state 全量 payload（get_storyline / get_book_detail 是其子集/重叠），
     追加就地提取的扁平字段：synopsis（outline）、protagonist（get_mc）、
-    next_bridge（第一个未写桥段 written_chapter==0，含 plot_id/name/roles/outline_id）。
-    agent 逐桥段循环每轮只调本工具一次，避免重复读上下文。
+    next_plot（第一个未写情节段 written_chapter==0，含 plot_id/name/roles/outline_id）。
+    agent 逐情节段循环每轮只调本工具一次，避免重复读上下文。
     style_card = 本笔名精简风格提醒（位于 payload 尾部，必读，防风格漂移）；
     完整风格用 get_pen_style 按需取。
     """
@@ -173,17 +173,17 @@ def get_writing_context(book_id: str) -> dict:
     if tl and tl.basic_info:
         protagonist = get_mc(tl.basic_info)
     payload["protagonist"] = protagonist
-    # next_bridge：第一个未写桥段（written_chapter==0）
-    next_bridge = None
+    # next_plot：第一个未写情节段（written_chapter==0）
+    next_plot = None
     if tl:
         for p in tl.plots:
             if not (getattr(p, "written_chapter", 0) or 0):
-                next_bridge = {
+                next_plot = {
                     "plot_id": p.id, "name": p.name, "roles": list(getattr(p, "roles", None) or []),
                     "outline_id": getattr(p, "outline_id", "") or "",
                 }
                 break
-    payload["next_bridge"] = next_bridge
+    payload["next_plot"] = next_plot
     # next_chapter：进行中草稿的章号优先，否则 current_chapter + 1（供写作任务卡显示「该写第几章」）
     book = payload.get("book") or {}
     draft = payload.get("draft")
@@ -200,7 +200,7 @@ def get_writing_context(book_id: str) -> dict:
 
 
 def get_storyline(book_id: str) -> dict:
-    """读取一本书的故事线（timeline）JSON：弧/桥段/线程/内涵/基础设定。"""
+    """读取一本书的故事线（timeline）JSON：弧/情节段/线程/内涵/基础设定。"""
     tl = _require_tl(book_id)
     return tl.to_dict()
 
@@ -291,7 +291,7 @@ def query_arc_library(keyword: str = "", tags: str = "") -> dict:
 
 
 def query_plots(category: str = "", context: str = "", keyword: str = "") -> dict:
-    """查桥段库：按分类/场景/关键词（名称）返回桥段模板清单。"""
+    """查情节段库：按分类/场景/关键词（名称）返回情节段模板清单。"""
     kw = (keyword or "").strip()
     rows = plot_lib.search(category=category, context=context)
     if kw:
@@ -347,13 +347,19 @@ def query_profiles(keyword: str = "") -> dict:
     } for p in rows[:30]]}
 
 
-def get_pen_style(book_id: str = "", profile_id: str = "", scene_tags: list = None) -> dict:
+_STYLE_RECENT = []   # 进程内近期已注入的样文 id(自动避重,dsh 单任务内跨情节段生效)
+_STYLE_RECENT_MAX = 12
+
+
+def get_pen_style(book_id: str = "", profile_id: str = "", query: dict = None,
+                  k: int = 3, avoid: list = None) -> dict:
     """读一个笔名的完整写作风格（句式风格+禁止内容+语言习惯+通用纪律），写作 agent 动笔前必读。
 
     book_id 与 profile_id 至少其一：book_id 优先按书绑定的笔名解析；否则按 profile_id；
-    都无则默认笔名（枫落）。scene_tags=可选场景标签列表（如 ["推理"] / ["多人对白"]）：给出则
-    STYLE REFERENCE 只注入命中该场景的词条(mode=scene,命中空则多样兜底);不给则多样封顶注入。
-    返回 prose style_rules（权威）+ 结构化 style/forbidden 列表 + samples(场景标签视图)，
+    都无则默认笔名（枫落）。query=多维权表(英文键)，如 {"scene":["investigation"],
+    "cast":"solo","dramatic_state":"uneasy"}：给则 STYLE REFERENCE 用加权随机从词条池抽 ≤k 条
+    (硬过滤→软加权→加权随机→自动避重，k 默认 3)；不给则多样封顶注入。avoid 可追加指定避开 id。
+    返回 prose style_rules（权威）+ 结构化 style/forbidden 列表 + samples(维度视图)，
     供逐条遵守/精确引用。信息不足时优先用本工具重读（独立薄工具，不纠缠全量上下文）。
     """
     from libraries.style_rules import StyleRuleLibrary, DEFAULT_PROFILE_ID
@@ -375,9 +381,16 @@ def get_pen_style(book_id: str = "", profile_id: str = "", scene_tags: list = No
     # 其后若存在 storage/style_refs/<pen>.reference.txt → 追加为 STYLE REFERENCE 人工样本(最高风格来源)。
     # 无 md → 回退规则拼装(legacy,数组照旧)。每次现读文件,手改 md/样本即刻生效。
     style_md_text = style_md.read_style_md(profile)
-    # STYLE REFERENCE 样文:全局词条库(10 类×≥3)。默认多样封顶(DEFAULT_REF_CHARS);
-    # 传 scene_tags=[场景] → 只注入该场景词条。md 单独保留、不参与裁剪;无 JSON → 旧文件兜底。
-    ref_text, ref_meta = style_samples.build_ref_text_for_profile(profile, scene_tags=scene_tags)
+    # STYLE REFERENCE:全局词条库。给 query → 加权随机抽 ≤k 条(自动近期避重);无 query → 多样封顶。
+    # md 单独保留、不参与裁剪;无 JSON → 旧文件兜底。
+    _avoid = [x for x in (list(avoid or []) + list(_STYLE_RECENT)) if x]
+    ref_text, ref_meta = style_samples.build_ref_text_for_profile(
+        profile, query=query, k=int(k or 3), avoid=_avoid)
+    if query and ref_meta and ref_meta.get("mode") == "pick":
+        for _sid in (ref_meta.get("selected") or []):
+            if _sid not in _STYLE_RECENT:
+                _STYLE_RECENT.append(_sid)
+        del _STYLE_RECENT[:-_STYLE_RECENT_MAX]
     sample_driven = style_md_text is not None
     if sample_driven:
         style_rules = style_md_text
@@ -405,7 +418,7 @@ def get_pen_style(book_id: str = "", profile_id: str = "", scene_tags: list = No
     if _cur:
         _sel_ids = [x for x in (getattr(profile, 'sample_ids', None) or []) if x]
         _meta_cur = [s for s in _cur if (not _sel_ids or s.id in _sel_ids)]
-        meta_samples = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
+        meta_samples = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags, "dims": s.dims,
                          "word_count": s.word_count, "source": s.source} for s in _meta_cur]
     return {
         "pen_name": profile.pen_name,
@@ -432,11 +445,11 @@ def _ref_summary(meta) -> str:
     total = meta.get("total", 0)
     chars = meta.get("chars", 0)
     max_chars = meta.get("max_chars")
-    if mode == "scene":
+    if mode == "pick":
         ids = ",".join(sel) if sel else "-"
-        tags = "/".join(meta.get("scene_tags") or [])
-        return (f"STYLE REFERENCE(场景 {tags}): 注入 {len(sel)} 条 [{ids}] "
-                f"≈{chars} 字符（库中该类共 {total}）")
+        fb = " [兜底]" if meta.get("fallback") else ""
+        return (f"STYLE REFERENCE(按场景): 抽取 {len(sel)} 条 [{ids}] "
+                f"≈{chars} 字符{fb}")
     if mode == "samples":
         ids = ",".join(sel) if sel else "-"
         budget = "多样封顶≤{0}".format(max_chars) if max_chars else "多样(不限)"
@@ -488,15 +501,15 @@ def _samples_ctx(profile_id: str = ""):
 
 def add_style_sample(profile_id: str, text: str, title: str = "", scene_tags: list = None,
                      source: str = "", note: str = "", replace_id: str = "",
-                     no_warn: bool = None) -> dict:
+                     no_warn: bool = None, dims: dict = None) -> dict:
     """给**全局样文库**加/替换一个词条(STYLE REFERENCE 人工样文,不分笔名,各笔名写作共享)。
 
     供 agent 把参考书里的**完整连续场景**按段截取入库(不拆技巧、不润色、保留普通解释句;
-    别单喂金句/纯高潮)。scene_tags=自由场景标签(顶部分类按钮即各词条标签并集,如 开场/群像/
-    推理/多人对白/规则·死亡/冲突·威胁/过渡·日常/独处·心理,一个词条可多标签);note 记为何选
-    这段/学习重点;replace_id 给出则替换该条否则追加;no_warn=True 标「人工确认保留」(短或与
-    其它条整段重叠也不预警,如从推理里截的对白聚焦样本)。profile_id 仅向后兼容占位。
-    服务端算字数并再生 reference.txt 镜像;注入全量由系统负责。"""
+    别单喂金句/纯高潮)。scene_tags 为过渡期中文标签(可空);dims=多维权表(英文键,8 维:scene/
+    narrative_action 列表 + dramatic_state/cast/dialogue_density/information_density/pace/pov 单值,
+    缺维=选择器通配;非法值被丢弃);replace_id 给出则替换该条否则追加;no_warn=True 人工确认保留。
+    profile_id 仅向后兼容占位。服务端算字数并再生 reference.txt 镜像;注入按 query 加权随机。
+    """
     cur = style_samples.load_samples() or []
     txt = (text or "").strip()
     if not txt:
@@ -506,12 +519,16 @@ def add_style_sample(profile_id: str, text: str, title: str = "", scene_tags: li
             "scene_tags": [str(t).strip() for t in (scene_tags or []) if str(t).strip()],
             "source": (source or "").strip(), "note": (note or "").strip(),
             "no_warn": bool(no_warn)}
+    if dims is not None:
+        meta["dims"] = dims
     rid = (replace_id or "").strip()
     if rid:
         for r in records:
             if r.get("id") == rid:
                 if no_warn is None:
                     meta.pop("no_warn")  # 替换但未指定 → 保留原 no_warn
+                if dims is None:
+                    meta.pop("dims", None)  # 替换未指定 → 保留原 dims
                 r.update(meta)
                 r["text"] = txt
                 break
@@ -543,7 +560,7 @@ def list_style_samples(profile_id: str = "") -> dict:
 
     供 agent 看当前有哪些词条、各属什么场景;想聚焦某场景时调 get_style_sample 取全文。"""
     cur = style_samples.load_samples() or []
-    rows = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
+    rows = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags, "dims": s.dims,
              "source": s.source, "note": s.note, "word_count": s.word_count} for s in cur]
     return {"ok": True, "scope": "global", "count": len(rows), "samples": rows}
 
@@ -553,7 +570,7 @@ def get_style_sample(profile_id: str = "", sample_id: str = "") -> dict:
     cur = style_samples.load_samples() or []
     if not sample_id:
         return {"ok": True, "scope": "global", "count": len(cur),
-                "samples": [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
+                "samples": [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags, "dims": s.dims,
                              "word_count": s.word_count} for s in cur]}
     for s in cur:
         if s.id == sample_id:
@@ -608,11 +625,11 @@ def save_basic_info(book_id: str, basic_info: dict) -> dict:
 
 def save_chapter_text(book_id: str, chapter_num: int, text: str,
                       title: str = "", summary: str = "",
-                      bridge_segments: list | None = None) -> dict:
+                      plot_segments: list | None = None) -> dict:
     """[薄工具] 保存整章正文（agent 自主生成后调用，内部不调 LLM）。
 
     agent 生成正文后，本工具负责纯规则副作用：去AI味 → 规则审查 → 章节落盘
-    （含桥段）→ 书进度/字数 → 故事线 written_chapter 进度 → 角色状态 →
+    （含情节段）→ 书进度/字数 → 故事线 written_chapter 进度 → 角色状态 →
     读者承诺台账（规则）→ 清草稿。summary 由 agent 生成传入（语义摘要是 LLM
     职责，迁到 agent）。
     """
@@ -626,21 +643,21 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     if n < 1:
         raise RuntimeError("chapter_num 需 >= 1")
 
-    # 1) 规则去AI味（词替换+段落节奏，无 LLM）；有桥段则逐段去并保持桥梁结构。
-    #    防静默丢字：bridge_segments 必须覆盖 text（总长 ≥ text 70%）。只列了部分桥段时以
-    #    text 为正文源落盘、不挂桥段，并回传 bridge_warning（提示 agent 把每桥段都列入）。
+    # 1) 规则去AI味（词替换+段落节奏，无 LLM）；有情节段则逐段去并保持桥梁结构。
+    #    防静默丢字：plot_segments 必须覆盖 text（总长 ≥ text 70%）。只列了部分情节段时以
+    #    text 为正文源落盘、不挂情节段，并回传 segment_warning（提示 agent 把每情节段都列入）。
     processed = text
-    bridge_warning = None
-    if bridge_segments:
-        raw_cover = sum(len((b.get("text") or "")) for b in bridge_segments)
+    segment_warning = None
+    if plot_segments:
+        raw_cover = sum(len((b.get("text") or "")) for b in plot_segments)
         if raw_cover < len(text) * 0.7:
-            bridge_warning = (f"bridge_segments 总长 {raw_cover} ＜ 正文 {len(text)}，疑似只列了部分桥段；"
-                              f"已按整章正文落盘、未挂桥段。请把本章每个桥段都列入 bridge_segments")
-            bridge_segments = None
+            segment_warning = (f"plot_segments 总长 {raw_cover} ＜ 正文 {len(text)}，疑似只列了部分情节段；"
+                              f"已按整章正文落盘、未挂情节段。请把本章每个情节段都列入 plot_segments")
+            plot_segments = None
         else:
             segs = []
-            by_pid = {}   # 非空 plot_id → 在 segs 中的下标（同 id 重写时原位替换，防重复桥段）
-            for b in bridge_segments:
+            by_pid = {}   # 非空 plot_id → 在 segs 中的下标（同 id 重写时原位替换，防重复情节段）
+            for b in plot_segments:
                 seg_text = (b.get("text") or "")
                 try:
                     seg_text = DeAIEngine().process_rule_based(seg_text).processed
@@ -654,9 +671,9 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
                     if pid:
                         by_pid[pid] = len(segs)
                     segs.append(seg)
-            bridge_segments = segs
+            plot_segments = segs
             processed = "\n\n".join(s["text"] for s in segs)
-    if bridge_segments is None:
+    if plot_segments is None:
         try:
             processed = DeAIEngine().process_rule_based(text).processed
         except Exception:
@@ -683,12 +700,12 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
             raise RuntimeError(
                 f"第 {n} 章正文 {count_prose_units(processed)} 字，低于本章下限 "
                 f"{int(target * HARD_MIN_RATIO)} 字，正文不完整，未落盘。"
-                f"请继续写满本章（逐桥段补全全部未写桥段）后，再调用 save_chapter_text。"
+                f"请继续写满本章（逐情节段补全全部未写情节段）后，再调用 save_chapter_text。"
             )
 
     # 3) 落盘章节
     book_mgr.save_chapter(book_id, n, title or f"第{n}章", processed, summary or "",
-                          review=review_dict, bridges=bridge_segments)
+                          review=review_dict, bridges=plot_segments)
 
     # 4) 书进度/字数
     try:
@@ -700,12 +717,12 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     except Exception:
         pass
 
-    # 5) 故事线 written_chapter 进度（本桥段标记为已写）
-    #    bridge_segments 缺失时回退草稿 bridges（agent 漏传 bridge_segments 也不会卡住 next_bridge）
+    # 5) 故事线 written_chapter 进度（本情节段标记为已写）
+    #    plot_segments 缺失时回退草稿 bridges（agent 漏传 plot_segments 也不会卡住 next_plot）
     try:
         tl = book_mgr.load_storyline(book_id)
         if tl:
-            written_plot_ids = {b.get("plot_id") for b in (bridge_segments or []) if b.get("plot_id")}
+            written_plot_ids = {b.get("plot_id") for b in (plot_segments or []) if b.get("plot_id")}
             if not written_plot_ids:
                 try:
                     dp = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
@@ -746,13 +763,13 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
         pass
 
     return {"ok": True, "chapter": n, "word_count": count_prose_units(processed),
-            "review": review_dict, "bridge_warning": bridge_warning}
+            "review": review_dict, "segment_warning": segment_warning}
 
 
 def _update_promises_ledger_thin(book_id: str, chapter_num: int) -> None:
     """薄工具用的读者承诺台账登记（规则层，无 LLM）。
 
-    标记本章已写桥段、pending 承诺按 deadline 距离重定 op（seed→touch→pressure→payoff）。
+    标记本章已写情节段、pending 承诺按 deadline 距离重定 op（seed→touch→pressure→payoff）。
     （完整设局/收局扫描复制 engine._update_promises_ledger，此处先做规则主路径。）
     """
     try:
@@ -773,11 +790,11 @@ def _update_promises_ledger_thin(book_id: str, chapter_num: int) -> None:
         pass
 
 
-def save_bridge_draft(book_id: str, chapter_num: int, plot_id: str,
+def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
                       plot_name: str, text: str) -> dict:
-    """[薄工具] 保存单个桥段到进行中草稿（draft_chapter.json，断点续写保底）。
+    """[薄工具] 保存单个情节段到进行中草稿（draft_chapter.json，断点续写保底）。
 
-    agent 逐桥段生成后调用：规则去AI味 → 追加进草稿（含 buffer/words/bridges），
+    agent 逐情节段生成后调用：规则去AI味 → 追加进草稿（含 buffer/words/bridges），
     章满后用 save_chapter_text 落盘并清草稿。
     """
     if not (book_id and text and (text or "").strip()):
@@ -803,7 +820,7 @@ def save_bridge_draft(book_id: str, chapter_num: int, plot_id: str,
         cur_ch = chapter_num
     entry = {"plot_id": plot_id or "", "plot_name": plot_name or "", "text": text}
     if plot_id:
-        # 同 plot_id 重写：替换旧条目而非追加（防同一桥段被反复生成导致重复渲染/高亮），最后写入胜出
+        # 同 plot_id 重写：替换旧条目而非追加（防同一情节段被反复生成导致重复渲染/高亮），最后写入胜出
         replaced = False
         for i, b in enumerate(bridges):
             if b.get("plot_id") == plot_id:
@@ -813,7 +830,7 @@ def save_bridge_draft(book_id: str, chapter_num: int, plot_id: str,
         if not replaced:
             bridges.append(entry)
     else:
-        # 空 plot_id 桥段不参与去重（可能代表不同的非故事线内容），直接追加
+        # 空 plot_id 情节段不参与去重（可能代表不同的非故事线内容），直接追加
         bridges.append(entry)
     buffer = [b.get("text", "") for b in bridges]
     words = sum(count_prose_units(b) for b in buffer)
@@ -823,14 +840,14 @@ def save_bridge_draft(book_id: str, chapter_num: int, plot_id: str,
             json.dump({"chapter_num": chapter_num, "buffer": buffer, "words": words,
                        "bridges": bridges}, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        raise RuntimeError(f"保存桥段草稿失败: {e}")
+        raise RuntimeError(f"保存情节段草稿失败: {e}")
     return {"ok": True, "chapter": chapter_num, "bridges": len(bridges), "words": words}
 
 
 def save_outlines(book_id: str, outlines: list | None = None,
                   plots: list | None = None, threads: list | None = None,
                   themes: list | None = None, mode: str = "replace") -> dict:
-    """[薄工具] 保存弧/桥段/线程/内涵（agent 生成后调用，内部不调 LLM）。
+    """[薄工具] 保存弧/情节段/线程/内涵（agent 生成后调用，内部不调 LLM）。
 
     接受 agent 生成的结构化 dict 列表，反序列化为 OutlineSlot / PlotSlot 落盘；
     mode=replace 整体替换 | append 续写追加。
@@ -873,7 +890,7 @@ def save_outlines(book_id: str, outlines: list | None = None,
             tl.plots.append(PlotSlot(
                 id=p.get("id") or f"plot_{base + i + 1:04d}",
                 template_id=p.get("template_id", ""),
-                name=p.get("name") or "未命名桥段",
+                name=p.get("name") or "未命名情节段",
                 category=p.get("category", ""),
                 sub_category=p.get("sub_category", ""),
                 outline_id=p.get("outline_id", ""),
@@ -924,10 +941,10 @@ def save_book_meta(book_id: str, title: str = "", synopsis: str = "") -> dict:
 
 
 def arc_material_candidates(book_id: str) -> dict:
-    """选材决策点候选池：情节弧库**平级独立弧模板** + 桥段库（供外部 agent 预选弧模板作参考，再在自身上下文生成弧+桥段）。
+    """选材决策点候选池：情节弧库**平级独立弧模板** + 情节段库（供外部 agent 预选弧模板作参考，再在自身上下文生成弧+情节段）。
 
     返回 {templates, plots}：templates 为平级独立弧清单（无父子层级，各带 id/name/tags/
-    description/min-max），plots 为桥段库候选（{id,name,category,sub_category}）。"""
+    description/min-max），plots 为情节段库候选（{id,name,category,sub_category}）。"""
     tl = _require_tl(book_id)
     _tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
     candidates = struct_lib.search(tags=_tags)
@@ -957,7 +974,7 @@ def _clear_wizard_candidates() -> None:
 
 
 def _outline_preview_text(outline_data: dict) -> str:
-    """把 generate_outline_preview 产出的弧+桥段序列化为 prompt 预览文本。"""
+    """把 generate_outline_preview 产出的弧+情节段序列化为 prompt 预览文本。"""
     if not outline_data:
         return ""
     lines = []
@@ -968,7 +985,7 @@ def _outline_preview_text(outline_data: dict) -> str:
             lines.append(f"  - {s.get('name', '')}：{evs}")
     plots = (outline_data.get("plots") or [])[:15]
     if plots:
-        lines.append("桥段：" + "、".join(p.get("name", "") for p in plots))
+        lines.append("情节段：" + "、".join(p.get("name", "") for p in plots))
     return "\n".join(lines)
 
 
@@ -1314,7 +1331,7 @@ def chapter_quality_gate(book_id: str, chapter_num: int = 0, recent_n: int = 5) 
 def validate_storyline(book_id: str = "", outlines: list | None = None,
                        plots: list | None = None, words_per_chapter: int = 3000) -> dict:
     """故事线校验（规则层，零成本）：检查两条硬规则——①顶层弧完整覆盖故事线纵轴（无叙事空白）、
-    ②桥段仅挂最底层弧（不包含其他弧的弧）。只报告不修复，问题作 decision_points 由 agent/用户补弧或移桥段。
+    ②情节段仅挂最底层弧（不包含其他弧的弧）。只报告不修复，问题作 decision_points 由 agent/用户补弧或移情节段。
 
     双模式：传 book_id 校验已落盘书；或步3 未建书时传 outlines/plots dict（内联模式，agent 提交前自查用，
     因为步3 时 book 尚未创建、get_book_detail/get_storyline 不可用）。返回 compact 报告：
@@ -1351,7 +1368,7 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
 
     if not _arcs and not _plots:
         return {"ok": True, "book_id": book_id, "passed": True, "issue_count": 0,
-                "summary": "无弧/桥段，无需校验", "total_words": 0,
+                "summary": "无弧/情节段，无需校验", "total_words": 0,
                 "top_arc_count": 0, "leaf_arc_count": 0, "plot_count": 0,
                 "coverage": {"passed": True, "total_words": 0, "leading_gap": False, "gaps": [], "issues": []},
                 "leaf_arcs": {"passed": True, "violations": [], "issues": []},
@@ -1377,7 +1394,7 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
             _cov_issues.append(f"顶层弧「{prev.name}」结束于 {prev.end_word}，「{nxt.name}」始于 {nxt.start_word}，间隔 {(nxt.start_word or 0) - (prev.end_word or 0)} 字叙事空白")
     _cov_passed = not _cov_issues
 
-    # ② 叶弧：parents = 有子弧的弧 id；桥段 outline_id 须存在且非 parents
+    # ② 叶弧：parents = 有子弧的弧 id；情节段 outline_id 须存在且非 parents
     _leaf_issues = []
     _viol = []
     parents = {getattr(a, "parent_arc_id", "") for a in _arcs if getattr(a, "parent_arc_id", "")}
@@ -1388,15 +1405,15 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
         oid = getattr(p, "outline_id", "") if not isinstance(p, dict) else p.get("outline_id") or ""
         _oname = getattr(_by_id.get(oid), "name", "") if oid in _by_id else ""
         if not oid or oid not in _by_id:
-            _leaf_issues.append(f"桥段「{pname or pid}」的 outline_id={oid or '空'} 悬空，不属于任何弧")
+            _leaf_issues.append(f"情节段「{pname or pid}」的 outline_id={oid or '空'} 悬空，不属于任何弧")
             _viol.append({"plot_id": pid, "plot_name": pname, "outline_id": oid, "outline_name": "", "reason": "悬空"})
         elif oid in parents:
-            _leaf_issues.append(f"桥段「{pname or pid}」挂在非最底层弧「{_oname}」({oid})——仅最底层弧可拥有桥段")
+            _leaf_issues.append(f"情节段「{pname or pid}」挂在非最底层弧「{_oname}」({oid})——仅最底层弧可拥有情节段")
             _viol.append({"plot_id": pid, "plot_name": pname, "outline_id": oid,
                           "outline_name": _oname, "reason": "非最底层弧"})
     _leaf_passed = not _leaf_issues
 
-    # ③ 弧内覆盖：顶层弧跨度 vs 其叶弧后代桥段 planned_words 之和（warning 级，不计硬失败）
+    # ③ 弧内覆盖：顶层弧跨度 vs 其叶弧后代情节段 planned_words 之和（warning 级，不计硬失败）
     # 口径与 libraries/storyline_writer.planned_words 一致：plot.words(agent 目标字数) 优先，
     # 未给回退 cover_beats×200 封顶 1200（两处同步，勿单改）。
     def _pw_of(p):
@@ -1434,14 +1451,14 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
         leaves = _collect_leaves(getattr(a, "id", ""))
         content = sum(_pw_by_oid.get(l, 0) for l in leaves)
         if not leaves:
-            content = _pw_by_oid.get(getattr(a, "id", ""), 0)   # 顶层弧自身即叶弧时挂桥段
+            content = _pw_by_oid.get(getattr(a, "id", ""), 0)   # 顶层弧自身即叶弧时挂情节段
         gap_words = max(span - content, 0)
         ratio = (span / content) if content > 0 else 999.0
         _fill_arcs.append({"id": getattr(a, "id", ""), "name": a.name, "span": span,
                            "planned_words": content, "gap_words": gap_words,
                            "ratio": round(ratio, 1)})
         if gap_words > wpc:   # 弧内空白超一章即报（收紧：去掉 ratio>3 宽松条件）
-            _fill_issues.append(f"顶层弧「{a.name}」跨度 {span} 字、桥段 planned 仅 {content} 字，约 {gap_words} 字空白（ratio {ratio:.1f}），建议拆子弧/缩弧跨度/补桥段")
+            _fill_issues.append(f"顶层弧「{a.name}」跨度 {span} 字、情节段 planned 仅 {content} 字，约 {gap_words} 字空白（ratio {ratio:.1f}），建议拆子弧/缩弧跨度/补情节段")
     _fill_passed = not _fill_issues
 
     passed = _cov_passed and _leaf_passed and _fill_passed
@@ -1449,11 +1466,11 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
     if _cov_issues:
         parts.append(f"弧树覆盖 {len(_cov_issues)} 处问题（{len(_gaps)} 处叙事空白）")
     if _leaf_issues:
-        parts.append(f"桥段叶弧 {len(_leaf_issues)} 处问题")
+        parts.append(f"情节段叶弧 {len(_leaf_issues)} 处问题")
     if _fill_issues:
-        parts.append(f"弧内空白 {len(_fill_issues)} 处（跨度远超桥段内容）")
+        parts.append(f"弧内空白 {len(_fill_issues)} 处（跨度远超情节段内容）")
     if not parts:
-        parts.append("弧树覆盖、桥段叶弧与弧内填充均通过")
+        parts.append("弧树覆盖、情节段叶弧与弧内填充均通过")
     decision_points = [{"check": "storyline", "severity": "warning",
                         "description": str(s)[:60], "location": "", "suggestion": ""}
                        for s in (_cov_issues + _leaf_issues + _fill_issues)[:20]]
@@ -1463,10 +1480,10 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
     for g in _gaps[:5]:
         suggestions.append(f"在「{g['before']}」与「{g['after']}」之间补弧或扩展前者 end_word 消除 {g['gap_words']} 字空白")
     for v in _viol[:5]:
-        suggestions.append(f"把桥段「{v['plot_name']}」移到其所属弧的最底层子弧，或把「{v['outline_name']}」拆出子弧")
+        suggestions.append(f"把情节段「{v['plot_name']}」移到其所属弧的最底层子弧，或把「{v['outline_name']}」拆出子弧")
     for f in _fill_arcs[:5]:
         if f["gap_words"] > wpc:
-            suggestions.append(f"顶层弧「{f['name']}」跨度 {f['span']} 字但桥段仅 {f['planned_words']} 字，拆出足够子弧/桥段填满，或把 end_word 缩到与内容匹配")
+            suggestions.append(f"顶层弧「{f['name']}」跨度 {f['span']} 字但情节段仅 {f['planned_words']} 字，拆出足够子弧/情节段填满，或把 end_word 缩到与内容匹配")
 
     # ④ 结构软提示（uniform/印刷感，不改 passed——只作决策点供 agent/步3 L2 消除或说明）
     _lattice = []
@@ -1482,7 +1499,7 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
     _bridge_words = sorted({_pw_of(p) for p in _plots})
     _uniform_bridge = len(_plots) >= 6 and len(_bridge_words) == 1
     if _uniform_bridge:
-        _lattice.append(f"桥段目标字数全相同（{len(_plots)} 个桥段均 {_bridge_words[0]} 字，常见=全默认 cover_beats=4→800），疑似模板印刷，建议按场景浓淡差异化（words 300~2500）")
+        _lattice.append(f"情节段目标字数全相同（{len(_plots)} 个情节段均 {_bridge_words[0]} 字，常见=全默认 cover_beats=4→800），疑似模板印刷，建议按场景浓淡差异化（words 300~2500）")
 
     # ⑤ 深度下探建议（可选，不强制、不改 passed）：两层树 + 存在 ≥3×wpc 的大叶弧 → 提示可拆第三层
     _by_arc_id = {(getattr(a, "id", "") or ""): a for a in _arcs}
@@ -1520,7 +1537,7 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
         if _uniform_leaf:
             _tags.append("叶弧跨度均一")
         if _uniform_bridge:
-            _tags.append("桥段字数均一")
+            _tags.append("情节段字数均一")
         parts.append("结构提示：" + "、".join(_tags) + "（软提示，见 suggestions/decision_points）")
     if _big_leaves:
         _big_names = "、".join(f"「{b['name']}」({b['span']}字≈{max(1, round(b['span'] / wpc))}章)"
@@ -1641,8 +1658,8 @@ _WIZARD_CMDS = {
     "add_candidate": ("candidate",),   # 增量追加 1 张候选卡（world_candidates 合并工具自动 push；候选={title, one_liner, world_brief}）
     "pick_candidate": (),   # 兼容保留：candidate={title, world_brief, one_liner} 内嵌传入（idx 仅卡片高亮，可选）；新 skill 不用
     "set_world": ("world_building",),   # 分阶段内容构建：部分世界观 dict 合并进步 3 表单
-    "set_picks": ("templates",),   # 开篇弧/桥段选择（templates 或 plots 任一非空，drive_ui 特判）
-    "set_outline": ("outlines", "plots"),   # 步3②生成的弧+桥段（generate_outline_preview 产出，submit 随书落库）
+    "set_picks": ("templates",),   # 开篇弧/情节段选择（templates 或 plots 任一非空，drive_ui 特判）
+    "set_outline": ("outlines", "plots"),   # 步3②生成的弧+情节段（generate_outline_preview 产出，submit 随书落库）
     "next": (), "prev": (),
     "load_candidates": (), "skip_candidates": (),
     "fill_world": (),   # 步骤③世界观重新补全（Agent 兜底/重试）
@@ -1690,14 +1707,14 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
       tone?, target_audience?, pov?, era_language?}   **顶层键必须叫 world_building**（部分维可分批提交，合并进表单不覆盖已填）；
       **rules 必须数组**（传字符串会被忽略）
     - set_picks: {templates: [id|{id,name}]} 或 {plots: [id|{id,name}]}（任一非空）
-    - set_outline: {outlines: [非空列表], plots: [list], threads?, themes?}   步3②弧+桥段，submit 随书落库
+    - set_outline: {outlines: [非空列表], plots: [list], threads?, themes?}   步3②弧+情节段，submit 随书落库
       outlines 每项 {id, name, start_word, end_word, parent_arc_id?, notes, stages?}（id 唯一必填、备注用 notes 非
       description、start_word/end_word 为 0 基字数坐标（start 含/end 不含，权威；可同时传 start_chapter/end_chapter
       兼容）、parent_arc_id 指向父弧 id 支持弧树嵌套）；弧=树状目标节点（定义见 NOVEL_AGENT.md 1.1），
-      字数跨度由剧情结构决定、不设固定章数、叶弧不要求=1 章（可跨多章、同父下不必相等）；仅最底层弧可拥有桥段；
+      字数跨度由剧情结构决定、不设固定章数、叶弧不要求=1 章（可跨多章、同父下不必相等）；仅最底层弧可拥有情节段；
       plots 每项 {id, name, outline_id, order, category?, thread_id?, roles?, words?, cover_beats?, template_structure?}
-      （id 唯一必填、outline_id 必填指向所属弧 id（须为最底层弧）、order 弧内序号；words=该桥段目标字数
-      0 基整数、按场景浓淡给（300~2500，同弧/全书不要全部相等），未给回退 cover_beats×200；cover_beats=节拍数 2~6 可选）——缺 id/outline_id 故事线桥段不显示
+      （id 唯一必填、outline_id 必填指向所属弧 id（须为最底层弧）、order 弧内序号；words=该情节段目标字数
+      0 基整数、按场景浓淡给（300~2500，同弧/全书不要全部相等），未给回退 cover_beats×200；cover_beats=节拍数 2~6 可选）——缺 id/outline_id 故事线情节段不显示
     - set_review: {title, platform?, folder?, downloaded_chapters?, profile_id?, profile_name?,
       plots?, structures?, gags?, characters?, style_rules?}   **侦察/提取合并页**：把 agent 提炼的五库候选
       呈现成可勾选审查卡（drive_ui 命令，非建书命令，不套步门控）。至少一类非空才可提交；
@@ -1840,7 +1857,7 @@ def _func_to_schema(fn):
 _LOCKED_TOOLS = {
     "confirm_world",
     # 薄工具（agent 生成后落盘，同样需书锁防并发）
-    "save_chapter_text", "save_bridge_draft", "save_outlines", "save_book_meta",
+    "save_chapter_text", "save_plot_draft", "save_outlines", "save_book_meta",
 }
 
 
@@ -2216,7 +2233,7 @@ def extract_state(folder: str = "", action: str = "load",
 def ingest_library_assets(plots: list | None = None, structures: list | None = None,
                           gags: list | None = None, characters: list | None = None,
                           source: str = "fanqie", gate: bool = True) -> dict:
-    """提取入库底层工具：把已审查确认的桥段/弧/笑点/角色写入四库。
+    """提取入库底层工具：把已审查确认的情节段/弧/笑点/角色写入四库。
 
     novel-scout 流程禁止 agent 直接调用本工具；必须先用 drive_ui(set_review)
     呈现候选，由用户在 /extract 页面确认后再由页面调用入库接口。
@@ -2283,7 +2300,7 @@ def judge_extraction(plots: list | None = None, structures: list | None = None,
     book_archive（自评书级专用，不进四库，可记 extract_state）。附 reasons 与
     overlap_with（与库内哪条近似）。
 
-    判据：①结构完整性（桥段需 structure 箭头骨架 + slots、弧需可复用 description、笑点需
+    判据：①结构完整性（情节段需 structure 箭头骨架 + slots、弧需可复用 description、笑点需
     pattern_description、角色需 personality）②库内 bigram 机制级近似（含本批
     已过闸候选）③候选自评 `_book_specific=true` / `_reusable=false`。
     structures 传**平级独立弧**（每条 = 一个弧 dict，无父子层级），逐条判定。
@@ -2311,7 +2328,7 @@ def _build_registry():
         save_outlines, save_book_meta,
         arc_material_candidates,
         # 写作 / 元数据（薄工具：agent 生成后落盘）
-        save_bridge_draft, save_chapter_text,
+        save_plot_draft, save_chapter_text,
         add_style_rule, delete_style_rule,
         add_style_sample, delete_style_sample, list_style_samples, get_style_sample,
         # 上架 / 质量门禁 / 校验

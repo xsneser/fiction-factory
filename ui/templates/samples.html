@@ -1,51 +1,101 @@
 {% extends "base.html" %}
 {% block title %}样文库 — 场景词条{% endblock %}
+{% block head %}
+<style>
+.dim-multi { display:flex; flex-wrap:wrap; gap:6px 10px; margin:2px 0 8px; }
+.dim-multi label { font-size:12.5px; color:#c9d1d9; display:inline-flex; align-items:center; gap:4px; cursor:pointer; }
+.smp-dims .chip { background:#1f2328; border:1px solid #30363d; color:#8b949e; }
+.smp-dims .chip.k { color:#d29922; }
+.dim-field { margin:6px 0; }
+.dim-field > b { color:#8b949e; font-size:12px; font-weight:600; display:inline-block; min-width:76px; }
+.dim-field select { max-width:220px; }
+.smp-meta-note, .smp-meta-src { word-break:break-word; }
+</style>
+{% endblock %}
 {% block content %}
-<h1>📝 样文库 <span style="font-size:13px;color:#8b949e;font-weight:normal">（全局词条 · 写作风格注入的 STYLE REFERENCE，共 {{ total }} 条）</span></h1>
+<h1>📝 样文库 <span style="font-size:13px;color:#8b949e;font-weight:normal">（全局词条 · 多维权表 · 共 {{ total }} 条）</span></h1>
 
-{# 顶部分类按钮：全部 + 各词条场景标签并集(多标签筛选) #}
+{# 顶部分类按钮：全部 + scene 维(英文键→中文展示) #}
 <div class="tabs char-tabs">
-    <a href="/samples" class="{{ 'active' if not current_tag else '' }}">全部</a>
-    {% for t in tags %}
-    <a href="/samples?tag={{ t }}" class="{{ 'active' if current_tag==t else '' }}">{{ t }}</a>
+    <a href="/samples" class="{{ 'active' if not current_scene else '' }}">全部</a>
+    {% for sc in scenes %}
+    <a href="/samples?scene={{ sc }}" class="{{ 'active' if current_scene==sc else '' }}">{{ dim_labels.scene[sc] }}</a>
     {% endfor %}
 </div>
 
-{# 新增/编辑 编辑器(折叠) #}
+{# 新增/编辑 编辑器(折叠):title/来源/备注 + 8 维权表 + 正文 + 不预警 #}
 <details id="smp-editor" class="card sr-card">
-    <summary style="cursor:pointer;font-weight:bold">➕ 新增样文词条（完整连续场景；1500-3000 字为佳；原文勿润色；可多场景标签）</summary>
+    <summary style="cursor:pointer;font-weight:bold">➕ 新增样文词条（完整连续场景；1500-3000 字为佳；原文勿润色）</summary>
     <div style="margin:10px 0">
         <input type="hidden" id="e-id">
-        <div class="smp-row"><label>标题</label><input id="e-title" class="smp-input" placeholder="如：开场·众人苏醒"></div>
-        <div class="smp-row"><label>场景标签</label><input id="e-tags" class="smp-input" placeholder="顿号分隔，如：开场、群像、推理、多人对白、规则·死亡…"></div>
-        <div class="smp-row"><label>来源</label><input id="e-source" class="smp-input" placeholder="如：《十日终焉》第1章 · 开场→苏醒"></div>
+        <div class="smp-row"><label>标题</label><input id="e-title" class="smp-input" placeholder="如：场景名·第N章"></div>
+        <div class="smp-row"><label>来源</label><input id="e-source" class="smp-input" placeholder="如：《十日终焉》第N章 · 起止描述"></div>
         <div class="smp-row"><label>备注</label><input id="e-note" class="smp-input" placeholder="为何选这段 / 学习重点"></div>
-        <div class="smp-row"><label style="cursor:pointer"><input type="checkbox" id="e-nowarn"> 不预警（该条短或与其它条重叠也接受）</label>
+        <div class="smp-row"><label>不预警</label><label style="cursor:pointer"><input type="checkbox" id="e-nowarn"> 该条短或与其它条重叠也接受</label>
             <span style="margin-left:12px;color:#8b949e">约 <span id="e-wc">0</span> 字</span></div>
-        <textarea id="e-text" class="sr-textarea" style="min-height:240px" spellcheck="false"
-            placeholder="# 完整连续场景原文"></textarea>
+
+        {% for f in ['scene','narrative_action'] %}
+        <div class="dim-field dim-multi">
+            <b>{{ dim_field_zh[f] }}</b>
+            <div id="g-{{ f }}" style="display:inline">
+                {% for v in dim_choices[f] %}
+                <label><input type="checkbox" class="cb-{{ f }}" value="{{ v }}">{{ dim_labels[f][v] }}</label>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+        {% for f in ['dramatic_state','cast','dialogue_density','information_density','pace','pov'] %}
+        <div class="dim-field">
+            <b>{{ dim_field_zh[f] }}</b>
+            <select id="e-{{ f }}" data-field="{{ f }}">
+                <option value="">（不限/通配）</option>
+                {% for v in dim_choices[f] %}
+                <option value="{{ v }}">{{ dim_labels[f][v] }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endfor %}
+
         <div class="sr-toolbar">
+            <button type="button" class="small" onclick="annotateEntry()">✨ 一键预标</button>
             <button type="button" class="small" onclick="saveEntry()">💾 保存词条</button>
             <button type="button" class="small" onclick="cancelEdit()">取消</button>
-            <span class="smp-tip">标签自由扩展 → 顶部分类按钮自动出现；多条标签则词条出现在多个分类下</span>
+            <span class="smp-tip">维度=缩小候选空间的结构标签(英文键)；选后会用于写作时的加权随机取样</span>
         </div>
+        <textarea id="e-text" class="sr-textarea" style="min-height:240px" spellcheck="false"
+            placeholder="# 完整连续场景原文"></textarea>
     </div>
 </details>
 
 {% if samples %}
 <div class="smp-list">
 {% for s in samples %}
-<div class="card accordion smp-card">
+<div class="card accordion smp-card" data-id="{{ s.id }}"
+     data-dims="{{ s.dims|tojson|forceescape }}">
     <div class="smp-head" onclick="toggleCard(this)" style="cursor:pointer">
-        <span class="smp-id">#{{ s.id }}</span>
         <span class="smp-title">{{ s.title or ('词条 ' ~ s.id) }}</span>
-        {% if s.scene_tags %}
-        <span class="smp-tags">{% for t in s.scene_tags %}<span class="chip">{{ t }}</span>{% endfor %}</span>
+        {% set sc = s.dims.get('scene', []) %}
+        {% if sc %}
+        <span class="smp-tags">{% for v in sc %}<span class="chip">{{ dim_labels.scene[v] }}</span>{% endfor %}</span>
         {% endif %}
+        {% if s.dims.get('cast') %}<span class="chip k">{{ dim_labels.cast[s.dims.cast] }}</span>{% endif %}
+        {% if s.dims.get('dialogue_density') %}<span class="chip">对话{{ dim_labels.dialogue_density[s.dims.dialogue_density] }}</span>{% endif %}
         <span class="smp-wc">约 {{ s.word_count }} 字</span>
-        {% if s.no_warn %}<span class="smp-badge" title="人工确认保留(短/与它条重叠)">不预警</span>{% endif %}
+        {% if s.no_warn %}<span class="smp-badge" title="人工确认保留">不预警</span>{% endif %}
     </div>
     <div class="smp-body" style="display:none">
+        <div class="smp-dims smp-meta">
+            {% for f in ['dramatic_state','narrative_action','information_density','pace','pov'] %}
+            {%- set v = s.dims.get(f) -%}
+            {%- if v -%}
+              <span class="chip k">{{ dim_field_zh[f] }}:</span>
+              {%- if f == 'narrative_action' -%}
+                {%- for vv in v -%}<span class="chip">{{ dim_labels[f][vv] }}</span>{%- endfor -%}
+              {%- else -%}<span class="chip">{{ dim_labels[f][v] }}</span>
+              {%- endif -%}
+            {%- endif -%}
+            {% endfor %}
+        </div>
         {% if s.source %}<div class="smp-meta smp-meta-src">来源：{{ s.source }}</div>{% endif %}
         {% if s.note %}<div class="smp-meta smp-meta-note">备注：{{ s.note }}</div>{% endif %}
         <pre class="smp-text">{{ s.text }}</pre>
@@ -58,46 +108,88 @@
 {% endfor %}
 </div>
 {% else %}
-<div class="empty" style="padding:20px"><p style="color:#484f58">{{ '没有匹配「'+current_tag+'」的词条' if current_tag else '样文库暂无词条，点上方「新增样文词条」添加' }}</p></div>
+<div class="empty" style="padding:20px"><p style="color:#484f58">{{ '没有匹配「'+dim_labels.scene[current_scene]+'」的词条' if current_scene else '样文库暂无词条，点上方「新增样文词条」添加' }}</p></div>
 {% endif %}
 
 <script>
+var MULTI = ['scene','narrative_action'];
+var SINGLE = ['dramatic_state','cast','dialogue_density','information_density','pace','pov'];
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function wcOf(t){ if(!t) return 0; var s=t.replace(/\s+/g,''); var cjk=(s.match(/[㐀-鿿]/g)||[]).length; var rest=s.replace(/[㐀-鿿]/g,' ').trim(); var w=rest?rest.split(/\s+/).length:0; return cjk+w; }
 function toggleCard(head){ var b=head.parentNode.querySelector('.smp-body'); b.style.display = (b.style.display==='none')?'block':'none'; }
-function setWc(){ document.getElementById('e-wc').textContent = wcOf(document.getElementById('e-text').value); }
+function setWc(){ var t=document.getElementById('e-text'); document.getElementById('e-wc').textContent = wcOf(t.value); }
 document.getElementById('e-text').addEventListener('input', setWc);
+
+function setDims(dims){
+    dims = dims || {};
+    MULTI.forEach(function(f){
+        var want = dims[f] || [];
+        document.querySelectorAll('#g-'+f+' input').forEach(function(cb){
+            cb.checked = want.indexOf(cb.value) !== -1;
+        });
+    });
+    SINGLE.forEach(function(f){
+        var el = document.getElementById('e-'+f);
+        if (el) el.value = (dims[f] || '');
+    });
+}
+function collectDims(){
+    var dims = {};
+    MULTI.forEach(function(f){
+        dims[f] = [].map.call(document.querySelectorAll('#g-'+f+' input:checked'), function(cb){ return cb.value; });
+        if (!dims[f].length) delete dims[f];
+    });
+    SINGLE.forEach(function(f){
+        var el = document.getElementById('e-'+f);
+        if (el && el.value) dims[f] = el.value;
+    });
+    return dims;
+}
+function clearForm(){
+    document.getElementById('e-id').value='';
+    ['e-title','e-source','e-note','e-text'].forEach(function(i){document.getElementById(i).value='';});
+    document.getElementById('e-nowarn').checked=false;
+    setDims({});
+    setWc();
+}
+function cancelEdit(){ var ed=document.getElementById('smp-editor'); ed.open=false; clearForm(); }
 
 function editSample(id){
     var card=null;
-    document.querySelectorAll('.smp-card').forEach(function(c){
-        if(c.querySelector('button[onclick*="'+id+'"]')) card=c;
-    });
+    document.querySelectorAll('.smp-card').forEach(function(c){ if(c.dataset.id===id) card=c; });
     var ed=document.getElementById('smp-editor'); ed.open=true;
+    clearForm();
     document.getElementById('e-id').value=id;
     if(card){
         document.getElementById('e-title').value = card.querySelector('.smp-title').textContent.trim();
         var src=card.querySelector('.smp-meta-src'); document.getElementById('e-source').value = src?src.textContent.replace(/^来源：/,'').trim():'';
         var note=card.querySelector('.smp-meta-note'); document.getElementById('e-note').value = note?note.textContent.replace(/^备注：/,'').trim():'';
-        var chips=card.querySelectorAll('.smp-tags .chip');
-        document.getElementById('e-tags').value = [].map.call(chips,function(c){return c.textContent.trim();}).join('、');
         document.getElementById('e-nowarn').checked = !!card.querySelector('.smp-badge');
         document.getElementById('e-text').value = card.querySelector('.smp-text').textContent;
+        try { setDims(JSON.parse(card.dataset.dims)); } catch(e){}
         setWc();
     }
     ed.scrollIntoView({behavior:'smooth', block:'start'});
 }
-function cancelEdit(){ var ed=document.getElementById('smp-editor'); ed.open=false; clearForm(); }
-function clearForm(){ ['e-id','e-title','e-tags','e-source','e-note','e-text'].forEach(function(i){document.getElementById(i).value='';}); document.getElementById('e-nowarn').checked=false; setWc(); }
+async function annotateEntry(){
+    var text=document.getElementById('e-text').value.trim();
+    if(!text){ showToast('先粘贴正文再预标','error'); return; }
+    const r=await fetch('/api/samples/annotate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})});
+    const d=await r.json();
+    if(!d.ok){ showToast('预标失败: '+(d.error||''),'error'); return; }
+    setDims(d.dims);
+    showToast('已按正文填入建议维度(英文键),可再人工微调','success');
+}
 async function saveEntry(){
+    var dims=collectDims();
     var sample={ id: document.getElementById('e-id').value.trim(),
         title: document.getElementById('e-title').value.trim(),
-        scene_tags: (document.getElementById('e-tags').value||'').split(/[、，,]/).map(function(s){return s.trim();}).filter(Boolean),
         source: document.getElementById('e-source').value.trim(),
         note: document.getElementById('e-note').value.trim(),
         text: document.getElementById('e-text').value.trim(),
-        no_warn: document.getElementById('e-nowarn').checked };
-    if(!sample.text){ showToast('正文不能为空', 'error'); return; }
+        no_warn: document.getElementById('e-nowarn').checked,
+        dims: dims };
+    if(!sample.text){ showToast('正文不能为空','error'); return; }
     const r=await fetch('/api/samples',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sample:sample})});
     const d=await r.json();
     if(!d.ok){ showToast('保存失败: '+(d.error||''),'error'); return; }

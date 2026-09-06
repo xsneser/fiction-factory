@@ -84,7 +84,8 @@ def _samples_upsert(records):
                "source": (r0.get("source") or "").strip(),
                "note": (r0.get("note") or "").strip(),
                "text": txt,
-               "no_warn": bool(r0.get("no_warn"))}
+               "no_warn": bool(r0.get("no_warn")),
+               "dims": r0.get("dims") or {}}
         hit = False
         if rid:
             for i, it in enumerate(items):
@@ -299,7 +300,7 @@ def style_rule_delete(rule_id):
 
 @bp.route("/structures")
 def structures():
-    """情节弧库页：**平级独立弧**；顶栏「全部 + 各题材标签」页签过滤（类桥段库）。"""
+    """情节弧库页：**平级独立弧**；顶栏「全部 + 各题材标签」页签过滤（类情节段库）。"""
     tag = (request.args.get("tag") or "").strip()
     lib = struct_lib
     all_arcs = list(lib.templates)
@@ -389,26 +390,53 @@ def profile_md_save(profile_id):
     return jsonify({"ok": True, "path": path})
 
 
+def _samples_scenes():
+    """样文库顶部分类按钮 = 库内词条 scene 维枚举(按 DIM_CHOICES 顺序、有内容才显示)。"""
+    order = style_samples.DIM_CHOICES.get("scene", [])
+    seen, out = set(), []
+    for s in _samples_all():
+        for v in (s.dims or {}).get("scene", []) or []:
+            if v in order and v not in seen:
+                seen.add(v)
+                out.append(v)
+    return out
+
+
 @bp.route("/samples")
 def samples_page():
-    """样文库(全局词条库)独立页:顶部场景分类按钮(tag 筛选) + 词条卡 + 新增/编辑/删除。"""
-    tag = (request.args.get("tag") or "").strip()
+    """样文库(全局词条库)独立页:顶部按 scene 维分类按钮 + 词条卡(维度标签) + 新增/编辑/删除。"""
+    scene = (request.args.get("scene") or "").strip()
     samples = _samples_all()
-    if tag:
-        samples = [s for s in samples if tag in (s.scene_tags or [])]
+    if scene:
+        samples = [s for s in samples if scene in ((s.dims or {}).get("scene") or [])]
     return render_template("samples.html",
         samples=[s.to_dict() for s in samples],
-        tags=_samples_categories(), current_tag=tag,
-        total=len(_samples_all()))
+        scenes=_samples_scenes(), current_scene=scene,
+        total=len(_samples_all()),
+        dim_choices=style_samples.DIM_CHOICES,
+        dim_labels=style_samples.DIM_LABELS,
+        dim_field_zh=style_samples.DIM_FIELD_ZH)
 
 
 @bp.route("/api/samples")
 def samples_list_api():
-    """列全局样文库词条元数据(id/title/场景标签/字数/来源/备注,不含正文)。"""
+    """列全局样文库词条元数据(id/title/维度/字数/来源/备注,不含正文)。"""
     rows = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
-             "source": s.source, "note": s.note, "word_count": s.word_count}
-            for s in _samples_all()]
+             "dims": s.dims, "source": s.source, "note": s.note,
+             "word_count": s.word_count} for s in _samples_all()]
     return jsonify({"ok": True, "count": len(rows), "samples": rows})
+
+
+@bp.route("/api/samples/annotate", methods=["POST"])
+def samples_annotate_api():
+    """一键预标:给 {text, scene_tags?} 返回多维权表建议(不落库),供表单填充后人工微调再保存。"""
+    d = request.get_json(silent=True) or {}
+    text = str(d.get("text") or "")
+    if not text:
+        return jsonify({"ok": False, "error": "text 不能为空"}), 400
+    from libraries.style_annotate import suggest_dims
+    dims = suggest_dims(text, [str(t) for t in (d.get("scene_tags") or [])])
+    return jsonify({"ok": True, "dims": dims})
 
 
 @bp.route("/api/samples", methods=["POST"])

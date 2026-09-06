@@ -21,6 +21,7 @@ scene_tag 先取最早 1 条,再按原序补足;宁可少塞不超限;保证至�
 pruner 默认已关 → 预算 0 = 全量注入全部词条。
 """
 import os
+import random
 import re
 from dataclasses import dataclass, field, asdict
 
@@ -349,6 +350,104 @@ def select_for_budget(samples: list, max_chars):
                     "chars": total, "selected": [s.id for s in chosen]}
 
 
+# 加权随机选择器:维度权重(用户设计)——scene/narrative_action 多选按命中数计,其余单选命中计权。
+SEL_WEIGHTS = {
+    "scene": 5, "dramatic_state": 3, "narrative_action": 3, "cast": 2,
+    "dialogue_density": 2, "information_density": 1, "pace": 1, "pov": 1,
+}
+_MULTI_DIMS = ("scene", "narrative_action")
+
+
+def _want_list(value):
+    if value is None or value == "":
+        return []
+    return value if isinstance(value, (list, tuple, set)) else [value]
+
+
+def pick_samples(samples, query=None, k=3, avoid=None, rng=None):
+    """加权随机取 k 条样文(硬过滤 → 软加权 → 加权随机 → 近期避重)。
+
+    - query: {字段: 值|列表},只认 SEL_WEIGHTS 里的维;样本缺某维 = 通配(不过滤也不加分)。
+    - 硬过滤:query 声明、样本已填且不匹配 → 排除。
+    - 软加权:权重命中求和;avoid 里的样本 ×0.5(软避重,不绝对禁止)。
+    - 命中为空 → 回退:池内随机选 k(仍避重加权),meta.fallback=True。
+    - rng 可注入(random.Random(seed))便于测试复现。
+    返回 (picked:list, meta)。"""
+    rng = rng or random
+    query = query or {}
+    avoid = set(avoid or [])
+    scored = []  # (sample, score)
+    for s in samples:
+        ok = True
+        score = 0
+        for f, w in SEL_WEIGHTS.items():
+            want = _want_list(query.get(f))
+            if not want:
+                continue
+            have = (s.dims or {}).get(f)
+            if have is None or have == "" or have == []:
+                continue  # 样本缺维 → 通配
+            if f in _MULTI_DIMS:
+                inter = len(set(have) & set(want))
+                if inter == 0:
+                    ok = False
+                    break
+                score += w * inter
+            else:
+                if have in want:
+                    score += w
+                else:
+                    ok = False
+                    break
+        if ok:
+            scored.append((s, score))
+    if not scored:
+        return _fallback_pick(samples, k, avoid, rng)
+
+    # 加权随机轮盘,不放回;avoid 里近期用过的 ×0.5(软避重,不绝对禁止)
+    work = []
+    for s, sc in scored:
+        w = sc + 0.5
+        if s.id in avoid:
+            w *= 0.5
+        work.append((s, w))
+    picked = []
+    for _ in range(min(k, len(work))):
+        total = sum(w for _, w in work)
+        r = rng.uniform(0.0, total)
+        acc, chosen = 0.0, None
+        for s, w in work:
+            acc += w
+            if r <= acc:
+                chosen = s
+                break
+        if chosen is None:
+            chosen = work[-1][0]
+        picked.append(chosen)
+        work = [(s, w) for s, w in work if s.id != chosen.id]
+    meta = {"mode": "pick", "query": {f: query[f] for f in SEL_WEIGHTS if query.get(f) is not None},
+            "count": len(picked), "total": len(samples),
+            "chars": sum(count_text_chars(s.text) for s in picked),
+            "selected": [s.id for s in picked], "fallback": False}
+    return picked, meta
+
+
+def _fallback_pick(samples, k, avoid, rng):
+    pool = list(samples)
+    picked = []
+    for _ in range(min(k, len(pool))):
+        if not pool:
+            break
+        ws = [0.5 if s.id in avoid else 1.0 for s in pool]
+        s = rng.choices(pool, weights=ws, k=1)[0]
+        picked.append(s)
+        pool = [x for x in pool if x.id != s.id]
+    meta = {"mode": "pick", "query": {}, "count": len(picked), "total": len(samples),
+            "chars": sum(count_text_chars(s.text) for s in picked),
+            "selected": [s.id for s in picked], "fallback": True}
+    return picked, meta
+
+
 def estimate_budget_for(style_md_text, guide_chars=None):
     """估算 style_rules 里留给样文的预算。
 
@@ -363,44 +462,36 @@ def estimate_budget_for(style_md_text, guide_chars=None):
     return max(1000, budget)
 
 
-def build_ref_text_for_profile(profile, max_chars=None, scene_tags=None):
-    """组注入用 STYLE REFERENCE 文本(权威源 JSON → 按场景/预算选样 → 渲染)。
+def build_ref_text_for_profile(profile, max_chars=None, query=None, k=3, avoid=None):
+    """组注入用 STYLE REFERENCE 文本(权威源 JSON → 加权随机 query 取样 / 预算多样 → 渲染)。
 
-    - 笔名在样文库选了词条(profile.sample_ids) → 先收窄到所选词条;
-    - scene_tags 给定 → 只注入标签命中的词条(mode:"scene"),命中为空则回退多样封顶;
-    - 未给 scene_tags → select_for_budget 多样封顶(pruner 关=DEFAULT_REF_CHARS,不再全量);
-    - 有 samples.json:返回 (text, meta{mode:"samples"|"scene",…});
+    - 笔名在样文库选了词条(profile.sample_ids) → 先收窄池子到所选词条;
+    - query 给定 → pick_samples(硬过滤→软加权→加权随机→近期避重)注入 ≤k 条(mode:"pick");
+    - 无 query → select_for_budget 多样封顶(pruner 关=DEFAULT_REF_CHARS,不每章灌全库);
+    - 有 samples.json:返回 (text, meta{mode:"pick"|"samples",…});
     - 无 samples.json 但有旧 reference.txt:legacy 兜底;两者皆无返回 (None, None)。
     """
     from . import style_md as _sm
     samples = load_samples()  # 全局样文库(不分笔名)
     if samples is not None:
-        # 笔名已选样文 → 只注入所选;未选 → 全量(向后兼容)
+        # 笔名已选样文 → 池子收窄到所选词条;未选 → 全库(向后兼容)
         chosen_ids = [x for x in (getattr(profile, "sample_ids", None) or []) if x]
         if chosen_ids:
             by_id = {s.id: s for s in samples}
-            picked = [by_id[i] for i in chosen_ids if i in by_id]
-            if picked:
-                samples = picked
-        # 按场景过滤:命中 → 全给该场景词条(量小);未命中 → 落到下方预算多样兜底
-        scene = [str(t).strip() for t in (scene_tags or []) if str(t).strip()]
-        scene_mode = False
-        if scene:
-            hit = [s for s in samples if set(s.scene_tags or []) & set(scene)]
-            if hit:
-                samples = hit
-                scene_mode = True
+            narrowed = [by_id[i] for i in chosen_ids if i in by_id]
+            if narrowed:
+                samples = narrowed
+        if query:
+            picked, meta = pick_samples(samples, query=query, k=k, avoid=avoid)
+            if not picked:
+                return None, None
+            meta["max_chars"] = None
+            meta["pen_selected"] = bool(chosen_ids)
+            return render_reference(picked), meta
         if max_chars is None:
             md_text = (_sm.read_style_md(profile) or "") if profile is not None else ""
             guide_chars = count_text_chars("# STYLE REFERENCE\n\n{0}\n\n".format(_REFERENCE_GUIDE))
             max_chars = estimate_budget_for(md_text, guide_chars)
-        if scene_mode:
-            chars = sum(count_text_chars(s.text) for s in samples)
-            meta = {"mode": "scene", "scene_tags": scene, "count": len(samples),
-                    "total": len(samples), "chars": chars,
-                    "selected": [s.id for s in samples], "max_chars": max_chars,
-                    "pen_selected": bool(chosen_ids)}
-            return render_reference(samples), meta
         selected, meta = select_for_budget(samples, max_chars)
         if not selected:
             return None, None
