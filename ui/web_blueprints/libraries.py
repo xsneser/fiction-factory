@@ -43,6 +43,16 @@ def _read_text_file(path):
         pass
     return ""
 
+
+def _parse_samples(content):
+    """把样文文件拆成多条样本：<sample>…</sample> 块各自成条；无标签则整体一条。"""
+    if not content:
+        return []
+    blocks = re.findall(r'<sample>(.*?)</sample>', content, re.S)
+    if blocks:
+        return [b.strip() for b in blocks if b.strip()]
+    return [content.strip()] if content.strip() else []
+
 @bp.route("/plots")
 def plots():
     cat = request.args.get("category","")
@@ -289,6 +299,7 @@ def profile_list():
     _root = _project_root()
     md_content = _read_text_file(os.path.join(_root, "styles", scope_label + ".md")) if (selected and not is_new) else ""
     reference_content = _read_text_file(os.path.join(_root, "storage", "style_refs", scope_label + ".reference.txt")) if (selected and not is_new) else ""
+    samples = _parse_samples(reference_content)
     return render_template("profiles.html",
         profiles=all_profiles, selected=selected, is_new=is_new,
         current_scope=current_scope, scope_label=scope_label,
@@ -296,7 +307,7 @@ def profile_list():
         bans=[r for r in own if r.kind == "ban"],
         summaries=summaries,
         platform_labels=PLATFORM_LABELS,
-        md_content=md_content, reference_content=reference_content)
+        md_content=md_content, reference_content=reference_content, samples=samples)
 
 
 @bp.route("/api/profile/<profile_id>/md", methods=["POST"])

@@ -574,3 +574,7 @@
         .sr-path { font-size:11px; color:var(--accent); font-family:Consolas, Menlo, monospace; }
         .sr-note { font-size:11px; color:#8b949e; flex:1; min-width:200px; }
         .sr-subhead { font-size:12px; color:#8b949e; margin:10px 0 6px; border-top:1px dashed #30363d; padding-top:10px; }
+
+        .sr-sample-item { display:flex; gap:8px; align-items:flex-start; margin:0 0 10px; }
+        .sr-sample-item .sr-ref-editor { flex:1; min-height:220px; }
+        .sr-sample-item .small { margin-top:4px; }
