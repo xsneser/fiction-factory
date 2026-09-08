@@ -69,7 +69,9 @@ python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
 
 面板顶部有 **「💬 对话 / 🔧 工具日志」两个页签**：切到工具日志可实时看到 Agent 调用了哪些工具（工具名/时间/成败/耗时/参数/结果摘要，3 秒自动刷新），一目了然每个步骤在干什么。
 
-**MCP 接口**：全部注册工具暴露为 MCP（**39 个**，数量以 `tools/mcp_smoke.py` `EXPECT_MCP_TOOLS` 为准；护栏：直建/直删工具不存在，建书走系统向导、删书走书库页手动），供 Claude Code 等外部 Agent 驱动：
+**MCP 接口**：默认兼容模式暴露全部 **45 个**注册工具；启用 `AGENT_TOOL_PROFILES=1` 后按 build/write/replan/publish/scout 等任务裁剪（数量始终以 `tools/mcp_smoke.py` `EXPECT_MCP_TOOLS` 为准）。新增 `get_story_state` 聚合增量规划状态；`save_outlines` 支持 `expected_revision` 与 `planning_patch` 原子提交。建书提交与删书仍只能由用户在页面操作。
+
+增量架构开关：`AGENT_TOOL_PROFILES=1` 启用侧栏任务工具裁剪，`INCREMENTAL_STORY_PLANNING=1` 将新书初始 committed 上限设为 30000 字，`STORYLINE_REVISION_CHECK=0` 可临时关闭 expected_revision 冲突拒绝。不开工具裁剪时保持旧客户端兼容。
 
 ```bash
 claude mcp add --scope project novel-engine -- python mcp_server.py
@@ -298,12 +300,13 @@ D:\NovelEngine\
 ├── test_chapters.py / test_e2e_pages.py / test_reader.py
 ├── tools/                   # 运维/专项脚本（mcp_smoke / simulate_full_flow /
 │                            #   verify_storyline_upgrade / test_picks_contract…）
-├── docs/                    # 9 篇设计/研究文档
-│   ├── 设计文档-总览-claude.md            # 唯一主设计文档
+├── docs/                    # 架构/设计/研究文档
+│   ├── 架构总览.md                      # 唯一架构/设计权威（2026-09-07 统一现行）
+│   ├── 架构与故事线模型-情节弧情节段关系.md # 弧段模型（现行）
+│   ├── 设计文档-风格样本池与情节段运行.md   # 样文池 Plot Run 规格（现行）
 │   ├── 设计文档-外部书目提取-顺序通读式提取.md
 │   ├── 设计文档-多平台热榜接口.md
-│   ├── 架构文档-内置agent-dsh.md / 架构总览.md
-│   └── 研究文档-*.md
+│   └── 研究文档-*.md 及 枫落_Agent样本驱动改造工作文件.md
 ├── requirements.txt
 └── LICENSE
 ```

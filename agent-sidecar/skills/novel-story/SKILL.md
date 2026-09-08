@@ -25,11 +25,16 @@ description: 弧+写作阶段。写正文/写下一章/写情节段/续写扩写
 ## 阶段二：写作（写正文 / 写下一章 / 写情节段）
 ### 上下文组装（单次读取）
 - **一次** `get_writing_context(book_id)` → 书(tags)+故事线+弧+章节摘要+draft+next_plot+style_card，一次拿全。
+- 若 `get_writing_context` 返回 `planning.boundary.needs_replan=true`（余量只剩 ≤2 plot 或剩余字数不足一批）：先把当前进行中的情节段写完并 `save_chapter_text` 收章（别把角色/读者问题丢在半途）；此后**本轮不再开新 plot**，**不调用任何 replan 工具、不调 `save_outlines`**（write profile 无这些工具，越权即失败）。在最终回复**末尾独占一行**输出机器可读交接：
+  `[NEED_REPLAN] book_id=<书id> reason=<planning.boundary.reason_codes 以;连接>`（reason_codes 为空则用 `WORDS_LOW`）。
+  系统检测到该行会自动 spawn `profile=replan` 续规划：`REPLAN_POLICY=auto` 自动原子提交后续写；`=confirm` 停在预览等你在界面确认。**不要替系统做 replan，也不重复写已交接的情节段**。若本次运行 profile 未启用（legacy 全量），同样只输出交接、交由系统编排，不自行调 replan 提交工具。
 - 整理成「写 next_plot + 出场角色 + 风格 + 前文语气」，**自己生成正文**。逐情节段循环每轮只重取一次；**不要**再单独调 get_book_detail/get_storyline。
-- **笔名风格强约束（必读必遵）**：动笔前先 `get_pen_style(book_id, no_ref=True)` 拿该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律；no_ref=只取规则/负约束，单篇样文由 `pick_plot_sample` 给），逐条遵守；每轮 `get_writing_context` 的 `style_card` 是**精简风格提醒（必读，防风格漂移）**。**未拿到风格不得写正文**；被裁剪/信息不足时用 `get_pen_style` 重读（独立薄工具，不纠缠全量上下文）。单篇样文（`pick_plot_sample` 返回，见下）是**最高风格来源**：直接参考其语言惯性/叙述距离/信息组织/对白衔接继续创作，**不总结、不抽公式、不套模板**；md 原则与规则只作负约束。样文 = 全局样文库（多维权表：scene/dramatic_state/narrative_action/cast/dialogue_density/information_density/pace/pov，英文键存）。**每情节段运行：先 `get_writing_context`（`plot_run.style_query` 已按情节段内容自动推导 scene/cast 等；线程/承诺不参与选样）→ 调一次 `pick_plot_sample(book_id)`，返回的 `text` 就是本段**唯一** STYLE REFERENCE 单篇样文（含 `# 场景:` 头）**——服务端按该 query 硬过滤→软加权→加权随机→近期避重抽恰 1 篇，连续情节段自动避重、语言参考随运行自然漂移；确需覆盖可给 `pick_plot_sample` 传 `query`，或该场景其余样文用 `get_style_sample` 拉全文备查。
+- **笔名风格强约束（必读必遵）**：动笔前先 `get_pen_style(book_id, no_ref=True)` 拿该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律；no_ref=只取规则/负约束，单篇样文由 `pick_plot_sample` 给），逐条遵守；每轮 `get_writing_context` 的 `style_card` 是**精简风格提醒（必读，防风格漂移）**。**未拿到风格不得写正文**；被裁剪/信息不足时用 `get_pen_style` 重读（独立薄工具，不纠缠全量上下文）。单篇样文（`pick_plot_sample` 返回，见下）是**最高风格来源**：直接参考其语言惯性/叙述距离/信息组织/对白衔接继续创作，**不总结、不抽公式、不套模板**；md 原则与规则只作负约束。样文 = 全局样文池（多维权表：scene/dramatic_state/narrative_action/cast/dialogue_density/information_density/pace/pov，英文键存）。**每情节段运行：先 `get_writing_context`（`plot_run.style_query` 已按情节段内容自动推导 scene/cast 等；线程/承诺不参与选样）→ 调一次 `pick_plot_sample(book_id)`，返回的 `text` 就是本段**唯一** STYLE REFERENCE 单篇样文（含 `# 场景:` 头）**——服务端按该 query 硬过滤→软加权→加权随机→近期避重抽恰 1 篇，连续情节段自动避重、语言参考随运行自然漂移；确需覆盖可给 `pick_plot_sample` 传 `query`，或该场景其余样文用 `get_style_sample` 拉全文备查。
+- **人物（plot_run.cast_pack 决定「谁在写」，与样文/剧情三层不混）**：出场以 cast_pack 的 `protagonists`/`active` 为准（`referenced` 仅提及，不给行为卡）。`behavior.*`（decision/communication/emotion）决定该角色在压力/危险/背叛/对陌生人/对朋友/对敌等情境下**一贯反应**——别因场景氛围漂移性格；`speech_profile` 决定语气/句长/句式倾向与 `forbidden` 禁说——按倾向生成自然对白，**不固定复读口头禅、不当表情包**（`catchphrase` 仅在情绪高点一次点缀）。`dyn.*`（goal/relationship/arc_stage 等）是前文演进结果，本段须与之一致。
+- **人物被剧情改变（character_events 记账）**：本段发生改变角色状态的剧情（关系/目标/实力/位置/弧阶段）→ 先在正文有行为表现，再随 `save_plot_draft(..., character_events=[{name, events:[{type,from?,to?,reason?}]}])` 上报，让角色被事件改变、跨章连续；`type ∈ goal_shift|power_shift|location_shift|arc_stage|trust_change|relationship|note`。**只报剧情造成的**变化**，不报 mood/secret/conflict**（防 agent 自报污染人物）。
 
 ### 生成 → 落盘（逐情节段）
-- 用 next_plot（第一个未写情节段）→ **你自主生成正文** → `save_plot_draft(book_id, chapter_num=N, plot_id, plot_name, text)` 落草稿。
+- 用 next_plot（第一个未写情节段）→ **你自主生成正文** → `save_plot_draft(book_id, chapter_num=N, plot_id, plot_name, text, character_events=?)` 落草稿（本段改变角色时带 character_events）。
 - 每情节段后自我核查（语气/伏笔/错词），有问题就地重写再落盘。
 
 ### 章满收尾 → save_chapter_text

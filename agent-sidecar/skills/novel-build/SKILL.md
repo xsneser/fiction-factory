@@ -10,7 +10,9 @@ description: 建书 步3。已选候选/补全世界观/继续建书。流程:�
 > 契约（set_world/set_outline/set_characters/校验字段）见 NOVEL_AGENT.md 1.2。
 
 ## 步 3 深化式内容构建（一次到位，不是浅稿后深化：本步产出即定稿级故事线）
-- **先搜索两个库取素材**：`query_arc_library`/`arc_material_candidates` 查**情节弧库**模板（弧库=**平级独立弧**，每弧一条参考，无模板内嵌子弧）、`query_plots` 查**情节段库**（需要时再 `query_gags`/`query_characters`）作参考，再动手设计。
+- **素材查询预算**：无 `book_id` 时不得调用 `arc_material_candidates`。默认各查询一次弧库与情节段库；只有覆盖不足才允许一次补查，不换近义词反复试探。
+- **增量建书**：全书目标默认 9万~18万字，但正式 outlines/plots 只承诺开篇约 1.5万~3万字；远期方向作为 planning future intents，不一次排完整本书。
+- **H2 future intents 真传入**：把远期方向（下一弧意图 / 主线升级方向 / 角色成长 / 未兑现线索）显式传给向导——调 `drive_ui(set_outline, args={outlines, plots, threads, themes, planning:{future_intents:[{id, kind, desc, note}]}})`（向导随 submit 经 `attach_build_session` 种进 planning_state；config 兜底补弧用 `save_outlines(..., planning_patch={"future_intents":[...]})`）。**不要只在聊天里说"远期作 future_intents"而不传参**，否则 planning_state 的 H2 区会是空的。
 - **差异化命题（存盘，反模板）**：动手排弧前先想清「本书与同类/所查模板的三个差异点」（题材套路 × 借书 × 世界观如何偏离）。最核心一条压进 `core_conflict`；**完整发散论述直接写 `world_building.differentiation`**——二者都随 `set_world` 内联落库（2026-09-05 起向导已透传该键，无需等书建后再补）。
 - **发散先行**：先在自身上下文出 2–3 条**相异**弧骨架，互相对比择一/融合后再细排；**不要**拿到弧库模板就逐槽位照填（库是"对镜"，借骨不借皮）。
 - 围绕「核心矛盾 → 势力 → 弧+情节段 → 人物 → 其余维度」反复推演：先想清楚故事线与世界观，再落 `set_world`/`set_outline`/`set_characters`。
