@@ -35,7 +35,7 @@ const DEBUG = process.env.NOVEL_AGENT_DEBUG === "1";
 /** 调试卡完整载荷目录（dsh_bridge 注入，绝对路径）：完整 request/response 写文件、SSE 只发裁剪预览。 */
 const DEBUG_PROMPT_DIR = process.env.DEBUG_PROMPT_DIR || "";
 
-/** 只转发的 session 事件类型（不推模型中间输出，见 docs/架构总览.md §三）。 */
+/** 只转发的 session 事件类型（不推模型中间输出，见 docs/架构总览.md §二 双通道）。 */
 const FORWARD = new Set(["tool/call", "tool/result"]);
 
 /** 把一条 payload 写为一行 NDJSON。 */
@@ -184,7 +184,8 @@ async function run(ctx, task, io) {
 					model: pendingLlm.model,
 					system: capDeep(pendingLlm.system, 2000),
 					messages: capDeep(msgs, 600),
-					tools: capTools(pendingLlm.tools)
+					tools: capTools(pendingLlm.tools),
+					total_messages: Array.isArray(pendingLlm.messages) ? pendingLlm.messages.length : 0
 				},
 				response: capDeep(event.data.message, 1500),
 				usage: lastUsage

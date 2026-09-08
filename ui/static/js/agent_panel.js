@@ -361,6 +361,10 @@ console.log('[agent-panel] v28 events-stream');
         var msgs = req.messages || [];
         var tools = req.tools || [];
         var seq = evt.seq;   // 调试卡完整原文按需拉取用（storage/debug-prompts/<seq>.json）
+        // 标题用真实消息总数（events-runner 在 SSE 只发最近 12 条预览，total_messages 带未裁剪全长），
+        // 随轮次累加递增；预览条数不足时才加「仅展示最近 N 条」注记，避免误导为「消息没在叠加」。
+        var shown = msgs.length;
+        var total = (typeof req.total_messages === 'number') ? req.total_messages : shown;
         var card = el('div', 'agent-llm-card');
         var head = el('div', 'agent-llm-head');
         head.appendChild(el('span', 'agent-llm-head-label', '🤖 LLM 调用 · ' + (req.model || '?')));
@@ -368,7 +372,8 @@ console.log('[agent-panel] v28 events-stream');
         card.appendChild(head);
         // kind：'prompt'/'response' 段支持展开时按需拉完整原文（初始仍是裁剪预览）；null 段只用预览
         var sections = [
-            ['💬 提示词（system + ' + msgs.length + ' 条消息）',
+            ['💬 提示词（system + ' + total + ' 条消息'
+                + (shown < total ? ' · 仅展示最近 ' + shown + ' 条' : '') + '）',
              { system: capDeep(req.system, 2000) || '', messages: capDeep(msgs.slice(-12), 600) }, 'prompt'],
             ['🧰 MCP 工具（' + tools.length + ' 个）', capToolsLite(tools), null],
             ['📦 返回 JSON', evt.response !== undefined ? capDeep(evt.response, 1500) : null, 'response']
