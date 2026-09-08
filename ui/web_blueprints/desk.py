@@ -75,15 +75,83 @@ def _chapters_from_disk(book_id: str, current_chapter: int):
 
 @bp.route("/api/desk/chapters/<book_id>")
 def desk_chapters_api(book_id):
-    """写作台正文 JSON：从磁盘现读已写章节+草稿（供前端轮询刷新右侧，修「agent 写完不显示」）。"""
+    """写作台正文 JSON：从磁盘现读已写章节+草稿（供前端轮询刷新右侧，修「agent 写完不显示」）。
+
+    附带 plot_run：当前 Plot Run 上下文（下一个未写情节段 + 弧目标 + 线程状态 + 承诺 +
+    字数余量），写作台左侧「Plot Run」面板据此展示「这一轮写什么」。组装逻辑与 Agent
+    侧共用 agent_tools._build_plot_run/_next_plot，保证 UI 显示的就是 agent 实际会写的那一段。
+    """
     cur = 0
     try:
         d = json.load(open(os.path.join(str(book_mgr.dir), book_id, "book.json"), encoding="utf-8"))
         cur = int(d.get("current_chapter") or 0)
     except Exception:
         pass
+    plot_run = None
+    recent_plot_outcome = None
+    planning = {}
+    try:
+        from agent_tools import _build_plot_run, _draft_plot_ids, _next_plot
+        from libraries.storyline import load_storyline
+        tl = load_storyline(_storyline_filepath(book_id))
+        draft = None
+        dp = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
+        if os.path.exists(dp):
+            with open(dp, encoding="utf-8") as fh:
+                draft = json.load(fh)
+        if tl is not None:
+            p = _next_plot(tl, draft)
+            if p is not None:
+                from agent_tools import _load_char_states
+                plot_run = _build_plot_run(tl, p, _load_char_states(book_id))
+            event_bridge = next((b for b in reversed((draft or {}).get("bridges") or [])
+                                 if isinstance(b, dict) and b.get("plot_id") and b.get("character_events")), None)
+            if event_bridge:
+                done_plot = next((x for x in (tl.plots or []) if x.id == event_bridge.get("plot_id")), None)
+                recent_plot_outcome = {
+                    "plot_id": event_bridge.get("plot_id"),
+                    "plot_name": getattr(done_plot, "name", "") if done_plot else event_bridge.get("plot_name", ""),
+                    "predictions": list(getattr(done_plot, "character_impact", None) or []) if done_plot else [],
+                    "facts": event_bridge.get("character_events") or [],
+                }
+            from libraries.planning_state import load_planning_state, detect_story_boundary
+            disk_book = book_mgr.get(book_id)
+            ps = load_planning_state(book_id, tl, disk_book, persist=False)
+            draft_ids = _draft_plot_ids(draft or {})
+            remaining = sum(1 for item in (tl.plots or [])
+                            if not (getattr(item, "written_chapter", 0) or 0) and item.id not in draft_ids)
+            planning = {
+                "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+                "target_word_budget": int(ps.get("target_word_budget") or 0),
+                "committed_until_word": int(ps.get("committed_until_word") or 0),
+                "written_until_word": int(getattr(disk_book, "total_words", 0) or 0) if disk_book else 0,
+                "boundary": detect_story_boundary(
+                    written_until_word=int(getattr(disk_book, "total_words", 0) or 0) if disk_book else 0,
+                    committed_until_word=int(ps.get("committed_until_word") or 0),
+                    remaining_plots=remaining,
+                    words_per_batch=int(tl.words_per_chapter or 3000),
+                    storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+                    last_replan=ps.get("last_replan") or {},
+                ),
+            }
+    except Exception as e:
+        logging.getLogger(__name__).warning("组装 plot_run 失败: %s", e)
+    chapters = _chapters_from_disk(book_id, cur)
+    if recent_plot_outcome is None:
+        last_bridge = next((b for ch in reversed(chapters) for b in reversed(ch.get("bridges") or [])
+                            if isinstance(b, dict) and b.get("plot_id") and b.get("character_events")), None)
+        if last_bridge:
+            done_plot = next((x for x in (tl.plots or []) if x.id == last_bridge.get("plot_id")), None) if 'tl' in locals() else None
+            recent_plot_outcome = {
+                "plot_id": last_bridge.get("plot_id"),
+                "plot_name": getattr(done_plot, "name", "") if done_plot else last_bridge.get("plot_name", ""),
+                "predictions": list(getattr(done_plot, "character_impact", None) or []) if done_plot else [],
+                "facts": last_bridge.get("character_events") or [],
+            }
     return jsonify({"book_id": book_id, "current_chapter": cur,
-                    "chapters": _chapters_from_disk(book_id, cur)})
+                    "chapters": chapters,
+                    "plot_run": plot_run, "recent_plot_outcome": recent_plot_outcome,
+                    "planning": planning})
 
 
 @bp.route("/books/storyline/write/<engine_id>")
@@ -151,6 +219,23 @@ def storyline_write_flow(engine_id):
             total_ch = 0
     from libraries.storyline import basic_info_world_done
     world_done = basic_info_world_done((sl.basic_info if sl else None))
+    planning_state = {}
+    planning_boundary = {}
+    if sl and book:
+        try:
+            from libraries.planning_state import load_planning_state, detect_story_boundary
+            planning_state = load_planning_state(book.book_id, sl, book, persist=False)
+            remaining_plots = sum(1 for p in (sl.plots or []) if not (getattr(p, "written_chapter", 0) or 0))
+            planning_boundary = detect_story_boundary(
+                written_until_word=int(book.total_words or 0),
+                committed_until_word=int(planning_state.get("committed_until_word") or 0),
+                remaining_plots=remaining_plots,
+                words_per_batch=int(sl.words_per_chapter or 3000),
+                storyline_revision=int(getattr(sl, "storyline_revision", 0) or 0),
+                last_replan=planning_state.get("last_replan") or {},
+            )
+        except Exception:
+            planning_state, planning_boundary = {}, {}
     return render_template("storyline_write_flow.html",
         engine_id=engine_id,
         state=engine.state,
@@ -159,6 +244,8 @@ def storyline_write_flow(engine_id):
         chapters=chapters,
         total_ch=total_ch,
         world_done=world_done,
+        planning_state=planning_state,
+        planning_boundary=planning_boundary,
     )
 
 
@@ -342,7 +429,3 @@ def continue_book_page(book_id):
                 'href="/books">📚 去书库</a></p></div>',
                 msg=str(e), bid=book_id), 200
     return redirect(url_for("desk.storyline_write_flow", engine_id=engine_id))
-
-
-
-

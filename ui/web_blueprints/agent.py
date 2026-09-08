@@ -16,7 +16,7 @@ from flask import Blueprint, request, jsonify  # noqa: E402
 from .ctx import sse_stream_response  # noqa: E402
 from agent_tools import TOOL_REGISTRY  # noqa: E402
 from libraries.nav_intent import take_nav_intents  # noqa: E402
-from libraries.dsh_bridge import run_dsh_task, interrupt_current_task, get_current_task_status, _DEBUG_PROMPT_DIR  # noqa: E402
+from libraries.dsh_bridge import run_dsh_flow, interrupt_current_task, get_current_task_status, _DEBUG_PROMPT_DIR  # noqa: E402
 from libraries.build_status import set_build_status  # noqa: E402
 from libraries.tool_log import get_tool_log, clear_tool_log  # noqa: E402
 
@@ -49,7 +49,7 @@ def agent_chat():
             if history and history[-1].get("role") == "user":
                 last = history.pop(-1)
                 task = last.get("content", "")
-            for evt in run_dsh_task(task, history, debug=debug):
+            for evt in run_dsh_flow(task, history, debug=debug):
                 yield emit(evt)
         except Exception as e:
             import traceback

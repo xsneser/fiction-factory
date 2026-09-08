@@ -4,7 +4,7 @@
 <div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <a href="/books/{{ state.book_id }}">{{ state.title or '(待定)' }}</a> <span class="sep">›</span> <span class="cur">写作台</span></div>
 {% endblock %}
 {% block content %}
-<link rel="stylesheet" href="/static/css/story_line.css?v=4">
+<link rel="stylesheet" href="/static/css/story_line.css?v=6">
 <link rel="stylesheet" href="/static/css/workspace.css?v=2">
 <link rel="stylesheet" href="/static/css/reader.css">
 {% from "_flow_stepper.html" import status_badge %}
@@ -25,11 +25,19 @@
     extra='<span>每章：<strong>' ~ storyline.words_per_chapter ~ '字</strong></span>'
 ) }}
 
+{% set planning_write_mode = true %}
+{% include "_planning_ui.html" %}
+
 {# ─── 两栏：左=故事线（可拖拽） | 右=按章分页阅读器（书式翻页 + 目录抽屉） ─── #}
 <div class="editor-split" id="editor-split" style="position:relative">
     <button type="button" class="el-expand-btn" id="el-expand-btn" title="展开故事线" onclick="toggleStorylinePanel()">▶ 故事线</button>
     <div class="editor-left" id="editor-left">
         <div class="gen-split-title">📋 故事线（点击情节段高亮对应正文）<button type="button" class="el-collapse-btn" title="折叠故事线" onclick="toggleStorylinePanel()">◀</button></div>
+        <div class="wf-plot-run" id="wf-plot-run" hidden>
+            <div class="wpr-head">🎯 Plot Run <span class="wpr-sub">当前情节段运行 · 每次只写一段 · 单篇样文参考</span></div>
+            <div class="wpr-body" id="wpr-body"></div>
+        </div>
+        <div class="wf-plot-run wpr-outcome" id="wf-plot-outcome" hidden></div>
         <div class="editor-scroll"><div id="editor-storyline" class="editor-storyline"></div></div>
     </div>
 
@@ -66,7 +74,7 @@
     </div>
 </div>
 
-<script src="/static/js/story_line.js?v=4"></script>
+<script src="/static/js/story_line.js?v=5"></script>
 <script src="/static/js/reader_core.js"></script>
 <script>
 function toggleStorylinePanel() {
@@ -213,11 +221,15 @@ function highlightOutlineContent(oid) {
 
 /* ─── 初始化故事线 ─── */
 function refreshStoryline(sl) {
-    if (window.StoryLine) window.StoryLine.init('editor-storyline', sl || {}, { scrollable: true });
+    if (window.StoryLine) window.StoryLine.init('editor-storyline', sl || {}, {
+        scrollable: true, planning: window.__PLANNING_STATE__ || {}, boundary: window.__PLANNING_BOUNDARY__ || {},
+        currentWord: (window.__PLANNING_STATE__ || {}).written_until_word || 0
+    });
 }
 (function initStoryline() {
     refreshStoryline(window.__BOOK_STORYLINE__);
 })();
+window.addEventListener('ne:planning-updated', function () { refreshStoryline(window.__BOOK_STORYLINE__); });
 
 /* ─── 可拖拽分栏：故事线宽度 20%–70%，持久化 localStorage；阅读器由 ResizeObserver 自动重排 ─── */
 (function initResize() {
@@ -310,6 +322,10 @@ function _resolveNextChapterAndSend(bid, title, pen) {
         .then(function (d) {
             if (!d || typeof d.current_chapter !== 'number') { send(fallback + 1); return; }
             window.__BOOK_CURRENT_CHAPTER__ = d.current_chapter;   // 顺带刷新注入值
+            if (d.planning && d.planning.boundary && d.planning.boundary.needs_replan) {
+                if (window.NEPlanning) window.NEPlanning.requestReplan();
+                return;
+            }
             var draft = (d.chapters || []).filter(function (c) { return c.draft; })[0];
             send(draft ? draft.num : (d.current_chapter + 1));
         })
@@ -324,15 +340,70 @@ function stopWritingTask(e) {
 
 
 
+/* ═══ Plot Run 面板：展示「当前这一轮写什么」——下一情节段 + 弧目标 + 线程状态 + 承诺 ═══
+   数据来自 /api/desk/chapters/<bid> 的 plot_run（与 Agent 侧 _build_plot_run 同一组装）。 */
+function renderPlotRun(pr) {
+    var box = document.getElementById('wf-plot-run');
+    var body = document.getElementById('wpr-body');
+    if (!box || !body) return;
+    if (!pr || !pr.plot) { box.hidden = true; return; }
+    box.hidden = false;
+    var html = '';
+    var badges = '';
+    if (pr.plot.is_payoff) badges += '<span class="wpr-badge payoff">↪ 收局</span>';
+    else if (pr.plot.resolves_name) badges += '<span class="wpr-badge payoff">↪ 解决「' + _ms_esc(pr.plot.resolves_name) + '」</span>';
+    html += '<div class="wpr-row"><span class="wpr-ic">📌</span><div class="wpr-main"><div class="wpr-title">' + _ms_esc(pr.plot.name) + badges + '</div>'
+        + '<div class="wpr-subline">' + (pr.plot.category ? _ms_esc(pr.plot.category) + ' · ' : '') + '目标约 ' + (pr.plot.words || '—') + ' 字'
+        + (pr.plot.roles && pr.plot.roles.length ? ' · 出场 ' + _ms_esc(pr.plot.roles.join('、')) : '') + '</div></div></div>';
+    if (pr.arc_goal && pr.arc_goal.name) {
+        var ag = pr.arc_goal;
+        html += '<div class="wpr-row"><span class="wpr-ic">📋</span><div class="wpr-main"><div class="wpr-title">' + _ms_esc(ag.arc_path || ag.name) + '</div>'
+            + '<div class="wpr-subline">' + (ag.stage_name ? '阶段 ' + _ms_esc(ag.stage_name) + ' · ' : '') + '弧内待写约 ' + (ag.words_left_in_arc || 0) + ' 字</div></div></div>';
+    }
+    if (pr.thread) {
+        html += '<div class="wpr-row"><span class="wpr-ic">🧵</span><div class="wpr-main"><div class="wpr-title">' + _ms_esc(pr.thread.name || pr.thread.id || '主线') + '</div>'
+            + '<div class="wpr-subline">' + _ms_esc(pr.thread.chain_note || '') + '</div></div></div>';
+    }
+    (pr.promise_state || []).forEach(function (pm) {
+        var ok = pm.status === 'done' || pm.type === 'payoff' || pm.op === 'payoff';
+        var txt = pm.desc || '钩子';
+        if (pm.deadline_chapter && !ok) txt += '（约第' + pm.deadline_chapter + '章）';
+        html += '<div class="wpr-row"><span class="wpr-ic">' + (ok ? '✅' : '⏳') + '</span><div class="wpr-main">'
+            + '<div class="wpr-subline">' + _ms_esc(txt) + ' <span class="wpr-dim">' + (ok ? '已兑现' : '待兑现') + '</span></div></div></div>';
+    });
+    var brief = pr.execution_brief || {};
+    [['🎯','戏剧目标',brief.dramatic_goal],['⚔️','冲突来源',brief.conflict_source],['🧭','人物选择',brief.character_choice],['🔄','不可逆变化',brief.irreversible_change],['❓','读者问题',brief.reader_question],['🪝','结尾钩子',brief.ending_hook]].forEach(function (x) {
+        if (x[2]) html += '<div class="wpr-row"><span class="wpr-ic">' + x[0] + '</span><div class="wpr-main"><div class="wpr-subline"><b>' + x[1] + '</b> · ' + _ms_esc(x[2]) + '</div></div></div>';
+    });
+    if ((pr.character_impact || []).length) html += '<details class="wpr-impact"><summary>👤 写前人物影响预测</summary>' + (pr.character_impact || []).map(function (x) { return '<div><b>' + _ms_esc(x.name || x.character || '角色') + '</b>：' + _ms_esc(x.prediction || x.intent || x.change || '') + '</div>'; }).join('') + '</details>';
+    body.innerHTML = html;
+}
+
+function renderRecentOutcome(outcome) {
+    var box = document.getElementById('wf-plot-outcome');
+    if (!box) return;
+    if (!outcome || !(outcome.facts || []).length) { box.hidden = true; return; }
+    box.hidden = false;
+    var predictions = outcome.predictions || [], facts = outcome.facts || [];
+    box.innerHTML = '<div class="wpr-head">👤 Prediction → Fact <span class="wpr-sub">' + _ms_esc(outcome.plot_name || outcome.plot_id) + '</span></div>' + facts.map(function (f) {
+        var name = f.name || f.character || '角色';
+        var pred = predictions.filter(function (p) { return (p.name || p.character) === name; })[0] || {};
+        return '<div class="wpr-compare"><b>' + _ms_esc(name) + '</b><span>预测：' + _ms_esc(pred.prediction || pred.intent || pred.change || '—') + '</span><span>实际：' + _ms_esc(f.reason || f.event || f.from || '—') + '</span><span>结果：' + _ms_esc(f.to || f.result || f.type || '—') + '</span></div>';
+    }).join('');
+}
+
 /* ═══ 正文实时刷新：轮询 /api/desk/chapters/<bid>，agent 写完情节段/章节即重渲染（保留当前章/页/高亮） ═══ */
 (function pollReader() {
     var bid = window.__STORYLINE_ID__;
     if (!bid) return;
     var lastFp = '';
-    setInterval(function () {
+    function run() {
         fetch('/api/desk/chapters/' + encodeURIComponent(bid))
             .then(function (r) { return r.json(); })
             .then(function (d) {
+                renderPlotRun(d.plot_run);   // Plot Run 面板随轮询刷新（当前情节段推进后自动切换）
+                renderRecentOutcome(d.recent_plot_outcome);
+                if (d.planning && window.NEPlanning && window.__PLANNING_STATE__ && d.planning.storyline_revision !== window.__PLANNING_STATE__.storyline_revision) window.NEPlanning.refresh();
                 // 顺带刷新注入的当前章号，让「继续写正文」按钮用上跨进程写盘后的最新值
                 if (d && typeof d.current_chapter === 'number' && d.current_chapter !== window.__BOOK_CURRENT_CHAPTER__) {
                     window.__BOOK_CURRENT_CHAPTER__ = d.current_chapter;
@@ -371,7 +442,9 @@ function stopWritingTask(e) {
                 }
             })
             .catch(function () {});
-    }, 3000);
+    }
+    run();                 // 进页立即渲染一次（Plot Run 面板不等 3s 轮询）
+    setInterval(run, 3000);
 })();
 
 </script>

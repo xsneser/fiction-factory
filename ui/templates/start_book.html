@@ -234,6 +234,7 @@ var WZ = {
     _task2Fired: false,   // 本次候选下已触发过第二个建书任务（重选候选后复位允许再触发）
     __ARCHETYPES__: [],   // 角色原型库（fetch /api/characters 后填充，供原型下拉/套用原型）
     state: { idea: '', pen_name: '', tags: [], borrow: { source_book_id: '', tweak: '' },
+             build_session_id: '', target_word_budget: 120000,
              genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
              storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
              protag_personality: '', protag_golden_finger: '',
@@ -242,6 +243,15 @@ var WZ = {
              _outline_picks: null, _outline_picks_names: null, _outline_data: null },
 
     el: function(id) { return document.getElementById(id); },
+
+    ensureBuildSession: function() {
+        if (!this.state.build_session_id) {
+            this.state.build_session_id = (window.crypto && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : ('build-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+        }
+        return this.state.build_session_id;
+    },
 
     /* textarea 自动增高：内容多时完全展开，不出现滚动条 */
     autoSize: function(el) {
@@ -390,6 +400,7 @@ var WZ = {
         // 前端自动 reset（清 state 除笔名 + 清表单 + 清 draft）→ 重新填 idea/pen/tags → 自动进步 2
         var keepPen = this.state.pen_name || '';
         this.state = { idea: '', pen_name: keepPen, tags: [], borrow: { source_book_id: '', tweak: '' },
+                       build_session_id: '', target_word_budget: 120000,
                        genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
                        storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
                        protag_personality: '', protag_golden_finger: '',
@@ -732,11 +743,60 @@ var WZ = {
     emptyChar: function() {
         return { name: '', role: '配角', importance: 2, identity: '', title: '', gender: '',
                  personality: '', catchphrase: '', brief: '', golden_finger: '', faction: '',
-                 age: 0, death_year: 0, archetype_id: '', relations: [] };
+                 age: 0, death_year: 0, archetype_id: '', relations: [],
+                 behavior: {}, speech_profile: {}, development_plan: '' };
     },
     esc: function(s) {
         return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    },
+    /* 嵌套字段读写（行为模型/语言倾向等 data-path 输入；.cc[data-f] 只收顶层扁平键） */
+    getPath: function(o, path) {
+        var cur = o, seg = String(path || '').split('.');
+        for (var i = 0; i < seg.length; i++) {
+            if (cur == null) return '';
+            cur = cur[seg[i]];
+        }
+        return cur;
+    },
+    setPath: function(o, path, val) {
+        var seg = String(path || '').split('.');
+        var cur = o;
+        for (var i = 0; i < seg.length - 1; i++) {
+            if (cur[seg[i]] == null || typeof cur[seg[i]] !== 'object') cur[seg[i]] = {};
+            cur = cur[seg[i]];
+        }
+        cur[seg[seg.length - 1]] = val;
+    },
+    /* 行为模型（情境→一贯反应）+ 语言倾向（非固定口头禅）折叠编辑区 */
+    behaviorSectionHTML: function(c) {
+        c = c || {};
+        var sp = c.speech_profile || {};
+        var pathIn = function(path, ph) {
+            return '<input class="bh" data-path="' + path + '" placeholder="' + (ph || '') + '" value="' + WZ.esc(WZ.getPath(c, path)) + '" style="width:100%">';
+        };
+        var pairs = [['decision_style', 'under_pressure', '压力下'], ['decision_style', 'danger', '危险时'],
+                     ['decision_style', 'betrayal', '遭背叛'], ['communication_style', 'stranger', '对陌生人'],
+                     ['communication_style', 'friend', '对朋友'], ['communication_style', 'enemy', '对敌人'],
+                     ['emotion_expression', 'anger', '愤怒时'], ['emotion_expression', 'fear', '恐惧时'],
+                     ['emotion_expression', 'sadness', '悲伤时']];
+        var g = pairs.map(function(x) {
+            return '<div style="flex:1 1 30%;min-width:150px"><label style="font-size:11px;color:#8b949e">' + x[2] + '</label>' + pathIn('behavior.' + x[0] + '.' + x[1]) + '</div>';
+        }).join('');
+        var list = function(path, ph, arr) {
+            return '<textarea class="bh" data-path="' + path + '" data-list="1" placeholder="' + ph + '" rows="2" style="width:100%;box-sizing:border-box">' + WZ.esc((arr || []).join('\n')) + '</textarea>';
+        };
+        return '<details style="margin-top:8px;border:1px solid #30363d;border-radius:6px;padding:6px 8px">'
+            + '<summary style="cursor:pointer;font-size:12px;color:#8b949e">🎭 行为模型 &amp; 语言倾向（进阶，可选）</summary>'
+            + '<div style="font-size:12px;color:#8b949e;margin:6px 0">情境→一贯反应：人物稳定感来自不同刺激下反应一致（每格 1-3 短句）</div>'
+            + '<div style="display:flex;flex-wrap:wrap;gap:6px">' + g + '</div>'
+            + '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'
+            + '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#8b949e">句长倾向（如 短句）</label>' + pathIn('speech_profile.rhythm') + '</div>'
+            + '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#8b949e">语气（如 克制）</label>' + pathIn('speech_profile.tone') + '</div>'
+            + '</div>'
+            + '<div style="margin-top:6px"><label style="font-size:11px;color:#8b949e">说话习惯 / 句式倾向（适时自然，不固定复读）</label>' + list('speech_profile.habits', '先确认事实、避免直接表达情绪…（每行一条）', sp.habits) + '</div>'
+            + '<div style="margin-top:6px"><label style="font-size:11px;color:#8b949e">绝不说 / 禁开口癖</label>' + list('speech_profile.forbidden', '夸张感叹、连续解释…（每行一条）', sp.forbidden) + '</div>'
+            + '</details>';
     },
     /* 角色 role/importance 归一化（防 agent 传非枚举 role / 漏 importance）：
        role 只取 主角/配角/反派/其他 四选一——非枚举值按 importance 推断（importance===1→主角，否则配角）；
@@ -823,7 +883,8 @@ var WZ = {
             + '<div class="char-relations">'
             + '<div style="font-size:12px;color:#8b949e;margin:6px 0 4px">人物关系（对方姓名 / 关系）</div>'
             + '<div class="rel-rows"></div>'
-            + '<button type="button" class="small" onclick="WZ.addRelRow(this)">➕ 加关系</button></div>';
+            + '<button type="button" class="small" onclick="WZ.addRelRow(this)">➕ 加关系</button></div>'
+            + WZ.behaviorSectionHTML(c);
         (container || this.el('wz-wb-factions')).appendChild(card);
         var relWrap = card.querySelector('.rel-rows');
         // relations 容错：agent 可能传字符串/字符串数组（而非 [{name,relation}]）——非数组直接跳过，不中断渲染
@@ -931,6 +992,15 @@ var WZ = {
                 var n = row.querySelector('.cc-rel-name').value.trim();
                 var r = row.querySelector('.cc-rel-rel').value.trim();
                 if (n) c.relations.push({name: n, relation: r});
+            });
+            // 嵌套字段（行为模型/语言倾向）：data-path 输入 → setPath 写进嵌套 dict；data-list 按换行转数组
+            card.querySelectorAll('[data-path]').forEach(function(inp) {
+                var p = inp.getAttribute('data-path');
+                if (!p) return;
+                var v = inp.getAttribute('data-list')
+                    ? inp.value.split('\n').map(function(s) { return s.trim(); }).filter(Boolean)
+                    : inp.value.trim();
+                WZ.setPath(c, p, v);
             });
             if (c.name) out.push(c);
         });
@@ -1083,6 +1153,7 @@ var WZ = {
         this.creating = true;
         this.submitError = '';   // 清旧错误,防 agent 读到上一次失败
         this.reportStatus();
+        this.ensureBuildSession();
         this.collect();
         var btn = this.el('wz-submit');
         btn.disabled = true; btn.textContent = '⏳ 创建中…';
@@ -1128,6 +1199,7 @@ var WZ = {
     persist: function() {
         if (this.bookId) return;   // 建书后不存草稿：避免恢复已完成向导到生成中的步骤
         try {
+            this.ensureBuildSession();
             this.collect();   // 从 DOM 刷新 state（含 characters）
             sessionStorage.setItem(this.PERSIST_KEY, JSON.stringify({
                 state: this.state,
@@ -1149,8 +1221,10 @@ var WZ = {
                 body: JSON.stringify({
                     cur: this.cur,
                     bookId: this.bookId || '',
+                    buildSessionId: (this.state && this.state.build_session_id) || '',
                     creating: !!this.creating,
                     _picked: !!this._picked,
+                    pen_selected: !!(this.state && this.state.pen_name),
                     has_world: !!(this.state && this.state.world_building),
                     has_picks: !!(this.state && this.state._outline_picks),
                     has_outline: !!(this.state && this.state._outline_data
@@ -1371,6 +1445,12 @@ window.onnecommand = function(e) {
             themes: Array.isArray(args.themes) ? args.themes : [],
             basic_info: (args.basic_info && typeof args.basic_info === 'object') ? args.basic_info : null
         };
+        if (args.planning && typeof args.planning === 'object') {
+            WZ.state.target_word_budget = args.planning.target_word_budget || WZ.state.target_word_budget;
+            WZ.state.future_intents = args.planning.future_intents || [];
+            WZ.state.story_questions = args.planning.story_questions || [];
+            WZ.state.decision_points = args.planning.decision_points || [];
+        }
         WZ.renderStoryline();   // 展示故事线 Gantt
         WZ.persist();   // 存草稿（刷新后 restore 也能渲染故事线）
         if (typeof showToast === 'function') {
@@ -1386,6 +1466,7 @@ window.onnecommand = function(e) {
         // 清空向导 state（除 pen_name 与库表字段），防上一本残留草稿干扰建书保真度
         var keepPen = WZ.state.pen_name || '';
         WZ.state = { idea: '', pen_name: keepPen, tags: [], borrow: { source_book_id: '', tweak: '' },
+                     build_session_id: '', target_word_budget: 120000,
                      genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
                      storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
                      protag_personality: '', protag_golden_finger: '',

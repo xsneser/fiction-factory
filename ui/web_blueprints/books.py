@@ -128,6 +128,9 @@ def _basic_info_from_outline(outline, book):
             item = dict(c)
             item.setdefault("role", "主角" if first else "配角")
             item.setdefault("relations", [])
+            item.setdefault("behavior", {})
+            item.setdefault("speech_profile", {})
+            item.setdefault("development_plan", "")
             bi["characters"].append(item)
             first = False
     return bi

@@ -8,6 +8,87 @@ from libraries.world_tags import genre_from_tags
 
 bp = Blueprint("storyline", __name__)
 
+
+def _planning_ui_payload(book_id):
+    """聚合故事合同与规划草稿；UI 只消费本结果，不在浏览器推断边界。"""
+    from libraries.storyline import load_storyline
+    from libraries.planning_state import (detect_story_boundary, load_planning_state,
+                                           load_replan_preview)
+    tl = load_storyline(_storyline_filepath(book_id))
+    book = book_mgr.get(book_id)
+    if tl is None or book is None:
+        return None
+    state = load_planning_state(book_id, tl, book, persist=False)
+    draft_ids = set()
+    draft_path = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
+    if os.path.exists(draft_path):
+        try:
+            draft = json.load(open(draft_path, encoding="utf-8"))
+            draft_ids = {str(x.get("plot_id") or "") for x in (draft.get("bridges") or []) if isinstance(x, dict)}
+        except Exception:
+            draft_ids = set()
+    unwritten = [p for p in (tl.plots or [])
+                 if not int(getattr(p, "written_chapter", 0) or 0) and p.id not in draft_ids]
+    boundary = detect_story_boundary(
+        written_until_word=int(getattr(book, "total_words", 0) or 0),
+        committed_until_word=int(state.get("committed_until_word") or 0),
+        remaining_plots=len(unwritten), words_per_batch=int(tl.words_per_chapter or 3000),
+        storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+        last_replan=state.get("last_replan") or {},
+    )
+    raw_horizon = state.get("horizon") if isinstance(state.get("horizon"), dict) else {}
+    h1 = raw_horizon.get("h1") or raw_horizon.get("near") or []
+    display = {
+        "h0": [{"id": p.id, "name": p.name, "outline_id": p.outline_id,
+                "words": int(p.words or 0)} for p in unwritten[:8]],
+        "h1": h1 if isinstance(h1, (list, dict, str)) else [],
+        "h2": state.get("future_intents") or [],
+    }
+    state = dict(state)
+    state["written_until_word"] = int(getattr(book, "total_words", 0) or 0)
+    state["storyline_revision"] = int(getattr(tl, "storyline_revision", 0) or 0)
+    state["display_horizon"] = display
+    return {
+        "ok": True, "book_id": book_id, "planning_state": state,
+        "storyline_snapshot": {
+            "revision": int(getattr(tl, "storyline_revision", 0) or 0),
+            "outline_count": len(tl.outlines or []), "plot_count": len(tl.plots or []),
+            "remaining_plot_count": len(unwritten),
+            "threads": [{"id": getattr(t, "id", ""), "name": getattr(t, "name", "")}
+                        if not isinstance(t, dict) else {"id": t.get("id", ""), "name": t.get("name", "")}
+                        for t in (tl.threads or [])],
+            "promise_count": len(tl.promises or []),
+        },
+        "boundary": boundary, "replan_preview": load_replan_preview(book_id),
+    }
+
+
+@bp.route("/api/storyline/<book_id>/planning-state", methods=["GET"])
+def api_planning_state(book_id):
+    payload = _planning_ui_payload(book_id)
+    if payload is None:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    return jsonify(payload)
+
+
+@bp.route("/api/storyline/<book_id>/commit-plan", methods=["POST"])
+def api_commit_plan(book_id):
+    """用户确认暂存预览后，走共享 replan 提交服务（修订 2：UI 与 auto orchestrator 同一点）。"""
+    from libraries.replan_service import commit_replan_preview
+    data = request.get_json(silent=True) or {}
+    result = commit_replan_preview(book_id, data.get("preview_id"),
+                                   data.get("expected_revision"))
+    status = result.pop("status", 200) if isinstance(result, dict) else 200
+    return jsonify(result), status
+
+
+@bp.route("/api/storyline/<book_id>/replan-preview/<preview_id>", methods=["DELETE"])
+def api_delete_replan_preview(book_id, preview_id):
+    from libraries.planning_state import delete_replan_preview
+    if not book_mgr.get(book_id):
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    return jsonify({"ok": True, "deleted": delete_replan_preview(book_id, preview_id)})
+
 # ═══════════════════════════════════════════
 # ⏱️ 故事线编辑（新书启动 v2）
 @bp.route("/storyline/<storyline_id>/edit")

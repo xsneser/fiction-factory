@@ -55,18 +55,41 @@ def start_new_book():
       - form（兼容旧入口/smoke 测试）：保留 302 重定向
     """
     if request.method == "POST":
-        llm = get_llm()
-        if not llm:
-            return jsonify({"error": "LLM 未配置"}), 500
-
         is_json = request.is_json
         data = request.get_json(silent=True) or {} if is_json else {}
         src = data if is_json else request.form
+        build_session_id = str(data.get("build_session_id") or "").strip() if is_json else ""
+        if build_session_id:
+            from libraries.planning_state import save_build_session
+            outline_preview = data.get("_outline_data") or {}
+            committed = max((int(o.get("end_word") or 0)
+                             for o in (outline_preview.get("outlines") or []) if isinstance(o, dict)), default=0)
+            save_build_session(build_session_id, {
+                "mode": "open",
+                "target_word_budget": max(int(data.get("target_word_budget") or 0), committed),
+                "committed_until_word": committed,
+                "future_intents": data.get("future_intents") or [],
+                "story_questions": data.get("story_questions") or [],
+                "decision_points": data.get("decision_points") or [],
+            })
+        llm = get_llm()
+        if not llm:
+            return jsonify({"error": "LLM 未配置"}), 500
 
         # 新流程：步 3 ②生成的大纲+情节段（generate_outline_preview 产出，set_outline 存入）
         outline_data = data.get("_outline_data") if is_json else None
         if not isinstance(outline_data, dict):
             outline_data = None
+        if outline_data:
+            from libraries.planning_state import enabled
+            if enabled("INCREMENTAL_STORY_PLANNING", False):
+                committed = max((int(o.get("end_word") or 0)
+                                 for o in (outline_data.get("outlines") or []) if isinstance(o, dict)), default=0)
+                if committed > 30000:
+                    return jsonify({"ok": False, "error": "incremental_horizon_exceeded",
+                                    "committed_until_word": committed,
+                                    "max_initial_committed_words": 30000,
+                                    "action": "只保留开篇承诺区，远期方向写入 future_intents"}), 400
 
         pen_name = src.get("pen_name", "")
         platform = src.get("platform", "") or "fanqie"
@@ -217,6 +240,9 @@ def start_new_book():
             style_profile_id="",
         )
         book_mgr.save_storyline(book.book_id, storyline)
+        if build_session_id:
+            from libraries.planning_state import attach_build_session
+            attach_build_session(build_session_id, book.book_id, storyline, book)
 
         # 向导（JSON）返回 book_id 供前端接续生成；旧 form 入口保留 302
         # 深化已并入步3、提交即 ready → 跳书详情不再带 ?newdraft=1（无自动深化派发）
@@ -244,5 +270,3 @@ def start_new_book():
 def outline_generator_page():
     """大纲生成器已内嵌到「启动新书」流程（故事线编辑器：一键生成完整大纲）"""
     return redirect(url_for("dashboard.start_new_book"))
-
-

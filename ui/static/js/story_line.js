@@ -43,6 +43,16 @@
   function fmtW(w) {
     return (w >= 1000) ? (Math.round(w / 1000 * 10) / 10) + 'k' : String(Math.round(w));
   }
+  function escHtml(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function intentText(v) {
+    if (typeof v === 'string') return v;
+    v = v || {};
+    return v.intent || v.question || v.title || v.name || v.goal || v.summary || '';
+  }
   /* 情节段预计字数（规划/预估）：plot.words 优先（agent 目标字数，clamp 3000），否则节拍制 cover_beats×200 封顶 1200
      ——与后端 storyline_writer.planned_words 同一口径（words 覆盖 + beat 兜底） */
   function plannedWords(p) {
@@ -679,6 +689,33 @@
     contentArea.appendChild(cursor);
   }
 
+  function renderBoundary(contentArea, planning, boundary) {
+    var committed = parseInt((planning || {}).committed_until_word || TOTAL_WORDS, 10) || TOTAL_WORDS;
+    var y = wordToPercent(Math.min(Math.max(0, committed), TOTAL_WORDS));
+    var line = document.createElement('div');
+    line.className = 'sl-boundary'; line.style.top = y + '%';
+    line.title = '已承诺至约 ' + fmtW(committed) + ' 字 · 剩余 ' + ((boundary || {}).remaining_plots || 0) + ' plots';
+    line.innerHTML = '<span>已承诺至 ' + fmtW(committed) + '</span>';
+    contentArea.appendChild(line);
+  }
+
+  function renderForecast(zone, planning) {
+    if (!zone) return;
+    var hz = (planning || {}).display_horizon || {};
+    var cards = [];
+    function add(kind, values) {
+      values = Array.isArray(values) ? values : (values ? [values] : []);
+      values.forEach(function (v) { var t = intentText(v); if (t) cards.push('<div class="sl-future-intent"><b>' + escHtml(kind) + '</b><span>' + escHtml(t) + '</span></div>'); });
+    }
+    add('H1 · 下一段方向', hz.h1);
+    add('H2 · 远期方向', hz.h2 || (planning || {}).future_intents);
+    add('Open Question', (planning || {}).story_questions);
+    add('Character Intent', (planning || {}).character_intents);
+    if (!cards.length) { zone.hidden = true; zone.innerHTML = ''; return; }
+    zone.hidden = false;
+    zone.innerHTML = '<div class="sl-forecast-title">🔭 可变未来 <span>方向性意图，可随写作改变</span></div><div class="sl-forecast-cards">' + cards.join('') + '</div>';
+  }
+
   /* ─── 工具提示 ─── */
   function makeTooltip(el) {
     function show(e) {
@@ -733,20 +770,22 @@
         '<div class="sl-root">' +
         '<div class="sl-header"><h1><span class="dot"></span>故事线</h1>' +
         '<div class="sl-header-right">' + zoomHtml +
-        '<div class="sl-meta">总字数 <span>' + fmtW(TOTAL_WORDS) + '</span> · 预计 <span>' + Math.max(1, Math.ceil(TOTAL_WORDS / Math.max(WPC, 1))) + '</span> 章 · 每章约 <span>' + WPC + '</span> 字 · 弧 <span>' + outlines.length + '</span> · 情节段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
+        '<div class="sl-meta">已承诺 <span>' + fmtW((opts.planning || {}).committed_until_word || TOTAL_WORDS) + '</span> · 每章约 <span>' + WPC + '</span> 字 · 弧 <span>' + outlines.length + '</span> · 情节段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
         '<div class="sl-main">' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
         '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
         '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">📋 弧</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
         '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">🔗 情节段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
         '<div class="sl-lane" style="flex:2"><div class="sl-lane-header">🧵 线程</div><div class="sl-lane-body" id="' + mountId + '-tb"></div></div>' +
-        '</div></div>' +
+        '</div></div><div class="sl-forecast-zone" id="' + mountId + '-fz" hidden></div>' +
         '<div class="sl-legend">' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#f97583"></span> 弧</div>' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#79c0ff"></span> 主情节段</div>' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#a5d6ff"></span> 子情节段</div>' +
         threadLegendHtml +
         '<div class="sl-legend-item"><span class="sl-legend-swatch payoff-line"></span> ◉设局 → ↪收局</div>' +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch boundary"></span> 黄线：决定到哪里</div>' +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch forecast"></span> 斜纹：可变未来</div>' +
         (narrCount.flashback ? '<div class="sl-legend-item"><span class="sl-legend-swatch flashback"></span> 倒叙</div>' : '') +
         (narrCount.interleaved ? '<div class="sl-legend-item"><span class="sl-legend-swatch interleaved"></span> 插叙</div>' : '') +
         '</div></div>';
@@ -763,6 +802,7 @@
       var plotBody = document.getElementById(mountId + '-pb');
       var threadBody = document.getElementById(mountId + '-tb');
       var contentArea = document.getElementById(mountId + '-ct');
+      var forecastZone = document.getElementById(mountId + '-fz');
 
       // 纵向缩放控件：记录需改高度的面板 + 绑定 + / − / 1x 按钮
       _scrollableMode = !!opts.scrollable;
@@ -784,7 +824,11 @@
         renderThreads(threadBody, tooltip, tt.show, tt.move, tt.hide);
         var existing = contentArea.querySelector('.sl-cursor');
         if (existing) existing.remove();
+        var oldBoundary = contentArea.querySelector('.sl-boundary');
+        if (oldBoundary) oldBoundary.remove();
         renderCursor(contentArea, opts.currentWord, opts.currentChapter);
+        renderBoundary(contentArea, opts.planning || {}, opts.boundary || {});
+        renderForecast(forecastZone, opts.planning || {});
       }
       _lastRender = renderAll;
       _lastMountId = mountId;
