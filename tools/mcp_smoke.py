@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 44  # 43 + 1 pick_plot_sample(Plot Run 单篇取样)。对齐 _build_registry 实收
+EXPECT_MCP_TOOLS = 45  # 新增 get_story_state；对齐 _build_registry 实收
 PASS, FAIL = [], []
 
 
@@ -83,7 +83,7 @@ async def main():
     bm, bid = _make_test_book()
     print(f"[setup] 临时书 {bid}（BookManager 直建，护栏：create_book 工具不存在）")
 
-    # 样文库现为全局词条库(不分笔名):往返按「before → add +1 → delete 回位」的增量断言,
+    # 样文池现为全局词条库(不分笔名):往返按「before → add +1 → delete 回位」的增量断言,
     # 不建临时笔名、不写 per-pen style_refs 文件。
 
     params = StdioServerParameters(
@@ -109,7 +109,7 @@ async def main():
                           "fetch_book", "fetch_novel", "fetch_webnovel", "discover_hot", "list_rankings",
                           "list_crawled_novels", "read_crawled_novel", "extract_state", "ingest_library_assets",
                           "save_chapter_text", "save_plot_draft", "save_outlines", "save_book_meta",
-                          "get_writing_context", "get_pen_style", "add_style_rule", "delete_style_rule",
+                          "get_writing_context", "get_story_state", "get_pen_style", "add_style_rule", "delete_style_rule",
                           "add_style_sample", "delete_style_sample", "list_style_samples", "get_style_sample"):
                     check(f"工具 {t} 在列", t in names)
 
@@ -121,10 +121,11 @@ async def main():
                 })).get("ok")
                 check("save_basic_info OK", bool(ok_save))
                 r = await call_json(session, "save_outlines",
-                                    {"book_id": bid, "outlines": [{"name": "开篇", "start_chapter": 1,
-                                                                   "end_chapter": 30}],
-                                     "plots": [{"name": "穿越开局", "outline_id": "outline_0001",
-                                                "cover_beats": 6, "words": 1400}]})
+                                    {"book_id": bid, "outlines": [{"id": "outline_0001", "name": "开篇",
+                                                                   "start_chapter": 1, "end_chapter": 30}],
+                                     "plots": [{"id": "plot_0001", "name": "穿越开局", "outline_id": "outline_0001",
+                                                "cover_beats": 6, "words": 1400}],
+                                     "validate": False})
                 check("save_outlines OK", r.get("ok") and r.get("outlines") == 1,
                       f"{r}")
                 detail = await call_json(session, "get_book_detail", {"book_id": bid})
@@ -151,15 +152,21 @@ async def main():
                 sc = (ctx.get("style_card") or "")
                 check("get_writing_context style_card 非空（无笔名也注入默认笔名精简卡）",
                       isinstance(sc, str) and len(sc) > 20 and "笔名" in sc, f"{len(sc)} 字符")
+                cp = (ctx.get("plot_run") or {}).get("cast_pack") or {}
+                check("get_writing_context plot_run.cast_pack 分级包(主角/出场/提及)",
+                      isinstance(cp.get("protagonists"), list) and len(cp.get("protagonists")) >= 1
+                      and (cp.get("protagonists")[0].get("name") or "") == "王小明"
+                      and isinstance(cp.get("active"), list) and isinstance(cp.get("referenced"), list),
+                      f"protagonists={[c.get('name') for c in (cp.get('protagonists') or [])]}")
                 ps = await call_json(session, "get_pen_style", {"book_id": bid})
                 check("get_pen_style 返回风格权威（style_rules/forbidden 非空）",
                       bool((ps.get("style_rules") or "")) and bool(ps.get("forbidden")),
                       f"{ps.get('pen_name')} style_rules {len(ps.get('style_rules') or '')} 字符")
 
-                # ── 2.5 样文库工具往返(全局词条库;增量:before→add→get→delete→回位)──
+                # ── 2.5 样文池工具往返(全局词条库;增量:before→add→get→delete→回位)──
                 _before_n = (await call_json(session, "list_style_samples", {})).get("count", 0)
-                _sm_text = ("这是一段用于样文库冒烟测试的连续场景文本，不含任何版权内容，"
-                            "仅用于验证样文库的落盘、镜像渲染与注入链路是否可用。")
+                _sm_text = ("这是一段用于样文池冒烟测试的连续场景文本，不含任何版权内容，"
+                            "仅用于验证样文池的落盘、镜像渲染与注入链路是否可用。")
                 sa = await call_json(session, "add_style_sample", {
                     "profile_id": "", "text": _sm_text, "title": "冒烟场景",
                     "scene_tags": ["冒烟", "测试"]})
@@ -193,7 +200,8 @@ async def main():
                 dui = await call_json(session, "drive_ui", {"cmd": "next"})
                 check("drive_ui 返回 __ui_command__", dui.get("__ui_command__") == "next")
                 dui2 = await call_json(session, "drive_ui", {"cmd": "set_outline",
-                    "args": {"outlines": [{"id": "outline_0001", "name": "测试大纲"}], "plots": []}})
+                    "args": {"outlines": [{"id": "outline_0001", "name": "测试大纲",
+                                           "start_word": 0, "end_word": 3000}], "plots": []}})
                 check("drive_ui set_outline 返回 __ui_command__", dui2.get("__ui_command__") == "set_outline")
                 # set_review（侦察/提取页呈现五库候选）：title 必填、五类至少一类非空
                 dui3 = await call_json(session, "drive_ui", {"cmd": "set_review",
@@ -211,6 +219,17 @@ async def main():
                 except Exception:
                     pass
                 check("drive_ui set_review 缺 title/五类被拒", _bad_review)
+                # 负例：弧只给 end_word、缺 start_word（半组跨度）应被拒（结构必填，不自动换算兜底）
+                _bad_outline = True
+                try:
+                    _r2 = await session.call_tool("drive_ui", {"cmd": "set_outline",
+                        "args": {"outlines": [{"id": "outline_no_span", "name": "缺跨度",
+                                               "end_word": 3000}], "plots": []}})
+                    if "__ui_command__" in call_text(_r2):
+                        _bad_outline = False
+                except Exception:
+                    pass
+                check("drive_ui set_outline 弧缺 start_word 被拒", _bad_outline)
                 intent_file = os.path.join(_ROOT, "storage", "nav_intent.json")
                 intents = []
                 if os.path.exists(intent_file):
@@ -279,7 +298,7 @@ async def main():
             os.remove(os.path.join(_ROOT, "storage", "extract_work", "冒烟扫读书.json"))
         except Exception:
             pass
-        # 样文库为全局库,往返已 delete 回位;不留临时文件需清理
+        # 样文池为全局库,往返已 delete 回位;不留临时文件需清理
 
     print("\n" + "=" * 50)
     print(f"  MCP 冒烟验收: {len(PASS)} 通过 / {len(FAIL)} 失败")
