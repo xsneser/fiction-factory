@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover
     from fastmcp import FastMCP
 
 from agent_tools import TOOL_REGISTRY  # noqa: E402
+from libraries.agent_tool_router import filter_registry, resolve_profile, selected_profile  # noqa: E402
 from libraries.tool_log import log_tool_call  # noqa: E402
 from libraries.loop_guard import get_loop_guard  # noqa: E402
 
@@ -128,6 +129,8 @@ def _wrap_logged(fn):
                     "summary": summary,
                     "duration_ms": round((time.time() - t0) * 1000),
                     "source": _SOURCE,
+                    "profile_name": globals().get("_PROFILE", ""),
+                    "visible_tool_count": len(globals().get("_EXPOSED_REGISTRY", TOOL_REGISTRY)),
                 })
             except Exception:
                 pass
@@ -137,7 +140,20 @@ def _wrap_logged(fn):
 # 逐个注册（工具名/描述/schema 由函数签名+docstring 自动生成）。
 # 护栏：直建/直删工具不存在于注册表——建书走「启动新书」向导 UI
 # （drive_ui 驱动）、删书走书库页手动；navigate/drive_ui 经意图桥驱动浏览器/向导。
-for _entry in TOOL_REGISTRY:
+_PROFILE = selected_profile(sys.argv)
+_EXPOSED_REGISTRY = filter_registry(TOOL_REGISTRY, _PROFILE)
+if _PROFILE in {"build", "build-candidates"}:
+    try:
+        from libraries.build_status import get_build_status
+        _bs = get_build_status() or {}
+        _resolved = resolve_profile(_PROFILE, book_exists=bool(_bs.get("book_id")),
+                                    storyline_exists=bool(_bs.get("book_id")),
+                                    pen_selected=bool(_bs.get("pen_selected")))
+        _allowed = set(_resolved["allowed_tools"])
+        _EXPOSED_REGISTRY = [entry for entry in _EXPOSED_REGISTRY if entry["name"] in _allowed]
+    except Exception:
+        pass
+for _entry in _EXPOSED_REGISTRY:
     mcp.tool()(_wrap_logged(_entry["func"]))
 
 if __name__ == "__main__":

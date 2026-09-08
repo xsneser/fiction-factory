@@ -43,9 +43,49 @@ DEFAULT_WORLD_BUILDING = {
 # 单条角色条目键（顺序即 to_dict 展示顺序）
 _CHAR_FIELDS = ("name", "role", "importance", "identity", "gender", "personality",
                 "catchphrase", "brief", "title", "golden_finger", "faction",
-                "age", "death_year", "archetype_id", "relations")
+                "age", "death_year", "archetype_id", "relations",
+                "behavior", "speech_profile", "development_plan")
 
 _CHAR_DEFAULT_ROLE = "配角"
+
+# 行为模型（情境→一贯反应）与语言倾向（非固定句式/口头禅复读）的嵌套结构键
+_BEHAVIOR_SLOT_KEYS = {
+    "decision_style": ("under_pressure", "danger", "betrayal"),
+    "communication_style": ("stranger", "friend", "enemy"),
+    "emotion_expression": ("anger", "fear", "sadness"),
+}
+_SPEECH_LIST_KEYS = ("habits", "forbidden")
+
+
+def _norm_behavior(v) -> dict:
+    """归一 behavior：{group:{slot:str}}，非 dict 组 → 全空。"""
+    if not isinstance(v, dict):
+        v = {}
+    out = {}
+    for grp, slots in _BEHAVIOR_SLOT_KEYS.items():
+        g = v.get(grp) if isinstance(v.get(grp), dict) else {}
+        out[grp] = {s: str(g.get(s, "") or "").strip() for s in slots}
+    return out
+
+
+def _norm_speech_profile(v) -> dict:
+    """归一 speech_profile：{rhythm,tone:str, habits/forbidden:list[str]}（语言倾向）。"""
+    if not isinstance(v, dict):
+        v = {}
+    _lst = lambda x: [str(i).strip() for i in (x or []) if isinstance(i, str) and str(i).strip()]
+    return {
+        "rhythm": str(v.get("rhythm", "") or "").strip(),
+        "tone": str(v.get("tone", "") or "").strip(),
+        "habits": _lst(v.get("habits")),
+        "forbidden": _lst(v.get("forbidden")),
+    }
+
+
+def _norm_development_plan(v):
+    """development_plan：str 一句成长方向，或 {growth_target,notes}；空 → ""。"""
+    if isinstance(v, dict):
+        return {k: str(x) for k, x in v.items() if str(x or "").strip()} or ""
+    return str(v or "").strip()
 
 
 def _canon_char(c) -> dict:
@@ -75,6 +115,10 @@ def _canon_char(c) -> dict:
             rels.append({"name": str(r["name"]).strip(),
                          "relation": str(r.get("relation", "") or "")})
     out["relations"] = rels
+    # 行为模型 / 语言倾向 / 成长规划（可选嵌套；空 → 默认空结构，不随人物丢弃）
+    out["behavior"] = _norm_behavior(c.get("behavior"))
+    out["speech_profile"] = _norm_speech_profile(c.get("speech_profile"))
+    out["development_plan"] = _norm_development_plan(c.get("development_plan"))
     return out
 
 
@@ -97,6 +141,9 @@ def _char_from_protagonist(p) -> dict:
         "death_year": int(p.get("death_year") or 0),
         "archetype_id": "",
         "relations": [],
+        "behavior": _norm_behavior(None),
+        "speech_profile": _norm_speech_profile(None),
+        "development_plan": "",
     }
 
 
@@ -123,6 +170,9 @@ def _char_from_support(c, mc_name) -> dict:
         "death_year": int(c.get("death_year") or 0),
         "archetype_id": str(c.get("archetype_id", "") or ""),
         "relations": rels,
+        "behavior": _norm_behavior(c.get("behavior")),
+        "speech_profile": _norm_speech_profile(c.get("speech_profile")),
+        "development_plan": _norm_development_plan(c.get("development_plan")),
     }
 
 
@@ -147,7 +197,9 @@ def normalize_basic_info(bi) -> dict:
         for c in (bi.get("supporting_cast") or []):
             if isinstance(c, dict) and str(c.get("name", "") or "").strip():
                 chars.append(_char_from_support(c, mc_name))
-        bi["characters"] = chars
+    # 统一写回：if 分支（characters 已存在）同样落 _canon_char 的归一化结果，
+    # 保证缺省字段（behavior/speech_profile/development_plan/relations 等）被补全/归一
+    bi["characters"] = chars
     # 兜底自动标主角（复刻旧"主角恒首"语义）：importance 未设时置 1
     if not any(str(c.get("role", "") or "").strip() == "主角"
                and str(c.get("name", "") or "").strip()
@@ -233,6 +285,104 @@ def reconcile_outline(o, wpc):
         o.end_chapter = max(o.start_chapter, word_to_chapter_end(o.end_word, wpc))
 
 
+def _payload_int(v):
+    """int 或纯整数字符串 → int；None/bool/其他 → None（对齐 save_outlines int() 与前端 parseInt）。"""
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if s and s.lstrip("+-").isdigit():
+            try:
+                return int(s)
+            except ValueError:
+                return None
+    return None
+
+
+def _arc_fields(o):
+    """dict 或 OutlineSlot → (id, name, start_chapter, end_chapter, start_word, end_word, parent_arc_id)。"""
+    if isinstance(o, dict):
+        return (str(o.get("id") or "").strip(), o.get("name") or "",
+                o.get("start_chapter"), o.get("end_chapter"),
+                o.get("start_word"), o.get("end_word"),
+                str(o.get("parent_arc_id") or "").strip())
+    return (str(getattr(o, "id", "") or "").strip(), getattr(o, "name", "") or "",
+            getattr(o, "start_chapter", None), getattr(o, "end_chapter", None),
+            getattr(o, "start_word", None), getattr(o, "end_word", None),
+            str(getattr(o, "parent_arc_id", "") or "").strip())
+
+
+def _plot_fields(p):
+    """dict 或 PlotSlot → (id, name, outline_id)。"""
+    if isinstance(p, dict):
+        return (str(p.get("id") or "").strip(), p.get("name") or "",
+                str(p.get("outline_id") or "").strip())
+    return (str(getattr(p, "id", "") or "").strip(), getattr(p, "name", "") or "",
+            str(getattr(p, "outline_id", "") or "").strip())
+
+
+def outline_payload_problems(outlines, plots, known_outlines=(), known_plots=()):
+    """校验提交的 outlines/plots 载荷结构（结构必填，缺则拒收、不自动换算兜底）。
+
+    每条弧须 id 非空唯一 + name 非空 + 一组完整跨度（字数对 0<=start<end 或 章对
+    1<=start<=end；半组/全缺非法）。每个情节段须 id 非空唯一 + outline_id 指向
+    存在的最底层（叶）弧。known_outlines/known_plots 只作上下文（save_outlines
+    append 可把 plots 挂到已落盘弧、防 id 撞），自身不被校验。
+    返回问题字符串列表，空 = 通过。"""
+    probs = []
+    new_arcs = [_arc_fields(o) for o in (outlines or [])]
+    known_arcs = [_arc_fields(o) for o in (known_outlines or [])]
+    seen_arc_ids = {a[0] for a in known_arcs if a[0]}
+    for i, (aid, aname, sc, ec, sw, ew, _parent) in enumerate(new_arcs):
+        who = f"弧[{i}]" + (f" id={aid}" if aid else "（未命名）")
+        if not aid:
+            probs.append(f"{who} 缺 id")
+        elif aid in seen_arc_ids:
+            probs.append(f"弧 id={aid} 重复（第 {i} 项与已有弧 id 冲突）")
+        else:
+            seen_arc_ids.add(aid)
+        if not aname:
+            probs.append(f"弧[id={aid or '?'}] 缺 name")
+        _sw, _ew = _payload_int(sw), _payload_int(ew)
+        _sc, _ec = _payload_int(sc), _payload_int(ec)
+        if _sw is not None and _ew is not None:
+            if _sw < 0 or _ew <= _sw:
+                probs.append(f"弧[id={aid or '?'}] 字数跨度非法：须整数且 0<=start_word<end_word"
+                             f"（当前 start_word={sw!r}, end_word={ew!r}）")
+        elif _sc is not None and _ec is not None:
+            if _sc < 1 or _ec < _sc:
+                probs.append(f"弧[id={aid or '?'}] 章节跨度非法：须整数且 1<=start_chapter<=end_chapter"
+                             f"（当前 start_chapter={sc!r}, end_chapter={ec!r}）")
+        else:
+            given = [k for k, v in (("start_word", sw), ("end_word", ew),
+                                    ("start_chapter", sc), ("end_chapter", ec))
+                     if _payload_int(v) is not None]
+            probs.append(f"弧[id={aid or '?'}] 缺完整跨度（当前只有 {given or '无'}）："
+                         "须成对传 start_word&end_word（0<=start<end）或 start_chapter&end_chapter"
+                         "（1<=start<=end）；不再自动按每章字数换算")
+    id_set = {a[0] for a in (new_arcs + known_arcs) if a[0]}
+    non_leaf = {a[6] for a in (new_arcs + known_arcs) if a[6] and a[6] in id_set}
+    known_plot_fields = [_plot_fields(p) for p in (known_plots or [])]
+    seen_plot_ids = {p[0] for p in known_plot_fields if p[0]}
+    for i, (pid, _pname, oid) in enumerate(_plot_fields(p) for p in (plots or [])):
+        who = f"情节段[{i}]" + (f" id={pid}" if pid else "（未命名）")
+        if not pid:
+            probs.append(f"{who} 缺 id")
+        elif pid in seen_plot_ids:
+            probs.append(f"情节段 id={pid} 重复（第 {i} 项与已有情节段 id 冲突）")
+        else:
+            seen_plot_ids.add(pid)
+        if not oid:
+            probs.append(f"情节段[id={pid or '?'}] 缺 outline_id（须指向叶弧 id）")
+        elif oid not in id_set:
+            probs.append(f"情节段[id={pid or '?'}] outline_id={oid} 未指向任何弧")
+        elif oid in non_leaf:
+            probs.append(f"情节段[id={pid or '?'}] outline_id={oid} 非叶弧（{oid} 含子弧，情节段只能挂最底层弧）")
+    return probs
+
+
 @dataclass
 class OutlineSlot:
     """一个大纲（情节弧）在故事线上的位置：树状目标节点，字数跨度（0 基，start 含/end 不含），可多层嵌套（parent_arc_id）；start_chapter/end_chapter 为兼容/推导视图。"""
@@ -296,6 +446,8 @@ class PlotSlot:
 
     # 出场人物（主角恒在；配角按名规则匹配到情节段事件/骨架/槽位）
     roles: list[str] = field(default_factory=list)
+    execution_brief: dict = field(default_factory=dict)   # 为什么写这一段（目标/冲突/选择/不可逆变化/钩子）
+    character_impact: list[dict] = field(default_factory=list)  # 写前人物变化预测
 
 
 @dataclass
@@ -336,6 +488,7 @@ class BookStoryline:
     phase: str = "config"          # config|outlines|plots|gags|ready
     generated_at: str = ""
     updated_at: str = ""
+    storyline_revision: int = 0   # 乐观并发版本；每次结构写入成功后 +1
 
     def to_dict(self) -> dict:
         def _outline_dict(o):
@@ -378,6 +531,8 @@ class BookStoryline:
                 "resolves_plot_id": p.resolves_plot_id,
                 "resolves_name": p.resolves_name,
                 "roles": p.roles,
+                "execution_brief": p.execution_brief,
+                "character_impact": p.character_impact,
             } for p in self.plots],
             "threads": self.threads,
             "promises": self.promises,
@@ -386,6 +541,7 @@ class BookStoryline:
             "phase": self.phase,
             "generated_at": self.generated_at,
             "updated_at": self.updated_at,
+            "storyline_revision": self.storyline_revision,
         }
 
     @classmethod
@@ -401,6 +557,7 @@ class BookStoryline:
             phase=d.get("phase", "config"),
             generated_at=d.get("generated_at", ""),
             updated_at=d.get("updated_at", ""),
+            storyline_revision=int(d.get("storyline_revision", 0) or 0),
         )
         tl.outlines = []
         for o in d.get("outlines", []):
@@ -449,6 +606,8 @@ class BookStoryline:
             resolves_plot_id=p.get("resolves_plot_id", ""),
             resolves_name=p.get("resolves_name", ""),
             roles=p.get("roles", []),
+            execution_brief=p.get("execution_brief", {}),
+            character_impact=p.get("character_impact", []),
         ) for p in d.get("plots", [])]
         tl.threads = d.get("threads", [])
         tl.promises = d.get("promises", [])

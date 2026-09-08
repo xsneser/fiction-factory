@@ -271,7 +271,7 @@ def _python_with_mcp():
     return _PY_WITH_MCP
 
 
-def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
+def _write_runtime_overlay(timeout_ms: int = 600000, mcp_profile: str = "") -> str:
     """写运行期 overlay（storage/dsh_runtime.yml）：长工具超时 + 事件流 runner。
 
     dsh patch 层对 id-targeted entry 是「整体替换 config」（非深合并），故 mcp
@@ -301,7 +301,8 @@ def _write_runtime_overlay(timeout_ms: int = 600000) -> str:
         f"    command: '{_python_with_mcp()}'\n"
         "    # --source dsh：mcp_server 据此把工具日志 source 记为 dsh（不写 JSONL），\n"
         "    # 右侧「工具日志」页签只展示外部 agent（source=mcp）调用，内部 dsh 不混入\n"
-        "    args: ['mcp_server.py', '--source', 'dsh']\n"
+        "    args: ['mcp_server.py', '--source', 'dsh'" +
+        (f", '--profile', '{mcp_profile}'" if mcp_profile else "") + "]\n"
         f"    cwd: '{cwd}'\n"
         f"    toolCallTimeoutMs: {timeout_ms}\n"
         "# workspace instructions：只注入小说写作指令（NOVEL_AGENT.md），不注入给 Claude Code 的工程 CLAUDE.md\n"
@@ -364,6 +365,54 @@ def _build_task_text(task: str, history: list | None) -> str:
     return "...(历史过长已截断，仅保留最近内容)...\n\n" + kept_body + "\n\n" + final
 
 
+def _task_tool_profile(task: str) -> str:
+    """按用户任务选择最小工具面；未命中回退 inspect（只读小面，绝不暴露全量）。
+
+    判定顺序有意固定：规划类短语（含"往下想"）先于写作类"继续/往下"，避免续规划被误当正文。
+    """
+    text = (task or "").lower()
+    if any(k in text for k in ("重规划", "续规划", "规划边界", "扩弧", "延伸故事线", "下一段弧",
+                               "再排一段", "自动续规划", "往下想", "replan")):
+        return "replan"
+    if any(k in text for k in ("发布", "上架", "完本", "导出", "书名简介", "检查能否发书")):
+        return "publish"
+    if any(k in text for k in ("侦察", "抓取", "热榜", "提取", "下载小说", "书库扫描")):
+        return "scout"
+    if any(k in text for k in ("样文", "风格规则", "禁词", "替换词", "风格匹配", "仿写", "笔风")):
+        return "style"
+    if any(k in text for k in ("候选", "开新书", "启动新书", "新书想法")):
+        return "build-candidates"
+    if any(k in text for k in ("建书", "世界观", "补全设定", "内容构建")):
+        return "build"
+    if any(k in text for k in ("写正文", "写下一章", "写第", "写情节段", "一键写", "完整章",
+                               "继续写", "继续", "接着写", "再写", "续写", "往下写", "继续正文")):
+        return "write"
+    return "inspect"
+
+
+def _profiles_enabled() -> bool:
+    """MCP profile 最小工具面是否启用（默认开）。
+
+    修订：默认按任务裁剪工具面 + 预注入 skill；仅当用户显式设 AGENT_TOOL_PROFILES=0/off
+    时才回到 legacy 全量 45 工具（无 --profile、无 skill 预注入，靠 NOVEL_AGENT + .dsh skills）。
+    """
+    v = (os.environ.get("AGENT_TOOL_PROFILES") or "1").strip().lower()
+    return v not in {"0", "false", "no", "off"}
+
+
+def _skill_text_for_profile(profile: str) -> str:
+    skill_name = {"build-candidates": "novel-build-candidates", "build": "novel-build",
+                  "write": "novel-story", "replan": "novel-replan", "publish": "novel-publish",
+                  "scout": "novel-scout"}.get(profile)
+    if not skill_name:
+        return ""
+    path = os.path.join(_ROOT, "agent-sidecar", "skills", skill_name, "SKILL.md")
+    if not os.path.exists(path):
+        raise RuntimeError(f"skill_not_found: {skill_name}；为安全起见禁止退化为裸 MCP")
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 # ─── NDJSON 事件 → SSE 事件映射 ───
 
 def _short_name(name: str) -> str:
@@ -405,7 +454,7 @@ _CMD_ZH = {
     "pick_candidate": "选中候选", "set_field": "填写字段", "set_tags": "设置标签",
     "next": "下一步", "prev": "上一步", "reset": "重置向导", "submit": "提交建书",
     "skip_candidates": "跳过候选", "load_candidates": "加载候选", "fill_world": "重新补全",
-    "set_picks": "记录选材",
+    "set_picks": "记录选材", "set_replan_preview": "暂存续规划预览",
 }
 _KEY_ZH = {
     "core_conflict": "核心矛盾", "genre": "题材", "sub_genre": "题材细分", "factions": "势力",
@@ -640,10 +689,18 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False):
     # 全服务单任务：新任务先打断正在跑的旧任务。事件存储（task_events.jsonl）不清空——
     # 它是「刷新重建」的渲染源（重启服务才消失），跨任务累积，仅显式「清空对话」清空。
     interrupt_current_task()
-    overlay = _write_runtime_overlay()
+    profile = _task_tool_profile(task) if _profiles_enabled() else ""
+    skill_text = _skill_text_for_profile(profile) if profile else ""
+    overlay = _write_runtime_overlay(mcp_profile=profile)
+    task_text = _build_task_text(task, history)
+    if skill_text:
+        skill_block = "\n\n[当前 Skill，必须遵守]\n" + skill_text
+        if len(task_text) + len(skill_block) > _MAX_TASK_CHARS:
+            task_text = "...(旧历史已为 Skill 预算截断)...\n" + task_text[-(_MAX_TASK_CHARS - len(skill_block) - 40):]
+        task_text += skill_block
     cmd = get_dsh_argv() + [
         "--profile", get_dsh_profile(),
-        "--patch", overlay, _build_task_text(task, history),
+        "--patch", overlay, task_text,
     ]
 
     proc = None
@@ -756,3 +813,150 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False):
         # 断连后跑完的任务由 get_current_task_status 惰性清槽，不会残留。
         if proc is not None and proc.poll() is not None:
             _clear_current_proc(proc)
+
+
+# ─── R5：NEED_REPLAN 交接 + 自动 replan 编排（修订 1）───
+#
+# write run（profile=write，无 replan 工具）在 get_writing_context 读到
+# planning.boundary.needs_replan 且本 run 无更多可写 plot 时，不得越权调 replan 工具，
+# 而是在最终回复末尾输出一行机器可读交接：
+#     [NEED_REPLAN] book_id=<id> reason=<PLOTS_LOW;WORDS_LOW>
+# orchestrator 在此检测该标记：吞掉该 run 的中间 done → 自动 spawn profile=replan 的
+# dsh run（skill 文本由 bridge 按 replan profile 注入）→
+#   REPLAN_POLICY=auto：replan 生成 preview 后 orchestrator 经共享 replan_service 原子
+#                       提交（storyline+planning 同边界）→ 再 spawn write run 续写；
+#   REPLAN_POLICY=confirm：replan 只暂存 preview 即停，等用户在 UI 抽屉确认
+#                       （commit-plan HTTP，同一 replan_service）。
+# 保证：最终只发一个 done；子 run 的 done 全部吞掉（防前端误以为对话已结束）。
+
+_NEED_REPLAN_RE = None  # 惰性编译（import re 一次）
+
+
+def _need_replan_re():
+    global _NEED_REPLAN_RE
+    if _NEED_REPLAN_RE is None:
+        import re as _re
+        _NEED_REPLAN_RE = _re.compile(r"^\s*\[NEED_REPLAN\]\s+(.*)$", _re.MULTILINE)
+    return _NEED_REPLAN_RE
+
+
+def parse_need_replan(text: str) -> dict | None:
+    """从 write run 最终文本里解析 [NEED_REPLAN] 交接。返回 {book_id, reason} 或 None。"""
+    if not text:
+        return None
+    m = _need_replan_re().search(text)
+    if not m:
+        return None
+    fields = {}
+    import re as _re
+    # 只按空白切字段，不把 reason 内部的 ";" 当分隔（reason_codes 是 PLOTS_LOW;WORDS_LOW）
+    for kv in _re.split(r"\s+", m.group(1).strip()):
+        if "=" in kv:
+            k, _, v = kv.partition("=")
+            fields[k.strip().lower()] = v.strip()
+    bid = fields.get("book_id")
+    return {"book_id": bid, "reason": fields.get("reason", "")} if bid else None
+
+
+def _replan_policy(policy: str | None) -> str:
+    p = (policy or os.environ.get("REPLAN_POLICY") or "auto").strip().lower()
+    return p if p in ("auto", "confirm") else "auto"
+
+
+def _replan_phase_task(book_id: str, reason: str, policy: str) -> str:
+    if policy == "confirm":
+        mode = "本任务只生成并暂存续规划预览即结束；等待用户在界面确认后才提交，请勿自行提交。"
+    else:
+        mode = "本任务由系统自动触发，生成的预览会被系统自动原子提交并继续写作；请勿等待界面确认。"
+    return (f"[系统自动触发续规划] 书 {book_id} 已临近已承诺故事边界"
+            f"（{reason or '规划余量不足'}）。请按 novel-replan 流程：只把当前事实当不可改、"
+            f"生成下一段 H0 committed + H1/H2 forecast，经 drive_ui(set_replan_preview) 暂存 preview。{mode}")
+
+
+def _resume_write_task(book_id: str) -> str:
+    return (f"[系统自动续写] 书 {book_id} 的续规划已提交、故事线已前移。"
+            "请继续按写作流程（novel-story）从下一个未写情节段开始写下一章正文。")
+
+
+def _annotated_reply(content: str) -> dict:
+    """去掉交接标记行，换成面向用户的一句说明。"""
+    text = _need_replan_re().sub("", content or "").strip()
+    note = "系统检测到已承诺故事边界，将自动续规划后继续写作。"
+    return {"type": "reply", "content": (text + "\n\n" + note) if text else note}
+
+
+def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
+                 policy: str | None = None):
+    """带 NEED_REPLAN 自动交接的多阶段 dsh 流（R5）。
+
+    单次普通任务 → 与 run_dsh_task 等价（多一层 done 归一）。检测到 [NEED_REPLAN]
+    交接则链式跑 replan（auto：提交后续写；confirm：停在预览等 UI 确认）。
+    子 run 的 done 一律吞掉，全程只发一个尾部 done。
+    """
+    import logging
+    _log_local = logging.getLogger("dsh_bridge.flow")
+    pol = _replan_policy(policy)
+    need = None
+
+    # Phase 1：用户任务（write/build/…）。捕获 reply 里的 NEED_REPLAN。
+    for evt in run_dsh_task(task, history, debug=debug):
+        t = evt.get("type")
+        if t == "reply":
+            parsed = parse_need_replan(evt.get("content") or "")
+            if parsed:
+                need = parsed
+                evt = _annotated_reply(evt.get("content") or "")
+        if t == "done":
+            continue
+        yield evt
+
+    if not need or not need.get("book_id"):
+        yield {"type": "done"}
+        return
+    bid = need["book_id"]
+
+    # Phase 2：replan run（profile=replan；skill 由 bridge 注入）。
+    replan_ok = True
+    for evt in run_dsh_task(_replan_phase_task(bid, need.get("reason", ""), pol),
+                            None, debug=debug):
+        t = evt.get("type")
+        if t == "done":
+            continue
+        if t == "error":
+            replan_ok = False
+        if t == "reply" and pol == "auto":
+            continue  # auto 下吞 replan 的散文回复，用 orchestrator 自己的状态行替代
+        yield evt
+    if not replan_ok:
+        yield {"type": "error", "message": "自动续规划阶段出错，已停止。请稍后手动触发续规划。"}
+        yield {"type": "done"}
+        return
+
+    if pol == "confirm":
+        # 停在 preview；用户在 UI 确认 → commit-plan（同一 replan_service）→ 前端/后续续写。
+        yield {"type": "done"}
+        return
+
+    # auto：经共享 service 原子提交 preview → 续写。
+    committed = False
+    try:
+        from libraries.replan_service import commit_replan_preview
+        from libraries.planning_state import load_replan_preview
+        prev = load_replan_preview(bid)
+        if prev:
+            r = commit_replan_preview(bid, prev.get("preview_id"),
+                                      int(prev.get("expected_revision", -1) or -1))
+            committed = bool(r and r.get("ok"))
+    except Exception as e:  # noqa: BLE001
+        _log_local.warning("auto replan commit failed: %s", e)
+    if not committed:
+        yield {"type": "error", "message": "自动续规划提交未成功：请检查 replan 预览后在界面手动确认。"}
+        yield {"type": "done"}
+        return
+
+    yield {"type": "reply", "content": "续规划已自动提交，故事线前移。继续写作。"}
+    for evt in run_dsh_task(_resume_write_task(bid), None, debug=debug):
+        if evt.get("type") == "done":
+            continue
+        yield evt
+    yield {"type": "done"}

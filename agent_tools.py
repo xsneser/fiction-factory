@@ -30,11 +30,17 @@ from ui.web_blueprints.ctx import (  # noqa: E402
 from core.text_utils import count_prose_units  # noqa: E402
 from libraries.reviewer import HARD_MIN_RATIO  # noqa: E402
 from libraries.storyline import OutlineSlot, annotate_plot_roles, \
-    get_mc, get_characters, normalize_basic_info  # noqa: E402
+    get_mc, get_characters, normalize_basic_info, \
+    outline_payload_problems  # noqa: E402
 from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
 from libraries.tool_policy import _wrap_phase_gate  # noqa: E402
 from libraries import style_md  # noqa: E402  # 样本驱动:styles/<pen>.md 与 STYLE REFERENCE 样本
-from libraries import style_samples  # noqa: E402  # 样文库 samples.json + 预算选样注入
+from libraries import style_samples  # noqa: E402  # 样文池 samples.json + 预算选样注入
+from libraries.planning_state import (  # noqa: E402
+    detect_story_boundary, load_planning_state, merge_state, planning_path,
+    save_planning_state, validate_patch,
+)
+from libraries.agent_tool_router import check_ui_command, selected_profile, tool_metadata  # noqa: E402
 
 
 # ─── 基础辅助 ───
@@ -175,7 +181,210 @@ def _outline_name_chain(tl, oid):
     return " / ".join(x for x in reversed(names) if x)
 
 
-def _build_plot_run(tl, p):
+def _char_states_path(book_id: str) -> str:
+    return os.path.join(_ROOT, "books", book_id, "character_states.json")
+
+
+def _load_char_states(book_id: str):
+    """读 books/<id>/character_states.json；缺失/损坏返回空机（不抛）。"""
+    from libraries.character_state import CharacterStateMachine
+    csm = CharacterStateMachine()
+    p = _char_states_path(book_id)
+    if os.path.exists(p):
+        try:
+            csm.load(p)
+        except Exception:
+            pass
+    return csm
+
+
+def _draft_char_events(book_id: str) -> list:
+    """从进行中草稿收集逐情节段上报的 character_events（save_chapter_text 漏传时的兜底）。"""
+    try:
+        dp = os.path.join(_ROOT, "books", book_id, "draft_chapter.json")
+        if not os.path.exists(dp):
+            return []
+        with open(dp, encoding="utf-8") as f:
+            d = json.load(f)
+        evs = []
+        for b in (d.get("bridges") or []):
+            if isinstance(b, dict):
+                evs.extend(b.get("character_events") or [])
+        return evs
+    except Exception:
+        return []
+
+
+def _segment_char_events(plot_segments) -> list:
+    """把 plot_segments 各条携带的 character_events 展平（只留有 name 的项）。"""
+    out = []
+    for b in (plot_segments or []):
+        if not isinstance(b, dict):
+            continue
+        for e in (b.get("character_events") or []):
+            if isinstance(e, dict) and str(e.get("name") or "").strip():
+                out.append(e)
+    return out
+
+
+# ─── cast_pack：按出场分级预解析的角色紧凑卡（plot_run 一块，谁在写） ───
+def _clip(s, n=60) -> str:
+    s = str(s or "").strip()
+    return s if len(s) <= n else s[:n] + "…"
+
+
+def _rel_of(c, mc_name) -> str:
+    for r in (c.get("relations") or []):
+        if isinstance(r, dict) and str(r.get("name", "") or "").strip() == mc_name:
+            return str(r.get("relation", "") or "")
+    return str(c.get("relation", "") or "")
+
+
+def _dyn_of(csm, name) -> dict:
+    """csm 动态态（只给 agent 可写/核心量；推断字段 mood/conflict/secret 不给，防噪音）。"""
+    if csm is None:
+        return {}
+    cs = csm.get(name)
+    if cs is None:
+        return {}
+    out = {}
+    for k in ("goal", "power_level", "relationship_to_mc", "arc_stage", "location"):
+        v = getattr(cs, k, "")
+        if v is not None and str(v).strip():
+            out[k] = str(v).strip()
+    if int(getattr(cs, "offline_chapters", 0) or 0) > 0:
+        out["offline_chapters"] = int(cs.offline_chapters)
+    return out
+
+
+def _speech_compact(c) -> str:
+    """speech_profile 压缩成一句（语言倾向）；空则回退 catchphrase 作「情绪高点点缀」。"""
+    sp = c.get("speech_profile") or {}
+    parts = []
+    if str(sp.get("rhythm", "") or "").strip():
+        parts.append("句长倾向:" + str(sp["rhythm"]).strip())
+    if str(sp.get("tone", "") or "").strip():
+        parts.append("语气:" + str(sp["tone"]).strip())
+    habits = [str(x).strip() for x in (sp.get("habits") or []) if str(x).strip()]
+    if habits:
+        parts.append("说话习惯:" + "、".join(habits[:3]))
+    forb = [str(x).strip() for x in (sp.get("forbidden") or []) if str(x).strip()]
+    if forb:
+        parts.append("绝不说:" + "、".join(forb[:2]))
+    if parts:
+        return "；".join(parts)
+    if str(c.get("catchphrase", "") or "").strip():
+        return "口癖(仅情绪高点一次点缀):" + str(c["catchphrase"]).strip()
+    return ""
+
+
+def _dev_goal_of(c) -> str:
+    dev = c.get("development_plan")
+    if isinstance(dev, dict):
+        return str((dev or {}).get("growth_target", "") or "").strip()
+    return str(dev or "").strip()
+
+
+def _build_cast_pack(tl, p, csm=None) -> dict:
+    """plot_run.cast_pack：本情节段出场角色的分级紧凑卡（决定「谁在写」）。
+
+    protagonists = role==主角 的角色（全卡，含 behavior/speech_profile/faction/relations）
+    active        = plot.roles 里其余出场角色（中卡：行为/语言/性格/关系/动态态）
+    referenced    = 情节段文本命中的非出场角色 ≤2（极简，含与在场角色关系）
+    空则对应空数组；dyn 来自 character_states（未落账 → 纯静态退化）。
+    全表仍在 storyline.basic_info.characters 作 bible 反查，本块只给本段要用的，控制体积。
+    """
+    empty = {"protagonists": [], "active": [], "referenced": []}
+    bi = (tl.basic_info or {}) if tl else {}
+    chars = bi.get("characters") or []
+    if not chars or p is None:
+        return empty
+    by_name = {}
+    for c in chars:
+        nm = str(c.get("name", "") or "").strip()
+        if nm:
+            by_name[nm] = c
+    mc_name = ""
+    for c in chars:
+        if str(c.get("role", "") or "").strip() == "主角" and str(c.get("name", "") or "").strip():
+            mc_name = str(c["name"]).strip()
+            break
+    if not mc_name:
+        for c in chars:
+            if str(c.get("name", "") or "").strip() and int(c.get("importance") or 0) == 1:
+                mc_name = str(c["name"]).strip()
+                break
+
+    def _card(c, full=False) -> dict:
+        nm = str(c.get("name", "") or "")
+        d = _dyn_of(csm, nm)
+        card = {
+            "name": nm,
+            "role": c.get("role", "") or "",
+            "importance": int(c.get("importance") or 2),
+            "identity": _clip(c.get("identity"), 40),
+            "title": _clip(c.get("title"), 30),
+            "personality": _clip(c.get("personality"), 60),
+            "brief": _clip(c.get("brief"), 60),
+            "speech": _speech_compact(c),
+            "relation_to_mc": _rel_of(c, mc_name),
+            "behavior": c.get("behavior") or {},
+            "speech_profile": c.get("speech_profile") or {},
+        }
+        if d:
+            card["dyn"] = d
+        dg = _dev_goal_of(c)
+        if dg:
+            card["dev_goal"] = dg
+        if full:
+            card["gender"] = c.get("gender", "") or ""
+            card["faction"] = c.get("faction", "") or ""
+            card["golden_finger"] = _clip(c.get("golden_finger"), 60)
+            rels = [{"name": str(r.get("name", "")), "relation": str(r.get("relation", "") or "")}
+                    for r in (c.get("relations") or []) if isinstance(r, dict) and r.get("name")]
+            if rels:
+                card["relations"] = rels[:3]
+        return card
+
+    protagonists = [_card(by_name[nm], full=True) for nm in by_name
+                    if str(by_name[nm].get("role", "") or "").strip() == "主角"]
+    pro_names = {c["name"] for c in protagonists}
+
+    active = []
+    for nm in (getattr(p, "roles", None) or []):
+        nm = str(nm or "").strip()
+        if not nm or nm in pro_names or nm not in by_name:
+            continue
+        active.append(_card(by_name[nm]))
+    act_names = {c["name"] for c in active}
+
+    # referenced：情节段文本命中（name 出现在标题/分类/骨架/节点/hook 里）的非出场角色，≤2
+    hay = " ".join([str(getattr(p, "name", "") or ""),
+                    str(getattr(p, "category", "") or ""),
+                    str(getattr(p, "sub_category", "") or ""),
+                    str(getattr(p, "template_structure", "") or "")] + list(getattr(p, "hook_points", None) or []))
+    referenced = []
+    for nm in by_name:
+        if nm in pro_names or nm in act_names:
+            continue
+        if nm in hay and len(referenced) < 2:
+            c = by_name[nm]
+            rel = _rel_of(c, mc_name)
+            for an in act_names or pro_names:
+                if not rel:
+                    for r in (c.get("relations") or []):
+                        if isinstance(r, dict) and str(r.get("name", "") or "").strip() in (act_names | pro_names):
+                            rel = str(r.get("relation", "") or "")
+                            break
+            referenced.append({
+                "name": nm, "role": c.get("role", "") or "",
+                "identity": _clip(c.get("identity"), 30) or _clip(c.get("brief"), 40),
+                "relation_to_mc": rel,
+            })
+    return {"protagonists": protagonists, "active": active, "referenced": referenced}
+
+
+def _build_plot_run(tl, p, csm=None):
     """组装一次情节段运行 plot_run：plot 全量 + 弧目标 + 线程状态 + 承诺 + 字数余量。
 
     全从已 load 的 tl 内存对象现算，不新增磁盘读；样文/场景判定不在此（走 get_pen_style）。
@@ -199,6 +408,8 @@ def _build_plot_run(tl, p):
             "is_payoff": bool(getattr(p, "resolves_plot_id", "") or ""),
         }
     }
+    run["execution_brief"] = dict(getattr(p, "execution_brief", None) or {})
+    run["character_impact"] = list(getattr(p, "character_impact", None) or [])
     # 弧目标
     arc = next((o for o in tl.outlines if o.id == getattr(p, "outline_id", "")), None)
     arc_goal = {"arc_id": "", "name": "", "notes": "", "arc_path": "",
@@ -264,6 +475,8 @@ def _build_plot_run(tl, p):
     # 写作 agent 直接据此选样（pick_plot_sample），不再每轮手判。线程/承诺不参与推导。
     from libraries.plot_dims import infer_plot_query
     run["style_query"] = infer_plot_query(p, tl) if tl is not None else {}
+    # 出场角色分级包（谁在写）：protagonists/active/referenced；dyn 由 csm 注入（未落账则静态退化）
+    run["cast_pack"] = _build_cast_pack(tl, p, csm)
     return run
 
 
@@ -310,7 +523,7 @@ def get_writing_context(book_id: str) -> dict:
             "roles": list(getattr(next_p, "roles", None) or []),
             "outline_id": getattr(next_p, "outline_id", "") or "",
         }
-        payload["plot_run"] = _build_plot_run(tl, next_p)
+        payload["plot_run"] = _build_plot_run(tl, next_p, _load_char_states(book_id))
     else:
         payload["next_plot"] = None
         payload["plot_run"] = None
@@ -326,6 +539,25 @@ def get_writing_context(book_id: str) -> dict:
     payload["pen_name"] = (tl.pen_name if tl else "") or book.get("pen_name") or ""
     profile = _profile_for(tl) if tl else None
     payload["style_card"] = profile.build_style_card() if profile else _default_style_card()
+    if tl:
+        ps = load_planning_state(book_id, tl, book_mgr.get(book_id))
+        remaining = sum(1 for p in (tl.plots or [])
+                        if not (getattr(p, "written_chapter", 0) or 0) and p.id not in _draft_plot_ids(draft or {}))
+        boundary = detect_story_boundary(
+            written_until_word=int((book or {}).get("total_words") or 0),
+            committed_until_word=int(ps.get("committed_until_word") or 0),
+            remaining_plots=remaining,
+            words_per_batch=int(tl.words_per_chapter or 3000),
+            storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+            last_replan=ps.get("last_replan") or {},
+        )
+        payload["planning"] = {
+            "target_word_budget": ps.get("target_word_budget", 0),
+            "committed_until_word": ps.get("committed_until_word", 0),
+            "written_until_word": ps.get("written_until_word", 0),
+            "storyline_revision": getattr(tl, "storyline_revision", 0),
+            "boundary": boundary,
+        }
     return payload
 
 
@@ -333,6 +565,64 @@ def get_storyline(book_id: str) -> dict:
     """读取一本书的故事线（timeline）JSON：弧/情节段/线程/内涵/基础设定。"""
     tl = _require_tl(book_id)
     return tl.to_dict()
+
+
+def get_story_state(book_id: str) -> dict:
+    """聚合故事状态：事实摘要、当前承诺、远期意图、线程/承诺、人物动态及规划边界。"""
+    tl = book_mgr.load_storyline(book_id)
+    if tl is None:
+        raise RuntimeError(f"「{book_id}」无故事线（storyline.json）")
+    book = book_mgr.get(book_id)
+    state = load_planning_state(book_id, tl, book)
+    draft = _draft_read(book_id) or {}
+    draft_ids = _draft_plot_ids(draft)
+    unwritten = [p for p in (tl.plots or [])
+                 if not (getattr(p, "written_chapter", 0) or 0) and p.id not in draft_ids]
+    current = unwritten[0] if unwritten else None
+    boundary = detect_story_boundary(
+        written_until_word=int(state.get("written_until_word") or 0),
+        committed_until_word=int(state.get("committed_until_word") or 0),
+        remaining_plots=len(unwritten),
+        words_per_batch=int(tl.words_per_chapter or 3000),
+        storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+        last_replan=state.get("last_replan") or {},
+    )
+    csm = _load_char_states(book_id)
+    char_dyn = []
+    for cs in getattr(csm, "characters", []):
+        name = str(getattr(cs, "name", "") or "")
+        if name:
+            char_dyn.append({"name": name, **_dyn_of(csm, name)})
+    return {
+        "ok": True,
+        "book_id": book_id,
+        "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+        "facts": {
+            "written_until_word": int(state.get("written_until_word") or 0),
+            "current_chapter": int(getattr(book, "current_chapter", 0) or 0) if book else 0,
+            "completed_plot_ids": [p.id for p in (tl.plots or []) if getattr(p, "written_chapter", 0)],
+            "character_dynamics": char_dyn,
+        },
+        "committed": {
+            "until_word": int(state.get("committed_until_word") or 0),
+            "current_arc_id": getattr(current, "outline_id", "") if current else "",
+            "current_plot": ({"id": current.id, "name": current.name,
+                              "outline_id": current.outline_id, "words": current.words}
+                             if current else None),
+            "remaining_plot_count": len(unwritten),
+        },
+        "forecast": {
+            "future_intents": state.get("future_intents") or [],
+            "character_intents": state.get("character_intents") or [],
+            "decision_points": state.get("decision_points") or [],
+        },
+        "story_questions": state.get("story_questions") or [],
+        "active_threads": state.get("active_threads") or tl.threads or [],
+        "critical_promises": state.get("critical_promises") or tl.promises or [],
+        "target_word_budget": int(state.get("target_word_budget") or 0),
+        "boundary": boundary,
+        "last_replan": state.get("last_replan") or {},
+    }
 
 
 
@@ -573,12 +863,11 @@ def get_pen_style(book_id: str = "", profile_id: str = "", query: dict = None,
     # 对应场景的样本(正文已注入;需要单条全文用 get_style_sample)。
     # 笔名已选样文 → 只列所选;未选 → 全量(兼容旧行为)。
     meta_samples = []
-    _cur = style_samples.load_samples()  # 全局样文库词条
-    if _cur:
-        _sel_ids = [x for x in (getattr(profile, 'sample_ids', None) or []) if x]
-        _meta_cur = [s for s in _cur if (not _sel_ids or s.id in _sel_ids)]
+    _pool = style_samples.pool_for(profile)  # 已按 sample_books/sample_ids 收窄到笔名可用池
+    if _pool:
         meta_samples = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags, "dims": s.dims,
-                         "word_count": s.word_count, "source": s.source} for s in _meta_cur]
+                         "word_count": s.word_count, "source": s.source,
+                         "source_book": s.source_book} for s in _pool]
     return {
         "pen_name": profile.pen_name,
         "language": profile.language or "zh",
@@ -605,7 +894,9 @@ def pick_plot_sample(book_id: str = "", query: dict = None, profile_id: str = ""
     写作 agent 每情节段运行调一次，text 就是本段唯一 STYLE REFERENCE 单篇样文（已含
     `# 场景:` 头 + 引导语），语言参考随运行自然漂移；同场景其余样文用 get_style_sample 备查。
     """
-    tl = _require_tl(book_id)
+    tl = book_mgr.load_storyline(book_id)
+    if tl is None:
+        raise RuntimeError(f"「{book_id}」无故事线（storyline.json）")
     draft = _draft_read(book_id)
     p = _next_plot(tl, draft)
     if p is None:
@@ -615,7 +906,7 @@ def pick_plot_sample(book_id: str = "", query: dict = None, profile_id: str = ""
     profile = _resolve_profile(book_id, profile_id)
     pool = style_samples.pool_for(profile)
     if not pool:
-        return {"ok": False, "error": "全局样文库无词条，无法单篇取样；请先在 /samples 入库人工样文。"}
+        return {"ok": False, "error": "全局样文池无词条，无法单篇取样；请先在 /samples 入库人工样文。"}
     picked, meta = style_samples.pick_samples(pool, query=q, k=1, avoid=_load_avoid(profile.id))
     # 注：空 query 时 _score_samples 对全池同分(declared 空) → 轮盘在整池上随机 1 条，不落多样分支。
     if not picked:
@@ -691,29 +982,33 @@ def delete_style_rule(rule_id: str) -> dict:
 
 
 def _samples_ctx(profile_id: str = ""):
-    """(兼容壳)样文库现为**全局词条库**(不分笔名);profile_id 仅占位,不再按笔名解析文件。"""
+    """(兼容壳)样文池现为**全局词条库**(不分笔名);profile_id 仅占位,不再按笔名解析文件。"""
     return None, None, style_samples.load_samples() or []
 
 
 def add_style_sample(profile_id: str, text: str, title: str = "", scene_tags: list = None,
                      source: str = "", note: str = "", replace_id: str = "",
-                     no_warn: bool = None, dims: dict = None) -> dict:
-    """给**全局样文库**加/替换一个词条(STYLE REFERENCE 人工样文,不分笔名,各笔名写作共享)。
+                     no_warn: bool = None, dims: dict = None,
+                     source_book: str = "") -> dict:
+    """给**全局样文池**加/替换一个词条(STYLE REFERENCE 人工样文,不分笔名,各笔名写作共享)。
 
     供 agent 把参考书里的**完整连续场景**按段截取入库(不拆技巧、不润色、保留普通解释句;
     别单喂金句/纯高潮)。scene_tags 为过渡期中文标签(可空);dims=多维权表(英文键,8 维:scene/
     narrative_action 列表 + dramatic_state/cast/dialogue_density/information_density/pace/pov 单值,
     缺维=选择器通配;非法值被丢弃);replace_id 给出则替换该条否则追加;no_warn=True 人工确认保留。
+    source_book=机器可读来源书键(如 `十日终焉` / `冰河末世，我囤积了百亿物资`,与书库书名一致),
+    空则自动从 source 的《》书名推导——供「全局池按来源书隔离」与 /samples 来源分组。
     profile_id 仅向后兼容占位。服务端算字数并再生 reference.txt 镜像;注入按 query 加权随机。
     """
     cur = style_samples.load_samples() or []
     txt = (text or "").strip()
     if not txt:
         raise RuntimeError("样文文本不能为空(应是一段完整连续场景原文)")
+    sb = (source_book or "").strip() or style_samples._book_from_source(source)
     records = [s.to_dict() for s in cur]
     meta = {"title": (title or "").strip(),
             "scene_tags": [str(t).strip() for t in (scene_tags or []) if str(t).strip()],
-            "source": (source or "").strip(), "note": (note or "").strip(),
+            "source": (source or "").strip(), "source_book": sb, "note": (note or "").strip(),
             "no_warn": bool(no_warn)}
     if dims is not None:
         meta["dims"] = dims
@@ -725,6 +1020,8 @@ def add_style_sample(profile_id: str, text: str, title: str = "", scene_tags: li
                     meta.pop("no_warn")  # 替换但未指定 → 保留原 no_warn
                 if dims is None:
                     meta.pop("dims", None)  # 替换未指定 → 保留原 dims
+                if not (source or "").strip() and not (source_book or "").strip():
+                    meta.pop("source_book", None)  # 替换未给来源 → 保留原 source_book
                 r.update(meta)
                 r["text"] = txt
                 break
@@ -742,7 +1039,7 @@ def add_style_sample(profile_id: str, text: str, title: str = "", scene_tags: li
 
 
 def delete_style_sample(profile_id: str, sample_id: str) -> dict:
-    """删除全局样文库的一个词条(按 id,如 s1)。"""
+    """删除全局样文池的一个词条(按 id,如 s1)。"""
     cur = style_samples.load_samples() or []
     if not cur or not any(s.id == sample_id for s in cur):
         return {"ok": False, "error": f"样文 {sample_id} 不存在"}
@@ -752,22 +1049,23 @@ def delete_style_sample(profile_id: str, sample_id: str) -> dict:
 
 
 def list_style_samples(profile_id: str = "") -> dict:
-    """列全局样文库**元数据**(id/标题/场景标签/字数/来源/备注,不含正文,保持薄)。
+    """列全局样文池**元数据**(id/标题/场景标签/字数/来源/备注,不含正文,保持薄)。
 
     供 agent 看当前有哪些词条、各属什么场景;想聚焦某场景时调 get_style_sample 取全文。"""
     cur = style_samples.load_samples() or []
     rows = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags, "dims": s.dims,
-             "source": s.source, "note": s.note, "word_count": s.word_count} for s in cur]
+             "source": s.source, "source_book": s.source_book, "note": s.note,
+             "word_count": s.word_count} for s in cur]
     return {"ok": True, "scope": "global", "count": len(rows), "samples": rows}
 
 
 def get_style_sample(profile_id: str = "", sample_id: str = "") -> dict:
-    """取全局样文库一个词条**全文**;sample_id 空则只回目录(与 list 同)。"""
+    """取全局样文池一个词条**全文**;sample_id 空则只回目录(与 list 同)。"""
     cur = style_samples.load_samples() or []
     if not sample_id:
         return {"ok": True, "scope": "global", "count": len(cur),
                 "samples": [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags, "dims": s.dims,
-                             "word_count": s.word_count} for s in cur]}
+                             "source_book": s.source_book, "word_count": s.word_count} for s in cur]}
     for s in cur:
         if s.id == sample_id:
             return {"ok": True, "sample": s.to_dict()}
@@ -785,10 +1083,21 @@ def query_characters(keyword: str = "", tag: str = "") -> dict:
 # 规划 / 编辑类（调 LLM，成功后使引擎会话过期）
 # ═══════════════════════════════════════════════════
 
-def save_basic_info(book_id: str, basic_info: dict) -> dict:
+def save_basic_info(book_id: str, basic_info: dict, expected_revision: int | None = None) -> dict:
     """保存基础设定（人物/世界观/基调/目标读者，深合并保留已填值），可带 book_title。
-    新 payload 传 characters 整体替换；旧 payload 传 protagonist/supporting_cast 兼容。"""
-    tl = _require_tl(book_id)
+    新 payload 传 characters 整体替换；旧 payload 传 protagonist/supporting_cast 兼容。
+
+    expected_revision 省略=不校验；给则与磁盘 storyline_revision 不一致返 stale_storyline
+    （storyline_revision 代表所有影响下次故事规划的事实状态，见 R3 修订）。
+    """
+    tl = book_mgr.load_storyline(book_id)
+    if tl is None:
+        raise RuntimeError(f"「{book_id}」无故事线（storyline.json）。"
+                           "请先经「启动新书」向导建书（步 3 内容随 submit 落库）。")
+    _cur = int(getattr(tl, "storyline_revision", 0) or 0)
+    if expected_revision is not None and int(expected_revision) != _cur:
+        return {"ok": False, "error": "stale_storyline", "expected": int(expected_revision),
+                "actual": _cur, "action": "refresh_and_replan"}
     bi = dict(tl.basic_info or {})
     if isinstance(basic_info.get("characters"), list):
         bi["characters"] = basic_info["characters"]
@@ -813,21 +1122,74 @@ def save_basic_info(book_id: str, basic_info: dict) -> dict:
         if book:
             book.title = basic_info["book_title"]
             book_mgr.update(book)
+    tl.storyline_revision = int(getattr(tl, "storyline_revision", 0) or 0) + 1
     tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
     save_tl(book_id, tl)
     _drop_engine(book_id)
-    return {"ok": True}
+    return {"ok": True, "storyline_revision": tl.storyline_revision}
+
+
+def _apply_chapter_planning_patch(book_id: str, tl, book, planning_patch: dict | None) -> dict | None:
+    """章末把 agent 上报的增量（story_questions/character_intents）语义合并进 planning_state。
+
+    - story_questions：稳定 id 或同文去重 → 更新状态；否则新开（默认 open）。
+      已 answered/superseded 的问题默认保持终态（upsert_story_questions 内保证）。
+    - character_intents：按人物 upsert，不按章无限 append。
+    - 其余白名单键走 merge_state 覆盖。
+    返回 None=无 patch/无变更；{"ok": False,...}=patch 非法（不阻塞正文落盘，仅回传）。
+    """
+    if not planning_patch:
+        return None
+    from libraries.planning_state import (validate_patch, merge_state, load_planning_state,
+                                          save_planning_state, upsert_story_questions,
+                                          upsert_character_intents)
+    try:
+        patch = validate_patch(planning_patch)
+    except ValueError as e:
+        return {"ok": False, "error": "planning_patch_invalid", "message": str(e)}
+    if not patch:
+        return None
+    try:
+        state = load_planning_state(book_id, tl, book, persist=False)
+        changed = False
+        for _key, _fn in (("story_questions", upsert_story_questions),
+                          ("character_intents", upsert_character_intents)):
+            if patch.get(_key) is not None:
+                merged = _fn(state.get(_key), patch.get(_key))
+                if merged != state.get(_key):
+                    state[_key] = merged
+                    changed = True
+        rest = {k: v for k, v in patch.items() if k not in ("story_questions", "character_intents")}
+        if rest:
+            state = merge_state(state, rest)
+            changed = True
+        if changed:
+            state["storyline_revision"] = int(getattr(tl, "storyline_revision", 0) or 0)
+            state["written_until_word"] = int(getattr(book, "total_words", 0) or 0) if book else 0
+            save_planning_state(book_id, state)
+        return {"ok": True, "changed": changed}
+    except Exception:
+        return None
 
 
 def save_chapter_text(book_id: str, chapter_num: int, text: str,
                       title: str = "", summary: str = "",
-                      plot_segments: list | None = None) -> dict:
+                      plot_segments: list | None = None,
+                      expected_revision: int | None = None,
+                      planning_patch: dict | None = None) -> dict:
     """[薄工具] 保存整章正文（agent 自主生成后调用，内部不调 LLM）。
 
     agent 生成正文后，本工具负责纯规则副作用：去AI味 → 规则审查 → 章节落盘
     （含情节段）→ 书进度/字数 → 故事线 written_chapter 进度 → 角色状态 →
     读者承诺台账（规则）→ 清草稿。summary 由 agent 生成传入（语义摘要是 LLM
     职责，迁到 agent）。
+
+    expected_revision（可选）：省略=不校验；给则与磁盘 storyline_revision 不一致时
+    直接返 stale_storyline、不落任何内容。
+    planning_patch（可选）：章末把 story_questions / character_intents 等增量
+    语义合并进 planning_state（稳定 id 去重、按人物 upsert），失败不阻塞正文落盘。
+    每次成功落盘一章都 bump storyline_revision（该值代表所有影响下次故事规划的
+    事实状态版本，使旧 replan preview 在 commit 时被正确判 stale）。
     """
     book = book_mgr.get(book_id)
     if not book:
@@ -838,6 +1200,19 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     n = int(chapter_num or 0)
     if n < 1:
         raise RuntimeError("chapter_num 需 >= 1")
+
+    # 0) 版本校验（expected_revision 省略=不校验；给则对比磁盘最新修订）
+    if expected_revision is not None:
+        _tl0 = book_mgr.load_storyline(book_id)
+        _rev0 = int(getattr(_tl0, "storyline_revision", 0) or 0) if _tl0 else 0
+        if int(expected_revision) != _rev0:
+            return {"ok": False, "error": "stale_storyline", "expected": int(expected_revision),
+                    "actual": _rev0, "action": "refresh_and_replan"}
+
+    # 0.5) 收集 agent 按情节段上报的剧情人物变化事件（plot_segments 优先；漏传回退草稿）
+    char_events = _segment_char_events(plot_segments)
+    if not char_events:
+        char_events = _draft_char_events(book_id)
 
     # 1) 规则去AI味（词替换+段落节奏，无 LLM）；有情节段则逐段去并保持桥梁结构。
     #    防静默丢字：plot_segments 必须覆盖 text（总长 ≥ text 70%）。只列了部分情节段时以
@@ -913,8 +1288,10 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     except Exception:
         pass
 
-    # 5) 故事线 written_chapter 进度（本情节段标记为已写）
+    # 5) 故事线 written_chapter 进度 + storyline_revision 递增
     #    plot_segments 缺失时回退草稿 bridges（agent 漏传 plot_segments 也不会卡住 next_plot）
+    #    storyline_revision = 影响下次故事规划的事实状态版本（R3/R5 修订）：每成功落盘一章 +1，
+    #    使旧 replan preview（expected_revision=旧值）在 commit 时被判 stale。
     try:
         tl = book_mgr.load_storyline(book_id)
         if tl:
@@ -931,19 +1308,30 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
             for p in tl.plots:
                 if not (getattr(p, "written_chapter", 0) or 0) and p.id in written_plot_ids:
                     p.written_chapter = n
+            tl.storyline_revision = int(getattr(tl, "storyline_revision", 0) or 0) + 1
+            tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
             book_mgr.save_storyline(book_id, tl)
+            # 5.5) 章末规划增量上报（reader_question/character_intents 语义合并；失败不阻塞落盘）
+            if planning_patch:
+                _apply_chapter_planning_patch(book_id, tl, book, planning_patch)
     except Exception:
         pass
 
-    # 6) 角色状态（规则自动机）
+    # 6) 角色状态（规则自动机 + agent 上报的剧情人物变化事件落账）
     try:
-        from libraries.character_state import CharacterStateMachine
-        csm = CharacterStateMachine()
-        csm_path = os.path.join(_ROOT, "books", book_id, "character_states.json")
-        if os.path.exists(csm_path):
-            csm.load(csm_path)
-        csm.update_from_chapter(n, processed)
-        csm.save(csm_path)
+        csm = _load_char_states(book_id)
+        bible = []
+        try:
+            _tl = book_mgr.load_storyline(book_id)
+            if _tl and _tl.basic_info:
+                bible = (_tl.basic_info or {}).get("characters") or []
+        except Exception:
+            pass
+        csm.ensure_registered(bible)          # 修 csm 空机：每章先按 bible 就地注册
+        if char_events:                        # agent 按情节段上报 → 剧情变化落账
+            csm.apply_events(char_events, n, bible)
+        csm.update_from_chapter(n, processed)  # 出场/离线计数
+        csm.save(_char_states_path(book_id))
     except Exception:
         pass
 
@@ -987,11 +1375,17 @@ def _update_promises_ledger_thin(book_id: str, chapter_num: int) -> None:
 
 
 def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
-                      plot_name: str, text: str) -> dict:
+                      plot_name: str, text: str,
+                      character_events: list | None = None) -> dict:
     """[薄工具] 保存单个情节段到进行中草稿（draft_chapter.json，断点续写保底）。
 
     agent 逐情节段生成后调用：规则去AI味 → 追加进草稿（含 buffer/words/bridges），
     章满后用 save_chapter_text 落盘并清草稿。
+
+    character_events（可选）：本情节段剧情造成的人物变化事件，随草稿落账，
+    章满 save_chapter_text 时并入角色状态机。每项 {name, events:[{type, from?, to?, reason?}]}，
+    type ∈ goal_shift|power_shift|location_shift|arc_stage|relationship|trust_change|note。
+    只报剧情造成的**变化**，不报 mood/secret 等推断字段（禁 agent 直写）。
     """
     if not (book_id and text and (text or "").strip()):
         raise RuntimeError("book_id 与 text 必填")
@@ -1014,7 +1408,8 @@ def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
         # 新章节草稿：重置
         bridges = []
         cur_ch = chapter_num
-    entry = {"plot_id": plot_id or "", "plot_name": plot_name or "", "text": text}
+    entry = {"plot_id": plot_id or "", "plot_name": plot_name or "", "text": text,
+             "character_events": (character_events or []) if isinstance(character_events, list) else []}
     if plot_id:
         # 同 plot_id 重写：替换旧条目而非追加（防同一情节段被反复生成导致重复渲染/高亮），最后写入胜出
         replaced = False
@@ -1042,7 +1437,10 @@ def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
 
 def save_outlines(book_id: str, outlines: list | None = None,
                   plots: list | None = None, threads: list | None = None,
-                  themes: list | None = None, mode: str = "replace") -> dict:
+                  themes: list | None = None, mode: str = "replace",
+                  expected_revision: int | None = None,
+                  planning_patch: dict | None = None,
+                  validate: bool = True) -> dict:
     """[薄工具] 保存弧/情节段/线程/内涵（agent 生成后调用，内部不调 LLM）。
 
     接受 agent 生成的结构化 dict 列表，反序列化为 OutlineSlot / PlotSlot 落盘；
@@ -1050,18 +1448,47 @@ def save_outlines(book_id: str, outlines: list | None = None,
     含 plots 则 phase=plots（草案待确认）否则 outlines；但**已 ready 书保持 ready**
     （续写/扩写追加弧后不降级——ready 翻转只由用户在书详情 UI 确认，见 confirm-storyline）。
     弧的 `notes`（设计意图/偏离库模板点）随 OutlineSlot 落盘，供蓝图过目复核。
+    结构必填（硬规则，缺则 raise 拒收、不自动换算兜底）：每条弧 id 非空唯一 + name +
+    一组完整跨度（start_word&end_word 成对整数 0<=start<end，或 start_chapter&end_chapter
+    成对整数 1<=start<=end；半组/全缺直接报错）；每个情节段 id 非空唯一 + outline_id 指向
+    存在的最底层（叶）弧；append/续写可只传 plots 挂到已落盘弧（outlines 留空）。
     """
-    tl = _require_tl(book_id)
-    from libraries.storyline import OutlineSlot, PlotSlot, reconcile_outline
+    # 直接读磁盘而非进程缓存：Web/MCP 双进程下 expected_revision 必须对比最新版本。
+    tl = book_mgr.load_storyline(book_id)
+    if tl is None:
+        raise RuntimeError(f"「{book_id}」无故事线（storyline.json）")
+    from libraries.storyline import BookStoryline, OutlineSlot, PlotSlot, reconcile_outline
+    from core.json_store import read_json, write_json_atomic
+    current_revision = int(getattr(tl, "storyline_revision", 0) or 0)
+    from libraries.planning_state import enabled as _planning_enabled
+    if (_planning_enabled("STORYLINE_REVISION_CHECK", True)
+            and expected_revision is not None and int(expected_revision) != current_revision):
+        return {"ok": False, "error": "stale_storyline", "expected": int(expected_revision),
+                "actual": current_revision, "action": "refresh_and_replan"}
+    try:
+        checked_patch = validate_patch(planning_patch)
+    except ValueError as e:
+        raise RuntimeError(str(e))
+    # 在副本上完成全部结构变更和校验，任何失败都不触碰正式故事线。
+    candidate = BookStoryline.from_dict(tl.to_dict())
+    # 结构校验（硬规则）：known 只对 append 生效（续写可把 plots 挂到已落盘弧）；replace 整体替换须自洽。
+    if mode not in {"replace", "append"}:
+        raise RuntimeError("mode 只允许 replace 或 append")
+    _known_arcs = [] if mode == "replace" else (candidate.outlines or [])
+    _known_plots = [] if mode == "replace" else (candidate.plots or [])
+    _probs = outline_payload_problems(outlines or [], plots or [],
+                                      known_outlines=_known_arcs, known_plots=_known_plots)
+    if _probs:
+        raise RuntimeError("save_outlines 拒绝：outlines/plots 结构不完整——" + "；".join(_probs))
     if mode == "replace":
-        tl.outlines = []
-        tl.plots = []
+        candidate.outlines = []
+        candidate.plots = []
     if outlines:
-        base = len(tl.outlines)
+        base = len(candidate.outlines)
         for i, o in enumerate(outlines):
             _sw = o.get("start_word"); _ew = o.get("end_word")
             _sc = o.get("start_chapter"); _ec = o.get("end_chapter")
-            tl.outlines.append(OutlineSlot(
+            candidate.outlines.append(OutlineSlot(
                 id=o.get("id") or f"outline_{base + i + 1:04d}",
                 template_id=o.get("template_id", ""),
                 name=o.get("name") or "未命名弧",
@@ -1078,12 +1505,12 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 narrative_target=o.get("narrative_target", ""),
                 notes=o.get("notes", ""),
             ))
-        for _o in tl.outlines:
-            reconcile_outline(_o, tl.words_per_chapter or 3000)
+        for _o in candidate.outlines:
+            reconcile_outline(_o, candidate.words_per_chapter or 3000)
     if plots:
-        base = len(tl.plots)
+        base = len(candidate.plots)
         for i, p in enumerate(plots):
-            tl.plots.append(PlotSlot(
+            candidate.plots.append(PlotSlot(
                 id=p.get("id") or f"plot_{base + i + 1:04d}",
                 template_id=p.get("template_id", ""),
                 name=p.get("name") or "未命名情节段",
@@ -1098,17 +1525,64 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 resolves_plot_id=p.get("resolves_plot_id", ""),
                 resolves_name=p.get("resolves_name", ""),
                 roles=p.get("roles") or [],
+                execution_brief=p.get("execution_brief") or {},
+                character_impact=p.get("character_impact") or [],
             ))
     if threads:
-        tl.threads = threads
+        candidate.threads = threads
     if themes:
-        tl.themes = themes
-    tl.phase = tl.phase if tl.phase == "ready" else ("plots" if plots else "outlines")
-    tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
-    save_tl(book_id, tl)
+        candidate.themes = themes
+    candidate.phase = candidate.phase if candidate.phase == "ready" else ("plots" if plots else "outlines")
+    candidate.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    if validate and candidate.outlines:
+        report = globals()["validate_storyline"](
+            outlines=candidate.to_dict().get("outlines") or [],
+            plots=candidate.to_dict().get("plots") or [],
+            words_per_chapter=candidate.words_per_chapter,
+        )
+        if not report.get("passed"):
+            raise RuntimeError("save_outlines 校验失败：" + str(report.get("summary") or report))
+
+    book = book_mgr.get(book_id)
+    old_state = load_planning_state(book_id, tl, book, persist=False)
+    new_state = merge_state(old_state, checked_patch)
+    candidate.storyline_revision = current_revision + 1
+    new_state["book_id"] = book_id
+    new_state["storyline_revision"] = candidate.storyline_revision
+    if checked_patch.get("last_replan"):
+        new_state.setdefault("last_replan", {})["result_revision"] = candidate.storyline_revision
+        new_state["last_replan"].setdefault("at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    new_state["written_until_word"] = int(getattr(book, "total_words", 0) or 0) if book else 0
+    new_state["committed_until_word"] = max(
+        int(new_state.get("committed_until_word") or 0),
+        max((int(getattr(o, "end_word", 0) or 0) for o in candidate.outlines), default=0),
+    )
+    if int(new_state.get("target_word_budget") or 0) <= 0:
+        new_state["target_word_budget"] = new_state["committed_until_word"]
+    story_path = os.path.join(_ROOT, "books", book_id, "storyline.json")
+    plan_path = planning_path(book_id)
+    old_story_raw = read_json(story_path)
+    old_plan_raw = read_json(plan_path) if plan_path.exists() else None
+    try:
+        save_tl(book_id, candidate)
+        save_planning_state(book_id, new_state)
+    except Exception:
+        if isinstance(old_story_raw, dict):
+            write_json_atomic(story_path, old_story_raw)
+            from ui.web_blueprints.ctx import _storylines, _storyline_lock
+            with _storyline_lock:
+                _storylines[book_id] = BookStoryline.from_dict(old_story_raw)
+        if isinstance(old_plan_raw, dict):
+            write_json_atomic(plan_path, old_plan_raw)
+        elif plan_path.exists():
+            plan_path.unlink()
+        raise
     _drop_engine(book_id)
-    return {"ok": True, "outlines": len(tl.outlines), "plots": len(tl.plots),
-            "phase": tl.phase}
+    return {"ok": True, "outlines": len(candidate.outlines), "plots": len(candidate.plots),
+            "phase": candidate.phase, "storyline_revision": candidate.storyline_revision,
+            "planning": {"target_word_budget": new_state.get("target_word_budget", 0),
+                         "committed_until_word": new_state.get("committed_until_word", 0),
+                         "written_until_word": new_state.get("written_until_word", 0)}}
 
 
 def save_book_meta(book_id: str, title: str = "", synopsis: str = "") -> dict:
@@ -1770,8 +2244,26 @@ def validate_world(book_id: str = "", basic_info: dict | None = None) -> dict:
         bi = tl.basic_info or {}
     else:
         bi = basic_info or {}
+        if not isinstance(bi, dict):
+            return {"ok": False, "error": "invalid_input_shape", "field": "basic_info",
+                    "received": type(bi).__name__, "action": "pass an object"}
+        if "factions" in bi and not ((bi.get("world_building") or {}).get("factions")):
+            return {"ok": False, "error": "invalid_input_shape",
+                    "field": "basic_info.world_building.factions",
+                    "received": "basic_info.factions",
+                    "action": "move_factions_under_world_building"}
+        if "world_building" in bi and not isinstance(bi.get("world_building"), dict):
+            return {"ok": False, "error": "invalid_input_shape", "field": "basic_info.world_building",
+                    "received": type(bi.get("world_building")).__name__, "action": "pass an object"}
+        if "characters" in bi and not isinstance(bi.get("characters"), list):
+            return {"ok": False, "error": "invalid_input_shape", "field": "basic_info.characters",
+                    "received": type(bi.get("characters")).__name__, "action": "pass an array"}
     wb = bi.get("world_building") or {}
     factions_raw = wb.get("factions") or []
+    if not isinstance(factions_raw, list):
+        return {"ok": False, "error": "invalid_input_shape",
+                "field": "basic_info.world_building.factions",
+                "received": type(factions_raw).__name__, "action": "pass an array"}
     chars = [c for c in (bi.get("characters") or []) if isinstance(c, dict)]
 
     def _norm(name):
@@ -1862,6 +2354,8 @@ _WIZARD_CMDS = {
     "reset": (),   # 清空向导 state（除 pen_name/库表外字段）——建书前先 reset，防残留干扰保真度
     "submit": (),
     "set_review": ("title",),   # 提取页：呈现五库候选审查卡（非建书命令，不入步门控）
+    "set_replan_preview": ("book_id", "expected_revision", "diagnosis", "directions",
+                            "selected_direction_id", "outlines", "plots", "planning_patch"),
 }
 
 # 步敏感命令 → 需求向导步（步 2 候选 / 步 3 内容构建）。
@@ -1881,20 +2375,27 @@ _WIZARD_STEP_GATE = {
 def drive_ui(cmd: str, args: dict = None) -> dict:
     """驱动「启动新书」向导 UI（命令桥）：set_field/set_tags/set_characters/set_candidates/
     add_candidate/pick_candidate/set_world/set_picks/set_outline/next/prev/load_candidates/
-    skip_candidates/fill_world/reset/submit。
+    skip_candidates/fill_world/reset/submit/set_replan_preview。
 
     非阻塞：把命令写入意图队列，浏览器每 ~2.5s 轮询消费（start_book.html 的
     window.onnecommand 执行）。不入书锁（不写书）。
-    建书仍走系统向导（/books/start POST）：agent 只驱动表单、点下一步/提交，
+    建书仍走系统向导（/books/start POST）：agent 只驱动表单和步骤，提交由用户点击，
     **不能绕过向导直建**（护栏：无直建工具）。
 
     必填 args（cmd → 必填键，缺则报错）：
     - set_field: {field, value}   field ∈ idea/pen/title/words/borrow_source/borrow_tweak
     - set_tags: {tags: [str]}
     - set_characters: {characters: [{name, role, importance, identity, personality, golden_finger,
-      gender, catchphrase, brief, title, age, death_year, faction, relations}]}（整体替换）
+      gender, catchphrase, brief, title, age, death_year, faction, relations,
+      behavior?, speech_profile?, development_plan?}]}（整体替换）
       role 只取 主角/配角/反派/其他；importance 必传（主角=1）；**relations 必须 [{name, relation}] 数组**
-      （传字符串会让前端渲染中断、后续角色全丢）
+      （传字符串会让前端渲染中断、后续角色全丢）；
+      behavior 可选 {decision_style:{under_pressure,danger,betrayal},
+      communication_style:{stranger,friend,enemy}, emotion_expression:{anger,fear,sadness}}（情境→一贯反应，每格 1-3 短句；
+      人物稳定感=不同刺激下反应一致）；
+      speech_profile 可选 {rhythm,tone:str, habits:[句式/表达倾向], forbidden:[绝不说]}（语言倾向，非固定口头禅复读；
+      缺省把 catchphrase 视作 habits 之一）；
+      development_plan 可选（一句成长方向，如「从独行者成为领导者」，或 {growth_target,notes}）——只规划不绑 Storyline
     - set_candidates: {candidates: [{title, one_liner?, world_brief?}]}   title 必填
     - add_candidate: {candidate: {title, one_liner?, world_brief?}}   title 必填，增量追加 1 张候选卡
     - pick_candidate: {candidate: {title, world_brief, one_liner}} 或 {idx: int}（至少其一）
@@ -1904,24 +2405,29 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
       **rules 必须数组**（传字符串会被忽略）
     - set_picks: {templates: [id|{id,name}]} 或 {plots: [id|{id,name}]}（任一非空）
     - set_outline: {outlines: [非空列表], plots: [list], threads?, themes?}   步3②弧+情节段，submit 随书落库
-      outlines 每项 {id, name, start_word, end_word, parent_arc_id?, notes, stages?}（id 唯一必填、备注用 notes 非
-      description、start_word/end_word 为 0 基字数坐标（start 含/end 不含，权威；可同时传 start_chapter/end_chapter
-      兼容）、parent_arc_id 指向父弧 id 支持弧树嵌套）；弧=树状目标节点（定义见 NOVEL_AGENT.md 1.1），
-      字数跨度由剧情结构决定、不设固定章数、叶弧不要求=1 章（可跨多章、同父下不必相等）；仅最底层弧可拥有情节段；
-      plots 每项 {id, name, outline_id, order, category?, thread_id?, roles?, words?, cover_beats?, template_structure?}
-      （id 唯一必填、outline_id 必填指向所属弧 id（须为最底层弧）、order 弧内序号；words=该情节段目标字数
-      0 基整数、按场景浓淡给（300~2500，同弧/全书不要全部相等），未给回退 cover_beats×200；cover_beats=节拍数 2~6 可选）——缺 id/outline_id 故事线情节段不显示
+      **结构必填（缺则命令被拒、不自动换算兜底）**——outlines 每项须 id 非空唯一 + name 非空 + 一组完整跨度：
+      `start_word/end_word` 成对整数（0 基、start 含/end 不含、0<=start_word<end_word，权威）**或**
+      `start_chapter/end_chapter` 成对整数（1<=start_chapter<=end_chapter）；半组（如只有 end_word）/全缺直接报错；
+      备注用 notes 非 description、parent_arc_id 指向父弧 id 支持弧树嵌套（缺省=顶层弧）；弧=树状目标节点
+      （定义见 NOVEL_AGENT.md 1.1），字数跨度由剧情结构决定、不设固定章数；仅最底层弧可拥有情节段；
+      plots 每项须 id 非空唯一 + outline_id 非空且指向存在的最底层（叶）弧，其余可选
+      （order 弧内序号；words=目标字数 0 基整数、按场景浓淡 300~2500，未给回退 cover_beats×200；
+      cover_beats=节拍数 2~6；category/thread_id/roles/template_structure 可选）——缺 id/outline_id/叶弧归属也会被拒
     - set_review: {title, platform?, folder?, downloaded_chapters?, profile_id?, profile_name?,
       plots?, structures?, gags?, characters?, style_rules?}   **侦察/提取合并页**：把 agent 提炼的五库候选
       呈现成可勾选审查卡（drive_ui 命令，非建书命令，不套步门控）。至少一类非空才可提交；
       style_rules 每项 {kind(prefer|ban), pattern, desc?, severity?, replacements?}。
       审查数据字段对齐 NOVEL_AGENT.md 1.2，用户确认后由页面 POST /api/scout/ingest 落库。
-    - submit: {}  **⚠️ 建书即创建书目并跳书详情页，调用前必须先向用户汇报设定概要并取得确认**
+    - set_replan_preview: {book_id, expected_revision, diagnosis, directions(2-3),
+      selected_direction_id, outlines, plots(3-8), planning_patch, threads?, themes?}。
+      只暂存续规划预览，不修改正式故事线；最终提交只能由用户在写作台抽屉确认。
+    - submit: {}  **禁止 Agent 调用；建书只能由用户在页面点击提交**
     - next / prev / reset / load_candidates / skip_candidates / fill_world: {} 无必填
     """
     cmd = (cmd or "").strip()
     if cmd not in _WIZARD_CMDS:
         raise RuntimeError(f"未知向导命令：{cmd}，可选 {sorted(_WIZARD_CMDS)}")
+    check_ui_command(cmd, selected_profile(sys.argv))
     args = dict(args or {})
     if cmd == "set_picks":   # templates 或 plots 任一非空即可（[] 会被通用校验误判为缺参）
         if not (args.get("templates") or args.get("plots")):
@@ -1932,6 +2438,23 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
             raise RuntimeError(f"命令 {cmd} 需 outlines 非空列表")
         if not isinstance(args.get("plots"), list):
             raise RuntimeError(f"命令 {cmd} 需 plots 列表")
+        # 结构校验（硬规则）：弧缺完整跨度/半组跨度、情节段挂非叶/悬空弧 → 直接拒绝，浏览器不代填兜底。
+        _probs = outline_payload_problems(outs, args["plots"])
+        if _probs:
+            raise RuntimeError(f"命令 {cmd} 拒绝：outlines/plots 结构不完整——" + "；".join(_probs))
+        try:
+            from libraries.build_status import get_build_status as _build_status
+            from libraries.planning_state import save_build_session
+            _sid = (_build_status() or {}).get("build_session_id") or ""
+            if _sid:
+                _committed = max((int(o.get("end_word") or 0) for o in outs), default=0)
+                _planning = dict(args.get("planning") or {})
+                _planning.setdefault("mode", "open")
+                _planning.setdefault("committed_until_word", _committed)
+                _planning.setdefault("target_word_budget", max(120000, _committed))
+                save_build_session(_sid, _planning)
+        except ValueError as e:
+            raise RuntimeError(f"命令 {cmd} planning 无效：{e}")
     elif cmd == "set_candidates":   # 呈现候选：非空 list、每项 dict 且含 title
         cands = args.get("candidates")
         if not (isinstance(cands, list) and cands
@@ -1946,6 +2469,54 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
         has_idx = isinstance(args.get("idx"), int)
         if not (has_candidate or has_idx):
             raise RuntimeError(f"命令 {cmd} 需 candidate 对象或 idx 至少其一（candidate={{title, world_brief, one_liner}}）")
+    elif cmd == "set_replan_preview":
+        book_id = str(args.get("book_id") or "").strip()
+        tl = book_mgr.load_storyline(book_id)
+        if tl is None:
+            raise RuntimeError(f"命令 {cmd}：书 {book_id} 无故事线")
+        if isinstance(args.get("expected_revision"), bool) or not isinstance(args.get("expected_revision"), int):
+            raise RuntimeError(f"命令 {cmd} 需 expected_revision 整数")
+        directions = args.get("directions")
+        if not (isinstance(directions, list) and 2 <= len(directions) <= 3
+                and all(isinstance(x, dict) and x.get("id") and x.get("title") for x in directions)):
+            raise RuntimeError(f"命令 {cmd} 需 2-3 个含 id/title 的 directions")
+        if not isinstance(args.get("diagnosis"), dict):
+            raise RuntimeError(f"命令 {cmd} 需 diagnosis 对象")
+        outs, plots = args.get("outlines"), args.get("plots")
+        if not isinstance(outs, list) or not (isinstance(plots, list) and 3 <= len(plots) <= 8):
+            raise RuntimeError(f"命令 {cmd} 需 outlines 数组及 3-8 个 plots")
+        problems = outline_payload_problems(outs, plots,
+                                            known_outlines=tl.outlines or [],
+                                            known_plots=tl.plots or [])
+        try:
+            checked_patch = validate_patch(args.get("planning_patch"))
+        except ValueError as e:
+            problems.append(str(e))
+            checked_patch = {}
+        selected = str(args.get("selected_direction_id") or "")
+        if selected not in {str(x.get("id")) for x in directions}:
+            problems.append("selected_direction_id 未指向 directions 中的方向")
+        if not problems:
+            combined = tl.to_dict()
+            combined["outlines"] = list(combined.get("outlines") or []) + outs
+            combined["plots"] = list(combined.get("plots") or []) + plots
+            report = globals()["validate_storyline"](
+                outlines=combined["outlines"], plots=combined["plots"],
+                words_per_chapter=tl.words_per_chapter,
+            )
+            if not report.get("passed"):
+                problems.append(str(report.get("summary") or report))
+        preview = {
+            "expected_revision": int(args["expected_revision"]),
+            "diagnosis": args["diagnosis"], "directions": directions,
+            "selected_direction_id": selected,
+            "outlines": outs, "plots": plots, "threads": args.get("threads") or [],
+            "themes": args.get("themes") or [], "planning_patch": checked_patch,
+            "validation": {"passed": not problems, "problems": problems},
+        }
+        from libraries.planning_state import save_replan_preview
+        saved = save_replan_preview(book_id, preview)
+        args = {"book_id": book_id, "preview_id": saved["preview_id"]}
     elif cmd == "set_review":   # 提取页：呈现五库候选审查卡（title 必填、至少一类非空、数组类型校验）
         if not (args.get("title") or "").strip():
             raise RuntimeError(f"命令 {cmd} 需 title 必填")
@@ -2054,6 +2625,8 @@ _LOCKED_TOOLS = {
     "confirm_world",
     # 薄工具（agent 生成后落盘，同样需书锁防并发）
     "save_chapter_text", "save_plot_draft", "save_outlines", "save_book_meta",
+    # 首次读取会 lazy bootstrap planning_state，故也需同书锁（不做快照）。
+    "get_story_state", "get_writing_context",
 }
 
 
@@ -2071,7 +2644,7 @@ def _wrap_book_lock(fn):
             raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
         try:
             # 决策点落库前快照（commit 语义：写工具改前先留底，供 preview_diff/rollback）
-            if book_id:
+            if book_id and fn.__name__ not in {"get_story_state", "get_writing_context"}:
                 try:
                     from libraries.book_snapshot import snapshot as _book_snap
                     _book_snap(book_id, fn.__name__)
@@ -2516,7 +3089,7 @@ def _build_registry():
         # 导航 / 建书向导驱动（用户高频意图，必须前置）
         navigate, drive_ui,
         # 只读摸底
-        list_books, get_book_state, get_writing_context, get_storyline,
+        list_books, get_book_state, get_writing_context, get_storyline, get_story_state,
         get_book_detail, get_build_status, query_arc_library, query_plots, query_gags, query_profiles, query_characters,
         get_pen_style, pick_plot_sample,
         # 规划（薄工具：agent 生成后落盘；旧工具内 LLM 生成已由 agent 自主生成接管）
@@ -2548,11 +3121,13 @@ def _build_registry():
         # 逐层保留 __name__/__wrapped__，MCP 端 schema 不受影响。
         wrapped = _wrap_book_lock(fn) if name in _LOCKED_TOOLS else fn
         wrapped = _wrap_phase_gate(wrapped)
+        from libraries.tool_policy import PHASE_GATES
         entries.append({
             "name": name,
             "description": (inspect.getdoc(fn) or "").strip(),
             "input_schema": _func_to_schema(fn),
             "func": wrapped,
+            **tool_metadata(name, allowed_phases=PHASE_GATES.get(name), locked=name in _LOCKED_TOOLS),
         })
     return entries
 

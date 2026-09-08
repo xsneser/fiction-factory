@@ -84,6 +84,7 @@ def sse_stream_response(gen):
 # ─── 引擎实例缓存 ───
 _engines: dict[str, NovelEngine] = {}
 _storylines: dict[str, dict] = {}  # 故事线配置缓存
+_storylines_mtime: dict[str, int] = {}  # 缓存对应的 storyline.json st_mtime_ns（跨进程失效）
 _storyline_lock = threading.Lock()  # 保护故事线缓存读写（Flask 多线程）
 
 # ─── 故事线统一存取：每本书的故事线都在书目录内 books/<id>/storyline.json ───
@@ -94,21 +95,50 @@ def _storyline_filepath(storyline_id: str) -> str:
 
 
 def _resolve_storyline(storyline_id):
-    """从内存缓存或磁盘加载 BookStoryline。"""
+    """从内存缓存或磁盘加载 BookStoryline（缓存按文件 st_mtime_ns 失效）。
+
+    外部 agent（MCP，独立进程）会直接写 storyline.json；若本进程缓存不带 mtime 失效，
+    Web 会一直读到陈旧故事线（R3 修订 6：用纳秒 mtime，Windows 下快速连续写入也可靠）。
+    """
+    import os as _os
+    path = _storyline_filepath(storyline_id)
+    try:
+        stat = _os.stat(path).st_mtime_ns if _os.path.exists(path) else None
+    except OSError:
+        stat = None
     with _storyline_lock:
         sl = _storylines.get(storyline_id)
-        if sl is None:
-            sl = load_storyline(_storyline_filepath(storyline_id))
+        cached_mtime = _storylines_mtime.get(storyline_id)
+        if sl is None or stat is None or cached_mtime != stat:
+            sl = load_storyline(path)
             if sl:
                 _storylines[storyline_id] = sl
+                if stat is not None:
+                    _storylines_mtime[storyline_id] = stat
+            else:
+                _storylines.pop(storyline_id, None)
+                _storylines_mtime.pop(storyline_id, None)
     return sl
 
 
 def _save_storyline(sl, storyline_id):
-    """写入内存缓存并落盘。"""
+    """写入内存缓存并落盘；结构写入自动推进乐观并发 revision。"""
+    try:
+        disk = load_storyline(_storyline_filepath(storyline_id))
+        disk_revision = int(getattr(disk, "storyline_revision", 0) or 0) if disk else -1
+        if int(getattr(sl, "storyline_revision", 0) or 0) <= disk_revision:
+            sl.storyline_revision = disk_revision + 1
+    except Exception:
+        pass
+    path = _storyline_filepath(storyline_id)
     with _storyline_lock:
         _storylines[storyline_id] = sl
-    save_storyline(sl, _storyline_filepath(storyline_id))
+        try:
+            import os as _os
+            _storylines_mtime[storyline_id] = _os.stat(path).st_mtime_ns
+        except OSError:
+            _storylines_mtime.pop(storyline_id, None)
+    save_storyline(sl, path)
 
 
 def _max_id_suffix(ids) -> int:
