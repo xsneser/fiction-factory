@@ -10,7 +10,7 @@ description: >-
 
 ## 前置检查（必做）
 1. `mcp__novel-engine__get_book_detail(book_id)`：看 `status`、`current_chapter`、`synopsis`（简介）、`pen_name`、`platform`（目标平台）。
-2. 无第 1 章正文 → 提示先跑 `novel-write`。
+2. 无第 1 章正文 → 提示先到侧栏写作台用 dsh novel-story 写第 1 章。
 3. 有第 1 章但无 synopsis / 书名不佳 → **你自主生成书名+简介**（读第 1 章内容提炼）→ `save_book_meta`。
 4. **笔名平台注册软提醒**：`mcp__novel-engine__query_profiles(keyword=书名笔名)` 看 `platform_accounts`/`registered_platforms`——笔名未在目标平台（`book.platform`）登记账号 → **如实告知用户**「正式上架前需在平台注册同名账号」（软提醒，不拦截；平台不实际代登录）。`publish_check` 报告也会含该 warning。
 
@@ -32,6 +32,6 @@ description: >-
 - 可 `navigate`（url=`/publish`）让用户看到上架页结果。
 
 ## 失败处置
-- 检查未过且未 force → 逐项列问题让用户先修（缺简介→`save_book_meta` 补；字数不足→`novel-write` 续写）。
+- 检查未过且未 force → 逐项列问题让用户先修（缺简介→`save_book_meta` 补；字数不足→侧栏 dsh novel-story 续写）。
 - `publish_book` 未过检查又没 force → 会报错，需 `force=True` 或先修完再发。
 - `BookBusyError` → 稍后重试。

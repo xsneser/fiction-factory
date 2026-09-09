@@ -106,13 +106,18 @@
 
 ### 落盘工具
 - `save_outlines`：保存 outlines/plots/threads/themes → 落盘。含 plots 且书未 ready → phase=plots（config 补弧后待用户在书详情确认）；**已 ready 书追加弧保持 ready**（续写/扩写不降级；深化已并入建书步3，正常新书由 submit 直接 phase=ready，不经 save_outlines）。**ready 只由用户动作触发**——正常建书=用户在向导点提交（agent 不调 submit）；config 补弧落 plots 后须用户在书详情页「确认弧+情节段」（/api/book/&lt;id&gt;/confirm-storyline）——agent 无 fill_gags/confirm_outlines 等翻 ready 工具，**不得臆造翻转**。弧的字数跨度、情节段叶弧规则见 1.2 故事线数据规则；**每条弧 `notes` 存「本弧目标 + 偏离库模板的点」**（落库可复核，供蓝图/用户过目）。结构门槛与 set_outline 相同（见 1.2）：每条弧/情节段缺 id/name/完整跨度/叶弧归属，工具 raise 拒收；append/续写可只传 plots 挂到已落盘弧（outlines 留空）。
-- `save_plot_draft`：逐情节段落盘进行中草稿（断点续写保底）。可选参数（Runtime Control 事实入口）：
-  - `character_events=[{name, events:[{type,from?,to?,reason?}]}]`——本段剧情造成的人物变化，随草稿落账、章满并入角色状态机（见 1.2 行为注入）；type ∈ goal_shift|power_shift|location_shift|arc_stage|trust_change|relationship|note，**不报 mood/secret/conflict（推断字段禁直写）**。
+- `save_plot_draft`：**write profile 的一次性 Plot 提交**（Writer 唯二工具之一）。只接受
+  `prepare_plot_run` 签发的 `commit_token` + 语义输出 `(commit_token, text, plot_summary, outcome,
+  character_events)`——token 已在服务端绑定 Plot / flow / storyline_revision / context_fingerprint /
+  sample_receipt 与该 Plot 的写前预测（expected_facts 来自 Plot 配置，不再由 Writer 传）。保存成功后本
+  Writer Run 必须结束，Writer 绝不自行决定下一 Plot / 收章 / 续规划。语义输出：
   - `outcome={choices_made[], information_revealed[], relationship_changes[], resource_changes[], promise_updates[], new_story_questions[]}`——本段**结构化结果**；平台**不从正文推断语义**（禁止指望从正文猜 facts），你没上报就没有 facts → reconcile 永远空。
-  - `expected_facts=[{subject, type, expected_to, strength: must|likely|possible}]`——写前可机器比较的预测；commit 后 reconcile 只比较 structured expected_facts vs actual facts（execution_brief/character_impact 只供阅读、不参与硬比较）。
-  - `run_id` / `based_on_storyline_revision`——本次 Plot Run 身份与所基于的故事线版本（`plot_run.run` 已给你；省略按 plot_id@当前 revision 派生）。
-- `save_chapter_text`：整章落盘（summary 由你生成；内部做规则去 AI 味/审查/角色状态(含 character_events 落账)/承诺台账并清草稿）。可选 `planning_patch`（章末 story_questions/character_intents 语义合并）、`expected_revision`（版本 CAS，陈旧返 stale_storyline）。返回含 `reconcile`（Prediction→Fact 对照，kind∈clean/prediction_drift/missed_prediction/unpredicted_fact/stale）；**以实际为准，不要改正文去迎合预测**。
-  - **写作闭环**：`get_writing_context`（读 plot_run/revision）→ 生成正文 + structured outcome → `save_plot_draft(character_events/outcome/expected_facts/run_id/based_on_storyline_revision)` → 章满 `save_chapter_text(plot_segments=…)` → reconcile / planning 校正。
+  - `character_events=[{name, events:[{type,from?,to?,reason?}]}]`——本段剧情造成的人物变化，随草稿落账、章满并入角色状态机；type ∈ goal_shift|power_shift|location_shift|arc_stage|trust_change|relationship|note，**不报 mood/secret/conflict（推断字段禁直写）**。
+  - `plot_summary` 50~120 字，仅供展示/检索/章节摘要，非事实源。
+- `save_chapter_text` / `chapter_quality_gate` / `finalize_draft_chapter`：**整章提交与门禁不在 write profile
+  暴露**——由服务端 FSM（`_writer_fsm` → `finalize_draft_chapter`）在草稿字数达标时原子拼章落盘
+  （规则去 AI 味/审查/角色状态含 character_events 落账/承诺台账/清草稿）并跑质量门禁，返回 reconcile 与
+  decision_points；仅 legacy 全量工具面（AGENT_TOOL_PROFILES=0）与内部调用可见。
 - `save_basic_info`：保存基础设定（config/plots 期，phase 门控）；可选 `expected_revision`（省略=不校验，给则与磁盘 storyline_revision 不一致返 stale_storyline）。
 - `save_book_meta`：保存书名+简介。
 
@@ -137,11 +142,11 @@
 - 工具被 phase 门控拒绝或抛 `BookBusyError` 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即循环，应停止并如实汇报。
 - 预算/额度触发 `budget_paused` 时停下，向用户如实汇报，不继续烧额度。
 - 薄工具（`save_outlines` / `save_chapter_text`）可能阻塞数分钟属正常，等待结果，不要反复同参重查。
-- **笔名风格强约束**：写作/续写前先 `get_pen_style(book_id, no_ref=True)` 读该笔名**全量风格**（句式风格 + 禁止内容 + 语言习惯 + 通用纪律；no_ref=只取规则/负约束，单篇样文由 `pick_plot_sample` 给），动笔必须逐条遵守，不得以任何理由绕过；每轮 `get_writing_context` 的 `style_card` 是精简提醒（必读，防风格漂移）。未拿到风格不得写正文。样文 = 全局样文池（多维权表：scene/dramatic_state/narrative_action/cast/dialogue_density/information_density/pace/pov，英文键存）。**每情节段运行：先 `get_writing_context`（`plot_run.style_query` 已按情节段内容自动推导 scene/cast 等；线程/承诺不参与选样）→ 调一次 `pick_plot_sample(book_id)`，返回的 `text` 就是本段**唯一** STYLE REFERENCE 单篇样文（含 `# 场景:` 头）**——服务端按该 query 硬过滤→软加权→加权随机→近期避重抽恰 1 篇，连续情节段自动避重、语言参考随运行自然漂移；确需覆盖可给 `pick_plot_sample` 传 `query`，或该场景其余样文用 `get_style_sample` 拉全文备查。可 `add_style_rule` / `delete_style_rule` 维护句式/禁词规则；可 `add_style_sample` / `delete_style_sample` 把参考书**完整连续场景**（勿拆技巧样本/勿润色/勿单喂金句与纯高潮，单条约 1500-3000 字，dims 填英文键结构性维度）入库为样文。
-- 工具结果可能被 dsh 裁剪（>8KB 只保留头尾）：`style_card` 位于 payload 尾部结构性幸存；信息不足时用 `get_pen_style` / `get_writing_context` / `get_book_state` 复读或按情节段增量推进，**不要臆测「spill 文件」**（本环境禁用了文件工具，不存在可读的 spill 文件）。
+- **笔名风格强约束（write run 由服务端解析）**：一次性 Writer 每段调 `prepare_plot_run`，返回里已含该笔名**精简风格卡 `style.card`** 与**唯一单篇样文 `style.sample`**（服务端按该笔名全量规则 + 情节段 query 加权随机取样并绑定回执）。Writer 不自行调 `get_pen_style` / `pick_plot_sample`（不在 write profile）；仅 legacy 全量工具面自行写作时才需先 `get_pen_style(no_ref=True)` 再 `pick_plot_sample`。未拿到风格不得写正文。
+- 工具结果可能被 dsh 裁剪（>8KB 只保留头尾）：信息不足时用 `prepare_plot_run(book_id)` 按当前情节段重新准备（Writer 唯二工具之一）；legacy 全量工具面才另可用 `get_pen_style`。**不要臆测「spill 文件」**（本环境禁用了文件工具，不存在可读的 spill 文件）。
 - **故事线完整性**：用 `validate_storyline(book_id)` 校验「顶层弧覆盖故事线纵轴（无叙事空白）」与「情节段仅挂最底层弧」两条硬规则；发现不合规如实汇报，不要静默硬写。
 - **`storyline_revision`（乐观并发事实状态版本）**：代表「所有会影响下一次故事规划的事实状态」的版本——不只 outlines/plots，也含 basic_info 与已写章节（每落盘一章 +1）。读到它的返回都应记住；replan 提交时把上次读到的值作为 `expected_revision` 回传，陈旧会返 `stale_storyline(expected/actual)` → 刷新后重规划，不要强覆盖。
-- **规划边界自动交接**：写作每轮读 `get_writing_context` 的 `planning.boundary.needs_replan`。命中且已无可写承诺 plot → 先 `save_chapter_text` 收尾当前章，再在最终回复**独占末行**输出 `[NEED_REPLAN] book_id=<id> reason=<reason_codes>`；orchestrator 按 `REPLAN_POLICY`（auto=原子提交后续写 / confirm=停在预览等界面确认）自动 spawn replan。**write 轮内不要调 replan 工具 / save_outlines 扩弧**；replan 轮内不要写正文。
-- **章末规划增量**：写完一章产生新读者问题 / 人物意图变化，可随 `save_chapter_text(planning_patch={...})` 回传——`story_questions` 用稳定 id 且状态 ∈ open/progressed/answered/superseded（同题 update 去重、终态不复开），`character_intents` 按人物 upsert；系统语义合并，不会无限 append。
+- **规划边界自动交接（服务端 FSM 负责）**：Writer 每段 `prepare_plot_run` 的 `horizon.boundary` 仅告知；是否收章/续规划由服务端 `_writer_fsm` 判定——章满→`finalize_draft_chapter` 收章，无剩余可写 Plot 且到边界→按 `REPLAN_POLICY`（auto=原子提交后续写 / confirm=停在预览等界面确认）自动 spawn replan。**write 轮内不要调 replan 工具 / save_outlines 扩弧，也不要自行收章**；一次性 Writer 只写当前 Plot、保存后即停。replan 轮内不写正文。
+- **章末规划增量**：一章产生的新读者问题 / 人物意图变化，由写 run 的 structured `outcome`（如 new_story_questions）经服务端 Plot/章提交时语义合并进 planning_state——`story_questions` 用稳定 id 且状态 ∈ open/progressed/answered/superseded（同题 update 去重、终态不复开），`character_intents` 按人物 upsert；不靠 Writer 回传 planning_patch。
 - **「删书」无 skill**——`navigate('/books')` 让用户手动点删除（直删工具不在工具面）。
 - 拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」，不跨阶段硬做。

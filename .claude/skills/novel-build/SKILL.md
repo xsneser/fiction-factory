@@ -17,7 +17,7 @@ description: >-
 1. `mcp__novel-engine__list_books` 看目标书是否已存在。
 2. 已存在 → `mcp__novel-engine__get_book_detail` 看 `phase`：
    - `config` → 继续本 skill（已有基本盘，补设定即可，跳过已完成的步骤）。
-   - `plots`（config 补弧后/遗留恢复；正常新书提交即 ready，不经此）→ 弧+情节段已落未 ready：引导用户在书详情「✅ 确认弧+情节段」进 ready，不要重复建书；`ready` → 引导 `novel-write`。
+   - `plots`（config 补弧后/遗留恢复；正常新书提交即 ready，不经此）→ 弧+情节段已落未 ready：引导用户在书详情「✅ 确认弧+情节段」进 ready，不要重复建书；`ready` → 引导侧栏 dsh novel-story 写作（novel-write 已废弃，仅存档）。
 3. 不存在 → `mcp__novel-engine__navigate(url="/books/start")` 把浏览器切到建书向导页。
 
 ## 决策点（必须停下问用户；选择类问题务必给编号选项，不要开放式空问）
@@ -92,11 +92,11 @@ description: >-
 - **第一章第一句必须是强钩子**：从冲突/悬念/奇观/反常起手，不要环境描写或背景介绍开场（例：主角被系统判死刑的瞬间，而不是「这是一个修真世界…」）。
 - **前三章内给出第一个爽点**：金手指觉醒/打脸/危机反转，让读者在第三章结束前吃到第一次回报。
 - **每章章末留钩子**：结尾停在疑问/危机/反转上，制造追读欲。
-- **落地检查**：写完章节后用 `mcp__novel-engine__chapter_quality_gate`（审查/连续性/追读/伏笔/爽点 五项门禁）核验；不合格 → 引导到 `novel-write` 重写该章。不加新工具，靠现有规则层检查。
+- **落地检查**：写完章节后用 `mcp__novel-engine__chapter_quality_gate`（审查/连续性/追读/伏笔/爽点 五项门禁）核验；不合格 → 引导到侧栏 dsh novel-story 重写该章。不加新工具，靠现有规则层检查。
 
 ## 退出状态
 - 成功：向导跑完世界观+深化式弧+情节段，用户提交建书即 `phase=ready`。用 `get_book_detail` 复核（主角名 + 世界观非空 + phase=ready）。
-- 下一步自然衔接：`novel-write`（写前三章）；config 兜底补弧落 plots → 用户在书详情「确认弧+情节段」进 ready；ready 后调整/扩弧经 save_outlines 追加（保持 ready）。
+- 下一步自然衔接：写前三章走 dsh 侧栏 novel-story（写作台「继续写正文」）；config 兜底补弧落 plots → 用户在书详情「确认弧+情节段」进 ready；ready 后调整/扩弧经 save_outlines 追加（保持 ready）。
 
 ## 失败处置
 - 「LLM 未配置」→ 提示到设置页或 `api.json` 配 key 后重试。

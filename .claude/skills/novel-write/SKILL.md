@@ -1,13 +1,23 @@
 ---
 name: novel-write
 description: >-
-  写作阶段。Use when the user wants to 写正文/写下一章/继续写/写情节段/把第 N 章写出来/写开头几章/
-  一键写完整章/写完整章/一键完整章节/完整章节构建
-  (write the next plot (情节段) or chapter, build a complete chapter in one shot)。
-  流程：渐进式披露组装上下文（书详情→故事线→当前情节段出场角色→最近已写）→ **agent 自主生成情节段
-  正文**（保持完整上下文连续）→ save_plot_draft 落盘 → 章满 save_chapter_text → 规则质检。前置：phase=ready。
+  [已废弃] 不要按本 skill 写作——它引用已被移除的工具(get_writing_context / 旧 save_plot_draft 位置参数)。
+  交互式写作请走侧栏 dsh 的 novel-story（一次性 Plot Writer + 服务端 FSM：prepare_plot_run →
+  save_plot_draft → 即停；完整章节=服务端 _writer_fsm 逐 Plot 编排，章满收章/门禁/续规划交接全在服务端）。
+  仅当用户明确要求查看历史写作流程存档时才加载本 skill。
 ---
-# 写作阶段（novel-write）— agent 自主生成
+# 写作阶段（novel-write）— 已废弃，写作走 dsh novel-story
+
+> ⚠️ **已废弃（2026-09）**：Claude Code 交互侧不再直接写作。正文写作统一由侧栏 dsh 的
+> `novel-story`（一次性 Plot Writer，write profile=2 工具）执行：`prepare_plot_run`（服务端已解析
+> style.card/.sample + commit_token）→ 写当前 Plot → `save_plot_draft(commit_token, text, plot_summary,
+> outcome, character_events)` → 即停。逐 Plot 推进、章满收章 + 质量门禁 + 到规划边界的续规划交接
+> 全由服务端 `_writer_fsm` → `finalize_draft_chapter` 完成，**不要再自行 save_chapter_text 或输出
+> [NEED_REPLAN]**。
+>
+> 下方为历史实现留档：引用已从注册表移除的 `get_writing_context`、已被 token 绑定签名取代的
+> `save_plot_draft(book_id, chapter_num, plot_id, …)`、以及 write profile 不再暴露的
+> `get_pen_style` / `pick_plot_sample` / `save_chapter_text`。**仅存档，不更新、勿按其写作。**
 
 > **核心原则**：正文由你（agent）**自主生成**——你带着完整对话上下文（书设定/故事线/刚写的前一段/
 > 风格要求）逐情节段写，生成后调用**薄工具** `save_plot_draft` / `save_chapter_text` 落盘。
