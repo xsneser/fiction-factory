@@ -19,8 +19,16 @@ from libraries.nav_intent import take_nav_intents  # noqa: E402
 from libraries.dsh_bridge import run_dsh_flow, interrupt_current_task, get_current_task_status, _DEBUG_PROMPT_DIR  # noqa: E402
 from libraries.build_status import set_build_status  # noqa: E402
 from libraries.tool_log import get_tool_log, clear_tool_log  # noqa: E402
+from libraries.agent_tool_router import PROFILE_TOOLS  # noqa: E402
+from libraries.mcp_runtime import status as mcp_runtime_status  # noqa: E402
 
 bp = Blueprint("agent", __name__)
+
+
+@bp.route("/api/agent/mcp-status", methods=["GET"])
+def agent_mcp_status():
+    """MCP 启动实例观测；不表示存在唯一的当前 profile 或进程存活状态。"""
+    return jsonify({"ok": True, **mcp_runtime_status(profile_tools=PROFILE_TOOLS)})
 
 
 @bp.route("/api/agent/chat", methods=["POST"])

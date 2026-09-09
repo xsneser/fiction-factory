@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""全局「样文库」—— STYLE REFERENCE 人工样本(词条)的结构化管理与注入。
+"""全局「样文池」—— STYLE REFERENCE 人工样本(词条)的结构化管理与注入。
 
 样文从「扁平 <sample> 文本文件 / 每笔名 samples.json」升为**全局一份带元数据的词条库**,
 解决:词条可按场景分类浏览/添加、各笔名写作时共享同一 STYLE REFERENCE(用户 2026-09-06 拍板)。
@@ -26,11 +26,21 @@ import re
 from dataclasses import dataclass, field, asdict
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_LIB = os.path.join(_ROOT, "storage", "style_samples")   # 全局样文库(权威源 + 镜像)
+_LIB = os.path.join(_ROOT, "storage", "style_samples")   # 全局样文池(权威源 + 镜像)
 _LEGACY_REFS = os.path.join(_ROOT, "storage", "style_refs")  # 旧每笔名文件(迁移/回滚参照)
 
 _SAMPLE_RE = re.compile(r"<sample>(.*?)</sample>", re.S)
 _WS_RE = re.compile(r"\s+")
+_BOOK_RE = re.compile(r"《([^》]+)》")
+
+
+def _book_from_source(source: str) -> str:
+    """从自由文本 source 推导机器可读来源书键(取《》内书名著,与书库书名一致);无《》→ ''。"""
+    s = (source or "").strip()
+    if not s:
+        return ""
+    m = _BOOK_RE.search(s)
+    return m.group(1).strip() if m else ""
 
 # dsh tool-result-pruner 阈值(headless profile 实际生效源 = dsh-base bundle:
 # vendor/dsh-ne/node_modules/@deepseek-ai/dsh-base/cordis.patch.yml thresholdChars:
@@ -106,12 +116,12 @@ def tool_prune_enabled() -> bool:
 
 
 def samples_path(pen_name: str = "") -> str:
-    """全局样文库权威源路径(不分笔名;pen_name 仅兼容占位)。"""
+    """全局样文池权威源路径(不分笔名;pen_name 仅兼容占位)。"""
     return os.path.join(_LIB, "samples.json")
 
 
 def reference_path(pen_name: str = "") -> str:
-    """全局样文库镜像路径(不分笔名)。"""
+    """全局样文池镜像路径(不分笔名)。"""
     return os.path.join(_LIB, "reference.txt")
 
 
@@ -179,6 +189,9 @@ class StyleSample:
     title: str = ""
     scene_tags: list = field(default_factory=list)   # 过渡期保留;迁移后弃用,由 dims.scene 取代
     source: str = ""
+    # 机器可读来源书键(如 `十日终焉` / `冰河末世，我囤积了百亿物资`),与书库书名一致;
+    # 供「全局池按来源书隔离」(profile.sample_books 收窄)与 /samples 来源分组。空 = 旧数据未标注。
+    source_book: str = ""
     note: str = ""
     word_count: int = 0
     # 人工确认保留:该条短(<800)或与其它条整段重叠也接受 → 保存不弹对应软预警
@@ -192,6 +205,9 @@ class StyleSample:
         self.dims = _clean_dims(self.dims)
         self.id = (self.id or "").strip()
         self.text = (self.text or "").strip()
+        if not self.source_book:
+            # 旧数据/新库未显式给 source_book → 从 source 自由文本《》内书名推导
+            self.source_book = _book_from_source(self.source)
         if not self.word_count:
             self.word_count = count_word_units(self.text)
 
@@ -208,6 +224,7 @@ class StyleSample:
             title=str(d.get("title") or "").strip(),
             scene_tags=[str(t).strip() for t in (d.get("scene_tags") or []) if str(t).strip()],
             source=str(d.get("source") or "").strip(),
+            source_book=str(d.get("source_book") or "").strip(),
             note=str(d.get("note") or "").strip(),
             word_count=int(d.get("word_count") or 0),
             no_warn=bool(d.get("no_warn") or False),
@@ -218,7 +235,7 @@ class StyleSample:
 # ─── 读写 ───
 
 def load_samples(pen_name: str = ""):
-    """读全局样文库词条;无文件/损坏 → None。pen_name 仅兼容占位(不分笔名)。"""
+    """读全局样文池词条;无文件/损坏 → None。pen_name 仅兼容占位(不分笔名)。"""
     path = samples_path()
     if not os.path.exists(path):
         return None
@@ -590,14 +607,22 @@ def estimate_budget_for(style_md_text, guide_chars=None):
 
 
 def pool_for(profile) -> list:
-    """样文库词条池,收窄到该笔名所选词条(profile.sample_ids);未选 → 全库。
+    """样文池词条池,收窄到该笔名的来源书 + 所选词条的交集;两者皆未声明 → 全库。
+
+    隔离顺序:先按 `profile.sample_books`(机器可读来源书键列表)过滤 source_book,再按
+    `profile.sample_ids`(词条 id)过滤——两道都只当「声明了才收窄」。这样 枫落(sample_books=
+    [十日终焉]) 与 星烬(sample_books=[冰河末世…]) 在同一全局池各抽各书、互不混样。
 
     供 build_ref_text_for_profile 与 pick_plot_sample 共用同一「当前笔名可用池」语义。
-    返回 [] 表示无全局样文库(samples.json 不存在/损坏)。
+    返回 [] 表示无全局样文池(samples.json 不存在/损坏)。
     """
     samples = load_samples()
     if samples is None:
         return []
+    chosen_books = [x for x in (getattr(profile, "sample_books", None) or []) if x]
+    if chosen_books:
+        by_book = {x for x in chosen_books}
+        samples = [s for s in samples if (s.source_book or "") in by_book]
     chosen_ids = [x for x in (getattr(profile, "sample_ids", None) or []) if x]
     if chosen_ids:
         by_id = {s.id: s for s in samples}
@@ -610,7 +635,7 @@ def pool_for(profile) -> list:
 def build_ref_text_for_profile(profile, max_chars=None, query=None, k=3, avoid=None):
     """组注入用 STYLE REFERENCE 文本(权威源 JSON → 加权随机 query 取样 / 预算多样 → 渲染)。
 
-    - 笔名在样文库选了词条(profile.sample_ids) → 先收窄池子到所选词条;
+    - 笔名在样文池选了词条(profile.sample_ids) → 先收窄池子到所选词条;
     - query 给定 → pick_samples(硬过滤→软加权→加权随机→近期避重)注入 ≤k 条(mode:"pick");
     - 无 query → select_for_budget 多样封顶(pruner 关=DEFAULT_REF_CHARS,不每章灌全库);
     - 有 samples.json:返回 (text, meta{mode:"pick"|"samples",…});
@@ -618,7 +643,7 @@ def build_ref_text_for_profile(profile, max_chars=None, query=None, k=3, avoid=N
     """
     from . import style_md as _sm
     pen_chosen = [x for x in (getattr(profile, "sample_ids", None) or []) if x]
-    samples = pool_for(profile)  # 全局样文库词条池,已收窄到笔名所选
+    samples = pool_for(profile)  # 全局样文池词条池,已收窄到笔名所选
     if samples:
         if query:
             picked, meta = pick_samples(samples, query=query, k=k, avoid=avoid)

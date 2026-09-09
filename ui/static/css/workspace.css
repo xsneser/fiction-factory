@@ -45,6 +45,14 @@ main { overflow: hidden; }
 
 .gen-split-title { font-size:12px; color:var(--fg-muted); margin-bottom:8px; }
 
+/* ─── 写作台头部压缩：标题 + 书信息合并为单行（省 info_bar 整行，书名不再与面包屑重复） ─── */
+.desk-head { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 0 10px; }
+.desk-head .desk-title { margin:0; font-size:20px; line-height:1.3; }
+.desk-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; color:var(--fg-muted); }
+.desk-meta .dm-name { color:var(--fg-strong); }
+.desk-meta .dm-item { color:var(--fg-muted); }
+.desk-meta .dm-sep { color:var(--border-soft); }
+
 /* 生成/写作动态（动作流）：每条动作一张卡片，右侧栏滚动 */
 .gen-feed { display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.5; }
 .gf-item { background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:var(--radius-sm); padding:6px 10px; color:#c9d1d9; }
@@ -79,3 +87,11 @@ main { overflow: hidden; }
 /* 阅读器共享组件样式已统一到 reader.css（本页 head 已加载 reader.css）。
    此处只补写作台布局差异：工具栏在视口下方 → margin-top（外部阅读器在视口上方用 reader.css 的 margin-bottom） */
 .editor-mid .reader-toolbar { margin-top:8px; margin-bottom:0; }
+
+/* ─── 移动端适配（Step 8）：窄屏单列，正文优先 → Plot Run/Outcome → 故事线 Gantt ─── */
+@media (max-width: 900px) {
+  .editor-split { flex-direction: column; gap: 10px; overflow-y: auto; }
+  .editor-left { order: 2; width: 100% !important; max-width: none; min-width: 0; }
+  .editor-mid { order: 1; min-height: 50vh; }
+  .editor-divider { display: none; }
+}

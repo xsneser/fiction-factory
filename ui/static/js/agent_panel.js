@@ -69,7 +69,7 @@ console.log('[agent-panel] v28 events-stream');
         pick_candidate: '选中候选', set_field: '填写字段', set_tags: '设置标签',
         next: '下一步', prev: '上一步', reset: '重置向导', submit: '提交建书',
         skip_candidates: '跳过候选', load_candidates: '加载候选', fill_world: '重新补全',
-        set_picks: '记录选材'
+        set_picks: '记录选材', set_replan_preview: '暂存续规划预览'
     };
     var KEY_ZH = {
         core_conflict: '核心矛盾', genre: '题材', sub_genre: '题材细分', factions: '势力', faction: '势力',
@@ -622,6 +622,12 @@ console.log('[agent-panel] v28 events-stream');
 
     function handleEvent(evt) {
         var t = evt.type;
+        if (t === 'domain') {
+            // WS6：写作相关工具成功 → 领域事件（chapter_changed/plot_run_changed/plan_committed）。
+            // 只作为 UI 刷新信号转发（写作台/规划面板监听 ne:desk-refresh），非持久业务状态。
+            window.dispatchEvent(new CustomEvent('ne:desk-refresh', { detail: evt }));
+            return;
+        }
         if (t === 'tool_call') {
             // dsh 核心实时推送：工具开始 → 建卡（usage = 该调用的真实 token 用量）
             if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }   // LLM 已结束，实时行让位给工具卡

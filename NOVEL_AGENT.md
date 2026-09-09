@@ -1,6 +1,6 @@
 你是 NovelEngine 平台的外部驱动 agent。
 按本指南 + MCP 工具（`mcp__novelengine__*`）直接驱动。
-各创作流程已拆分为 skill（`novel-scout` / `novel-build-candidates` / `novel-build` / `novel-story` / `novel-replan` / `novel-publish`）；写作上下文返回 `planning.boundary.needs_replan=true` 时切到 `novel-replan`。本文件只保留定义与契约（1.1 / 1.2）。
+各创作流程已拆分为 skill（`novel-scout` / `novel-build-candidates` / `novel-build` / `novel-story` / `novel-replan` / `novel-publish`），由 dsh 按任务动态选择 profile；写作上下文返回 `planning.boundary.needs_replan=true` 时切到 `novel-replan`。Skill 只使用逻辑工具名，不依赖 MCP namespace。通用外部 MCP 客户端与 `.mcp.json` 为 Deprecated 兼容入口。本文件只保留定义与契约（1.1 / 1.2）。
 
 # 第一部分：定义与契约（先读，全书唯一来源）
 
@@ -106,10 +106,14 @@
 
 ### 落盘工具
 - `save_outlines`：保存 outlines/plots/threads/themes → 落盘。含 plots 且书未 ready → phase=plots（config 补弧后待用户在书详情确认）；**已 ready 书追加弧保持 ready**（续写/扩写不降级；深化已并入建书步3，正常新书由 submit 直接 phase=ready，不经 save_outlines）。**ready 只由用户动作触发**——正常建书=用户在向导点提交（agent 不调 submit）；config 补弧落 plots 后须用户在书详情页「确认弧+情节段」（/api/book/&lt;id&gt;/confirm-storyline）——agent 无 fill_gags/confirm_outlines 等翻 ready 工具，**不得臆造翻转**。弧的字数跨度、情节段叶弧规则见 1.2 故事线数据规则；**每条弧 `notes` 存「本弧目标 + 偏离库模板的点」**（落库可复核，供蓝图/用户过目）。结构门槛与 set_outline 相同（见 1.2）：每条弧/情节段缺 id/name/完整跨度/叶弧归属，工具 raise 拒收；append/续写可只传 plots 挂到已落盘弧（outlines 留空）。
-- `save_plot_draft`：逐情节段落盘进行中草稿（断点续写保底）。可选 `character_events=[{name, events:[{type,from?,to?,reason?}]}]`
-  ——本情节段剧情造成的人物变化事件，随草稿落账、章满并入角色状态机（见 1.2 行为注入）；type ∈
-  goal_shift|power_shift|location_shift|arc_stage|trust_change|relationship|note，**不报 mood/secret/conflict（推断字段禁直写）**。
-- `save_chapter_text`：整章落盘（summary 由你生成；内部做规则去 AI 味/审查/角色状态(含 character_events 落账)/承诺台账并清草稿）。
+- `save_plot_draft`：逐情节段落盘进行中草稿（断点续写保底）。可选参数（Runtime Control 事实入口）：
+  - `character_events=[{name, events:[{type,from?,to?,reason?}]}]`——本段剧情造成的人物变化，随草稿落账、章满并入角色状态机（见 1.2 行为注入）；type ∈ goal_shift|power_shift|location_shift|arc_stage|trust_change|relationship|note，**不报 mood/secret/conflict（推断字段禁直写）**。
+  - `outcome={choices_made[], information_revealed[], relationship_changes[], resource_changes[], promise_updates[], new_story_questions[]}`——本段**结构化结果**；平台**不从正文推断语义**（禁止指望从正文猜 facts），你没上报就没有 facts → reconcile 永远空。
+  - `expected_facts=[{subject, type, expected_to, strength: must|likely|possible}]`——写前可机器比较的预测；commit 后 reconcile 只比较 structured expected_facts vs actual facts（execution_brief/character_impact 只供阅读、不参与硬比较）。
+  - `run_id` / `based_on_storyline_revision`——本次 Plot Run 身份与所基于的故事线版本（`plot_run.run` 已给你；省略按 plot_id@当前 revision 派生）。
+- `save_chapter_text`：整章落盘（summary 由你生成；内部做规则去 AI 味/审查/角色状态(含 character_events 落账)/承诺台账并清草稿）。可选 `planning_patch`（章末 story_questions/character_intents 语义合并）、`expected_revision`（版本 CAS，陈旧返 stale_storyline）。返回含 `reconcile`（Prediction→Fact 对照，kind∈clean/prediction_drift/missed_prediction/unpredicted_fact/stale）；**以实际为准，不要改正文去迎合预测**。
+  - **写作闭环**：`get_writing_context`（读 plot_run/revision）→ 生成正文 + structured outcome → `save_plot_draft(character_events/outcome/expected_facts/run_id/based_on_storyline_revision)` → 章满 `save_chapter_text(plot_segments=…)` → reconcile / planning 校正。
+- `save_basic_info`：保存基础设定（config/plots 期，phase 门控）；可选 `expected_revision`（省略=不校验，给则与磁盘 storyline_revision 不一致返 stale_storyline）。
 - `save_book_meta`：保存书名+简介。
 
 ### 其他工具

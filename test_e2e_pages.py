@@ -242,6 +242,11 @@ def run_tests():
                           "window.StoryLine.init('detail-storyline'" in r.text
                           and "/static/js/story_line.js" in r.text,
                           "storyline Gantt not wired in detail")
+                    check(f"Detail planning panel ({bid})", 'id="planning-state-panel"' in r.text,
+                          "incremental planning panel missing")
+                    ps = get(f"/api/storyline/{bid}/planning-state")
+                    check(f"Planning state API ({bid})", ps.status_code == 200
+                          and isinstance(ps.json().get("boundary"), dict), f"got {ps.status_code}")
                 # 顶部按钮行不再含跳转设定/大纲的按钮（设定=页内锚点 #world-edit）
                 check(f"Detail no world/outline jump ({bid})",
                       f'href="/books/{bid}/world"' not in r.text
@@ -256,6 +261,9 @@ def run_tests():
                 check(f"Write flow title in page",
                       "✍️ 写作台" in r.text or bid in r.text,
                       f"write flow marker not found for {bid}")
+                check(f"Write flow boundary/replan UI ({bid})",
+                      'id="boundary-banner"' in r.text and 'id="replan-drawer"' in r.text,
+                      "boundary banner or replan drawer missing")
 
             # /world 已并入详情页：始终 302 到书详情（旧入口/书签兼容；confirm 会 mutate，交给 tools/smoke_world_card.py）
             r = s.get(urljoin(BASE, f"/books/{bid}/world"), timeout=15, allow_redirects=False)
@@ -303,8 +311,20 @@ def run_tests():
     else:
         for marker, label in [("window.StoryLine.init('editor-storyline'", "gantt init wired"),
                               ("window.__BOOK_STORYLINE__", "storyline data injected"),
-                              ("/static/js/story_line.js", "story_line.js loaded")]:
+                              ("/static/js/story_line.js", "story_line.js loaded"),
+                              ("/static/js/planning_ui.js", "planning_ui.js loaded")]:
             check(f"Write flow {label}", marker in tl_editor.text, f"'{marker}' missing")
+        check("Write flow Chinese current-plot title", "🎯 当前情节" in tl_editor.text,
+              "current plot panel is not localized")
+        check("Write flow Chinese outcome title", "上一情节造成的变化" in tl_editor.text,
+              "outcome panel is not localized")
+
+    story_js = get("/static/js/story_line.js")
+    if story_js.status_code == 200:
+        check("Storyline lightweight progress update", "updateProgress: function" in story_js.text,
+              "StoryLine.updateProgress missing")
+        check("Storyline has no forecast zone", "sl-forecast-zone" not in story_js.text,
+              "forecast cards still rendered inside Gantt")
 
     # ═══ CSS/JS consistency ═══
     print("\n--- Style Consistency ---")

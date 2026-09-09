@@ -89,9 +89,13 @@ class PenNameProfile:
     """
     # 书目
     assigned_books: list[str] = field(default_factory=list)
-    # 已选样文（全局样文库 samples.json 词条 id 列表）—— 笔名写作时只注入这些样文；
+    # 已选样文（全局样文池 samples.json 词条 id 列表）—— 笔名写作时只注入这些样文；
     # 空 = 未选择（注入时回退全量样文，兼容旧行为）
     sample_ids: list[str] = field(default_factory=list)
+    # 写作样文的来源书白名单（全局样文池 source_book 键列表，如 ["十日终焉"] / ["冰河末世，我囤积了百亿物资"]）
+    # —— 两个笔名共享同一全局样池时按来源书隔离（先按本列表过滤池，再按 sample_ids）。
+    # 空 = 不按来源书收窄（兼容旧行为：仅 sample_ids 或全库）
+    sample_books: list[str] = field(default_factory=list)
     # 平台账号注册信息（仅 UI 人工登记；agent 只读）—— 运营元数据，不进风格 prompt
     platform_accounts: dict = field(default_factory=dict)
     """
@@ -126,6 +130,7 @@ class PenNameProfile:
             "style_assets": self.style_assets,
             "assigned_books": self.assigned_books,
             "sample_ids": self.sample_ids,
+            "sample_books": self.sample_books,
             "platform_accounts": self.platform_accounts,
             "description": self.description,
             "created_at": self.created_at, "updated_at": self.updated_at,
@@ -144,6 +149,7 @@ class PenNameProfile:
             style_assets=d.get("style_assets", {}),
             assigned_books=d.get("assigned_books", []),
             sample_ids=[str(x).strip() for x in (d.get("sample_ids") or []) if str(x).strip()],
+            sample_books=[str(x).strip() for x in (d.get("sample_books") or []) if str(x).strip()],
             platform_accounts=d.get("platform_accounts", {}),
             description=d.get("description", ""),
             created_at=d.get("created_at", ""),

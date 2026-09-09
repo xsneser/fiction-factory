@@ -180,11 +180,15 @@ class BookManager:
     def save_chapter(self, book_id: str, chapter_num: int,
                      title: str, content: str, summary: str = "",
                      review: dict | None = None,
-                     bridges: list | None = None):
+                     bridges: list | None = None,
+                     plot_spans: list | None = None):
         """保存章节（review：规则审查结果 dict，随章节落盘供详情页展示；
-        bridges：本情节段逐段去AI味后的 [{plot_id, plot_name, text}]，供写作台
-        点击情节段→高亮对应正文；旧文件无此键，向前兼容。
-        content 为派生缓存，落盘时保证 == "\n\n".join(bridges[].text)）"""
+        bridges：本情节段逐段去AI味后的 [{plot_id, plot_name, text, run_id?, facts?}]，
+        供写作台点击情节段→高亮对应正文与 Prediction→Fact 对照；旧文件无此键，向前兼容。
+        content 为派生缓存，落盘时保证 == "\n\n".join(bridges[].text)。
+        plot_spans（可选，WS5）：[{plot_id, plot_name, run_id, start, end}]，start 含/end 不含，
+        offset 以 content 的 Python 字符串下标计（段间以 "\n\n" 两个换行连接）；供精确跳转/定位备查，
+        前端高亮优先 plot_id + DOM 段，不按字符 offset 重切（避免 Unicode 切分漂移）。"""
         book_dir = self.dir / book_id / "chapters"
         book_dir.mkdir(parents=True, exist_ok=True)
         chapter_file = book_dir / f"{chapter_num:04d}.json"
@@ -193,6 +197,7 @@ class BookManager:
             "content": content, "summary": summary,
             "review": review,
             "bridges": bridges,
+            "plot_spans": plot_spans,
             "created_at": datetime.now().isoformat(),
         })
 

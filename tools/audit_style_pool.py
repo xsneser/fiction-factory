@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""样文库 dims 区分度审计(只读,无 LLM)。
+"""样文池 dims 区分度审计(只读,无 LLM)。
 
 背景:style_annotate 旧自动预标会在全池注入低区分度标签(narrative_action 近全
 deduce/reveal、pace 近全 slow),让加权随机的「命中分差」坍缩。本工具把问题暴露出来
@@ -35,7 +35,7 @@ DOMINANT_RATIO = 0.6  # 某取值占该维 >60% 记为「主导/低区分」
 def _load():
     path = os.path.join(ROOT, "storage", "style_samples", "samples.json")
     if not os.path.exists(path):
-        print(f"无样文库 {path}"); return []
+        print(f"无样文池 {path}"); return []
     samples = ss.load_samples()
     return samples or []
 
@@ -43,7 +43,7 @@ def _load():
 def main():
     samples = _load()
     if not samples:
-        print("样文库为空")
+        print("样文池为空")
         return
     print(f"词条总数 {len(samples)}\n")
     # 1) 主导值

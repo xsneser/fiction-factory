@@ -1,9 +1,11 @@
 {
   "mcpServers": {
-    "novel-engine": {
-      "command": "python",
-      "args": ["mcp_server.py"],
-      "env": {}
-    }
+    "novel-engine-build-candidates": {"command": "python", "args": ["mcp_server.py", "--profile", "build-candidates", "--source", "claude-build-candidates"], "env": {}},
+    "novel-engine-build": {"command": "python", "args": ["mcp_server.py", "--profile", "build", "--source", "claude-build"], "env": {}},
+    "novel-engine-story": {"command": "python", "args": ["mcp_server.py", "--profile", "write", "--source", "claude-story"], "env": {}},
+    "novel-engine-replan": {"command": "python", "args": ["mcp_server.py", "--profile", "replan", "--source", "claude-replan"], "env": {}},
+    "novel-engine-publish": {"command": "python", "args": ["mcp_server.py", "--profile", "publish", "--source", "claude-publish"], "env": {}},
+    "novel-engine-scout": {"command": "python", "args": ["mcp_server.py", "--profile", "scout", "--source", "claude-scout"], "env": {}},
+    "novel-engine-legacy": {"command": "python", "args": ["mcp_server.py", "--source", "claude-legacy"], "env": {}}
   }
 }

@@ -18,9 +18,11 @@ _STATUS_PATH = os.path.join(_ROOT, "storage", "build_status.json")
 _DEFAULTS = {
     "cur": 1,
     "book_id": "",
+    "build_session_id": "",
     "creating": False,
     "created": False,
     "_picked": False,
+    "pen_selected": False,
     "has_world": False,
     "has_picks": False,
     "has_outline": False,
@@ -42,6 +44,8 @@ def set_build_status(state: dict) -> None:
         for k, v in state.items():
             if k == "bookId":
                 mapped["book_id"] = v
+            elif k == "buildSessionId":
+                mapped["build_session_id"] = v
             elif k in _DEFAULTS:
                 mapped[k] = v
         data.update(mapped)

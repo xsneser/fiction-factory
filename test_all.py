@@ -355,6 +355,25 @@ assert_ok("故事线-矛盾警告", any("重生故事线矛盾" in w for w in _s
 _sw2 = _genB._validate_storyline_math({"protagonist": {"name": "陈默", "age": 25}, "world_building": {"era": "2008年"}})
 assert_ok("故事线-自洽无警告", not any("矛盾" in w or "不自洽" in w for w in _sw2))
 
+# 角色行为注入：行为模型 / 语言倾向 / 成长规划（嵌套字段 roundtrip + 空默认）
+from libraries.storyline import normalize_basic_info as _nbi
+_chb = _nbi({"characters": [{"name": "顾铮", "role": "主角", "importance": 1,
+    "behavior": {"decision_style": {"under_pressure": "先确认信息", "danger": "先保队友", "betrayal": "找证据"}},
+    "speech_profile": {"rhythm": "短句", "tone": "克制",
+                       "habits": ["先确认事实"], "forbidden": ["夸张感叹"]},
+    "development_plan": "从独行者成为领导者"}]})
+assert_ok("行为-嵌套往返", _chb["characters"][0]["behavior"]["decision_style"]["betrayal"] == "找证据"
+          and _chb["characters"][0]["speech_profile"]["habits"] == ["先确认事实"]
+          and _chb["characters"][0]["development_plan"] == "从独行者成为领导者")
+assert_ok("行为-空角色给默认结构", _nbi({"characters": [{"name": "路人", "role": "配角"}]})["characters"][0]["behavior"]
+          == {"decision_style": {"under_pressure": "", "danger": "", "betrayal": ""},
+              "communication_style": {"stranger": "", "friend": "", "enemy": ""},
+              "emotion_expression": {"anger": "", "fear": "", "sadness": ""}})
+_tlr = BookStoryline.from_dict({"book_title": "t", "basic_info": _chb,
+                                "outlines": [], "plots": [], "threads": [], "promises": []})
+assert_ok("行为-storyline往返", _tlr.to_dict()["basic_info"]["characters"][0]
+          ["speech_profile"]["forbidden"] == ["夸张感叹"])
+
 # ══════════════════════════════════════════════
 #  Phase 4: 成本追踪
 # ══════════════════════════════════════════════
@@ -456,6 +475,26 @@ assert_ok("角色-离线追踪", csm.get("神秘老者").offline_chapters == 1)
 ctx_prompt = csm.build_context_prompt(chapter_num=1)
 assert_ok("角色-上下文生成", len(ctx_prompt) > 50)
 assert_ok("角色-包含角色名", "林风" in ctx_prompt)
+
+# 剧情→人物变化事件（character_events，纯规则白名单：禁写 mood/secret 等推断字段）
+_csmEv = CharacterStateMachine()
+_csmEv.ensure_registered([
+    {"name": "主角甲", "role": "主角", "importance": 1},
+    {"name": "队友乙", "role": "配角", "importance": 2,
+     "relations": [{"name": "主角甲", "relation": "普通队友"}]}])
+_app = _csmEv.apply_events([{"name": "队友乙", "events": [
+    {"type": "trust_change", "from": "普通队友", "to": "信任增加", "reason": "共同承担风险"},
+    {"type": "goal_shift", "to": "追查泄密者"},
+    {"type": "mood_shift", "to": "愤怒"},            # 非白名单 → 忽略
+]}], chapter_num=12, bible=None)
+assert_ok("事件-白名单映射", _csmEv.get("队友乙").goal == "追查泄密者"
+          and _csmEv.get("队友乙").relationship_to_mc == "信任增加")
+assert_ok("事件-推断字段禁写", "愤怒" not in (_csmEv.get("队友乙").mood or ""))
+assert_ok("事件-台账带chapter", len(_csmEv.get("队友乙").events) == 2
+          and all(e["chapter"] == 12 for e in _csmEv.get("队友乙").events)
+          and {e["type"] for e in _csmEv.get("队友乙").events} == {"trust_change", "goal_shift"})
+assert_ok("事件-bible注册", _csmEv.get("主角甲") is not None and _csmEv.get("队友乙") is not None)
+assert_ok("事件-无事件仅注册", _csmEv.apply_events([], 1, bible=None) == [])
 
 # ══════════════════════════════════════════════
 #  Phase 8: 内容审查
@@ -624,17 +663,198 @@ _ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 3, "created": Fa
                    "set_world", {"world_building": {"core_conflict": "x"}})
 assert_ok("门控-正确步放行", _ok)
 _ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 3, "created": True, "book_id": "book_x"},
-                   "set_outline", {"outlines": [{"id": "o1", "name": "n"}], "plots": []})
+                   "set_outline", {"outlines": [{"id": "o1", "name": "n",
+                                                  "start_word": 0, "end_word": 3000}], "plots": []})
 assert_ok("门控-已建书拒绝", not _ok)
 _ok, _ = _gate_run({"updated_at": "2026-08-25 00:00:00", "cur": 3, "created": False},
                    "set_field", {"field": "title", "value": "t"})
 assert_ok("门控-set_field 跨步放行", _ok)
 _ok, _ = _gate_run({"updated_at": "", "cur": 2, "created": False},
-                   "set_outline", {"outlines": [{"id": "o1", "name": "n"}], "plots": []})
+                   "set_outline", {"outlines": [{"id": "o1", "name": "n",
+                                                  "start_word": 0, "end_word": 3000}], "plots": []})
 assert_ok("门控-宽松阀跳过（updated_at 空）", _ok)
 _ni_mod.push_ui_command = _orig_push
 _bs_mod.get_build_status = _orig_get
 _bs_mod.set_build_status({})   # 恢复空态，不残留真实向导状态
+
+# ══════════════════════════════════════════════
+#  Phase: 弧/情节段载荷结构校验（set_outline / save_outlines 硬门槛）
+# ══════════════════════════════════════════════
+print("\n═══ Phase: 弧/情节段载荷结构校验（硬门槛）═══")
+from libraries.storyline import outline_payload_problems as _opp
+from libraries.storyline import BookStoryline as _BS3
+from agent_tools import save_outlines as _so
+
+# 直接调 helper：跨度半组/全缺拒、完整章对/字对放行、零长弧拒、plot 挂非叶/悬空拒、append 语义
+assert_ok("载荷-只给end_word拒", _opp([{"id": "a1", "name": "n", "end_word": 3000}], []) != [])
+assert_ok("载荷-只给start_word拒", _opp([{"id": "a2", "name": "n", "start_word": 0}], []) != [])
+assert_ok("载荷-无跨度拒", _opp([{"id": "a3", "name": "n"}], []) != [])
+assert_ok("载荷-缺id拒", _opp([{"name": "无id", "start_word": 0, "end_word": 1000}], []) != [])
+assert_ok("载荷-缺name拒", _opp([{"id": "x1", "start_word": 0, "end_word": 1000}], []) != [])
+assert_ok("载荷-章对放行", _opp([{"id": "b1", "name": "n", "start_chapter": 1, "end_chapter": 3}], []) == [])
+assert_ok("载荷-字对放行", _opp([{"id": "b2", "name": "n", "start_word": 0, "end_word": 3000}], []) == [])
+assert_ok("载荷-零长弧拒", _opp([{"id": "b3", "name": "n", "start_word": 3000, "end_word": 3000}], []) != [])
+assert_ok("载荷-plot缺id拒", _opp([{"id": "A", "name": "a", "start_word": 0, "end_word": 6000}],
+                                  [{"name": "无id", "outline_id": "A"}]) != [])
+assert_ok("载荷-plot挂非叶拒", any("叶弧" in s for s in _opp(
+    [{"id": "A", "name": "顶层", "start_word": 0, "end_word": 6000},
+     {"id": "B", "name": "子", "start_word": 0, "end_word": 3000, "parent_arc_id": "A"}],
+    [{"id": "p1", "name": "挂顶层", "outline_id": "A"}])), "非叶应拒")
+assert_ok("载荷-plot挂叶放行", _opp(
+    [{"id": "A", "name": "顶层", "start_word": 0, "end_word": 6000},
+     {"id": "B", "name": "子", "start_word": 0, "end_word": 3000, "parent_arc_id": "A"}],
+    [{"id": "p2", "name": "挂子", "outline_id": "B"}]) == [])
+assert_ok("载荷-outline_id悬空拒", _opp([{"id": "A", "name": "a", "start_word": 0, "end_word": 1000}],
+                                        [{"id": "p3", "name": "x", "outline_id": "NOPE"}]) != [])
+assert_ok("载荷-append挂既有叶放行", _opp([], [{"id": "p4", "name": "x", "outline_id": "old_leaf"}],
+                                         known_outlines=[{"id": "old_leaf", "name": "旧叶",
+                                                          "start_word": 0, "end_word": 3000}]) == [])
+assert_ok("载荷-append挂被夺叶拒", _opp(
+    [{"id": "new_child", "name": "新子", "start_word": 0, "end_word": 1500, "parent_arc_id": "old_leaf"}],
+    [{"id": "p5", "name": "x", "outline_id": "old_leaf"}],
+    known_outlines=[{"id": "old_leaf", "name": "旧叶", "start_word": 0, "end_word": 3000}]) != [])
+
+# drive_ui(set_outline) 入口：patch 入队 → 无跨度拒（消息含跨度）、完整跨度放行并入队
+_orig_push3 = _ni_mod.push_ui_command
+_pushed3 = []
+_ni_mod.push_ui_command = lambda cmd, args=None: _pushed3.append(cmd)
+def _run_set_outline(_outs, _plots):
+    try:
+        _drive_ui("set_outline", {"outlines": _outs, "plots": _plots})
+        return True, ""
+    except RuntimeError as _e:
+        return False, str(_e)
+_ok3, _msg3 = _run_set_outline([{"id": "o1", "name": "n"}], [])
+assert_ok("载荷-set_outline无跨度拒", (not _ok3) and "跨度" in _msg3, _msg3)
+_ok4, _ = _run_set_outline([{"id": "o1", "name": "n", "start_word": 0, "end_word": 3000}], [])
+assert_ok("载荷-set_outline完整跨度放行", _ok4 and _pushed3 == ["set_outline"], str(_pushed3))
+_ni_mod.push_ui_command = _orig_push3
+
+# save_outlines 入口（真实落盘）：replace 落叶弧 → append 半组拒 → append plots 挂既有叶过 → 夺叶后拒
+_tb2 = bm.create(title="载荷校验书", pen_name="t", genre="玄幻")
+_tbid2 = _tb2.book_id
+try:
+    bm.save_storyline(_tbid2, _BS3(book_title="载荷校验书", pen_name="t",
+                                   words_per_chapter=3000, platform="fanqie", phase="config"))
+    _r1 = _so(_tbid2, outlines=[{"id": "arc1", "name": "叶弧1", "start_word": 0, "end_word": 9000}],
+              plots=[], mode="replace", validate=False)
+    assert_ok("载荷-save_outlines落叶弧", _r1.get("ok") and _r1.get("outlines") == 1, str(_r1))
+    _bad_semi, _msg_semi = True, ""
+    try:
+        _so(_tbid2, outlines=[{"id": "arc2", "name": "缺起点", "end_word": 6000}], mode="append", validate=False)
+        _bad_semi = False
+    except RuntimeError as _e:
+        _msg_semi = str(_e)
+    assert_ok("载荷-save_outlines半组拒", _bad_semi and ("跨度" in _msg_semi), _msg_semi)
+    _r2 = _so(_tbid2, plots=[{"id": "pl1", "name": "桥1", "outline_id": "arc1", "words": 800}], mode="append", validate=False)
+    assert_ok("载荷-append挂既有叶过", _r2.get("ok") and _r2.get("plots") == 1, str(_r2))
+    _r3 = _so(_tbid2, outlines=[{"id": "sub1", "name": "子弧", "start_word": 0, "end_word": 3000,
+                                 "parent_arc_id": "arc1"}], mode="append", validate=False)
+    assert_ok("载荷-append加子弧过", _r3.get("ok"), str(_r3))
+    _bad_nl, _msg_nl = True, ""
+    try:
+        _so(_tbid2, plots=[{"id": "pl2", "name": "桥2", "outline_id": "arc1"}], mode="append", validate=False)
+        _bad_nl = False
+    except RuntimeError as _e:
+        _msg_nl = str(_e)
+    assert_ok("载荷-plot挂被夺叶拒", _bad_nl and "叶弧" in _msg_nl, _msg_nl)
+finally:
+    bm.delete(_tbid2)
+
+# ══════════════════════════════════════════════
+#  Phase: 增量规划状态 / profile / revision
+# ══════════════════════════════════════════════
+print("\n═══ Phase: 增量规划状态 / profile / revision ═══")
+import agent_tools as _at
+from libraries.agent_tool_router import filter_registry as _filter_registry, resolve_profile as _resolve_profile
+from libraries.planning_state import detect_story_boundary as _detect_boundary
+from libraries.planning_state import (save_build_session as _save_build_session,
+                                      attach_build_session as _attach_build_session,
+                                      build_session_path as _build_session_path,
+                                      load_replan_preview as _load_replan_preview,
+                                      delete_replan_preview as _delete_replan_preview)
+
+assert_ok("profile-build工具数", len(_filter_registry(_at.TOOL_REGISTRY, "build")) <= 10)
+assert_ok("profile-write工具数", len(_filter_registry(_at.TOOL_REGISTRY, "write")) <= 6)
+_rp = _resolve_profile("build", book_exists=False, pen_selected=True)
+assert_ok("profile-无书隐藏弧候选", "arc_material_candidates" not in _rp["allowed_tools"])
+assert_ok("profile-已选笔名隐藏查询", "query_profiles" not in _rp["allowed_tools"])
+_bd1 = _detect_boundary(written_until_word=1000, committed_until_word=10000,
+                        remaining_plots=5, words_per_batch=3000, storyline_revision=2)
+assert_ok("boundary-未临界不触发", not _bd1["needs_replan"])
+_bd2 = _detect_boundary(written_until_word=8000, committed_until_word=10000,
+                        remaining_plots=2, words_per_batch=3000, storyline_revision=2)
+assert_ok("boundary-低余量触发", _bd2["needs_replan"] and "PLOTS_LOW" in _bd2["reason_codes"])
+_bd3 = _detect_boundary(written_until_word=8000, committed_until_word=10000,
+                        remaining_plots=2, words_per_batch=3000, storyline_revision=2,
+                        last_replan={"from_revision": 2, "reason_codes": _bd2["reason_codes"]})
+assert_ok("boundary-同版本防抖", not _bd3["needs_replan"] and _bd3["debounced"])
+
+_shape = _at.validate_world(basic_info={"factions": [{"name": "错层"}], "characters": []})
+assert_ok("world-shape明确报错", _shape.get("error") == "invalid_input_shape"
+          and _shape.get("field") == "basic_info.world_building.factions")
+_submit_blocked = False
+try:
+    _at.drive_ui("submit", {})
+except RuntimeError as _e:
+    _submit_blocked = "user_only" in str(_e) or "只能由用户" in str(_e)
+assert_ok("ui-submit仅用户", _submit_blocked)
+
+_tb3 = bm.create(title="revision校验书", pen_name="t", genre="玄幻")
+_tbid3 = _tb3.book_id
+try:
+    from ui.web_blueprints.ctx import _storylines as _story_cache
+    _story_cache.pop(_tbid3, None)  # 前一临时书可能复用相同 book_NNN id
+    bm.save_storyline(_tbid3, _BS3(book_title="revision校验书", pen_name="t",
+                                   words_per_chapter=3000, platform="fanqie", phase="ready"))
+    _sid1, _sid2 = "test-build-session-a", "test-build-session-b"
+    _save_build_session(_sid1, {"target_word_budget": 100000, "future_intents": ["A"]})
+    _save_build_session(_sid2, {"target_word_budget": 90000, "future_intents": ["B"]})
+    _attached = _attach_build_session(_sid1, _tbid3, bm.load_storyline(_tbid3), _tb3)
+    assert_ok("build-session迁移并隔离", _attached.get("target_word_budget") == 100000
+              and not _build_session_path(_sid1).exists() and _build_session_path(_sid2).exists())
+    _build_session_path(_sid2).unlink()
+    _rev1 = _so(_tbid3,
+                outlines=[{"id": "r1", "name": "开篇", "start_word": 0, "end_word": 3000}],
+                plots=[{"id": "rp1", "name": "起势", "outline_id": "r1", "words": 800},
+                       {"id": "rp2", "name": "受阻", "outline_id": "r1", "words": 1000},
+                       {"id": "rp3", "name": "转折", "outline_id": "r1", "words": 1200}],
+                mode="replace", expected_revision=0,
+                planning_patch={"target_word_budget": 120000, "future_intents": ["扩大冲突"]})
+    assert_ok("revision-成功加一", _rev1.get("storyline_revision") == 1, str(_rev1))
+    _stale = _so(_tbid3, plots=[], mode="append", expected_revision=0)
+    assert_ok("revision-陈旧拒绝", _stale.get("error") == "stale_storyline" and _stale.get("actual") == 1)
+    _story_state = _at.get_story_state(_tbid3)
+    assert_ok("story-state聚合", _story_state.get("storyline_revision") == 1
+              and _story_state.get("target_word_budget") == 120000)
+    _invalid_patch = False
+    try:
+        _so(_tbid3, plots=[], mode="append", expected_revision=1,
+            planning_patch={"not_a_field": True})
+    except RuntimeError:
+        _invalid_patch = True
+    assert_ok("原子提交-无效patch不改revision", _invalid_patch
+              and bm.load_storyline(_tbid3).storyline_revision == 1)
+    _preview_args = {
+        "book_id": _tbid3, "expected_revision": 1,
+        "diagnosis": {"current_pressure": "承诺区将尽", "reader_question": "主角如何选择"},
+        "directions": [{"id": "a", "title": "迎战"}, {"id": "b", "title": "撤退"}],
+        "selected_direction_id": "a",
+        "outlines": [{"id": "r2", "name": "下一弧", "start_word": 3000, "end_word": 6000}],
+        "plots": [{"id": "rp4", "name": "逼迫", "outline_id": "r2", "words": 1000},
+                  {"id": "rp5", "name": "选择", "outline_id": "r2", "words": 1000},
+                  {"id": "rp6", "name": "代价", "outline_id": "r2", "words": 1000}],
+        "planning_patch": {"future_intents": ["扩大冲突"]},
+    }
+    _at.drive_ui("set_replan_preview", _preview_args)
+    _preview = _load_replan_preview(_tbid3) or {}
+    assert_ok("replan-preview可恢复且不改正式revision",
+              _preview.get("validation", {}).get("passed") is True
+              and bm.load_storyline(_tbid3).storyline_revision == 1, str(_preview))
+    assert_ok("replan-preview可按id丢弃", _delete_replan_preview(_tbid3, _preview.get("preview_id", ""))
+              and _load_replan_preview(_tbid3) is None)
+finally:
+    bm.delete(_tbid3)
 
 # ══════════════════════════════════════════════
 #  Phase: 情节段目标字数 plot.words（反印刷感）
@@ -647,6 +867,10 @@ _r = _BS2.from_dict({"plots": [{"id": "w1", "name": "桥", "outline_id": "a1", "
 assert_ok("words-往返落库", _r.plots[0].words == 1100 and _r.plots[0].cover_beats == 6
           and _r.to_dict()["plots"][0].get("words") == 1100)
 assert_ok("words-缺省为None", _BS2.from_dict({"plots": [{"id": "w0", "name": "桥", "outline_id": "a1"}]}).plots[0].words is None)
+_brief_rt = _BS2.from_dict({"plots": [{"id": "wb", "name": "桥", "outline_id": "a1",
+    "execution_brief": {"dramatic_goal": "逼迫选择"}, "character_impact": [{"name": "甲", "prediction": "承担责任"}]}]})
+assert_ok("plot-run执行简报往返", _brief_rt.to_dict()["plots"][0]["execution_brief"]["dramatic_goal"] == "逼迫选择"
+          and _brief_rt.to_dict()["plots"][0]["character_impact"][0]["name"] == "甲")
 assert_ok("planned-words覆盖", _pw(_PS2(id="a", template_id="t", name="n", outline_id="o", words=1500)) == 1500)
 assert_ok("planned-words上限3000", _pw(_PS2(id="a", template_id="t", name="n", outline_id="o", words=6000)) == 3000)
 assert_ok("planned-words下限200", _pw(_PS2(id="a", template_id="t", name="n", outline_id="o", words=80)) == 200)

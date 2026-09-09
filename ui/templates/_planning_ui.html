@@ -1,4 +1,4 @@
-<section class="planning-panel" id="planning-state-panel" data-book-id="{{ book_id or state.book_id }}">
+<section class="planning-panel" id="planning-state-panel" data-book-id="{{ book_id or state.book_id }}" data-compact="{{ 1 if planning_write_mode else 0 }}">
   <div class="planning-panel-head"><span>🧭 增量规划</span><span class="planning-revision" id="planning-revision">加载中…</span></div>
   <div id="planning-panel-body" class="planning-panel-body"><div class="empty">正在读取规划状态…</div></div>
 </section>
@@ -20,4 +20,4 @@
     <div class="revision-actions"><button type="button" class="small" data-revision-cancel>保留预览</button><button type="button" class="btn" data-revision-refresh>刷新并重新规划</button></div>
   </div>
 </div>
-<script src="/static/js/planning_ui.js?v=1"></script>
+<script src="/static/js/planning_ui.js?v=3"></script>

@@ -446,8 +446,10 @@ class PlotSlot:
 
     # 出场人物（主角恒在；配角按名规则匹配到情节段事件/骨架/槽位）
     roles: list[str] = field(default_factory=list)
-    execution_brief: dict = field(default_factory=dict)   # 为什么写这一段（目标/冲突/选择/不可逆变化/钩子）
-    character_impact: list[dict] = field(default_factory=list)  # 写前人物变化预测
+    execution_brief: dict = field(default_factory=dict)   # 为什么写这一段（目标/冲突/选择/不可逆变化/钩子；自然语言，供 Agent 阅读）
+    character_impact: list[dict] = field(default_factory=list)  # 写前人物变化预测（自然语言，供 Agent 阅读）
+    expected_facts: list[dict] = field(default_factory=list)    # 可机器比较的写前预测（reconcile 只比它）：
+        # [{subject, type, expected_to, strength: must|likely|possible}]；type 与 character_state 事件白名单对齐
 
 
 @dataclass
@@ -533,6 +535,7 @@ class BookStoryline:
                 "roles": p.roles,
                 "execution_brief": p.execution_brief,
                 "character_impact": p.character_impact,
+                "expected_facts": p.expected_facts,
             } for p in self.plots],
             "threads": self.threads,
             "promises": self.promises,
@@ -608,6 +611,7 @@ class BookStoryline:
             roles=p.get("roles", []),
             execution_brief=p.get("execution_brief", {}),
             character_impact=p.get("character_impact", []),
+            expected_facts=p.get("expected_facts", []),
         ) for p in d.get("plots", [])]
         tl.threads = d.get("threads", [])
         tl.promises = d.get("promises", [])

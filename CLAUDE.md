@@ -25,6 +25,7 @@ NovelEngine 是「可视化、外部 agent 可驱动的多阶段小说创作平�
 - **护栏（必须遵守）**：建/删书工具不在工具面（无法经 MCP/任何工具面直调）。建书必须走「启动新书」向导（`navigate("/books/start")` + `drive_ui` 填表/点下一步，由系统创建）；**世界观与故事线在向导步 3「内容构建工作台」深化式构建（差异化命题→core_conflict→弧+情节段(每弧 notes)→势力→人物→其余维度，内联 validate 回打≥1轮）并随提交落库，书创建即 phase=ready**（2026-09-05 深化并入步3：用户在向导点提交即解锁写作；ready 翻转无任何 agent 工具，仅 config/补弧兜底须用户书详情「确认弧+情节段」/api/book/&lt;id&gt;/confirm-storyline）（大纲+情节段由 **agent 自主生成**经 `drive_ui(set_outline)` 落表、随 submit 落库；旧 `generate_outline_preview`/`generate_full_outline`/`generate_world` 工具已删，兜底走 agent 自主生成 → `save_outlines`/`save_basic_info`）；删书必须 `navigate("/books")` 让用户手动点删除按钮。agent 不得绕向导直建书、不得代删书。
 - **MCP profile 默认开（dsh）**：`libraries/dsh_bridge` 每任务按意图裁到最小工具面（write=6 / replan=7 / …），未分类→inspect 只读小面；仅 `AGENT_TOOL_PROFILES=0` 才回 legacy 全量 45。建书为**前部承诺**（只提交开篇 committed 区 + H2 future_intents），写到边界后 replan 续规划。
 - **replan 单原子提交**：storyline + planning_state 同一边界（`save_outlines` 副本上校验、失败整份回滚），revision CAS（`storyline_revision` = 影响下次规划的事实状态版本，含已写章节）；UI(commit-plan) 与 auto orchestrator 共用 `libraries/replan_service.commit_replan_preview`。
+- **skill↔profile 契约（P0）**：`TOOL_REGISTRY` 是全局工具真源，`agent_tool_router.PROFILE_TOOLS` 是 profile 暴露集合真源，Skill 是工作流使用契约；三层必须满足 `skill ⊆ profile ⊆ registry`（当前 build=10 / scout=15 / write=6 / replan=7 / publish=6 / build-candidates=4 / inspect=8 / style=8）。`dsh_bridge.run_dsh_task` spawn 前校验，不匹配明确拒绝启动。外部 MCP 客户端与 `.mcp.json` 仅作 Deprecated 兼容入口，正常工作流使用 dsh 动态 profile。
 
 ## 站内页面路由表（navigate 用；无书时部分页 302 重定向）
 

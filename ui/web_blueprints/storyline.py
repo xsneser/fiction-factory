@@ -20,17 +20,22 @@ def _planning_ui_payload(book_id):
         return None
     state = load_planning_state(book_id, tl, book, persist=False)
     draft_ids = set()
+    draft_written = 0
     draft_path = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
     if os.path.exists(draft_path):
         try:
             draft = json.load(open(draft_path, encoding="utf-8"))
             draft_ids = {str(x.get("plot_id") or "") for x in (draft.get("bridges") or []) if isinstance(x, dict)}
+            from core.text_utils import count_prose_units
+            draft_written = count_prose_units("\n\n".join(draft.get("buffer") or []))
         except Exception:
             draft_ids = set()
+            draft_written = 0
     unwritten = [p for p in (tl.plots or [])
                  if not int(getattr(p, "written_chapter", 0) or 0) and p.id not in draft_ids]
+    written_now = int(getattr(book, "total_words", 0) or 0) + draft_written
     boundary = detect_story_boundary(
-        written_until_word=int(getattr(book, "total_words", 0) or 0),
+        written_until_word=written_now,
         committed_until_word=int(state.get("committed_until_word") or 0),
         remaining_plots=len(unwritten), words_per_batch=int(tl.words_per_chapter or 3000),
         storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
@@ -45,7 +50,7 @@ def _planning_ui_payload(book_id):
         "h2": state.get("future_intents") or [],
     }
     state = dict(state)
-    state["written_until_word"] = int(getattr(book, "total_words", 0) or 0)
+    state["written_until_word"] = written_now
     state["storyline_revision"] = int(getattr(tl, "storyline_revision", 0) or 0)
     state["display_horizon"] = display
     return {

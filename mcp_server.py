@@ -6,7 +6,7 @@
 驱动同一套工具；MCP 是独立进程，与 Web 通过 books/ 文件 JSON 协调。
 
 用法（项目根目录）：
-    claude mcp add --scope project novel-engine -- python mcp_server.py
+    dsh 由 dsh_bridge 按任务传入 --profile；外部客户端的 .mcp.json 接入为 Deprecated 兼容入口。
 """
 import functools
 import inspect
@@ -28,12 +28,21 @@ from agent_tools import TOOL_REGISTRY  # noqa: E402
 from libraries.agent_tool_router import filter_registry, resolve_profile, selected_profile  # noqa: E402
 from libraries.tool_log import log_tool_call  # noqa: E402
 from libraries.loop_guard import get_loop_guard  # noqa: E402
+from libraries.mcp_runtime import record_startup  # noqa: E402
 
 # 工具日志 source 区分：dsh 内部调用经 runtime overlay 带 `--source dsh` 拉起
 # （source=dsh，tool_log 不写 storage/tool_log.jsonl——「工具日志」页签只展示
 # 外部 agent 的 source=mcp 调用，内部 dsh 不混入）；外部拉起（.mcp.json / mcp_smoke）
 # 无此参数 → source=mcp。
-_SOURCE = "dsh" if "--source" in sys.argv else "mcp"
+def _arg_value(name: str, default: str = "") -> str:
+    try:
+        i = sys.argv.index(name)
+        return sys.argv[i + 1] if i + 1 < len(sys.argv) else default
+    except ValueError:
+        return default
+
+
+_SOURCE = _arg_value("--source", "mcp")
 
 mcp = FastMCP("novel-engine")
 
@@ -155,6 +164,12 @@ if _PROFILE in {"build", "build-candidates"}:
         pass
 for _entry in _EXPOSED_REGISTRY:
     mcp.tool()(_wrap_logged(_entry["func"]))
+
+_RUNTIME_INSTANCE = record_startup(
+    profile=_PROFILE,
+    source=_SOURCE,
+    tools=[entry["name"] for entry in _EXPOSED_REGISTRY],
+)
 
 if __name__ == "__main__":
     mcp.run()   # stdio transport

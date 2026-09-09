@@ -69,13 +69,12 @@ python ui/web_ui.py     # Web 管理面板（主界面，端口 58080）
 
 面板顶部有 **「💬 对话 / 🔧 工具日志」两个页签**：切到工具日志可实时看到 Agent 调用了哪些工具（工具名/时间/成败/耗时/参数/结果摘要，3 秒自动刷新），一目了然每个步骤在干什么。
 
-**MCP 接口**：默认兼容模式暴露全部 **45 个**注册工具；启用 `AGENT_TOOL_PROFILES=1` 后按 build/write/replan/publish/scout 等任务裁剪（数量始终以 `tools/mcp_smoke.py` `EXPECT_MCP_TOOLS` 为准）。新增 `get_story_state` 聚合增量规划状态；`save_outlines` 支持 `expected_revision` 与 `planning_patch` 原子提交。建书提交与删书仍只能由用户在页面操作。
+**MCP 接口**：dsh 是主入口，由 `dsh_bridge` 按任务动态选择 build-candidates/build/write/replan/publish/scout profile。`.mcp.json` 与通用外部 MCP 客户端接入已标记 **Deprecated**，多服务注册不代表单 session 隔离，legacy 只能显式启用。新增 `get_story_state` 聚合增量规划状态；`save_outlines` 支持 `expected_revision` 与 `planning_patch` 原子提交。
 
 增量架构开关：`AGENT_TOOL_PROFILES=1` 启用侧栏任务工具裁剪，`INCREMENTAL_STORY_PLANNING=1` 将新书初始 committed 上限设为 30000 字，`STORYLINE_REVISION_CHECK=0` 可临时关闭 expected_revision 冲突拒绝。不开工具裁剪时保持旧客户端兼容。
 
 ```bash
-claude mcp add --scope project novel-engine -- python mcp_server.py
-claude mcp call novel-engine get_book_state book_id=book_001   # 只读试调用
+兼容外部客户端时必须使用对应 profile 的独立配置，并重新建立 session；不要把多个 profile server 自动合并到同一会话。
 ```
 
 > MCP 为独立 stdio 进程，与 Web 服务并存（共享 `books/` 文件，勿同时操作同一本书）。详见主设计文档。

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""plot_dims.infer_plot_query 与「k=1 单篇取样」链路的单元测试(不依赖真实样文库)。
+"""plot_dims.infer_plot_query 与「k=1 单篇取样」链路的单元测试(不依赖真实样文池)。
 
 覆盖:
 - 情节段内容 → dims:谈判/推理/独处/决战 各得其场景与人物组织;
@@ -60,7 +60,7 @@ def test_infer():
 
 
 def test_pool_k1():
-    print("== pool_for + pick_samples k=1(打桩样文库) ==")
+    print("== pool_for + pick_samples k=1(打桩样文池) ==")
     fake = [
         NS(id="s1", title="谈判", word_count=10, text="……", dims={"scene": ["negotiation"], "cast": "duo"}),
         NS(id="s2", title="调查", word_count=10, text="……", dims={"scene": ["investigation"], "cast": "solo"}),

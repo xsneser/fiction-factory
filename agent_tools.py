@@ -384,12 +384,14 @@ def _build_cast_pack(tl, p, csm=None) -> dict:
     return {"protagonists": protagonists, "active": active, "referenced": referenced}
 
 
-def _build_plot_run(tl, p, csm=None):
-    """组装一次情节段运行 plot_run：plot 全量 + 弧目标 + 线程状态 + 承诺 + 字数余量。
+def _build_plot_run(tl, p, csm=None, draft=None, facts_by_plot=None):
+    """组装一次情节段运行 plot_run：run 生命周期 + plot 全量 + 弧目标 + 线程状态 + 承诺 + 字数余量。
 
     全从已 load 的 tl 内存对象现算，不新增磁盘读；样文/场景判定不在此（走 get_pen_style）。
+    draft/facts_by_plot 可选，用于派生 run 生命周期状态（get_writing_context/desk 三处同源共用）。
     """
     run = {
+        "run": plot_run_lifecycle(tl, p, draft, facts_by_plot),
         "plot": {
             "id": p.id, "name": p.name, "category": p.category or "",
             "sub_category": getattr(p, "sub_category", "") or "",
@@ -403,6 +405,7 @@ def _build_plot_run(tl, p, csm=None):
             "hook_points": list(getattr(p, "hook_points", None) or []),
             "theme_hints": list(getattr(p, "theme_hints", None) or []),
             "roles": list(getattr(p, "roles", None) or []),
+            "expected_facts": list(getattr(p, "expected_facts", None) or []),
             "outline_id": getattr(p, "outline_id", "") or "",
             "written_chapter": getattr(p, "written_chapter", 0) or 0,
             "is_payoff": bool(getattr(p, "resolves_plot_id", "") or ""),
@@ -492,6 +495,45 @@ def _next_plot(tl, draft):
     return None
 
 
+def _run_id_for(plot_id: str, based_revision: int) -> str:
+    """PlotRun 身份：`plot_id@based_storyline_revision`。
+
+    Plot 是稳定规划节点；PlotRun 是基于某次 storyline revision 的执行实例。同一未完成
+    plot 在 revision 变更后（写期间被 replan/改设定）即产生新的 run，故 id 必须带 revision。
+    """
+    return f"{plot_id or 'plot'}@{int(based_revision or 0)}"
+
+
+def plot_run_lifecycle(tl, plot, draft=None, facts_by_plot=None) -> dict:
+    """派生 Plot Run 生命周期 Created → Drafting → Committed → Reconciled（WS1）。
+
+    不建独立 run 文件：draft bridge 含该 plot=Drafting；plot.written_chapter>0 且该章
+    bridge 已有 facts=Reconciled、无 facts=Committed（待对账）；否则 Created。
+    run.id=plot_id@based_revision（revision 变更即新 run）；based_on_storyline_revision 供
+    commit 时 refresh→compare→reconcile（WS2）。
+    """
+    pid = getattr(plot, "id", "") or ""
+    based = int(getattr(tl, "storyline_revision", 0) or 0)
+    if pid in _draft_plot_ids(draft):
+        status, label = "Drafting", "正在写作"
+    else:
+        wc = int(getattr(plot, "written_chapter", 0) or 0)
+        if wc:
+            if (facts_by_plot or {}).get(pid):
+                status, label = "Reconciled", "已对账"
+            else:
+                status, label = "Committed", "已提交"
+        else:
+            status, label = "Created", "待开始"
+    return {
+        "id": _run_id_for(pid, based),
+        "plot_id": pid,
+        "status": status,
+        "label": label,
+        "based_on_storyline_revision": based,
+    }
+
+
 def get_writing_context(book_id: str) -> dict:
     """[薄工具] 一次返回写正文所需的完整上下文（书配置+故事线+角色/世界观+弧+最近章摘要+草稿）。
 
@@ -500,7 +542,8 @@ def get_writing_context(book_id: str) -> dict:
     next_plot（第一个未写且不在草稿内的情节段，draft-aware，含 plot_id/name/roles/outline_id）、
     plot_run（该次情节段运行的收敛上下文：plot 全量/所在弧目标/线程状态/承诺/字数余量——
     场景判定与样文仍走 get_pen_style(query, k=1)，此处不替 agent 判场景、不带样文正文）。
-    agent 逐情节段循环每轮只调本工具一次，避免重复读上下文。
+    agent 逐情节段循环每轮只调本工具一次，避免重复读上下文；返回的是调用时的
+    一致性快照，写入正文后若要继续规划，必须重新读取本工具或 get_story_state。
     style_card = 本笔名精简风格提醒（位于 payload 尾部，必读，防风格漂移）；
     完整风格用 get_pen_style 按需取。
     """
@@ -523,7 +566,7 @@ def get_writing_context(book_id: str) -> dict:
             "roles": list(getattr(next_p, "roles", None) or []),
             "outline_id": getattr(next_p, "outline_id", "") or "",
         }
-        payload["plot_run"] = _build_plot_run(tl, next_p, _load_char_states(book_id))
+        payload["plot_run"] = _build_plot_run(tl, next_p, _load_char_states(book_id), draft=draft)
     else:
         payload["next_plot"] = None
         payload["plot_run"] = None
@@ -557,6 +600,13 @@ def get_writing_context(book_id: str) -> dict:
             "written_until_word": ps.get("written_until_word", 0),
             "storyline_revision": getattr(tl, "storyline_revision", 0),
             "boundary": boundary,
+            # 与写作台规划面板共享同一导航层；这些字段是方向提示，
+            # 不会把 forecast 误当成可直接写入的正式 plot。
+            "horizon": ps.get("horizon") or {},
+            "future_intents": ps.get("future_intents") or [],
+            "story_questions": ps.get("story_questions") or [],
+            "character_intents": ps.get("character_intents") or [],
+            "last_replan": ps.get("last_replan") or {},
         }
     return payload
 
@@ -1214,11 +1264,26 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     if not char_events:
         char_events = _draft_char_events(book_id)
 
+    # 0.55) 读进行中草稿的 per-plot facts/run 快照（agent 经 save_plot_draft(outcome=) 上报的
+    #       **结构化结果**）。commit 原样搬进 chapter bridge——平台不推断正文，只搬运 structured facts（修订 2）。
+    _draft_by_plot = {}
+    try:
+        _dp0 = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
+        if os.path.exists(_dp0):
+            with open(_dp0, encoding="utf-8") as f:
+                _dd = json.load(f)
+            for _b in (_dd.get("bridges") or []):
+                if isinstance(_b, dict) and _b.get("plot_id"):
+                    _draft_by_plot[str(_b["plot_id"])] = _b
+    except Exception:
+        _draft_by_plot = {}
+
     # 1) 规则去AI味（词替换+段落节奏，无 LLM）；有情节段则逐段去并保持桥梁结构。
     #    防静默丢字：plot_segments 必须覆盖 text（总长 ≥ text 70%）。只列了部分情节段时以
     #    text 为正文源落盘、不挂情节段，并回传 segment_warning（提示 agent 把每情节段都列入）。
     processed = text
     segment_warning = None
+    plot_spans = []   # WS5：content 内各 plot 的 [start,end)（Python 串下标，段间以 2 个换行连接）
     if plot_segments:
         raw_cover = sum(len((b.get("text") or "")) for b in plot_segments)
         if raw_cover < len(text) * 0.7:
@@ -1235,6 +1300,32 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
                 except Exception:
                     pass
                 seg = {"plot_id": b.get("plot_id"), "plot_name": b.get("plot_name"), "text": seg_text}
+                # 携带 per-plot facts/run 快照：优先来自草稿（save_plot_draft 结构化上报），
+                # plot_segments 自带亦可。facts 永不从正文推断。
+                _db = _draft_by_plot.get(str(seg.get("plot_id") or "")) if seg.get("plot_id") else None
+                if _db is not None:
+                    seg["facts"] = _db.get("facts") or {}
+                    seg["expected_facts"] = _db.get("expected_facts") or []
+                    seg["run_id"] = _db.get("run_id") or ""
+                    seg["based_on_storyline_revision"] = _db.get("based_on_storyline_revision") or 0
+                    seg["character_events"] = _db.get("character_events") or []
+                else:
+                    _sf = dict(b.get("facts") or {}) if isinstance(b.get("facts"), dict) else {}
+                    if not _sf and isinstance(b.get("outcome"), dict):
+                        _sf = {k: list((b["outcome"].get(k) or [])) for k in
+                               ("choices_made", "information_revealed", "relationship_changes",
+                                "resource_changes", "promise_updates", "new_story_questions")}
+                    if _sf or b.get("character_events"):
+                        _sf = dict(_sf)
+                        _sf.setdefault("character_events", list(b.get("character_events") or []))
+                        seg["facts"] = _sf
+                    if b.get("expected_facts"):
+                        seg["expected_facts"] = b["expected_facts"]
+                    if b.get("run_id"):
+                        seg["run_id"] = b["run_id"]
+                    if b.get("based_on_storyline_revision") is not None:
+                        seg["based_on_storyline_revision"] = b["based_on_storyline_revision"]
+                    seg["character_events"] = list(b.get("character_events") or [])
                 pid = seg.get("plot_id")
                 if pid and pid in by_pid:
                     segs[by_pid[pid]] = seg        # 同 plot_id 重写：替换旧条目保持原位置，最后写入胜出
@@ -1244,6 +1335,13 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
                     segs.append(seg)
             plot_segments = segs
             processed = "\n\n".join(s["text"] for s in segs)
+            # WS5 plot_spans：与 processed 同序逐段累加（start 含/end 不含；段间 "\n\n" 2 字符）
+            _off = 0
+            for s in segs:
+                _t = s.get("text") or ""
+                plot_spans.append({"plot_id": s.get("plot_id"), "plot_name": s.get("plot_name"),
+                                   "run_id": s.get("run_id") or "", "start": _off, "end": _off + len(_t)})
+                _off += len(_t) + 2
     if plot_segments is None:
         try:
             processed = DeAIEngine().process_rule_based(text).processed
@@ -1276,7 +1374,7 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
 
     # 3) 落盘章节
     book_mgr.save_chapter(book_id, n, title or f"第{n}章", processed, summary or "",
-                          review=review_dict, bridges=plot_segments)
+                          review=review_dict, bridges=plot_segments, plot_spans=plot_spans or None)
 
     # 4) 书进度/字数
     try:
@@ -1317,6 +1415,32 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     except Exception:
         pass
 
+    # 5.6) Prediction→Fact reconcile（修订 2/3）：只比较 structured expected_facts vs actual facts，
+    #      fact 永远优先；漂移转 DecisionPoint，apply_fact_intents 以事实校正 character_intents；
+    #      全程 try/except，失败不阻塞正文已成功落盘、绝不回写正文。
+    reconcile_result = None
+    try:
+        from libraries.reconcile import reconcile_chapter, apply_fact_intents
+        from libraries.decision_feed import dp_from_reconcile
+        tl_r = book_mgr.load_storyline(book_id)
+        if tl_r is not None and plot_spans:
+            rc = reconcile_chapter(book_id, n, tl_r)
+            runs = rc.get("runs") or []
+            apply_fact_intents(book_id, tl_r, book, runs)
+            points = []
+            for r in runs:
+                points.extend(dp_from_reconcile(r))
+            reconcile_result = {
+                "ok": True, "chapter": n, "runs": len(runs),
+                "kinds": [r.get("kind") for r in runs],
+                "drift_count": sum(len(r.get("drifts") or []) for r in runs),
+                "unpredicted_count": sum(len(r.get("unpredicted") or []) for r in runs),
+                "stale_count": sum(1 for r in runs if r.get("stale")),
+                "decision_points": points,
+            }
+    except Exception:
+        reconcile_result = None
+
     # 6) 角色状态（规则自动机 + agent 上报的剧情人物变化事件落账）
     try:
         csm = _load_char_states(book_id)
@@ -1347,7 +1471,8 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
         pass
 
     return {"ok": True, "chapter": n, "word_count": count_prose_units(processed),
-            "review": review_dict, "segment_warning": segment_warning}
+            "review": review_dict, "segment_warning": segment_warning,
+            "plot_spans": plot_spans or None, "reconcile": reconcile_result}
 
 
 def _update_promises_ledger_thin(book_id: str, chapter_num: int) -> None:
@@ -1376,7 +1501,9 @@ def _update_promises_ledger_thin(book_id: str, chapter_num: int) -> None:
 
 def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
                       plot_name: str, text: str,
-                      character_events: list | None = None) -> dict:
+                      character_events: list | None = None, outcome: dict | None = None,
+                      expected_facts: list | None = None, run_id: str = "",
+                      based_on_storyline_revision: int | None = None) -> dict:
     """[薄工具] 保存单个情节段到进行中草稿（draft_chapter.json，断点续写保底）。
 
     agent 逐情节段生成后调用：规则去AI味 → 追加进草稿（含 buffer/words/bridges），
@@ -1386,6 +1513,14 @@ def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
     章满 save_chapter_text 时并入角色状态机。每项 {name, events:[{type, from?, to?, reason?}]}，
     type ∈ goal_shift|power_shift|location_shift|arc_stage|relationship|trust_change|note。
     只报剧情造成的**变化**，不报 mood/secret 等推断字段（禁 agent 直写）。
+
+    outcome（可选，修订 2）：本段**结构化结果**（平台不做任何 NLP 推断，禁止指望从正文猜语义）：
+      {choices_made[], information_revealed[], relationship_changes[], resource_changes[],
+       promise_updates[], new_story_questions[]}。这些与 character_events 一起作为本 run 的 facts。
+    expected_facts（可选，修订 3）：本 run 可机器比较的预测 [{subject, type, expected_to, strength}]；
+      省略时 commit 的 reconcile 回退读 PlotSlot.expected_facts；execution_brief 只供阅读、不参与比较。
+    run_id / based_on_storyline_revision（可选）：本次 Plot Run 身份与所基于故事线版本；缺省由
+      plot_id@当前 storyline_revision 派生（修订 1：revision 变更即新 run）。
     """
     if not (book_id and text and (text or "").strip()):
         raise RuntimeError("book_id 与 text 必填")
@@ -1394,6 +1529,18 @@ def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
         text = DeAIEngine().process_rule_based(text).processed
     except Exception:
         pass
+    # Plot Run 快照：基于哪个 story revision、以什么身份进入 Drafting（修订 1：plot_id@rev）。
+    if based_on_storyline_revision is None:
+        _tl = book_mgr.load_storyline(book_id)
+        based_on_storyline_revision = int(getattr(_tl, "storyline_revision", 0) or 0) if _tl else 0
+    based_on_storyline_revision = int(based_on_storyline_revision or 0)
+    if not run_id:
+        run_id = _run_id_for(plot_id or "plot", based_on_storyline_revision)
+    _facts = {}
+    for _k in ("choices_made", "information_revealed", "relationship_changes",
+               "resource_changes", "promise_updates", "new_story_questions"):
+        _facts[_k] = list((outcome or {}).get(_k) or []) if isinstance(outcome, dict) else []
+    _facts["character_events"] = list(character_events or []) if isinstance(character_events, list) else []
     dp = os.path.join(_ROOT, "books", book_id, "draft_chapter.json")
     draft = {}
     try:
@@ -1410,6 +1557,10 @@ def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
         cur_ch = chapter_num
     entry = {"plot_id": plot_id or "", "plot_name": plot_name or "", "text": text,
              "character_events": (character_events or []) if isinstance(character_events, list) else []}
+    entry["facts"] = _facts
+    entry["expected_facts"] = list(expected_facts or []) if isinstance(expected_facts, list) else []
+    entry["run_id"] = run_id
+    entry["based_on_storyline_revision"] = based_on_storyline_revision
     if plot_id:
         # 同 plot_id 重写：替换旧条目而非追加（防同一情节段被反复生成导致重复渲染/高亮），最后写入胜出
         replaced = False
@@ -1527,6 +1678,7 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 roles=p.get("roles") or [],
                 execution_brief=p.get("execution_brief") or {},
                 character_impact=p.get("character_impact") or [],
+                expected_facts=p.get("expected_facts") or [],
             ))
     if threads:
         candidate.threads = threads
@@ -1877,12 +2029,14 @@ def chapter_quality_gate(book_id: str, chapter_num: int = 0, recent_n: int = 5) 
     def _push(check, severity, description, location="", suggestion=""):
         if len(decision_points) >= 20:
             return
-        decision_points.append({
-            "check": check, "severity": severity,
-            "description": str(description)[:40],
-            "location": str(location)[:40],
-            "suggestion": str(suggestion)[:40],
-        })
+        from libraries.decision_feed import dp as _dp, SOURCE_BY_CHECK as _SRC
+        decision_points.append(_dp(
+            source=_SRC.get(check) or "reviewer",
+            kind=check, message=str(description)[:40], severity=severity,
+            subject_id=str(location)[:40], anchor=f"ch{n}", chapter=n,
+            suggested_action=str(suggestion)[:40],
+            location=str(location)[:40], suggestion=str(suggestion)[:40],
+        ))
 
     # 1. 审查（规则层；score>=60 视为过）
     try:

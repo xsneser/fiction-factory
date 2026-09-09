@@ -2,7 +2,7 @@
 角色状态自动机（Character State Machine）
 追踪每个角色在每章后的动态状态变化
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 
 
@@ -24,6 +24,25 @@ class CharacterState:
     offline_chapters: int = 0         # 连续离线章节数
     arc_stage: str = ""               # 弧线阶段
     notes: str = ""                   # 其他备注
+    # —— 推断字段（禁 agent 直写；secret 永不由 agent 设置，防自报污染人物）——
+    conflict: str = ""
+    secret: str = ""
+    emotional_pressure: str = ""
+    # 人物变化事件台账（剧情造成的变化）：每项 {type, from?, to?, reason?, chapter}
+    events: list = field(default_factory=list)
+
+
+# agent 可上报的剧情事件 type → 允许更新的字段（映射到的才被写；mood/conflict/secret/
+# emotional_pressure 不在映射内 = 禁 agent 直写，仅作推断字段预留）。
+_EVENT_FIELD = {
+    "goal_shift": "goal",
+    "power_shift": "power_level",
+    "location_shift": "location",
+    "arc_stage": "arc_stage",
+    "relationship": "relationship_to_mc",
+    "trust_change": "relationship_to_mc",   # 关系向变化（写 relationship_to_mc + 台账）
+}
+_ALLOWED_EVENT_TYPES = set(_EVENT_FIELD) | {"note"}
 
 
 class CharacterStateMachine:
@@ -58,6 +77,94 @@ class CharacterStateMachine:
         )
         self.characters.append(cs)
         return cs
+
+    def _mc_name(self, bible) -> str:
+        """bible（basic_info.characters）里取主角名（role==主角，importance==1 兜底）。"""
+        for c in (bible or []):
+            if str(c.get("role", "") or "").strip() == "主角" \
+                    and str(c.get("name", "") or "").strip():
+                return str(c["name"]).strip()
+        for c in (bible or []):
+            if str(c.get("name", "") or "").strip() and int(c.get("importance") or 0) == 1:
+                return str(c["name"]).strip()
+        return ""
+
+    def ensure_registered(self, bible) -> None:
+        """按 bible（basic_info.characters）就地注册全部角色（修 agent 薄工具流 csm 空机缺口）。
+
+        未注册 → 用静态字段 bootstrap（含 relation_to_mc 推导）；已注册只填空字段不覆盖动态量。
+        每章写盘前都调，保证 apply_events / update_from_chapter 有角色可写。
+        """
+        if not bible:
+            return
+        mc_name = self._mc_name(bible)
+        for c in (bible or []):
+            if not str(c.get("name", "") or "").strip():
+                continue
+            rel = ""
+            if mc_name:
+                for r in (c.get("relations") or []):
+                    if isinstance(r, dict) and str(r.get("name", "") or "").strip() == mc_name:
+                        rel = str(r.get("relation", "") or "")
+                        break
+            self.register(str(c["name"]).strip(),
+                          identity=str(c.get("identity", "") or ""),
+                          gender=str(c.get("gender", "") or ""),
+                          personality=str(c.get("personality", "") or ""),
+                          catchphrase=str(c.get("catchphrase", "") or ""),
+                          brief=str(c.get("brief", "") or ""),
+                          relationship_to_mc=rel)
+
+    def apply_events(self, events, chapter_num, bible=None) -> list:
+        """剧情造成的人物变化事件落账（纯规则，无 LLM；agent 按情节段上报）。
+
+        events: [{name, events:[{type, from?, to?, reason?}]}]
+          type ∈ goal_shift|power_shift|location_shift|arc_stage|relationship|trust_change|note
+          → 白名单字段映射写入 + 全部 append 进角色 events 台账（补 chapter）。
+          mood/conflict/secret/emotional_pressure 不在白名单 = 禁 agent 直写（推断字段）。
+        bible: basic_info.characters 列表。未注册角色按其静态字段就地 bootstrap 注册
+          （修 agent 薄工具流 csm 空机缺口）；已注册只填空字段不覆盖动态量。
+        返回被触动的 CharacterState 列表。
+        """
+        self.ensure_registered(bible)
+        if not events:
+            return []
+        applied = []
+        for item in events:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "") or "").strip()
+            cs = self.get(name)
+            if cs is None:                     # bible 与已注册都没有 → 不凭空造角色
+                continue
+            evs = item.get("events") or []
+            if not isinstance(evs, list):
+                continue
+            touched = False
+            for e in evs:
+                if not isinstance(e, dict):
+                    continue
+                t = str(e.get("type", "") or "").strip()
+                if t not in _ALLOWED_EVENT_TYPES:
+                    continue
+                to = e.get("to")
+                frm = e.get("from")
+                reason = str(e.get("reason", "") or "").strip()
+                if t in _EVENT_FIELD and to is not None:
+                    setattr(cs, _EVENT_FIELD[t], str(to).strip())
+                    touched = True
+                entry = {"type": t, "chapter": int(chapter_num or 0)}
+                if frm is not None and str(frm).strip():
+                    entry["from"] = str(frm).strip()
+                if to is not None and str(to).strip():
+                    entry["to"] = str(to).strip()
+                if reason:
+                    entry["reason"] = reason
+                cs.events.append(entry)
+                touched = True
+            if touched:
+                applied.append(cs)
+        return applied
 
     def get(self, name: str) -> CharacterState | None:
         for c in self.characters:

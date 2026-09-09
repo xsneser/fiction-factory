@@ -1,6 +1,6 @@
 ---
 name: novel-build
-description: 建书 步3。已选候选/补全世界观/继续建书。流程:步3 内容构建工作台**深化式**生成（先查弧/情节段库取素材 → 反模板差异化命题(core_conflict + world_building.differentiation 随 set_world 内联落库) → 核心矛盾→势力→弧+情节段(每弧 notes 含目标+偏离模板点)→人物→其余维度 → 内联 validate_storyline/validate_world 回打≥1轮直到 passed → 汇报故事线蓝图），用户自行提交建书(agent 不调 submit)。深化已并入步3、提交即 phase=ready（无书详情二次确认/无后置深化任务）；config 兜底补弧另走 save_outlines→plots→用户在书详情确认（agent 无翻 ready 工具）。
+description: 建书 步3。已选候选/补全世界观/继续建书。流程:步3 内容构建工作台**深化式**生成（先查弧/情节段库取素材 → 反模板差异化命题(core_conflict + world_building.differentiation 随 set_world 内联落库) → 核心矛盾→势力→弧+情节段(每弧 notes 含目标+偏离模板点)→人物→其余维度 → 内联 validate_storyline/validate_world 回打≥1轮直到 passed → 汇报故事线蓝图），用户自行提交建书(agent 不调 submit)。深化已并入步3、提交即 phase=ready（无书详情二次确认/无后置深化任务）；config 兜底补弧在 build profile 外（属 replan/legacy，见收尾引导）；agent 无翻 ready 工具。
 ---
 
 # 建书 步3：内容构建工作台（novel-build）
@@ -10,9 +10,9 @@ description: 建书 步3。已选候选/补全世界观/继续建书。流程:�
 > 契约（set_world/set_outline/set_characters/校验字段）见 NOVEL_AGENT.md 1.2。
 
 ## 步 3 深化式内容构建（一次到位，不是浅稿后深化：本步产出即定稿级故事线）
-- **素材查询预算**：无 `book_id` 时不得调用 `arc_material_candidates`。默认各查询一次弧库与情节段库；只有覆盖不足才允许一次补查，不换近义词反复试探。
+- **素材查询预算**：默认各查询一次弧库与情节段库（`query_arc_library`/`query_plots`，本 profile 可调）；只有覆盖不足才允许一次补查，不换近义词反复试探。
 - **增量建书**：全书目标默认 9万~18万字，但正式 outlines/plots 只承诺开篇约 1.5万~3万字；远期方向作为 planning future intents，不一次排完整本书。
-- **H2 future intents 真传入**：把远期方向（下一弧意图 / 主线升级方向 / 角色成长 / 未兑现线索）显式传给向导——调 `drive_ui(set_outline, args={outlines, plots, threads, themes, planning:{future_intents:[{id, kind, desc, note}]}})`（向导随 submit 经 `attach_build_session` 种进 planning_state；config 兜底补弧用 `save_outlines(..., planning_patch={"future_intents":[...]})`）。**不要只在聊天里说"远期作 future_intents"而不传参**，否则 planning_state 的 H2 区会是空的。
+- **H2 future intents 真传入**：把远期方向（下一弧意图 / 主线升级方向 / 角色成长 / 未兑现线索）显式传给向导——调 `drive_ui(set_outline, args={outlines, plots, threads, themes, planning:{future_intents:[{id, kind, desc, note}]}})`（向导随 submit 经 `attach_build_session` 种进 planning_state）。**不要只在聊天里说"远期作 future_intents"而不传参**，否则 planning_state 的 H2 区会是空的。
 - **差异化命题（存盘，反模板）**：动手排弧前先想清「本书与同类/所查模板的三个差异点」（题材套路 × 借书 × 世界观如何偏离）。最核心一条压进 `core_conflict`；**完整发散论述直接写 `world_building.differentiation`**——二者都随 `set_world` 内联落库（2026-09-05 起向导已透传该键，无需等书建后再补）。
 - **发散先行**：先在自身上下文出 2–3 条**相异**弧骨架，互相对比择一/融合后再细排；**不要**拿到弧库模板就逐槽位照填（库是"对镜"，借骨不借皮）。
 - 围绕「核心矛盾 → 势力 → 弧+情节段 → 人物 → 其余维度」反复推演：先想清楚故事线与世界观，再落 `set_world`/`set_outline`/`set_characters`。
@@ -26,8 +26,8 @@ description: 建书 步3。已选候选/补全世界观/继续建书。流程:�
 用户提交建书后 → `get_build_status()` 拿 `book_id`（`created=true` 才算建成；未建成先等片刻再查，仍无 → 如实汇报）→ `get_book_detail(book_id)` 看 phase：
 
 - **phase=ready**（弧+情节段完整随 submit 落库，正常）→ 故事线已可写作，交棒 `novel-story`；向用户说明可直接进写作台。
-- **phase=config**（submit 时②弧失败没带上）→ 兜底补弧：自主生成 outlines/plots（含每弧 notes）→ `save_outlines(mode=replace)` 落盘（→ phase=plots）→ 引导用户在书详情页点「✅ 确认弧+情节段」翻 ready（legacy 恢复门，非常态）。
-- **phase=plots**（仅 outlines 无 plots 的 edge）→ 同上引导用户书详情确认补弧/确认。
+- **phase=config**（submit 时②弧失败没带上）→ **本 profile 无补弧工具**（补弧只在 replan/legacy 路径）——如实汇报，引导用户走建书/「续规划」或书详情补弧后回写作；不要尝试调用本 profile 外的工具。
+- **phase=plots**（仅 outlines 无 plots 的 edge）→ 同上引导用户在书详情「✅ 确认弧+情节段」。
 
 ## 退出状态
 - 正常：蓝图已汇报、用户提交建书 → 书 phase=ready，交棒写作台。

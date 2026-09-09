@@ -368,13 +368,19 @@ def _build_task_text(task: str, history: list | None) -> str:
 def _task_tool_profile(task: str) -> str:
     """按用户任务选择最小工具面；未命中回退 inspect（只读小面，绝不暴露全量）。
 
-    判定顺序有意固定：规划类短语（含"往下想"）先于写作类"继续/往下"，避免续规划被误当正文。
+    判定顺序有意固定：续规划优先；明确写作动作优先于提示中附带的“风格规则”。
+    “完本”不能用裸子串匹配，否则“写完本章”会被误判为 publish。
     """
     text = (task or "").lower()
     if any(k in text for k in ("重规划", "续规划", "规划边界", "扩弧", "延伸故事线", "下一段弧",
                                "再排一段", "自动续规划", "往下想", "replan")):
         return "replan"
-    if any(k in text for k in ("发布", "上架", "完本", "导出", "书名简介", "检查能否发书")):
+    if any(k in text for k in ("写正文", "写下一章", "写第", "写情节段", "一键写", "完整章",
+                               "继续写", "接着写", "再写", "续写", "往下写", "继续正文")):
+        return "write"
+    publish_markers = ("发布", "上架", "导出", "书名简介", "检查能否发书",
+                       "标记完本", "设为完本", "全书完本", "作品完本", "完本状态")
+    if text.strip() == "完本" or any(k in text for k in publish_markers):
         return "publish"
     if any(k in text for k in ("侦察", "抓取", "热榜", "提取", "下载小说", "书库扫描")):
         return "scout"
@@ -384,8 +390,8 @@ def _task_tool_profile(task: str) -> str:
         return "build-candidates"
     if any(k in text for k in ("建书", "世界观", "补全设定", "内容构建")):
         return "build"
-    if any(k in text for k in ("写正文", "写下一章", "写第", "写情节段", "一键写", "完整章",
-                               "继续写", "继续", "接着写", "再写", "续写", "往下写", "继续正文")):
+    # 只有前面的明确领域意图都未命中时，泛化“继续”才默认解释为继续写作。
+    if "继续" in text:
         return "write"
     return "inspect"
 
@@ -575,6 +581,47 @@ def _update_extract_progress(name, args, msg, ok):
         )
 
 
+_DOMAIN_BY_TOOL = {
+    "save_plot_draft": "plot_run_changed",
+    "save_chapter_text": "chapter_changed",
+    "save_outlines": "plan_committed",
+    "chapter_quality_gate": "quality_gate",
+}
+
+
+def _domain_event_from_tool(name, args, msg) -> dict | None:
+    """写作相关工具成功后，派生领域事件（WS6，修订 7）。
+
+    用 call_id → tool args 任务级映射取参数（**禁止从格式化字符串猜**）；storyline_revision
+    尽量从结果 JSON 读，读不到就省去（refresh 时会重算）。事件只是 UI 刷新信号，非持久业务状态。
+    """
+    dom = _DOMAIN_BY_TOOL.get(name)
+    if not dom:
+        return None
+    args = args or {}
+    ev = {"name": dom, "book_id": args.get("book_id") or ""}
+    try:
+        if args.get("chapter_num") is not None:
+            ev["chapter"] = int(args["chapter_num"])
+    except (TypeError, ValueError):
+        pass
+    if args.get("plot_id"):
+        ev["plot_id"] = str(args["plot_id"])
+    try:
+        txt = _extract_result_text(msg) if callable(_extract_result_text) else ""
+        obj = json.loads(txt) if (txt or "").lstrip().startswith("{") else None
+        if isinstance(obj, dict):
+            if obj.get("storyline_revision") is not None:
+                ev["storyline_revision"] = obj["storyline_revision"]
+            if "chapter" not in ev and obj.get("chapter") is not None:
+                ev["chapter"] = obj["chapter"]
+            if "plot_id" not in ev and obj.get("plot_id"):
+                ev["plot_id"] = obj["plot_id"]
+    except Exception:
+        pass
+    return ev
+
+
 def _map_dsh_event(evt: dict, pending: dict):
     """一行 NDJSON 事件 → SSE 事件（生成器，可产 0..N 条）。
 
@@ -658,6 +705,11 @@ def _map_dsh_event(evt: dict, pending: dict):
                "callId": call_id or p.get("callId") or "",
                "ok": ok,
                "summary": _zh_tool_summary(name, p.get("args"), msg)}
+        # WS6：写作相关工具成功后追加领域事件（与既有事件同流下发，events-runner 无需改）
+        if ok:
+            _dom = _domain_event_from_tool(name, p.get("args"), msg)
+            if _dom:
+                yield {"type": "domain", **_dom}
     elif t == "llm/call":
         # 调试模式（NOVEL_AGENT_DEBUG=1 时 events-runner 才 emit）：一次 LLM 调用的
         # 提示词/MCP工具/返回JSON，前端渲染「LLM 调用」调试卡。不持久化 task_events。
@@ -691,6 +743,22 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False):
     interrupt_current_task()
     profile = _task_tool_profile(task) if _profiles_enabled() else ""
     skill_text = _skill_text_for_profile(profile) if profile else ""
+    # P0 预检：注入的 skill 引用必须 ⊆ 该 profile 暴露的工具；不匹配=契约破损，明确报错并拒绝启动，
+    # 绝不自动 fail-open 到全量 45（AGENT_TOOL_PROFILES=0 才是显式 legacy/debug 逃生）。
+    if profile and skill_text:
+        try:
+            from libraries.skill_profile import missing_for_text
+            _missing = missing_for_text(skill_text, profile)
+            if _missing:
+                _log.warning("skill/profile 契约不匹配 profile=%s missing=%s", profile, _missing)
+                yield {"type": "error",
+                       "message": (f"skill/profile 契约不匹配：profile={profile} 未暴露工具 "
+                                   f"{_missing}。请修复 skill 引用或对应 PROFILE_TOOLS 后重试；"
+                                   "不会自动回退全量工具。")}
+                yield {"type": "done"}
+                return
+        except Exception:  # noqa: BLE001 —— 预检失败不应在已打通过的链路上制造崩溃，交给后续 unknown-tool 兜底
+            _log.warning("skill/profile 预检异常（跳过，按现有行为继续）", exc_info=True)
     overlay = _write_runtime_overlay(mcp_profile=profile)
     task_text = _build_task_text(task, history)
     if skill_text:

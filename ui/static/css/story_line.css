@@ -70,7 +70,7 @@
 .sl-lane { flex: 1; position: relative; border-left: 1px solid var(--border-soft); min-width: 0; }
 .sl-lane:first-child { border-left: none; }
 .sl-lane-header {
-  position: sticky; top: 0; left: 0; right: 0; z-index: 30;
+  position: sticky; top: 0; left: 0; right: 0; z-index: 70;
   padding: var(--space-1) var(--space-2);
   font-size: 11px; font-weight: 600; line-height: 1.3;
   color: var(--fg-strong);
@@ -80,7 +80,7 @@
 .sl-lane-body { position: absolute; top: 24px; left: 4px; right: 4px; bottom: 4px; }
 
 /* ─── 进度光标 ─── */
-.sl-cursor { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger-fg); box-shadow: 0 0 8px var(--danger-fg); z-index: 8; pointer-events: none; }
+.sl-cursor { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger-fg); box-shadow: 0 0 8px var(--danger-fg); z-index: 60; pointer-events: none; }
 
 /* ─── 条 ─── */
 .sl-bar {
@@ -186,9 +186,13 @@
 .wpr-title { color: var(--fg); font-weight: 600; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .wpr-subline { color: var(--fg-dim); font-size: 11px; }
 .wpr-badge { font-size: 9.5px; font-weight: 600; padding: 0 5px; border-radius: 8px; }
+.wpr-badge.reconcile { background:rgba(155,187,244,.14); color:#a9c7ff; }
 .wpr-badge.payoff { background: rgba(63, 185, 80, .15); color: var(--success-fg); }
 .wpr-badge.setup { background: rgba(210, 153, 34, .15); color: var(--warn); }
 .wpr-dim { color: var(--fg-muted); }
+.wpr-help { display:inline-grid; place-items:center; width:15px; height:15px; margin-left:auto; border:1px solid var(--border); border-radius:50%; color:var(--fg-muted); font-size:10px; cursor:help; }
+.wpr-result-title { margin:7px 0 4px; color:var(--fg-strong); font-size:11px; font-weight:600; }
+.wpr-actual-list { display:grid; gap:3px; color:var(--fg-dim); font-size:11px; line-height:1.45; }
 .planning-strip { display:flex; flex-wrap:wrap; gap:10px 18px; margin:10px 0 12px; padding:10px 14px;
   border:1px solid #30363d; border-radius:8px; background:#0d1117; color:#8b949e; font-size:12px; }
 .planning-strip strong { color:#c9d1d9; }
@@ -198,18 +202,10 @@
 .forecast-card summary { color:#bc8cff; cursor:pointer; }
 .forecast-card ul { margin:8px 0 2px 18px; }
 
-/* 增量规划：实色合同 + 琥珀边界 + 斜纹未来意图 */
+/* 增量规划：Gantt 只保留有字数坐标的正式合同与承诺边界。 */
 .sl-boundary { position:absolute; left:0; right:0; height:0; border-top:2px dashed #d29922; z-index:45; pointer-events:auto; }
 .sl-boundary span { position:absolute; right:8px; top:-18px; padding:1px 6px; border-radius:9px; background:#2d2412; color:#e3b341; font-size:10px; }
-.sl-forecast-zone { flex:none; padding:12px; border-top:1px dashed #d29922; background:repeating-linear-gradient(135deg,rgba(137,87,229,.08),rgba(137,87,229,.08) 10px,rgba(137,87,229,.025) 10px,rgba(137,87,229,.025) 20px); }
-.sl-forecast-title { color:#bc8cff; font-weight:600; font-size:12px; margin-bottom:8px; }
-.sl-forecast-title span { color:var(--fg-muted); font-weight:400; margin-left:6px; }
-.sl-forecast-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:7px; }
-.sl-future-intent { display:flex; flex-direction:column; gap:3px; padding:8px; border:1px dashed rgba(188,140,255,.5); border-radius:7px; background:rgba(13,17,23,.72); min-width:0; }
-.sl-future-intent b { color:#bc8cff; font-size:10px; }
-.sl-future-intent span { color:var(--fg-dim); font-size:11px; overflow-wrap:anywhere; }
 .sl-legend-swatch.boundary { height:0; border-top:2px dashed #d29922; background:none; }
-.sl-legend-swatch.forecast { background:repeating-linear-gradient(135deg,#8957e5 0,#8957e5 2px,transparent 2px,transparent 5px); }
 
 .planning-panel { margin:10px 0 14px; border:1px solid var(--border-soft); border-radius:10px; background:var(--bg-card); overflow:hidden; }
 .planning-panel-head { display:flex; justify-content:space-between; padding:10px 14px; color:var(--fg-strong); font-weight:600; border-bottom:1px solid var(--border-soft); }
@@ -223,6 +219,10 @@
 .planning-grid section { border:1px solid var(--border-soft); border-radius:8px; padding:8px; min-width:0; }
 .planning-grid h4,.replan-section h4 { margin:0 0 5px; font-size:11px; color:var(--fg); }
 .planning-grid ul,.replan-section ul { margin:0; padding-left:16px; color:var(--fg-dim); font-size:11px; }
+.planning-character-intents { display:grid; gap:7px; }
+.planning-character-intents article { display:flex; flex-direction:column; gap:3px; padding:7px; border-radius:7px; background:var(--bg-inset); }
+.planning-character-intents b { color:var(--fg-strong); font-size:11px; }
+.planning-character-intents span { color:var(--fg-dim); font-size:11px; line-height:1.45; }
 .planning-empty { color:var(--fg-muted); font-size:11px; }
 .boundary-banner { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 14px; margin:8px 0 12px; border:1px solid #d29922; border-radius:9px; background:rgba(210,153,34,.09); color:#e3b341; }
 .boundary-banner[hidden] { display:none; }.boundary-banner div { display:flex; flex-direction:column; }.boundary-banner span { color:var(--fg-dim); font-size:11px; }
@@ -236,3 +236,24 @@
 .wpr-impact { margin-top:5px; color:var(--fg-dim); }.wpr-impact summary { cursor:pointer; color:var(--fg); }.wpr-compare { display:grid; gap:2px; padding:6px 0; border-top:1px dashed var(--border-soft); }.wpr-compare span { color:var(--fg-dim); font-size:11px; }
 @media (max-width:900px) { .planning-grid { grid-template-columns:1fr 1fr; } }
 @media (max-width:600px) { .planning-grid { grid-template-columns:1fr; }.planning-metrics { grid-template-columns:repeat(3,1fr); }.boundary-banner { align-items:flex-start; flex-direction:column; } }
+
+/* ─── 写作台 Planning Mini Bar（信息减法：默认 60-90px，详情抽屉按需展开，仅 data-compact=1 生效） ─── */
+.planning-panel.compact { margin:6px 0 10px; }
+.planning-panel.compact .planning-panel-head { display:none; }
+.planning-panel.compact .planning-panel-body { padding:6px 14px; }
+.planning-minibar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; color:var(--fg-muted); min-height:26px; }
+.pm-chip { background:var(--bg-inset); border:1px solid var(--border-soft); border-radius:999px; padding:1px 8px; color:var(--fg); font-weight:600; font-size:11px; }
+.pm-sep { width:1px; height:14px; background:var(--border-soft); }
+.pm-words b { color:var(--fg-strong); font-weight:600; }
+.pm-rem { color:var(--fg); }
+.pm-h0 { color:var(--fg-strong); }
+.pm-h1,.pm-h2 { color:var(--fg-dim); }
+.pm-boundary.ok { color:#3fb950; }
+.pm-boundary.warn { color:#e3b341; }
+.pm-boundary.crit { color:#ff7b72; font-weight:600; }
+.pm-alert { color:#e3b341; background:rgba(210,153,34,.10); border:1px solid rgba(210,153,34,.35); border-radius:999px; padding:0 8px; font-size:11px; }
+.pm-detail-btn { margin-left:auto; background:var(--bg-inset); border:1px solid var(--border-soft); color:var(--fg); border-radius:6px; padding:2px 10px; font-size:11px; cursor:pointer; }
+.pm-detail-btn:hover { color:var(--accent); border-color:var(--accent); }
+/* 展开后的横向卡片矩阵（复用 planning-metrics / planning-grid） */
+.planning-cards { margin-top:8px; padding-top:10px; border-top:1px dashed var(--border-soft); }
+.planning-cards .planning-metrics { margin-bottom:8px; }

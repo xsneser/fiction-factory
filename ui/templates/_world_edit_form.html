@@ -99,7 +99,51 @@ function autoSizeTextarea(el) {
 function emptyChar() {
     return {name:'', role:'配角', importance:2, identity:'', title:'', gender:'', personality:'',
             catchphrase:'', brief:'', golden_finger:'', faction:'', age:0, death_year:0,
-            archetype_id:'', relations:[]};
+            archetype_id:'', relations:[], behavior:{}, speech_profile:{}, development_plan:''};
+}
+/* 嵌套字段读写（行为模型/语言倾向等 data-path 输入；.cc[data-f] 只收顶层扁平键） */
+function getPath(o, path) {
+    var cur = o, seg = String(path || '').split('.');
+    for (var i = 0; i < seg.length; i++) { if (cur == null) return ''; cur = cur[seg[i]]; }
+    return cur;
+}
+function setPath(o, path, val) {
+    var seg = String(path || '').split('.'), cur = o;
+    for (var i = 0; i < seg.length - 1; i++) {
+        if (cur[seg[i]] == null || typeof cur[seg[i]] !== 'object') cur[seg[i]] = {};
+        cur = cur[seg[i]];
+    }
+    cur[seg[seg.length - 1]] = val;
+}
+/* 行为模型（情境→一贯反应）+ 语言倾向（非固定口头禅）折叠编辑区 */
+function behaviorSectionHTML(c) {
+    c = c || {};
+    var sp = c.speech_profile || {};
+    function pathIn(path) {
+        return '<input class="bh" data-path="' + path + '" value="' + esc(getPath(c, path)) + '" style="width:100%">';
+    }
+    var pairs = [['decision_style','under_pressure','压力下'],['decision_style','danger','危险时'],
+                 ['decision_style','betrayal','遭背叛'],['communication_style','stranger','对陌生人'],
+                 ['communication_style','friend','对朋友'],['communication_style','enemy','对敌人'],
+                 ['emotion_expression','anger','愤怒时'],['emotion_expression','fear','恐惧时'],
+                 ['emotion_expression','sadness','悲伤时']];
+    var g = pairs.map(function(x){
+        return '<div style="flex:1 1 30%;min-width:150px"><label style="font-size:11px;color:#8b949e">' + x[2] + '</label>' + pathIn('behavior.' + x[0] + '.' + x[1]) + '</div>';
+    }).join('');
+    function list(path, ph, arr) {
+        return '<textarea class="bh" data-path="' + path + '" data-list="1" placeholder="' + ph + '" rows="2" style="width:100%;box-sizing:border-box">' + esc((arr || []).join('\n')) + '</textarea>';
+    }
+    return '<details style="margin-top:8px;border:1px solid #30363d;border-radius:6px;padding:6px 8px">'
+        + '<summary style="cursor:pointer;font-size:12px;color:#8b949e">🎭 行为模型 &amp; 语言倾向（进阶，可选）</summary>'
+        + '<div style="font-size:12px;color:#8b949e;margin:6px 0">情境→一贯反应：人物稳定感来自不同刺激下反应一致（每格 1-3 短句）</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:6px">' + g + '</div>'
+        + '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'
+        + '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#8b949e">句长倾向（如 短句）</label>' + pathIn('speech_profile.rhythm') + '</div>'
+        + '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#8b949e">语气（如 克制）</label>' + pathIn('speech_profile.tone') + '</div>'
+        + '</div>'
+        + '<div style="margin-top:6px"><label style="font-size:11px;color:#8b949e">说话习惯 / 句式倾向（适时自然，不固定复读）</label>' + list('speech_profile.habits', '先确认事实、避免直接表达情绪…（每行一条）', sp.habits) + '</div>'
+        + '<div style="margin-top:6px"><label style="font-size:11px;color:#8b949e">绝不说 / 禁开口癖</label>' + list('speech_profile.forbidden', '夸张感叹、连续解释…（每行一条）', sp.forbidden) + '</div>'
+        + '</details>';
 }
 function legacyChars(bi) {
     /* 旧结构 basic_info（protagonist + supporting_cast）→ characters 数组（兜底兼容） */
@@ -404,7 +448,8 @@ function appendCharCard(c, container) {
         + '<div class="char-relations">'
         + '<div style="font-size:12px;color:#8b949e;margin:6px 0 4px">人物关系（对方姓名 / 关系）</div>'
         + '<div class="rel-rows"></div>'
-        + '<button type="button" class="small" onclick="addRelRow(this)">➕ 加关系</button></div>';
+        + '<button type="button" class="small" onclick="addRelRow(this)">➕ 加关系</button></div>'
+        + behaviorSectionHTML(c);
     (container || $('wb-factions')).appendChild(card);
     var sel = card.querySelector('.char-archetype');
     var opts = '<option value="">（无原型）</option>';
@@ -503,6 +548,15 @@ function collectCharCards() {
             var n = row.querySelector('.cc-rel-name').value.trim();
             var r = row.querySelector('.cc-rel-rel').value.trim();
             if (n) c.relations.push({name: n, relation: r});
+        });
+        // 嵌套字段（行为模型/语言倾向）：data-path 输入 → setPath 写进嵌套 dict；data-list 按换行转数组
+        card.querySelectorAll('[data-path]').forEach(function(inp) {
+            var p = inp.getAttribute('data-path');
+            if (!p) return;
+            var v = inp.getAttribute('data-list')
+                ? inp.value.split('\n').map(function(s) { return s.trim(); }).filter(Boolean)
+                : inp.value.trim();
+            setPath(c, p, v);
         });
         if (c.name) out.push(c);
     });

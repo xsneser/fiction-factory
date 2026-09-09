@@ -40,15 +40,17 @@ def _chapters_from_disk(book_id: str, current_chapter: int):
 
     MCP 是独立进程，save_chapter_text/save_plot_draft 只写磁盘 book.json/chapters/、draft_chapter.json；
     Web 进程缓存的 engine.book.current_chapter 可能滞后。这里全部从磁盘现读。"""
+    from core.text_utils import count_prose_units
     chapters = []
     for n in range(1, current_chapter + 1):
         ch = book_mgr.load_chapter(book_id, n)
         if ch and ch.get("content"):
             chapters.append({
                 "num": n,
-                "title": ch.get("title") or f"第{n}章",
-                "content": ch.get("content") or "",
-                "bridges": ch.get("bridges") or [],
+                    "title": ch.get("title") or f"第{n}章",
+                    "content": ch.get("content") or "",
+                    "bridges": ch.get("bridges") or [],
+                    "word_count": int(ch.get("word_count") or count_prose_units(ch.get("content") or "")),
             })
     # 进行中草稿（draft_chapter.json）：bridges 逐情节段 span.m-bridge，刚写完的情节段即时可见
     dp = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
@@ -66,11 +68,43 @@ def _chapters_from_disk(book_id: str, current_chapter: int):
                     "content": "\n\n".join((b.get("text") or "") for b in bridges) if bridges
                                else "\n\n".join(buffer),
                     "bridges": bridges,
+                    "word_count": count_prose_units("\n\n".join((b.get("text") or "") for b in bridges) if bridges else "\n\n".join(buffer)),
                     "draft": True,
                 })
         except Exception as e:
             logging.getLogger(__name__).warning("加载进行中草稿失败: %s", e)
     return chapters
+
+
+def _plot_outcome(bridge, tl, chapter_num=0):
+    """把一条已完成 plot 的 bridge 转成 Prediction→Fact 对照视图（WS2）。
+
+    predictions = PlotSlot.character_impact（自然语言，供人读）；expected_facts = 可机器比较预测；
+    facts = structured facts（agent 上报，绝不从正文推断）；reconcile = reconcile_run 对照结果。
+    """
+    if not bridge:
+        return None
+    from libraries.reconcile import reconcile_run
+    pid = bridge.get("plot_id")
+    plot = next((x for x in ((tl.plots) or []) if x.id == pid), None) if tl is not None else None
+    facts = bridge.get("facts") or {}
+    if not facts and bridge.get("character_events"):
+        facts = {"character_events": list(bridge.get("character_events") or [])}
+    base = int(bridge.get("based_on_storyline_revision") or 0)
+    cur = int(getattr(tl, "storyline_revision", 0) or 0) if tl is not None else 0
+    run = reconcile_run(plot=plot, bridge=bridge,
+                        based_on_storyline_revision=base, current_revision=cur,
+                        chapter_num=int(chapter_num or 0))
+    return {
+        "plot_id": pid,
+        "plot_name": getattr(plot, "name", "") if plot else bridge.get("plot_name", ""),
+        "run_id": bridge.get("run_id") or run.get("run_id") or "",
+        "predictions": list(getattr(plot, "character_impact", None) or []) if plot else [],
+        "expected_facts": (bridge.get("expected_facts")
+                           or (list(getattr(plot, "expected_facts", None) or []) if plot else [])),
+        "facts": facts,
+        "reconcile": run,
+    }
 
 
 @bp.route("/api/desk/chapters/<book_id>")
@@ -99,21 +133,23 @@ def desk_chapters_api(book_id):
         if os.path.exists(dp):
             with open(dp, encoding="utf-8") as fh:
                 draft = json.load(fh)
+        base_written = int(getattr(book_mgr.get(book_id), "total_words", 0) or 0)
+        draft_written = 0
+        if draft:
+            from core.text_utils import count_prose_units
+            draft_written = count_prose_units("\n\n".join(draft.get("buffer") or []))
+        written_now = base_written + draft_written
         if tl is not None:
             p = _next_plot(tl, draft)
             if p is not None:
                 from agent_tools import _load_char_states
-                plot_run = _build_plot_run(tl, p, _load_char_states(book_id))
+                plot_run = _build_plot_run(tl, p, _load_char_states(book_id), draft=draft)
             event_bridge = next((b for b in reversed((draft or {}).get("bridges") or [])
-                                 if isinstance(b, dict) and b.get("plot_id") and b.get("character_events")), None)
+                                 if isinstance(b, dict) and b.get("plot_id")
+                                 and (b.get("facts") or b.get("character_events"))), None)
             if event_bridge:
-                done_plot = next((x for x in (tl.plots or []) if x.id == event_bridge.get("plot_id")), None)
-                recent_plot_outcome = {
-                    "plot_id": event_bridge.get("plot_id"),
-                    "plot_name": getattr(done_plot, "name", "") if done_plot else event_bridge.get("plot_name", ""),
-                    "predictions": list(getattr(done_plot, "character_impact", None) or []) if done_plot else [],
-                    "facts": event_bridge.get("character_events") or [],
-                }
+                recent_plot_outcome = _plot_outcome(event_bridge, tl,
+                                                    int((draft or {}).get("chapter_num") or 0))
             from libraries.planning_state import load_planning_state, detect_story_boundary
             disk_book = book_mgr.get(book_id)
             ps = load_planning_state(book_id, tl, disk_book, persist=False)
@@ -124,9 +160,16 @@ def desk_chapters_api(book_id):
                 "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
                 "target_word_budget": int(ps.get("target_word_budget") or 0),
                 "committed_until_word": int(ps.get("committed_until_word") or 0),
-                "written_until_word": int(getattr(disk_book, "total_words", 0) or 0) if disk_book else 0,
+                "written_until_word": written_now,
+                # 写作台轮询与规划面板使用同一份导航数据，避免一个接口显示
+                # “未规划”、另一个接口已有 H1/H2 的短暂分裂。
+                "horizon": ps.get("horizon") or {},
+                "future_intents": ps.get("future_intents") or [],
+                "story_questions": ps.get("story_questions") or [],
+                "character_intents": ps.get("character_intents") or [],
+                "last_replan": ps.get("last_replan") or {},
                 "boundary": detect_story_boundary(
-                    written_until_word=int(getattr(disk_book, "total_words", 0) or 0) if disk_book else 0,
+                    written_until_word=written_now,
                     committed_until_word=int(ps.get("committed_until_word") or 0),
                     remaining_plots=remaining,
                     words_per_batch=int(tl.words_per_chapter or 3000),
@@ -138,16 +181,17 @@ def desk_chapters_api(book_id):
         logging.getLogger(__name__).warning("组装 plot_run 失败: %s", e)
     chapters = _chapters_from_disk(book_id, cur)
     if recent_plot_outcome is None:
-        last_bridge = next((b for ch in reversed(chapters) for b in reversed(ch.get("bridges") or [])
-                            if isinstance(b, dict) and b.get("plot_id") and b.get("character_events")), None)
+        last_ch, last_bridge = None, None
+        for ch in reversed(chapters):
+            for b in reversed(ch.get("bridges") or []):
+                if isinstance(b, dict) and b.get("plot_id") and (b.get("facts") or b.get("character_events")):
+                    last_ch, last_bridge = ch, b
+                    break
+            if last_bridge:
+                break
         if last_bridge:
-            done_plot = next((x for x in (tl.plots or []) if x.id == last_bridge.get("plot_id")), None) if 'tl' in locals() else None
-            recent_plot_outcome = {
-                "plot_id": last_bridge.get("plot_id"),
-                "plot_name": getattr(done_plot, "name", "") if done_plot else last_bridge.get("plot_name", ""),
-                "predictions": list(getattr(done_plot, "character_impact", None) or []) if done_plot else [],
-                "facts": last_bridge.get("character_events") or [],
-            }
+            _tlc = tl if 'tl' in locals() else None
+            recent_plot_outcome = _plot_outcome(last_bridge, _tlc, (last_ch or {}).get("num") or 0)
     return jsonify({"book_id": book_id, "current_chapter": cur,
                     "chapters": chapters,
                     "plot_run": plot_run, "recent_plot_outcome": recent_plot_outcome,
@@ -162,6 +206,7 @@ def storyline_write_flow(engine_id):
         return "引擎会话已过期", 404
     # 已写章节（供中栏「章节正文」预载，作为书目内容连续展示）
     chapters = []
+    initial_written_words = 0
     book = getattr(engine, "book", None)
     if book and book.book_id:
         # 跨进程 stale：MCP/dsh 子进程写盘后，用磁盘 book.json 的最新 current_chapter 修正缓存
@@ -177,11 +222,14 @@ def storyline_write_flow(engine_id):
             for n in range(1, book.current_chapter + 1):
                 ch = book_mgr.load_chapter(book.book_id, n)
                 if ch and ch.get("content"):
+                    from core.text_utils import count_prose_units
+                    initial_written_words += count_prose_units(ch.get("content") or "")
                     chapters.append({
                         "num": n,
                         "title": ch.get("title") or f"第{n}章",
                         "content": ch.get("content") or "",
                         "bridges": ch.get("bridges") or [],
+                        "word_count": int(ch.get("word_count") or count_prose_units(ch.get("content") or "")),
                     })
         except Exception as e:
             logger.warning("加载已写章节失败: %s", e)
@@ -206,6 +254,8 @@ def storyline_write_flow(engine_id):
                 "bridges": bridges,
                 "draft": True,
             })
+            from core.text_utils import count_prose_units
+            initial_written_words += count_prose_units("\n\n".join((b.get("text") or "") for b in bridges) if bridges else "\n\n".join(buffer))
     sl = getattr(engine, "storyline", None)
     # 字数轴：总章数优先用引擎已字数化的 state.total_chapters，否则由情节段 planned_words 推导
     total_ch = getattr(getattr(engine, "state", None), "total_chapters", 0) or 0
@@ -225,9 +275,13 @@ def storyline_write_flow(engine_id):
         try:
             from libraries.planning_state import load_planning_state, detect_story_boundary
             planning_state = load_planning_state(book.book_id, sl, book, persist=False)
+            # 页面首屏必须使用磁盘章节的实时字数；Web 进程中的 book 对象可能是 Agent
+            # 写作前加载的旧快照。故事线和轮询接口仍以领域状态为准。
+            planning_state = dict(planning_state or {})
+            planning_state["written_until_word"] = int(initial_written_words)
             remaining_plots = sum(1 for p in (sl.plots or []) if not (getattr(p, "written_chapter", 0) or 0))
             planning_boundary = detect_story_boundary(
-                written_until_word=int(book.total_words or 0),
+                written_until_word=int(initial_written_words),
                 committed_until_word=int(planning_state.get("committed_until_word") or 0),
                 remaining_plots=remaining_plots,
                 words_per_batch=int(sl.words_per_chapter or 3000),
@@ -246,6 +300,7 @@ def storyline_write_flow(engine_id):
         world_done=world_done,
         planning_state=planning_state,
         planning_boundary=planning_boundary,
+        initial_written_words=initial_written_words,
     )
 
 

@@ -299,20 +299,49 @@ def api_book_promises(book_id):
 
 @bp.route("/api/book/<book_id>/diagnose", methods=["POST"])
 def api_book_diagnose(book_id):
-    """书详情：质量诊断（连续性/追读/承诺，规则层零成本聚合）。
-
-    复用 agent_tools 的三个 diagnose_*（MCP 同源），点按钮跑一次全量扫描。
+    """书详情：Longitudinal 诊断（WS4）——走 diagnose_story_window（内部 service），
+    chapter_quality_gate 保持 Local/chapter；两者共享 primitives、统一 DecisionPoint。
+    保留 legacy continuity/retention/promises 分区给既有面板，另带统一 decision_points。
     """
     import agent_tools
+    from libraries.diagnose_window import diagnose_story_window
     try:
+        window = diagnose_story_window(book_id)
         return jsonify({
             "continuity": agent_tools.diagnose_continuity(book_id),
             "retention": agent_tools.diagnose_retention(book_id),
             "promises": agent_tools.diagnose_promises(book_id),
+            "scope": window.get("scope"),
+            "decision_points": window.get("decision_points") or [],
+            "summary": window.get("summary") or "",
+            "counts": window.get("counts") or {},
         })
     except Exception as e:
         logger.warning("诊断失败: %s", e)
         return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/book/<book_id>/decision-center")
+def api_book_decision_center(book_id):
+    """书详情 Decision Center 数据源（WS7）：统一决策点 = Longitudinal(window) + Local(gate)。
+    UI 只读本聚合，不再自拼 diagnose（gate 为 chapter scope、window 为 recent-N/arc/book scope）。"""
+    from libraries.diagnose_window import diagnose_story_window
+    from libraries.decision_feed import collect_decision_points
+    from agent_tools import chapter_quality_gate, book_mgr
+    groups = []
+    cur = 0
+    try:
+        bk = book_mgr.get(book_id)
+        cur = int(getattr(bk, "current_chapter", 0) or 0) if bk else 0
+        groups.append((diagnose_story_window(book_id)).get("decision_points") or [])
+        if cur >= 1:
+            gate = chapter_quality_gate(book_id, chapter_num=cur)
+            groups.append(gate.get("decision_points") or [])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("decision-center 聚合失败: %s", e)
+    feed = collect_decision_points(groups)
+    feed.update({"book_id": book_id, "recent_chapter": cur})
+    return jsonify(feed)
 
 
 # ═══ 历史快照（diff 审查 + 回滚；写工具落库前自动留底） ═══

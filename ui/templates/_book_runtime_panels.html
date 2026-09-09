@@ -1,5 +1,12 @@
-{# ─── 书详情运行时面板（竞品规则层组件 UI 化）：角色状态 / 读者承诺台账 / 爽点标注 ─── #}
+{# ─── 书详情运行时面板（竞品规则层组件 UI 化）：决策中心 / 角色状态 / 读者承诺台账 / 爽点标注 ─── #}
 {# 依赖：包含页已定义 window.BOOK_ID（book_detail.html）；手风琴复用全局 .accordion-header 委托 ── #}
+
+<div class="accordion">
+    <div class="accordion-header">🎛 运行时决策中心 <span class="sl-chev">▸</span></div>
+    <div class="accordion-body">
+        <div id="rp-decision"><div class="empty">加载中…</div></div>
+    </div>
+</div>
 
 <div class="accordion">
     <div class="accordion-header">🎭 角色状态 <span class="sl-chev">▸</span></div>
@@ -111,6 +118,46 @@ function runChapterDeai(n){
         .catch(function(){ el.innerHTML = '<span class="tag red">去AI请求失败</span>'; });
 }
 
+/* 🎛 运行时决策中心（WS5/WS7）：统一 DecisionPoint = Longitudinal(window) + Local(gate)。
+   只消费后端 /api/book/<id>/decision-center 聚合（collect_decision_points），UI 不重算任何业务判断。 */
+function loadDecisionCenter(){
+    var el = document.getElementById('rp-decision'); if(!el) return;
+    fetch('/api/book/'+window.BOOK_ID+'/decision-center')
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if(d.error){ el.innerHTML = '<span class="tag red">'+_rp_esc(d.error)+'</span> <button type="button" class="small" onclick="loadDecisionCenter()">重试</button>'; return; }
+            var points = d.decision_points || [];
+            var b = d.buckets || {red:0, yellow:0, green:0};
+            if(!points.length){
+                el.innerHTML = '<div class="empty">🟢 当前没有需要处理的运行时问题</div>';
+                return;
+            }
+            var cards = '';
+            if(b.red) cards += '<span class="tag red" style="margin-right:4px">🔴 需处理 '+b.red+'</span>';
+            if(b.yellow) cards += '<span class="tag yellow" style="margin-right:4px">🟡 值得关注 '+b.yellow+'</span>';
+            if(b.green) cards += '<span class="tag green">🟢 正常 '+b.green+'</span>';
+            var SV = {critical:0, error:1, warning:2, ok:3, info:4};
+            var SEV_TAG = {critical:'red', error:'red', warning:'yellow', ok:'green', info:'blue'};
+            var sorted = points.slice().sort(function(a, b2){
+                var ab = a.blocking ? 0 : 1, bb = b2.blocking ? 0 : 1;
+                if(ab !== bb) return ab - bb;
+                return (SV[a.severity] == null ? 5 : SV[a.severity]) - (SV[b2.severity] == null ? 5 : SV[b2.severity]);
+            });
+            var list = sorted.map(function(p){
+                var tag = '<span class="tag '+ (SEV_TAG[p.severity]||'blue') +'">'+_rp_esc(p.severity||'info')+'</span>';
+                var src = p.source ? '<span class="tag" style="margin-left:4px">'+_rp_esc(p.source)+'</span>' : '';
+                var blk = p.blocking ? '<span class="tag red" style="margin-left:4px">🚧 阻塞</span>' : '';
+                var act = p.suggested_action ? '<div class="hint" style="font-size:12px;color:var(--fg-muted)">→ '+_rp_esc(p.suggested_action)+'</div>' : '';
+                return '<div style="padding:6px 0;border-bottom:1px dashed var(--border-soft)">'
+                    + tag + src + blk
+                    + '<div style="margin-top:2px;font-size:13px">'+_rp_esc(p.message||p.description||'')+'</div>'
+                    + act + '</div>';
+            }).join('');
+            el.innerHTML = (cards ? '<div style="margin-bottom:4px">'+cards+'</div>' : '') + list;
+        })
+        .catch(function(){ el.innerHTML = '<span class="tag red">决策中心加载失败</span> <button type="button" class="small" onclick="loadDecisionCenter()">重试</button>'; });
+}
+
 /* 🔍 质量诊断：连续性/追读/承诺（规则层，点按钮跑一次） */
 function runDiagnose(){
     var el = document.getElementById('rp-diag'); if(!el) return;
@@ -185,23 +232,56 @@ function runPunchPoints(n){
     var BOOK = window.BOOK_ID || '';
     if(!BOOK) return;
 
+    /* 🎛 运行时决策中心（首层，进页即拉） */
+    loadDecisionCenter();
+
     /* 🎭 角色状态 */
     fetch('/api/book/'+BOOK+'/character-states').then(function(r){ return r.json(); }).then(function(d){
         var el = document.getElementById('rp-char-states'); if(!el) return;
         var cs = d.characters || [];
         if(!cs.length){ el.innerHTML = '<div class="empty">还没有角色状态（开始写作后生成）</div>'; return; }
         var warns = (d.warnings||[]).map(function(w){ return '<div class="tag red" style="margin:2px">'+_rp_esc(w)+'</div>'; }).join('');
+        /* 事件台账 type → 展示名（与 character_state._ALLOWED_EVENT_TYPES 对齐） */
+        var ET = {goal_shift:'🎯 目标', power_shift:'⚡ 实力', location_shift:'📍 位置',
+                  arc_stage:'🌀 弧线', relationship:'🤝 关系', trust_change:'🔗 信任', note:'📝 备注'};
         var cards = cs.map(function(c){
             var offline = (c.offline_chapters||0) > 50;
             var meta = [];
             if(c.location) meta.push('📍 '+_rp_esc(c.location));
             if(c.mood) meta.push('情绪：'+_rp_esc(c.mood));
             if(c.goal) meta.push('目标：'+_rp_esc(c.goal));
+            if(c.power_level) meta.push('实力：'+_rp_esc(c.power_level));
+            if(c.relationship_to_mc) meta.push('关系：'+_rp_esc(c.relationship_to_mc));
+            if(c.arc_stage) meta.push('弧线：'+_rp_esc(c.arc_stage));
             if(c.last_appeared_chapter) meta.push('最近出场 第'+c.last_appeared_chapter+'章');
+            /* 推断字段（禁 agent 直写，黄色高亮区分） */
+            var inferred = [];
+            if(c.conflict) inferred.push('⚔️ 矛盾 '+_rp_esc(c.conflict));
+            if(c.secret) inferred.push('🫥 秘密 '+_rp_esc(c.secret));
+            if(c.emotional_pressure) inferred.push('🌡 压力 '+_rp_esc(c.emotional_pressure));
+            /* 人物变化事件台账（倒序：最新在前） */
+            var evs = (c.events||[]).slice().reverse();
+            var evHtml = '';
+            if(evs.length){
+                evHtml = '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--fg-muted)">📜 人物变化事件台账（'+evs.length+'）</summary>'
+                    + '<div style="margin-top:4px;border-left:2px solid var(--border-soft);padding-left:8px">'
+                    + evs.map(function(e){
+                        var t = ET[e.type] || e.type || '事件';
+                        var line = '第'+(e.chapter||'?')+'章 <span class="tag blue" style="margin:1px 2px 1px 0">'+_rp_esc(t)+'</span>';
+                        if(e.from && e.to) line += _rp_esc(e.from)+' → <b>'+_rp_esc(e.to)+'</b>';
+                        else if(e.to) line += '→ <b>'+_rp_esc(e.to)+'</b>';
+                        else if(e.from) line += _rp_esc(e.from)+' →';
+                        if(e.reason) line += ' <span style="color:var(--fg-dim)">— '+_rp_esc(e.reason)+'</span>';
+                        return '<div style="font-size:12px;padding:2px 0">'+line+'</div>';
+                    }).join('')
+                    + '</div></details>';
+            }
             return '<div style="padding:8px 12px;margin:6px 0;border:1px solid var(--border);border-radius:8px;background:var(--bg-inset)">'
                 + '<b>'+_rp_esc(c.name)+'</b>'
                 + (offline ? ' <span class="tag red">离线 '+c.offline_chapters+' 章</span>' : '')
                 + (meta.length ? '<div style="font-size:12px;color:var(--fg-dim);margin-top:4px">'+meta.join(' · ')+'</div>' : '')
+                + (inferred.length ? '<div style="font-size:12px;color:#d29922;margin-top:3px">'+inferred.join(' · ')+'</div>' : '')
+                + evHtml
                 + '</div>';
         }).join('');
         el.innerHTML = (warns ? '<div class="form-row">'+warns+'</div>' : '') + cards;

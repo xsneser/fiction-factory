@@ -359,7 +359,7 @@
         .prof-new { display:block; margin-top:10px; padding:9px 10px; border:1px dashed var(--border);
                     border-radius:6px; color:var(--accent); text-decoration:none; text-align:center; font-size:13px; }
         .prof-new:hover { border-color:var(--accent); background:rgba(31,111,235,.08); }
-        /* ── 笔名与风格 · 样文库标签（场景分类 + 按 id 勾选 + 已选展示）── */
+        /* ── 笔名与风格 · 样文池标签（场景分类 + 按 id 勾选 + 已选展示）── */
         .pfs-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:14px; }
         .pfs-summary { flex:1; min-width:280px; }
         .pfs-summary strong { font-size:14px; color:var(--fg-strong); }
@@ -378,7 +378,7 @@
         .pfs-check { accent-color:var(--success-fg); margin:0; flex-shrink:0; }
         .pfs-id { font-family:Consolas,Menlo,monospace; font-size:12px; color:var(--accent);
             background:rgba(31,111,235,.12); border-radius:4px; padding:1px 7px; flex-shrink:0; }
-        /* 样文库页词条卡 id 徽章 */
+        /* 样文池页词条卡 id 徽章 */
         .smp-id { font-family:Consolas,Menlo,monospace; font-size:12px; color:var(--accent);
             background:rgba(31,111,235,.12); border-radius:4px; padding:1px 7px; flex-shrink:0; }
         .hint { color:#8b949e; font-size:13px; margin-bottom:12px; }
@@ -437,6 +437,12 @@
         .tabs::-webkit-scrollbar-thumb { background:#30363d; border-radius:2px; }
         .tabs a { padding:8px 16px; color:#8b949e; text-decoration:none; font-size:13px; border-bottom:2px solid transparent; white-space:nowrap; flex-shrink:0; }
         .tabs a.active, .tabs a:hover { color:#f0f6fc; border-bottom-color:#58a6ff; }
+        /* 二级分类（次级弱化：来源书行等）——与一级 .tabs 下划线高亮区分 */
+        .tabs.sub { border-bottom-color:#21262d; }
+        .tabs.sub a { padding:4px 12px; font-size:12px; border:1px solid transparent; border-radius:14px; color:#8b949e; }
+        .tabs.sub a.active, .tabs.sub a:hover { color:#58a6ff; background:rgba(88,166,255,.08); border-color:#30363d; }
+        /* 样文池工具行（全选当前范围 / 取消当前范围） */
+        .pfs-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0; }
         /* Agent 面板页签（右侧侧栏） */
         .agent-tabs { display:flex; gap:2px; border-bottom:1px solid #21262d; margin-bottom:8px; }
         .agent-tabs a { flex:1; text-align:center; padding:6px 0; color:#8b949e; cursor:pointer; font-size:12px; border-bottom:2px solid transparent; }
@@ -617,7 +623,7 @@
         .sr-sample-item .sr-ref-editor { flex:1; min-height:240px; }
         .sr-sample-item .small { margin-top:0; }
 
-        /* ─── 样文库独立页(/samples：分类按钮 + 词条卡 + 编辑器) ─── */
+        /* ─── 样文池独立页(/samples：分类按钮 + 词条卡 + 编辑器) ─── */
         .smp-list { display:grid; grid-template-columns:1fr; gap:12px; margin-top:6px; }  /* 单栏词条 */
         .smp-card { margin:0; }
         .smp-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
