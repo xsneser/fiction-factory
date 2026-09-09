@@ -109,7 +109,7 @@ async def main():
                           "fetch_book", "fetch_novel", "fetch_webnovel", "discover_hot", "list_rankings",
                           "list_crawled_novels", "read_crawled_novel", "extract_state", "ingest_library_assets",
                           "save_chapter_text", "save_plot_draft", "save_outlines", "save_book_meta",
-                          "get_writing_context", "get_story_state", "get_pen_style", "add_style_rule", "delete_style_rule",
+                          "prepare_plot_run", "get_story_state", "get_pen_style", "add_style_rule", "delete_style_rule",
                           "add_style_sample", "delete_style_sample", "list_style_samples", "get_style_sample"):
                     check(f"工具 {t} 在列", t in names)
 
@@ -124,7 +124,7 @@ async def main():
                                     {"book_id": bid, "outlines": [{"id": "outline_0001", "name": "开篇",
                                                                    "start_chapter": 1, "end_chapter": 30}],
                                      "plots": [{"id": "plot_0001", "name": "穿越开局", "outline_id": "outline_0001",
-                                                "cover_beats": 6, "words": 1400}],
+                                                "cover_beats": 6, "words": 1400, "roles": ["王小明"]}],
                                      "validate": False})
                 check("save_outlines OK", r.get("ok") and r.get("outlines") == 1,
                       f"{r}")
@@ -148,12 +148,16 @@ async def main():
                 check("save_outlines 保留 cover_beats/words",
                       _find_val(sl, "words", 1400) and _find_val(sl, "cover_beats", 6),
                       "情节段 words=1400/cover_beats=6 应落库")
-                ctx = await call_json(session, "get_writing_context", {"book_id": bid})
-                sc = (ctx.get("style_card") or "")
-                check("get_writing_context style_card 非空（无笔名也注入默认笔名精简卡）",
+                # Plot-Run 写作入口要求 ready；冒烟直建绕过 UI 确认，故此处模拟用户确认。
+                tl_ready = bm.load_storyline(bid)
+                tl_ready.phase = "ready"
+                bm.save_storyline(bid, tl_ready)
+                ctx = await call_json(session, "prepare_plot_run", {"book_id": bid})
+                sc = ((ctx.get("style") or {}).get("card") or "")
+                check("prepare_plot_run style card 非空（无笔名也注入默认笔名精简卡）",
                       isinstance(sc, str) and len(sc) > 20 and "笔名" in sc, f"{len(sc)} 字符")
-                cp = (ctx.get("plot_run") or {}).get("cast_pack") or {}
-                check("get_writing_context plot_run.cast_pack 分级包(主角/出场/提及)",
+                cp = ctx.get("cast") or {}
+                check("prepare_plot_run cast 分级包(主角/出场/提及)",
                       isinstance(cp.get("protagonists"), list) and len(cp.get("protagonists")) >= 1
                       and (cp.get("protagonists")[0].get("name") or "") == "王小明"
                       and isinstance(cp.get("active"), list) and isinstance(cp.get("referenced"), list),

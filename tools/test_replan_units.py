@@ -30,53 +30,41 @@ def check(name, cond, detail=""):
 
 
 def test_flow_orchestration() -> str:
-    """run_dsh_flow 分支验收：自动/confirm/无标记 都只产 1 个 done、链数正确。"""
+    """run_dsh_flow 分支验收（R7 FSM 模型）：
+
+    - write 意图 → _writer_fsm：带书号时首个子 run 收「归一化薄续写任务」（无聊天历史、无任何工具名，
+      杜绝任务里出现 write profile 之外的工具名）；子 run 若未提交任何 Plot → 恰 1 error + 1 done。
+    - 非 write（闲聊）→ 单 spawn、1 done、原样转发回复。
+    """
     import libraries.dsh_bridge as B
 
     real = B.run_dsh_task
     calls = []
 
-    def fake_run(task, history=None, debug=False):
-        calls.append(task or "")
-        t = task or ""
-        if "[系统自动触发续规划]" in t:
-            evs = [{"type": "tool_result", "name": "drive_ui", "ok": True},
-                   {"type": "reply", "content": "已暂存预览 pv_x。"}]
-        elif "[系统自动续写]" in t:
-            evs = [{"type": "reply", "content": "继续写作完成。"}]
-        elif "写下一章" in t:
-            evs = [{"type": "reply", "content": "写完了。\n[NEED_REPLAN] book_id=book_007 reason=PLOTS_LOW"}]
-        else:
-            evs = [{"type": "reply", "content": "普通回复。"}]
-        evs = evs + [{"type": "done"}]
-        for e in evs:
+    def fake_run(task, history=None, debug=False, **kw):
+        calls.append((task or "", history))
+        for e in [{"type": "reply", "content": "写完了。"}, {"type": "done"}]:
             yield dict(e)
 
     B.run_dsh_task = fake_run
-    import libraries.replan_service as RS
-    import libraries.planning_state as PS
-    _cp, _lp = RS.commit_replan_preview, PS.load_replan_preview
-    committed = []
-    RS.commit_replan_preview = lambda *a, **k: (committed.append(a) or {"ok": True})
-    PS.load_replan_preview = lambda bid: {"preview_id": "pv_x", "expected_revision": 1}
     try:
-        # auto：写(marker)→replan→commit→resume，共 3 次 spawn，恰好 1 done
-        calls.clear(); committed.clear()
-        evs = list(B.run_dsh_flow("写下一章", policy="auto"))
+        # write：带书号 → 首个子 run 收归一化任务；fake 无 plot_run_changed → 子 run 未提交 = 真实失败路径
+        calls.clear()
+        evs = list(B.run_dsh_flow("继续写 book_042", policy="auto"))
         if sum(1 for e in evs if e.get("type") == "done") != 1:
-            return f"auto done 数≠1: {[e.get('type') for e in evs]}"
-        if len(calls) != 3 or not committed:
-            return f"auto 链数不对 calls={len(calls)} committed={bool(committed)}"
-        if not any(e.get("type") == "reply" and "续规划已自动提交" in (e.get("content") or "")
-                   for e in evs):
-            return "auto 缺 orchestrator 状态回复"
-        # confirm：写(marker)→replan 停，共 2 次 spawn、不 commit、1 done
-        calls.clear(); committed.clear()
-        evs2 = list(B.run_dsh_flow("写下一章", policy="confirm"))
-        if sum(1 for e in evs2 if e.get("type") == "done") != 1 or committed or len(calls) != 2:
-            return f"confirm 分支不对 done={sum(1 for e in evs2 if e.get('type')=='done')} " \
-                   f"committed={bool(committed)} calls={len(calls)}"
-        # 无标记：1 次 spawn、1 done、原样转发回复
+            return f"write→FSM done 数≠1: {[e.get('type') for e in evs]}"
+        if sum(1 for e in evs if e.get("type") == "error") != 1:
+            return "write 子 run 未提交应恰 1 error"
+        if len(calls) != 1:
+            return f"writer spawn 数≠1: {len(calls)}"
+        t, h = calls[0]
+        if "book_042" not in t or "当前 Plot" not in t or h is not None:
+            return f"首个子 run 未归一化薄任务: task={t!r} hist={h}"
+        for tool in ("prepare_plot_run", "save_plot_draft", "get_pen_style",
+                     "save_chapter_text", "chapter_quality_gate"):
+            if tool in t:
+                return f"子 run 任务不应含工具名 {tool}: {t!r}"
+        # 无标记（非 write）：1 次 spawn、1 done、原样转发回复
         calls.clear()
         evs3 = list(B.run_dsh_flow("闲聊一句", policy="auto"))
         if sum(1 for e in evs3 if e.get("type") == "done") != 1 or len(calls) != 1:
@@ -84,7 +72,6 @@ def test_flow_orchestration() -> str:
         return ""
     finally:
         B.run_dsh_task = real
-        RS.commit_replan_preview, PS.load_replan_preview = _cp, _lp
 
 
 def main():

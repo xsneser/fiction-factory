@@ -286,7 +286,12 @@ def _write_runtime_overlay(timeout_ms: int = 600000, mcp_profile: str = "") -> s
     cwd = _ROOT.replace(os.sep, "/")   # YAML 用正斜杠，与模板一致
     # persona 每行缩进 6 空格（YAML `>-` 折叠标量的块缩进），经 {persona_block} 值替换插入 f-string——
     # 值内 {{model}}/{{cwd}} 不会被 f-string 二次解析，保持字面供 dsh 插值。
-    persona_block = "\n".join("      " + ln for ln in _PERSONA.strip().splitlines())
+    is_writer = mcp_profile == "write"
+    writer_persona = """You are a Plot Writer. Use only the two provided NovelEngine MCP tools.
+Prepare exactly one Plot, write it, save it once, and stop. The server owns all routing and planning."""
+    persona_block = "\n".join("      " + ln for ln in (writer_persona if is_writer else _PERSONA).strip().splitlines())
+    instruction_candidates = "[]" if is_writer else "['NOVEL_AGENT.md']"
+    instruction_budget = "0" if is_writer else "20000"
     yaml_text = (
         "# dsh 运行期 overlay（dsh_bridge 生成）—— 强制长工具超时 + 事件流 runner。\n"
         "# 注意：dsh patch 对 id-targeted entry 整体替换 config，必须给全；\n"
@@ -305,11 +310,11 @@ def _write_runtime_overlay(timeout_ms: int = 600000, mcp_profile: str = "") -> s
         (f", '--profile', '{mcp_profile}'" if mcp_profile else "") + "]\n"
         f"    cwd: '{cwd}'\n"
         f"    toolCallTimeoutMs: {timeout_ms}\n"
-        "# workspace instructions：只注入小说写作指令（NOVEL_AGENT.md），不注入给 Claude Code 的工程 CLAUDE.md\n"
+        "# Writer 不接收全局 NOVEL_AGENT；非 Writer 保持原开发/路由指令。\n"
         "- id: agent-instructions\n"
         "  config:\n"
-        "    maxBytes: 20000\n"
-        "    instructionFileCandidates: ['NOVEL_AGENT.md']\n"
+        f"    maxBytes: {instruction_budget}\n"
+        f"    instructionFileCandidates: {instruction_candidates}\n"
         "    localInstructionFileCandidates: []\n"
         "# 系统提示词：persona + 关运行时快照（沙箱/审批对纯 MCP 小说 agent 无意义，对应工具已禁）\n"
         "- id: system-prompt\n"
@@ -333,6 +338,10 @@ def _write_runtime_overlay(timeout_ms: int = 600000, mcp_profile: str = "") -> s
             "- id: tool-result-pruner\n"
             "  disabled: true\n"
         )
+    if is_writer:
+        # Writer 不可联网、不可读取 skill catalog 或进入计划模式。
+        for plugin in ("tool-web", "web", "web-search-deepseek", "tool-skill", "skill", "tool-plan", "plan-mode"):
+            yaml_text += f"- id: {plugin}\n  disabled: true\n"
     os.makedirs(os.path.dirname(_OVERLAY_PATH), exist_ok=True)
     with open(_OVERLAY_PATH, "w", encoding="utf-8") as f:
         f.write(yaml_text)
@@ -617,6 +626,10 @@ def _domain_event_from_tool(name, args, msg) -> dict | None:
                 ev["chapter"] = obj["chapter"]
             if "plot_id" not in ev and obj.get("plot_id"):
                 ev["plot_id"] = obj["plot_id"]
+            if obj.get("book_id"):
+                ev["book_id"] = obj["book_id"]
+            if obj.get("flow_id"):
+                ev["flow_id"] = obj["flow_id"]
     except Exception:
         pass
     return ev
@@ -725,7 +738,8 @@ def _map_dsh_event(evt: dict, pending: dict):
         yield {"type": "done"}
 
 
-def run_dsh_task(task: str, history: list | None = None, debug: bool = False):
+def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
+                 flow_id: str = "", child_run_id: str = ""):
     """跑一次 dsh headless 任务，实时产出 SSE 事件 dict。
 
     事件序列（由 events-runner 的 NDJSON 流实时驱动）：tool_call / tool_result /
@@ -779,6 +793,10 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False):
         try:
             ensure_proxy()   # 保证本地 token 代理(58082)已监听，dsh 的 LLM 调用才能走它计 token
             env = {**os.environ, "DEEPSEEK_BASE_URL": "http://127.0.0.1:58082"}
+            if flow_id:
+                env["NOVEL_WRITE_FLOW_ID"] = flow_id
+            if child_run_id:
+                env["NOVEL_WRITE_CHILD_RUN_ID"] = child_run_id
             if debug:
                 # 调试模式：通知 events-runner 把每次 LLM 调用的提示词/MCP工具/返回JSON emit 成 llm/call；
                 # 完整载荷写 storage/debug-prompts/<seq>.json（SSE 只发裁剪预览，前端按需 fetch）。
@@ -885,7 +903,7 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False):
 
 # ─── R5：NEED_REPLAN 交接 + 自动 replan 编排（修订 1）───
 #
-# write run（profile=write，无 replan 工具）在 get_writing_context 读到
+# write run（profile=write，无 replan 工具）在 prepare_plot_run 读到
 # planning.boundary.needs_replan 且本 run 无更多可写 plot 时，不得越权调 replan 工具，
 # 而是在最终回复末尾输出一行机器可读交接：
 #     [NEED_REPLAN] book_id=<id> reason=<PLOTS_LOW;WORDS_LOW>
@@ -953,6 +971,200 @@ def _annotated_reply(content: str) -> dict:
     return {"type": "reply", "content": (text + "\n\n" + note) if text else note}
 
 
+def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None):
+    """一个父 Flow 调度多个独立 Writer 子进程；模型从不决定下一状态。
+
+    每轮先从磁盘草稿状态判定动作（含首轮，避免满章草稿 / 规划边界先空跑一个注定无法提交的
+    Writer 子 run 而被误报「未完成有效 Plot 提交」）：满章草稿→服务端收章、无剩余可写 Plot
+    且到边界→续规划；仅确有可写 Plot 时才 spawn 一次性 Writer 子 run。Writer 子 run 一律收
+    归一化薄任务（工具面只有 prepare_plot_run/save_plot_draft），不喂整段用户长文本，杜绝任务
+    里出现其工具面外工具名导致 unknown-tool 停摆。
+    """
+    from agent_tools import _draft_read, finalize_draft_chapter, load_tl
+    from libraries.planning_state import detect_story_boundary, load_planning_state
+    from libraries.write_flow import (chapter_status, next_action, load_flow, transition, release_lease,
+                                      start_flow, active_flow_id)
+    import re
+
+    pol = _replan_policy(policy)
+
+    def _book_in(text: str) -> str:
+        m = re.search(r"\b(book[_-][A-Za-z0-9_-]+)\b", text or "", re.I)
+        return m.group(1) if m else ""
+
+    def _plot_task(bid: str) -> str:
+        # 归一化续写任务：只说「写当前 Plot」，不塞任何流程/工具名。
+        return f"[服务端续写] 继续书 {bid} 的当前 Plot，写完后停止。"
+
+    def _flow_for(bid: str, chapter_num: int = 1) -> str:
+        """取已活跃 Flow；没有则补建一个（供收章/续规划/审计有落点）。"""
+        if not bid:
+            return ""
+        try:
+            return active_flow_id(bid) or start_flow(bid, chapter_num)["flow_id"]
+        except Exception:
+            return ""
+
+    def _evaluate(bid: str):
+        """按磁盘草稿返回 (status, action)；book 未知或故事线缺失 → (None, None)。"""
+        if not bid:
+            return None, None
+        tl = load_tl(bid)
+        if tl is None:
+            return None, None
+        draft = _draft_read(bid) or {}
+        ps = load_planning_state(bid, tl, None)
+        drafted = {x.get("plot_id") for x in draft.get("bridges") or []}
+        remaining = sum(1 for p in tl.plots if not getattr(p, "written_chapter", 0) and p.id not in drafted)
+        boundary = detect_story_boundary(
+            written_until_word=int(draft.get("words") or 0),
+            committed_until_word=int(ps.get("committed_until_word") or 0),
+            remaining_plots=remaining,
+            words_per_batch=int(tl.words_per_chapter or 3000),
+            storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+            last_replan=ps.get("last_replan") or {})
+        status = chapter_status(bid, tl, draft, needs_replan=bool(boundary.get("needs_replan")))
+        return status, next_action(status)
+
+    book_id = _book_in(task)
+    flow_id = active_flow_id(book_id) if book_id else ""
+    child_no = 0
+    while True:
+        status, action = _evaluate(book_id)
+        # ── 收章：草稿已满但尚未落盘为章节（含中断恢复，不必先 spawn 写手）──
+        if action == "COMMITTING_CHAPTER":
+            if not flow_id:
+                flow_id = _flow_for(book_id, int((_draft_read(book_id) or {}).get("chapter_num") or 1))
+            try:
+                transition(book_id, flow_id, "COMMITTING_CHAPTER")
+                committed = finalize_draft_chapter(book_id, flow_id)
+                yield {"type": "domain", "name": "chapter_changed", "book_id": book_id, "flow_id": flow_id,
+                       "chapter": committed.get("chapter"), "phase": "DONE"}
+                yield {"type": "reply", "content": f"第{committed.get('chapter')}章已由服务端提交并完成质量门禁。"}
+            except Exception as exc:
+                try:
+                    transition(book_id, flow_id, "FAILED", error=str(exc))
+                except Exception:
+                    pass
+                yield {"type": "error", "message": f"章节提交失败：{exc}"}
+            yield {"type": "done"}
+            return
+        # ── 续规划：无剩余可写承诺 Plot 且到达规划边界 ──
+        if action == "REPLANNING":
+            if not flow_id:
+                flow_id = _flow_for(book_id)
+            try:
+                transition(book_id, flow_id, "REPLANNING", replan_state={"reason": status["reason"]})
+            except Exception:
+                pass
+            if pol == "confirm":
+                try:
+                    transition(book_id, flow_id, "WAIT_CONFIRM")
+                except Exception:
+                    pass
+                yield {"type": "reply", "content": "本章尚未达到目标字数且已承诺 Plot 用尽；已生成续规划等待确认。"}
+                yield {"type": "done"}
+                return
+            # Planner 仍是独立 profile；只让它按局部 state 产出下一小段 committed Plot。
+            ok = True
+            for evt in run_dsh_task(_replan_phase_task(book_id, status["reason"], pol), None, debug=debug):
+                if evt.get("type") == "error": ok = False
+                if evt.get("type") != "done": yield evt
+            if not ok:
+                try:
+                    transition(book_id, flow_id, "FAILED", error="planner_failed")
+                except Exception:
+                    pass
+                yield {"type": "done"}
+                return
+            try:
+                from libraries.replan_service import commit_replan_preview
+                from libraries.planning_state import load_replan_preview
+                preview = load_replan_preview(book_id) or {}
+                if not commit_replan_preview(book_id, preview.get("preview_id"),
+                                             int(preview.get("expected_revision", -1) or -1)).get("ok"):
+                    raise RuntimeError("续规划提交失败")
+            except Exception as exc:
+                try:
+                    transition(book_id, flow_id, "FAILED", error=str(exc))
+                except Exception:
+                    pass
+                yield {"type": "error", "message": str(exc)}
+                yield {"type": "done"}
+                return
+            try:
+                transition(book_id, flow_id, "PREPARING_PLOT")
+            except Exception:
+                pass
+            continue   # 故事线已前移 → 回顶部应出现可写 Plot
+        if action == "FAILED":
+            # plot_exhausted_without_replan / 不变量：没有可写 Plot 且未满足续规划条件
+            if flow_id:
+                try:
+                    transition(book_id, flow_id, "FAILED", error="chapter_status_invariant")
+                except Exception:
+                    pass
+                release_lease(book_id, flow_id)
+            yield {"type": "error",
+                   "message": "章节状态不变量失败：没有可写 Plot 且未满足续规划条件。"}
+            yield {"type": "done"}
+            return
+        # ── 写一个 Plot：PREPARING_PLOT；book 未知时这是探路子 run（借其 domain 事件拿书与 flow）──
+        child_no += 1
+        child_id = f"writer:{child_no}"
+        c_task = _plot_task(book_id) if book_id else task
+        c_hist = None if book_id else history
+        saved = None
+        child_tail = ""
+        for evt in run_dsh_task(c_task, c_hist, debug=debug, flow_id=flow_id, child_run_id=child_id):
+            if evt.get("type") == "domain" and evt.get("name") == "plot_run_changed":
+                if evt.get("flow_id"):
+                    flow_id = evt["flow_id"]
+                saved = evt
+            if evt.get("type") == "reply":
+                child_tail = evt.get("content") or ""
+            if evt.get("type") != "done":
+                yield evt
+        if not book_id:
+            # 探路子 run：从它的 domain 事件 / 任务文本恢复书与 flow
+            book_id = (saved or {}).get("book_id") or _book_in(task)
+            if not flow_id and book_id:
+                flow_id = active_flow_id(book_id)
+        # SSE/domain 只是 UI 信号，草稿账本才是提交事实。若子进程已写盘但 domain 事件在桥接层
+        # 丢失，按草稿最后一桥恢复，绝不把已保存的 Plot 误报为失败。
+        if book_id and (not saved or not flow_id):
+            recovered_draft = _draft_read(book_id) or {}
+            if recovered_draft.get("bridges"):
+                if not flow_id:
+                    flow_id = _flow_for(book_id, int(recovered_draft.get("chapter_num") or 1))
+                last = (recovered_draft.get("bridges") or [])[-1]
+                saved = {"book_id": book_id, "flow_id": flow_id, "plot_id": last.get("plot_id"),
+                         "recovered_from_draft": True}
+                yield {"type": "domain", "name": "write_flow_recovered", "book_id": book_id,
+                       "flow_id": flow_id, "phase": "EVALUATING"}
+        if not saved or not flow_id or not book_id:
+            # 已判定「有可写 Plot」（或探路）却无任何提交 → 真实 Writer 失败，带上书号与子 run 尾回复便于排查
+            msg = "Writer 未完成有效 Plot 提交；流程已停止。"
+            if book_id:
+                msg += f" book={book_id}"
+            tail = child_tail.strip()
+            if tail:
+                msg += " " + tail[:200]
+            yield {"type": "error", "message": msg}
+            yield {"type": "done"}
+            return
+        # 子 Run 是 parent Flow 的可恢复审计记录，前端可按 flow 展开显示。
+        flow = load_flow(book_id, flow_id) or {}
+        children = list(flow.get("child_runs") or [])
+        children.append({"child_run_id": child_id, "kind": "plot", "plot_id": saved.get("plot_id"),
+                         "completed_at": time.time()})
+        try:
+            transition(book_id, flow_id, "EVALUATING", child_runs=children)
+        except Exception:
+            pass
+        # 回到顶部：按新草稿状态决定收章 / 续写 / 续规划
+
+
 def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
                  policy: str | None = None):
     """带 NEED_REPLAN 自动交接的多阶段 dsh 流（R5）。
@@ -961,6 +1173,9 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
     交接则链式跑 replan（auto：提交后续写；confirm：停在预览等 UI 确认）。
     子 run 的 done 一律吞掉，全程只发一个尾部 done。
     """
+    if _profiles_enabled() and _task_tool_profile(task) == "write":
+        yield from _writer_fsm(task, history, debug, policy)
+        return
     import logging
     _log_local = logging.getLogger("dsh_bridge.flow")
     pol = _replan_policy(policy)
