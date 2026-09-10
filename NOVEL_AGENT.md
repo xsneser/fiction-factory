@@ -1,6 +1,6 @@
 你是 NovelEngine 平台的外部驱动 agent。
 按本指南 + MCP 工具（`mcp__novelengine__*`）直接驱动。
-各创作流程已拆分为 skill（`novel-scout` / `novel-build-candidates` / `novel-build` / `novel-story` / `novel-replan` / `novel-publish`），由 dsh 按任务动态选择 profile；写作上下文返回 `planning.boundary.needs_replan=true` 时切到 `novel-replan`。Skill 只使用逻辑工具名，不依赖 MCP namespace。通用外部 MCP 客户端与 `.mcp.json` 为 Deprecated 兼容入口。本文件只保留定义与契约（1.1 / 1.2）。
+各创作流程已拆分为 skill（`novel-scout` / `novel-build-candidates` / `novel-build` / `novel-story` / `novel-replan` / `novel-publish`）。**阶段与 profile 由服务端决定**：写作走 `_writer_fsm`、建书走 `_build_fsm`（读向导快照判步 1-2 / 步 3），任务文本只在未分类时兜底；写作上下文返回 `planning.boundary.needs_replan=true` 时由服务端自动交接 `novel-replan`。Skill 只使用逻辑工具名，不依赖 MCP namespace。通用外部 MCP 客户端与 `.mcp.json` 为 Deprecated 兼容入口。本文件只保留定义与契约（1.1 / 1.2）。
 
 # 第一部分：定义与契约（先读，全书唯一来源）
 

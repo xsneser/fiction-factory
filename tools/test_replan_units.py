@@ -111,7 +111,9 @@ def main():
     os.environ.pop("ALLOW_UNSCOPED_AGENT_TOOLS", None)
     os.environ.pop("AGENT_TOOL_PROFILES", None)
 
-    # 2) 分类（含未分类→inspect，绝不回退空/全量）
+    # 2) 分类（只读问句→inspect；未分类→哨兵。两端都绝不回退空/全量：空 profile 会让
+    #    MCP 侧 filter_registry("") fail-open 到全量 45，未分类的 run 由 _resolve_run_profile
+    #    收敛到只读面 + run_dsh_flow 显式报错）
     cases = {
         "写下一章": "write", "继续": "write", "继续写第5章": "write", "续写": "write",
         "帮我往下想一段": "replan", "续规划": "replan", "扩弧": "replan",
