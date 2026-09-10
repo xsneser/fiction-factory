@@ -1438,6 +1438,18 @@ def _unroutable_hint() -> str:
             "若只是想问状态，直接问「查看/状态/进度」——那条是只读的，照常可用。")
 
 
+def _stage_progressed(stage: dict) -> bool:
+    """快照是否显示该阶段已出产物（用于把连败计数归零）。
+
+    **注意不要拿它当「已完成」判据**：步 3 的 `has_outline` 可能是向导自己的
+    `fill_world` 兜底骨架（不查 profile 就能写），本事件里正是它让人误以为故事线已生成。
+    所以只用于记账归零，绝不据此跳过真正的生成。
+    """
+    if stage.get("phase") == "BUILDING":
+        return bool(stage.get("has_world") or stage.get("has_outline"))
+    return bool(stage.get("picked"))
+
+
 def _build_fsm(task: str, history: list | None, debug: bool):
     """建书父 Flow：读向导快照定阶段 → 起一个对应 profile 的子 run → 停下等用户。
 
@@ -1486,12 +1498,18 @@ def _build_fsm(task: str, history: list | None, debug: bool):
         target = "BUILDING" if prof == "build" else "STAGING"
     child_task = _build_step3_task() if target == "BUILDING" else _build_candidates_task()
 
-    # 连败记账：同一阶段重跑（上一轮没换来阶段推进）才累加，换阶段即归零；
-    # 超过上限**显式失败**，不无限烧 LLM 会话。
-    flow = load_flow(session_id) if session_id else None
+    # 连败记账：同一阶段重跑**且快照显示还没出产物**才累加；换阶段、或该阶段已出产物
+    # 都归零。归零那半条是关键——用户反复「再改改」是合法迭代，不能因为同一阶段被
+    # 请求多次就判死；真正要拦的是「跑完什么都没换来」的空转。
+    #
+    # 只在快照**新鲜**时记账：过期快照看不到产物，无法判进展，照记会误报失败
+    # （向导开着不动 >30min，快照即过期）。STALE 分支一律不记账。
+    ledger = bool(session_id) and bool(stage.get("fresh"))
+    flow = load_flow(session_id) if ledger else None
     attempts = int((flow or {}).get("attempts") or 0)
-    attempts = attempts + 1 if (flow or {}).get("resume_point") == target else 1
-    if session_id and attempts > MAX_BUILD_ATTEMPTS:
+    same_stage = (flow or {}).get("resume_point") == target
+    attempts = attempts + 1 if (same_stage and not _stage_progressed(stage)) else 1
+    if ledger and attempts > MAX_BUILD_ATTEMPTS:
         try:
             transition(session_id, "FAILED", attempts=attempts, error="no_progress")
         except Exception as exc:  # noqa: BLE001
@@ -1501,7 +1519,7 @@ def _build_fsm(task: str, history: list | None, debug: bool):
                "请打开「启动新书」向导自查页面状态（或手动填写步 3），再回来继续。"}
         yield {"type": "done"}
         return
-    if session_id:
+    if ledger:
         try:
             if not flow:
                 start_flow(session_id, mode=action.lower())
@@ -1518,7 +1536,7 @@ def _build_fsm(task: str, history: list | None, debug: bool):
         if evt.get("type") == "error":
             ok = False
         yield evt
-    if session_id:
+    if ledger:
         try:
             append_child_run(session_id, target, kind=prof, ok=ok)
         except Exception as exc:  # noqa: BLE001

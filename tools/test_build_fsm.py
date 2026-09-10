@@ -134,7 +134,33 @@ def main():
         check("换阶段后计数归零", BF.load_flow(SID)["attempts"] == 1,
               f"attempts={BF.load_flow(SID)['attempts']}")
 
-        # ── 9) UNROUTABLE 显式指引（run_dsh_flow 层）──
+        # ── 9) 合法迭代不该被判死：同阶段重复请求但快照显示已出产物 → 计数归零、照常起 run ──
+        # （回归：原先只看 resume_point，用户反复「再改改」会在第 3 次被误判空转而 FAILED）
+        path = BF.flow_path(SID)
+        if path.exists():
+            path.unlink()
+        for i in range(B.MAX_BUILD_ATTEMPTS + 1):
+            evs = run(STEP3_TASK, _snap(cur=3, has_world=True, has_outline=True))
+            check(f"迭代第 {i + 1} 轮仍起 run（已出产物→归零）", len(calls) == 1)
+            check(f"迭代第 {i + 1} 轮不误报失败",
+                  not any(e.get("type") == "error" for e in evs),
+                  f"types={[e.get('type') for e in evs]}")
+
+        # ── 10) 快照过期（看不到产物）→ 不记账、不误报失败 ──
+        path = BF.flow_path(SID)
+        if path.exists():
+            path.unlink()
+        stale = _snap(cur=3)
+        stale["updated_at"] = "2026-01-01 00:00:00"
+        for i in range(B.MAX_BUILD_ATTEMPTS + 1):
+            evs = run(STEP3_TASK, stale)
+            check(f"过期快照第 {i + 1} 轮仍起 run（不记账）", len(calls) == 1)
+            check(f"过期快照第 {i + 1} 轮不误报失败",
+                  not any(e.get("type") == "error" for e in evs),
+                  f"types={[e.get('type') for e in evs]}")
+        check("过期快照不建 Flow 记录（无进展可观测）", not BF.flow_path(SID).exists())
+
+        # ── 11) UNROUTABLE 显式指引（run_dsh_flow 层）──
         B.run_dsh_task = real_run
         evs = list(B.run_dsh_flow("今天天气不错"))
         check("未分类不静默回落只读面",
