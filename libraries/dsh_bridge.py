@@ -351,6 +351,16 @@ Prepare exactly one Plot, write it, save it once, and stop. The server owns all 
         for plugin in ("tool-web", "web", "web-search-deepseek", "tool-skill", "skill", "skill-filesystem",
                        "tool-plan", "plan-mode"):
             yaml_text += f"- id: {plugin}\n  disabled: true\n"
+    elif mcp_profile and not _skill_text_for_profile(mcp_profile):
+        # **没有 skill 注入的 profile**（inspect/style）也关掉 skill 目录：skill 目录由
+        # dsh 自己的 skill 插件发现并注入，不受 profile 约束，于是 agent 会在目录里看到
+        # novel-build 等技能、却被同一 profile 挡在工具面外——「被告知有这本事，却没有这
+        # 工具」，实测就是这么把「大纲生成失败」误导成只读提问的。插件 id 见
+        # `node vendor/dsh-ne/lib/bin.js --profile headless --dump-default-config`；
+        # writer 分支已在生产验证同一组 id。
+        # 注：legacy（mcp_profile=""，显式 debug 逃生）保持原样，不在此列。
+        for plugin in ("tool-skill", "skill", "skill-filesystem"):
+            yaml_text += f"- id: {plugin}\n  disabled: true\n"
     os.makedirs(os.path.dirname(_OVERLAY_PATH), exist_ok=True)
     with open(_OVERLAY_PATH, "w", encoding="utf-8") as f:
         f.write(yaml_text)
