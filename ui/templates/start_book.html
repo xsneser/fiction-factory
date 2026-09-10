@@ -342,22 +342,67 @@ var WZ = {
             }
             return;
         }
-        // 步 2「已挑选完毕」→ 交给 agent 继续建书：自动发第二个建书任务（dsh 侧 skill 已于 2026-08-24 删除，agent 用 MCP 直驱），
-        // 步 3 由 agent 分阶段补全世界观 → submit → 弧。取代旧「前端自动跳步 + 一键补全」路径。
+        // 步 2「已挑选完毕」→ 交给 agent 继续建书。
+        //
+        // ⚠️ **顺序是硬要求：先把状态原子落服务端（transition），成功后才派发 agent。**
+        // 2026-09-10 事故：此前先 `agentSendTask`、再在 show(3) 里异步 reportStatus，于是
+        // 服务端 _build_fsm 判阶段时读到的还是 cur=2 → 起了 build-candidates profile 的子 run
+        // （那个工具面没有 set_world/set_outline/set_characters），模型整轮只能做「平台错误恢复」。
+        // 状态没能在服务端落盘就**绝不**启动依赖它的模型——宁可让用户多等几十毫秒。
         if (this.cur === 2 && this._picked && !this._task2Fired) {
             this._task2Fired = true;
             this._agentDriving = true;
-            var task = '请继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」），自主生成填写步 3 内容表单及故事线：挑选弧 → 构建核心矛盾core_conflict → 创建势力 → 挑选情节段 → 创建各势力人物适配 → 补全其余表单 → 评判合理性及阅读吸引力并修改。填完表单后停下，向用户汇报设定概要并等待确认；用户明确确认后再提交建书。'
-                + ' [build_session=' + this.ensureBuildSession() + ']';   // 机器标记：服务端据此把本次任务钉到本向导会话（build_status 是全局单快照）
-            if (typeof window.agentSendTask === 'function') {
-                window.agentSendTask(task, { card: true });
-            } else if (typeof showToast === 'function') {
-                showToast('Agent 面板未就绪，请刷新页面后点「已挑选完毕」继续', 'error');
-                this._task2Fired = false;
-                this._agentDriving = false;
-            }
+            var self = this;
+            this.transitionTo(3).then(function(ok) {
+                if (!ok) {
+                    self._task2Fired = false;    // 允许用户再点一次重试
+                    self._agentDriving = false;
+                    if (typeof showToast === 'function')
+                        showToast('状态没能在服务端落盘，已取消本次建书；请再点一次「已挑选完毕」', 'error');
+                    return;
+                }
+                self.show(3);
+                var task = '请继续建这本新书（步 2 已选定候选「' + (self.state.title || '') + '」），自主生成填写步 3 内容表单及故事线：挑选弧 → 构建核心矛盾core_conflict → 创建势力 → 挑选情节段 → 创建各势力人物适配 → 补全其余表单 → 评判合理性及阅读吸引力并修改。填完表单后停下，向用户汇报设定概要并等待确认；用户明确确认后再提交建书。'
+                    + ' [build_session=' + self.ensureBuildSession() + ']';   // 机器标记：服务端据此把本次任务钉到本向导会话（build_status 是全局单快照）
+                if (typeof window.agentSendTask === 'function') {
+                    window.agentSendTask(task, { card: true });
+                } else if (typeof showToast === 'function') {
+                    showToast('Agent 面板未就绪，请刷新页面后点「已挑选完毕」继续', 'error');
+                    self._task2Fired = false;
+                    self._agentDriving = false;
+                }
+            });
+            return;   // 切步与派发都在 transition 成功之后进行
         }
         this.show(this.cur + 1);
+    },
+
+    /* 阶段转场：把 step + 表单事实**原子**写进服务端 canonical 记录
+       （POST /api/build/transition）。返回 Promise<bool>；false = 未落盘，调用方不得派发 agent。
+       服务端记录才是阶段权威——build_status.json 只是 UI 现状快照。 */
+    transitionTo: function(step) {
+        var body = {
+            build_session_id: this.ensureBuildSession(),
+            step: step,
+            // idea/标签读 DOM 而非 state（agentBuild() 会把 state.tags 清空而 chip 仍是 .on）
+            idea: (this.el('wz-idea') ? this.el('wz-idea').value.trim() : ''),
+            tags: Array.prototype.slice.call(document.querySelectorAll('.chip.on'))
+                    .map(function(b) { return b.dataset.tag; }),
+            pen_name: (this.state && this.state.pen_name) || '',
+            selected_candidate: (this.state && this.state.selected_candidate) || null
+        };
+        var self = this;
+        try {
+            return fetch('/api/build/transition', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            }).then(function(r) {
+                return r.json().catch(function() { return { ok: false }; });
+            }).then(function(d) {
+                if (d && d.ok) { self._buildRevision = d.revision; return true; }
+                return false;
+            }).catch(function() { return false; });
+        } catch (e) { return Promise.resolve(false); }
     },
     prev: function() { this.show(this.cur - 1); },
 
@@ -461,6 +506,18 @@ var WZ = {
         this._worldFilled = false;   // 新候选方向 → 步 3 按新种子重新补全
         this._outline_picks = null;
         this._task2Fired = false;   // 重选候选后允许再次触发第二个建书任务
+        // 选择落服务端（canonical 记录）——「用户选了什么」不再只活在 window 状态里，
+        // 服务端据此在步 3 读回权威上下文（而不是把整段聊天转发给模型）。失败不阻断选择本身。
+        this.state.selected_candidate = { title: c.title || '',
+                                          one_liner: c.one_liner || '',
+                                          world_brief: c.world_brief || '' };
+        try {
+            fetch('/api/build/pick', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ build_session_id: this.ensureBuildSession(),
+                                       candidate: this.state.selected_candidate })
+            }).catch(function() {});
+        } catch (e) {}
         if (typeof showToast === 'function') showToast('已选中：' + c.title + '，点「已挑选完毕」交给 Agent 建书', 'success');
     },
     // 候选卡渲染（set_candidates 整体替换 / add_candidate 增量追加共用）：只渲染不选中，
@@ -1157,6 +1214,10 @@ var WZ = {
         this.reportStatus();
         this.ensureBuildSession();
         this.collect();
+        // canonical 草稿优先：带上会话 id + revision，服务端命中即用**它校验过的草稿**建书
+        // （表单只是投影）；手填模式（无草稿/无 revision）服务端自动回退表单 payload。
+        this.state.build_session_id = this.ensureBuildSession();
+        if (this._buildRevision != null) this.state.build_revision = this._buildRevision;
         var btn = this.el('wz-submit');
         btn.disabled = true; btn.textContent = '⏳ 创建中…';
         var self = this;
@@ -1217,8 +1278,10 @@ var WZ = {
     },
     // 上报建书状态到后端（storage/build_status.json，供 MCP 工具 get_build_status 读）
     reportStatus: function() {
+        // 返回 Promise：调用方可 await 它来保证「状态已到服务端」再决定下一步
+        // （步 2→3 的转场就是靠这个顺序修掉 2026-09-10 那次「先发任务后上报」的竞态）。
         try {
-            fetch('/api/agent/build-status', {
+            return fetch('/api/agent/build-status', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     cur: this.cur,
@@ -1244,8 +1307,8 @@ var WZ = {
                                     && this.state._outline_data.outlines.length),
                     submit_error: this.submitError || ''
                 })
-            }).catch(function() {});
-        } catch (e) {}
+            }).catch(function() { return null; });
+        } catch (e) { return Promise.resolve(null); }
     },
     restore: function() {
         var raw;

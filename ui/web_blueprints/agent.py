@@ -134,10 +134,97 @@ def agent_token_usage_clear():
 
 @bp.route("/api/agent/build-status", methods=["POST"])
 def agent_build_status():
-    """浏览器上报建书向导状态（WZ.reportStatus），写入 storage/build_status.json 供 MCP 工具读取。"""
+    """浏览器上报建书向导状态（WZ.reportStatus），写入 storage/build_status.json 供 MCP 工具读取。
+
+    ⚠️ 这里写的是 **UI 现状快照**（向导当前页、submit_error 原文），**不是阶段权威**——
+    阶段权威在 `libraries/build_draft`（服务端 canonical 记录，只由 /api/build/transition
+    原子推进）。2026-09-10 的事故正是把本快照当阶段判据：前端先发 agent 任务、后上报
+    `cur=3`，服务端读到 `cur=2` 便起了 build-candidates profile（工具面里没有
+    set_world/set_outline），模型整轮只能做平台错误恢复。
+    """
     data = request.get_json(silent=True) or {}
     set_build_status(data)
     return jsonify({"ok": True})
+
+
+@bp.route("/api/build/transition", methods=["POST"])
+def build_transition():
+    """建书阶段转场（**原子**）——阶段权威的唯一写入口。
+
+    body: {build_session_id, step, selected_candidate?, idea?, tags?, pen_name?}
+    返回: {ok, step, revision}
+
+    前端必须在拿到本端点成功响应**之后**才允许派发 agent 任务：状态没落服务端就启动
+    依赖它的模型，是「先发任务后上报」事故的根源，宁可让用户多等几十毫秒。
+    """
+    from libraries import build_draft
+    data = request.get_json(silent=True) or {}
+    sid = str(data.get("build_session_id") or "").strip()
+    if not sid:
+        return jsonify({"ok": False, "error": "build_session_id 缺失"}), 400
+    step = data.get("step")
+    if step is None:
+        return jsonify({"ok": False, "error": "step 缺失"}), 400
+    try:
+        step = int(step)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": f"step 非法: {data.get('step')!r}"}), 400
+
+    # 只透传请求里**确实给了**的字段，避免用 None 覆盖已有值
+    fields = {}
+    for key in ("idea", "tags", "pen_name"):
+        if data.get(key) is not None:
+            fields[key] = data[key]
+    cand = data.get("selected_candidate")
+    if isinstance(cand, dict) and cand.get("title"):
+        # 服务端已有的选择优先（/api/build/pick 才是选择的正式入口）——
+        # 浏览器带的只是「记录还没落过时」的补位，不作权威
+        fields["selected_candidate"] = (build_draft.load(sid).get("selected_candidate")
+                                        or cand)
+    try:
+        rec = build_draft.transition(sid, step=step, **fields)
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "step": rec["step"], "revision": rec["revision"]})
+
+
+@bp.route("/api/build/pick", methods=["POST"])
+def build_pick():
+    """选定候选方向（服务端持久化）——用户点候选卡时调用。
+
+    body: {build_session_id, candidate?: {title, one_liner?, world_brief?}, idx?: int}
+    `idx` 从 canonical 记录里的候选列表解析（候选由 add_candidate/set_candidates 落盘），
+    因此浏览器不再是「用户选了什么」的事实源。选择**不**推进步号（推进走 transition）。
+    """
+    from libraries import build_draft
+    data = request.get_json(silent=True) or {}
+    sid = str(data.get("build_session_id") or "").strip()
+    if not sid:
+        return jsonify({"ok": False, "error": "build_session_id 缺失"}), 400
+    rec = build_draft.load(sid)
+    cand = data.get("candidate")
+    if not (isinstance(cand, dict) and cand.get("title")):
+        cand = None
+        idx = data.get("idx")
+        if idx is not None:
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": f"idx 非法: {data.get('idx')!r}"}), 400
+            cands = rec.get("candidates") or []
+            if not (0 <= idx < len(cands)):
+                return jsonify({"ok": False, "error":
+                                f"idx 越界: {idx}（服务端已有 {len(cands)} 张候选）"}), 400
+            cand = cands[idx]
+    if not cand:
+        return jsonify({"ok": False, "error": "需 candidate 或 idx 之一"}), 400
+    # 服务端已落盘的候选副本优先（add_candidate/set_candidates 存的那份）：浏览器传来的
+    # 只是「哪一张被点了」，快照内容以服务端为准，避免表单/窗口状态改动污染选择事实。
+    stored = {c.get("title"): c for c in (rec.get("candidates") or [])}
+    cand = stored.get(cand.get("title")) or cand
+    rec = build_draft.update(sid, selected_candidate=cand)
+    return jsonify({"ok": True, "revision": rec["revision"],
+                    "selected_candidate": rec["selected_candidate"]})
 
 
 @bp.route("/api/agent/tool-log", methods=["GET"])

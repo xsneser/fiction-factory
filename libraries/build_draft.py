@@ -1,0 +1,188 @@
+"""建书 canonical 记录 — 一次建书的**唯一权威状态**（`storage/build_drafts/<sid>.json`）。
+
+为什么要有这个文件（改前先读，这是踩过坑后的收口）：
+
+1. **阶段权威不能挂在浏览器上**。此前阶段由两处表达：浏览器上报的
+   `storage/build_status.json` 快照 + 任务文本里的自然语言。2026-09-10 实测：用户点
+   「已挑选完毕」时前端**先**发 agent 任务、**后**才上报 `cur=3`，于是 `_build_fsm`
+   读到 `cur=2` → 起了 `build-candidates` profile 的子 run（那个工具面没有
+   set_world/set_outline）→ 模型整轮只能做「平台错误恢复」。
+   现在 `step` 只由这里持有，且只由**服务端端点**（transition）原子推进：前端必须先
+   拿到 transition 成功响应，才允许派发 agent。
+
+2. **不要复用 `storage/build_sessions/<sid>.json`**。那是 `libraries/planning_state.py`
+   的 planning 草稿，且 `attach_build_session` 在建书成功时会 `unlink()` 它
+   （`libraries/build_flow.py` 顶部第 1 条已写明）——两者同文件会互相踩且随建书消失。
+
+3. **与 `build_status.json` 的分工**（两个文件都要有，别合并）：
+   - 本文件 = canonical：step / revision / selected_candidate / draft / 提交结果。
+   - `build_status.json` = 浏览器 UI 现状快照（向导当前页、submit_error 原文），
+     供 `get_build_status` 工具与 `drive_ui` 步门控使用，**不再作阶段判据**。
+
+4. **`draft` 是提交源**（`/books/start` 命中 revision 时用它建书），浏览器表单只是它的
+   UI 投影；手动模式（「跳过，手动设定」）没有 draft，提交回退表单 payload。
+
+并发：三个写者（浏览器端点、MCP 薄工具、提交回写）分属不同进程，故用
+`process_file_lock` 跨进程锁 + `write_json_atomic`，与 `libraries/crawl_progress.py` 同形。
+"""
+from __future__ import annotations
+
+import os
+import time
+
+from core.json_store import process_file_lock, read_json, write_json_atomic
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DIR = os.path.join(_ROOT, "storage", "build_drafts")
+
+# 保留的会话记录数（建书成功不删记录：它是审计线索，只做有界清理）
+MAX_KEPT = 50
+
+# 步号语义：1-2=候选阶段（build-candidates），3=内容构建（build）。
+# 与 dsh_bridge._build_fsm 的 profile 映射一一对应（见 libraries/skill_profile.SKILL_PROFILE_MAP）。
+STEP_TO_PROFILE = {1: "build-candidates", 2: "build-candidates", 3: "build"}
+
+_DEFAULTS = {
+    "session_id": "",
+    "step": 1,                 # 权威步号（服务端 transition 推进）
+    "revision": 0,             # 每次 canonical 变更 +1（CAS：save_build_draft / 提交校验）
+    "idea": "",
+    "tags": [],
+    "pen_name": "",
+    # 候选卡列表（set_candidates 整体替换 / add_candidate 增量追加，服务端副本）
+    "candidates": [],
+    # 用户在步 2 选定的候选快照（服务端持久化，**不依赖浏览器 window 状态**）
+    "selected_candidate": None,
+    # 步 3 内容草稿：{world: {...}, storyline: {...}, characters: [...]}
+    "draft": None,
+    "created": False,
+    "book_id": "",
+    "submit_error": "",
+    "updated_at": "",
+}
+
+
+def _safe_sid(session_id: str) -> str:
+    safe = "".join(c for c in str(session_id or "") if c.isalnum() or c in "-_")
+    if not safe:
+        raise ValueError("build_session_id 不能为空")
+    return safe
+
+
+def path_for(session_id: str) -> str:
+    return os.path.join(_DIR, f"{_safe_sid(session_id)}.json")
+
+
+def _coerce(data: dict) -> dict:
+    """补默认 + 清洗（与 build_status 同形：别把 _DEFAULTS 里的可变对象递出去）。"""
+    out = dict(_DEFAULTS)
+    for k, v in (data or {}).items():
+        if k in _DEFAULTS:
+            out[k] = v
+    out["session_id"] = str(out.get("session_id") or "")
+    out["step"] = int(out.get("step") or 1)
+    out["revision"] = int(out.get("revision") or 0)
+    out["tags"] = [t.strip() for t in (out.get("tags") or []) if isinstance(t, str) and t.strip()]
+    out["pen_name"] = str(out.get("pen_name") or "")
+    out["created"] = bool(out.get("book_id"))
+    out["submit_error"] = str(out.get("submit_error") or "")
+    out["candidates"] = [c for c in (out.get("candidates") or []) if isinstance(c, dict)]
+    if not isinstance(out.get("selected_candidate"), dict):
+        out["selected_candidate"] = None
+    if not isinstance(out.get("draft"), dict):
+        out["draft"] = None
+    return out
+
+
+def load(session_id: str) -> dict:
+    """读 canonical 记录；无记录返回默认（step=1、revision=0）。重复读不消费。"""
+    if not session_id:
+        return dict(_DEFAULTS)
+    try:
+        raw = read_json(path_for(session_id), {}) or {}
+    except Exception:  # noqa: BLE001 —— 坏文件不该让建书流程崩，按无记录处理
+        raw = {}
+    return _coerce(raw)
+
+
+def exists(session_id: str) -> bool:
+    return bool(session_id) and os.path.exists(path_for(session_id))
+
+
+def _prune(keep_name: str) -> None:
+    try:
+        files = sorted((os.path.join(_DIR, f) for f in os.listdir(_DIR) if f.endswith(".json")),
+                       key=os.path.getmtime, reverse=True)
+    except OSError:
+        return
+    for path in files[MAX_KEPT:]:
+        if os.path.basename(path) == keep_name:
+            continue
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def update(session_id: str, *, bump: bool = True, **fields) -> dict:
+    """合并写 canonical 记录（原子）。`bump=False` 时不动 revision。
+
+    只接受 `_DEFAULTS` 内的键，其余静默丢弃——避免调用方把 UI 专用字段混进来。
+    """
+    path = path_for(session_id)
+    os.makedirs(_DIR, exist_ok=True)
+    with process_file_lock(path):
+        cur = _coerce(read_json(path, {}) or {})
+        if not cur.get("session_id"):
+            cur["session_id"] = _safe_sid(session_id)
+        for k, v in fields.items():
+            if k in _DEFAULTS and k not in ("session_id", "revision"):
+                cur[k] = v
+        if bump:
+            cur["revision"] = int(cur.get("revision") or 0) + 1
+        cur["created"] = bool(cur.get("book_id"))
+        cur["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        write_json_atomic(path, cur)
+    _prune(os.path.basename(path))
+    return cur
+
+
+def transition(session_id: str, *, step: int | None = None, **fields) -> dict:
+    """阶段转场（**原子**）：一次写 step + 候选/表单事实，revision +1。
+
+    前端必须拿到本函数成功返回后才允许派发 agent 任务——这正是 2026-09-10 那次
+    「先发任务后上报状态」事故的修法：状态没落服务端就不启动依赖它的模型。
+    """
+    if step is not None:
+        step = int(step)
+        if step not in STEP_TO_PROFILE:
+            raise ValueError(f"未知建书步号: {step}")
+        fields["step"] = step
+    return update(session_id, **fields)
+
+
+def mark_submitted(session_id: str, book_id: str = "", error: str = "") -> dict:
+    """提交结果回写（`/books/start` 建成功后调用；失败则记 submit_error）。"""
+    if book_id:
+        return update(session_id, book_id=book_id, submit_error="")
+    return update(session_id, submit_error=error or "未知错误")
+
+
+def profile_for_step(step: int) -> str:
+    """步号 → 该步应有的 MCP profile（spawn 不变量的判据之一）。"""
+    return STEP_TO_PROFILE.get(int(step or 1), "build-candidates")
+
+
+def save_candidates(session_id: str, candidates: list, *, append: bool = False) -> dict:
+    """候选卡落服务端（`set_candidates` 整体替换 / `add_candidate` 增量追加）。
+
+    为什么服务端也要存：候选此前只活在浏览器 `window.__CANDIDATES__` 里，于是
+    「用户选了什么 / 有哪些备选」无法服务端读回，只能靠向导把整段聊天转发给模型
+    （本次约 4.2 万 token 的来源）。存下来之后 `/api/build/pick(idx)` 与
+    `get_build_context` 的恢复链都不再依赖浏览器。
+    """
+    cands = [c for c in (candidates or []) if isinstance(c, dict) and c.get("title")]
+    if append:
+        cands = (load(session_id).get("candidates") or []) + cands
+    return update(session_id, candidates=cands)
+

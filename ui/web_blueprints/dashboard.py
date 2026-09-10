@@ -59,6 +59,34 @@ def start_new_book():
         data = request.get_json(silent=True) or {} if is_json else {}
         src = data if is_json else request.form
         build_session_id = str(data.get("build_session_id") or "").strip() if is_json else ""
+        # canonical 草稿优先：命中 revision 时用**服务端记录**（agent 经 save_build_draft 写、
+        # validate_build 校验过的那一份）建书，浏览器表单只是它的 UI 投影。未命中
+        # （手填模式「跳过，手动设定」没有 draft / revision 不匹配）→ 回退下面的表单 payload，
+        # 保证唯一已验证可用的建书链路不因本次收口而破。
+        if build_session_id and is_json:
+            from libraries import build_draft as _bd
+            _rec = _bd.load(build_session_id)
+            _draft = _rec.get("draft") or {}
+            _rev = data.get("build_revision")
+            try:
+                _rev_ok = _rev is not None and int(_rec.get("revision") or 0) == int(_rev)
+            except (TypeError, ValueError):
+                _rev_ok = False
+            if _draft and _rev_ok:
+                if isinstance(_draft.get("world"), dict):
+                    data["world_building"] = _draft["world"]
+                if isinstance(_draft.get("characters"), list) and _draft["characters"]:
+                    data["characters"] = _draft["characters"]
+                _sl = _draft.get("storyline")
+                if isinstance(_sl, dict) and _sl.get("outlines"):
+                    data["_outline_data"] = {
+                        "outlines": _sl.get("outlines") or [],
+                        "plots": _sl.get("plots") or [],
+                        "threads": _sl.get("threads") or [],
+                        "themes": _sl.get("themes") or [],
+                        "basic_info": {},
+                    }
+                    data["future_intents"] = _sl.get("future_intents") or []
         if build_session_id:
             from libraries.planning_state import save_build_session
             outline_preview = data.get("_outline_data") or {}
@@ -243,6 +271,15 @@ def start_new_book():
         if build_session_id:
             from libraries.planning_state import attach_build_session
             attach_build_session(build_session_id, book.book_id, storyline, book)
+            # 提交结果回写 canonical 记录：阶段权威在服务端，_build_fsm 不再靠浏览器快照
+            # 猜「建成没有」。attach_build_session 会 unlink planning 草稿，所以放在它之后。
+            try:
+                from libraries import build_draft as _bd3
+                _bd3.mark_submitted(build_session_id, book_id=book.book_id)
+            except Exception as e:  # noqa: BLE001 —— 回写失败不该让建成的书回滚
+                import logging
+                logging.getLogger(__name__).warning(
+                    "canonical 记录回写 book_id 失败 session=%s: %s", build_session_id, e)
 
         # 向导（JSON）返回 book_id 供前端接续生成；旧 form 入口保留 302
         # 深化已并入步3、提交即 ready → 跳书详情不再带 ?newdraft=1（无自动深化派发）

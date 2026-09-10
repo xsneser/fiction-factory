@@ -479,10 +479,19 @@ def _unscoped_tools_allowed() -> bool:
     return v in {"1", "true", "yes", "on"}
 
 
+# profile → 该 profile 注入的 skill（唯一映射；skill 侧的反向映射在
+# libraries/skill_profile.SKILL_PROFILE_MAP，_build_fsm 的 spawn 不变量校验两者互指）。
+_SKILL_FOR_PROFILE = {"build-candidates": "novel-build-candidates", "build": "novel-build",
+                      "write": "novel-story", "replan": "novel-replan",
+                      "publish": "novel-publish", "scout": "novel-scout"}
+
+
+def _skill_name_for_profile(profile: str) -> str:
+    return _SKILL_FOR_PROFILE.get(profile, "")
+
+
 def _skill_text_for_profile(profile: str) -> str:
-    skill_name = {"build-candidates": "novel-build-candidates", "build": "novel-build",
-                  "write": "novel-story", "replan": "novel-replan", "publish": "novel-publish",
-                  "scout": "novel-scout"}.get(profile)
+    skill_name = _skill_name_for_profile(profile)
     if not skill_name:
         return ""
     path = os.path.join(_ROOT, "agent-sidecar", "skills", skill_name, "SKILL.md")
@@ -1475,6 +1484,7 @@ def _build_fsm(task: str, history: list | None, debug: bool):
     build-status 回报一起冻住，形成互等。所以只报「已发起填写」，成效留到下一轮看
     （`attempts` 记账见下）。同理，「建书已成功」只认快照里的 book_id，不猜。
     """
+    from libraries import build_draft
     from libraries.build_flow import (append_child_run, build_stage, load_flow,
                                       next_action, start_flow, transition)
     from libraries.build_status import get_build_status
@@ -1490,6 +1500,64 @@ def _build_fsm(task: str, history: list | None, debug: bool):
     session_id = marker_sid or snap_sid
     stage = build_stage(snap)
     action = next_action(stage)
+
+    # ─── 阶段权威：服务端 canonical 记录（storage/build_drafts/<sid>.json）──────────
+    # 不再看浏览器快照的 `cur`，也不解析任务文本里的自然语言。2026-09-10 事故就是
+    # 「前端先发 agent 任务、后上报 cur=3」→ 这里读到 cur=2 → 起了 build-candidates
+    # 子 run（工具面没有 set_world/set_outline）→ 模型整轮只能做平台错误恢复。
+    # 现在 step 只由 POST /api/build/transition 原子推进，且前端**必须等它成功**才派发。
+    #
+    # 快照仍管两件事：submit_error 原文（只有浏览器知道）与连败记账的新鲜度。
+    # 无向导会话（用户直接在侧栏说「排故事线」）→ 沿用关键词路由，保持既有侧栏用法。
+    # 注意「记录存在才权威」：向导的「跳过，手动设定」直接 show(3) 而不过 transition，
+    # 老页面也可能还没升级前端——那两种情况没有 canonical 记录，必须退回快照 `cur`
+    # （否则手动路径会被永远判成步 1-2）。有记录时以记录为准，快照不再参与阶段判定。
+    rec = build_draft.load(session_id) if session_id else {}
+    if session_id and build_draft.exists(session_id):
+        step = int(rec.get("step") or 1)
+        prof = build_draft.profile_for_step(step)
+        if str(rec.get("book_id") or ""):
+            action = "SUBMITTED"
+            stage["book_id"] = str(rec.get("book_id") or "")
+            stage["created"] = True
+        elif action not in ("FAILED",):
+            action = "BUILD" if prof == "build" else "CANDIDATES"
+        target = "BUILDING" if prof == "build" else "STAGING"
+        # spawn 硬不变量（在任何 LLM 启动之前）——让「agent 进来才发现拿错工具」在结构上
+        # 不可能，而不是靠模型自己 get_build_status 去发现：
+        #   ① 会话 step 的期望 profile == 本次要起的 profile；
+        #   ② 该 profile 的 skill 存在且 skill→profile 双向一致（防 SKILL_PROFILE_MAP 漂移）；
+        #   ③ skill 引用的工具 ⊆ 该 profile 的工具面（run_dsh_task 里还有一道，这里提前拦）。
+        expected_prof = build_draft.profile_for_step(int(rec.get("step") or 1))
+        ski = _skill_name_for_profile(prof)
+        try:
+            skill_txt = _skill_text_for_profile(prof)   # 缺失即 RuntimeError（禁退化为裸 MCP）
+        except RuntimeError as exc:
+            yield {"type": "error", "message": f"建书 skill 注入失败：{exc}"}
+            yield {"type": "done"}
+            return
+        from libraries.skill_profile import SKILL_PROFILE_MAP, missing_for_text
+        _bad = []
+        if prof != expected_prof:
+            _bad.append(f"step={step} 期望 profile={expected_prof}，实得 {prof}")
+        if SKILL_PROFILE_MAP.get(ski) != prof:
+            _bad.append(f"skill={ski} 与 profile={prof} 不互指")
+        _missing = missing_for_text(skill_txt, prof)
+        if _missing:
+            _bad.append(f"skill 引用了本 profile 未暴露的工具 {_missing}")
+        if _bad:
+            yield {"type": "error", "message":
+                   "建书阶段/工具面/skill 不变量不成立，已拒绝启动以免 agent 拿错工具空转："
+                   + "；".join(_bad) + "。请重发一次任务。"}
+            yield {"type": "done"}
+            return
+    elif action == "BUILD":
+        prof, target = "build", "BUILDING"
+    elif action == "CANDIDATES":
+        prof, target = "build-candidates", "STAGING"
+    else:   # STALE：没有可信快照，退回任务文本判到的 profile（标记/关键词已是尽力而为）
+        prof = _task_tool_profile(task) or "build-candidates"
+        target = "BUILDING" if prof == "build" else "STAGING"
 
     if action == "SUBMITTED":
         yield {"type": "reply", "content":

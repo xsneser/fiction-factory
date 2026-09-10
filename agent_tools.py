@@ -2629,6 +2629,31 @@ def _clear_wizard_candidates() -> None:
         pass
 
 
+def _persist_wizard_candidates(cmd: str, args: dict) -> None:
+    """把候选卡落服务端 canonical 记录（`storage/build_drafts/<sid>.json`）。
+
+    候选此前只活在浏览器 `window.__CANDIDATES__` 里——服务端无法读回「有哪些备选 /
+    用户选了哪个」，于是只能把整段聊天转发给模型（建书步 3 那 ~4.2 万 token 的来源）。
+    落盘后 `/api/build/pick(idx)` 与 get_build_context 的恢复链都不再依赖浏览器。
+
+    失败**不阻断**：UI 命令照常入队，候选落盘只是服务端副本（向导仍能在页面上正常建书）。
+    """
+    try:
+        from libraries import build_draft
+        from libraries.build_status import get_build_status
+        sid = str((get_build_status() or {}).get("build_session_id") or "")
+        if not sid:
+            return   # 向导还没上报会话 id（浏览器未打开/未上报）→ 无键可存
+        if cmd == "set_candidates":
+            build_draft.save_candidates(sid, args.get("candidates") or [])
+        else:   # add_candidate：增量追加单张
+            c = args.get("candidate")
+            if isinstance(c, dict):
+                build_draft.save_candidates(sid, [c], append=True)
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("候选落 canonical 记录失败 cmd=%s: %s", cmd, exc)
+
+
 def _outline_preview_text(outline_data: dict) -> str:
     """把 generate_outline_preview 产出的弧+情节段序列化为 prompt 预览文本。"""
     if not outline_data:
@@ -3588,6 +3613,8 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
                     "请先 get_build_status 确认当前步，或 drive_ui(next/prev) 对齐后再操作")
     if cmd == "reset":
         _clear_wizard_candidates()   # 新会话清空候选持久化，防跨会话残留
+    if cmd in ("set_candidates", "add_candidate"):
+        _persist_wizard_candidates(cmd, args)   # 候选落服务端（浏览器不再是唯一副本）
     from libraries.nav_intent import push_ui_command
     # submit 半同步：推送前快照 submit_error，只对「新错误」反应，规避陈旧错误误判
     _read_st = None

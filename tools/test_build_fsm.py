@@ -13,6 +13,7 @@ sys.path.insert(0, ROOT)
 
 import libraries.build_status as BS  # noqa: E402
 import libraries.dsh_bridge as B  # noqa: E402
+from libraries import build_draft as BD  # noqa: E402
 from libraries import build_flow as BF  # noqa: E402
 
 SID = "selftest-build-fsm"
@@ -192,6 +193,70 @@ def main():
                   f"types={[e.get('type') for e in evs]}")
         check("过期快照不建 Flow 记录（无进展可观测）", not BF.flow_path(SID).exists())
 
+        # ── 10b) 2026-09-10 事故防复发：canonical 记录 step=3 + 快照仍是 cur=2 ──
+        # 现场：用户点「已挑选完毕」时前端**先**发 agent 任务、**后**才上报 cur=3，于是服务端
+        # 读到 cur=2 → 起了 build-candidates profile（工具面没有 set_world/set_outline），
+        # 模型整轮只能做平台错误恢复。修法=阶段权威改看服务端 canonical 记录。
+        path = BF.flow_path(SID)
+        if path.exists():
+            path.unlink()
+        BD.transition(SID, step=3, selected_candidate={"title": "2050：星港从零建起"})
+        evs = run(STEP3_TASK, _snap(cur=2, _picked=False))
+        check("记录 step=3 + 滞后快照(cur=2) → 起 build（事故防复发）",
+              len(calls) == 1 and calls[0]["mcp_profile"] == "build",
+              f"calls={[c['mcp_profile'] for c in calls]}")
+
+        # ── 10c) 反向：记录 step=2 + 快照 cur=3 → 记录权威，起 build-candidates ──
+        BD.transition(SID, step=2)
+        evs = run(STEP1_TASK, _snap(cur=3))
+        check("记录 step=2 + 快照 cur=3 → 起 build-candidates（记录权威）",
+              len(calls) == 1 and calls[0]["mcp_profile"] == "build-candidates",
+              f"calls={[c['mcp_profile'] for c in calls]}")
+
+        # ── 10d) 记录带回 book_id → SUBMITTED，不起 run ──
+        BD.mark_submitted(SID, book_id="book_010")
+        evs = run("继续建书", _snap(cur=3))
+        check("canonical 记录的 book_id → SUBMITTED 不起 run", not calls)
+        check("canonical SUBMITTED 的 reply 带 book_id",
+              any("book_010" in (e.get("content") or "") for e in evs))
+
+        # ── 10e) 记录存在 + 快照带 submit_error → FAILED（提交失败仍由浏览器侧原文透出）──
+        path = BF.flow_path(SID)
+        if path.exists():
+            path.unlink()
+        # 记录也要清：上一条 10d 写进了 book_id，留着会让本用例被判成 SUBMITTED
+        if os.path.exists(BD.path_for(SID)):
+            os.remove(BD.path_for(SID))
+        BD.transition(SID, step=3)
+        evs = run("继续建书", _snap(cur=3, submit_error="书名重复"))
+        check("记录 step=3 + submit_error → 不起 run", not calls)
+        check("提交失败原文透出",
+              any(e.get("type") == "error" and "书名重复" in (e.get("message") or "") for e in evs))
+
+        # ── 10f) spawn 硬不变量：skill 与 profile 不互指 → 拒绝启动 LLM ──
+        import libraries.skill_profile as SP
+        path = BF.flow_path(SID)
+        if path.exists():
+            path.unlink()
+        BD.transition(SID, step=3)
+        _orig_map = dict(SP.SKILL_PROFILE_MAP)
+        SP.SKILL_PROFILE_MAP["novel-build"] = "write"   # 人为把 build 的 skill 指到别处
+        try:
+            evs = run(STEP3_TASK, _snap(cur=3))
+        finally:
+            SP.SKILL_PROFILE_MAP.clear()
+            SP.SKILL_PROFILE_MAP.update(_orig_map)
+        check("skill/profile 不互指 → 不启动 LLM（硬不变量）", not calls,
+              f"calls={[c['mcp_profile'] for c in calls]}")
+        check("不变量失败给出明确原因",
+              any(e.get("type") == "error" and "不变量不成立" in (e.get("message") or "")
+                  for e in evs), f"evs={[e.get('type') for e in evs]}")
+
+        # ── 10g) profile→skill 映射与 skill_profile.SKILL_PROFILE_MAP 互指（静态）──
+        _mismatch = [(p, s) for p, s in B._SKILL_FOR_PROFILE.items()
+                     if SP.SKILL_PROFILE_MAP.get(s) != p]
+        check("profile→skill 与 skill→profile 双向一致", not _mismatch, f"{_mismatch}")
+
         # ── 11) UNROUTABLE 显式指引（run_dsh_flow 层）──
         B.run_dsh_task = real_run
         evs = list(B.run_dsh_flow("今天天气不错"))
@@ -209,6 +274,13 @@ def main():
             p = BF.flow_path(sid)
             if p.exists():
                 p.unlink()
+            # canonical 记录也要清（本测试写的是真文件 storage/build_drafts/<sid>.json）
+            try:
+                dp = BD.path_for(sid)
+                if os.path.exists(dp):
+                    os.remove(dp)
+            except Exception:
+                pass
 
     if failed:
         raise AssertionError(failed)
