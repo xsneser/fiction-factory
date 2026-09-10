@@ -62,14 +62,16 @@ def _assert_wizard_text():
 
     同时守住 [build_session=…] 标记：服务端靠它把任务钉到具体向导会话
     （build_status.json 是全局单快照），向导侧一旦不发，`_build_fsm` 只能退回读快照。
+    两条交接任务**都**要带，所以数个数而不是只看存在。
     """
     path = os.path.join(ROOT, "ui", "templates", "start_book.html")
     with open(path, encoding="utf-8") as f:
         html = f.read()
     for frag, label in (("请为这本新书生成世界观候选", "步 1 交接"),
-                        ("请继续建这本新书", "步 2→3 交接"),
-                        ("[build_session=", "步 2→3 交接的 build_session 标记")):
-        assert frag in html, f"{label}已不在 start_book.html，请同步：{frag}"
+                        ("请继续建这本新书", "步 2→3 交接")):
+        assert frag in html, f"{label}原文已不在 start_book.html，请同步：{frag}"
+    n_marker = html.count("[build_session=")
+    assert n_marker >= 2, f"两条交接任务都应带 [build_session=…] 标记，实际只有 {n_marker} 处"
 
 
 def main():

@@ -432,7 +432,8 @@ var WZ = {
         var task = '请为这本新书生成世界观候选（已完成步 1 填表、已自动进步 2）：一句话设定「' + idea + '」'
             + '题材标签「' + (tags.join('、') || '（未选）') + '」'
             + '笔名「' + (pen || '（未选，请帮我选）') + '」。'
-            + '笔名未选就 query_profiles 查一个最匹配的并 drive_ui(set_field pen) 补填。';
+            + '笔名未选就 query_profiles 查一个最匹配的并 drive_ui(set_field pen) 补填。'
+            + ' [build_session=' + this.ensureBuildSession() + ']';   // 机器标记：与服务端 build_status 的会话 id 同源（步 1 也要能认会话）
         if (typeof window.agentSendTask === 'function') {
             window.agentSendTask(task, { card: true });   // 右侧显示「🚀 建书任务」卡片，而非用户气泡
         } else {
@@ -1225,6 +1226,14 @@ var WZ = {
                     // 保证首次上报就带上会话 id（此前只在 createBook 附近 ensure，
                     // 步 3 交接时服务端可能还拿不到）——与交接任务里的 [build_session=…] 同源
                     buildSessionId: this.ensureBuildSession(),
+                    // 表单内容：提交前服务端没有别的副本，候选生成/步3 深化都要靠它。
+                    // 取值直接读 DOM，**不用 this.state.tags**——agentBuild() 会把 state.tags
+                    // 重置为 [] 而 chip 仍是 .on，用 state 会报出与页面不符的空标签。
+                    // 也**别**在这里调 collect()：它会用 DOM 覆盖 state.title，而步 3 用
+                    // state.title 覆盖 #wz-title，可能把步 2→3 交接要用的候选书名清掉。
+                    idea: (this.el('wz-idea') ? this.el('wz-idea').value.trim() : ''),
+                    tags: Array.prototype.slice.call(document.querySelectorAll('.chip.on'))
+                        .map(function(b) { return b.dataset.tag; }),
                     creating: !!this.creating,
                     _picked: !!this._picked,
                     pen_selected: !!(this.state && this.state.pen_name),

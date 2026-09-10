@@ -28,6 +28,11 @@ _DEFAULTS = {
     "has_outline": False,
     "updated_at": "",
     "submit_error": "",   # 建书 submit 失败原因(浏览器上报;agent 经 drive_ui(submit)/get_build_status 感知)
+    # 表单内容：提交前**服务端没有其他副本**（书要等用户点提交才创建），而候选生成必须
+    # 知道用户选的一句话设定与题材标签——任务文本没带全时（如用户自己在侧栏说「开新书」），
+    # agent 靠这两个字段读回。
+    "idea": "",
+    "tags": [],
 }
 
 
@@ -50,6 +55,11 @@ def set_build_status(state: dict) -> None:
                 mapped[k] = v
         data.update(mapped)
         data["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    # 防御性拷贝 + 清洗：`dict(_DEFAULTS)` 是浅拷贝，tags 的列表默认值会被所有记录
+    # **共享同一个对象**（空 state 路径尤其容易踩：那里根本不经过 mapped）。
+    # 只收「非空字符串」——别用 str(t) 兜底：那会把 null 变成字符串 "None" 存进去。
+    data["tags"] = [t.strip() for t in (data.get("tags") or [])
+                    if isinstance(t, str) and t.strip()]
     data["created"] = bool(data.get("book_id"))
     write_json_atomic(_STATUS_PATH, data)
 
@@ -59,5 +69,7 @@ def get_build_status() -> dict:
     data = read_json(_STATUS_PATH, {}) or {}
     out = dict(_DEFAULTS)
     out.update({k: v for k, v in data.items() if k in _DEFAULTS})
+    # 同 set 侧：别把 _DEFAULTS 里的列表对象递出去（调用方一改就污染全局默认值）
+    out["tags"] = list(out.get("tags") or [])
     out["created"] = bool(out.get("book_id"))
     return out

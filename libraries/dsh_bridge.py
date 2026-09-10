@@ -1413,16 +1413,25 @@ def _parse_build_session(task: str) -> str:
     return m.group(1) if m else ""
 
 
-def _build_step3_task() -> str:
-    # 归一化薄任务：只说做什么，**不枚举工具名**——任务里出现工具面外的工具名会让 run 因
-    # unknown-tool 停摆（同 _writer_fsm._plot_task 的注释）。
-    return ("[服务端建书] 为当前建书向导会话填写步 3「内容构建工作台」：世界观、弧与情节段、"
-            "势力与人物、其余表单维度。填完表单停下，向用户汇报设定概要并等待用户确认；"
-            "不要自行提交建书。")
+def _build_stage_note(target: str) -> str:
+    """服务端阶段提示——**追加**在调用方原文之后，绝不替换它。
 
+    ⚠️ 这里是踩过的坑：曾照抄 `_writer_fsm` 的「归一化薄任务」把整段任务文本**换掉**，
+    结果向导原文里携带的 idea/题材标签/「已选定候选「书名」」全丢，agent 只能凭空生成
+    （实测产出 6 张与用户标签毫无关系的候选）。差别在数据源：Writer 的输入由服务端
+    `prepare_plot_run` 提供，而**建书的表单数据只存在于任务文本里**（服务端无副本，
+    `drive_ui` 也没有读回表单的命令）——所以只能转发原文，最多追加这段。
 
-def _build_candidates_task() -> str:
-    return "[服务端建书] 为当前建书向导会话生成世界观候选并逐张呈现，然后停下等用户在步 2 挑选。"
+    这段文字本身**不出现任何工具名**：任务里出现工具面外的工具名会让 run 因
+    unknown-tool 停摆（同 `_writer_fsm._plot_task` 的注释）。向导原文里自带的工具名
+    （如步 1 的 `query_profiles` / `drive_ui`）都已确认落在对应 profile 内。
+    """
+    if target == "BUILDING":
+        return ("\n\n[服务端建书] 已判定当前在步 3：按 novel-build 填写「内容构建工作台」"
+                "（世界观 / 弧与情节段 / 势力与人物 / 其余维度），填完停下等用户确认，"
+                "不要自行提交建书。")
+    return ("\n\n[服务端建书] 已判定当前在步 1-2：按 novel-build-candidates 生成世界观候选"
+            "并逐张呈现，停下等用户在步 2 挑选，不自动选、不跳步。")
 
 
 def _unroutable_hint() -> str:
@@ -1455,6 +1464,11 @@ def _build_fsm(task: str, history: list | None, debug: bool):
 
     **一轮只派发一个子 run**（不像 _writer_fsm 要循环出多段 Plot）：建书每步之后要么等用户
     挑选/确认、要么等用户自己点提交，没有「同一轮内持续推进」的动作。
+
+    **子 run 收「调用方原文 + history + 追加的阶段提示」，不做薄任务**——这是与 `_writer_fsm`
+    有意的分歧：Writer 的输入由服务端 `prepare_plot_run` 给，任务文本里没有数据；建书的
+    idea/题材标签/「已选定候选「书名」」**只在向导拼的任务文本里**（服务端无副本，`drive_ui`
+    也没有读回表单的命令）。曾把这里做成薄任务，直接把用户的标签丢掉、候选生成跑偏。
 
     这里**不**阻塞等表单落地：`drive_ui` 是异步的（写 nav_intent 队列，浏览器每 ~2.5s
     轮询后才应用），而 58080 是**单线程** Flask——在此 sleep 等快照刷新会把浏览器自己的
@@ -1496,7 +1510,8 @@ def _build_fsm(task: str, history: list | None, debug: bool):
     else:   # STALE：没有可信快照，退回任务文本判到的 profile（标记/关键词已是尽力而为）
         prof = _task_tool_profile(task) or "build-candidates"
         target = "BUILDING" if prof == "build" else "STAGING"
-    child_task = _build_step3_task() if target == "BUILDING" else _build_candidates_task()
+    # 转发调用方原文 + 追加阶段提示（**不合成薄任务**，见 _build_stage_note 的坑）
+    child_task = (task or "").strip() + _build_stage_note(target)
 
     # 连败记账：同一阶段重跑**且快照显示还没出产物**才累加；换阶段、或该阶段已出产物
     # 都归零。归零那半条是关键——用户反复「再改改」是合法迭代，不能因为同一阶段被
@@ -1529,7 +1544,8 @@ def _build_fsm(task: str, history: list | None, debug: bool):
 
     child_id = f"build:{attempts}"
     ok = True
-    for evt in run_dsh_task(child_task, None, debug=debug, flow_id=session_id or "",
+    # history 原样转发：用户前几轮说过的话也是上下文（曾硬传 None，与薄任务一起丢过一版）
+    for evt in run_dsh_task(child_task, history, debug=debug, flow_id=session_id or "",
                             child_run_id=child_id, mcp_profile=prof):
         if evt.get("type") == "done":
             continue

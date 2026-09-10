@@ -17,8 +17,18 @@ from libraries import build_flow as BF  # noqa: E402
 
 SID = "selftest-build-fsm"
 OTHER_SID = "selftest-build-fsm-other"
+
+# 向导真实任务文本（ui/templates/start_book.html：步 1 约 432-436、步 2→3 约 350-351）。
+# 这两段文本是**表单数据的唯一载体**（服务端没有副本），下面据此断言子 run 必须收到原文。
+STEP1_TASK = ('请为这本新书生成世界观候选（已完成步 1 填表、已自动进步 2）：一句话设定「2050」'
+              '题材标签「穿越、星际、异界、基建、军事」笔名「星烬」。'
+              '笔名未选就 query_profiles 查一个最匹配的并 drive_ui(set_field pen) 补填。')
 STEP3_TASK = ("请继续建这本新书（步 2 已选定候选「2050：星港从零建起」），自主生成填写步 3 "
               "内容表单及故事线：挑选弧 → 挑选情节段 → 补全其余表单。")
+STEP1_DATA = ("2050", "穿越、星际、异界、基建、军事")     # 步 1 必须透传的 idea / 标签
+STEP3_DATA = ("2050：星港从零建起",)                      # 步 3 必须透传的用户选定候选
+HISTORY = [{"role": "user", "content": "我想要偏军事硬核的方向"},
+           {"role": "assistant", "content": "好的"}]
 
 
 def _fresh() -> str:
@@ -55,7 +65,7 @@ def main():
     def run(task, snapshot):
         calls.clear()
         BS.get_build_status = lambda: snapshot
-        return list(B._build_fsm(task, None, False))
+        return list(B._build_fsm(task, HISTORY, False))
 
     B.run_dsh_task = fake_run
     try:
@@ -66,8 +76,6 @@ def main():
               f"calls={[c['mcp_profile'] for c in calls]}")
         check("步 3 走标记里的 session id",
               calls[0]["flow_id"] == SID, f"flow_id={calls[0]['flow_id']}")
-        check("步 3 薄任务不枚举工具名",
-              "mcp__novelengine" not in calls[0]["task"] and "drive_ui" not in calls[0]["task"])
         check("步 3 尾部只有一个 done", sum(e.get("type") == "done" for e in evs) == 1)
         check("子 run 的中间事件（工具卡/回复）照常透传",
               any(e.get("type") == "tool_call" for e in evs)
@@ -75,13 +83,37 @@ def main():
         check("步 3 reply 提醒用户自己点提交",
               any("自己点" in (e.get("content") or "") for e in evs if e.get("type") == "reply"))
         check("Flow 落到 BUILDING", BF.load_flow(SID)["phase"] == "BUILDING")
+        # 回归（曾把整段任务文本换成薄任务 → 用户选定候选被丢掉）
+        check("步 3 子 run 收到调用方原文（含「已选定候选「…」」）",
+              all(d in calls[0]["task"] for d in STEP3_DATA),
+              f"task={calls[0]['task'][:80]!r}")
+        check("步 3 子 run 收到对话历史（不再硬传 None）",
+              calls[0]["history"] == HISTORY, f"history={calls[0]['history']!r}")
+        check("服务端只追加、不替换（原文为前缀）",
+              calls[0]["task"].startswith(STEP3_TASK), f"task={calls[0]['task'][:80]!r}")
+        note = B._build_stage_note("BUILDING")
+        check("服务端追加文字里没有工具名",
+              "mcp__novelengine" not in note and "drive_ui" not in note
+              and "save_outlines" not in note)
 
         # ── 2) 步 1-2（cur=2）→ build-candidates profile ──
-        evs = run('请继续建这本新书（步 2 已选定候选「星环工兵」）', _snap(cur=2, _picked=False))
+        evs = run(STEP1_TASK, _snap(cur=2, _picked=False))
         check("步 2 起 build-candidates profile",
               len(calls) == 1 and calls[0]["mcp_profile"] == "build-candidates",
               f"calls={[c['mcp_profile'] for c in calls]}")
         check("步 2 Flow 落 STAGING", BF.load_flow(SID)["phase"] == "STAGING")
+        # 回归（本次用户报的：步 2 生成候选时没拿到步 1 选的标签）
+        check("步 2 子 run 收到步 1 的 idea 与题材标签",
+              all(d in calls[0]["task"] for d in STEP1_DATA),
+              f"task={calls[0]['task'][:90]!r}")
+        check("步 2 子 run 收到对话历史", calls[0]["history"] == HISTORY)
+        # 向导原文自带的工具名必须落在这个 profile 内（否则子 run 会 unknown-tool 停摆）
+        from libraries.agent_tool_router import PROFILE_TOOLS
+        mentioned = [n for n in ("query_profiles", "drive_ui", "save_outlines",
+                                 "mcp__novelengine") if n in STEP1_TASK]
+        check("向导原文提到的工具都在 build-candidates 面内",
+              all(n in PROFILE_TOOLS["build-candidates"] for n in mentioned),
+              f"越界={[n for n in mentioned if n not in PROFILE_TOOLS['build-candidates']]}")
 
         # ── 3) 已建书 → SUBMITTED，不起 run ──
         evs = run("继续建书", _snap(book_id="book_009"))
