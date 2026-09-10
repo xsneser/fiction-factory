@@ -220,14 +220,27 @@ def api_confirm_storyline(book_id):
     if not tl.plots:
         return jsonify({"ok": False,
                         "error": "尚无情节段，请先补弧落盘再确认"}), 400
-    builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
-                               gag_lib=gag_lib)
-    builder.fill_themes_and_hooks(tl.plots, tl)
-    from libraries.storyline import annotate_plot_roles
-    annotate_plot_roles(tl)
-    tl.phase = "ready"
-    tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
-    book_mgr.save_storyline(book_id, tl)
+    # phase 翻 ready 是规划相关事实：加书锁 + bump revision，避免与写作/续规划并发互相覆盖
+    # （此前用裸 book_mgr.save_storyline，不 bump revision，旧 replan preview 会看起来仍新鲜）。
+    from libraries.book_lock import BookBusyError, BookLock
+    lock = BookLock(book_id)
+    if not lock.acquire(timeout=30.0, purpose="confirm_storyline"):
+        raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
+    try:
+        tl = book_mgr.load_storyline(book_id)      # 锁内重读，取最新
+        if tl is None:
+            return jsonify({"ok": False, "error": "not found"}), 404
+        builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
+                                   gag_lib=gag_lib)
+        builder.fill_themes_and_hooks(tl.plots, tl)
+        from libraries.storyline import annotate_plot_roles
+        annotate_plot_roles(tl)
+        tl.phase = "ready"
+        tl.storyline_revision = int(getattr(tl, "storyline_revision", 0) or 0) + 1
+        tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        book_mgr.save_storyline(book_id, tl)
+    finally:
+        lock.release()
     return jsonify({"ok": True, "phase": "ready", "plots": len(tl.plots)})
 
 

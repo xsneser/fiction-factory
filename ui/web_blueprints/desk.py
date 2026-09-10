@@ -209,13 +209,37 @@ def desk_chapters_api(book_id):
     }
     future = {"plots": list(future_horizon.get("h1") or [])[:2],
               "horizon": future_horizon, "questions": (planning or {}).get("story_questions") or []}
+    # 审计面取 **令牌账本**（prepare 时签发的权威取证记录）而非 raw `_build_plot_run`——
+    # 后者不产出 context_fingerprint/sample_receipt，会让取证面板恒空。
+    audit_record, tool_events = {}, []
+    try:
+        from libraries.plot_commit_tokens import latest_audit_record
+        audit_record = latest_audit_record(book_id, plot_id=str(current_plot.get("id") or ""),
+                                           storyline_revision=rev) or {}
+        if not audit_record:      # 当前 Plot 尚无令牌（未 prepare）：放宽到最近一条
+            audit_record = latest_audit_record(book_id) or {}
+        if audit_record.get("flow_id"):
+            from libraries.dsh_bridge import get_task_events
+            want = {"prepare_plot_run", "save_plot_draft"}
+            tool_events = [
+                {"name": e.get("name") or e.get("tool") or "", "ts": e.get("ts"),
+                 "ok": e.get("ok", True), "child_run_id": e.get("child_run_id") or ""}
+                for e in get_task_events(limit=300)
+                if (e.get("name") or e.get("tool")) in want
+                and (not e.get("flow_id") or e.get("flow_id") == audit_record.get("flow_id"))
+            ][-12:]
+    except Exception as _exc:  # noqa: BLE001
+        log.warning("写作台审计面取令牌记录失败 book=%s: %s", book_id, _exc)
     audit = {
-        "context_fingerprint": (plot_run or {}).get("context_fingerprint", ""),
+        "context_fingerprint": audit_record.get("context_fingerprint", ""),
         "storyline_revision": rev,
         "execution_brief": (plot_run or {}).get("execution_brief") or {},
         "cast_pack": (plot_run or {}).get("cast_pack") or {},
-        "sample_receipt": (plot_run or {}).get("sample_receipt") or {},
-        "tool_events": [], "reconcile": past.get("reconcile") or {},
+        "sample_receipt": audit_record.get("sample_receipt") or {},
+        "token": {"plot_id": audit_record.get("plot_id", ""), "accepted": audit_record.get("accepted"),
+                  "issued_at": audit_record.get("issued_at"), "accepted_at": audit_record.get("accepted_at")},
+        "flow_id": audit_record.get("flow_id", ""), "child_run_id": audit_record.get("child_run_id", ""),
+        "tool_events": tool_events, "reconcile": past.get("reconcile") or {},
     }
     return jsonify({"book_id": book_id, "current_chapter": cur,
                     "chapters": chapters,
@@ -354,6 +378,7 @@ def storyline_write_flow(engine_id):
     )
 
 
+# ⚠️ 已废弃：旧 NovelEngine 逐步写作入口（当前写作走侧栏 dsh + 服务端 FSM）。（无前端引用；删除属 API 面变更，待单独确认）
 @bp.route("/api/storyline-engine/<engine_id>/step", methods=["POST"])
 def storyline_engine_step(engine_id):
     """蓝图引擎：按故事线写下一章（新书前三章 / 续写任意章节通用）"""
@@ -407,6 +432,7 @@ def storyline_engine_step(engine_id):
     })
 
 
+# ⚠️ 已废弃：旧整章 SSE 写作入口（当前写作走侧栏 dsh + 服务端 FSM）。（无前端引用；删除属 API 面变更，待单独确认）
 @bp.route("/api/storyline-engine/<engine_id>/write-chapter", methods=["POST"])
 def storyline_engine_write_chapter_sse(engine_id):
     """蓝图引擎：流式写一章（SSE）。逐情节段下发 plot_start / plot_done / chapter_done。
@@ -452,6 +478,7 @@ def storyline_engine_write_chapter_sse(engine_id):
     return sse_stream_response(generate())
 
 
+# ⚠️ 已废弃：旧单情节段 SSE 写作入口（当前写作走侧栏 dsh + 服务端 FSM）。（无前端引用；删除属 API 面变更，待单独确认）
 @bp.route("/api/storyline-engine/<engine_id>/write-bridge", methods=["POST"])
 def storyline_engine_write_bridge_sse(engine_id):
     """蓝图引擎：流式写「一个」情节段（SSE，新核心·按情节段撰写）。

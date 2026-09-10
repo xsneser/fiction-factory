@@ -238,3 +238,23 @@ def accept(book_id: str, token: str, result: dict) -> None:
 def accepted_result(book_id: str, token: str) -> dict | None:
     record = _load(book_id).get("tokens", {}).get(token) or {}
     return copy.deepcopy(record.get("result")) if record.get("accepted") else None
+
+
+def latest_audit_record(book_id: str, plot_id: str = "", storyline_revision: int | None = None) -> dict:
+    """最近的令牌记录（**不含**大快照），供写作台审计面显示真实取证字段。
+
+    写作台的 context_fingerprint / sample_receipt 此前取自 raw `_build_plot_run`，而那两个
+    字段只在 prepare 里产生 → 面板恒空。这里直接读令牌账本这一权威来源。
+    """
+    rows = list((_load(book_id).get("tokens") or {}).values())
+    rows = [r for r in rows if isinstance(r, dict)]
+    if plot_id:
+        rows = [r for r in rows if str(r.get("plot_id") or "") == str(plot_id)]
+    if storyline_revision is not None:
+        rows = [r for r in rows if int(r.get("storyline_revision") or 0) == int(storyline_revision)]
+    if not rows:
+        return {}
+    row = max(rows, key=lambda r: float(r.get("issued_at") or 0))
+    return {k: copy.deepcopy(row.get(k)) for k in
+            ("plot_id", "storyline_revision", "context_fingerprint", "sample_receipt",
+             "flow_id", "child_run_id", "issued_at", "accepted", "accepted_at")}

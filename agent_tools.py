@@ -650,10 +650,42 @@ def _build_plot_run(tl, p, csm=None, draft=None, facts_by_plot=None):
     return run
 
 
+def _thread_projection(thread: dict | None) -> dict:
+    """把 `_build_plot_run` 里的线程态压成 Writer 快照用的小投影。"""
+    t = thread if isinstance(thread, dict) else {}
+    written = [w for w in (t.get("same_thread_written") or []) if isinstance(w, dict)]
+    unwritten = [str(x) for x in (t.get("same_thread_unwritten") or [])]
+    return {"id": t.get("id", ""), "name": t.get("name", ""), "desc": t.get("desc", ""),
+            "chain_note": t.get("chain_note", ""),
+            "recent_written": written[-3:],
+            "unwritten_count": len(unwritten), "unwritten_next": unwritten[:5]}
+
+
+def _ordered_plots(tl) -> list:
+    """按「弧顺序 → 阶段 → 次序 → 原列表序」排情节段。
+
+    与 outline_agent/storyline_writer 的既有排序口径一致（它们都用
+    `大纲位置→stage_index→order`），只多一个「原列表序」兜底，保证遗留数据
+    （order 全为 0）仍按写入顺序稳定可复现。写作顺序、horizon、cast 预测共用它。
+    """
+    outline_pos = {getattr(o, "id", ""): i for i, o in enumerate(getattr(tl, "outlines", None) or [])}
+    plots = list(getattr(tl, "plots", None) or [])
+    index = {id(p): i for i, p in enumerate(plots)}
+    return sorted(plots, key=lambda p: (
+        outline_pos.get(getattr(p, "outline_id", ""), 9999),
+        int(getattr(p, "stage_index", 0) or 0),
+        int(getattr(p, "order", 0) or 0),
+        index.get(id(p), 0)))
+
+
 def _next_plot(tl, draft):
-    """第一个未写情节段（written_chapter==0 且不在当前草稿内）——draft-aware，防章中途重复返回同一首。"""
+    """下一个待写情节段（written_chapter==0 且不在当前草稿内）——draft-aware，防章中途重复返回同一首。
+
+    顺序取 `_ordered_plots`（弧→阶段→次序），不再直接用 JSON 里的 `tl.plots` 列表序——
+    续规划 append 后列表序未必等于叙事序。
+    """
     indraft = _draft_plot_ids(draft)
-    for p in tl.plots:
+    for p in _ordered_plots(tl):
         if getattr(p, "written_chapter", 0) or 0:
             continue
         if p.id in indraft:
@@ -896,15 +928,13 @@ def prepare_plot_run(book_id: str) -> dict:
                        "summary": (bridge.get("facts") or {}),
                        "ending": text[-800:] if i == 0 else text[-500:]})
     terms = list(getattr(p, "roles", None) or []) + [getattr(p, "thread_id", ""), getattr(p, "name", "")]
-    horizon_plots = []
-    for q in tl.plots:
-        if q.id == p.id:
-            continue
-        if getattr(q, "written_chapter", 0) or q.id in _draft_plot_ids(draft):
-            continue
-        horizon_plots.append(q)
-        if len(horizon_plots) == 1: break
-    remaining = sum(1 for q in tl.plots if not getattr(q, "written_chapter", 0) and q.id not in _draft_plot_ids(draft))
+    # horizon 与剩余计数都走 _ordered_plots（弧→阶段→次序），与写作顺序同一口径
+    indraft = _draft_plot_ids(draft)
+    pending = [q for q in _ordered_plots(tl)
+               if q.id != p.id and not getattr(q, "written_chapter", 0) and q.id not in indraft]
+    horizon_plots = pending[:1]
+    remaining = sum(1 for q in _ordered_plots(tl)
+                    if not getattr(q, "written_chapter", 0) and q.id not in indraft)
     boundary = detect_story_boundary(
         written_until_word=runtime["display_written_words"],
         committed_until_word=int(ps.get("committed_until_word") or 0), remaining_plots=remaining,
@@ -914,14 +944,23 @@ def prepare_plot_run(book_id: str) -> dict:
     status = chapter_status(book_id, tl, draft, needs_replan=bool(boundary.get("needs_replan")))
     # 风格卡已在幂等检查前解析；本次只在没有可恢复快照时选一篇样文。
     sample = {"text": "", "receipt": {}, "meta": {}}
+    sample_problem = ""
     try:
         picked = pick_plot_sample(book_id, query=raw_run.get("style_query") or {})
-        if picked.get("ok"):
+        if picked.get("ok") and (picked.get("text") or "").strip():
             sample = {"text": picked.get("text") or "", "receipt": picked.get("sample_receipt") or {},
                       "meta": picked.get("sample") or {}}
-    except Exception:
-        # 无样文池时仍允许写作，style card 是可用的保底。
-        pass
+        else:
+            sample_problem = str(picked.get("error") or picked.get("message") or "样文池未返回可用样文")
+    except Exception as exc:  # noqa: BLE001
+        sample_problem = f"取样异常：{exc}"
+    if sample_problem:
+        # 设计取舍：样文池不可用时**仍允许写作**（style card 是保底，样文本就是可选参考），
+        # 但绝不假装取到了样文——快照里显式标 unavailable、回执不记 digest，并留日志，
+        # 让「这次没有样文」在审计面可辨（此前静默降级成空样文 + 空回执）。
+        sample["receipt"] = {"status": "unavailable", "reason": sample_problem}
+        _log.warning("Plot 取样不可用，按无样文继续（style card 保底）book=%s plot=%s: %s",
+                     book_id, p.id, sample_problem)
     # pick_plot_sample 的独立旧入口不带动态 cast；prepare 是唯一 Writer 入口，
     # 所以在这里以完整七 Packet 的指纹重新绑定 receipt。
     style_snapshot = build_snapshot(style_profile, style_card, sample["receipt"])
@@ -963,6 +1002,9 @@ def prepare_plot_run(book_id: str) -> dict:
                     "do_not_resolve_yet": [], "next_function": (horizon_plots[0].category or horizon_plots[0].name) if horizon_plots else None,
                     "arc_destination": (raw_run.get("arc_goal") or {}).get("notes", ""), "boundary": boundary,
                     "chapter_status": status},
+        # 当前线程态（最小契约要求 current_thread 明示；只投影最近已写 + 未写计数/前几个 id，
+        # 不把整条线程的 id 列表塞进快照——那是导航信息，不是上下文主体）。
+        "thread": _thread_projection(raw_run.get("thread")),
         "style": {"card": style_card, "sample": sample, "snapshot": style_snapshot},
     }
     token = issue_commit_token(
@@ -2169,9 +2211,13 @@ def save_plot_draft(commit_token: str, text: str, plot_summary: str = "",
     if not (text or "").strip():
         raise RuntimeError("text 必填")
     summary = str(plot_summary or "").strip()
-    if summary and not 50 <= len(summary) <= 120:
-        # Summary is display/search metadata, not a fact source. Do not make a
-        # valid Plot retry its entire LLM turn for a soft formatting miss.
+    summary_problems = []
+    if not summary:
+        summary_problems.append("plot_summary 为空（契约 50-120 字，仅作展示/检索用）")
+    elif not 50 <= len(summary) <= 120:
+        # Summary 只作展示/检索元数据，不是事实源：不为一次格式不合格让整轮 LLM 重写，
+        # 但必须**如实记下问题**（此前只截断不给信号）。
+        summary_problems.append(f"plot_summary 长度 {len(summary)} 不在 50-120")
         _log.warning("plot_summary 长度 %d 不在 50-120，按展示字段容错保存", len(summary))
         if len(summary) > 120:
             summary = summary[:120]
@@ -2201,18 +2247,119 @@ def save_plot_draft(commit_token: str, text: str, plot_summary: str = "",
         raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
     try:
         return _commit_plot_draft_locked(book_id, commit_token, text, summary,
-                                         outcome, character_events)
+                                         outcome, character_events, summary_problems)
     finally:
         lock.release()
 
 
+def _finish_plot_commit(book_id: str, commit_token: str, record: dict, plot,
+                        chapter_num: int, result: dict) -> dict:
+    """Plot 提交收尾（正常提交与崩溃恢复共用）：写身份 + 记账本 + 推进 flow。
+
+    flow 推进失败只记日志（Plot 已生效，不该回滚），并顺手把续规划连败计数归零（有推进）。
+    """
+    from libraries.plot_commit_tokens import accept
+    flow_id = record.get("flow_id") or "adhoc"
+    if flow_id == "adhoc":
+        # 旧入口没有提前创建 Flow；首次成功提交时补建可恢复 Flow，后续子 Run 都继承它。
+        from libraries.write_flow import active_flow_id, start_flow
+        flow_id = active_flow_id(book_id)
+        if not flow_id:
+            flow_id = start_flow(book_id, chapter_num)["flow_id"]
+    result.update(book_id=book_id, plot_id=plot.id, writer_run_complete=True,
+                  flow_id=flow_id, child_run_id=record.get("child_run_id"))
+    accept(book_id, commit_token, result)
+    if flow_id:
+        try:
+            from libraries.write_flow import load_flow, transition
+            flow = load_flow(book_id, flow_id) or {}
+            completed = list(flow.get("completed_plot_ids") or [])
+            if plot.id not in completed:
+                completed.append(plot.id)
+            transition(book_id, flow_id, "EVALUATING", current_plot_id=plot.id,
+                       completed_plot_ids=completed, replan_state={"reason": "", "attempts": 0})
+        except Exception as e:  # noqa: BLE001
+            # 子 Run 审计记录失败不该回滚已生效的 Plot 提交，但必须留痕（此前静默吞掉）。
+            _log.warning("flow 推进失败（Plot 已提交）book=%s flow=%s: %s", book_id, flow_id, e)
+    return result
+
+
+def _recover_partial_plot_commit(book_id: str, commit_token: str, tl, draft: dict):
+    """崩溃恢复：草稿里已有本令牌对应 Plot 的桥 → 补齐 staged 事实/记账本后幂等返回。
+
+    Plot 提交跨三处（写 draft → stage_delta → accept token），中间崩溃会留下：
+    draft 已含该 Plot（`_next_plot` 已跳过它，正常校验只会以「token 与当前 Plot 不匹配」
+    失败），该 Plot 的 staged 事实永远缺失，FSM 的草稿恢复还会把「部分完成的桥」当成已完成。
+    桥里已存 facts/run_id/based_on_storyline_revision/context_fingerprint，因此可以确定性重放
+    `reconcile_run` + `stage_delta`（按 plot_id 幂等）+ `accept`，不需要读正文推断语义。
+
+    返回补齐后的 result；没有需要恢复的东西返回 None（继续走正常提交路径）。
+    """
+    from libraries.plot_commit_tokens import _load
+    record = ((_load(book_id).get("tokens") or {}).get(commit_token)) or {}
+    if not record or record.get("accepted"):
+        return None
+    plot_id = str(record.get("plot_id") or "")
+    if not plot_id:
+        return None
+    fingerprint = record.get("context_fingerprint") or ""
+    bridge = None
+    for b in (draft.get("bridges") or []):
+        if str(b.get("plot_id") or "") != plot_id:
+            continue
+        if fingerprint and b.get("context_fingerprint") != fingerprint:
+            continue
+        bridge = b
+        break
+    if bridge is None:
+        return None
+    if tl is None:
+        return None
+    plot = next((p for p in (tl.plots or []) if p.id == plot_id), None)
+    if plot is None:
+        return None
+    chapter_num = int(draft.get("chapter_num") or 0)
+    text = str(bridge.get("text") or "")
+    try:
+        from libraries.plot_run_state import make_plot_delta, stage_delta
+        from libraries.reconcile import reconcile_run
+        reconcile = reconcile_run(
+            plot=plot, bridge=bridge,
+            based_on_storyline_revision=int(bridge.get("based_on_storyline_revision") or 0),
+            current_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+            chapter_num=chapter_num)
+        stage_delta(book_id, make_plot_delta(
+            plot_id=plot_id, plot_name=bridge.get("plot_name") or "", chapter_num=chapter_num,
+            facts=bridge.get("facts") or {}, text=text, run_id=bridge.get("run_id") or "",
+            reconcile=reconcile, plot_summary=bridge.get("plot_summary") or "",
+            arc_id=getattr(plot, "outline_id", "") or ""))
+    except Exception as e:  # noqa: BLE001
+        _log.warning("补齐中断的 Plot 提交失败（保留草稿，留待下次重试）book=%s plot=%s: %s",
+                     book_id, plot_id, e)
+        return None
+    metrics = _text_metrics(text)
+    _log.warning("检测到中断的 Plot 提交，已按草稿桥补齐 staged 事实 book=%s plot=%s",
+                 book_id, plot_id)
+    return _finish_plot_commit(book_id, commit_token, record, plot, chapter_num, {
+        "ok": True, "chapter": chapter_num, "bridges": len(draft.get("bridges") or []),
+        "actual_prose_units": metrics["actual_prose_units"],
+        "raw_codepoints": metrics["raw_codepoints"],
+        "protocol": "v2" if int(bridge.get("protocol_version") or 1) >= 2 else "shadow",
+        "reconcile": reconcile, "recovered_from_draft": True,
+    })
+
+
 def _commit_plot_draft_locked(book_id: str, commit_token: str, text: str, summary: str,
-                              outcome: dict | None, character_events: list | None) -> dict:
+                              outcome: dict | None, character_events: list | None,
+                              summary_problems: list | None = None) -> dict:
     """save_plot_draft 的锁内主体：调用方负责持有 `books/<id>/.lock`。"""
-    from libraries.plot_commit_tokens import verify, accept
-    from libraries.write_flow import transition
+    from libraries.plot_commit_tokens import verify
     tl = book_mgr.load_storyline(book_id)
     draft = _draft_read(book_id) or {}
+    # 先看有没有「上次提交中断」的痕迹：draft 里已有本令牌的桥 → 补齐并幂等返回。
+    recovered = _recover_partial_plot_commit(book_id, commit_token, tl, draft)
+    if recovered is not None:
+        return recovered
     current = _next_plot(tl, draft) if tl else None
     if not current:
         raise RuntimeError("当前没有可提交的 Plot")
@@ -2257,30 +2404,10 @@ def _commit_plot_draft_locked(book_id: str, commit_token: str, text: str, summar
         context_fingerprint=record.get("context_fingerprint") or "",
         sample_receipt=record.get("sample_receipt") or {},
         plot_summary=summary, verified_record=record)
-    flow_id = record.get("flow_id") or "adhoc"
-    if flow_id == "adhoc":
-        # 旧入口没有提前创建 Flow；首次成功提交时补建可恢复 Flow，后续子 Run 都继承它。
-        from libraries.write_flow import start_flow, active_flow_id
-        flow_id = active_flow_id(book_id)
-        if not flow_id:
-            flow = start_flow(book_id, chapter_num)
-            flow_id = flow["flow_id"]
-    result.update(book_id=book_id, plot_id=current.id, writer_run_complete=True,
-                  flow_id=flow_id, child_run_id=record.get("child_run_id"))
-    accept(book_id, commit_token, result)
-    if flow_id:
-        try:
-            from libraries.write_flow import load_flow
-            flow = load_flow(book_id, flow_id) or {}
-            completed = list(flow.get("completed_plot_ids") or [])
-            if current.id not in completed:
-                completed.append(current.id)
-            transition(book_id, flow_id, "EVALUATING", current_plot_id=current.id,
-                       completed_plot_ids=completed)
-        except Exception as e:
-            # 子 Run 审计记录失败不该回滚已生效的 Plot 提交，但必须留痕（此前静默吞掉）。
-            _log.warning("flow 推进失败（Plot 已提交）book=%s flow=%s: %s", book_id, flow_id, e)
-    return result
+    if summary_problems:
+        # 非阻断的契约问题如实回报（摘要超长会被截断为 120，问题清单里保留原长）
+        result["summary_problems"] = list(summary_problems)
+    return _finish_plot_commit(book_id, commit_token, record, current, chapter_num, result)
 
 
 def save_outlines(book_id: str, outlines: list | None = None,
@@ -3533,6 +3660,7 @@ _LOCKED_TOOLS = {
     "confirm_world",
     # 薄工具（agent 生成后落盘，同样需书锁防并发）
     "save_chapter_text", "save_outlines", "save_book_meta",
+    "save_basic_info",     # 会 bump storyline_revision（影响规划），必须与写作/续规划互斥
     # 首次读取会 lazy bootstrap planning_state，故也需同书锁（不做快照）。
     "get_story_state", "prepare_plot_run",
 }

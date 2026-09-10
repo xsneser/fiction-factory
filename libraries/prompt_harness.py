@@ -5,6 +5,9 @@
   · 书级设定卡（Book Bible）：主角/世界观/配角/基调/内涵/风格 压缩成紧凑 bullet，
     在全书开始前确立统一的写作风格与世界观，注入所有写作与弧决策。
   · render_bridge_prompt   ：情节段写作（取代 storyline_writer._group_prompt 的内联拼装）
+    ⚠️ 仅服务于**旧 NovelEngine 引擎写作路径**（engine/storyline_writer + 相应测试）。
+    当前生产写作走 dsh 一次性 Plot Writer（prepare_plot_run → save_plot_draft），
+    其提示词由服务端在 prepare 里组装，**不经过本模块**；改写作提示词别改这里。
   · render_detector_prompt ：笑点探测器（gag_injector 用；笑点完全涌现，不写入弧）
   · render_summary_prompt  ：章节语义摘要（长程记忆）
   · render_outline_context ：弧各 phase 前置设定卡

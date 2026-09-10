@@ -18,6 +18,10 @@ from core.text_utils import count_prose_units
 ROOT = Path(__file__).resolve().parents[1]
 PHASES = {"IDLE", "PREPARING_PLOT", "WRITING_PLOT", "COMMITTING_PLOT", "EVALUATING",
           "COMMITTING_CHAPTER", "QUALITY_GATE", "REPLANNING", "WAIT_CONFIRM", "FAILED", "DONE"}
+# FSM 实际会写入的阶段：PREPARING_PLOT / EVALUATING / COMMITTING_CHAPTER / QUALITY_GATE /
+# REPLANNING / WAIT_CONFIRM / FAILED / DONE。
+# IDLE / WRITING_PLOT / COMMITTING_PLOT 目前只是**标签位**（合法但无人写入）——保留以便
+# UI/审计按语义命名，不要据此以为 FSM 会停在这些状态上。
 DEFAULT_LEASE_SECONDS = 15 * 60
 
 

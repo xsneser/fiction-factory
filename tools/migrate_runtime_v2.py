@@ -1,5 +1,12 @@
 """保守迁移：仅重算可确定的运行态字段，不从正文推断任何剧情语义。
 
+范围（**不做语义迁移**）：章节正文字数/码点、桥段计量、plot_spans、book.total_words。
+**不**迁移 storyline_revision / planning_state / staged facts / 角色状态 / reconcile 状态——
+那些属于语义层，必须由写作/规划正常流程产出，脚本不猜。
+
+写盘走书锁 + write_json_atomic（并发写作/收章时不得裸写覆盖），并在改前把原文件备份到
+`backups/runtime_v2/<book_id>/`（可用 --rollback 回滚）。
+
 示例：
   python tools/migrate_runtime_v2.py --book book_002 --dry-run
   python tools/migrate_runtime_v2.py --book book_002
@@ -34,38 +41,47 @@ def rebuild_spans(bridges: list) -> list:
 
 
 def migrate(book_id: str, dry_run: bool, backup_root: Path) -> dict:
+    from core.json_store import read_json, write_json_atomic
+    from libraries.book_lock import BookBusyError, BookLock
+
     directory = ROOT / "books" / book_id
     if not directory.exists():
         raise SystemExit(f"书不存在：{book_id}")
+    lock = BookLock(book_id)
+    if not lock.acquire(timeout=30.0, purpose="migrate_runtime_v2"):
+        raise BookBusyError(f"另一进程正在操作这本书（迁移需要独占），请稍后再试：{book_id}")
     changed, review, total = [], [], 0
-    for path in sorted((directory / "chapters").glob("*.json")):
-        data = json.loads(path.read_text(encoding="utf-8"))
-        content = str(data.get("content") or "")
-        metrics = {"actual_prose_units": prose_units(content), "raw_codepoints": len(content)}
-        total += metrics["actual_prose_units"]
-        bridges = data.get("bridges") or []
-        if bridges:
-            for b in bridges:
-                b.update({"actual_prose_units": prose_units(str(b.get("text") or "")),
-                          "raw_codepoints": len(str(b.get("text") or ""))})
-            data["plot_spans"] = rebuild_spans(bridges)
-        elif data.get("plot_spans") is None:
-            review.append(f"{path.name}: 无 bridges，未猜测 plot_spans")
-        data.update(metrics)
-        changed.append(path)
+    try:
+        for path in sorted((directory / "chapters").glob("*.json")):
+            data = read_json(path) or {}
+            content = str(data.get("content") or "")
+            metrics = {"actual_prose_units": prose_units(content), "raw_codepoints": len(content)}
+            total += metrics["actual_prose_units"]
+            bridges = data.get("bridges") or []
+            if bridges:
+                for b in bridges:
+                    b.update({"actual_prose_units": prose_units(str(b.get("text") or "")),
+                              "raw_codepoints": len(str(b.get("text") or ""))})
+                data["plot_spans"] = rebuild_spans(bridges)
+            elif data.get("plot_spans") is None:
+                review.append(f"{path.name}: 无 bridges，未猜测 plot_spans")
+            data.update(metrics)
+            changed.append(path)
+            if not dry_run:
+                target = backup_root / book_id / "chapters" / path.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+                write_json_atomic(path, data)
+        book_path = directory / "book.json"
+        book = read_json(book_path) or {}
+        book["total_words"] = total
         if not dry_run:
-            target = backup_root / book_id / "chapters" / path.name
+            target = backup_root / book_id / "book.json"
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
-            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    book_path = directory / "book.json"
-    book = json.loads(book_path.read_text(encoding="utf-8"))
-    book["total_words"] = total
-    if not dry_run:
-        target = backup_root / book_id / "book.json"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(book_path, target)
-        book_path.write_text(json.dumps(book, ensure_ascii=False, indent=2), encoding="utf-8")
+            shutil.copy2(book_path, target)
+            write_json_atomic(book_path, book)
+    finally:
+        lock.release()
     return {"book_id": book_id, "dry_run": dry_run, "chapters": len(changed), "total_words": total,
             "needs_review": review, "backup": str(backup_root / book_id) if not dry_run else None}
 

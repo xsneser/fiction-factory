@@ -71,6 +71,37 @@ def main():
         gate = chapter_quality_gate(bid, 1)
         assert gate["checks"]["future_consumption"]["passed"] is False
         print("plot-run protocol: OK")
+
+        # ── 崩溃恢复：draft 已写、staged/accept 缺失时，重放同一令牌应补齐而不是报「不匹配」 ──
+        import json
+        from libraries import plot_commit_tokens as tokens_mod
+        from libraries.plot_run_state import load_staged
+        r3 = prepare_plot_run(bid)
+        t3 = prose(1300)
+        saved3 = save_plot_draft(r3["run"]["commit_token"], t3,
+                                 "顾衡在终点确认了新的异常来源，并把线索固定下来，为下一步行动留出明确的接口、代价与时间压力，同时保持调查节奏不松。",
+                                 outcome={})
+        assert saved3.get("writer_run_complete") and not saved3.get("recovered_from_draft")
+        # 回滚成「提交中断」：草稿桥保留，删掉 staged 事实与令牌 accepted 标记
+        staged_path = os.path.join(ROOT, "books", bid, "staged_story_state.json")
+        with open(staged_path, encoding="utf-8") as f:
+            staged_before = json.load(f)
+        assert staged_before.get("plot_deltas"), "前置条件：staged 事实已写入"
+        os.remove(staged_path)
+        state = tokens_mod._load(bid)
+        rec = state["tokens"][r3["run"]["commit_token"]]
+        rec["accepted"] = False
+        rec.pop("result", None)
+        rec.pop("accepted_at", None)
+        tokens_mod._save(bid, state)
+        replay = save_plot_draft(r3["run"]["commit_token"], t3,
+                                 "顾衡在终点确认了新的异常来源，并把线索固定下来，为下一步行动留出明确的接口、代价与时间压力，同时保持调查节奏不松。",
+                                 outcome={})
+        assert replay.get("recovered_from_draft") is True, replay
+        replays = [d for d in (load_staged(bid).get("plot_deltas") or []) if d.get("plot_id") == "p3"]
+        assert replays, "恢复应把该情节段的 staged 事实补回来"
+        assert tokens_mod.accepted_result(bid, r3["run"]["commit_token"]), "恢复应完成令牌签收"
+        print("plot commit crash recovery: OK")
     finally:
         bm.delete(bid)
 

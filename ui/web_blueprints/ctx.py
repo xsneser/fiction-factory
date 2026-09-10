@@ -30,6 +30,8 @@ from libraries.storyline import (
     get_mc, get_characters, relation_to_mc, normalize_basic_info,
 )
 
+log = logging.getLogger("web_ctx")
+
 # ─── 全局服务 ───
 plot_lib = PlotLibrary()
 struct_lib = StructureLibrary()
@@ -122,23 +124,37 @@ def _resolve_storyline(storyline_id):
 
 
 def _save_storyline(sl, storyline_id):
-    """写入内存缓存并落盘；结构写入自动推进乐观并发 revision。"""
-    try:
-        disk = load_storyline(_storyline_filepath(storyline_id))
-        disk_revision = int(getattr(disk, "storyline_revision", 0) or 0) if disk else -1
-        if int(getattr(sl, "storyline_revision", 0) or 0) <= disk_revision:
-            sl.storyline_revision = disk_revision + 1
-    except Exception:
-        pass
+    """写入内存缓存并落盘；结构写入自动推进乐观并发 revision。
+
+    UI 直写路径也必须与 MCP/dsh 侧互斥：加书锁 + 在锁内重新读盘抬 revision（避免两处
+    「读旧版本→各写一份→互相覆盖」）。mtime 在**写盘之后**记录，否则记的是写前时间戳，
+    下一次读必然 cache miss。
+    """
+    from libraries.book_lock import BookBusyError, BookLock
     path = _storyline_filepath(storyline_id)
-    with _storyline_lock:
-        _storylines[storyline_id] = sl
+    book_id = str(storyline_id or "")
+    lock = BookLock(book_id) if book_id.startswith("book_") else None
+    if lock is not None and not lock.acquire(timeout=30.0, purpose="_save_storyline"):
+        raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
+    try:
         try:
-            import os as _os
-            _storylines_mtime[storyline_id] = _os.stat(path).st_mtime_ns
-        except OSError:
-            _storylines_mtime.pop(storyline_id, None)
-    save_storyline(sl, path)
+            disk = load_storyline(path)
+            disk_revision = int(getattr(disk, "storyline_revision", 0) or 0) if disk else -1
+            if int(getattr(sl, "storyline_revision", 0) or 0) <= disk_revision:
+                sl.storyline_revision = disk_revision + 1
+        except Exception as e:  # noqa: BLE001
+            log.warning("_save_storyline 读盘抬版本失败（按传入版本写入）%s: %s", storyline_id, e)
+        save_storyline(sl, path)
+        with _storyline_lock:
+            _storylines[storyline_id] = sl
+            try:
+                import os as _os
+                _storylines_mtime[storyline_id] = _os.stat(path).st_mtime_ns   # 写盘后记录
+            except OSError:
+                _storylines_mtime.pop(storyline_id, None)
+    finally:
+        if lock is not None:
+            lock.release()
 
 
 def _max_id_suffix(ids) -> int:
@@ -158,6 +174,7 @@ def _seed_builder_counter(builder, ids) -> None:
 
 
 __all__ = [
+    "log",
     "plot_lib", "struct_lib", "gag_lib", "char_lib", "style_rules", "profiles", "book_mgr",
     "get_llm", "invalidate_llm", "sse_stream_response",
     "_engines", "_storylines", "_storyline_lock",

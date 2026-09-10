@@ -216,7 +216,13 @@ def load_planning_state(book_id: str, tl, book=None, persist: bool = True) -> di
         data = merge_state(default_state(book_id, tl, book), data)
         data["book_id"] = book_id
         data["storyline_revision"] = int(getattr(tl, "storyline_revision", 0) or 0)
-        data["written_until_word"] = _written(book)
+        # 只有拿到真实 book 时才回写已写字数：`book=None` 的只读调用（如 FSM 评估）
+        # 否则会把 written_until_word 覆写成 0 并落盘，与 UI/写路径互相打架。
+        if book is not None:
+            data["written_until_word"] = _written(book)
+        # 承诺水位只增不减：换/缩短故事线（mode=replace）不会把已承诺区缩回去，
+        # 因此边界判定对「被替换掉的那段承诺」仍按旧水位理解——这是刻意选择（宁可多补一批，
+        # 也不要让已向读者承诺的内容失去边界保护）。
         data["committed_until_word"] = max(int(data.get("committed_until_word") or 0), _max_committed(tl))
         if persist and data != original:
             write_json_atomic(path, data)
@@ -236,23 +242,43 @@ def load_replan_preview(book_id: str) -> dict | None:
 
 
 def save_replan_preview(book_id: str, preview: dict) -> dict:
-    """保存非权威续规划预览；每本书只保留最新一份。"""
+    """保存非权威续规划预览；每本书只保留最新一份。
+
+    预览是**单份覆盖**语义：并发计划器后写会盖掉先写，所以写入纳入书锁（与 commit-plan
+    同一把锁），并记下产出方的运行身份（flow/child run），便于审计与「这是谁写的预览」。
+    """
+    from libraries.book_lock import BookBusyError, BookLock
     data = copy.deepcopy(preview or {})
     data["book_id"] = book_id
     data["preview_id"] = str(data.get("preview_id") or uuid.uuid4().hex)
     data["created_at"] = str(data.get("created_at") or time.strftime("%Y-%m-%d %H:%M:%S"))
-    write_json_atomic(replan_preview_path(book_id), data)
+    data.setdefault("owner_flow_id", os.environ.get("NOVEL_WRITE_FLOW_ID", ""))
+    data.setdefault("owner_child_run_id", os.environ.get("NOVEL_WRITE_CHILD_RUN_ID", ""))
+    lock = BookLock(book_id)
+    if not lock.acquire(timeout=30.0, purpose="save_replan_preview"):
+        raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
+    try:
+        write_json_atomic(replan_preview_path(book_id), data)
+    finally:
+        lock.release()
     return data
 
 
 def delete_replan_preview(book_id: str, preview_id: str = "") -> bool:
+    from libraries.book_lock import BookBusyError, BookLock
     path = replan_preview_path(book_id)
     data = load_replan_preview(book_id)
     if not data:
         return False
     if preview_id and str(data.get("preview_id") or "") != str(preview_id):
         return False
-    path.unlink(missing_ok=True)
+    lock = BookLock(book_id)
+    if not lock.acquire(timeout=30.0, purpose="delete_replan_preview"):
+        raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
+    try:
+        path.unlink(missing_ok=True)
+    finally:
+        lock.release()
     return True
 
 
