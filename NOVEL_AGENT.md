@@ -104,6 +104,15 @@
   style_rules 每项 `{kind(prefer|ban), pattern, desc?, severity?, replacements?}`（风格规则归属 `profile_id` 笔名）。
   确认后由**页面** POST `/api/scout/ingest` 落库，agent **不要**再自行 `ingest_library_assets` 重复入库。
 
+### 读回向导状态（get_build_status）
+- `get_build_status()`：读浏览器上报的向导快照（重复读不消费）。建书前/中/后都用它判进度：
+  `cur`（1-3）、`book_id`/`created`（建成才有）、`build_session_id`、`pen_selected`、
+  `_picked`、`has_world`/`has_picks`/`has_outline`、`submit_error`（建书失败原因原文），
+  以及**表单内容 `idea` / `tags`**（题材标签数组）。
+- **表单字段的用法**：提交前 idea/标签在服务端**只有这一份**（书要等用户点提交才创建）。
+  向导交接任务里通常已带上它们；**文本没给全时（例如用户自己在侧栏说「开新书」）就以这两个
+  字段为准**，别凭空生成候选。
+
 ### 落盘工具
 - `save_outlines`：保存 outlines/plots/threads/themes → 落盘。含 plots 且书未 ready → phase=plots（config 补弧后待用户在书详情确认）；**已 ready 书追加弧保持 ready**（续写/扩写不降级；深化已并入建书步3，正常新书由 submit 直接 phase=ready，不经 save_outlines）。**ready 只由用户动作触发**——正常建书=用户在向导点提交（agent 不调 submit）；config 补弧落 plots 后须用户在书详情页「确认弧+情节段」（/api/book/&lt;id&gt;/confirm-storyline）——agent 无 fill_gags/confirm_outlines 等翻 ready 工具，**不得臆造翻转**。弧的字数跨度、情节段叶弧规则见 1.2 故事线数据规则；**每条弧 `notes` 存「本弧目标 + 偏离库模板的点」**（落库可复核，供蓝图/用户过目）。结构门槛与 set_outline 相同（见 1.2）：每条弧/情节段缺 id/name/完整跨度/叶弧归属，工具 raise 拒收；append/续写可只传 plots 挂到已落盘弧（outlines 留空）。
 - `save_plot_draft`：**write profile 的一次性 Plot 提交**（Writer 唯二工具之一）。只接受
