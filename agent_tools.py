@@ -3644,6 +3644,254 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
     return {"__ui_command__": cmd, "cmd": cmd}
 
 
+# ═══════════════════════════════════════════════════════
+# 建书步 3 薄业务工具（profile=build 的**全部**工具面）
+# ═══════════════════════════════════════════════════════
+#
+# 为什么步 3 不再给 drive_ui：它是「一个工具 + 十几个子命令」的命令桥，模型看得见的
+# 命令面远大于它能执行的面（2026-09-10 实测：模型看见 set_world、调用却吃
+# ui_command_forbidden，随后把整轮预算花在「试 set_world → 试 set_characters →
+# navigate → 再读状态」这类**平台错误恢复**上，小说设计一次都没做）。
+# 步 3 的真实意图只有四个：读权威上下文 → 查素材 → 校草稿 → 落草稿。
+# **工具面即能力边界**。
+#
+# 上下文来源：`storage/build_drafts/<sid>.json`（canonical，服务端持有）——
+# 不再靠把整段聊天转发给模型（那是 ~4.2 万 token 的来源，也与服务端判定互相矛盾）。
+
+_ROLES = {"主角", "配角", "反派", "其他"}
+
+
+def _current_build_session(explicit: str = "") -> str:
+    """本次建书会话 id（canonical 记录的键）。
+
+    优先显式传入——子 run 的任务文本带着 `[build_session=…]`，skill 要求 agent 回传；
+    否则退回向导快照（`build_status.json` 是**全局单份**，两个向导 tab 并行会串，
+    显式传参是多 tab 下的正解）。
+    """
+    sid = str(explicit or "").strip()
+    if sid:
+        return sid
+    try:
+        from libraries.build_status import get_build_status
+        return str((get_build_status() or {}).get("build_session_id") or "")
+    except Exception:
+        return ""
+
+
+def _character_issues(characters: list | None) -> list:
+    """人物载荷的结构性问题（与 drive_ui(set_characters) 的契约同源）。
+
+    这些是 agent 最容易写错、且前端会**静默**出问题的三处：role 自由文本会被归成配角、
+    relations 传字符串会让卡片渲染中断、importance 缺失导致主角识别错。此前只能靠
+    NOVEL_AGENT.md 让模型记住，现在由工具直接回打。
+    """
+    issues = []
+    if not isinstance(characters, list) or not characters:
+        return ["characters 为空：至少要有主角"]
+    names = {str((c or {}).get("name") or "") for c in characters if isinstance(c, dict)}
+    for i, c in enumerate(characters):
+        if not isinstance(c, dict):
+            issues.append(f"characters[{i}] 不是对象")
+            continue
+        nm = str(c.get("name") or "").strip()
+        tag = f"人物「{nm or i}」"
+        if not nm:
+            issues.append(f"characters[{i}] 缺 name")
+        if str(c.get("role") or "") not in _ROLES:
+            issues.append(f"{tag} 的 role={c.get('role')!r} 不合法（只取 主角/配角/反派/其他）")
+        if not c.get("importance"):
+            issues.append(f"{tag} 缺 importance（主角=1，其余≥2）")
+        rel = c.get("relations")
+        if rel is None:
+            continue
+        if not isinstance(rel, list) or any(not isinstance(r, dict) or not r.get("name") for r in rel):
+            issues.append(f"{tag} 的 relations 必须是 [{{name, relation}}] 对象数组")
+        else:
+            for r in rel:
+                if str(r.get("name")) not in names:
+                    issues.append(f"{tag} 的关系指向不存在的人物「{r.get('name')}」")
+    if not any(int((c or {}).get("importance") or 0) == 1 for c in characters if isinstance(c, dict)):
+        issues.append("没有 importance=1 的主角")
+    return issues
+
+
+def get_build_context(build_session_id: str = "") -> dict:
+    """[步 3 第一步] 读回本次建书的**全部权威事实**——世界观/人物/故事线一律据此生成。
+
+    返回 session{build_session_id, step, revision, exists}、idea、tags、pen、
+    selected_candidate（用户在步 2 选定的候选快照）、existing_draft（已落过的草稿，
+    用于续改；首次为 null）、candidates_count、warnings。
+
+    这是步 3 的**唯一**输入源：不要向用户复述历史对话，也不要凭前文猜测设定——
+    记录里没有的东西就是没有，`warnings` 会点名缺哪一项。
+
+    `build_session_id` 从任务文本里的 `[build_session=…]` 原样回传（多 tab 才不串）。
+    """
+    from libraries import build_draft
+    sid = _current_build_session(build_session_id)
+    if not sid:
+        return {"ok": False, "error": "no_build_session",
+                "message": "拿不到建书会话 id：请让用户在「启动新书」向导里重走一次，"
+                           "或在带 [build_session=…] 标记的任务里调用。"}
+    rec = build_draft.load(sid)
+    warnings = []
+    if not build_draft.exists(sid):
+        warnings.append("服务端还没有本次会话的记录——阶段可能还没转场（用户未点「已挑选完毕」）。")
+    if int(rec.get("step") or 1) != 3:
+        warnings.append(f"服务端记录的 step={rec.get('step')}（非 3）：步 3 工具不该在这一步使用。")
+    if not rec.get("selected_candidate") and not rec.get("candidates"):
+        warnings.append("记录里既没有选中候选也没有候选列表（用户可能是「跳过，手动设定」进步 3）。")
+    return {
+        "ok": True,
+        "session": {"build_session_id": rec.get("session_id") or sid,
+                    "step": int(rec.get("step") or 1),
+                    "revision": int(rec.get("revision") or 0),
+                    "exists": build_draft.exists(sid)},
+        "idea": rec.get("idea") or "",
+        "tags": list(rec.get("tags") or []),
+        "pen": {"name": rec.get("pen_name") or ""},
+        "selected_candidate": rec.get("selected_candidate"),
+        "existing_draft": rec.get("draft"),
+        "candidates_count": len(rec.get("candidates") or []),
+        "warnings": warnings,
+    }
+
+
+def validate_build(world: dict | None = None, storyline: dict | None = None,
+                   characters: list | None = None, words_per_chapter: int = 3000,
+                   build_session_id: str = "") -> dict:
+    """[步 3 校验] 聚合校验完整 BuildDraft（世界观 + 故事线 + 人物）。**纯检查、不落表。**
+
+    三个参数不传就对着**服务端已落盘的草稿**跑（所以续改时可以零参数再校验一次）。
+    - `world`：drive_ui(set_world) 的参数（顶层键必须 world_building；也可直接给
+      world_building 本体，会被自动包一层）。
+    - `storyline`：{outlines, plots, threads?, themes?, planning?}。
+    - `characters`：人物数组（role ∈ 主角/配角/反派/其他、importance 必传、
+      relations 为 [{name, relation}]）。
+
+    返回 {passed, issues, decision_points, structure_hints}。**必须按 issues /
+    decision_points 改到 passed=true 再 save_build_draft**——save 复用同一套校验，
+    没过不会落盘。
+    """
+    from libraries import build_draft
+    sid = _current_build_session(build_session_id)
+    rec = build_draft.load(sid) if sid else {}
+    draft = rec.get("draft") or {}
+    world = world if world is not None else (draft.get("world") if draft else None)
+    storyline = storyline if storyline is not None else (draft.get("storyline") if draft else None)
+    characters = characters if characters is not None else (draft.get("characters") if draft else None)
+
+    wb = world if isinstance(world, dict) else {}
+    if wb and not isinstance(wb.get("world_building"), dict):
+        wb = {"world_building": wb}   # 容忍直接给 world_building 本体
+    sl = storyline if isinstance(storyline, dict) else {}
+
+    issues: list = []
+    decision_points: list = []
+    structure_hints: list = []
+    world_report, storyline_report = None, None
+
+    if not wb:
+        issues.append("world 为空：世界观必填")
+    else:
+        world_report = validate_world(basic_info={"world_building": wb.get("world_building") or {},
+                                                  "characters": characters or []})
+        if not world_report.get("passed", True):
+            issues.extend(world_report.get("issues") or [])
+        decision_points.extend(world_report.get("decision_points") or [])
+
+    if not sl:
+        issues.append("storyline 为空：开篇弧 + 情节段必填")
+    else:
+        outs, plots = sl.get("outlines"), sl.get("plots")
+        if not (isinstance(outs, list) and outs):
+            issues.append("storyline.outlines 需非空列表")
+        if not isinstance(plots, list) or not plots:
+            issues.append("storyline.plots 需非空列表（仅最底层弧可挂情节段）")
+        if isinstance(outs, list) and outs and isinstance(plots, list) and plots:
+            storyline_report = validate_storyline(
+                outlines=outs, plots=plots,
+                words_per_chapter=int(words_per_chapter or 3000))
+            if not storyline_report.get("passed", True):
+                issues.extend(storyline_report.get("issues") or [])
+            decision_points.extend(storyline_report.get("decision_points") or [])
+            structure_hints.extend(storyline_report.get("structure_hints") or [])
+
+    issues.extend(_character_issues(characters))
+
+    passed = not issues
+    return {"ok": True, "passed": passed, "issue_count": len(issues), "issues": issues,
+            "decision_points": decision_points, "structure_hints": structure_hints,
+            "world": world_report, "storyline": storyline_report,
+            "next": ("校验通过，可以 save_build_draft 落盘"
+                     if passed else "按 issues / decision_points 修正后重新 validate_build")}
+
+
+def save_build_draft(world: dict | None = None, storyline: dict | None = None,
+                     characters: list | None = None, words_per_chapter: int = 3000,
+                     expected_revision: int | None = None,
+                     build_session_id: str = "") -> dict:
+    """[步 3 落盘] 原子保存**通过校验**的步 3 草稿（世界观 + 故事线 + 人物一次提交）。
+
+    语义是「先验证、后落表」：**校验不过什么都不写**，返回 {saved: false, validation}。
+    通过后：
+      ① 写服务端 canonical 记录（storage/build_drafts/<sid>.json，revision +1，提交源）；
+      ② 把同一份载荷投影到浏览器步 3 表单（用户能看见、能自己点提交）。
+    校验不过时不要换参数试探，按 validation.issues 改草稿内容再提交。
+
+    `expected_revision` 传 get_build_context 读到的 revision（CAS：中途被改过就拒收，
+    避免覆盖）。`world` / `storyline` 的形状同 validate_build。
+
+    参数都可省略——省略即复用服务端已落盘的草稿（只提交改动过的那一部分）。
+    """
+    from libraries import build_draft
+    sid = _current_build_session(build_session_id)
+    if not sid:
+        return {"ok": False, "saved": False, "error": "no_build_session",
+                "message": "拿不到建书会话 id；请从任务文本里的 [build_session=…] 原样回传。"}
+    rec = build_draft.load(sid)
+    if expected_revision is not None and int(rec.get("revision") or 0) != int(expected_revision):
+        return {"ok": False, "saved": False, "error": "revision_conflict",
+                "current_revision": int(rec.get("revision") or 0),
+                "message": "草稿在服务端已被改动（revision 不匹配）：请重新 get_build_context 再提交。"}
+
+    old = rec.get("draft") or {}
+    merged = {
+        "world": world if world is not None else old.get("world"),
+        "storyline": storyline if storyline is not None else old.get("storyline"),
+        "characters": characters if characters is not None else old.get("characters"),
+    }
+    report = validate_build(world=merged["world"], storyline=merged["storyline"],
+                            characters=merged["characters"],
+                            words_per_chapter=words_per_chapter,
+                            build_session_id=sid)
+    if not report.get("passed"):
+        return {"ok": False, "saved": False, "validation": report,
+                "message": "校验未通过，未落盘（按 issues 修正后重试）"}
+
+    rec = build_draft.update(sid, draft=merged)
+
+    # 投影到浏览器步 3 表单：载荷**已整体校验通过**，这里的逐条 drive_ui 只可能因
+    # 浏览器侧问题失败（向导页没开、步不对），收集成 project_errors 如实回报，不回滚已落盘草稿。
+    projected, project_errors = [], []
+    for cmd, payload in (("set_world", merged["world"]),
+                         ("set_outline", merged["storyline"]),
+                         ("set_characters", {"characters": merged["characters"]})):
+        if not payload:
+            continue
+        try:
+            drive_ui(cmd, dict(payload))
+            projected.append(cmd)
+        except Exception as e:  # noqa: BLE001
+            project_errors.append(f"{cmd}: {e}")
+    return {"ok": True, "saved": True, "revision": int(rec.get("revision") or 0),
+            "projected": projected, "project_errors": project_errors,
+            "validation": {"passed": True, "decision_points": report.get("decision_points") or [],
+                           "structure_hints": report.get("structure_hints") or []},
+            "message": "草稿已落服务端并投影到步 3 表单；请向用户汇报蓝图，"
+                       "由用户自己点「创建并进入写作台」提交（agent 不提交）。"}
+
+
 # ═══════════════════════════════════════════════════
 # 工具注册表（自动从函数签名生成 JSON Schema，MCP 与 agent 循环共用）
 # ═══════════════════════════════════════════════════
@@ -4159,6 +4407,8 @@ def _build_registry():
         # 只读摸底
         list_books, get_book_state, prepare_plot_run, get_storyline, get_story_state,
         get_book_detail, get_build_status, query_arc_library, query_plots, query_gags, query_profiles, query_characters,
+        # 建书步 3 薄工具（profile=build 的全部面；不走 drive_ui，见其定义处的说明）
+        get_build_context, validate_build, save_build_draft,
         get_pen_style, pick_plot_sample,
         # 规划（薄工具：agent 生成后落盘；旧工具内 LLM 生成已由 agent 自主生成接管）
         save_basic_info,

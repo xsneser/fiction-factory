@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 45  # 新增 get_story_state；对齐 _build_registry 实收
+EXPECT_MCP_TOOLS = 48  # 建书步 3 薄工具 +3（get_build_context/validate_build/save_build_draft）
 PASS, FAIL = [], []
 
 
@@ -110,6 +110,8 @@ async def main():
                           "list_crawled_novels", "read_crawled_novel", "extract_state", "ingest_library_assets",
                           "save_chapter_text", "save_plot_draft", "save_outlines", "save_book_meta",
                           "prepare_plot_run", "get_story_state", "get_pen_style", "add_style_rule", "delete_style_rule",
+                          # 建书步 3 薄工具（profile=build 的全部面）
+                          "get_build_context", "validate_build", "save_build_draft",
                           "add_style_sample", "delete_style_sample", "list_style_samples", "get_style_sample"):
                     check(f"工具 {t} 在列", t in names)
 

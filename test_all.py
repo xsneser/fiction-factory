@@ -774,7 +774,10 @@ from libraries.planning_state import (save_build_session as _save_build_session,
                                       load_replan_preview as _load_replan_preview,
                                       delete_replan_preview as _delete_replan_preview)
 
-assert_ok("profile-build工具数", len(_filter_registry(_at.TOOL_REGISTRY, "build")) <= 10)
+assert_ok("profile-build工具数=5（工具面即能力边界）",
+          {e["name"] for e in _filter_registry(_at.TOOL_REGISTRY, "build")}
+          == {"get_build_context", "query_arc_library", "query_plots",
+              "validate_build", "save_build_draft"})
 assert_ok("profile-write工具数", len(_filter_registry(_at.TOOL_REGISTRY, "write")) <= 6)
 _rp = _resolve_profile("build", book_exists=False, pen_selected=True)
 assert_ok("profile-无书隐藏弧候选", "arc_material_candidates" not in _rp["allowed_tools"])

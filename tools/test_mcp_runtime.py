@@ -21,7 +21,7 @@ def main() -> None:
                 profile="write",
                 source="dsh",
                 tools=sorted(PROFILE_TOOLS["write"]),
-                registry_tool_count=45,
+                registry_tool_count=48,
                 flow_id="flow-a",
                 child_run_id="child-a",
             )
@@ -29,14 +29,14 @@ def main() -> None:
                 profile="scout",
                 source="dsh",
                 tools=["fetch_book"],
-                registry_tool_count=45,
+                registry_tool_count=48,
                 flow_id="flow-b",
                 child_run_id="child-b",
             )
 
             selected = mcp_runtime.status(
                 profile_tools=PROFILE_TOOLS,
-                registry_tool_count=45,
+                registry_tool_count=48,
                 flow_id="flow-a",
                 child_run_id="child-a",
             )
@@ -45,12 +45,12 @@ def main() -> None:
             assert active["instance_id"] == first["instance_id"]
             assert active["profile"] == "write"
             assert active["profile_mcp_tool_count"] == 2
-            assert active["registry_tool_count"] == 45
+            assert active["registry_tool_count"] == 48
             assert active["host_tool_count"] is None
 
             missing = mcp_runtime.status(
                 profile_tools=PROFILE_TOOLS,
-                registry_tool_count=45,
+                registry_tool_count=48,
                 flow_id="flow-missing",
             )
             assert missing["active"]["matched"] is False
@@ -58,7 +58,7 @@ def main() -> None:
 
             unscoped = mcp_runtime.status(
                 profile_tools=PROFILE_TOOLS,
-                registry_tool_count=45,
+                registry_tool_count=48,
             )
             assert unscoped["active"]["matched"] is False
             assert len(unscoped["observed_mcp_instances"]) == 2

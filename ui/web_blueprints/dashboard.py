@@ -73,8 +73,13 @@ def start_new_book():
             except (TypeError, ValueError):
                 _rev_ok = False
             if _draft and _rev_ok:
-                if isinstance(_draft.get("world"), dict):
-                    data["world_building"] = _draft["world"]
+                # 草稿各段的形状 = 对应 drive_ui 命令的参数（见 agent_tools.save_build_draft）
+                _w = _draft.get("world")
+                if isinstance(_w, dict) and isinstance(_w.get("world_building"), dict):
+                    data["world_building"] = _w["world_building"]
+                    for _k in ("tone", "target_audience", "pov", "era_language"):
+                        if _w.get(_k):
+                            data[_k] = _w[_k]
                 if isinstance(_draft.get("characters"), list) and _draft["characters"]:
                     data["characters"] = _draft["characters"]
                 _sl = _draft.get("storyline")
@@ -86,7 +91,9 @@ def start_new_book():
                         "themes": _sl.get("themes") or [],
                         "basic_info": {},
                     }
-                    data["future_intents"] = _sl.get("future_intents") or []
+                    _planning = _sl.get("planning") or {}
+                    data["future_intents"] = (_planning.get("future_intents")
+                                              or _sl.get("future_intents") or [])
         if build_session_id:
             from libraries.planning_state import save_build_session
             outline_preview = data.get("_outline_data") or {}

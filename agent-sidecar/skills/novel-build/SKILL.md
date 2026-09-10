@@ -1,39 +1,46 @@
 ---
 name: novel-build
-description: 建书 步3。已选候选/补全世界观/继续建书。流程:步3 内容构建工作台**深化式**生成（先查弧/情节段库取素材 → 反模板差异化命题(core_conflict + world_building.differentiation 随 set_world 内联落库) → 核心矛盾→势力→弧+情节段(每弧 notes 含目标+偏离模板点)→人物→其余维度 → 内联 validate_storyline/validate_world 回打≥1轮直到 passed → 汇报故事线蓝图），用户自行提交建书(agent 不调 submit)。深化已并入步3、提交即 phase=ready（无书详情二次确认/无后置深化任务）；config 兜底补弧在 build profile 外（属 replan/legacy，见收尾引导）；agent 无翻 ready 工具。
+description: 建书 步3。已选候选/补全世界观/继续建书。流程:get_build_context 取权威输入 → query_arc_library/query_plots 各查一次 → 一次性设计完整 BuildDraft（差异化命题 + 世界观/势力 + 开篇弧+情节段 + 人物 + 线程/远期意图）→ validate_build 回打至 passed → save_build_draft 落盘 → 汇报蓝图并停；用户自己点提交（agent 不提交）。
 ---
 
-# 建书 步3：内容构建工作台（novel-build）
+# 建书 步3：内容构建（novel-build）
 
-> 护栏：建书只能 `drive_ui` 驱动浏览器向导，**agent 不调 submit**（用户自行点击提交）；**agent 无任何把书翻到 ready 的工具**——正常建书由用户在向导点提交（步3 深化式内容随书落库）即 phase=ready；config/补弧兜底路径的 plots→ready 只能用户在书详情页点「✅ 确认弧+情节段，开始写作」。直建/直删工具不在工具面。
-> 触发：用户在步 2 点「已挑选完毕」后，页面自动把本任务发给 agent；也可在侧栏说「继续建书 / 补全世界观 / 深化弧」。
-> 契约（set_world/set_outline/set_characters/校验字段）见 NOVEL_AGENT.md 1.2。
+护栏：本阶段只能填表——`save_build_draft` 落草稿，**提交只能由用户在页面点击**（agent 无
+直建/翻 ready 工具）。不要给用户派活、不要自己改流程。
 
-## 步 3 深化式内容构建（一次到位，不是浅稿后深化：本步产出即定稿级故事线）
-- **素材查询预算**：默认各查询一次弧库与情节段库（`query_arc_library`/`query_plots`，本 profile 可调）；只有覆盖不足才允许一次补查，不换近义词反复试探。
-- **增量建书**：全书目标默认 9万~18万字，但正式 outlines/plots 只承诺开篇约 1.5万~3万字；远期方向作为 planning future intents，不一次排完整本书。
-- **H2 future intents 真传入**：把远期方向（下一弧意图 / 主线升级方向 / 角色成长 / 未兑现线索）显式传给向导——调 `drive_ui(set_outline, args={outlines, plots, threads, themes, planning:{future_intents:[{id, kind, desc, note}]}})`（向导随 submit 经 `attach_build_session` 种进 planning_state）。**不要只在聊天里说"远期作 future_intents"而不传参**，否则 planning_state 的 H2 区会是空的。
-- **差异化命题（存盘，反模板）**：动手排弧前先想清「本书与同类/所查模板的三个差异点」（题材套路 × 借书 × 世界观如何偏离）。最核心一条压进 `core_conflict`；**完整发散论述直接写 `world_building.differentiation`**——二者都随 `set_world` 内联落库（2026-09-05 起向导已透传该键，无需等书建后再补）。
-- **发散先行**：先在自身上下文出 2–3 条**相异**弧骨架，互相对比择一/融合后再细排；**不要**拿到弧库模板就逐槽位照填（库是"对镜"，借骨不借皮）。
-- 围绕「核心矛盾 → 势力 → 弧+情节段 → 人物 → 其余维度」反复推演：先想清楚故事线与世界观，再落 `set_world`/`set_outline`/`set_characters`。
-- **弧+情节段（字数按内容、反印刷感）**：outlines 弧树嵌套按字数跨度（`start_word/end_word`）、plots **仅挂最底层弧**；用 `set_outline` 落表。**每个情节段 `words`（目标字数，0 基整数，300~2500）按场景浓淡给——过渡/日常 300~600、常规推进 800~1600、关键/高潮 1800~2500，同弧/全书不要全部相等**；弧字数跨度 = 其情节段 `words` 之和（叶弧可跨多章、同父下不必相等、可三层），**不要按章数/words_per_chapter 均分**。**第三层条件化**：目标块 ≥3 章（≥3×words_per_chapter）且内含 2+ 可独立排序子目标时拆第三层（判据/样板见 NOVEL_AGENT.md 1.1）；每本书至少检查一遍有无这样的块——没有就保持两层并在 notes/汇报里说明，**勿为凑层硬拆**。**每条弧 `notes` 必含「本弧目标 + 偏离库模板 X 的点」**（notes 落库、供蓝图/用户过目复核）。
-- **弧树层级自主定**：弧库模板是**单弧参考**（独立弧，借其方向/戏剧目标即可）；书内弧树（顶层弧 + `parent_arc_id` 子弧、层数/分支）由你按剧情结构自主设计——**不必照抄模板、不必均匀**（有的顶层弧不拆、有的两层、有的更深）。**反例（勿做）**：顶层弧按章均分等长叶弧、每个情节段字数全同——那是印刷感，不是剧情结构。
-- **校验回打环（L2，走工具不靠肉眼，至少 1 轮）**：生成/修改后、提交前调 `validate_storyline(outlines=..., plots=..., words_per_chapter=...)`（内联模式，步3 书未创建时用）+ `validate_world(basic_info=...)`（势力/人物一致性）；按 `decision_points` 反复补弧/移情节段/缩弧跨度/补人物**直到 `passed=true`**（首次没过不许直接跳过）；若返回 `structure_hints`（叶弧跨度全相等/情节段字数全相同，软提示）**必须重排至消除或向用户说明**；仍有残留则逐条列入汇报向用户如实说明。
-- **反复反思**：从剧情吸引力、设定一致性、阅读节奏出发反复审视，发现问题继续改，直到满意为止。
-- **全部落定后停下**，向用户汇报**故事线蓝图**：书名/世界观/势力/人物 + 差异化命题一句话 + 弧树层级（顶层弧与子弧、每弧字数跨度）/ 情节段数 / 线程与设局-收局 + `passed`。**用户在步 3 即可看到故事线**，满意后**自行点击按钮提交**（agent 不调 submit）。提交即 phase=ready，无需书详情二次确认。
+## 流程（一次到位，本步产出即定稿级故事线）
 
-## 提交后：查相位收尾（无深化段——深化已在步3完成）
-用户提交建书后 → `get_build_status()` 拿 `book_id`（`created=true` 才算建成；未建成先等片刻再查，仍无 → 如实汇报）→ `get_book_detail(book_id)` 看 phase：
+1. `get_build_context()` — 取**唯一权威输入**：idea / 题材标签 / 笔名 / 用户选中的候选 /
+   已落草稿。**只依据它生成**，不要复述历史对话、不要凭前文猜设定；`warnings` 点名缺什么。
+2. `query_arc_library` 与 `query_plots` **各查一次**（这是"对镜"不是模板）；覆盖不足才补查一次。
+3. **先在脑内设计完整草稿，再落表**——不要边想边写、不要反复改：
+   世界观与势力 → 核心矛盾与差异化命题 → 开篇弧与情节段 → 人物 → 线程与远期意图。
+   世界观、人物、故事线是一个整体，改一处先回头检查其余两处是否还自洽。
+4. `validate_build(...)` 校验整份草稿；按 `issues` / `decision_points` 改到 `passed=true`。
+   `structure_hints` 是软提示（叶弧跨度全相等/情节段字数全相同 = 印刷感），要重排而不是忽略。
+5. `save_build_draft(...)` 落盘（内部复用同一套校验：**不过什么都不写**）。落盘后表单会
+   自动出现世界观/弧+情节段/人物。
+6. **停下**，向用户汇报蓝图：书名 / 世界观一句话 / 势力 / 人物 / 差异化命题 / 弧树与字数跨度 /
+   情节段数 / 线程与设局-收局 / 校验是否 passed。然后等用户自己点「创建并进入写作台」。
 
-- **phase=ready**（弧+情节段完整随 submit 落库，正常）→ 故事线已可写作，交棒 `novel-story`；向用户说明可直接进写作台。
-- **phase=config**（submit 时②弧失败没带上）→ **本 profile 无补弧工具**（补弧只在 replan/legacy 路径）——如实汇报，引导用户走建书/「续规划」或书详情补弧后回写作；不要尝试调用本 profile 外的工具。
-- **phase=plots**（仅 outlines 无 plots 的 edge）→ 同上引导用户在书详情「✅ 确认弧+情节段」。
+## 创作原则（其余约束由工具 schema 与 validate_build 强制，不必背）
 
-## 退出状态
-- 正常：蓝图已汇报、用户提交建书 → 书 phase=ready，交棒写作台。
-- 兜底：config 补弧落 plots → 停在书详情等用户确认。
+- **只承诺开篇**：正式弧+情节段覆盖开篇约 1.5万~3万字；远期方向写进
+  `storyline.planning.future_intents`（下一弧意图 / 主线升级 / 角色成长 / 未兑现线索），
+  不要一次排完整本书。
+- **弧按剧情，不按章**：弧是树状目标节点，字数跨度由内容决定；**不要**把顶层弧按章均分成
+  等长叶弧、也不要让情节段字数全相同。同一父弧下的子弧不必等长；需要时用 `parent_arc_id` 分层。
+- **情节段只挂最底层弧**；字数按场景浓淡给（过渡短、高潮长）。
+- **差异化命题**：动手前想清"本书与同类/所查模板的三个差异点"。最核心一条压进
+  `world_building.core_conflict`，完整论述写 `world_building.differentiation`。
+- **每条弧 `notes` 写「本弧目标 + 偏离库模板 X 的点」**（落库可复核）。
+- **人物服务于势力与剧情**：每个势力至少 1 人；人物行为要一贯（不同刺激下反应一致）。
+- **借骨不借皮**：弧库/段库模板是单弧参考，书内弧树由你按剧情结构自主设计。
 
 ## 失败处置
-- `drive_ui` 后浏览器没反应 → `navigate('/books/start')` 再试。
-- 向导卡步 / 提交后确认按钮无反应 → `get_book_detail` 看 phase：若已 ready 直接 navigate 写作台。
-- `BookBusyError` → 稍后重试。
+
+- `validate_build` 一直不过 → 按 `issues` 逐条改内容；不要靠改参数或换写法绕过校验。
+- `save_build_draft` 报 `revision_conflict` → 重新 `get_build_context` 再提交。
+- `project_errors` 非空 → 草稿已落服务端，但表单投影失败：如实告诉用户刷新向导页；不要重复落盘。
+- 拿不到会话 id / `get_build_context` 报 `no_build_session` → 停下让用户在向导里重走一遍，
+  不要凭猜测照写。

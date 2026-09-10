@@ -6,9 +6,15 @@ import os
 
 PROFILE_TOOLS = {
     "build-candidates": {"navigate", "drive_ui", "get_build_status", "query_profiles"},
-    "build": {"get_build_status", "drive_ui", "query_arc_library", "query_plots",
-              "query_gags", "query_characters", "validate_storyline", "validate_world",
-              "navigate", "get_book_detail"},
+    # 建书步 3 = 5 个薄工具（工具面即能力边界）：读权威上下文 → 查素材 → 校草稿 → 落草稿。
+    # 移除 drive_ui / get_build_status / validate_storyline / validate_world / navigate /
+    # get_book_detail / query_gags / query_characters：
+    #   · drive_ui 是「可见命令面 >> 可执行面」的唯一来源（2026-09-10 事故的直接原因）；
+    #   · validate_* 已由 validate_build 聚合（agent 不必自己决定先校世界还是先校故事线）；
+    #   · 本阶段的契约是「填完 → 汇报 → 停 → 等用户提交」，提交后的相位属下一阶段 orchestrator；
+    #   · query_characters 先不给：人物按势力与剧情自主设计（要复用角色原型库再一行加回）。
+    "build": {"get_build_context", "query_arc_library", "query_plots",
+              "validate_build", "save_build_draft"},
     # Writer 是一次性 Plot 生成器：其余流程由服务端 FSM 负责。
     "write": {"prepare_plot_run", "save_plot_draft"},
     "replan": {"get_story_state", "save_outlines", "validate_storyline", "validate_world",

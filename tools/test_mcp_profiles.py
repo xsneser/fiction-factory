@@ -13,9 +13,9 @@ EXPECTED = {
     "write": {"prepare_plot_run", "save_plot_draft"},
     "replan": {"get_story_state", "save_outlines", "validate_storyline", "validate_world",
                "query_arc_library", "query_plots", "drive_ui"},
-    "build": {"get_build_status", "drive_ui", "query_arc_library", "query_plots",
-              "query_gags", "query_characters", "validate_storyline", "validate_world",
-              "navigate", "get_book_detail"},
+    # 建书步 3 = 5 个薄工具（工具面即能力边界；含 drive_ui 在内的旧面已移出）
+    "build": {"get_build_context", "query_arc_library", "query_plots",
+              "validate_build", "save_build_draft"},
     # build-candidates 会按 build_status 的 pen_selected 摘掉 query_profiles，
     # 故只断言「⊆ 该 profile 且 ⊇ 去掉 query_profiles 的那一份」（见 check_optional）
     "build-candidates": {"navigate", "drive_ui", "get_build_status", "query_profiles"},
