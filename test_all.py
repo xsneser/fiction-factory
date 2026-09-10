@@ -844,9 +844,14 @@ try:
         "directions": [{"id": "a", "title": "迎战"}, {"id": "b", "title": "撤退"}],
         "selected_direction_id": "a",
         "outlines": [{"id": "r2", "name": "下一弧", "start_word": 3000, "end_word": 6000}],
+        # 批次下限与 planning_state.REPLAN_BATCH_MIN 同源（曾为 3 → 现 6；
+        # 夹具未同步会让下面直接 RuntimeError，属历史失效夹具）
         "plots": [{"id": "rp4", "name": "逼迫", "outline_id": "r2", "words": 1000},
                   {"id": "rp5", "name": "选择", "outline_id": "r2", "words": 1000},
-                  {"id": "rp6", "name": "代价", "outline_id": "r2", "words": 1000}],
+                  {"id": "rp6", "name": "代价", "outline_id": "r2", "words": 1000},
+                  {"id": "rp7", "name": "反扑", "outline_id": "r2", "words": 1000},
+                  {"id": "rp8", "name": "抉择", "outline_id": "r2", "words": 1000},
+                  {"id": "rp9", "name": "落子", "outline_id": "r2", "words": 1000}],
         "planning_patch": {"future_intents": ["扩大冲突"]},
     }
     _at.drive_ui("set_replan_preview", _preview_args)
