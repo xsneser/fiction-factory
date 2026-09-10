@@ -50,11 +50,20 @@ def main():
                 id="p2", template_id="", name="追查回声", outline_id="a", words=1500,
                 order=2, roles=["顾衡"], protocol_version=2))
             bm.save_storyline(book_id, current)
-            return {"ok": True}
+            # 显式 commit_ok：FSM 只认这个字段（返回载荷里的 ok 是规划 UI 聚合的 ok）
+            return {"commit_ok": True, "ok": True}
 
         def fake_run(task, history=None, debug=False, **kwargs):
             calls.append(("replan" if "续规划" in (task or "") else "write", kwargs))
             if "续规划" in (task or ""):
+                # 计划器必须留下**基于当前版本**的预览，FSM 才会提交它（服务端不再替计划器臆造预览）
+                from libraries.planning_state import save_replan_preview
+                save_replan_preview(bid, {
+                    "preview_id": "pv-midchapter", "expected_revision": 0,
+                    "outlines": [], "plots": [],
+                    "validation": {"passed": True, "problems": []},
+                    "planning_patch": {},
+                })
                 yield {"type": "reply", "content": "续规划已准备。"}
                 yield {"type": "done"}
                 return

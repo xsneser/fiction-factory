@@ -3312,6 +3312,13 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
             raise RuntimeError(f"命令 {cmd}：书 {book_id} 无故事线")
         if isinstance(args.get("expected_revision"), bool) or not isinstance(args.get("expected_revision"), int):
             raise RuntimeError(f"命令 {cmd} 需 expected_revision 整数")
+        # 预览必须基于**当前**故事线版本：陈旧预览要到 commit 才被 CAS 拒绝，
+        # 而那时 auto 路径已经中断整轮写作。这里早失败，让计划器重读 get_story_state。
+        current_revision = int(getattr(tl, "storyline_revision", 0) or 0)
+        if int(args["expected_revision"]) != current_revision:
+            raise RuntimeError(
+                f"命令 {cmd}：expected_revision={args['expected_revision']} 与当前故事线版本 "
+                f"{current_revision} 不一致（预览会过期）；请重新 get_story_state 后按最新版本生成")
         directions = args.get("directions")
         if not (isinstance(directions, list) and 2 <= len(directions) <= 3
                 and all(isinstance(x, dict) and x.get("id") and x.get("title") for x in directions)):

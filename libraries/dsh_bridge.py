@@ -995,6 +995,81 @@ def _annotated_reply(content: str) -> dict:
     return {"type": "reply", "content": (text + "\n\n" + note) if text else note}
 
 
+# 同一个 Flow 内允许几轮「新起计划器」；用尽后不再烧 LLM 会话，直接失败并给出可操作提示。
+# 在途预览会被复用（不重复起计划器），所以只有计划器真的没产出/产出陈旧时才计数。
+MAX_REPLAN_ATTEMPTS = 2
+
+
+def _current_revision(book_id: str) -> int:
+    from agent_tools import load_tl
+    tl = load_tl(book_id)
+    return int(getattr(tl, "storyline_revision", 0) or 0) if tl is not None else 0
+
+
+def _replan_attempts(book_id: str, flow_id: str) -> int:
+    if not (book_id and flow_id):
+        return 0
+    from libraries.write_flow import load_flow
+    flow = load_flow(book_id, flow_id) or {}
+    state = flow.get("replan_state") if isinstance(flow.get("replan_state"), dict) else {}
+    try:
+        return int(state.get("attempts") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _fresh_replan_preview(book_id: str, revision: int) -> dict:
+    """在途预览只有在 `expected_revision` 等于当前故事线版本时才可复用。
+
+    陈旧预览必须重新规划——否则提交时会被 CAS 拒绝，白跑一轮计划器还中断写作。
+    """
+    from libraries.planning_state import load_replan_preview
+    preview = load_replan_preview(book_id) or {}
+    if not preview:
+        return {}
+    expected = preview.get("expected_revision")
+    if isinstance(expected, bool) or not isinstance(expected, int):
+        return {}
+    return preview if int(expected) == int(revision) else {}
+
+
+def _commit_pending_replan(book_id: str) -> dict:
+    """把在途 preview 交给共享 replan_service 原子提交（与 UI commit-plan 同一入口）。
+
+    成功判据只用 service 显式的 `commit_ok`：返回载荷里的 `ok` 是规划 UI 聚合接口的 ok，
+    不是提交结果，用它会「提交成功却报失败」。
+    """
+    from libraries.planning_state import load_replan_preview
+    from libraries.replan_service import commit_replan_preview
+    preview = load_replan_preview(book_id) or {}
+    if not preview:
+        return {"commit_ok": False, "error": "no_pending_preview"}
+    expected = preview.get("expected_revision")
+    if isinstance(expected, bool) or not isinstance(expected, int):
+        return {"commit_ok": False, "error": "preview_missing_revision"}
+    return commit_replan_preview(book_id, preview.get("preview_id"), expected)
+
+
+def _fail_flow(book_id: str, flow_id: str, error: str, message: str):
+    """统一的失败出口：转 FAILED + **释放租约** + 一个 error 与 done。
+
+    此前各失败分支各写各的，其中两处漏释放租约 → 失败后租约白占 15 分钟，
+    下一次写作还会被 active_flow_id 吸到这个已 FAILED 的 Flow 上。
+    """
+    from libraries.write_flow import release_lease, transition
+    if flow_id:
+        try:
+            transition(book_id, flow_id, "FAILED", error=error)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("flow 置 FAILED 失败 book=%s flow=%s: %s", book_id, flow_id, exc)
+        try:
+            release_lease(book_id, flow_id)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("租约释放失败 book=%s flow=%s: %s", book_id, flow_id, exc)
+    yield {"type": "error", "message": message}
+    yield {"type": "done"}
+
+
 def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None):
     """一个父 Flow 调度多个独立 Writer 子进程；模型从不决定下一状态。
 
@@ -1007,7 +1082,7 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
     from agent_tools import (_draft_read, _runtime_written_words, finalize_draft_chapter,
                              load_tl)
     from libraries.planning_state import detect_story_boundary, load_planning_state
-    from libraries.write_flow import (chapter_status, next_action, load_flow, transition, release_lease,
+    from libraries.write_flow import (chapter_status, next_action, load_flow, transition,
                                       start_flow, active_flow_id)
     import re
 
@@ -1072,72 +1147,79 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
                        "chapter": committed.get("chapter"), "phase": "DONE"}
                 yield {"type": "reply", "content": f"第{committed.get('chapter')}章已由服务端提交并完成质量门禁。"}
             except Exception as exc:
-                try:
-                    transition(book_id, flow_id, "FAILED", error=str(exc))
-                except Exception:
-                    pass
-                yield {"type": "error", "message": f"章节提交失败：{exc}"}
+                yield from _fail_flow(book_id, flow_id, f"chapter_commit_failed:{exc}",
+                                      f"章节提交失败：{exc}")
+                return
             yield {"type": "done"}
             return
         # ── 续规划：无剩余可写承诺 Plot 且到达规划边界 ──
         if action == "REPLANNING":
             if not flow_id:
                 flow_id = _flow_for(book_id)
-            try:
-                transition(book_id, flow_id, "REPLANNING", replan_state={"reason": status["reason"]})
-            except Exception:
-                pass
+            revision = _current_revision(book_id)
+            # attempts 计的是「自上次成功出品以来连续失败/无产的续规划轮数」，成功出一段 Plot
+            # 或提交成功即归零（见下面 EVALUATING / PREPARING_PLOT 两处 reset）——否则长章节里
+            # 多次合法的续规划会被误判成死循环而中断写作。
+            attempts = _replan_attempts(book_id, flow_id)
+            # 在途预览（且版本仍新鲜）直接复用：不重复起计划器，不烧第二次 LLM 会话。
+            preview = _fresh_replan_preview(book_id, revision)
+            if not preview:
+                if attempts >= MAX_REPLAN_ATTEMPTS:
+                    yield from _fail_flow(
+                        book_id, flow_id, "replan_attempts_exhausted",
+                        f"续规划连续 {attempts} 轮未产出可用故事线（书 {book_id}）；本轮写作已停止。"
+                        "请检查规划预览与情节段配置后再继续。")
+                    return
+                try:
+                    transition(book_id, flow_id, "REPLANNING",
+                               replan_state={"reason": status["reason"], "attempts": attempts + 1})
+                except Exception as exc:  # noqa: BLE001
+                    _log.warning("flow 置 REPLANNING 失败 book=%s flow=%s: %s", book_id, flow_id, exc)
+                # Planner 仍是独立 profile；只让它按局部 state 产出下一小段 committed Plot。
+                ok = True
+                for evt in run_dsh_task(_replan_phase_task(book_id, status["reason"], pol), None, debug=debug):
+                    if evt.get("type") == "error": ok = False
+                    if evt.get("type") != "done": yield evt
+                # 计划器可能改过故事线，按最新版本再判一次新鲜度。
+                preview = _fresh_replan_preview(book_id, _current_revision(book_id)) if ok else {}
+                if not preview:
+                    detail = "计划器执行出错" if not ok else "计划器未暂存可用预览（或预览版本已过期）"
+                    yield {"type": "reply", "content":
+                           f"{detail}，将重试续规划（第 {attempts + 1}/{MAX_REPLAN_ATTEMPTS} 轮）。"}
+                    continue     # 回到顶部重试；连续超限由上面的 attempts 上限兜住
             if pol == "confirm":
+                # 只暂存预览即停，等用户在故事线面板确认（commit-plan 走同一 replan_service）。
+                # 租约保留在 WAIT_CONFIRM 上（无进程在跑；下一次「继续写」会复用同一 Flow 并命中
+                # 在途预览分支，不会重复起计划器）。
                 try:
-                    transition(book_id, flow_id, "WAIT_CONFIRM")
-                except Exception:
-                    pass
-                yield {"type": "reply", "content": "本章尚未达到目标字数且已承诺 Plot 用尽；已生成续规划等待确认。"}
+                    transition(book_id, flow_id, "WAIT_CONFIRM",
+                               replan_state={"reason": status["reason"], "attempts": attempts,
+                                             "preview_id": preview.get("preview_id")})
+                except Exception as exc:  # noqa: BLE001
+                    _log.warning("flow 置 WAIT_CONFIRM 失败 book=%s flow=%s: %s", book_id, flow_id, exc)
+                yield {"type": "reply", "content":
+                       "本章尚未达到目标字数且已承诺 Plot 用尽；续规划预览已生成，"
+                       "请在故事线面板确认后再次「继续写」。"}
                 yield {"type": "done"}
                 return
-            # Planner 仍是独立 profile；只让它按局部 state 产出下一小段 committed Plot。
-            ok = True
-            for evt in run_dsh_task(_replan_phase_task(book_id, status["reason"], pol), None, debug=debug):
-                if evt.get("type") == "error": ok = False
-                if evt.get("type") != "done": yield evt
-            if not ok:
-                try:
-                    transition(book_id, flow_id, "FAILED", error="planner_failed")
-                except Exception:
-                    pass
-                yield {"type": "done"}
-                return
+            # auto：经共享 service 原子提交（在途预览直接复用）。
+            result = _commit_pending_replan(book_id)
+            if not result.get("commit_ok"):
+                reason = result.get("error") or result.get("message") or "未知原因"
+                yield {"type": "reply", "content":
+                       f"续规划提交未成功（{reason}），将重试续规划"
+                       f"（第 {attempts + 1}/{MAX_REPLAN_ATTEMPTS} 轮）。"}
+                continue
             try:
-                from libraries.replan_service import commit_replan_preview
-                from libraries.planning_state import load_replan_preview
-                preview = load_replan_preview(book_id) or {}
-                if not commit_replan_preview(book_id, preview.get("preview_id"),
-                                             int(preview.get("expected_revision", -1) or -1)).get("ok"):
-                    raise RuntimeError("续规划提交失败")
-            except Exception as exc:
-                try:
-                    transition(book_id, flow_id, "FAILED", error=str(exc))
-                except Exception:
-                    pass
-                yield {"type": "error", "message": str(exc)}
-                yield {"type": "done"}
-                return
-            try:
-                transition(book_id, flow_id, "PREPARING_PLOT")
+                transition(book_id, flow_id, "PREPARING_PLOT",
+                           replan_state={"reason": "", "attempts": 0})   # 出品成功 → 计数归零
             except Exception:
                 pass
             continue   # 故事线已前移 → 回顶部应出现可写 Plot
         if action == "FAILED":
             # plot_exhausted_without_replan / 不变量：没有可写 Plot 且未满足续规划条件
-            if flow_id:
-                try:
-                    transition(book_id, flow_id, "FAILED", error="chapter_status_invariant")
-                except Exception:
-                    pass
-                release_lease(book_id, flow_id)
-            yield {"type": "error",
-                   "message": "章节状态不变量失败：没有可写 Plot 且未满足续规划条件。"}
-            yield {"type": "done"}
+            yield from _fail_flow(book_id, flow_id, "chapter_status_invariant",
+                                  "章节状态不变量失败：没有可写 Plot 且未满足续规划条件。")
             return
         # ── 写一个 Plot：PREPARING_PLOT；book 未知时这是探路子 run（借其 domain 事件拿书与 flow）──
         child_no += 1
@@ -1189,9 +1271,11 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
         children.append({"child_run_id": child_id, "kind": "plot", "plot_id": saved.get("plot_id"),
                          "completed_at": time.time()})
         try:
-            transition(book_id, flow_id, "EVALUATING", child_runs=children)
-        except Exception:
-            pass
+            # 出一段 Plot = 实质推进 → 续规划连败计数归零（否则长章节里多次合法续规划会被上限误伤）
+            transition(book_id, flow_id, "EVALUATING", child_runs=children,
+                       replan_state={"reason": "", "attempts": 0})
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("flow 置 EVALUATING 失败 book=%s flow=%s: %s", book_id, flow_id, exc)
         # 回到顶部：按新草稿状态决定收章 / 续写 / 续规划
 
 
@@ -1251,15 +1335,10 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
         return
 
     # auto：经共享 service 原子提交 preview → 续写。
+    # 成功判据用 service 的 commit_ok（不能看返回载荷的 ok——那是规划 UI 聚合接口的 ok）。
     committed = False
     try:
-        from libraries.replan_service import commit_replan_preview
-        from libraries.planning_state import load_replan_preview
-        prev = load_replan_preview(bid)
-        if prev:
-            r = commit_replan_preview(bid, prev.get("preview_id"),
-                                      int(prev.get("expected_revision", -1) or -1))
-            committed = bool(r and r.get("ok"))
+        committed = bool(_commit_pending_replan(bid).get("commit_ok"))
     except Exception as e:  # noqa: BLE001
         _log_local.warning("auto replan commit failed: %s", e)
     if not committed:
