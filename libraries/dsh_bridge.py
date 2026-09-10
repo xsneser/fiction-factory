@@ -383,11 +383,30 @@ def _build_task_text(task: str, history: list | None) -> str:
     return "...(历史过长已截断，仅保留最近内容)...\n\n" + kept_body + "\n\n" + final
 
 
-def _task_tool_profile(task: str) -> str:
-    """按用户任务选择最小工具面；未命中回退 inspect（只读小面，绝不暴露全量）。
+# 未分类哨兵：任务既不是明确的阶段动作、也不是只读问句。
+#
+# 调用方约定（**别把空值写进 profile**）：`run_dsh_flow` 收到哨兵时产出显式报错 + 阶段
+# 指引，不 spawn；`run_dsh_task` 内部另行收敛为只读面——因为 MCP 侧 `filter_registry("")`
+# 会 fail-open 到**全量 45 工具**（agent_tool_router 的 `if not profile: return registry`），
+# 空 profile 是比 inspect 更危险的回落，绝不能让空值流到 `--profile`。
+UNROUTABLE_PROFILE = ""
 
-    判定顺序有意固定：续规划优先；明确写作动作优先于提示中附带的“风格规则”。
-    “完本”不能用裸子串匹配，否则“写完本章”会被误判为 publish。
+
+def _task_tool_profile(task: str) -> str:
+    """按用户任务选择最小工具面；未分类返回 UNROUTABLE_PROFILE（不再静默回落只读面）。
+
+    判定顺序有意固定，改前先读这几条：
+      - 续规划优先：`延伸故事线`/`扩弧` 属 replan，不是 build；
+      - 明确写作动作优先于提示中附带的“风格规则”/“情节段”，否则“继续写…全部情节段”
+        会被判成 style/build；
+      - “完本”不能用裸子串匹配，否则“写完本章”会被误判为 publish；
+      - 建书有两段（步 1-2 候选 / 步 3 内容构建），**文本上不可分**：步 1 的自动任务原文
+        同时含「候选」和「世界观」。这里只保证“别漏、别误伤”，真正的阶段判定交给服务端
+        ——`run_dsh_flow` 把 build/build-candidates 一并交给 `_build_fsm`，由它读
+        build_status.cur 决定起哪个 profile。所以下面只想清“强标记”，不追求文本互斥。
+      - 只读问句是**正面命中**（保留「问一句书的状态」这类正当用法），排在所有动作之后；
+        全都命不中才返回哨兵，由调用方显式报错——这正是「大纲生成失败」被静默当成只读
+        提问、于是只能读不能写的根因。
     """
     text = (task or "").lower()
     if any(k in text for k in ("重规划", "续规划", "规划边界", "扩弧", "延伸故事线", "下一段弧",
@@ -404,14 +423,38 @@ def _task_tool_profile(task: str) -> str:
         return "scout"
     if any(k in text for k in ("样文", "风格规则", "禁词", "替换词", "风格匹配", "仿写", "笔风")):
         return "style"
+    # 步 3 的强标记**必须排在「候选」之前**：步 2→3 的交接原文带着「已选定候选」，
+    # 若让「候选」先命中，步 3 就会被判成步 1-2 的 profile——那个工具面没有
+    # set_outline/set_world/set_characters（UI_COMMAND_POLICY 拒收），故事线无从写入。
+    if any(k in text for k in ("步 3", "步3", "故事线", "大纲", "情节段", "内容构建",
+                               "生成弧", "排弧", "补弧", "完整弧")):
+        return "build"
     if any(k in text for k in ("候选", "开新书", "启动新书", "新书想法")):
         return "build-candidates"
-    if any(k in text for k in ("建书", "世界观", "补全设定", "内容构建")):
+    if any(k in text for k in ("建书", "世界观", "补全设定")):
         return "build"
     # 只有前面的明确领域意图都未命中时，泛化“继续”才默认解释为继续写作。
     if "继续" in text:
         return "write"
-    return "inspect"
+    # 只读问句：必须排在所有动作分支之后，否则“继续写，顺便看下状态”会被抢走。
+    if any(k in text for k in ("查看", "看看", "看一下", "什么情况", "是什么", "讲什么",
+                               "写到哪", "哪了", "状态", "进度", "怎么样", "为什么", "为何",
+                               "有没有", "是否", "列出", "多少")):
+        return "inspect"
+    return UNROUTABLE_PROFILE
+
+
+def _resolve_run_profile(task: str, explicit: str = "") -> str:
+    """定本次 run 的 MCP profile：显式声明优先，任务文本只作兜底。
+
+    **返回值在 profiles 开启时永不为空**：MCP 侧 `filter_registry("")` 会 fail-open 到
+    全量 45 工具，所以「未分类」必须在这里收敛到只读面（inspect），而不是放空值下去。
+    面向用户的「未分类」显式报错在 `run_dsh_flow` 那一层做（它拦在 spawn 之前）；
+    本函数只保证底层原语**按构造成立地安全**，任何调用方都不可能靠放空值拿到全量工具。
+    """
+    if not _profiles_enabled():
+        return ""
+    return (explicit or "").strip() or _task_tool_profile(task) or "inspect"
 
 
 def _profiles_enabled() -> bool:
@@ -753,7 +796,8 @@ def _map_dsh_event(evt: dict, pending: dict):
 
 
 def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
-                 flow_id: str = "", child_run_id: str = "", book_id: str = ""):
+                 flow_id: str = "", child_run_id: str = "", book_id: str = "",
+                 mcp_profile: str = ""):
     """跑一次 dsh headless 任务，实时产出 SSE 事件 dict。
 
     事件序列（由 events-runner 的 NDJSON 流实时驱动）：tool_call / tool_result /
@@ -765,6 +809,10 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
     全服务单任务：本任务启动前先 interrupt_current_task() 打断任何正在跑的 dsh；
     本任务也可被后续任务 / `/api/agent/chat/cancel` 打断（被打断则 error+done 收尾）。
     finally 里收尸（杀残留 proc + wait），避免孤儿进程。
+
+    mcp_profile：**服务端显式指定的工具面**（`_build_fsm` / `_writer_fsm` 按阶段定）。
+    给了就用它，不给才按任务文本猜；两者都不确定时收敛到只读 inspect——见
+    `_resolve_run_profile` 的 fail-open 说明，任何情况下都别让空 profile 流下去。
     """
     # 全服务单任务：新任务先打断正在跑的旧任务。事件存储（task_events.jsonl）不清空——
     # 它是「刷新重建」的渲染源（重启服务才消失），跨任务累积，仅显式「清空对话」清空。
@@ -776,7 +824,7 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
             "请同时显式设置 ALLOW_UNSCOPED_AGENT_TOOLS=1")}
         yield {"type": "done"}
         return
-    profile = _task_tool_profile(task) if profiles_enabled else ""
+    profile = _resolve_run_profile(task, mcp_profile)
     skill_text = _skill_text_for_profile(profile) if profile else ""
     # P0 预检：注入的 skill 引用必须 ⊆ 该 profile 暴露的工具；不匹配=契约破损，明确报错并拒绝启动，
     # 绝不自动 fail-open 到全量 45（AGENT_TOOL_PROFILES=0 才是显式 legacy/debug 逃生）。
