@@ -347,7 +347,8 @@ var WZ = {
         if (this.cur === 2 && this._picked && !this._task2Fired) {
             this._task2Fired = true;
             this._agentDriving = true;
-            var task = '请继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」），自主生成填写步 3 内容表单及故事线：挑选弧 → 构建核心矛盾core_conflict → 创建势力 → 挑选情节段 → 创建各势力人物适配 → 补全其余表单 → 评判合理性及阅读吸引力并修改。填完表单后停下，向用户汇报设定概要并等待确认；用户明确确认后再提交建书。';
+            var task = '请继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」），自主生成填写步 3 内容表单及故事线：挑选弧 → 构建核心矛盾core_conflict → 创建势力 → 挑选情节段 → 创建各势力人物适配 → 补全其余表单 → 评判合理性及阅读吸引力并修改。填完表单后停下，向用户汇报设定概要并等待确认；用户明确确认后再提交建书。'
+                + ' [build_session=' + this.ensureBuildSession() + ']';   // 机器标记：服务端据此把本次任务钉到本向导会话（build_status 是全局单快照）
             if (typeof window.agentSendTask === 'function') {
                 window.agentSendTask(task, { card: true });
             } else if (typeof showToast === 'function') {
@@ -1221,7 +1222,9 @@ var WZ = {
                 body: JSON.stringify({
                     cur: this.cur,
                     bookId: this.bookId || '',
-                    buildSessionId: (this.state && this.state.build_session_id) || '',
+                    // 保证首次上报就带上会话 id（此前只在 createBook 附近 ensure，
+                    // 步 3 交接时服务端可能还拿不到）——与交接任务里的 [build_session=…] 同源
+                    buildSessionId: this.ensureBuildSession(),
                     creating: !!this.creating,
                     _picked: !!this._picked,
                     pen_selected: !!(this.state && this.state.pen_name),

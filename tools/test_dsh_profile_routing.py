@@ -58,13 +58,18 @@ CASES = {
 
 
 def _assert_wizard_text():
-    """向导原文改了要同步本文件的常量，否则上面的回归形同虚设。"""
+    """向导原文改了要同步本文件的常量，否则上面的回归形同虚设。
+
+    同时守住 [build_session=…] 标记：服务端靠它把任务钉到具体向导会话
+    （build_status.json 是全局单快照），向导侧一旦不发，`_build_fsm` 只能退回读快照。
+    """
     path = os.path.join(ROOT, "ui", "templates", "start_book.html")
     with open(path, encoding="utf-8") as f:
         html = f.read()
     for frag, label in (("请为这本新书生成世界观候选", "步 1 交接"),
-                        ("请继续建这本新书", "步 2→3 交接")):
-        assert frag in html, f"{label}原文已不在 start_book.html，请同步本文件常量：{frag}"
+                        ("请继续建这本新书", "步 2→3 交接"),
+                        ("[build_session=", "步 2→3 交接的 build_session 标记")):
+        assert frag in html, f"{label}已不在 start_book.html，请同步：{frag}"
 
 
 def main():
