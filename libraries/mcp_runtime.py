@@ -15,15 +15,26 @@ ROOT = Path(__file__).resolve().parents[1]
 SESSION_LOG = ROOT / "storage" / "mcp_sessions.jsonl"
 
 
-def record_startup(*, profile: str, source: str, tools: list[str]) -> dict:
+def record_startup(*, profile: str, source: str, tools: list[str],
+                  registry_tool_count: int | None = None,
+                  flow_id: str = "", child_run_id: str = "",
+                  host_tool_count: int | None = None) -> dict:
     now = time.strftime("%Y-%m-%d %H:%M:%S")
+    visible_tools = sorted(set(tools or []))
     item = {
         "instance_id": uuid.uuid4().hex,
         "pid": os.getpid(),
         "profile": profile or "legacy",
         "source": source or "mcp",
-        "tools": sorted(set(tools or [])),
-        "tool_count": len(set(tools or [])),
+        "flow_id": flow_id or "",
+        "child_run_id": child_run_id or "",
+        "tools": visible_tools,
+        # Keep tool_count as a compatibility alias for older UI/log consumers.
+        "tool_count": len(visible_tools),
+        "profile_mcp_tool_count": len(visible_tools),
+        "registry_tool_count": registry_tool_count,
+        # The Python MCP process cannot observe dsh's final host catalog.
+        "host_tool_count": host_tool_count,
         "started_at": now,
         "last_seen": now,
         "observed": True,
@@ -53,13 +64,47 @@ def read_sessions(limit: int = 100) -> list[dict]:
     return list(reversed(out))
 
 
-def status(*, profile_tools: dict[str, set[str]], limit: int = 100) -> dict:
+def status(*, profile_tools: dict[str, set[str]], limit: int = 100,
+           registry_tool_count: int | None = None,
+           flow_id: str = "", child_run_id: str = "",
+           mcp_instance_id: str = "") -> dict:
     sessions = read_sessions(limit)
-    dsh = next((x for x in sessions if x.get("source") == "dsh"), None)
+    selectors = {
+        "flow_id": flow_id or "",
+        "child_run_id": child_run_id or "",
+        "instance_id": mcp_instance_id or "",
+    }
+    has_selector = any(selectors.values())
+
+    def matches(item: dict) -> bool:
+        return all(not value or item.get(key) == value
+                   for key, value in selectors.items())
+
+    # A task-specific query never falls back to another instance. Without an
+    # identity there is no active instance; callers can inspect the history.
+    dsh = next((x for x in sessions
+                if x.get("source") == "dsh" and has_selector and matches(x)), None)
+    active = {
+        "instance_id": dsh.get("instance_id") if dsh else None,
+        "flow_id": dsh.get("flow_id") if dsh else None,
+        "child_run_id": dsh.get("child_run_id") if dsh else None,
+        "profile": dsh.get("profile") if dsh else None,
+        "tools": dsh.get("tools", []) if dsh else [],
+        "registry_tool_count": dsh.get("registry_tool_count") if dsh else None,
+        "profile_mcp_tool_count": dsh.get("profile_mcp_tool_count",
+                                         dsh.get("tool_count")) if dsh else None,
+        "host_tool_count": dsh.get("host_tool_count") if dsh else None,
+        "last_seen": dsh.get("last_seen") if dsh else None,
+        "matched": bool(dsh),
+    }
     return {
+        "registry_tool_count": registry_tool_count,
         "configured_profiles": {
             name: len(tools) for name, tools in sorted(profile_tools.items())
         },
+        "selectors": selectors,
+        "active": active,
+        # Compatibility summary for callers that do not yet pass identity.
         "dsh": {
             "last_profile": dsh.get("profile") if dsh else None,
             "last_seen": dsh.get("last_seen") if dsh else None,

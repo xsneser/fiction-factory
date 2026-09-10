@@ -45,6 +45,7 @@ ui_server.log
 # 备份数据不入库
 books.bak*/
 *.bak
+backups/
 
 # dsh 侧车技能联接(不入库)
 .dsh/

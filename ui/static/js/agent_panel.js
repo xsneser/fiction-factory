@@ -62,7 +62,7 @@ console.log('[agent-panel] v28 events-stream');
         skill: '技能', chapter_quality_gate: '章节质量门禁',
         discover_hot: '侦察热榜', list_rankings: '榜单分类', fetch_novel: '抓取小说',
         list_crawled_novels: '已抓取书库', read_crawled_novel: '读抓取书', ingest_library_assets: '提取入库',
-        get_writing_context: '读取写作上下文'
+        prepare_plot_run: '准备情节段运行上下文'
     };
     var CMD_ZH = {
         set_world: '写入世界观', set_characters: '写入角色', set_candidates: '填入候选',
@@ -367,7 +367,13 @@ console.log('[agent-panel] v28 events-stream');
         var card = el('div', 'agent-llm-card');
         var head = el('div', 'agent-llm-head');
         head.appendChild(el('span', 'agent-llm-head-label', '🤖 LLM 调用 · ' + (req.model || '?')));
-        head.appendChild(el('span', 'agent-llm-head-meta', evt.usage ? '⚡ ' + formatTokens(evt.usage) : ''));
+        var budget = evt.input_budget || {};
+        var budgetLabel = (budget.total_chars !== undefined)
+            ? '📊 ' + budget.total_chars + ' chars ≈ ' + (budget.estimated_tokens || '—') + ' tok' : '';
+        var meta = [];
+        if (evt.usage) meta.push('⚡ ' + formatTokens(evt.usage));
+        if (budgetLabel) meta.push(budgetLabel);
+        head.appendChild(el('span', 'agent-llm-head-meta', meta.join(' · ')));
         card.appendChild(head);
         // kind：'prompt'/'response' 段支持展开时按需拉完整原文（初始仍是裁剪预览）；null 段只用预览
         var sections = [
@@ -460,8 +466,10 @@ console.log('[agent-panel] v28 events-stream');
                 var h0 = toolsLog.scrollHeight;
                 var ratio = h0 ? toolsLog.scrollTop / h0 : 0;
                 var nearBottom = h0 - toolsLog.scrollTop - toolsLog.clientHeight < 80;
+                var fmtCount = function(v) { return (v === null || v === undefined) ? '—' : v; };
                 var html = '<div style="position:sticky;top:0;z-index:1;background:#161b22;font-size:12px;color:#8b949e;padding:4px 0 8px;margin-bottom:4px">'
-                    + '已暴露 <strong>' + d.tools_exposed + '</strong> 工具 · MCP 调用 <strong>' + log.length
+                    + '注册 <strong>' + fmtCount(d.registry_tool_count) + '</strong> · 当前 MCP <strong>' + fmtCount(d.profile_mcp_tool_count)
+                    + '</strong> · Host <strong>' + fmtCount(d.host_tool_count) + '</strong> · 调用 <strong>' + log.length
                     + '</strong> 次 · 成功 <span style="color:#3fb950">' + success
                     + '</span> 失败 <span style="color:#f85149">' + (log.length - success) + '</span>'
                     + ' <button class="small" onclick="window.loadToolLog()">🔄 刷新</button>'

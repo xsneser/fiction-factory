@@ -11,6 +11,7 @@ import json
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit, urlunsplit
 
 import requests  # noqa: E402
 
@@ -155,6 +156,40 @@ def _count_output_chars(text):
     return n
 
 
+def _local_http_proxy_fallbacks(url: str) -> dict:
+    """Normalize Windows' HTTPS proxy registry entry for local HTTP proxies.
+
+    Clash-like local listeners commonly expose HTTP CONNECT on 7897 while
+    WinHTTP/urllib reports the registry value as ``https://127.0.0.1:7897``.
+    Requests then attempts TLS to the proxy itself and raises SSLEOFError.
+    """
+    proxies = requests.utils.get_environ_proxies(url) or {}
+    fixed = {}
+    changed = False
+    for scheme, proxy in proxies.items():
+        try:
+            parsed = urlsplit(proxy)
+            if parsed.scheme == "https" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}:
+                proxy = urlunsplit(("http", parsed.netloc, parsed.path, parsed.query, parsed.fragment))
+                changed = True
+        except (TypeError, ValueError):
+            pass
+        fixed[scheme] = proxy
+    return fixed if changed else {}
+
+
+def _forward(target: str, payload: dict, headers: dict):
+    """Forward once normally, then retry a local HTTPS-proxy mismatch as HTTP."""
+    try:
+        return requests.post(target, json=payload, headers=headers, stream=True, timeout=600)
+    except requests.exceptions.ProxyError:
+        fallback = _local_http_proxy_fallbacks(target)
+        if not fallback:
+            raise
+        return requests.post(target, json=payload, headers=headers, proxies=fallback,
+                             stream=True, timeout=600)
+
+
 class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):  # 静默
         pass
@@ -204,7 +239,15 @@ class _Handler(BaseHTTPRequestHandler):
         elif api_key:
             headers["Authorization"] = "Bearer " + api_key
         try:
-            resp = requests.post(target, json=payload, headers=headers, stream=True, timeout=600)
+            resp = _forward(target, payload, headers)
+            # dsh may carry a stale user-level key while the project api.json
+            # key is valid. Retry auth failures once with the configured project
+            # credential, without exposing either value in logs or responses.
+            if (resp.status_code in (401, 403) and api_key and incoming_auth
+                    and incoming_auth != "Bearer " + api_key):
+                resp.close()
+                headers["Authorization"] = "Bearer " + api_key
+                resp = _forward(target, payload, headers)
         except Exception as e:
             self._send_json({"ok": False, "error": f"proxy forward failed: {e}"}, 502)
             return

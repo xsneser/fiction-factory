@@ -446,6 +446,8 @@ class PlotSlot:
 
     # 出场人物（主角恒在；配角按名规则匹配到情节段事件/骨架/槽位）
     roles: list[str] = field(default_factory=list)
+    no_named_cast: bool = False     # 合法的无具名人物场景；否则 roles 必须为角色 bible 中的名字
+    protocol_version: int = 1       # 新规划默认由 save_outlines 写为 2；旧书保持影子校验
     execution_brief: dict = field(default_factory=dict)   # 为什么写这一段（目标/冲突/选择/不可逆变化/钩子；自然语言，供 Agent 阅读）
     character_impact: list[dict] = field(default_factory=list)  # 写前人物变化预测（自然语言，供 Agent 阅读）
     expected_facts: list[dict] = field(default_factory=list)    # 可机器比较的写前预测（reconcile 只比它）：
@@ -533,6 +535,8 @@ class BookStoryline:
                 "resolves_plot_id": p.resolves_plot_id,
                 "resolves_name": p.resolves_name,
                 "roles": p.roles,
+                "no_named_cast": p.no_named_cast,
+                "protocol_version": p.protocol_version,
                 "execution_brief": p.execution_brief,
                 "character_impact": p.character_impact,
                 "expected_facts": p.expected_facts,
@@ -609,6 +613,8 @@ class BookStoryline:
             resolves_plot_id=p.get("resolves_plot_id", ""),
             resolves_name=p.get("resolves_name", ""),
             roles=p.get("roles", []),
+            no_named_cast=bool(p.get("no_named_cast", False)),
+            protocol_version=int(p.get("protocol_version", 1) or 1),
             execution_brief=p.get("execution_brief", {}),
             character_impact=p.get("character_impact", []),
             expected_facts=p.get("expected_facts", []),

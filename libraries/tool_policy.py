@@ -20,6 +20,7 @@ PHASE_GATES = {
     "save_book_meta": {"ready"},
     "save_plot_draft": {"ready"},
     "save_chapter_text": {"ready"},
+    "prepare_plot_run": {"ready"},
     # 写作风格取样 —— Plot Run 每段抽单篇样文
     "pick_plot_sample": {"ready"},
     # 建书规划 —— config 落基本盘；plots 草案期放行（深化弧/补差异化命题时改 basic_info，ready 后禁）

@@ -64,7 +64,7 @@ def main():
     from libraries.book_manager import BookManager
     from libraries.storyline import load_storyline
     from libraries.planning_state import planning_path, read_json
-    from agent_tools import save_plot_draft, save_chapter_text, _run_id_for
+    from agent_tools import prepare_plot_run, save_plot_draft, save_chapter_text, _run_id_for
 
     bm = BookManager(os.path.join(_ROOT, "books"))
     bm, bid = _make_book(bm)
@@ -74,13 +74,13 @@ def main():
               f"{_run_id_for('p1',42)} / {_run_id_for('p1',43)}")
 
         ch_text = _filler(2300, seed=0)
+        prepared = prepare_plot_run(bid)
         r_draft = save_plot_draft(
-            bid, 1, "p1", "查明真凶", ch_text,
+            prepared["run"]["commit_token"], ch_text,
+            "顾衡查明真凶后承担责任，却发现矿脉位置与预期并不一致，为后续追查留下新的事实矛盾、行动压力以及必须查清真相的明确目标。",
             character_events=[{"name": "顾衡", "events": [
                 {"type": "location_shift", "from": "七号工区", "to": "霜脊镇"}]}],
-            outcome={"choices_made": ["公开承担违规改造责任"]},
-            expected_facts=[{"subject": "顾衡", "type": "location_shift",
-                             "expected_to": "矿脉", "strength": "must"}])
+            outcome={"choices_made": ["公开承担违规改造责任"]})
         check("save_plot_draft 成功（outcome/facts 入口）", bool(r_draft.get("ok")), f"{r_draft}")
 
         r = save_chapter_text(bid, 1, ch_text, title="第1章", summary="摘要",

@@ -9,6 +9,8 @@
   'use strict';
 
   var TOTAL_WORDS = 0;
+  var WRITTEN_UNTIL_WORD = 0;  // 红线：最后一个连续已写情节段的底边，永不穿过情节段
+  var COMMITTED_UNTIL_WORD = 0; // 黄线：全部已承诺下级弧/段字数相加后的终点
   var WPC = 3000;
   var CHARS_PER_BEAT = 200, MAX_BRIDGE_WORDS = 1200, MAX_PLAN_WORDS = 3000;   // 与后端 storyline_writer.py 同一公式/口径
   var outlines = [], plots = [], threads = [];
@@ -54,8 +56,19 @@
   function wordToPercent(w) {
     return (TOTAL_WORDS > 0) ? (w / TOTAL_WORDS) * 100 : 0;
   }
+  /* 弧/情节段都画在通道标题（24px）下、底部留白（4px）上的 lane body 内。
+     红线、黄线与左侧刻度必须使用同一可绘制区，才会落在情节段边界。 */
+  function wordToLaneY(container, w) {
+    var h = container && container.clientHeight;
+    if (!h) return wordToPercent(w) + '%';
+    return (24 + Math.max(0, h - 28) * wordToPercent(w) / 100) + 'px';
+  }
   function fmtW(w) {
-    return (w >= 1000) ? (Math.round(w / 1000 * 10) / 10) + 'k' : String(Math.round(w));
+    return Number(w || 0).toLocaleString('zh-CN') + '字';
+  }
+  function fmtAxisW(w) {
+    var n = Number(w || 0);
+    return n >= 1000 ? ((Math.round(n / 100) / 10) + 'K') : String(Math.round(n));
   }
   function escHtml(v) {
     return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
@@ -95,7 +108,7 @@
   /* ─── 数据适配：BookStoryline → 平铺数组（情节段按真实规划字数定位，预计=实际） ───
      legacy 书 outline/plot/thread 缺 id：在此合成稳定 id + 建 raw→syn 映射，
      保证泳道/连线/徽标/高亮全自洽，前端不崩。 */
-  function adapt(bt) {
+  function adapt(bt, opts) {
     bt = bt || {};
     WPC = bt.words_per_chapter || 3000;
     setupIds = {};
@@ -182,12 +195,14 @@
       var o = outlineById[key];
       if (!o) return;
       var rootColor = outlineColorById[key] || '#79c0ff';
-      // 情节段按 planned_words 在弧内累计定位（字数轴，与后端 storyline_writer.planned_words 同公式）
+      // 初步按规划字数定位；已写段随后会用正文实测字数重排。
       var cursor = o.start;
       list.forEach(function (x) {
         var p = x.p;
         var s = cursor;
-        var pw = plannedWords(p);
+        var actual = Math.max(0, parseInt(p.actual_words, 10) || 0);
+        var planned = plannedWords(p);
+        var pw = actual > 0 ? actual : planned;
         var e = Math.min(cursor + pw, o.end);
         if (e <= s) e = Math.min(s + MAX_BRIDGE_WORDS, o.end);   // cover_beats 缺失兜底
         cursor = e;
@@ -206,8 +221,54 @@
           resolves: resolvesSyn || '',
           resolves_name: p.resolves_name || '',
           roles: p.roles || [],
+          actual_words: actual,
+          planned_words: planned,
+          written: actual > 0 || !!p.written_chapter,
         });
       });
+    });
+
+    // 红线前使用正文实测字数；红线后的情节段顺序后移，但每段仍保持自己的规划字数。
+    // 新写完一段只推动后续内容，不拉伸或压缩后续情节段。
+    var reflowCursor = 0;
+    plots.sort(function (a, b) { return a.start - b.start || a.end - b.end; });
+    var sawUnwritten = false;
+    WRITTEN_UNTIL_WORD = 0;
+    plots.forEach(function (p) {
+      var length = p.written && p.actual_words > 0 ? p.actual_words : p.planned_words;
+      p.start = reflowCursor;
+      p.end = reflowCursor + length;
+      reflowCursor = p.end;
+      if (!sawUnwritten && p.written) WRITTEN_UNTIL_WORD = p.end;
+      else sawUnwritten = true;
+    });
+    // 当前故事线中的所有情节段都是已承诺内容；黄线必须取它们的真实累计终点，
+    // 不能取旧规划里可能已过期的 outline.end_word。
+    COMMITTED_UNTIL_WORD = reflowCursor;
+    TOTAL_WORDS = Math.max(COMMITTED_UNTIL_WORD, 1);
+    var outlineByIdForSpan = {};
+    outlines.forEach(function (o) { outlineByIdForSpan[o.id] = o; });
+    function isDescendantPlot(plot, outlineId) {
+      var oid = plot.oid;
+      var guard = 0;
+      while (oid && guard++ <= outlines.length) {
+        if (oid === outlineId) return true;
+        oid = outlineByIdForSpan[oid] && outlineByIdForSpan[oid].parent;
+      }
+      return false;
+    }
+    outlines.forEach(function (o) {
+      // 父弧覆盖其所有后代段；因此父弧字数严格等于下级弧/段的累计字数，与是否已写无关。
+      var members = plots.filter(function (p) { return isDescendantPlot(p, o.id); });
+      if (!members.length) return;
+      o.start = Math.min.apply(null, members.map(function (p) { return p.start; }));
+      o.end = Math.max.apply(null, members.map(function (p) { return p.end; }));
+      o.start_w = o.start;
+      o.end_w = o.end;
+      o.start_ch = Math.floor(o.start / WPC) + 1;
+      o.end_ch = Math.max(o.start_ch, Math.ceil(o.end / WPC));
+      o.actual_words = members.reduce(function (n, p) { return n + (p.actual_words || 0); }, 0);
+      o.written = members.some(function (p) { return p.written; });
     });
 
     // 叙事线程 → 横带区间（id/name 双表匹配，解决存量「thread_id 与 threads 列表不闭合」；
@@ -271,11 +332,11 @@
     function addTick(w) {
       var yPct = wordToPercent(w);
       var tick = document.createElement('div');
-      tick.className = 'sl-tick'; tick.style.top = yPct + '%';
+      tick.className = 'sl-tick'; tick.style.top = wordToLaneY(axisPanel, w);
       axisPanel.appendChild(tick);
       var label = document.createElement('div');
-      label.className = 'sl-tick-label'; label.style.top = yPct + '%';
-      label.textContent = fmtW(w);
+      label.className = 'sl-tick-label'; label.style.top = wordToLaneY(axisPanel, w);
+      label.textContent = fmtAxisW(w);
       axisPanel.appendChild(label);
     }
     for (var w = 0; w < TOTAL_WORDS; w += step) addTick(w);
@@ -361,6 +422,7 @@
         title: o.name,
         rows: [
           ['字数', fmtW(o.start_w) + '—' + fmtW(o.end_w)],
+          o.written ? ['已写实测', fmtW(o.actual_words)] : null,
           ['约第', o.start_ch + '—' + o.end_ch + '章'],
           ['手法', o.narrative === 'chronological' ? '顺叙' : (o.narrative === 'flashback' ? '倒叙' : '插叙')],
           parentName ? ['父弧', parentName] : null,
@@ -510,6 +572,7 @@
         rows: [
           ['层级', level === 0 ? '主情节段' : '子情节段 L' + level],
           ['字数', fmtW(p.start) + '—' + fmtW(p.end)],
+          p.written ? ['已写实测', fmtW(p.actual_words)] : ['规划字数', fmtW(p.planned_words)],
           ['线程', p.thread || '主线'],
           p.resolves ? ['收局', '解决「' + p.resolves_name + '」'] : null,
           (p.roles && p.roles.length) ? ['出场', p.roles.join('、')] : null,
@@ -691,6 +754,7 @@
 
   /* ─── 渲染：进度光标（字数轴：currentWord=累计已写字数；兼容 currentChapter×WPC） ─── */
   function renderCursor(contentArea, currentWord, currentChapter) {
+    if (WRITTEN_UNTIL_WORD > 0) currentWord = WRITTEN_UNTIL_WORD;
     if (currentWord === undefined || currentWord === null || currentWord === 0) {
       if (!currentChapter || currentChapter <= 0) return;
       currentWord = currentChapter * WPC;
@@ -699,16 +763,16 @@
     var y = wordToPercent(w);
     var cursor = document.createElement('div');
     cursor.className = 'sl-cursor';
-    cursor.style.top = y + '%';
+    cursor.style.top = wordToLaneY(contentArea, w);
     contentArea.appendChild(cursor);
   }
 
   function renderBoundary(contentArea, planning, boundary) {
-    var committed = parseInt((planning || {}).committed_until_word || TOTAL_WORDS, 10) || TOTAL_WORDS;
+    var committed = COMMITTED_UNTIL_WORD || parseInt((planning || {}).committed_until_word || TOTAL_WORDS, 10) || TOTAL_WORDS;
     var y = wordToPercent(Math.min(Math.max(0, committed), TOTAL_WORDS));
     var line = document.createElement('div');
-    line.className = 'sl-boundary'; line.style.top = y + '%';
-    line.title = '已承诺至约 ' + fmtW(committed) + ' 字 · 剩余 ' + ((boundary || {}).remaining_plots || 0) + ' plots';
+    line.className = 'sl-boundary'; line.style.top = wordToLaneY(contentArea, committed);
+    line.title = '已承诺至约 ' + fmtW(committed) + ' · 剩余 ' + ((boundary || {}).remaining_plots || 0) + ' plots';
     line.innerHTML = '<span>已承诺至 ' + fmtW(committed) + '</span>';
     contentArea.appendChild(line);
   }
@@ -736,7 +800,7 @@
       var mount = document.getElementById(mountId);
       if (!mount) return;
       opts = opts || {};
-      adapt(bt);
+      adapt(bt, opts);
       // 可选：按章节数拉长内容（仍是百分比渲染 → 每个百分比映射更多像素 → 条间距更大、可上下滚动）。
       // 内容条用 min-height（非 height）：内容短于容器 → flex stretch 填满容器、无滚动条（空故事线=干净固定容器）；
       // 内容长于容器 → 内部 .sl-main 滚动，画布随内容增长（无限长）。仅 scrollable 调用方生效。
@@ -767,7 +831,7 @@
         '<div class="sl-root">' +
         '<div class="sl-header"><h1><span class="dot"></span>故事线</h1>' +
         '<div class="sl-header-right">' + zoomHtml +
-        '<div class="sl-meta">已承诺 <span class="sl-meta-committed">' + fmtW((opts.planning || {}).committed_until_word || TOTAL_WORDS) + '</span> · 每章约 <span>' + WPC + '</span> 字 · 弧 <span>' + outlines.length + '</span> · 情节段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
+        '<div class="sl-meta">已承诺 <span class="sl-meta-committed">' + fmtW(COMMITTED_UNTIL_WORD || TOTAL_WORDS) + '</span> · 每章约 <span>' + WPC + '</span> 字 · 弧 <span>' + outlines.length + '</span> · 情节段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
         '<div class="sl-main">' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
         '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
@@ -846,7 +910,7 @@
       renderCursor(ps.contentArea, opts.currentWord, opts.currentChapter);
       renderBoundary(ps.contentArea, opts.planning || {}, opts.boundary || {});
       var committed = ps.mount.querySelector('.sl-meta-committed');
-      if (committed) committed.textContent = fmtW((opts.planning || {}).committed_until_word || TOTAL_WORDS);
+      if (committed) committed.textContent = fmtW(COMMITTED_UNTIL_WORD || TOTAL_WORDS);
     },
 
     /* 高亮：按 outline_id / plot_id 给故事线里对应的弧/情节段条加高亮并滚动到可见位置。

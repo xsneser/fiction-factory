@@ -70,6 +70,25 @@ function capTools(tools) {
 	} : t);
 }
 
+/**
+ * 记录真实送入模型的三块输入预算（UTF-16 code units + 粗略 token 估算）。
+ * usage.input 是服务商权威值；字符分项用于定位 system/messages/tools 的膨胀来源。
+ */
+function inputBudget(request) {
+	const chars = (value) => JSON.stringify(value ?? null).length;
+	const systemChars = chars(request.system);
+	const messageChars = chars(request.messages);
+	const toolChars = chars(request.tools);
+	const totalChars = systemChars + messageChars + toolChars;
+	return {
+		system_chars: systemChars,
+		message_chars: messageChars,
+		tool_schema_chars: toolChars,
+		total_chars: totalChars,
+		estimated_tokens: Math.ceil(totalChars / 2)
+	};
+}
+
 /** 收尾：沿用 headless 的 summarize —— 最后一个非空 assistant/message 文本 + turn 结束原因。 */
 function summarize(events, firstSeq) {
 	let started = false;
@@ -188,7 +207,8 @@ async function run(ctx, task, io) {
 					total_messages: Array.isArray(pendingLlm.messages) ? pendingLlm.messages.length : 0
 				},
 				response: capDeep(event.data.message, 1500),
-				usage: lastUsage
+				usage: lastUsage,
+				input_budget: inputBudget(pendingLlm)
 			}});
 			pendingLlm = null;
 		}
@@ -255,4 +275,4 @@ function apply(ctx, config) {
 	});
 }
 
-export { Config, apply, inject, internals, name };
+export { Config, apply, inject, inputBudget, internals, name };

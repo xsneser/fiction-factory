@@ -19,21 +19,14 @@ def _planning_ui_payload(book_id):
     if tl is None or book is None:
         return None
     state = load_planning_state(book_id, tl, book, persist=False)
-    draft_ids = set()
-    draft_written = 0
-    draft_path = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
-    if os.path.exists(draft_path):
-        try:
-            draft = json.load(open(draft_path, encoding="utf-8"))
-            draft_ids = {str(x.get("plot_id") or "") for x in (draft.get("bridges") or []) if isinstance(x, dict)}
-            from core.text_utils import count_prose_units
-            draft_written = count_prose_units("\n\n".join(draft.get("buffer") or []))
-        except Exception:
-            draft_ids = set()
-            draft_written = 0
+    # 「已写字数」与服务端 FSM / prepare_plot_run 共用同一口径（_runtime_written_words：
+    # 已落盘章节正文计字 + 草稿计字），否则 UI 显示的边界会和 FSM 的判定不一致。
+    from agent_tools import _draft_read, _runtime_written_words
+    draft = _draft_read(book_id) or {}
+    draft_ids = {str(x.get("plot_id") or "") for x in (draft.get("bridges") or []) if x.get("plot_id")}
     unwritten = [p for p in (tl.plots or [])
                  if not int(getattr(p, "written_chapter", 0) or 0) and p.id not in draft_ids]
-    written_now = int(getattr(book, "total_words", 0) or 0) + draft_written
+    written_now = _runtime_written_words(book_id, tl, book, draft)
     boundary = detect_story_boundary(
         written_until_word=written_now,
         committed_until_word=int(state.get("committed_until_word") or 0),

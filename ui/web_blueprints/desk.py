@@ -45,12 +45,15 @@ def _chapters_from_disk(book_id: str, current_chapter: int):
     for n in range(1, current_chapter + 1):
         ch = book_mgr.load_chapter(book_id, n)
         if ch and ch.get("content"):
+            metrics = {"actual_prose_units": int(ch.get("actual_prose_units") or count_prose_units(ch.get("content") or "")),
+                       "raw_codepoints": int(ch.get("raw_codepoints") or len(ch.get("content") or ""))}
             chapters.append({
                 "num": n,
                     "title": ch.get("title") or f"第{n}章",
                     "content": ch.get("content") or "",
                     "bridges": ch.get("bridges") or [],
-                    "word_count": int(ch.get("word_count") or count_prose_units(ch.get("content") or "")),
+                    "word_count": metrics["actual_prose_units"],
+                    **metrics,
             })
     # 进行中草稿（draft_chapter.json）：bridges 逐情节段 span.m-bridge，刚写完的情节段即时可见
     dp = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
@@ -69,6 +72,8 @@ def _chapters_from_disk(book_id: str, current_chapter: int):
                                else "\n\n".join(buffer),
                     "bridges": bridges,
                     "word_count": count_prose_units("\n\n".join((b.get("text") or "") for b in bridges) if bridges else "\n\n".join(buffer)),
+                    "actual_prose_units": count_prose_units("\n\n".join((b.get("text") or "") for b in bridges) if bridges else "\n\n".join(buffer)),
+                    "raw_codepoints": len("\n\n".join((b.get("text") or "") for b in bridges) if bridges else "\n\n".join(buffer)),
                     "draft": True,
                 })
         except Exception as e:
@@ -125,7 +130,7 @@ def desk_chapters_api(book_id):
     recent_plot_outcome = None
     planning = {}
     try:
-        from agent_tools import _build_plot_run, _draft_plot_ids, _next_plot
+        from agent_tools import _build_plot_run, _draft_plot_ids, _next_plot, _runtime_projection
         from libraries.storyline import load_storyline
         tl = load_storyline(_storyline_filepath(book_id))
         draft = None
@@ -133,12 +138,8 @@ def desk_chapters_api(book_id):
         if os.path.exists(dp):
             with open(dp, encoding="utf-8") as fh:
                 draft = json.load(fh)
-        base_written = int(getattr(book_mgr.get(book_id), "total_words", 0) or 0)
-        draft_written = 0
-        if draft:
-            from core.text_utils import count_prose_units
-            draft_written = count_prose_units("\n\n".join(draft.get("buffer") or []))
-        written_now = base_written + draft_written
+        runtime = _runtime_projection(book_id, tl, book_mgr.get(book_id), draft)
+        written_now = runtime["display_written_words"]
         if tl is not None:
             p = _next_plot(tl, draft)
             if p is not None:
@@ -161,6 +162,10 @@ def desk_chapters_api(book_id):
                 "target_word_budget": int(ps.get("target_word_budget") or 0),
                 "committed_until_word": int(ps.get("committed_until_word") or 0),
                 "written_until_word": written_now,
+                "committed_words": runtime["committed_words"],
+                "draft_words": runtime["draft_words"],
+                "raw_codepoints": runtime["committed_raw_codepoints"] + runtime["draft_raw_codepoints"],
+                "current_plot": runtime["current_plot"],
                 # 写作台轮询与规划面板使用同一份导航数据，避免一个接口显示
                 # “未规划”、另一个接口已有 H1/H2 的短暂分裂。
                 "horizon": ps.get("horizon") or {},
@@ -192,10 +197,37 @@ def desk_chapters_api(book_id):
         if last_bridge:
             _tlc = tl if 'tl' in locals() else None
             recent_plot_outcome = _plot_outcome(last_bridge, _tlc, (last_ch or {}).get("num") or 0)
+    # 单快照 UI 投影：Past / Current / Future 与审计信息来自同一 revision。
+    rev = int((planning or {}).get("storyline_revision") or 0)
+    current_plot = (plot_run or {}).get("plot") or {}
+    future_horizon = (planning or {}).get("horizon") or {}
+    past = {
+        "plot_id": (recent_plot_outcome or {}).get("plot_id", ""),
+        "plot_name": (recent_plot_outcome or {}).get("plot_name", ""),
+        "word_count": (recent_plot_outcome or {}).get("word_count", 0),
+        "reconcile": (recent_plot_outcome or {}).get("reconcile") or {},
+    }
+    future = {"plots": list(future_horizon.get("h1") or [])[:2],
+              "horizon": future_horizon, "questions": (planning or {}).get("story_questions") or []}
+    audit = {
+        "context_fingerprint": (plot_run or {}).get("context_fingerprint", ""),
+        "storyline_revision": rev,
+        "execution_brief": (plot_run or {}).get("execution_brief") or {},
+        "cast_pack": (plot_run or {}).get("cast_pack") or {},
+        "sample_receipt": (plot_run or {}).get("sample_receipt") or {},
+        "tool_events": [], "reconcile": past.get("reconcile") or {},
+    }
     return jsonify({"book_id": book_id, "current_chapter": cur,
                     "chapters": chapters,
                     "plot_run": plot_run, "recent_plot_outcome": recent_plot_outcome,
-                    "planning": planning})
+                    "planning": planning,
+                    "state_revision": rev,
+                    "past": past,
+                    "current": {"plot": current_plot, "active_run": (plot_run or {}).get("run") or None,
+                                 "next_plot": current_plot if current_plot else None},
+                    "future": future,
+                    "selection": {"plan_plot_id": "", "bridge_plot_id": ""},
+                    "audit": audit})
 
 
 @bp.route("/books/storyline/write/<engine_id>")
@@ -207,6 +239,7 @@ def storyline_write_flow(engine_id):
     # 已写章节（供中栏「章节正文」预载，作为书目内容连续展示）
     chapters = []
     initial_written_words = 0
+    initial_raw_codepoints = 0
     book = getattr(engine, "book", None)
     if book and book.book_id:
         # 跨进程 stale：MCP/dsh 子进程写盘后，用磁盘 book.json 的最新 current_chapter 修正缓存
@@ -224,6 +257,7 @@ def storyline_write_flow(engine_id):
                 if ch and ch.get("content"):
                     from core.text_utils import count_prose_units
                     initial_written_words += count_prose_units(ch.get("content") or "")
+                    initial_raw_codepoints += len(ch.get("content") or "")
                     chapters.append({
                         "num": n,
                         "title": ch.get("title") or f"第{n}章",
@@ -256,7 +290,21 @@ def storyline_write_flow(engine_id):
             })
             from core.text_utils import count_prose_units
             initial_written_words += count_prose_units("\n\n".join((b.get("text") or "") for b in bridges) if bridges else "\n\n".join(buffer))
+            initial_raw_codepoints += len("\n\n".join((b.get("text") or "") for b in bridges) if bridges else "\n\n".join(buffer))
     sl = getattr(engine, "storyline", None)
+    # 将正文桥接段按统一口径回填到故事线视图；规划对象本身不落盘修改。
+    storyline_data = sl.to_dict() if sl else None
+    if storyline_data:
+        from core.text_utils import count_prose_units
+        actual_plot_words = {}
+        for chapter in chapters:
+            for bridge in chapter.get("bridges") or []:
+                pid = str(bridge.get("plot_id") or "")
+                if pid:
+                    actual_plot_words[pid] = actual_plot_words.get(pid, 0) + count_prose_units(bridge.get("text") or "")
+        for plot in storyline_data.get("plots") or []:
+            pid = str(plot.get("id") or "")
+            plot["actual_words"] = int(actual_plot_words.get(pid, 0))
     # 字数轴：总章数优先用引擎已字数化的 state.total_chapters，否则由情节段 planned_words 推导
     total_ch = getattr(getattr(engine, "state", None), "total_chapters", 0) or 0
     if not total_ch and sl:
@@ -294,6 +342,7 @@ def storyline_write_flow(engine_id):
         engine_id=engine_id,
         state=engine.state,
         storyline=sl,
+        storyline_data=storyline_data,
         book=book,
         chapters=chapters,
         total_ch=total_ch,
@@ -301,6 +350,7 @@ def storyline_write_flow(engine_id):
         planning_state=planning_state,
         planning_boundary=planning_boundary,
         initial_written_words=initial_written_words,
+        initial_raw_codepoints=initial_raw_codepoints,
     )
 
 

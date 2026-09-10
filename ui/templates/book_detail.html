@@ -4,7 +4,7 @@
 {% endblock %}
 {% block content %}
 {% from "_flow_stepper.html" import status_badge %}
-<link rel="stylesheet" href="/static/css/story_line.css?v=6">
+<link rel="stylesheet" href="/static/css/story_line.css?v=10">
 <h1 id="book-title" style="cursor:pointer" title="点击编辑书名">📖 {{ book.title or '(待定)' }}</h1>
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
@@ -60,16 +60,8 @@ var storylineId = "{{ book.book_id }}";
 <div class="card" style="margin-bottom:16px"><div class="title">📝 简介</div><p style="color:#8b949e;margin:0">{{ basic_info.get('synopsis') }}</p></div>
 {% endif %}
 
-{% if draft %}
-<div class="accordion"><div class="accordion-header"><span>✍️ 进行中草稿：第{{ draft.chapter_num }}章（未固化）</span><span style="color:#8b949e;font-size:12px">📊 {{ draft.words }} 字 · 写作台中断时保留</span></div>
-    <div class="accordion-body">
-        <pre style="white-space:pre-wrap;max-height:480px;overflow-y:auto;background:#1c2128;border:1px solid #30363d;padding:12px;border-radius:6px">{{ draft.text }}</pre>
-    </div>
-</div>
-{% endif %}
-
-{% if chapters %}
-<h3>📑 目录 ({{ chapters|length }})</h3>
+{% if chapters or draft %}
+<h3>📑 目录 ({{ chapters|length + (1 if draft else 0) }})</h3>
 <div class="toc-split">
     <!-- 左栏：章节目录（独立滚动） -->
     <div class="toc-list">
@@ -79,6 +71,12 @@ var storylineId = "{{ book.book_id }}";
             <div class="toc-meta">📊 {{ ch.word_count }} 字{% if ch.created_at %} · {{ ch.created_at[:16] }}{% endif %}</div>
         </div>
         {% endfor %}
+        {% if draft %}
+        <div class="toc-item draft-toc-item {{ 'active' if not chapters }}" data-num="{{ draft.chapter_num }}" onclick="showTocChapter({{ draft.chapter_num }})">
+            <div>第{{ draft.chapter_num }}章: 进行中草稿 <span class="m-draft-tag">未固化</span></div>
+            <div class="toc-meta">📊 {{ draft.words }} 字 · 写作台中断时保留</div>
+        </div>
+        {% endif %}
     </div>
     <!-- 右栏：点开章节的展开内容（独立滚动） -->
     <div class="toc-detail">
@@ -95,6 +93,19 @@ var storylineId = "{{ book.book_id }}";
             <div class="toc-ch-content"><pre>{{ ch.content }}</pre></div>
         </div>
         {% endfor %}
+        {% if draft %}
+        <div class="toc-chapter draft-toc-chapter" id="toc-ch-{{ draft.chapter_num }}" {% if chapters %}hidden{% endif %}>
+            <div class="toc-ch-head">第{{ draft.chapter_num }}章: 进行中草稿 <span class="toc-ch-meta">📊 {{ draft.words }} 字 · 未固化</span></div>
+            <div class="draft-segments">
+            {% for segment in draft.segments %}
+            <div class="draft-segment">
+                <div class="draft-segment-label">第{{ segment.seq }}段</div>
+                <pre>{{ segment.text }}</pre>
+            </div>
+            {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 <style>
@@ -104,12 +115,20 @@ var storylineId = "{{ book.book_id }}";
 .toc-item:hover { background:#1f2937; color:#f0f6fc; }
 .toc-item.active { background:rgba(31,111,235,.15); color:#58a6ff; border:1px solid rgba(31,111,235,.35); }
 .toc-meta { font-size:11px; color:#6e7681; margin-top:2px; }
+.toc-item .m-draft-tag { display:inline-block; margin-left:4px; padding:1px 6px; font-size:11px; color:#8b949e; border:1px dashed #30363d; border-radius:999px; }
+.toc-item.draft-toc-item { color:#d29922; background:rgba(210,153,34,.07); border:1px dashed rgba(210,153,34,.55); }
+.toc-item.draft-toc-item:hover, .toc-item.draft-toc-item.active { color:#f2cc60; background:rgba(210,153,34,.16); border-color:#d29922; }
 .toc-detail { flex:1; min-width:0; max-height:min(520px,65vh); overflow-y:auto; border:1px solid #30363d; border-radius:8px; padding:12px; }
 .toc-ch-head { font-weight:600; color:#f0f6fc; margin-bottom:8px; }
 .toc-ch-meta { font-weight:normal; font-size:12px; color:#8b949e; }
 .toc-ch-summary { color:#8b949e; margin:4px 0 8px; }
 .toc-ch-review { font-size:12px; margin:4px 0 8px; }
 .toc-ch-content pre { white-space:pre-wrap; margin:0; }
+.draft-toc-chapter { border:1px dashed rgba(210,153,34,.65); background:rgba(210,153,34,.05); padding:12px; border-radius:6px; }
+.draft-segment { margin:0 0 12px; padding:10px 12px; border-left:3px solid #d29922; background:rgba(210,153,34,.09); border-radius:4px; }
+.draft-segment:last-child { margin-bottom:0; }
+.draft-segment-label { margin-bottom:6px; color:#f2cc60; font-size:12px; font-weight:600; }
+.draft-segment pre { white-space:pre-wrap; margin:0; color:#e6edf3; }
 </style>
 <script>
 function showTocChapter(n) {
@@ -120,8 +139,9 @@ function showTocChapter(n) {
 {% else %}
 <div class="empty"><div class="icon">✍️</div><p>还没有生成章节</p><p style="margin-top:6px"><a href="/books/{{ book_id }}/continue" class="btn">→ 进入写作台</a></p></div>
 {% endif %}
-<script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
-<script src="/static/js/story_line.js?v=5"></script>
+
+<script>window.__BOOK_STORYLINE__ = {{ storyline_data | tojson if storyline_data else 'null' }};</script>
+<script src="/static/js/story_line.js?v=10"></script>
 <script>
 /* 故事线区块默认折叠：Gantt 在隐藏态容器高度为 0，改为首次展开 #sl-toggle 时再初始化 */
 var _slInited = false;

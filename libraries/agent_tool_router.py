@@ -9,8 +9,8 @@ PROFILE_TOOLS = {
     "build": {"get_build_status", "drive_ui", "query_arc_library", "query_plots",
               "query_gags", "query_characters", "validate_storyline", "validate_world",
               "navigate", "get_book_detail"},
-    "write": {"get_writing_context", "get_pen_style", "pick_plot_sample",
-              "save_plot_draft", "save_chapter_text", "chapter_quality_gate"},
+    # Writer 是一次性 Plot 生成器：其余流程由服务端 FSM 负责。
+    "write": {"prepare_plot_run", "save_plot_draft"},
     "replan": {"get_story_state", "save_outlines", "validate_storyline", "validate_world",
                "query_arc_library", "query_plots", "drive_ui"},
     "publish": {"get_book_detail", "save_book_meta", "publish_check", "publish_book",
@@ -88,7 +88,7 @@ def tool_metadata(name: str, *, allowed_phases=None, locked: bool = False) -> di
     write_prefixes = ("save_", "add_", "delete_", "publish", "mark_", "ingest_", "fetch_", "drive_ui")
     read_write = "write" if name.startswith(write_prefixes) else "read"
     requires_book = name in {
-        "get_book_state", "get_writing_context", "get_storyline", "get_story_state", "get_book_detail",
+        "get_book_state", "prepare_plot_run", "get_storyline", "get_story_state", "get_book_detail",
         "save_basic_info", "save_outlines", "save_book_meta", "arc_material_candidates",
         "save_plot_draft", "save_chapter_text", "publish_check", "mark_finished", "publish_book",
         "export_book", "chapter_quality_gate", "pick_plot_sample",

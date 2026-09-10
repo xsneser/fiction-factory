@@ -192,9 +192,12 @@ class BookManager:
         book_dir = self.dir / book_id / "chapters"
         book_dir.mkdir(parents=True, exist_ok=True)
         chapter_file = book_dir / f"{chapter_num:04d}.json"
+        from core.text_utils import count_prose_units
         write_json_atomic(chapter_file, {
             "num": chapter_num, "title": title,
             "content": content, "summary": summary,
+            "actual_prose_units": count_prose_units(content or ""),
+            "raw_codepoints": len(content or ""),
             "review": review,
             "bridges": bridges,
             "plot_spans": plot_spans,

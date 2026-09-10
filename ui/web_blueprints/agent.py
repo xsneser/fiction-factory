@@ -27,8 +27,21 @@ bp = Blueprint("agent", __name__)
 
 @bp.route("/api/agent/mcp-status", methods=["GET"])
 def agent_mcp_status():
-    """MCP 启动实例观测；不表示存在唯一的当前 profile 或进程存活状态。"""
-    return jsonify({"ok": True, **mcp_runtime_status(profile_tools=PROFILE_TOOLS)})
+    """按当前任务身份返回 MCP 观测，避免把并发任务的实例当成当前 profile。"""
+    task = get_current_task_status()
+    flow_id = request.args.get("flow_id", "") or task.get("flow_id", "")
+    child_run_id = request.args.get("child_run_id", "") or task.get("child_run_id", "")
+    instance_id = request.args.get("mcp_instance_id", "")
+    return jsonify({
+        "ok": True,
+        **mcp_runtime_status(
+            profile_tools=PROFILE_TOOLS,
+            registry_tool_count=len(TOOL_REGISTRY),
+            flow_id=flow_id,
+            child_run_id=child_run_id,
+            mcp_instance_id=instance_id,
+        ),
+    })
 
 
 @bp.route("/api/agent/chat", methods=["POST"])
@@ -129,12 +142,45 @@ def agent_build_status():
 
 @bp.route("/api/agent/tool-log", methods=["GET"])
 def agent_tool_log():
-    """右侧面板「工具日志」页签数据：所有暴露工具数 + 工具调用汇总与时间线。"""
+    """工具日志与分层工具计数；当前实例按 flow/child identity 绑定。"""
     log = get_tool_log()
     success = sum(1 for x in log if x.get("ok"))
+    task = get_current_task_status()
+    runtime = mcp_runtime_status(
+        profile_tools=PROFILE_TOOLS,
+        registry_tool_count=len(TOOL_REGISTRY),
+        flow_id=task.get("flow_id", ""),
+        child_run_id=task.get("child_run_id", ""),
+    )
+    active = runtime.get("active", {})
+    matched = bool(active.get("matched"))
+    host_tool_count = active.get("host_tool_count") if matched else None
+    if host_tool_count is None and task.get("running"):
+        # Debug llm_call events carry the final dsh host catalog. Match the
+        # same task identity; never borrow a concurrent flow's observation.
+        from libraries.dsh_bridge import get_task_events
+        for event in reversed(get_task_events(float(task.get("started_at") or 0))):
+            if event.get("type") != "llm_call":
+                continue
+            if task.get("flow_id") and event.get("flow_id") != task.get("flow_id"):
+                continue
+            if task.get("child_run_id") and event.get("child_run_id") != task.get("child_run_id"):
+                continue
+            if isinstance(event.get("host_tool_count"), int):
+                host_tool_count = event["host_tool_count"]
+                break
     return jsonify({
         "ok": True,
-        "tools_exposed": len(TOOL_REGISTRY),
+        # Deprecated compatibility field: it is the matched profile count,
+        # never the global registry count. Use the explicit fields below.
+        "tools_exposed": active.get("profile_mcp_tool_count") if matched else None,
+        "registry_tool_count": runtime.get("registry_tool_count"),
+        "profile_mcp_tool_count": active.get("profile_mcp_tool_count") if matched else None,
+        "host_tool_count": host_tool_count,
+        "active_profile": active.get("profile") if matched else None,
+        "active_instance_id": active.get("instance_id") if matched else None,
+        "active_flow_id": active.get("flow_id") if matched else None,
+        "active_child_run_id": active.get("child_run_id") if matched else None,
         "total": len(log),
         "success": success,
         "failed": len(log) - success,

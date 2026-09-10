@@ -41,17 +41,21 @@ _DEBUG_PROMPT_DIR = os.path.join(_ROOT, "storage", "debug-prompts")   # 调试�
 
 # ─── 全服务单任务：当前 dsh 子进程 + 打断（kill 整树）───
 _current_proc = None
-_current_task_meta = None   # {"started_at": float, "task": str}：当前运行任务元数据（前端切页恢复感知用）
+_current_task_meta = None   # 当前运行任务元数据（含 flow/child identity，前端切页恢复感知用）
 _current_proc_lock = threading.Lock()
 _last_interrupted_pid = None
 
 
-def _set_current_proc(proc, task: str = ""):
+def _set_current_proc(proc, task: str = "", flow_id: str = "", child_run_id: str = ""):
     global _current_proc, _current_task_meta
     with _current_proc_lock:
         _current_proc = proc
-        _current_task_meta = {"started_at": time.time(),
-                              "task": (task or "").strip()[:80]}
+        _current_task_meta = {
+            "started_at": time.time(),
+            "task": (task or "").strip()[:80],
+            "flow_id": flow_id or "",
+            "child_run_id": child_run_id or "",
+        }
 
 
 def _clear_current_proc(proc):
@@ -80,6 +84,8 @@ def get_current_task_status() -> dict:
                 "pid": proc.pid,
                 "started_at": meta.get("started_at"),
                 "task": meta.get("task", ""),
+                "flow_id": meta.get("flow_id", ""),
+                "child_run_id": meta.get("child_run_id", ""),
             }
         _current_proc = None
         _current_task_meta = None
@@ -319,6 +325,7 @@ Prepare exactly one Plot, write it, save it once, and stop. The server owns all 
         "# 系统提示词：persona + 关运行时快照（沙箱/审批对纯 MCP 小说 agent 无意义，对应工具已禁）\n"
         "- id: system-prompt\n"
         "  config:\n"
+        "    includeHarnessIdentity: false\n"
         "    includeRuntimeContext: false\n"
         f"    persona: >-\n{persona_block}\n"
         "# 事件流：禁 headless-runner（只打印最终文本），换 events-runner 推 NDJSON。\n"
@@ -340,7 +347,8 @@ Prepare exactly one Plot, write it, save it once, and stop. The server owns all 
         )
     if is_writer:
         # Writer 不可联网、不可读取 skill catalog 或进入计划模式。
-        for plugin in ("tool-web", "web", "web-search-deepseek", "tool-skill", "skill", "tool-plan", "plan-mode"):
+        for plugin in ("tool-web", "web", "web-search-deepseek", "tool-skill", "skill", "skill-filesystem",
+                       "tool-plan", "plan-mode"):
             yaml_text += f"- id: {plugin}\n  disabled: true\n"
     os.makedirs(os.path.dirname(_OVERLAY_PATH), exist_ok=True)
     with open(_OVERLAY_PATH, "w", encoding="utf-8") as f:
@@ -406,13 +414,15 @@ def _task_tool_profile(task: str) -> str:
 
 
 def _profiles_enabled() -> bool:
-    """MCP profile 最小工具面是否启用（默认开）。
-
-    修订：默认按任务裁剪工具面 + 预注入 skill；仅当用户显式设 AGENT_TOOL_PROFILES=0/off
-    时才回到 legacy 全量 45 工具（无 --profile、无 skill 预注入，靠 NOVEL_AGENT + .dsh skills）。
-    """
+    """MCP profile 最小工具面是否启用（默认开）。"""
     v = (os.environ.get("AGENT_TOOL_PROFILES") or "1").strip().lower()
     return v not in {"0", "false", "no", "off"}
+
+
+def _unscoped_tools_allowed() -> bool:
+    """Legacy 全量工具面必须再有一个显式 unsafe 开关。"""
+    v = (os.environ.get("ALLOW_UNSCOPED_AGENT_TOOLS") or "").strip().lower()
+    return v in {"1", "true", "yes", "on"}
 
 
 def _skill_text_for_profile(profile: str) -> str:
@@ -726,10 +736,13 @@ def _map_dsh_event(evt: dict, pending: dict):
     elif t == "llm/call":
         # 调试模式（NOVEL_AGENT_DEBUG=1 时 events-runner 才 emit）：一次 LLM 调用的
         # 提示词/MCP工具/返回JSON，前端渲染「LLM 调用」调试卡。不持久化 task_events。
+        request = data.get("request") or {}
+        host_tools = request.get("tools") if isinstance(request, dict) else None
         yield {"type": "llm_call",
                "seq": data.get("seq"), "turn": data.get("turn"), "step": data.get("step"),
-               "request": data.get("request"), "response": data.get("response"),
-               "usage": data.get("usage")}
+               "request": request, "response": data.get("response"),
+               "usage": data.get("usage"), "input_budget": data.get("input_budget"),
+               "host_tool_count": len(host_tools) if isinstance(host_tools, list) else None}
     elif t == "reply":
         yield {"type": "reply", "content": data.get("text") or ""}
     elif t == "error":
@@ -755,7 +768,14 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
     # 全服务单任务：新任务先打断正在跑的旧任务。事件存储（task_events.jsonl）不清空——
     # 它是「刷新重建」的渲染源（重启服务才消失），跨任务累积，仅显式「清空对话」清空。
     interrupt_current_task()
-    profile = _task_tool_profile(task) if _profiles_enabled() else ""
+    profiles_enabled = _profiles_enabled()
+    if not profiles_enabled and not _unscoped_tools_allowed():
+        yield {"type": "error", "message": (
+            "AGENT_TOOL_PROFILES 已关闭；如需开发/诊断 legacy 全量工具，"
+            "请同时显式设置 ALLOW_UNSCOPED_AGENT_TOOLS=1")}
+        yield {"type": "done"}
+        return
+    profile = _task_tool_profile(task) if profiles_enabled else ""
     skill_text = _skill_text_for_profile(profile) if profile else ""
     # P0 预检：注入的 skill 引用必须 ⊆ 该 profile 暴露的工具；不匹配=契约破损，明确报错并拒绝启动，
     # 绝不自动 fail-open 到全量 45（AGENT_TOOL_PROFILES=0 才是显式 legacy/debug 逃生）。
@@ -820,7 +840,7 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
                               "（源码入库，依赖重建），且 Node 在 PATH"}
             yield {"type": "done"}
             return
-        _set_current_proc(proc, task)
+        _set_current_proc(proc, task, flow_id=flow_id, child_run_id=child_run_id)
 
         q = queue.Queue()
         stderr_buf = []
@@ -865,6 +885,10 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
                 saw_any = True
                 _log.debug("dsh event %s (%d bytes)", evt.get("type", ""), len(line))
                 for sse in _map_dsh_event(evt, pending):
+                    if flow_id:
+                        sse.setdefault("flow_id", flow_id)
+                    if child_run_id:
+                        sse.setdefault("child_run_id", child_run_id)
                     # 持久化所有可渲染卡片（工具卡 + 调试模式 LLM 调用卡），供刷新后重建卡片流
                     if sse.get("type") in ("tool_call", "tool_result", "llm_call"):
                         _append_task_event(sse)
@@ -980,7 +1004,8 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
     归一化薄任务（工具面只有 prepare_plot_run/save_plot_draft），不喂整段用户长文本，杜绝任务
     里出现其工具面外工具名导致 unknown-tool 停摆。
     """
-    from agent_tools import _draft_read, finalize_draft_chapter, load_tl
+    from agent_tools import (_draft_read, _runtime_written_words, finalize_draft_chapter,
+                             load_tl)
     from libraries.planning_state import detect_story_boundary, load_planning_state
     from libraries.write_flow import (chapter_status, next_action, load_flow, transition, release_lease,
                                       start_flow, active_flow_id)
@@ -1013,11 +1038,16 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
         if tl is None:
             return None, None
         draft = _draft_read(bid) or {}
-        ps = load_planning_state(bid, tl, None)
+        # 仅**读**规划态判边界：必须 persist=False。此前用默认 persist=True 且 book=None，
+        # 会把 planning_state.written_until_word 覆写成 0 并落盘（与 UI 读路径互相打架）。
+        ps = load_planning_state(bid, tl, None, persist=False)
         drafted = {x.get("plot_id") for x in draft.get("bridges") or []}
         remaining = sum(1 for p in tl.plots if not getattr(p, "written_chapter", 0) and p.id not in drafted)
+        # 边界在**绝对轴**上比较，已写字数必须与 committed_until_word 同轴：
+        # 已落盘章节正文 + 当前草稿（_runtime_written_words）。绝不能用 draft["words"]——
+        # 那是本章草稿的内部计数（章内量纲），会让 WORDS_LOW 永不触发。
         boundary = detect_story_boundary(
-            written_until_word=int(draft.get("words") or 0),
+            written_until_word=_runtime_written_words(bid, tl, None, draft),
             committed_until_word=int(ps.get("committed_until_word") or 0),
             remaining_plots=remaining,
             words_per_batch=int(tl.words_per_chapter or 3000),

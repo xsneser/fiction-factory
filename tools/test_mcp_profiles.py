@@ -10,8 +10,7 @@ from mcp.client.stdio import stdio_client
 
 
 EXPECTED = {
-    "write": {"get_writing_context", "get_pen_style", "pick_plot_sample",
-              "save_plot_draft", "save_chapter_text", "chapter_quality_gate"},
+    "write": {"prepare_plot_run", "save_plot_draft"},
     "replan": {"get_story_state", "save_outlines", "validate_storyline", "validate_world",
                "query_arc_library", "query_plots", "drive_ui"},
 }

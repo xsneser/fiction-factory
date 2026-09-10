@@ -169,6 +169,9 @@ _RUNTIME_INSTANCE = record_startup(
     profile=_PROFILE,
     source=_SOURCE,
     tools=[entry["name"] for entry in _EXPOSED_REGISTRY],
+    registry_tool_count=len(TOOL_REGISTRY),
+    flow_id=os.environ.get("NOVEL_WRITE_FLOW_ID", ""),
+    child_run_id=os.environ.get("NOVEL_WRITE_CHILD_RUN_ID", ""),
 )
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ import time
 import inspect
 import typing
 import functools
+import hashlib
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _ROOT)
@@ -79,6 +80,154 @@ def _draft_read(book_id: str):
         return None
 
 
+def _text_metrics(text: str) -> dict:
+    """唯一的正文计量口径：发布/门禁用 prose units，展示同时给 Unicode code points。"""
+    text = text or ""
+    return {"actual_prose_units": count_prose_units(text), "raw_codepoints": len(text)}
+
+
+def _draft_metrics(draft: dict | None) -> dict:
+    bridges = list((draft or {}).get("bridges") or [])
+    content = "\n\n".join(str(b.get("text") or "") for b in bridges)
+    metrics = _text_metrics(content)
+    metrics["bridge_count"] = len(bridges)
+    return metrics
+
+
+def _context_fingerprint(book_id: str, tl, plot_run: dict | None, profile=None,
+                         style_snapshot: dict | None = None,
+                         version_vector: dict | None = None) -> str:
+    """Hash the canonical semantic inputs observed by one Plot Run."""
+    payload = {
+        "book_id": book_id,
+        "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+        "run": (plot_run or {}).get("run") or {},
+        "plot": (plot_run or {}).get("plot") or {},
+        "style_profile_id": getattr(profile, "id", "") or "",
+        "style_snapshot": style_snapshot or {},
+        "version_vector": version_vector or {},
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _semantic_digest(value) -> str:
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                     separators=(",", ":"), default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _json_source_digest(path: str) -> str:
+    """Digest a JSON source without invoking a resolver or mutating it."""
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            value = json.load(fh)
+    except (OSError, TypeError, ValueError):
+        return ""
+    return _semantic_digest(value)
+
+
+def _context_version_vector(book_id: str, tl, draft: dict | None,
+                            style_snapshot: dict | None = None) -> dict:
+    """Return revisions for semantic sources used by a prepared Plot.
+
+    This intentionally hashes canonical source state, not the rendered packet:
+    display metadata or resolver ordering cannot make a valid run stale.
+    """
+    from libraries.plot_run_state import load_staged
+    draft = draft or {}
+    staged = load_staged(book_id)
+    book_dir = os.path.join(_ROOT, "books", book_id)
+    return {
+        "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+        "draft_revision": _semantic_digest({
+            "chapter_num": draft.get("chapter_num", 0),
+            "bridges": draft.get("bridges") or [],
+        }),
+        "staged_revision": _semantic_digest({
+            "chapter_num": staged.get("chapter_num", 0),
+            "plot_deltas": staged.get("plot_deltas") or [],
+        }),
+        "character_state_revision": _json_source_digest(
+            os.path.join(book_dir, "character_states.json")),
+        "planning_revision": _json_source_digest(
+            os.path.join(book_dir, "planning_state.json")),
+        "memory_source_revision": _json_source_digest(
+            os.path.join(book_dir, "story_memory.json")),
+        "style_digest": (style_snapshot or {}).get("digest", ""),
+        "sample_id": (style_snapshot or {}).get("sample_id", ""),
+        "sample_content_digest": (style_snapshot or {}).get("sample_content_digest", ""),
+    }
+
+
+def _committed_metrics(book_id: str, book=None) -> tuple[int, int]:
+    """已落盘章节的 (正文字数, 原始码点数)。
+
+    优先累加 `save_chapter` 落盘的 `actual_prose_units`/`raw_codepoints`（v2 起每章必写），
+    避免每次 prepare / 每轮 FSM 评估都把全书正文重读一遍再正则计字（O(章节数×字数)）；
+    只有 v2 迁移前写入、缺这两个字段的旧章节才按正文补算一次。
+    """
+    units = codepoints = 0
+    for n in range(1, int(getattr(book, "current_chapter", 0) or 0) + 1):
+        ch = book_mgr.load_chapter(book_id, n) or {}
+        if not ch:
+            continue
+        u, c = ch.get("actual_prose_units"), ch.get("raw_codepoints")
+        if isinstance(u, int) and isinstance(c, int):
+            units += u
+            codepoints += c
+            continue
+        m = _text_metrics(ch.get("content") or "")
+        units += m["actual_prose_units"]
+        codepoints += m["raw_codepoints"]
+    return units, codepoints
+
+
+def _runtime_written_words(book_id: str, tl=None, book=None, draft=None) -> int:
+    """「已写字数」的**唯一口径**：已落盘章节正文计字 + 当前草稿计字。
+
+    绝对轴坐标（与 `committed_until_word` 同轴），所以边界判定只能用这个值；
+    章内判定（本章是否够 `words_per_chapter`）请用 `write_flow.chapter_status` 的章内 `words`。
+    """
+    return int(_runtime_projection(book_id, tl, book, draft)["display_written_words"])
+
+
+def _runtime_projection(book_id: str, tl=None, book=None, draft=None) -> dict:
+    """storyline + draft 的单一运行态投影；planning_state 只提供 forecast，不做当前事实源。"""
+    tl = tl if tl is not None else book_mgr.load_storyline(book_id)
+    book = book if book is not None else book_mgr.get(book_id)
+    draft = _draft_read(book_id) if draft is None else draft
+    draft = draft or {}
+    next_p = _next_plot(tl, draft) if tl else None
+    committed_units, committed_codepoints = _committed_metrics(book_id, book) if book else (0, 0)
+    dmetrics = _draft_metrics(draft)
+    planned = int(getattr(next_p, "words", 0) or 0) if next_p else 0
+    return {
+        "next_plot": next_p,
+        "current_plot": ({"id": next_p.id, "name": next_p.name, "outline_id": next_p.outline_id,
+                          "thread_id": getattr(next_p, "thread_id", "") or ""} if next_p else None),
+        "planned_prose_units": planned,
+        "committed_words": committed_units,
+        "draft_words": dmetrics["actual_prose_units"],
+        "display_written_words": committed_units + dmetrics["actual_prose_units"],
+        "committed_raw_codepoints": committed_codepoints,
+        "draft_raw_codepoints": dmetrics["raw_codepoints"],
+        "draft": draft,
+    }
+
+
+def _commit_journal_path(book_id: str) -> str:
+    return os.path.join(_ROOT, "books", book_id, "chapter_commit.pending.json")
+
+
+def _write_commit_journal(book_id: str, payload: dict) -> None:
+    """跨文件章节提交的恢复线索；正常完成会删除，异常保留给下一次上下文/运维检查。"""
+    from core.json_store import write_json_atomic
+    write_json_atomic(_commit_journal_path(book_id), payload)
+
+
 def _profile_for(tl):
     if tl and tl.pen_name:
         try:
@@ -139,11 +288,14 @@ def get_book_state(book_id: str) -> dict:
     for n in range(1, book.current_chapter + 2):
         ch = book_mgr.load_chapter(book_id, n)
         if ch:
+            metrics = _text_metrics(ch.get("content") or "")
             chapters.append({
                 "num": n,
                 "title": ch.get("title"),
                 "summary": ch.get("summary"),
-                "word_count": count_prose_units(ch.get("content") or ""),
+                "word_count": metrics["actual_prose_units"],
+                "actual_prose_units": metrics["actual_prose_units"],
+                "raw_codepoints": metrics["raw_codepoints"],
             })
     return {
         "book": {
@@ -388,7 +540,7 @@ def _build_plot_run(tl, p, csm=None, draft=None, facts_by_plot=None):
     """组装一次情节段运行 plot_run：run 生命周期 + plot 全量 + 弧目标 + 线程状态 + 承诺 + 字数余量。
 
     全从已 load 的 tl 内存对象现算，不新增磁盘读；样文/场景判定不在此（走 get_pen_style）。
-    draft/facts_by_plot 可选，用于派生 run 生命周期状态（get_writing_context/desk 三处同源共用）。
+    draft/facts_by_plot 可选，用于派生 run 生命周期状态（prepare_plot_run/desk 三处同源共用）。
     """
     run = {
         "run": plot_run_lifecycle(tl, p, draft, facts_by_plot),
@@ -405,6 +557,9 @@ def _build_plot_run(tl, p, csm=None, draft=None, facts_by_plot=None):
             "hook_points": list(getattr(p, "hook_points", None) or []),
             "theme_hints": list(getattr(p, "theme_hints", None) or []),
             "roles": list(getattr(p, "roles", None) or []),
+            "no_named_cast": bool(getattr(p, "no_named_cast", False)),
+            "protocol_version": int(getattr(p, "protocol_version", 1) or 1),
+            "planned_prose_units": int(getattr(p, "words", 0) or 0),
             "expected_facts": list(getattr(p, "expected_facts", None) or []),
             "outline_id": getattr(p, "outline_id", "") or "",
             "written_chapter": getattr(p, "written_chapter", 0) or 0,
@@ -534,8 +689,8 @@ def plot_run_lifecycle(tl, plot, draft=None, facts_by_plot=None) -> dict:
     }
 
 
-def get_writing_context(book_id: str) -> dict:
-    """[薄工具] 一次返回写正文所需的完整上下文（书配置+故事线+角色/世界观+弧+最近章摘要+草稿）。
+def _deprecated_get_writing_context(book_id: str) -> dict:
+    """已退役的全量上下文实现，仅保留在模块内供历史迁移审计，绝不注册为 Agent 工具。
 
     复用 get_book_state 全量 payload（get_storyline / get_book_detail 是其子集/重叠），
     追加就地提取的扁平字段：synopsis（outline）、protagonist（get_mc）、
@@ -559,7 +714,8 @@ def get_writing_context(book_id: str) -> dict:
     payload["protagonist"] = protagonist
     # next_plot：第一个未写情节段（draft-aware：written_chapter==0 且不在当前草稿内，防章中途重复返回同一首）
     draft = payload.get("draft") or {}
-    next_p = _next_plot(tl, draft) if tl else None
+    runtime = _runtime_projection(book_id, tl, book_mgr.get(book_id), draft)
+    next_p = runtime["next_plot"]
     if next_p is not None:
         payload["next_plot"] = {
             "plot_id": next_p.id, "name": next_p.name,
@@ -582,12 +738,18 @@ def get_writing_context(book_id: str) -> dict:
     payload["pen_name"] = (tl.pen_name if tl else "") or book.get("pen_name") or ""
     profile = _profile_for(tl) if tl else None
     payload["style_card"] = profile.build_style_card() if profile else _default_style_card()
+    payload["runtime"] = {k: v for k, v in runtime.items() if k not in ("next_plot", "draft")}
+    payload["context_fingerprint"] = _context_fingerprint(book_id, tl, payload.get("plot_run"), profile) if next_p else ""
+    pending = _commit_journal_path(book_id)
+    if os.path.exists(pending):
+        payload["commit_recovery"] = {"pending": True, "path": pending,
+                                      "action": "检测到未完成章节提交；请先核对并恢复后继续写作"}
     if tl:
         ps = load_planning_state(book_id, tl, book_mgr.get(book_id))
         remaining = sum(1 for p in (tl.plots or [])
                         if not (getattr(p, "written_chapter", 0) or 0) and p.id not in _draft_plot_ids(draft or {}))
         boundary = detect_story_boundary(
-            written_until_word=int((book or {}).get("total_words") or 0),
+            written_until_word=int(runtime["display_written_words"]),
             committed_until_word=int(ps.get("committed_until_word") or 0),
             remaining_plots=remaining,
             words_per_batch=int(tl.words_per_chapter or 3000),
@@ -598,6 +760,9 @@ def get_writing_context(book_id: str) -> dict:
             "target_word_budget": ps.get("target_word_budget", 0),
             "committed_until_word": ps.get("committed_until_word", 0),
             "written_until_word": ps.get("written_until_word", 0),
+            "display_written_words": runtime["display_written_words"],
+            "committed_words": runtime["committed_words"],
+            "draft_words": runtime["draft_words"],
             "storyline_revision": getattr(tl, "storyline_revision", 0),
             "boundary": boundary,
             # 与写作台规划面板共享同一导航层；这些字段是方向提示，
@@ -609,6 +774,196 @@ def get_writing_context(book_id: str) -> dict:
             "last_replan": ps.get("last_replan") or {},
         }
     return payload
+
+
+def _staged_cast_projection(cast: dict, staged: dict) -> dict:
+    """把本章已 reconcile 的人物变化覆盖到下一段的运行态，不落正式角色状态机。"""
+    from libraries.character_state import _EVENT_FIELD
+    result = json.loads(json.dumps(cast or {}, ensure_ascii=False))
+    dynamic = {}
+    for delta in (staged.get("plot_deltas") or []):
+        for row in (delta.get("character_changes") or []):
+            name = str((row or {}).get("name") or "").strip()
+            for event in ((row or {}).get("events") or []):
+                field = _EVENT_FIELD.get(str((event or {}).get("type") or ""))
+                if name and field and (event or {}).get("to") is not None:
+                    dynamic.setdefault(name, {})[field] = str(event["to"])
+    for group in result.values():
+        if not isinstance(group, list):
+            continue
+        for card in group:
+            if isinstance(card, dict) and card.get("name") in dynamic:
+                card.setdefault("dyn", {}).update(dynamic[card["name"]])
+                card["state_source"] = "staged_fact"
+    return result
+
+
+def prepare_plot_run(book_id: str) -> dict:
+    """准备当前唯一待写 Plot，返回 Writer 输入快照和提交 receipt。
+
+    成功后请使用返回的 token 提交一次；服务端负责 Plot 顺序和章节编排。
+    """
+    from libraries.plot_run_state import load_staged, previous_change, retrieved_memory
+    from libraries.plot_commit_tokens import (issue as issue_commit_token,
+                                               find_prepared, attach_snapshot)
+    from libraries.write_flow import chapter_status
+    tl = _require_tl(book_id)
+    book = book_mgr.get(book_id)
+    draft = _draft_read(book_id) or {}
+    runtime = _runtime_projection(book_id, tl, book, draft)
+    p = runtime["next_plot"]
+    profile = _profile_for(tl)
+    if p is None:
+        return {"ok": True, "run": None, "reason": "no_pending_plot"}
+    staged = load_staged(book_id)
+    raw_run = _build_plot_run(tl, p, _load_char_states(book_id), draft=draft)
+    run = raw_run["run"]
+    style_profile = profile
+    if style_profile is None:
+        try:
+            style_profile = _resolve_profile(book_id)
+        except Exception:
+            style_profile = None
+    style_card = (style_profile.build_style_card() if style_profile
+                  else _default_style_card())
+    # Materialize planning state before deriving the retry key; first and
+    # subsequent prepares must observe the same source set.
+    ps = load_planning_state(book_id, tl, book)
+    from libraries.style_snapshot import (build_snapshot, selected_sample_digest,
+                                           snapshot_matches)
+    base_style_snapshot = build_snapshot(style_profile, style_card)
+    base_version_vector = _context_version_vector(book_id, tl, draft, base_style_snapshot)
+    run["context_fingerprint"] = _context_fingerprint(
+        book_id, tl, raw_run, profile, style_snapshot=base_style_snapshot,
+        version_vector=base_version_vector)
+    prepared_key = run["context_fingerprint"]
+    flow_id = os.environ.get("NOVEL_WRITE_FLOW_ID", "adhoc")
+    child_run_id = os.environ.get("NOVEL_WRITE_CHILD_RUN_ID", run["id"])
+    # Retry the same prepared Plot from its immutable snapshot. This check must
+    # happen before sample selection because picking mutates avoidance history.
+    existing = find_prepared(
+        book_id=book_id,
+        flow_id=flow_id,
+        plot_id=p.id,
+        storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+        prepared_key=prepared_key,
+    )
+    if existing:
+        snapshot = existing[1].get("prepared_snapshot")
+        saved_style = ((snapshot or {}).get("style") or {}).get("snapshot")
+        sample_id = (saved_style or {}).get("sample_id", "")
+        current_digest = selected_sample_digest(style_profile, sample_id) if style_profile else ""
+        if isinstance(snapshot, dict) and saved_style and current_digest is not None and snapshot_matches(
+                style_profile, style_card, saved_style, current_digest):
+            return snapshot
+    execution = dict(raw_run["plot"])
+    # 新数据 roles 是严格契约；旧数据仅用结构化字段补齐，不从正文猜角色。
+    protocol = int(execution.get("protocol_version") or 1)
+    role_warnings = []
+    if protocol >= 2 and not execution.get("no_named_cast") and not execution.get("roles"):
+        raise RuntimeError("roles_v2：当前 Plot 缺少出场角色；请先补齐角色或显式标记 no_named_cast")
+    resolution = {"mode": "v2_strict" if protocol >= 2 else "legacy_fallback", "confidence": "high", "warnings": role_warnings}
+    if protocol < 2 and not execution.get("roles"):
+        candidates = []
+        for row in (raw_run.get("character_impact") or []):
+            if isinstance(row, dict) and row.get("name"):
+                candidates.append(str(row["name"]))
+        for row in ((raw_run.get("execution_brief") or {}).get("actors") or []):
+            if isinstance(row, str): candidates.append(row)
+        execution["roles"] = list(dict.fromkeys(candidates))
+        resolution.update(confidence="medium", warnings=["legacy Plot 的角色来自结构化规划回退" if candidates else "legacy Plot 未提供结构化出场角色"])
+    execution.update({"brief": raw_run.get("execution_brief") or {},
+                      "arc": raw_run.get("arc_goal") or {},
+                      "must_happen": list((raw_run.get("execution_brief") or {}).get("must_happen") or []),
+                      "must_not_happen": list((raw_run.get("execution_brief") or {}).get("must_not_happen") or [])})
+    bridges = list(draft.get("bridges") or [])
+    recent = []
+    for i, bridge in enumerate(reversed(bridges[-2:])):
+        text = str(bridge.get("text") or "")
+        recent.append({"distance": i + 1, "plot_id": bridge.get("plot_id"),
+                       "plot_name": bridge.get("plot_name"),
+                       "summary": (bridge.get("facts") or {}),
+                       "ending": text[-800:] if i == 0 else text[-500:]})
+    terms = list(getattr(p, "roles", None) or []) + [getattr(p, "thread_id", ""), getattr(p, "name", "")]
+    horizon_plots = []
+    for q in tl.plots:
+        if q.id == p.id:
+            continue
+        if getattr(q, "written_chapter", 0) or q.id in _draft_plot_ids(draft):
+            continue
+        horizon_plots.append(q)
+        if len(horizon_plots) == 1: break
+    remaining = sum(1 for q in tl.plots if not getattr(q, "written_chapter", 0) and q.id not in _draft_plot_ids(draft))
+    boundary = detect_story_boundary(
+        written_until_word=runtime["display_written_words"],
+        committed_until_word=int(ps.get("committed_until_word") or 0), remaining_plots=remaining,
+        words_per_batch=int(tl.words_per_chapter or 3000),
+        storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+        last_replan=ps.get("last_replan") or {})
+    status = chapter_status(book_id, tl, draft, needs_replan=bool(boundary.get("needs_replan")))
+    # 风格卡已在幂等检查前解析；本次只在没有可恢复快照时选一篇样文。
+    sample = {"text": "", "receipt": {}, "meta": {}}
+    try:
+        picked = pick_plot_sample(book_id, query=raw_run.get("style_query") or {})
+        if picked.get("ok"):
+            sample = {"text": picked.get("text") or "", "receipt": picked.get("sample_receipt") or {},
+                      "meta": picked.get("sample") or {}}
+    except Exception:
+        # 无样文池时仍允许写作，style card 是可用的保底。
+        pass
+    # pick_plot_sample 的独立旧入口不带动态 cast；prepare 是唯一 Writer 入口，
+    # 所以在这里以完整七 Packet 的指纹重新绑定 receipt。
+    style_snapshot = build_snapshot(style_profile, style_card, sample["receipt"])
+    version_vector = _context_version_vector(book_id, tl, draft, style_snapshot)
+    run["context_fingerprint"] = _context_fingerprint(
+        book_id, tl, raw_run, profile, style_snapshot=style_snapshot,
+        version_vector=version_vector)
+    sample["receipt"]["context_fingerprint"] = run["context_fingerprint"]
+    brief = raw_run.get("execution_brief") or {}
+    must = list(brief.get("must_happen") or [])
+    should = list(brief.get("should_happen") or [])
+    may = list(brief.get("may_happen") or [])
+    execution.update({"entry_state": brief.get("entry_state") or {}, "success_criteria": brief.get("success_criteria") or must,
+                      "must": must, "should": should, "may": may,
+                      "chapter_progress": {"target_words": status["target_words"], "written_words": status["written_words"],
+                                           "plot_index": len(bridges) + 1, "is_likely_last_plot": bool(status["chapter_ready"] or not status["has_next_committed_plot"])}})
+    configured_memory_budget = int(os.environ.get("WRITE_MEMORY_BUDGET", "2500") or 2500)
+    context_budget = int(os.environ.get("WRITE_CONTEXT_BUDGET", "12000") or 12000)
+    output_reserve = int(os.environ.get("WRITE_OUTPUT_RESERVE", "3000") or 3000)
+    fixed_packets = {"execution": execution, "cast": raw_run.get("cast_pack") or {},
+                     "style_card": style_card, "sample": sample.get("text") or ""}
+    fixed_cost = len(json.dumps(fixed_packets, ensure_ascii=False)) // 2
+    # 2500 是软上限；当本 Plot 的角色/样文较大时自动给 memory 让路。
+    memory_budget = max(400, min(configured_memory_budget, context_budget - fixed_cost - output_reserve))
+    # 近段尾部按预算收缩；previous_change 单列，不占此预算。
+    recent = recent[:2]
+    used = sum(len(str(x.get("ending") or "")) // 2 for x in recent)
+    retrieved = retrieved_memory(book_id, terms, limit=max(1, min(6, (memory_budget - min(memory_budget, used)) // 250 or 1)))
+    prepared = {
+        "ok": True,
+        "run": {"id": run["id"], "expires_in_seconds": 20 * 60,
+                "cast_resolution": resolution,
+                "context_version_vector": version_vector},
+        "execution": execution,
+        "previous_change": previous_change(book_id),
+        "cast": {**_staged_cast_projection(raw_run.get("cast_pack") or {}, staged), "resolution": resolution},
+        "memory": {"budget_tokens": memory_budget, "recent": recent, "retrieved": retrieved},
+        "horizon": {"preserve": list(getattr(horizon_plots[0], "expected_facts", None) or []) if horizon_plots else [],
+                    "do_not_resolve_yet": [], "next_function": (horizon_plots[0].category or horizon_plots[0].name) if horizon_plots else None,
+                    "arc_destination": (raw_run.get("arc_goal") or {}).get("notes", ""), "boundary": boundary,
+                    "chapter_status": status},
+        "style": {"card": style_card, "sample": sample, "snapshot": style_snapshot},
+    }
+    token = issue_commit_token(
+        book_id=book_id, flow_id=flow_id, child_run_id=child_run_id,
+        plot_id=p.id, storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+        context_fingerprint=run["context_fingerprint"], sample_receipt=sample["receipt"],
+        prepared_key=prepared_key, version_vector=version_vector,
+        prepared_snapshot=prepared,
+    )
+    prepared["run"]["commit_token"] = token
+    attach_snapshot(book_id, token, prepared)
+    return prepared
 
 
 def get_storyline(book_id: str) -> dict:
@@ -625,12 +980,13 @@ def get_story_state(book_id: str) -> dict:
     book = book_mgr.get(book_id)
     state = load_planning_state(book_id, tl, book)
     draft = _draft_read(book_id) or {}
+    runtime = _runtime_projection(book_id, tl, book, draft)
     draft_ids = _draft_plot_ids(draft)
     unwritten = [p for p in (tl.plots or [])
                  if not (getattr(p, "written_chapter", 0) or 0) and p.id not in draft_ids]
-    current = unwritten[0] if unwritten else None
+    current = runtime["next_plot"]
     boundary = detect_story_boundary(
-        written_until_word=int(state.get("written_until_word") or 0),
+        written_until_word=int(runtime["display_written_words"]),
         committed_until_word=int(state.get("committed_until_word") or 0),
         remaining_plots=len(unwritten),
         words_per_batch=int(tl.words_per_chapter or 3000),
@@ -649,10 +1005,15 @@ def get_story_state(book_id: str) -> dict:
         "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
         "facts": {
             "written_until_word": int(state.get("written_until_word") or 0),
+            "committed_words": runtime["committed_words"],
+            "draft_words": runtime["draft_words"],
+            "display_written_words": runtime["display_written_words"],
+            "raw_codepoints": runtime["committed_raw_codepoints"] + runtime["draft_raw_codepoints"],
             "current_chapter": int(getattr(book, "current_chapter", 0) or 0) if book else 0,
             "completed_plot_ids": [p.id for p in (tl.plots or []) if getattr(p, "written_chapter", 0)],
             "character_dynamics": char_dyn,
         },
+        "staged_facts": _staged_story_state_for_api(book_id),
         "committed": {
             "until_word": int(state.get("committed_until_word") or 0),
             "current_arc_id": getattr(current, "outline_id", "") if current else "",
@@ -672,7 +1033,16 @@ def get_story_state(book_id: str) -> dict:
         "target_word_budget": int(state.get("target_word_budget") or 0),
         "boundary": boundary,
         "last_replan": state.get("last_replan") or {},
+        "runtime": {k: v for k, v in runtime.items() if k not in ("next_plot", "draft")},
     }
+
+
+def _staged_story_state_for_api(book_id: str) -> dict:
+    """Planning Agent 可见的暂存事实与 forecast 分离，绝不混入正式 facts。"""
+    from libraries.plot_run_state import load_staged
+    staged = load_staged(book_id)
+    return {"chapter_num": staged.get("chapter_num", 0),
+            "plot_deltas": staged.get("plot_deltas") or []}
 
 
 
@@ -963,13 +1333,25 @@ def pick_plot_sample(book_id: str = "", query: dict = None, profile_id: str = ""
         return {"ok": False, "error": "k=1 取样为空（无可取样本）。"}
     _record_pick(profile.id, meta.get("selected") or [s.id for s in picked])
     s = picked[0]
+    rendered = style_samples.render_reference([s])
+    from libraries.style_snapshot import build_snapshot, rendered_sample_digest
+    cast_names = [x.get("name") for group in (run.get("cast_pack") or {}).values()
+                  if isinstance(group, list) for x in group if isinstance(x, dict) and x.get("name")]
+    sample_receipt = {"sample_id": s.id, "profile_id": profile.id,
+                      "plot_id": p.id, "cast_names": cast_names,
+                      "content_digest": rendered_sample_digest(rendered)}
+    style_snapshot = build_snapshot(profile, profile.build_style_card(), sample_receipt)
+    fingerprint = _context_fingerprint(book_id, tl, run, profile,
+                                        style_snapshot=style_snapshot)
     return {
         "ok": True,
         "plot": {"id": p.id, "name": p.name},
         "query": q,
         "sample": {"id": s.id, "title": s.title or s.id, "word_count": s.word_count},
-        "text": style_samples.render_reference([s]),
+        "text": rendered,
         "ref_summary": _ref_summary(meta),
+        "sample_receipt": {**sample_receipt, "context_fingerprint": fingerprint,
+                           "style_snapshot": style_snapshot},
     }
 
 
@@ -1278,6 +1660,17 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     except Exception:
         _draft_by_plot = {}
 
+    # protocol v2 的草稿是章节 canonical source：提交参数只能确认段集合，不能静默覆盖已签收文本。
+    _v2_draft = [b for b in _draft_by_plot.values() if int(b.get("protocol_version", 1) or 1) >= 2]
+    if _v2_draft:
+        submitted_ids = [str((b or {}).get("plot_id") or "") for b in (plot_segments or [])]
+        expected_ids = [str(b.get("plot_id") or "") for b in _v2_draft]
+        if not plot_segments or set(submitted_ids) != set(expected_ids):
+            raise RuntimeError("protocol_v2：save_chapter_text 必须提交与已保存草稿完全一致的 plot_segments")
+        plot_segments = [{"plot_id": b.get("plot_id"), "plot_name": b.get("plot_name"),
+                          "text": b.get("text") or ""} for b in _v2_draft]
+        text = "\n\n".join(b["text"] for b in plot_segments)
+
     # 1) 规则去AI味（词替换+段落节奏，无 LLM）；有情节段则逐段去并保持桥梁结构。
     #    防静默丢字：plot_segments 必须覆盖 text（总长 ≥ text 70%）。只列了部分情节段时以
     #    text 为正文源落盘、不挂情节段，并回传 segment_warning（提示 agent 把每情节段都列入）。
@@ -1287,9 +1680,7 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     if plot_segments:
         raw_cover = sum(len((b.get("text") or "")) for b in plot_segments)
         if raw_cover < len(text) * 0.7:
-            segment_warning = (f"plot_segments 总长 {raw_cover} ＜ 正文 {len(text)}，疑似只列了部分情节段；"
-                              f"已按整章正文落盘、未挂情节段。请把本章每个情节段都列入 plot_segments")
-            plot_segments = None
+            raise RuntimeError(f"plot_segments 总长 {raw_cover} ＜ 正文 {len(text)}；拒绝静默降级，请提交完整桥段")
         else:
             segs = []
             by_pid = {}   # 非空 plot_id → 在 segs 中的下标（同 id 重写时原位替换，防重复情节段）
@@ -1309,6 +1700,8 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
                     seg["run_id"] = _db.get("run_id") or ""
                     seg["based_on_storyline_revision"] = _db.get("based_on_storyline_revision") or 0
                     seg["character_events"] = _db.get("character_events") or []
+                    seg["context_fingerprint"] = _db.get("context_fingerprint") or ""
+                    seg["sample_receipt"] = _db.get("sample_receipt") or {}
                 else:
                     _sf = dict(b.get("facts") or {}) if isinstance(b.get("facts"), dict) else {}
                     if not _sf and isinstance(b.get("outcome"), dict):
@@ -1327,6 +1720,7 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
                         seg["based_on_storyline_revision"] = b["based_on_storyline_revision"]
                     seg["character_events"] = list(b.get("character_events") or [])
                 pid = seg.get("plot_id")
+                seg.update(_text_metrics(seg_text))
                 if pid and pid in by_pid:
                     segs[by_pid[pid]] = seg        # 同 plot_id 重写：替换旧条目保持原位置，最后写入胜出
                 else:
@@ -1340,7 +1734,8 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
             for s in segs:
                 _t = s.get("text") or ""
                 plot_spans.append({"plot_id": s.get("plot_id"), "plot_name": s.get("plot_name"),
-                                   "run_id": s.get("run_id") or "", "start": _off, "end": _off + len(_t)})
+                                   "run_id": s.get("run_id") or "", "start": _off, "end": _off + len(_t),
+                                   **_text_metrics(_t)})
                 _off += len(_t) + 2
     if plot_segments is None:
         try:
@@ -1372,17 +1767,22 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
                 f"请继续写满本章（逐情节段补全全部未写情节段）后，再调用 save_chapter_text。"
             )
 
+    _write_commit_journal(book_id, {"schema_version": 1, "book_id": book_id, "chapter_num": n,
+                                    "title": title or f"第{n}章", "started_at": time.time(),
+                                    "plot_ids": [s.get("plot_id") for s in (plot_segments or [])],
+                                    "phase": "prevalidated"})
+
     # 3) 落盘章节
     book_mgr.save_chapter(book_id, n, title or f"第{n}章", processed, summary or "",
                           review=review_dict, bridges=plot_segments, plot_spans=plot_spans or None)
 
     # 4) 书进度/字数
     try:
-        if book.current_chapter < n:
-            book.current_chapter = n
-            book.status = "writing"
-            book.total_words = (book.total_words or 0) + count_prose_units(processed)
-            book_mgr.update(book)
+        book.current_chapter = max(int(book.current_chapter or 0), n)
+        book.status = "writing"
+        book.total_words = sum(count_prose_units((book_mgr.load_chapter(book_id, i) or {}).get("content") or "")
+                               for i in range(1, int(book.current_chapter or 0) + 1))
+        book_mgr.update(book)
     except Exception:
         pass
 
@@ -1462,6 +1862,15 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     # 7) 读者承诺台账（规则：written_chapter 标记 + pending 承诺 op 分级演化）
     _update_promises_ledger_thin(book_id, n)
 
+    # 7.5) 暂存事实升级为章节正式历史；过程只聚合 Agent 已上报的结构化 delta，
+    # 不读取正文推断语义。写入失败不应清空 staged ledger，便于恢复。
+    chapter_delta = None
+    try:
+        from libraries.plot_run_state import build_chapter_delta, commit_chapter_delta
+        chapter_delta = commit_chapter_delta(book_id, build_chapter_delta(book_id, n))
+    except Exception:
+        chapter_delta = None
+
     # 8) 清进行中草稿（整章已落盘）
     try:
         dp = os.path.join(_ROOT, "books", book_id, "draft_chapter.json")
@@ -1469,10 +1878,49 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
             os.remove(dp)
     except Exception:
         pass
+    try:
+        journal = _commit_journal_path(book_id)
+        if os.path.exists(journal):
+            os.remove(journal)
+    except Exception:
+        pass
 
-    return {"ok": True, "chapter": n, "word_count": count_prose_units(processed),
+    metrics = _text_metrics(processed)
+    return {"ok": True, "chapter": n, "word_count": metrics["actual_prose_units"],
+            **metrics,
             "review": review_dict, "segment_warning": segment_warning,
-            "plot_spans": plot_spans or None, "reconcile": reconcile_result}
+            "plot_spans": plot_spans or None, "reconcile": reconcile_result,
+            "chapter_delta": chapter_delta}
+
+
+def finalize_draft_chapter(book_id: str, flow_id: str = "") -> dict:
+    """服务端从已签收的 draft 原子提交章节并执行门禁（不暴露给 Writer）。"""
+    draft = _draft_read(book_id) or {}
+    bridges = list(draft.get("bridges") or [])
+    if not bridges:
+        raise RuntimeError("没有可提交的章节草稿")
+    chapter_num = int(draft.get("chapter_num") or 0)
+    if chapter_num < 1:
+        raise RuntimeError("草稿缺少章节号")
+    text = "\n\n".join(str(x.get("text") or "") for x in bridges)
+    # Plot summary 不进入事实层，只做面向读者的章节摘要来源。
+    summaries = [str(x.get("plot_summary") or "").strip() for x in bridges if x.get("plot_summary")]
+    summary = "；".join(summaries)
+    if len(summary) > 240:
+        summary = summary[:240]
+    result = save_chapter_text(book_id, chapter_num, text, title=f"第{chapter_num}章",
+                               summary=summary, plot_segments=[{"plot_id": x.get("plot_id"),
+                               "plot_name": x.get("plot_name"), "text": x.get("text") or ""} for x in bridges])
+    gate = chapter_quality_gate(book_id, chapter_num)
+    result["quality_gate"] = gate
+    if flow_id:
+        try:
+            from libraries.write_flow import transition, release_lease
+            transition(book_id, flow_id, "DONE", chapter_num=chapter_num)
+            release_lease(book_id, flow_id)
+        except Exception:
+            pass
+    return result
 
 
 def _update_promises_ledger_thin(book_id: str, chapter_num: int) -> None:
@@ -1499,11 +1947,13 @@ def _update_promises_ledger_thin(book_id: str, chapter_num: int) -> None:
         pass
 
 
-def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
+def _save_plot_draft_legacy(book_id: str, chapter_num: int, plot_id: str,
                       plot_name: str, text: str,
                       character_events: list | None = None, outcome: dict | None = None,
                       expected_facts: list | None = None, run_id: str = "",
-                      based_on_storyline_revision: int | None = None) -> dict:
+                      based_on_storyline_revision: int | None = None,
+                      context_fingerprint: str = "", sample_receipt: dict | None = None,
+                      plot_summary: str = "", verified_record: dict | None = None) -> dict:
     """[薄工具] 保存单个情节段到进行中草稿（draft_chapter.json，断点续写保底）。
 
     agent 逐情节段生成后调用：规则去AI味 → 追加进草稿（含 buffer/words/bridges），
@@ -1524,6 +1974,36 @@ def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
     """
     if not (book_id and text and (text or "").strip()):
         raise RuntimeError("book_id 与 text 必填")
+    from libraries.plot_run_state import validate_outcome, make_plot_delta, stage_delta
+    try:
+        checked_outcome = validate_outcome(outcome)
+    except ValueError as e:
+        raise RuntimeError(str(e))
+    tl_now = book_mgr.load_storyline(book_id)
+    draft_now = _draft_read(book_id) or {}
+    current = _next_plot(tl_now, draft_now) if tl_now else None
+    if current is None or current.id != plot_id:
+        raise RuntimeError("当前 plot 已变化；请重新读取 prepare_plot_run 后再保存")
+    expected_run = _run_id_for(plot_id, int(getattr(tl_now, "storyline_revision", 0) or 0))
+    is_v2 = int(getattr(current, "protocol_version", 1) or 1) >= 2
+    if is_v2:
+        if verified_record:
+            # The commit token already represents the immutable prepared input.
+            # Never rebuild the resolver here: it may reorder memory or pick a
+            # different sample and would make retries spuriously stale.
+            context_fingerprint = verified_record.get("context_fingerprint") or context_fingerprint
+            sample_receipt = dict(verified_record.get("sample_receipt") or sample_receipt or {})
+        else:
+            # Private legacy callers still get the old strict check; the public
+            # token path always supplies verified_record.
+            expected_fp = _context_fingerprint(book_id, tl_now,
+                                               _build_plot_run(tl_now, current, draft=draft_now), _profile_for(tl_now))
+            if not context_fingerprint or context_fingerprint != expected_fp:
+                raise RuntimeError("protocol_v2：context_fingerprint 缺失或已失效，请重新读取 prepare_plot_run")
+        if run_id != expected_run or based_on_storyline_revision is None or int(based_on_storyline_revision) != int(getattr(tl_now, "storyline_revision", 0) or 0):
+            raise RuntimeError("protocol_v2：run_id 或 storyline_revision 不匹配，请刷新上下文")
+        if not isinstance(sample_receipt, dict) or sample_receipt.get("context_fingerprint") != context_fingerprint:
+            raise RuntimeError("protocol_v2：sample_receipt 缺失或与上下文不匹配")
     text = (text or "").strip()
     try:
         text = DeAIEngine().process_rule_based(text).processed
@@ -1539,7 +2019,7 @@ def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
     _facts = {}
     for _k in ("choices_made", "information_revealed", "relationship_changes",
                "resource_changes", "promise_updates", "new_story_questions"):
-        _facts[_k] = list((outcome or {}).get(_k) or []) if isinstance(outcome, dict) else []
+        _facts[_k] = checked_outcome[_k]
     _facts["character_events"] = list(character_events or []) if isinstance(character_events, list) else []
     dp = os.path.join(_ROOT, "books", book_id, "draft_chapter.json")
     draft = {}
@@ -1557,10 +2037,15 @@ def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
         cur_ch = chapter_num
     entry = {"plot_id": plot_id or "", "plot_name": plot_name or "", "text": text,
              "character_events": (character_events or []) if isinstance(character_events, list) else []}
+    entry["plot_summary"] = str(plot_summary or "").strip()
     entry["facts"] = _facts
     entry["expected_facts"] = list(expected_facts or []) if isinstance(expected_facts, list) else []
     entry["run_id"] = run_id
     entry["based_on_storyline_revision"] = based_on_storyline_revision
+    entry["context_fingerprint"] = context_fingerprint
+    entry["sample_receipt"] = dict(sample_receipt or {})
+    entry["protocol_version"] = 2 if is_v2 else 1
+    entry.update(_text_metrics(text))
     if plot_id:
         # 同 plot_id 重写：替换旧条目而非追加（防同一情节段被反复生成导致重复渲染/高亮），最后写入胜出
         replaced = False
@@ -1583,7 +2068,160 @@ def save_plot_draft(book_id: str, chapter_num: int, plot_id: str,
                        "bridges": bridges}, f, ensure_ascii=False, indent=2)
     except Exception as e:
         raise RuntimeError(f"保存情节段草稿失败: {e}")
-    return {"ok": True, "chapter": chapter_num, "bridges": len(bridges), "words": words}
+    # Plot 即事务边界：仅用结构化 facts reconcile，通过后进入可恢复 staged ledger，
+    # 下一次 prepare_plot_run 立即能看到它；正式角色状态仍待章节 commit。
+    from libraries.reconcile import reconcile_run
+    reconcile = reconcile_run(plot=current, bridge=entry,
+                              based_on_storyline_revision=based_on_storyline_revision,
+                              current_revision=int(getattr(tl_now, "storyline_revision", 0) or 0),
+                              chapter_num=chapter_num)
+    try:
+        staged = stage_delta(book_id, make_plot_delta(
+            plot_id=plot_id, plot_name=plot_name, chapter_num=chapter_num, facts=_facts,
+            text=text, run_id=run_id, reconcile=reconcile, plot_summary=plot_summary,
+            arc_id=getattr(current, "outline_id", "") or ""))
+    except ValueError as e:
+        raise RuntimeError(f"暂存事实落账失败: {e}")
+    return {"ok": True, "chapter": chapter_num, "bridges": len(bridges), "words": words,
+            "actual_prose_units": words, "raw_codepoints": sum(len(b) for b in buffer),
+            "protocol": "v2" if is_v2 else "shadow", "reconcile": reconcile,
+            "staged_fact_count": len(staged.get("plot_deltas") or [])}
+
+
+def save_plot_draft(commit_token: str, text: str, plot_summary: str = "",
+                    outcome: dict | None = None, character_events: list | None = None) -> dict:
+    """提交当前 Plot 正文及实际结构化变化。
+
+    token 必须来自 prepare_plot_run；成功后暂存事实生效且当前 Writer Run 结束。
+    outcome 只能包含 choices_made、information_revealed、relationship_changes、
+    resource_changes、promise_updates、new_story_questions，且每项都是 list；
+    character_events 只上报正文造成的变化，格式为 [{name, events:[{type, from?, to?, reason?}]}]，
+    type 仅可用 goal_shift、power_shift、location_shift、arc_stage、relationship、trust_change、note。
+    plot_summary 仅供展示/检索/章节摘要，长度 50～120 字，不是事实源。
+    """
+    from libraries.plot_commit_tokens import accepted_result
+    if not (text or "").strip():
+        raise RuntimeError("text 必填")
+    summary = str(plot_summary or "").strip()
+    if summary and not 50 <= len(summary) <= 120:
+        # Summary is display/search metadata, not a fact source. Do not make a
+        # valid Plot retry its entire LLM turn for a soft formatting miss.
+        _log.warning("plot_summary 长度 %d 不在 50-120，按展示字段容错保存", len(summary))
+        if len(summary) > 120:
+            summary = summary[:120]
+    if isinstance(outcome, dict) and outcome.get("relationship_changes"):
+        for row in character_events or []:
+            if any((event or {}).get("type") == "relationship" for event in (row or {}).get("events") or []):
+                raise RuntimeError("关系变化只能由 outcome.relationship_changes 提交，禁止双源写入")
+    # token 表是按书分片，当前 Plot 无需由 Writer 提交；先在本书中定位 token。
+    book_id = ""
+    from pathlib import Path
+    for candidate in (Path(_ROOT) / "books").iterdir():
+        if not candidate.is_dir():
+            continue
+        try:
+            result = accepted_result(candidate.name, commit_token)
+            # accepted token 是幂等返回，允许网络重试。
+            if result:
+                return {**result, "idempotent": True, "writer_run_complete": True}
+            from libraries.plot_commit_tokens import _load  # local-only store lookup
+            if commit_token in (_load(candidate.name).get("tokens") or {}):
+                book_id = candidate.name
+                break
+        except Exception:
+            continue
+    if not book_id:
+        raise RuntimeError("commit_token 无效；请重新 prepare")
+    # W1：本函数签名不含 book_id（Writer 只带回 commit_token），`_wrap_book_lock` 取不到锁目标，
+    # 因此在这里解析出归属书后**显式**加锁，覆盖「版本校验 → 落草稿/staged → 记账本 → 推进 flow」
+    # 全过程：令牌只防重放，不防与 Web 进程 / 另一 MCP 客户端同书并发写盘。
+    # 注意：BookLock 不可重入，故本函数不得再出现在 _LOCKED_TOOLS 里（否则 wrapper 会二次加锁死锁）。
+    from libraries.book_lock import BookBusyError, BookLock
+    lock = BookLock(book_id)
+    if not lock.acquire(timeout=30.0, purpose="save_plot_draft"):
+        raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
+    try:
+        return _commit_plot_draft_locked(book_id, commit_token, text, summary,
+                                         outcome, character_events)
+    finally:
+        lock.release()
+
+
+def _commit_plot_draft_locked(book_id: str, commit_token: str, text: str, summary: str,
+                              outcome: dict | None, character_events: list | None) -> dict:
+    """save_plot_draft 的锁内主体：调用方负责持有 `books/<id>/.lock`。"""
+    from libraries.plot_commit_tokens import verify, accept
+    from libraries.write_flow import transition
+    tl = book_mgr.load_storyline(book_id)
+    draft = _draft_read(book_id) or {}
+    current = _next_plot(tl, draft) if tl else None
+    if not current:
+        raise RuntimeError("当前没有可提交的 Plot")
+    try:
+        # Verify only authoritative identity/version fields. The token carries
+        # the prepared snapshot; rebuilding PlotRun here would be side-effectful
+        # and could change memory ordering or sample selection.
+        record = verify(book_id, commit_token, plot_id=current.id,
+                        storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+                        context_fingerprint=None)
+    except ValueError as e:
+        raise RuntimeError(str(e))
+    prepared_snapshot = record.get("prepared_snapshot") or {}
+    saved_style = ((prepared_snapshot.get("style") or {}).get("snapshot")
+                   if isinstance(prepared_snapshot, dict) else None)
+    if saved_style:
+        from libraries.style_snapshot import selected_sample_digest, snapshot_matches
+        profile = _profile_for(tl)
+        if profile is None:
+            try:
+                profile = _resolve_profile(book_id)
+            except Exception:
+                pass
+        current_card = profile.build_style_card() if profile else _default_style_card()
+        sample_id = saved_style.get("sample_id", "")
+        current_sample_digest = selected_sample_digest(profile, sample_id) if profile else ""
+        if current_sample_digest is None or not snapshot_matches(
+                profile, current_card, saved_style, current_sample_digest):
+            raise RuntimeError("commit_token 风格上下文已失效；请重新 prepare_plot_run")
+    recorded_vector = record.get("version_vector") or {}
+    if recorded_vector:
+        current_vector = _context_version_vector(book_id, tl, draft, saved_style or {})
+        if current_vector != recorded_vector:
+            raise RuntimeError("commit_token 权威上下文已变化；请重新 prepare_plot_run")
+    chapter_num = int((draft or {}).get("chapter_num") or ((getattr(book_mgr.get(book_id), "current_chapter", 0) or 0) + 1))
+    result = _save_plot_draft_legacy(
+        book_id, chapter_num, current.id, current.name, text,
+        character_events=character_events, outcome=outcome,
+        expected_facts=list(getattr(current, "expected_facts", None) or []),
+        run_id=f"{current.id}@{int(getattr(tl, 'storyline_revision', 0) or 0)}",
+        based_on_storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+        context_fingerprint=record.get("context_fingerprint") or "",
+        sample_receipt=record.get("sample_receipt") or {},
+        plot_summary=summary, verified_record=record)
+    flow_id = record.get("flow_id") or "adhoc"
+    if flow_id == "adhoc":
+        # 旧入口没有提前创建 Flow；首次成功提交时补建可恢复 Flow，后续子 Run 都继承它。
+        from libraries.write_flow import start_flow, active_flow_id
+        flow_id = active_flow_id(book_id)
+        if not flow_id:
+            flow = start_flow(book_id, chapter_num)
+            flow_id = flow["flow_id"]
+    result.update(book_id=book_id, plot_id=current.id, writer_run_complete=True,
+                  flow_id=flow_id, child_run_id=record.get("child_run_id"))
+    accept(book_id, commit_token, result)
+    if flow_id:
+        try:
+            from libraries.write_flow import load_flow
+            flow = load_flow(book_id, flow_id) or {}
+            completed = list(flow.get("completed_plot_ids") or [])
+            if current.id not in completed:
+                completed.append(current.id)
+            transition(book_id, flow_id, "EVALUATING", current_plot_id=current.id,
+                       completed_plot_ids=completed)
+        except Exception as e:
+            # 子 Run 审计记录失败不该回滚已生效的 Plot 提交，但必须留痕（此前静默吞掉）。
+            _log.warning("flow 推进失败（Plot 已提交）book=%s flow=%s: %s", book_id, flow_id, e)
+    return result
 
 
 def save_outlines(book_id: str, outlines: list | None = None,
@@ -1676,10 +2314,20 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 resolves_plot_id=p.get("resolves_plot_id", ""),
                 resolves_name=p.get("resolves_name", ""),
                 roles=p.get("roles") or [],
+                no_named_cast=bool(p.get("no_named_cast", False)),
+                protocol_version=int(p.get("protocol_version", 2) or 2),
                 execution_brief=p.get("execution_brief") or {},
                 character_impact=p.get("character_impact") or [],
                 expected_facts=p.get("expected_facts") or [],
             ))
+        known_names = {str(c.get("name") or "") for c in ((candidate.basic_info or {}).get("characters") or [])}
+        for p in candidate.plots:
+            unknown = [name for name in (p.roles or []) if name not in known_names]
+            if unknown:
+                raise RuntimeError(f"save_outlines 拒绝：情节段「{p.name}」包含未知角色：{'、'.join(unknown)}")
+            # 世界观/角色尚未建立的早期兼容书不在这里卡死；有角色 bible 的新规划必须显式声明 cast。
+            if p.protocol_version >= 2 and known_names and not p.no_named_cast and not p.roles:
+                raise RuntimeError(f"save_outlines 拒绝：情节段「{p.name}」缺 roles；无具名角色请显式 no_named_cast=true")
     if threads:
         candidate.threads = threads
     if themes:
@@ -2106,6 +2754,37 @@ def chapter_quality_gate(book_id: str, chapter_num: int = 0, recent_n: int = 5) 
         skipped.append("punch_points")
         checks["punch_points"] = {"passed": None, "skipped": True, "error": str(e)[:60]}
 
+    # 6. Future consumption：仅比较结构化事实与未执行 Plot 的 expected_facts，
+    # 不从正文猜剧情。命中表示本章可能提前消耗后续明确承诺，交由用户/规划 Agent 决策。
+    try:
+        from libraries.plot_run_state import history_path
+        from core.json_store import read_json
+        from libraries.reconcile import actual_fact_entries
+        history = read_json(history_path(book_id)) if history_path(book_id).exists() else {}
+        current_delta = next((x for x in reversed((history or {}).get("chapters") or [])
+                              if int(x.get("chapter_num") or 0) == n), {})
+        actual = []
+        for delta in (current_delta.get("plot_deltas") or []):
+            actual.extend(actual_fact_entries(delta.get("facts") or {}))
+        tl = book_mgr.load_storyline(book_id)
+        consumed = []
+        for p in (tl.plots or []) if tl else []:
+            if getattr(p, "written_chapter", 0):
+                continue
+            for expected in (getattr(p, "expected_facts", None) or []):
+                if not isinstance(expected, dict):
+                    continue
+                for fact in actual:
+                    if (fact.get("subject") == expected.get("subject") and fact.get("type") == expected.get("type")
+                            and fact.get("actual_to") == expected.get("expected_to")):
+                        consumed.append({"future_plot_id": p.id, "future_plot_name": p.name,
+                                         "subject": fact.get("subject"), "type": fact.get("type")})
+        checks["future_consumption"] = {"passed": not consumed, "issues_count": len(consumed),
+                                        "violations": consumed[:10]}
+    except Exception as e:
+        skipped.append("future_consumption")
+        checks["future_consumption"] = {"passed": None, "skipped": True, "error": str(e)[:60]}
+
     # 决策点聚合：硬问题（review/连续性/追读）优先，伏笔为提示。
     # review 的 warning/error 级问题无论是否通过都进决策点（如 AI 味词提示，供用户定夺去 AI 味）
     rv = checks.get("review") or {}
@@ -2122,14 +2801,17 @@ def chapter_quality_gate(book_id: str, chapter_num: int = 0, recent_n: int = 5) 
     if pp.get("passed") is False:
         for it in (pp.get("top_issues") or []):
             _push("promises", "info", "伏笔未推进", suggestion=it)
+    fc = checks.get("future_consumption") or {}
+    for it in (fc.get("violations") or [])[:3]:
+        _push("future_consumption", "warning", "可能提前消耗后续情节", suggestion=it.get("future_plot_name", ""))
 
     complete = not skipped
-    ran = [k for k in ("review", "continuity", "retention", "promises", "punch_points")
+    ran = [k for k in ("review", "continuity", "retention", "promises", "punch_points", "future_consumption")
            if (checks.get(k) or {}).get("skipped") is not True]
     all_passed = bool(ran) and all((checks[k] or {}).get("passed") is True for k in ran)
     passed = complete and all_passed
     issue_count = sum(int((checks[k] or {}).get("issues_count") or (checks[k] or {}).get("issue_count") or 0)
-                      for k in ("review", "continuity", "retention", "promises", "punch_points"))
+                      for k in ("review", "continuity", "retention", "promises", "punch_points", "future_consumption"))
     review_score = (rv.get("score") if isinstance(rv.get("score"), (int, float)) else 0)
 
     if skipped:
@@ -2775,13 +3457,19 @@ def _func_to_schema(fn):
 # 删书走书库页手动，任何 agent（含 MCP 面）都拿不到建/删能力。
 
 # 写类工具：进入前须拿书锁（防 Web / MCP 双进程同书撞写），退出释放。
+# 这些工具的签名里有 book_id，wrapper 才能据此取锁目标（functools.wraps 保留签名）。
 _LOCKED_TOOLS = {
     "confirm_world",
     # 薄工具（agent 生成后落盘，同样需书锁防并发）
-    "save_chapter_text", "save_plot_draft", "save_outlines", "save_book_meta",
+    "save_chapter_text", "save_outlines", "save_book_meta",
     # 首次读取会 lazy bootstrap planning_state，故也需同书锁（不做快照）。
-    "get_story_state", "get_writing_context",
+    "get_story_state", "prepare_plot_run",
 }
+
+# 自持锁工具：签名里没有 book_id（只有 commit_token），wrapper 取不到锁目标，
+# 由函数体在解析出归属书后自行 BookLock（见 save_plot_draft / _commit_plot_draft_locked）。
+# 仅用于工具元数据如实标注 locked，切勿加进 _LOCKED_TOOLS（BookLock 不可重入 → 双重加锁死锁）。
+_SELF_LOCKED_TOOLS = {"save_plot_draft"}
 
 
 def _wrap_book_lock(fn):
@@ -2798,7 +3486,7 @@ def _wrap_book_lock(fn):
             raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
         try:
             # 决策点落库前快照（commit 语义：写工具改前先留底，供 preview_diff/rollback）
-            if book_id and fn.__name__ not in {"get_story_state", "get_writing_context"}:
+            if book_id and fn.__name__ not in {"get_story_state", "prepare_plot_run"}:
                 try:
                     from libraries.book_snapshot import snapshot as _book_snap
                     _book_snap(book_id, fn.__name__)
@@ -3243,7 +3931,7 @@ def _build_registry():
         # 导航 / 建书向导驱动（用户高频意图，必须前置）
         navigate, drive_ui,
         # 只读摸底
-        list_books, get_book_state, get_writing_context, get_storyline, get_story_state,
+        list_books, get_book_state, prepare_plot_run, get_storyline, get_story_state,
         get_book_detail, get_build_status, query_arc_library, query_plots, query_gags, query_profiles, query_characters,
         get_pen_style, pick_plot_sample,
         # 规划（薄工具：agent 生成后落盘；旧工具内 LLM 生成已由 agent 自主生成接管）
@@ -3271,7 +3959,8 @@ def _build_registry():
             raise RuntimeError(f"工具注册表去重失败：{name} 出现两次")
         seen.add(name)
         # 包装顺序：phase 门控最外层（phase 不对就不等锁）→ 书锁 → 原函数。
-        # 门控对未收录工具原样返回；锁只对 _LOCKED_TOOLS 生效。functools.wraps
+        # 门控对未收录工具原样返回；锁只对 _LOCKED_TOOLS 生效（自持锁工具见
+        # _SELF_LOCKED_TOOLS，其函数体自己加锁，只影响元数据标注）。functools.wraps
         # 逐层保留 __name__/__wrapped__，MCP 端 schema 不受影响。
         wrapped = _wrap_book_lock(fn) if name in _LOCKED_TOOLS else fn
         wrapped = _wrap_phase_gate(wrapped)
@@ -3281,7 +3970,8 @@ def _build_registry():
             "description": (inspect.getdoc(fn) or "").strip(),
             "input_schema": _func_to_schema(fn),
             "func": wrapped,
-            **tool_metadata(name, allowed_phases=PHASE_GATES.get(name), locked=name in _LOCKED_TOOLS),
+            **tool_metadata(name, allowed_phases=PHASE_GATES.get(name),
+                            locked=name in _LOCKED_TOOLS or name in _SELF_LOCKED_TOOLS),
         })
     return entries
 

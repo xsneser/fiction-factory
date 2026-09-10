@@ -85,6 +85,14 @@ def main():
     check("AGENT_TOOL_PROFILES=0 → legacy 关闭", B._profiles_enabled() is False)
     os.environ["AGENT_TOOL_PROFILES"] = "off"
     check("AGENT_TOOL_PROFILES=off → 关闭", B._profiles_enabled() is False)
+    os.environ.pop("ALLOW_UNSCOPED_AGENT_TOOLS", None)
+    check("legacy 未显式授权", B._unscoped_tools_allowed() is False)
+    blocked = list(B.run_dsh_task("闲聊"))
+    check("legacy 未授权不启动", any("ALLOW_UNSCOPED_AGENT_TOOLS" in (e.get("message") or "")
+                                     for e in blocked))
+    os.environ["ALLOW_UNSCOPED_AGENT_TOOLS"] = "1"
+    check("legacy 需双开关授权", B._unscoped_tools_allowed() is True)
+    os.environ.pop("ALLOW_UNSCOPED_AGENT_TOOLS", None)
     os.environ.pop("AGENT_TOOL_PROFILES", None)
 
     # 2) 分类（含未分类→inspect，绝不回退空/全量）

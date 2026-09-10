@@ -161,24 +161,43 @@ def book_detail(book_id):
             chapters.append(ch)
     # 进行中章节草稿（按情节段撰写中断时落盘；详情页展示未固化内容，写作台才有写入）
     draft = None
+    draft_bridges = []
     draft_path = f"books/{book_id}/draft_chapter.json"
     if os.path.exists(draft_path):
         try:
             with open(draft_path, encoding="utf-8") as f:
                 _d = json.load(f)
             _buf = _d.get("buffer") or []
+            draft_bridges = _d.get("bridges") or []
             if _buf:
                 draft = {
                     "chapter_num": _d.get("chapter_num", 0),
                     "text": "\n\n".join(_buf),
+                    "segments": [{"seq": i + 1, "text": text} for i, text in enumerate([x for x in _buf if x])],
                     "words": count_prose_units("\n\n".join(_buf)),
                 }
         except Exception as e:
             logger.warning("读取章节草稿失败: %s", e)
+    # 与写作台共用同一份桥接段实测字数，避免两页的红线锚点不同。
+    storyline_data = storyline.to_dict() if storyline else None
+    if storyline_data:
+        actual_plot_words = {}
+        for chapter in chapters:
+            for bridge in chapter.get("bridges") or []:
+                pid = str(bridge.get("plot_id") or "")
+                if pid:
+                    actual_plot_words[pid] = actual_plot_words.get(pid, 0) + count_prose_units(bridge.get("text") or "")
+        for bridge in draft_bridges:
+            pid = str(bridge.get("plot_id") or "")
+            if pid:
+                actual_plot_words[pid] = actual_plot_words.get(pid, 0) + count_prose_units(bridge.get("text") or "")
+        for plot in storyline_data.get("plots") or []:
+            plot["actual_words"] = int(actual_plot_words.get(str(plot.get("id") or ""), 0))
     # 「从已有书借鉴」已挪到启动新书向导②（dashboard GET 提供 borrow_books），详情页不再传
     return render_template("book_detail.html", book=book,
         outline=outline, chapters=chapters,
         storyline=storyline,
+        storyline_data=storyline_data,
         basic_info=basic_info,
         draft=draft)
 
@@ -416,5 +435,3 @@ def api_chapter_punch_points(book_id, chapter_num):
         out["ok"] = False
         out["error"] = str(e)
     return jsonify(out)
-
-
