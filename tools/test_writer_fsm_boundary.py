@@ -124,6 +124,25 @@ def main():
         assert result.get("ok"), result
         assert ("acquire", bid, "save_plot_draft", True) in trace, trace
         assert ("release", bid) in trace, trace
+        print("[OK] 已写字数单一口径 + 提交路径自持锁")
+
+        # ── 5) phase 门控也必须能判 save_plot_draft 的书（它签名里没有 book_id）──
+        wrapped = next(e["func"] for e in agent_tools.TOOL_REGISTRY if e["name"] == "save_plot_draft")
+        second = agent_tools.prepare_plot_run(bid)          # 下一个 Plot 的令牌
+        token2 = second["run"]["commit_token"]
+        tl_now = bm.load_storyline(bid)
+        tl_now.phase = "plots"                              # 假装故事线回退到未就绪阶段
+        bm.save_storyline(bid, tl_now)
+        try:
+            wrapped(commit_token=token2, text="顾衡继续前行。")
+            raise AssertionError("phase 未就绪时 save_plot_draft 竟然通过了门控")
+        except RuntimeError as e:
+            assert "phase 门控拒绝" in str(e), e
+        # 提示（NOVEL_WRITE_BOOK_ID）不符时必须 fail-closed，不得去翻别的书
+        from libraries.plot_commit_tokens import resolve_book_id
+        assert resolve_book_id(token2, bid) == bid
+        assert resolve_book_id(token2, "book_999") == "", "归属书提示不符必须 fail-closed"
+        print("[OK] save_plot_draft 的 phase 门控经 commit_token 解析归属书（提示不符 fail-closed）")
         print("writer fsm boundary + self-lock: OK")
     finally:
         book_lock.BookLock = original_lock_cls

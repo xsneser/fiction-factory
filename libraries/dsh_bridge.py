@@ -21,6 +21,7 @@ Claude Code 经 MCP 调用的总览）。
 
 本模块零新增 Python 依赖（subprocess + 标准库 + core.json_store.read_json）。
 """
+import contextlib
 import json
 import logging
 import os
@@ -752,7 +753,7 @@ def _map_dsh_event(evt: dict, pending: dict):
 
 
 def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
-                 flow_id: str = "", child_run_id: str = ""):
+                 flow_id: str = "", child_run_id: str = "", book_id: str = ""):
     """跑一次 dsh headless 任务，实时产出 SSE 事件 dict。
 
     事件序列（由 events-runner 的 NDJSON 流实时驱动）：tool_call / tool_result /
@@ -817,6 +818,10 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
                 env["NOVEL_WRITE_FLOW_ID"] = flow_id
             if child_run_id:
                 env["NOVEL_WRITE_CHILD_RUN_ID"] = child_run_id
+            if book_id:
+                # 让 save_plot_draft 免去「全库扫令牌账本」：子进程只带回 commit_token，
+                # 归属书由服务端注入 → 只查一本书（O(1)），且提示不符时 fail-closed。
+                env["NOVEL_WRITE_BOOK_ID"] = book_id
             if debug:
                 # 调试模式：通知 events-runner 把每次 LLM 调用的提示词/MCP工具/返回JSON emit 成 llm/call；
                 # 完整载荷写 storage/debug-prompts/<seq>.json（SSE 只发裁剪预览，前端按需 fetch）。
@@ -1050,6 +1055,38 @@ def _commit_pending_replan(book_id: str) -> dict:
     return commit_replan_preview(book_id, preview.get("preview_id"), expected)
 
 
+@contextlib.contextmanager
+def _lease_heartbeat(book_id: str, flow_id: str, interval: float = 60.0):
+    """子 run 运行期间后台续租（上下文管理器）。
+
+    租约 TTL 15 分钟，而单个 Writer/Planner 子进程可能跑 10 分钟以上（单工具调用超时
+    就是 600s），期间没有 transition → 不会心跳。若租约在此期间到期并被别的任务接管，
+    本 run 后续 transition 会抛「写作租约不属于当前流程」，状态机半路失联。
+    这里在有身份的 run 期间起守护线程定期 heartbeat；失败只记日志——真丢租约时，
+    下一次 transition 会明确报错。
+    """
+    stop = threading.Event()
+    thread = None
+
+    def _beat():
+        from libraries.write_flow import heartbeat_lease
+        while not stop.wait(interval):
+            try:
+                heartbeat_lease(book_id, flow_id)
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("写作租约续租失败 book=%s flow=%s: %s", book_id, flow_id, exc)
+
+    if book_id and flow_id:
+        thread = threading.Thread(target=_beat, name=f"lease-{flow_id[:8]}", daemon=True)
+        thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        if thread is not None:
+            thread.join(timeout=1.0)
+
+
 def _fail_flow(book_id: str, flow_id: str, error: str, message: str):
     """统一的失败出口：转 FAILED + **释放租约** + 一个 error 与 done。
 
@@ -1177,9 +1214,12 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
                     _log.warning("flow 置 REPLANNING 失败 book=%s flow=%s: %s", book_id, flow_id, exc)
                 # Planner 仍是独立 profile；只让它按局部 state 产出下一小段 committed Plot。
                 ok = True
-                for evt in run_dsh_task(_replan_phase_task(book_id, status["reason"], pol), None, debug=debug):
-                    if evt.get("type") == "error": ok = False
-                    if evt.get("type") != "done": yield evt
+                with _lease_heartbeat(book_id, flow_id):
+                    for evt in run_dsh_task(_replan_phase_task(book_id, status["reason"], pol), None,
+                                            debug=debug, book_id=book_id, flow_id=flow_id,
+                                            child_run_id=f"planner:{attempts + 1}"):
+                        if evt.get("type") == "error": ok = False
+                        if evt.get("type") != "done": yield evt
                 # 计划器可能改过故事线，按最新版本再判一次新鲜度。
                 preview = _fresh_replan_preview(book_id, _current_revision(book_id)) if ok else {}
                 if not preview:
@@ -1228,15 +1268,17 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
         c_hist = None if book_id else history
         saved = None
         child_tail = ""
-        for evt in run_dsh_task(c_task, c_hist, debug=debug, flow_id=flow_id, child_run_id=child_id):
-            if evt.get("type") == "domain" and evt.get("name") == "plot_run_changed":
-                if evt.get("flow_id"):
-                    flow_id = evt["flow_id"]
-                saved = evt
-            if evt.get("type") == "reply":
-                child_tail = evt.get("content") or ""
-            if evt.get("type") != "done":
-                yield evt
+        with _lease_heartbeat(book_id, flow_id):   # 长子 run 期间持续续租，防租约到期易主
+            for evt in run_dsh_task(c_task, c_hist, debug=debug, flow_id=flow_id,
+                                    child_run_id=child_id, book_id=book_id):
+                if evt.get("type") == "domain" and evt.get("name") == "plot_run_changed":
+                    if evt.get("flow_id"):
+                        flow_id = evt["flow_id"]
+                    saved = evt
+                if evt.get("type") == "reply":
+                    child_tail = evt.get("content") or ""
+                if evt.get("type") != "done":
+                    yield evt
         if not book_id:
             # 探路子 run：从它的 domain 事件 / 任务文本恢复书与 flow
             book_id = (saved or {}).get("book_id") or _book_in(task)

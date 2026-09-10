@@ -17,7 +17,7 @@ SESSION_LOG = ROOT / "storage" / "mcp_sessions.jsonl"
 
 def record_startup(*, profile: str, source: str, tools: list[str],
                   registry_tool_count: int | None = None,
-                  flow_id: str = "", child_run_id: str = "",
+                  flow_id: str = "", child_run_id: str = "", book_id: str = "",
                   host_tool_count: int | None = None) -> dict:
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     visible_tools = sorted(set(tools or []))
@@ -28,6 +28,8 @@ def record_startup(*, profile: str, source: str, tools: list[str],
         "source": source or "mcp",
         "flow_id": flow_id or "",
         "child_run_id": child_run_id or "",
+        # 仅供观测：子进程带了归属书 → save_plot_draft 的令牌定位是 O(1) 而非全库扫描
+        "book_id": book_id or "",
         "tools": visible_tools,
         # Keep tool_count as a compatibility alias for older UI/log consumers.
         "tool_count": len(visible_tools),
@@ -88,6 +90,7 @@ def status(*, profile_tools: dict[str, set[str]], limit: int = 100,
         "instance_id": dsh.get("instance_id") if dsh else None,
         "flow_id": dsh.get("flow_id") if dsh else None,
         "child_run_id": dsh.get("child_run_id") if dsh else None,
+        "book_id": dsh.get("book_id") if dsh else None,
         "profile": dsh.get("profile") if dsh else None,
         "tools": dsh.get("tools", []) if dsh else [],
         "registry_tool_count": dsh.get("registry_tool_count") if dsh else None,

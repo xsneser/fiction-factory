@@ -172,6 +172,7 @@ _RUNTIME_INSTANCE = record_startup(
     registry_tool_count=len(TOOL_REGISTRY),
     flow_id=os.environ.get("NOVEL_WRITE_FLOW_ID", ""),
     child_run_id=os.environ.get("NOVEL_WRITE_CHILD_RUN_ID", ""),
+    book_id=os.environ.get("NOVEL_WRITE_BOOK_ID", ""),
 )
 
 if __name__ == "__main__":

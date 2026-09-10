@@ -804,8 +804,7 @@ def prepare_plot_run(book_id: str) -> dict:
     成功后请使用返回的 token 提交一次；服务端负责 Plot 顺序和章节编排。
     """
     from libraries.plot_run_state import load_staged, previous_change, retrieved_memory
-    from libraries.plot_commit_tokens import (issue as issue_commit_token,
-                                               find_prepared, attach_snapshot)
+    from libraries.plot_commit_tokens import issue as issue_commit_token, find_prepared
     from libraries.write_flow import chapter_status
     tl = _require_tl(book_id)
     book = book_mgr.get(book_id)
@@ -961,8 +960,8 @@ def prepare_plot_run(book_id: str) -> dict:
         prepared_key=prepared_key, version_vector=version_vector,
         prepared_snapshot=prepared,
     )
+    # 令牌已在 issue 时写进快照（账本一次写入即可），无需再 attach 一次全量重写。
     prepared["run"]["commit_token"] = token
-    attach_snapshot(book_id, token, prepared)
     return prepared
 
 
@@ -1776,15 +1775,14 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     book_mgr.save_chapter(book_id, n, title or f"第{n}章", processed, summary or "",
                           review=review_dict, bridges=plot_segments, plot_spans=plot_spans or None)
 
-    # 4) 书进度/字数
+    # 4) 书进度/字数（累加章节已存的计量字段，不再把全书正文重读一遍计字）
     try:
         book.current_chapter = max(int(book.current_chapter or 0), n)
         book.status = "writing"
-        book.total_words = sum(count_prose_units((book_mgr.load_chapter(book_id, i) or {}).get("content") or "")
-                               for i in range(1, int(book.current_chapter or 0) + 1))
+        book.total_words = _committed_metrics(book_id, book)[0]
         book_mgr.update(book)
-    except Exception:
-        pass
+    except Exception as e:
+        _log.warning("书进度/字数更新失败 book=%s chapter=%s: %s", book_id, n, e)
 
     # 5) 故事线 written_chapter 进度 + storyline_revision 递增
     #    plot_segments 缺失时回退草稿 bridges（agent 漏传 plot_segments 也不会卡住 next_plot）
@@ -2113,25 +2111,18 @@ def save_plot_draft(commit_token: str, text: str, plot_summary: str = "",
         for row in character_events or []:
             if any((event or {}).get("type") == "relationship" for event in (row or {}).get("events") or []):
                 raise RuntimeError("关系变化只能由 outcome.relationship_changes 提交，禁止双源写入")
-    # token 表是按书分片，当前 Plot 无需由 Writer 提交；先在本书中定位 token。
-    book_id = ""
-    from pathlib import Path
-    for candidate in (Path(_ROOT) / "books").iterdir():
-        if not candidate.is_dir():
-            continue
-        try:
-            result = accepted_result(candidate.name, commit_token)
-            # accepted token 是幂等返回，允许网络重试。
-            if result:
-                return {**result, "idempotent": True, "writer_run_complete": True}
-            from libraries.plot_commit_tokens import _load  # local-only store lookup
-            if commit_token in (_load(candidate.name).get("tokens") or {}):
-                book_id = candidate.name
-                break
-        except Exception:
-            continue
+    # token 表按书分片，当前 Plot 无需由 Writer 提交；子进程只带回 commit_token，
+    # 归属书由服务端经 NOVEL_WRITE_BOOK_ID 注入 → 只查一本书的账本（O(1)）。
+    # 无提示（手工/测试调用）才回退全库扫描；有提示但账本里没有该令牌 = 子进程上下文错，
+    # 直接失败而不是去翻别的书（fail-closed）。
+    from libraries.plot_commit_tokens import resolve_book_id
+    book_id = resolve_book_id(commit_token, os.environ.get("NOVEL_WRITE_BOOK_ID", ""))
     if not book_id:
         raise RuntimeError("commit_token 无效；请重新 prepare")
+    # accepted token 是幂等返回，允许网络重试。
+    accepted = accepted_result(book_id, commit_token)
+    if accepted:
+        return {**accepted, "idempotent": True, "writer_run_complete": True}
     # W1：本函数签名不含 book_id（Writer 只带回 commit_token），`_wrap_book_lock` 取不到锁目标，
     # 因此在这里解析出归属书后**显式**加锁，覆盖「版本校验 → 落草稿/staged → 记账本 → 推进 flow」
     # 全过程：令牌只防重放，不防与 Web 进程 / 另一 MCP 客户端同书并发写盘。
