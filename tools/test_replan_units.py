@@ -34,7 +34,9 @@ def test_flow_orchestration() -> str:
 
     - write 意图 → _writer_fsm：带书号时首个子 run 收「归一化薄续写任务」（无聊天历史、无任何工具名，
       杜绝任务里出现 write profile 之外的工具名）；子 run 若未提交任何 Plot → 恰 1 error + 1 done。
-    - 非 write（闲聊）→ 单 spawn、1 done、原样转发回复。
+    - 非 write 但已分类（只读问句）→ 单 spawn、1 done、原样转发回复。
+    - **未分类（闲聊）→ 不 spawn、恰 1 error + 1 done**（显式阶段指引；此前静默回落
+      只读 inspect 面，用户说「大纲生成失败」只能换来一串只读工具调用）。
     """
     import libraries.dsh_bridge as B
 
@@ -64,11 +66,25 @@ def test_flow_orchestration() -> str:
                      "save_chapter_text", "chapter_quality_gate"):
             if tool in t:
                 return f"子 run 任务不应含工具名 {tool}: {t!r}"
-        # 无标记（非 write）：1 次 spawn、1 done、原样转发回复
+        # 非 write 但已分类（只读问句）：1 次 spawn、1 done、原样转发回复
         calls.clear()
-        evs3 = list(B.run_dsh_flow("闲聊一句", policy="auto"))
+        evs3 = list(B.run_dsh_flow("查看这本书的状态", policy="auto"))
         if sum(1 for e in evs3 if e.get("type") == "done") != 1 or len(calls) != 1:
-            return f"无标记分支不对 calls={len(calls)} types={[e.get('type') for e in evs3]}"
+            return f"只读分支不对 calls={len(calls)} types={[e.get('type') for e in evs3]}"
+        if not any(e.get("type") == "reply" and "写完了" in (e.get("content") or "") for e in evs3):
+            return "只读分支未原样转发回复"
+        # 未分类（闲聊）：不 spawn、恰 1 error（阶段指引）+ 1 done
+        calls.clear()
+        evs4 = list(B.run_dsh_flow("闲聊一句", policy="auto"))
+        if len(calls) != 0:
+            return f"未分类不应 spawn: calls={len(calls)}"
+        if sum(1 for e in evs4 if e.get("type") == "done") != 1:
+            return f"未分类 done 数≠1: {[e.get('type') for e in evs4]}"
+        if sum(1 for e in evs4 if e.get("type") == "error") != 1:
+            return f"未分类应恰 1 error（阶段指引）: {[e.get('type') for e in evs4]}"
+        if not any("没看出要做哪个阶段" in (e.get("message") or "")
+                   for e in evs4 if e.get("type") == "error"):
+            return "未分类 error 未给出阶段指引文案"
         return ""
     finally:
         B.run_dsh_task = real

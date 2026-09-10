@@ -1380,23 +1380,187 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
         # 回到顶部：按新草稿状态决定收章 / 续写 / 续规划
 
 
+# ─── 建书侧服务端 FSM：阶段由向导状态决定，模型不决定下一步 ───
+#
+# 修的是什么：`_task_tool_profile` 曾把向导步 2→3 的自动交接原文（含「已选定候选」）判成
+# 步 1-2 的 build-candidates profile，而那个工具面没有 set_outline/set_world/set_characters
+# （UI_COMMAND_POLICY 拒收）→ 故事线在工具层就没有写入路径（表现为「大纲生成失败」）。
+# 现在阶段判定归服务端：`run_dsh_flow` 把 build/build-candidates 两类**一并**交给本函数，
+# 由它读 storage/build_status.json（浏览器上报的向导快照）决定起哪个 profile 的子 run。
+# 任务文本只用来取 `build_session` 标记，不再用来判阶段。
+
+MAX_BUILD_ATTEMPTS = 2
+
+
+def _parse_build_session(task: str) -> str:
+    """取任务文本里的 `build_session=<sid>` 结构化标记（向导交接任务自带）。
+
+    这是**机器可读标记**、不是中文关键词猜测：`build_status.json` 是全局单快照，
+    标记用于把「这条任务属于哪个向导页」钉死（错配判据见 _build_fsm）。
+    """
+    import re
+    m = re.search(r"build[_ ]?session\s*=\s*([A-Za-z0-9_-]+)", task or "", re.I)
+    return m.group(1) if m else ""
+
+
+def _build_step3_task() -> str:
+    # 归一化薄任务：只说做什么，**不枚举工具名**——任务里出现工具面外的工具名会让 run 因
+    # unknown-tool 停摆（同 _writer_fsm._plot_task 的注释）。
+    return ("[服务端建书] 为当前建书向导会话填写步 3「内容构建工作台」：世界观、弧与情节段、"
+            "势力与人物、其余表单维度。填完表单停下，向用户汇报设定概要并等待用户确认；"
+            "不要自行提交建书。")
+
+
+def _build_candidates_task() -> str:
+    return "[服务端建书] 为当前建书向导会话生成世界观候选并逐张呈现，然后停下等用户在步 2 挑选。"
+
+
+def _unroutable_hint() -> str:
+    """未分类任务的显式指引（**不**静默回落只读面）。"""
+    return ("这次没看出要做哪个阶段，所以没有启动 agent（避免落到只读面上白跑一轮）。\n"
+            "请带上阶段动作再说一句，例如：\n"
+            "  · 建书（步 1-2）：开新书 / 生成候选\n"
+            "  · 建书（步 3）：继续建书 / 生成故事线 / 排弧 / 选情节段\n"
+            "  · 写作：写下一章 / 继续写\n"
+            "  · 续规划：续规划 / 扩弧\n"
+            "  · 抓取：抓取番茄小说 / 侦察热榜\n"
+            "  · 上架：检查能否发书 / 上架 / 完本\n"
+            "若只是想问状态，直接问「查看/状态/进度」——那条是只读的，照常可用。")
+
+
+def _build_fsm(task: str, history: list | None, debug: bool):
+    """建书父 Flow：读向导快照定阶段 → 起一个对应 profile 的子 run → 停下等用户。
+
+    **一轮只派发一个子 run**（不像 _writer_fsm 要循环出多段 Plot）：建书每步之后要么等用户
+    挑选/确认、要么等用户自己点提交，没有「同一轮内持续推进」的动作。
+
+    这里**不**阻塞等表单落地：`drive_ui` 是异步的（写 nav_intent 队列，浏览器每 ~2.5s
+    轮询后才应用），而 58080 是**单线程** Flask——在此 sleep 等快照刷新会把浏览器自己的
+    build-status 回报一起冻住，形成互等。所以只报「已发起填写」，成效留到下一轮看
+    （`attempts` 记账见下）。同理，「建书已成功」只认快照里的 book_id，不猜。
+    """
+    from libraries.build_flow import (append_child_run, build_stage, load_flow,
+                                      next_action, start_flow, transition)
+    from libraries.build_status import get_build_status
+
+    snap = get_build_status() or {}
+    marker_sid = _parse_build_session(task)
+    snap_sid = str(snap.get("build_session_id") or "")
+    if marker_sid and snap_sid and marker_sid != snap_sid:
+        # 快照属于另一个向导页 → 对本会话不可信，宁可当 STALE 退回关键词兜底
+        _log.info("build flow: 快照 session 与任务标记不一致（%s vs %s），按 STALE 处理",
+                  snap_sid, marker_sid)
+        snap = {}
+    session_id = marker_sid or snap_sid
+    stage = build_stage(snap)
+    action = next_action(stage)
+
+    if action == "SUBMITTED":
+        yield {"type": "reply", "content":
+               f"这本已经建好了（book_id={stage['book_id']}，phase 随提交即 ready）。"
+               "要开始写正文就说「写下一章」。"}
+        yield {"type": "done"}
+        return
+    if action == "FAILED":
+        yield {"type": "error", "message":
+               f"建书提交失败：{stage['submit_error']}。请在向导页面按提示修正后重新提交。"}
+        yield {"type": "done"}
+        return
+
+    if action == "BUILD":
+        prof, target = "build", "BUILDING"
+    elif action == "CANDIDATES":
+        prof, target = "build-candidates", "STAGING"
+    else:   # STALE：没有可信快照，退回任务文本判到的 profile（标记/关键词已是尽力而为）
+        prof = _task_tool_profile(task) or "build-candidates"
+        target = "BUILDING" if prof == "build" else "STAGING"
+    child_task = _build_step3_task() if target == "BUILDING" else _build_candidates_task()
+
+    # 连败记账：同一阶段重跑（上一轮没换来阶段推进）才累加，换阶段即归零；
+    # 超过上限**显式失败**，不无限烧 LLM 会话。
+    flow = load_flow(session_id) if session_id else None
+    attempts = int((flow or {}).get("attempts") or 0)
+    attempts = attempts + 1 if (flow or {}).get("resume_point") == target else 1
+    if session_id and attempts > MAX_BUILD_ATTEMPTS:
+        try:
+            transition(session_id, "FAILED", attempts=attempts, error="no_progress")
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("建书 Flow 置 FAILED 失败 session=%s: %s", session_id, exc)
+        yield {"type": "error", "message":
+               f"建书连续 {attempts - 1} 轮没换来阶段推进（当前停在 {target}），已停止以免空转。"
+               "请打开「启动新书」向导自查页面状态（或手动填写步 3），再回来继续。"}
+        yield {"type": "done"}
+        return
+    if session_id:
+        try:
+            if not flow:
+                start_flow(session_id, mode=action.lower())
+            transition(session_id, target, attempts=attempts)
+        except Exception as exc:  # noqa: BLE001 —— 记账失败不该拦住真正的建书动作
+            _log.warning("建书 Flow 置 %s 失败 session=%s: %s", target, session_id, exc)
+
+    child_id = f"build:{attempts}"
+    ok = True
+    for evt in run_dsh_task(child_task, None, debug=debug, flow_id=session_id or "",
+                            child_run_id=child_id, mcp_profile=prof):
+        if evt.get("type") == "done":
+            continue
+        if evt.get("type") == "error":
+            ok = False
+        yield evt
+    if session_id:
+        try:
+            append_child_run(session_id, target, kind=prof, ok=ok)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("建书 Flow 记子 run 失败 session=%s: %s", session_id, exc)
+
+    if not ok:
+        yield {"type": "error", "message":
+               f"建书子任务（{prof}）执行出错，本轮未完成。可以重发一次；"
+               "若仍失败，请在向导页面手动填写。"}
+    elif prof == "build":
+        yield {"type": "reply", "content":
+               "步 3 内容已发起填写（表单由浏览器异步应用，几秒后生效）。请在页面 review "
+               "世界观 / 弧与情节段 / 人物，确认无误后**自己点「创建并进入写作台」**"
+               "——提交只能由你点，agent 不代提交。"}
+    else:
+        yield {"type": "reply", "content":
+               "候选已逐张呈现在步 2。挑一个方向后点「已挑选完毕」，我会接着做步 3 的故事线。"}
+    yield {"type": "done"}
+
+
 def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
                  policy: str | None = None):
     """带 NEED_REPLAN 自动交接的多阶段 dsh 流（R5）。
 
+    写作 / 建书两类走各自的服务端 FSM（阶段与 profile 由服务端状态决定，不问模型）；
+    其余阶段（replan/publish/scout/style/inspect）走下面的通用单任务 + NEED_REPLAN 链。
     单次普通任务 → 与 run_dsh_task 等价（多一层 done 归一）。检测到 [NEED_REPLAN]
     交接则链式跑 replan（auto：提交后续写；confirm：停在预览等 UI 确认）。
     子 run 的 done 一律吞掉，全程只发一个尾部 done。
     """
-    if _profiles_enabled() and _task_tool_profile(task) == "write":
-        yield from _writer_fsm(task, history, debug, policy)
-        return
+    if _profiles_enabled():
+        prof = _task_tool_profile(task)
+        if prof == "write":
+            yield from _writer_fsm(task, history, debug, policy)
+            return
+        # build 与 build-candidates **一并**交给 _build_fsm：两段交接文本不可分
+        # （都含「候选」），阶段由它读向导快照定，别在这里按文本二选一。
+        if prof in ("build", "build-candidates"):
+            yield from _build_fsm(task, history, debug)
+            return
+        if not prof:
+            # 未分类：不静默回落只读面（此前「大纲生成失败」只换来一串只读工具调用），
+            # 显式报错 + 阶段指引。
+            yield {"type": "error", "message": _unroutable_hint()}
+            yield {"type": "done"}
+            return
     import logging
     _log_local = logging.getLogger("dsh_bridge.flow")
     pol = _replan_policy(policy)
     need = None
 
-    # Phase 1：用户任务（write/build/…）。捕获 reply 里的 NEED_REPLAN。
+    # Phase 1：用户任务（replan/publish/scout/style/inspect）。捕获 reply 里的 NEED_REPLAN。
     for evt in run_dsh_task(task, history, debug=debug):
         t = evt.get("type")
         if t == "reply":
