@@ -294,11 +294,29 @@ def _write_runtime_overlay(timeout_ms: int = 600000, mcp_profile: str = "") -> s
     # persona 每行缩进 6 空格（YAML `>-` 折叠标量的块缩进），经 {persona_block} 值替换插入 f-string——
     # 值内 {{model}}/{{cwd}} 不会被 f-string 二次解析，保持字面供 dsh 插值。
     is_writer = mcp_profile == "write"
+    # 建书两段子 run 与 writer 同样**自带完整契约**（skill 注入在任务文本上 + 工具面就是
+    # 它需要的全部能力），所以不再注入 NOVEL_AGENT.md：那份 workspace 指令 25.3KB 而预算
+    # 只给 20KB，尾部「第二部分：护栏」一直被静默截断——既浪费 token 又恰好丢掉护栏。
+    is_build = mcp_profile in ("build", "build-candidates")
     writer_persona = """You are a Plot Writer. Use only the two provided NovelEngine MCP tools.
 Prepare exactly one Plot, write it, save it once, and stop. The server owns all routing and planning."""
-    persona_block = "\n".join("      " + ln for ln in (writer_persona if is_writer else _PERSONA).strip().splitlines())
-    instruction_candidates = "[]" if is_writer else "['NOVEL_AGENT.md']"
-    instruction_budget = "0" if is_writer else "20000"
+    build_persona = """You are the NovelEngine Build Agent. Complete exactly one build step using the
+authoritative build context and the tools exposed in this profile.
+Design world, factions, characters and the opening committed storyline as one coherent system.
+Use library material as inspiration, not as a template. Commit only the opening horizon; leave
+long-range directions as future intents. Validate the draft and revise until it passes or only
+user decisions remain. Never submit the book yourself, never change phases, never browse the web."""
+    if is_writer:
+        persona = writer_persona
+    elif is_build:
+        persona = build_persona
+    else:
+        persona = _PERSONA
+    persona_block = "\n".join("      " + ln for ln in persona.strip().splitlines())
+    instruction_candidates = "[]" if (is_writer or is_build) else "['NOVEL_AGENT.md']"
+    # 非建书/写作 profile 仍拿 NOVEL_AGENT.md：预算提到能装下全文，先止住静默截断
+    # （文档拆分留作后续——那时才谈得上「压到 20KB」）。
+    instruction_budget = "0" if (is_writer or is_build) else "30000"
     yaml_text = (
         "# dsh 运行期 overlay（dsh_bridge 生成）—— 强制长工具超时 + 事件流 runner。\n"
         "# 注意：dsh patch 对 id-targeted entry 整体替换 config，必须给全；\n"
@@ -350,6 +368,15 @@ Prepare exactly one Plot, write it, save it once, and stop. The server owns all 
         # Writer 不可联网、不可读取 skill catalog 或进入计划模式。
         for plugin in ("tool-web", "web", "web-search-deepseek", "tool-skill", "skill", "skill-filesystem",
                        "tool-plan", "plan-mode"):
+            yaml_text += f"- id: {plugin}\n  disabled: true\n"
+    elif is_build:
+        # 建书子 run 同样不需要联网 / skill catalog / 计划模式：
+        # · skill 由 bridge 直接注入在**任务文本**上（见 run_dsh_task），stock skill 工具是冗余的；
+        #   更要紧的是 skill catalog 由 dsh 插件自行发现，不受 profile 约束——agent 会在目录里
+        #   看到 novel-scout 等同级技能、却被工具面挡在外面（「被告知有这本事，却没有这工具」）。
+        # · web_search / exit_plan_mode 对纯表单填写毫无用处，只分散注意力。
+        for plugin in ("tool-web", "web", "web-search-deepseek", "tool-skill", "skill",
+                       "skill-filesystem", "tool-plan", "plan-mode"):
             yaml_text += f"- id: {plugin}\n  disabled: true\n"
     elif mcp_profile and not _skill_text_for_profile(mcp_profile):
         # **没有 skill 注入的 profile**（inspect/style）也关掉 skill 目录：skill 目录由
@@ -1456,6 +1483,90 @@ def _unroutable_hint() -> str:
             "若只是想问状态，直接问「查看/状态/进度」——那条是只读的，照常可用。")
 
 
+_PICKED_RE = None
+
+
+def _extract_picked_title(*texts: str) -> str:
+    """从向导交接原文里抽「步 2 已选定候选「X」」的 X（**有界提取**，服务端正则）。
+
+    这是恢复链的最后一环：绝不把整段聊天转发给模型让它自己找（那正是 4.2 万 token 的
+    来源）。只认向导自己拼的那句固定格式。
+    """
+    global _PICKED_RE
+    if _PICKED_RE is None:
+        import re
+        _PICKED_RE = re.compile(r"已选定候选[「『\"]([^」』\"]+)[」』\"]")
+    for t in texts:
+        if not t:
+            continue
+        m = _PICKED_RE.search(str(t))
+        if m:
+            return m.group(1).strip()
+    return ""
+
+
+def _ensure_build_context(session_id: str, rec: dict, task: str,
+                          history: list | None, snap: dict | None = None) -> list:
+    """步 3 子 run 的权威上下文补齐（**服务端做**）。返回仍缺的项（空列表=齐了）。
+
+    恢复链（每一环都写回 canonical 记录，模型只看 get_build_context 的结果）：
+      ① canonical 记录（正常路径：前端 transition 时已带 idea/标签/笔名 + pick 已带选中候选）
+      ② 向导快照（旧页面/记录被打断时补 idea、标签）
+      ③ 候选存储 + 有界文本提取（从向导原文/最近消息里抽「已选定候选「X」」，与候选列表按标题对齐）
+      ④ 仍缺 → 返回缺失项，调用方**不派发**（宁可让用户重选，也不让 agent 凭猜测编设定）
+    """
+    from libraries import build_draft
+
+    # 只用**已解析过的那份快照**（错配时调用方已把它清空）——重新 get_build_status() 会把
+    # 「属于别的向导页」的 _picked/idea 当成本会话的事实（实测踩过）。
+    snap = snap or {}
+    updates: dict = {}
+    if not rec.get("idea"):
+        snap_idea = str(snap.get("idea") or "").strip()
+        if snap_idea:
+            updates["idea"] = snap_idea
+    if not rec.get("tags"):
+        snap_tags = snap.get("tags") or []
+        if snap_tags:
+            updates["tags"] = list(snap_tags)
+
+    missing = []
+    if not rec.get("selected_candidate"):
+        # ③ 有界提取：向导原文优先，其次最近几条消息（只认固定格式那一句）
+        recent = [m.get("content") for m in (history or [])[-8:] if isinstance(m, dict)]
+        title = _extract_picked_title(task, *[str(c) for c in recent if c])
+        if title:
+            hit = next((c for c in (rec.get("candidates") or [])
+                        if str(c.get("title") or "").strip() == title), None)
+            updates["selected_candidate"] = dict(hit) if hit else {"title": title}
+        elif snap.get("_picked"):
+            # 用户明明选了候选，但服务端恢复不出来 → 不要让 agent 猜
+            missing.append("selected_candidate")
+    if updates:
+        # **必须带上 step**：本函数可能是在「没有 canonical 记录」的路径上被调用的
+        # （手动设定 / 老页面），而 update() 的默认 step=1 —— 只写候选不写步号会造出一份
+        # 「step=1 但已经选了候选」的记录，下一条任务就会因此被判成步 1-2（实测踩过）。
+        updates["step"] = 3
+        rec = build_draft.update(session_id, **updates)
+        _log.info("build flow: 步 3 上下文补齐 session=%s keys=%s",
+                  session_id, sorted(updates))
+    return missing
+
+
+def _build_child_task(session_id: str) -> str:
+    """步 3 子 run 的薄任务：**数据全部走 get_build_context**，任务文本只给动作。
+
+    与步 1-2 的「转发原文」有意不同：那一段的表单数据只存在于任务文本里（服务端无副本），
+    而步 3 的事实已在 canonical 记录里。之前这里转发整段历史 → 单次请求 8.3 万字符
+    / ~4.2 万 token，且与 get_build_context 读到的内容互相矛盾（模型被迫仲裁）。
+    """
+    return (f"完成建书步 3（build session={session_id}）。"
+            "先用 get_build_context 读权威上下文，再按本页 skill 的流程："
+            "各查一次弧库与情节段库 → 设计完整草稿（世界观/势力/弧+情节段/人物）→ "
+            "validate_build 校验至通过 → save_build_draft 落盘 → 向用户汇报蓝图并停下。"
+            "用户自己点提交，不要代提交。")
+
+
 def _stage_progressed(stage: dict) -> bool:
     """快照是否显示该阶段已出产物（用于把连败计数归零）。
 
@@ -1571,15 +1682,22 @@ def _build_fsm(task: str, history: list | None, debug: bool):
         yield {"type": "done"}
         return
 
-    if action == "BUILD":
-        prof, target = "build", "BUILDING"
-    elif action == "CANDIDATES":
-        prof, target = "build-candidates", "STAGING"
-    else:   # STALE：没有可信快照，退回任务文本判到的 profile（标记/关键词已是尽力而为）
-        prof = _task_tool_profile(task) or "build-candidates"
-        target = "BUILDING" if prof == "build" else "STAGING"
-    # 转发调用方原文 + 追加阶段提示（**不合成薄任务**，见 _build_stage_note 的坑）
-    child_task = (task or "").strip() + _build_stage_note(target)
+    # 子 run 的任务文本：步 3 用薄任务（事实走 get_build_context），步 1-2 仍转发原文
+    # （步 1-2 的表单数据只存在于任务文本里——服务端那时还没有 canonical 记录）。
+    if prof == "build":
+        _missing = _ensure_build_context(session_id, rec, task, history, snap)
+        if _missing:
+            yield {"type": "error", "message":
+                   f"步 3 上下文不全（缺 {'、'.join(_missing)}）：服务端没能从记录/候选/向导原文里"
+                   "恢复出用户的选定候选。已停下不派发——请让用户在向导里重选候选并点「已挑选完毕」，"
+                   "不要让 agent 凭空编设定。"}
+            yield {"type": "done"}
+            return
+        child_task = _build_child_task(session_id)
+        child_history: list = []   # 不继承整段对话：数据已在 canonical 记录里
+    else:
+        child_task = (task or "").strip() + _build_stage_note(target)
+        child_history = history or []
 
     # 连败记账：同一阶段重跑**且快照显示还没出产物**才累加；换阶段、或该阶段已出产物
     # 都归零。归零那半条是关键——用户反复「再改改」是合法迭代，不能因为同一阶段被
@@ -1613,7 +1731,7 @@ def _build_fsm(task: str, history: list | None, debug: bool):
     child_id = f"build:{attempts}"
     ok = True
     # history 原样转发：用户前几轮说过的话也是上下文（曾硬传 None，与薄任务一起丢过一版）
-    for evt in run_dsh_task(child_task, history, debug=debug, flow_id=session_id or "",
+    for evt in run_dsh_task(child_task, child_history, debug=debug, flow_id=session_id or "",
                             child_run_id=child_id, mcp_profile=prof):
         if evt.get("type") == "done":
             continue

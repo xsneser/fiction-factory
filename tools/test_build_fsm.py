@@ -63,8 +63,22 @@ def main():
         if not cond:
             failed.append(name)
 
-    def run(task, snapshot):
+    def drop_rec(sid=SID):
+        """清 canonical 记录：各用例必须独立（步 3 的恢复链会写记录，残留会串台）。"""
+        try:
+            p = BD.path_for(sid)
+            if os.path.exists(p):
+                os.remove(p)
+        except Exception:
+            pass
+
+    def run(task, snapshot, keep_record=False):
+        """跑一轮 FSM。默认**清掉 canonical 记录**让各用例独立——步 3 的上下文恢复链
+        会写记录，残留会让下一条用例走「记录权威」分支而串台（实测踩过）。
+        `keep_record=True` 供显式铺记录用例（10b~10g）使用。"""
         calls.clear()
+        if not keep_record:
+            drop_rec()
         BS.get_build_status = lambda: snapshot
         return list(B._build_fsm(task, HISTORY, False))
 
@@ -84,14 +98,16 @@ def main():
         check("步 3 reply 提醒用户自己点提交",
               any("自己点" in (e.get("content") or "") for e in evs if e.get("type") == "reply"))
         check("Flow 落到 BUILDING", BF.load_flow(SID)["phase"] == "BUILDING")
-        # 回归（曾把整段任务文本换成薄任务 → 用户选定候选被丢掉）
-        check("步 3 子 run 收到调用方原文（含「已选定候选「…」」）",
-              all(d in calls[0]["task"] for d in STEP3_DATA),
-              f"task={calls[0]['task'][:80]!r}")
-        check("步 3 子 run 收到对话历史（不再硬传 None）",
-              calls[0]["history"] == HISTORY, f"history={calls[0]['history']!r}")
-        check("服务端只追加、不替换（原文为前缀）",
-              calls[0]["task"].startswith(STEP3_TASK), f"task={calls[0]['task'][:80]!r}")
+        # 步 3 改为**薄任务 + 不转发历史**（2026-09-10 收口）：数据走 get_build_context
+        # 读 canonical 记录。此前转发整段聊天 → 单次 8.3 万字符 / ~4.2 万 token，且内容
+        # 与服务端判定互相矛盾（模型被迫仲裁）。
+        check("步 3 子 run 收薄任务（不再转发整段原文）",
+              calls[0]["task"].startswith("完成建书步 3（build session=")
+              and len(calls[0]["task"]) < 600, f"task={calls[0]['task'][:80]!r}")
+        check("步 3 薄任务点名 get_build_context（本 profile 内工具）",
+              "get_build_context" in calls[0]["task"])
+        check("步 3 子 run 不继承对话历史（数据在 canonical 记录里）",
+              calls[0]["history"] == [], f"history={calls[0]['history']!r}")
         note = B._build_stage_note("BUILDING")
         check("服务端追加文字里没有工具名",
               "mcp__novelengine" not in note and "drive_ui" not in note
@@ -201,21 +217,21 @@ def main():
         if path.exists():
             path.unlink()
         BD.transition(SID, step=3, selected_candidate={"title": "2050：星港从零建起"})
-        evs = run(STEP3_TASK, _snap(cur=2, _picked=False))
+        evs = run(STEP3_TASK, _snap(cur=2, _picked=False), keep_record=True)
         check("记录 step=3 + 滞后快照(cur=2) → 起 build（事故防复发）",
               len(calls) == 1 and calls[0]["mcp_profile"] == "build",
               f"calls={[c['mcp_profile'] for c in calls]}")
 
         # ── 10c) 反向：记录 step=2 + 快照 cur=3 → 记录权威，起 build-candidates ──
         BD.transition(SID, step=2)
-        evs = run(STEP1_TASK, _snap(cur=3))
+        evs = run(STEP1_TASK, _snap(cur=3), keep_record=True)
         check("记录 step=2 + 快照 cur=3 → 起 build-candidates（记录权威）",
               len(calls) == 1 and calls[0]["mcp_profile"] == "build-candidates",
               f"calls={[c['mcp_profile'] for c in calls]}")
 
         # ── 10d) 记录带回 book_id → SUBMITTED，不起 run ──
         BD.mark_submitted(SID, book_id="book_010")
-        evs = run("继续建书", _snap(cur=3))
+        evs = run("继续建书", _snap(cur=3), keep_record=True)
         check("canonical 记录的 book_id → SUBMITTED 不起 run", not calls)
         check("canonical SUBMITTED 的 reply 带 book_id",
               any("book_010" in (e.get("content") or "") for e in evs))
@@ -228,7 +244,7 @@ def main():
         if os.path.exists(BD.path_for(SID)):
             os.remove(BD.path_for(SID))
         BD.transition(SID, step=3)
-        evs = run("继续建书", _snap(cur=3, submit_error="书名重复"))
+        evs = run("继续建书", _snap(cur=3, submit_error="书名重复"), keep_record=True)
         check("记录 step=3 + submit_error → 不起 run", not calls)
         check("提交失败原文透出",
               any(e.get("type") == "error" and "书名重复" in (e.get("message") or "") for e in evs))
@@ -242,7 +258,7 @@ def main():
         _orig_map = dict(SP.SKILL_PROFILE_MAP)
         SP.SKILL_PROFILE_MAP["novel-build"] = "write"   # 人为把 build 的 skill 指到别处
         try:
-            evs = run(STEP3_TASK, _snap(cur=3))
+            evs = run(STEP3_TASK, _snap(cur=3), keep_record=True)
         finally:
             SP.SKILL_PROFILE_MAP.clear()
             SP.SKILL_PROFILE_MAP.update(_orig_map)
@@ -256,6 +272,29 @@ def main():
         _mismatch = [(p, s) for p, s in B._SKILL_FOR_PROFILE.items()
                      if SP.SKILL_PROFILE_MAP.get(s) != p]
         check("profile→skill 与 skill→profile 双向一致", not _mismatch, f"{_mismatch}")
+
+        # ── 10h) 步 3 上下文补齐：记录缺选中候选 → 服务端有界提取并写回 ──
+        drop_rec()
+        BD.transition(SID, step=3)          # 记录有 step、没有候选（旧页面/被打断）
+        evs = run(STEP3_TASK, _snap(cur=3), keep_record=True)
+        check("缺选中候选 → 从向导原文有界提取并派发",
+              len(calls) == 1 and calls[0]["mcp_profile"] == "build",
+              f"calls={[c['mcp_profile'] for c in calls]}")
+        check("提取结果写回 canonical 记录",
+              (BD.load(SID).get("selected_candidate") or {}).get("title") == "2050：星港从零建起",
+              str(BD.load(SID).get("selected_candidate")))
+        check("补齐时带上 step（否则默认 step=1 会把下一条判成步 1-2）",
+              int(BD.load(SID).get("step") or 0) == 3)
+        check("补齐后仍不转发历史（数据在记录里）", calls[0]["history"] == [])
+
+        # ── 10i) 上下文恢复不出来 → **不派发**（宁可让用户重选，不让 agent 编设定）──
+        drop_rec()
+        BD.transition(SID, step=3)
+        evs = run("继续建书", _snap(cur=3), keep_record=True)   # 无「已选定候选「…」」字样
+        check("上下文不全时不派发", not calls, f"calls={[c['mcp_profile'] for c in calls]}")
+        check("并给出可行动提示",
+              any(e.get("type") == "error" and "上下文不全" in (e.get("message") or "")
+                  for e in evs), f"evs={[e.get('type') for e in evs]}")
 
         # ── 11) UNROUTABLE 显式指引（run_dsh_flow 层）──
         B.run_dsh_task = real_run

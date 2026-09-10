@@ -404,7 +404,14 @@ var WZ = {
             }).catch(function() { return false; });
         } catch (e) { return Promise.resolve(false); }
     },
-    prev: function() { this.show(this.cur - 1); },
+    // 回退同样要同步服务端阶段权威：否则从步 3 退回步 2 后 canonical 记录仍写着 step=3，
+    // 下一条任务会被判成步 3（用户明明在重选候选）。
+    prev: function() {
+        var target = this.cur - 1;
+        this.show(target);
+        if (this.bookId || target < 1 || target > 3) return;
+        this.transitionTo(target);
+    },
 
     toggleTag: function(btn) {
         btn.classList.toggle('on');

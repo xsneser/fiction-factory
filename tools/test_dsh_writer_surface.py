@@ -48,7 +48,34 @@ def main() -> None:
     assert mapped[0]["host_tool_count"] == 1
     assert mapped[0]["input_budget"]["total_chars"] == 100
 
+    # ── 建书两段子 run：与 writer 同样自带契约，不注入 NOVEL_AGENT.md（会被 20KB 预算截断，
+    # 恰好截掉「第二部分：护栏」），并同样禁掉联网 / skill catalog / 计划模式。──
+    for profile, expected in (("build", {"get_build_context", "query_arc_library", "query_plots",
+                                         "validate_build", "save_build_draft"}),
+                              ("build-candidates", {"navigate", "drive_ui", "get_build_status",
+                                                    "query_profiles"})):
+        assert PROFILE_TOOLS[profile] <= expected, (profile, PROFILE_TOOLS[profile] ^ expected)
+    overlay_build = Path(DB._write_runtime_overlay(mcp_profile="build")).read_text(encoding="utf-8")
+    assert "maxBytes: 0" in overlay_build
+    assert "instructionFileCandidates: []" in overlay_build
+    for plugin in ("tool-web", "web", "web-search-deepseek", "tool-skill", "skill",
+                   "skill-filesystem", "tool-plan", "plan-mode"):
+        assert f"- id: {plugin}\n  disabled: true" in overlay_build, plugin
+    assert "NovelEngine Build Agent" in overlay_build
+    # 非建书/写作 profile 仍拿 NOVEL_AGENT.md，但预算要装得下全文（25.3KB）——此前 20000
+    # 会静默截掉尾部护栏段
+    overlay_scout = Path(DB._write_runtime_overlay(mcp_profile="scout")).read_text(encoding="utf-8")
+    assert "maxBytes: 30000" in overlay_scout
+    assert "instructionFileCandidates: ['NOVEL_AGENT.md']" in overlay_scout
+
+    # 建书 skill 不得提到本 profile 之外的任何工具名（否则子 run 因 unknown-tool 停摆）
+    build_skill = DB._skill_text_for_profile("build")
+    for banned in ("drive_ui", "get_build_status", "validate_storyline", "validate_world",
+                   "save_outlines", "navigate", "get_book_detail"):
+        assert banned not in build_skill, banned
+
     print("[OK] writer overlay and two-tool contract")
+    print("[OK] build/build-candidates overlay: 自带契约 + stock 工具已禁")
 
 
 if __name__ == "__main__":
