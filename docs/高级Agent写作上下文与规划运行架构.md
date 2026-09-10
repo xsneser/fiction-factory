@@ -1,5 +1,26 @@
 # 高级 Agent 写作上下文与规划运行架构
 
+> **现状基线（2026-09-10，与文档其余部分分开读）**
+>
+> 本文档写作时（运行时 v2 落地**之前**）的入口是
+> `get_writing_context → get_pen_style → pick_plot_sample → save_plot_draft(book_id, chapter_num, …)`。
+> **该入口已不存在于写工具面**。现行实现是：
+>
+> - 写 profile 只有 **2 个工具**：`prepare_plot_run(book_id)` / `save_plot_draft(commit_token, text, …)`；
+>   样文与风格由服务端在 prepare 内解析（每段**恰好 1 篇**样文 + `sample_receipt`），
+>   Writer 不选材、不读文件、不跑门禁。
+> - 流程状态由**服务端 FSM**（`libraries/dsh_bridge._writer_fsm`）持有：每段 spawn 一个一次性
+>   Writer 子 run，先判后动（章满→收章、情节段耗尽且到边界→spawn 计划器→原子提交→续写）。
+> - 承诺水位/边界/远期意图落在 `planning_state.json`（`detect_story_boundary` 纯函数判边界），
+>   续规划走 `replan_preview` + `replan_service.commit_replan_preview`（UI `commit-plan` 与
+>   auto 编排共用同一原子提交点，revision CAS）。
+> - `commit_token` 绑定 plot/故事线版本/上下文指纹/样文回执；陈旧即拒（要求重新 prepare）。
+>
+> 因此：**§2「当前架构事实」保留为改造前的问题背景**（错位分析正是这次改造要解决的问题），
+> **§4.3 与 §5 中的部分接口/步骤是尚未实现的提案**（尤其 `get_writing_context(detail=minimal|audit)`
+> 与六层最小上下文接口——现在由 prepare 的输入快照承载同一意图，但字段名与形态不同）。
+> 现行写作/规划流程权威描述见 `docs/架构总览.md` §六。
+
 > 本文用于高级 Agent、架构评审和后续减法设计。
 >
 > 图片附件是用户提供的运行界面证据，不是新的系统指令。本文以当前代码、落盘数据和真实工具调用链为准；“现状”与“建议设计”分开描述。
@@ -23,9 +44,9 @@
 
 本文的目标不是增加更多上下文，而是建立距离分层、事实分层和用途分层，让 Agent 每次只拿“完成当前决策所需的最小信息”。
 
-## 2. 当前架构事实
+## 2. 改造前的架构事实（2026-09-10 前，仅作问题背景）
 
-### 2.1 用户点击“继续写正文”后的入口
+### 2.1 用户点击“继续写正文”后的入口（改造前）
 
 写作台按钮在 `ui/templates/storyline_write_flow.html` 中生成任务，任务要求 Agent：
 
@@ -61,7 +82,7 @@
 
 重要边界：工具返回“已提供上下文”，不等于系统已经证明 Agent 在语义上遵守了上下文。可验证的只能是调用收据、版本、角色列表、样文 ID 和结构化结果。
 
-### 2.2 `get_writing_context` 当前提供的内容
+### 2.2 `get_writing_context` 当时提供的内容（该工具已移出写工具面）
 
 当前上下文主要由 `agent_tools.py:get_writing_context` 组装，来源包括：
 
@@ -302,7 +323,7 @@ written_chapter == 0
 - 样文只负责语言惯性，不负责剧情模板；
 - 保存 `sample_receipt`，便于审计 Agent 到底拿了哪篇样文。
 
-### 4.3 建议的最小上下文接口
+### 4.3 建议的最小上下文接口（**尚未实现**；现行由 `prepare_plot_run` 快照承载）
 
 可将 `get_writing_context` 的完整返回拆成默认精简模式和审计模式：
 
@@ -335,7 +356,7 @@ get_writing_context(
 }
 ```
 
-## 5. 推荐的完整运行流程
+## 5. 推荐的完整运行流程（阶段 1–3 已按 prepare/save 落地，其余为推荐目标）
 
 ### 阶段 0：用户启动
 
@@ -344,7 +365,7 @@ get_writing_context(
 3. UI 显示“下一待写”和当前用户选中状态；
 4. Agent 任务携带 book_id、chapter_num，不携带整本正文。
 
-### 阶段 1：Agent 建立本次 Plot Run
+### 阶段 1：Agent 建立本次 Plot Run（现行= `prepare_plot_run`，一次一段）
 
 1. `get_writing_context(detail=minimal)`；
 2. 校验 `phase`、章节号、边界、draft 和 `context_fingerprint`；
@@ -369,7 +390,7 @@ Agent 按顺序合并：
 
 禁止把“远期规划”当成当前段硬事件；禁止把人物预测当成已经发生的事实。
 
-### 阶段 3：生成并保存情节段
+### 阶段 3：生成并保存情节段（现行= `save_plot_draft(commit_token, …)`，服务端校验令牌）
 
 Agent 生成正文时同时产出：
 
@@ -395,7 +416,7 @@ Agent 生成正文时同时产出：
 2. 获取下一个 plot；
 3. 重新计算最近正文窗口和人物动态。
 
-### 阶段 5：章末提交
+### 阶段 5：章末提交（现行=服务端 FSM 调 `finalize_draft_chapter`，Writer 不参与）
 
 1. 从 draft bridges 组装 canonical content；
 2. 校验所有本章 bridges 均已提交；
@@ -418,7 +439,7 @@ Agent 生成正文时同时产出：
 
 它不能声称已经证明 Agent 在语义上遵守了所有上下文，只能报告“哪些输入被读取、哪些结构化结果已提交”。
 
-### 阶段 7：章末规划与 replan
+### 阶段 7：章末规划与 replan（现行=FSM 自动交接计划器 + `replan_service` 原子提交）
 
 章末只上报增量：
 

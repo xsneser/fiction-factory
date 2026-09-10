@@ -90,7 +90,11 @@
 
 ### 3.3 🎯 Plot Run 面板逐区块（你问的「这一部分是干什么的」）
 
-渲染函数 `renderPlotRun`（`storyline_write_flow.html:345-380`），数据 = `desk_chapters_api` 里的 `plot_run`，**与 Agent 侧写作上下文 `get_writing_context` 的 `plot_run` 是同一组装（`agent_tools._build_plot_run`，§五）**——UI 显示什么，Agent 实际就写什么：
+渲染函数 `renderPlotRun`（`storyline_write_flow.html:345-380`），数据 = `desk_chapters_api` 里的 `plot_run`，**与 Agent 侧共用同一组装（`agent_tools._build_plot_run`）**——UI 显示什么，Agent 下一步就写什么：
+
+> ⚠️ 历史标注（2026-09-10）：本文写作时 Agent 读的是 `get_writing_context`；现行写 profile 只有
+> `prepare_plot_run` / `save_plot_draft` 两个工具（其快照由 prepare 在 `_build_plot_run` 之上再组装），
+> 但「UI 与 Agent 同源」这一结论仍然成立。详见 `docs/架构总览.md` §六。
 
 | 区块 | 数据字段 | 含义（示例） |
 |---|---|---|
@@ -152,7 +156,7 @@
        ├─ style_query   infer_plot_query（服务端判场景 → pick_plot_sample 选样）
        └─ cast_pack     出场角色分级紧凑卡（protagonists/active/referenced，
                         谁在写；dyn 来自 character_states，:288-384）
-写作 Agent 侧 get_writing_context（agent_tools.py:495）返回的 plot_run = 同一函数
+写作 Agent 侧（历史：get_writing_context；现行：prepare_plot_run 快照）的 plot_run = 同一函数
 → 「UI 显示 = Agent 上下文 = 同一组装」，两处不漂移（所见即所写）
 ```
 
