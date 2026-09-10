@@ -281,13 +281,34 @@ def attach_build_session(session_id: str, book_id: str, tl, book=None) -> dict:
     return state
 
 
+# ── H0 承诺批次策略（阈值与批大小必须同源）──────────────────────────────
+# 计划器一次续规划产出的 committed 情节段数，与「剩余多少就请求续规划」的阈值必须联动：
+# 早期实现是「触发阈值 ≤2 段」+「每次只补 3–8 段」，等于每 1–7 段就要跑一整轮计划器会话
+# （一次会话 ≈ 10 轮 LLM + 12KB NOVEL_AGENT.md + skills + 10 个工具 schema），
+# 规划开销与写作产出严重失衡。现在一次补 6–12 段、阈值取批大小的三分之一。
+REPLAN_BATCH_MIN = 6
+REPLAN_BATCH_MAX = 12
+
+
+def replan_low_plot_threshold() -> int:
+    """剩余情节段 ≤ 此值即请求续规划（按最小批次推导，避免与批大小脱节）。"""
+    return max(2, REPLAN_BATCH_MIN // 3)
+
+
 def detect_story_boundary(*, written_until_word: int, committed_until_word: int,
                           remaining_plots: int, words_per_batch: int,
-                          storyline_revision: int, last_replan: dict | None = None) -> dict:
-    """纯函数：在剩余 plot<=2 或承诺余量不足一个批次时请求 replan。"""
+                          storyline_revision: int, last_replan: dict | None = None,
+                          low_plot_threshold: int | None = None) -> dict:
+    """纯函数：剩余 plot 低于阈值 或 承诺余量不足一个批次时请求 replan。
+
+    注意两个信号的角色：它们是**续规划信号**（UI 横幅 + 计划器输入），不是「停写」信号。
+    写作 FSM 的动作优先级是「章满收章 → 还有可写 Plot 就继续写 → 都没有才续规划」，
+    所以情节段没耗尽时不会为了边界中断写作（`write_flow.next_action`）。
+    """
+    threshold = replan_low_plot_threshold() if low_plot_threshold is None else int(low_plot_threshold)
     remaining_words = max(0, int(committed_until_word or 0) - int(written_until_word or 0))
     reasons = []
-    if int(remaining_plots or 0) <= 2:
+    if int(remaining_plots or 0) <= threshold:
         reasons.append("PLOTS_LOW")
     if remaining_words <= max(1, int(words_per_batch or 0)):
         reasons.append("WORDS_LOW")
@@ -297,4 +318,5 @@ def detect_story_boundary(*, written_until_word: int, committed_until_word: int,
     debounced = bool(reasons) and same_revision and set(reasons).issubset(last_reasons)
     return {"needs_replan": bool(reasons) and not debounced, "reason_codes": reasons,
             "remaining_plots": max(0, int(remaining_plots or 0)), "remaining_words": remaining_words,
+            "low_plot_threshold": threshold,
             "debounced": debounced, "storyline_revision": int(storyline_revision or 0)}

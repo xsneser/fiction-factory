@@ -8,9 +8,9 @@ description: 临近已承诺故事边界或既有预测被事实推翻时，依�
 1. 调 `get_story_state(book_id)`；若 `boundary.needs_replan=false`，停止，不重复规划。
 2. 只把 `facts` 当作不可改事实；`forecast` 可修改或废弃，禁止回写已完成 plot 和章节。
 3. 用短决策卡完成：当前问题、人物压力、读者问题、2–3 个不同方向、各自代价与人物影响、选中方向及原因。
-4. 把选中方向压成下一批 3–8 个可执行 plot。每个 plot 明确目标、阻力、选择、代价、结果，并至少造成一种不可逆变化。
+4. 把选中方向压成下一批 6–12 个可执行 plot。每个 plot 明确目标、阻力、选择、代价、结果，并至少造成一种不可逆变化。
 5. 新弧从现有 `committed.until_word` 连续追加；情节段只挂叶弧。远期内容只写入 `future_intents`，不得伪装成正式 plot。
-6. 不直接调用 `save_outlines`。调用 `drive_ui(cmd="set_replan_preview", args=...)` 暂存预览；参数包含书、revision、诊断、2–3 个方向、选中方向、3–8 个 plots、可选 outlines 与完整 planning patch。用户在抽屉确认后才由服务端原子提交。
+6. 不直接调用 `save_outlines`。调用 `drive_ui(cmd="set_replan_preview", args=...)` 暂存预览；参数包含书、revision（必须等于当前故事线版本，服务端会校验）、诊断、2–3 个方向、选中方向、6–12 个 plots、可选 outlines 与完整 planning patch。用户在抽屉确认后才由服务端原子提交。
 7. 若用户指定其他方向或要求重拟，只为该方向重新生成完整预览。状态变化时重新读取 `get_story_state`，不得移除 expected_revision 或强行覆盖。
 8. 素材库默认不查；确需参考时最多一次主查询、coverage 不足最多补查一次。
 

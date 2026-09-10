@@ -1182,7 +1182,18 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
                 committed = finalize_draft_chapter(book_id, flow_id)
                 yield {"type": "domain", "name": "chapter_changed", "book_id": book_id, "flow_id": flow_id,
                        "chapter": committed.get("chapter"), "phase": "DONE"}
-                yield {"type": "reply", "content": f"第{committed.get('chapter')}章已由服务端提交并完成质量门禁。"}
+                # 章已在盘上：下面的都是**提交后诊断**，只提示、绝不改口说「章没提交」。
+                notes = []
+                if committed.get("state_error"):
+                    notes.append(f"注意：{committed['state_error']}")
+                gate = committed.get("quality_gate") or {}
+                if isinstance(gate, dict) and (gate.get("skipped") or gate.get("ok") is False):
+                    notes.append("质量门禁异常已跳过（章已提交，可稍后重跑门禁）")
+                if notes:
+                    yield {"type": "reply", "content":
+                           f"第{committed.get('chapter')}章已提交（正文已落盘）。" + "；".join(notes)}
+                else:
+                    yield {"type": "reply", "content": f"第{committed.get('chapter')}章已由服务端提交并完成质量门禁。"}
             except Exception as exc:
                 yield from _fail_flow(book_id, flow_id, f"chapter_commit_failed:{exc}",
                                       f"章节提交失败：{exc}")

@@ -58,18 +58,22 @@ def _seed_first_arc(bid):
 
 
 def _preview_args(bid, revision, next_plot_id=2):
-    """一份能通过 set_replan_preview 全部校验的预览参数（3 个情节段 + 新叶弧）。"""
+    """一份能通过 set_replan_preview 全部校验的预览参数（一批 6 个情节段 + 新叶弧）。
+
+    批大小取自 planning_state.REPLAN_BATCH_MIN（与「剩余多少就续规划」阈值同源）。
+    """
+    from libraries.planning_state import REPLAN_BATCH_MIN
     return {
         "book_id": bid, "expected_revision": revision,
         "diagnosis": {"current_pressure": "承诺区将尽", "reader_question": "他能否守住？"},
         "directions": [{"id": "d1", "title": "迎战"}, {"id": "d2", "title": "撤退"}],
         "selected_direction_id": "d1",
-        "outlines": [{"id": "a2", "name": "第二弧", "start_word": 3000, "end_word": 6000}],
+        "outlines": [{"id": "a2", "name": "第二弧", "start_word": 3000, "end_word": 9000}],
         "plots": [{"id": f"p{i}", "name": f"段{i}", "outline_id": "a2", "words": 1000,
                    "roles": ["顾衡"]}
-                  for i in range(next_plot_id, next_plot_id + 3)],
+                  for i in range(next_plot_id, next_plot_id + REPLAN_BATCH_MIN)],
         # 故意塞一个假的 last_replan：服务端必须以自己算的为准覆盖它
-        "planning_patch": {"committed_until_word": 6000,
+        "planning_patch": {"committed_until_word": 9000,
                            "last_replan": {"from_revision": 999, "reason_codes": ["BOGUS"]}},
     }
 
@@ -108,7 +112,9 @@ def main():
         assert not load_replan_preview(bid), "提交成功后应删除预览"
         tl_after = bm.load_storyline(bid)
         assert int(tl_after.storyline_revision) == revision + 1, tl_after.storyline_revision
-        assert [p.id for p in tl_after.plots] == ["p1", "p2", "p3", "p4"], [p.id for p in tl_after.plots]
+        from libraries.planning_state import REPLAN_BATCH_MIN as _BMIN
+        expect_ids = ["p1"] + [f"p{i}" for i in range(2, 2 + _BMIN)]
+        assert [p.id for p in tl_after.plots] == expect_ids, [p.id for p in tl_after.plots]
         state = load_planning_state(bid, tl_after, bm.get(bid), persist=False)
         last = state.get("last_replan") or {}
         assert last.get("from_revision") == revision, last
@@ -127,10 +133,10 @@ def main():
                 "diagnosis": {"current_pressure": "开篇"},
                 "directions": [{"id": "d1", "title": "进"}, {"id": "d2", "title": "退"}],
                 "selected_direction_id": "d1",
-                "outlines": [{"id": "z1", "name": "开局弧", "start_word": 0, "end_word": 3000}],
+                "outlines": [{"id": "z1", "name": "开局弧", "start_word": 0, "end_word": 6000}],
                 "plots": [{"id": f"z{i}", "name": f"开篇{i}", "outline_id": "z1", "words": 1000,
                            "roles": ["顾衡"]}
-                          for i in range(1, 4)],
+                          for i in range(1, 7)],
                 "planning_patch": {"committed_until_word": 3000},
             })
             zero_commit = bridge._commit_pending_replan(zero_bid)

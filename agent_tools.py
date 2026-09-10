@@ -13,6 +13,7 @@
 import os
 import sys
 import json
+import logging
 import time
 import inspect
 import typing
@@ -21,6 +22,17 @@ import hashlib
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _ROOT)
+
+_log = logging.getLogger("agent_tools")
+
+
+class ChapterCommittedStateError(RuntimeError):
+    """章节正文/文件已落盘，但**权威状态**（故事线 written_chapter / storyline_revision）未更新。
+
+    这类失败既不能当成「章节提交失败」（章确实在盘上），更不能静默：不更新 written_chapter
+    会让下一轮 `_next_plot` 重写同一情节段；不 bump revision 会让旧 replan preview 看起来
+    仍然新鲜、CAS 放行。调用方（finalize_draft_chapter → FSM）必须把它回报给用户。
+    """
 
 from ui.web_blueprints.ctx import (  # noqa: E402
     plot_lib, struct_lib, gag_lib, char_lib, profiles, book_mgr,
@@ -1755,16 +1767,16 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     except Exception:
         pass
 
-    # 2.5) 硬门禁：正文低于字数下限 → 拒绝落盘（保留进行中草稿），逼 agent 续写满章
-    if review_dict and not review_dict.get("passed"):
-        short = any(i.get("severity") == "error" and i.get("category") == "word_count"
-                    for i in (review_dict.get("issues") or []))
-        if short:
-            raise RuntimeError(
-                f"第 {n} 章正文 {count_prose_units(processed)} 字，低于本章下限 "
-                f"{int(target * HARD_MIN_RATIO)} 字，正文不完整，未落盘。"
-                f"请继续写满本章（逐情节段补全全部未写情节段）后，再调用 save_chapter_text。"
-            )
+    # 2.5) 硬门禁：正文低于字数下限 → 拒绝落盘（保留进行中草稿），逼 agent 续写满章。
+    #      必须**独立于审查器**：审查器异常会让 review_dict=None，早期实现据此整段跳过下限检查
+    #      → 过短正文照样落盘（章质量与后续 reconcile 都被污染）。
+    actual_units = count_prose_units(processed)
+    if actual_units < int(target * HARD_MIN_RATIO):
+        raise RuntimeError(
+            f"第 {n} 章正文 {actual_units} 字，低于本章下限 "
+            f"{int(target * HARD_MIN_RATIO)} 字，正文不完整，未落盘。"
+            f"请继续写满本章（逐情节段补全全部未写情节段）后，再调用 save_chapter_text。"
+        )
 
     _write_commit_journal(book_id, {"schema_version": 1, "book_id": book_id, "chapter_num": n,
                                     "title": title or f"第{n}章", "started_at": time.time(),
@@ -1788,9 +1800,18 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     #    plot_segments 缺失时回退草稿 bridges（agent 漏传 plot_segments 也不会卡住 next_plot）
     #    storyline_revision = 影响下次故事规划的事实状态版本（R3/R5 修订）：每成功落盘一章 +1，
     #    使旧 replan preview（expected_revision=旧值）在 commit 时被判 stale。
-    try:
-        tl = book_mgr.load_storyline(book_id)
-        if tl:
+    #
+    #    ⚠️ 这一段是**权威状态**：静默失败会让「正文已写、情节段仍算未写」（下一轮重写同一
+    #    情节段）并且 revision 不 bump（旧 replan preview 看起来仍新鲜、CAS 放行）。因此这里
+    #    重试一次后显式抛 ChapterCommittedStateError，由 finalize_draft_chapter 转成「章已提交
+    #    但状态待修复」的诊断，绝不当作章节提交失败、也绝不静默。
+    tl = None
+    last_state_error = None
+    for attempt in (1, 2):
+        try:
+            tl = book_mgr.load_storyline(book_id)
+            if tl is None:
+                raise RuntimeError("故事线缺失")
             written_plot_ids = {b.get("plot_id") for b in (plot_segments or []) if b.get("plot_id")}
             if not written_plot_ids:
                 try:
@@ -1799,19 +1820,30 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
                         with open(dp, encoding="utf-8") as f:
                             _d = json.load(f)
                         written_plot_ids = {b.get("plot_id") for b in (_d.get("bridges") or []) if b.get("plot_id")}
-                except Exception:
-                    pass
+                except Exception as e:
+                    _log.warning("回退草稿取情节段失败 book=%s chapter=%s: %s", book_id, n, e)
             for p in tl.plots:
                 if not (getattr(p, "written_chapter", 0) or 0) and p.id in written_plot_ids:
                     p.written_chapter = n
             tl.storyline_revision = int(getattr(tl, "storyline_revision", 0) or 0) + 1
             tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
             book_mgr.save_storyline(book_id, tl)
-            # 5.5) 章末规划增量上报（reader_question/character_intents 语义合并；失败不阻塞落盘）
-            if planning_patch:
-                _apply_chapter_planning_patch(book_id, tl, book, planning_patch)
-    except Exception:
-        pass
+            last_state_error = None
+            break
+        except Exception as e:  # noqa: BLE001
+            last_state_error = e
+            _log.warning("故事线进度更新失败（第 %s 次尝试）book=%s chapter=%s: %s",
+                         attempt, book_id, n, e)
+    if last_state_error is not None:
+        raise ChapterCommittedStateError(
+            f"第{n}章已落盘，但故事线进度/版本更新失败：{last_state_error}；"
+            "需修复 storyline.json（written_chapter / storyline_revision）后再继续写作") from last_state_error
+    # 5.5) 章末规划增量上报（reader_question/character_intents 语义合并；失败不阻塞落盘）
+    if planning_patch:
+        try:
+            _apply_chapter_planning_patch(book_id, tl, book, planning_patch)
+        except Exception as e:  # noqa: BLE001
+            _log.warning("章末规划增量合并失败（不阻塞正文）book=%s chapter=%s: %s", book_id, n, e)
 
     # 5.6) Prediction→Fact reconcile（修订 2/3）：只比较 structured expected_facts vs actual facts，
     #      fact 永远优先；漂移转 DecisionPoint，apply_fact_intents 以事实校正 character_intents；
@@ -1836,7 +1868,9 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
                 "stale_count": sum(1 for r in runs if r.get("stale")),
                 "decision_points": points,
             }
-    except Exception:
+    except Exception as e:  # noqa: BLE001
+        _log.warning("章末 reconcile 失败（正文与章已落地，仅预测对账缺失）book=%s chapter=%s: %s",
+                     book_id, n, e)
         reconcile_result = None
 
     # 6) 角色状态（规则自动机 + agent 上报的剧情人物变化事件落账）
@@ -1854,11 +1888,14 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
             csm.apply_events(char_events, n, bible)
         csm.update_from_chapter(n, processed)  # 出场/离线计数
         csm.save(_char_states_path(book_id))
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        _log.warning("角色状态落账失败（不阻塞正文）book=%s chapter=%s: %s", book_id, n, e)
 
     # 7) 读者承诺台账（规则：written_chapter 标记 + pending 承诺 op 分级演化）
-    _update_promises_ledger_thin(book_id, n)
+    try:
+        _update_promises_ledger_thin(book_id, n)
+    except Exception as e:  # noqa: BLE001
+        _log.warning("读者承诺台账更新失败（不阻塞正文）book=%s chapter=%s: %s", book_id, n, e)
 
     # 7.5) 暂存事实升级为章节正式历史；过程只聚合 Agent 已上报的结构化 delta，
     # 不读取正文推断语义。写入失败不应清空 staged ledger，便于恢复。
@@ -1866,7 +1903,9 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     try:
         from libraries.plot_run_state import build_chapter_delta, commit_chapter_delta
         chapter_delta = commit_chapter_delta(book_id, build_chapter_delta(book_id, n))
-    except Exception:
+    except Exception as e:  # noqa: BLE001
+        _log.warning("暂存事实升级失败（保留 staged ledger 便于恢复）book=%s chapter=%s: %s",
+                     book_id, n, e)
         chapter_delta = None
 
     # 8) 清进行中草稿（整章已落盘）
@@ -1874,14 +1913,14 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
         dp = os.path.join(_ROOT, "books", book_id, "draft_chapter.json")
         if os.path.exists(dp):
             os.remove(dp)
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        _log.warning("清理章节草稿失败（章已落盘）book=%s chapter=%s: %s", book_id, n, e)
     try:
         journal = _commit_journal_path(book_id)
         if os.path.exists(journal):
             os.remove(journal)
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        _log.warning("清理提交日志失败（章已落盘）book=%s chapter=%s: %s", book_id, n, e)
 
     metrics = _text_metrics(processed)
     return {"ok": True, "chapter": n, "word_count": metrics["actual_prose_units"],
@@ -1892,7 +1931,17 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
 
 
 def finalize_draft_chapter(book_id: str, flow_id: str = "") -> dict:
-    """服务端从已签收的 draft 原子提交章节并执行门禁（不暴露给 Writer）。"""
+    """服务端从已签收的 draft 提交章节 + 执行质量门禁（不暴露给 Writer）。
+
+    顺序与失败语义（W8）：
+      1. `save_chapter_text` 是**不可回退**的落盘点：它失败（章未确认落盘）→ 抛异常，
+         由 FSM 的失败出口统一转 FAILED + 释放租约；
+      2. 一旦章落地，后续**全部是提交后诊断/收尾**——质量门禁异常只标 `quality_gate.error`，
+         flow 一定走到 DONE 并释放租约，绝不出现「章已提交却报『章节提交失败』且租约不释放」；
+      3. 若权威状态（故事线进度/revision）在章落地后更新失败，`save_chapter_text` 抛
+         `ChapterCommittedStateError`，这里转成 `state_error` 诊断返回（章确实已提交），
+         由 FSM 提示用户修复后继续。
+    """
     draft = _draft_read(book_id) or {}
     bridges = list(draft.get("bridges") or [])
     if not bridges:
@@ -1901,23 +1950,42 @@ def finalize_draft_chapter(book_id: str, flow_id: str = "") -> dict:
     if chapter_num < 1:
         raise RuntimeError("草稿缺少章节号")
     text = "\n\n".join(str(x.get("text") or "") for x in bridges)
-    # Plot summary 不进入事实层，只做面向读者的章节摘要来源。
+    # Plot summary 不进入事实层，只做面向读者的章节摘要来源（取前若干段拼接，不硬截断句子）。
     summaries = [str(x.get("plot_summary") or "").strip() for x in bridges if x.get("plot_summary")]
-    summary = "；".join(summaries)
-    if len(summary) > 240:
-        summary = summary[:240]
-    result = save_chapter_text(book_id, chapter_num, text, title=f"第{chapter_num}章",
-                               summary=summary, plot_segments=[{"plot_id": x.get("plot_id"),
-                               "plot_name": x.get("plot_name"), "text": x.get("text") or ""} for x in bridges])
-    gate = chapter_quality_gate(book_id, chapter_num)
-    result["quality_gate"] = gate
+    summary = "；".join(summaries[:3])
+    state_error = None
+    try:
+        result = save_chapter_text(book_id, chapter_num, text, title=f"第{chapter_num}章",
+                                   summary=summary, plot_segments=[{"plot_id": x.get("plot_id"),
+                                   "plot_name": x.get("plot_name"), "text": x.get("text") or ""} for x in bridges])
+    except ChapterCommittedStateError as exc:
+        _log.error("章已落盘但权威状态未更新 book=%s chapter=%s: %s", book_id, chapter_num, exc)
+        state_error = str(exc)
+        result = {"ok": True, "chapter": chapter_num, "state_error": state_error,
+                  **_text_metrics(text)}
+    # 提交后诊断：门禁读的是已落盘章节，异常只作诊断，不改「章已提交」这一事实。
+    try:
+        gate = chapter_quality_gate(book_id, chapter_num)
+        result["quality_gate"] = gate if isinstance(gate, dict) else {"ok": True, "report": gate}
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("章质量门禁异常（章已提交）book=%s chapter=%s: %s", book_id, chapter_num, exc)
+        result["quality_gate"] = {"ok": False, "error": str(exc), "skipped": True}
     if flow_id:
+        from libraries.write_flow import release_lease, transition
         try:
-            from libraries.write_flow import transition, release_lease
-            transition(book_id, flow_id, "DONE", chapter_num=chapter_num)
-            release_lease(book_id, flow_id)
-        except Exception:
-            pass
+            transition(book_id, flow_id, "QUALITY_GATE")
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("flow 置 QUALITY_GATE 失败 book=%s flow=%s: %s", book_id, flow_id, exc)
+        try:
+            transition(book_id, flow_id, "DONE", chapter_num=chapter_num,
+                       error=state_error)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("flow 置 DONE 失败 book=%s flow=%s: %s", book_id, flow_id, exc)
+        finally:
+            try:
+                release_lease(book_id, flow_id)     # 收章完成无论如何都要释放租约
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("租约释放失败 book=%s flow=%s: %s", book_id, flow_id, exc)
     return result
 
 
@@ -3317,8 +3385,13 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
         if not isinstance(args.get("diagnosis"), dict):
             raise RuntimeError(f"命令 {cmd} 需 diagnosis 对象")
         outs, plots = args.get("outlines"), args.get("plots")
-        if not isinstance(outs, list) or not (isinstance(plots, list) and 3 <= len(plots) <= 8):
-            raise RuntimeError(f"命令 {cmd} 需 outlines 数组及 3-8 个 plots")
+        # 批大小与「剩余多少就续规划」的阈值同源（planning_state.REPLAN_BATCH_*），
+        # 否则一次补太少 + 阈值太高 → 每 1–7 段就烧一整轮计划器会话。
+        from libraries.planning_state import REPLAN_BATCH_MAX, REPLAN_BATCH_MIN
+        if not isinstance(outs, list) or not (isinstance(plots, list)
+                                             and REPLAN_BATCH_MIN <= len(plots) <= REPLAN_BATCH_MAX):
+            raise RuntimeError(f"命令 {cmd} 需 outlines 数组及 "
+                               f"{REPLAN_BATCH_MIN}-{REPLAN_BATCH_MAX} 个 plots")
         problems = outline_payload_problems(outs, plots,
                                             known_outlines=tl.outlines or [],
                                             known_plots=tl.plots or [])

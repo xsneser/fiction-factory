@@ -125,6 +125,16 @@ def chapter_status(book_id: str, tl, draft: dict | None, *, needs_replan: bool) 
 
 
 def next_action(status: dict) -> str:
+    """按状态选下一个动作。**优先级是有意固定的**：
+
+    章满收章 → 还有可写 Plot 就继续写 → 都没有才续规划 → 否则失败。
+
+    「还有可写 Plot」优先于边界信号：`detect_story_boundary` 给出的 PLOTS_LOW/WORDS_LOW
+    是**续规划信号**（UI 横幅 + 计划器输入），不是「停写」信号。已承诺的情节段是已经向读者
+    承诺的内容，写它们不需要新规划；在情节段耗尽前为边界中断写作只会白烧一轮计划器会话
+    （一次 ≈ 10 轮 LLM）。相应地：审查/改动这里前请先读 planning_state.detect_story_boundary
+    的注释与批次策略（REPLAN_BATCH_*），别顺手把边界提到 has_next 之前。
+    """
     if status.get("chapter_ready"):
         return "COMMITTING_CHAPTER"
     if status.get("has_next_committed_plot"):
