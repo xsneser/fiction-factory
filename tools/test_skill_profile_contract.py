@@ -10,6 +10,7 @@
 """
 import os
 import sys
+import typing
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
@@ -56,6 +57,52 @@ def main():
         unused = sorted(set(profile_allows(profile)) - refs)
         if unused:
             print(f"  ⚠️ {skill} profile 未被 skill 文本直接引用（非阻断）: {unused}")
+
+    # ── drive_ui 的可见 schema 必须等于能力边界（P1）────────────────────────────
+    # 回归（2026-09-10）：build-candidates 的 run 里模型看得见 set_world、调了才被拒，
+    # 于是整轮预算花在「试 set_world → 试 set_characters → navigate → 再读状态」上。
+    import agent_tools as AT
+    from libraries.agent_tool_router import (UI_COMMAND_POLICY, allowed_ui_commands,
+                                             check_ui_command, filter_drive_ui_doc,
+                                             make_drive_ui_for_profile)
+    all_cmds = sorted(AT._WIZARD_CMDS)
+    for profile in sorted(PROFILE_TOOLS):
+        allowed = allowed_ui_commands(profile)
+        # ① 能力集与 check_ui_command 的判定必须同源（暴力比对，防两张表漂移）
+        real = set()
+        for c in all_cmds:
+            try:
+                check_ui_command(c, profile)
+                real.add(c)
+            except RuntimeError:
+                pass
+        check(f"allowed_ui_commands({profile}) 与 check_ui_command 同源", allowed == real,
+              f"表={sorted(allowed - real)} 判定={sorted(real - allowed)}")
+        if "drive_ui" not in PROFILE_TOOLS[profile]:
+            continue   # 没暴露 drive_ui 的 profile：裁不裁描述都无所谓，不必断言
+        # ② 暴露的 cmd enum 就是能力集（schema 层不可表达越界命令）
+        cands = [c for c in all_cmds if c in allowed]
+        keep = [c for c in all_cmds if c not in allowed]
+        if not cands or not keep:
+            continue
+        base = next((e["func"] for e in AT.TOOL_REGISTRY if e["name"] == "drive_ui"), None)
+        fn, desc = make_drive_ui_for_profile(profile, base)
+        got = set(typing.get_args(typing.get_type_hints(fn).get("cmd")) or ())
+        check(f"drive_ui({profile}) 的 cmd 注解 == 能力集", got == set(cands),
+              f"多={sorted(got - set(cands))} 少={sorted(set(cands) - got)}")
+        # ③ description 不泄露越界命令（submit 例外：它是禁止性说明）
+        leaked = [c for c in keep if c != "submit" and c in (desc or "")]
+        check(f"drive_ui({profile}) 描述不含越界命令", not leaked, f"泄露={leaked}")
+        check(f"drive_ui({profile}) 描述保留 submit 禁令（护栏）",
+              "submit" in (desc or ""), "")
+
+    # ④ 越界调用的报错必须可行动（带上本 profile 的合法命令集）
+    try:
+        check_ui_command("set_world", "build-candidates")
+        check("越界命令报错可行动", False, "未抛错")
+    except RuntimeError as e:
+        check("越界命令报错可行动",
+              "set_world" in str(e) and "set_field" in str(e), str(e)[:120])
 
     mirror = dsh_mirror_mismatch()
     check(".dsh/skills 镜像与源 byte-identical", not mirror, ("；".join(mirror)) if mirror else "(6 skill 一致)")

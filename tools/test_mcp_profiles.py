@@ -13,6 +13,12 @@ EXPECTED = {
     "write": {"prepare_plot_run", "save_plot_draft"},
     "replan": {"get_story_state", "save_outlines", "validate_storyline", "validate_world",
                "query_arc_library", "query_plots", "drive_ui"},
+    "build": {"get_build_status", "drive_ui", "query_arc_library", "query_plots",
+              "query_gags", "query_characters", "validate_storyline", "validate_world",
+              "navigate", "get_book_detail"},
+    # build-candidates 会按 build_status 的 pen_selected 摘掉 query_profiles，
+    # 故只断言「⊆ 该 profile 且 ⊇ 去掉 query_profiles 的那一份」（见 check_optional）
+    "build-candidates": {"navigate", "drive_ui", "get_build_status", "query_profiles"},
 }
 
 
@@ -24,9 +30,30 @@ async def check(profile: str) -> None:
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            names = {tool.name for tool in (await session.list_tools()).tools}
-            assert names == EXPECTED[profile], (profile, sorted(names))
-            print(f"[OK] {profile}: {len(names)} tools")
+            tools = (await session.list_tools()).tools
+            names = {t.name for t in tools}
+            if profile == "build-candidates":
+                # 现场 build_status 的 pen_selected 会实时摘掉 query_profiles → 断言上下界
+                assert names <= EXPECTED[profile], (profile, sorted(names - EXPECTED[profile]))
+                assert names >= EXPECTED[profile] - {"query_profiles"}, (profile, sorted(names))
+            else:
+                assert names == EXPECTED[profile], (profile, sorted(names))
+            # P1：**线路上**的 drive_ui schema 必须已按 profile 裁到能力边界
+            # （2026-09-10：模型看得见 set_world、调了才吃 ui_command_forbidden，
+            #   于是整轮预算花在平台错误恢复上）
+            if "drive_ui" in names:
+                from libraries.agent_tool_router import allowed_ui_commands
+                schema = next(t for t in tools if t.name == "drive_ui").inputSchema
+                enum = set(schema["properties"]["cmd"].get("enum") or [])
+                assert enum == allowed_ui_commands(profile), (
+                    profile, sorted(enum ^ allowed_ui_commands(profile)))
+                desc = next(t for t in tools if t.name == "drive_ui").description or ""
+                leaked = [c for c in ("set_world", "set_outline", "set_characters")
+                          if c in desc and c not in allowed_ui_commands(profile)]
+                assert not leaked, (profile, leaked)
+                print(f"[OK] {profile}: {len(names)} tools；drive_ui cmd enum {len(enum)} 个已裁剪")
+            else:
+                print(f"[OK] {profile}: {len(names)} tools")
 
 
 async def main() -> None:

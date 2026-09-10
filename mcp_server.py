@@ -12,8 +12,10 @@ import functools
 import inspect
 import json
 import os
+import re
 import sys
 import time
+from typing import Literal
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _ROOT)
@@ -146,6 +148,22 @@ def _wrap_logged(fn):
     return _wrapped
 
 
+# ─── drive_ui 的**可见 schema** 按 profile 裁剪（P1）──────────────────────────
+# 为什么必须做（2026-09-10 实测）：drive_ui 是「一个工具 + 十几个子命令」的命令桥，
+# `filter_registry` 只裁工具级；命令级此前只在**调用时**由 check_ui_command 拒绝
+# （JSON Schema 里 cmd 是裸 string）。于是 build-candidates 的 run 里模型**看得见**
+# set_world、调了才吃 ui_command_forbidden —— 模型随后把整轮预算花在
+# 「试 set_world → 试 set_characters → navigate → 再读状态」这种平台错误恢复上，
+# 小说设计一次都没做。**可见 schema 必须等于能力边界**：description 与 cmd enum 一起裁。
+# 实现在 libraries/agent_tool_router.py（可离线测试，import 本文件会触发注册副作用）。
+
+
+def _drive_ui_for_profile(profile: str):
+    from libraries.agent_tool_router import make_drive_ui_for_profile
+    base = next((e["func"] for e in TOOL_REGISTRY if e["name"] == "drive_ui"), None)
+    return make_drive_ui_for_profile(profile, base)
+
+
 # 逐个注册（工具名/描述/schema 由函数签名+docstring 自动生成）。
 # 护栏：直建/直删工具不存在于注册表——建书走「启动新书」向导 UI
 # （drive_ui 驱动）、删书走书库页手动；navigate/drive_ui 经意图桥驱动浏览器/向导。
@@ -163,6 +181,11 @@ if _PROFILE in {"build", "build-candidates"}:
     except Exception:
         pass
 for _entry in _EXPOSED_REGISTRY:
+    if _entry["name"] == "drive_ui":
+        _dui, _dui_desc = _drive_ui_for_profile(_PROFILE)
+        if _dui is not None:
+            mcp.tool(name="drive_ui", description=_dui_desc)(_wrap_logged(_dui))
+            continue
     mcp.tool()(_wrap_logged(_entry["func"]))
 
 _RUNTIME_INSTANCE = record_startup(
