@@ -42,9 +42,10 @@ from ui.web_blueprints.ctx import (  # noqa: E402
 )
 from core.text_utils import count_prose_units  # noqa: E402
 from libraries.reviewer import HARD_MIN_RATIO  # noqa: E402
-from libraries.storyline import PLOT_HARD_MAX, OutlineSlot, annotate_plot_roles, \
-    get_mc, get_characters, normalize_basic_info, outline_payload_problems, \
-    plot_size_problems, signature_phrases_of, voice_keys_with_content  # noqa: E402
+from libraries.storyline import PLOT_HARD_MAX, PLOT_PREFERRED_MAX, OutlineSlot, \
+    annotate_plot_roles, get_mc, get_characters, normalize_basic_info, \
+    outline_payload_problems, plot_size_problems, signature_phrases_of, \
+    voice_keys_with_content  # noqa: E402
 from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
 from libraries.tool_policy import _wrap_phase_gate  # noqa: E402
 from libraries import style_md  # noqa: E402  # 样本驱动:styles/<pen>.md 与 STYLE REFERENCE 样本
@@ -91,6 +92,209 @@ def _draft_read(book_id: str):
             return json.load(f)
     except Exception:
         return None
+
+
+# 章节草稿里**跨 Plot 存活**的键（保存下一个情节段时必须原样带过去）。
+# style_anchor = 本章唯一主样文（冻结正文）；chapter_title = 开章时定下的标题。
+# 只写 bridge 的旧实现每保存一段就把它们丢掉——见 _save_plot_draft_legacy 的注释。
+_DRAFT_CARRIED_KEYS = ("style_anchor", "chapter_title")
+
+
+def _draft_write(book_id: str, draft: dict) -> None:
+    """原子写章节草稿（读写路径统一走这里，避免多处写盘口径不一致）。
+
+    `write_json_atomic` 自带建目录 + 文件锁，所以调用方不必再 os.makedirs。
+    """
+    from core.json_store import write_json_atomic
+    write_json_atomic(os.path.join(_ROOT, "books", book_id, "draft_chapter.json"), draft)
+
+
+def _draft_carried(draft: dict | None, chapter_num: int) -> dict:
+    """取出草稿里需要跨 Plot 保留的字段；**换章时返回空**（锚与标题都是章级事实）。"""
+    d = draft or {}
+    if int(d.get("chapter_num") or 0) != int(chapter_num or 0):
+        return {}
+    return {k: d[k] for k in _DRAFT_CARRIED_KEYS if d.get(k) not in (None, "", {}, [])}
+
+
+CONTINUITY_TAIL_CHARS = 800
+
+
+def _build_continuity_tail(book_id: str, draft: dict | None, chapter_num: int) -> dict | None:
+    """上一段正文的**语言尾巴**——Plot 之间/章之间唯一的连续正文通道。
+
+    与 `previous_change` 分工：那个说「发生了什么」（结构化事实），这个说「上一段文字
+    是怎么说话、怎么断句、怎么收尾的」（语言惯性）。Writer 是 per-Plot 的独立 LLM Run，
+    没有尾巴就会每次从零重建文风。
+
+    章内取上一 bridge 结尾；**新章第一个 Plot 没有 bridge**（换章时草稿重置），此时必须
+    取上一章已落盘正文——旧实现只从草稿取，于是每个新章首段都是完全失忆的。
+    首章 / 上一章缺失 → 返回 None（不注入空对象，免得模型对着空尾巴瞎猜）。
+    """
+    d = draft or {}
+    bridges = list(d.get("bridges") or [])
+    if bridges:
+        text = str(bridges[-1].get("text") or "")
+        if text.strip():
+            return {"source": "previous_plot", "text": text[-CONTINUITY_TAIL_CHARS:]}
+        return None
+    if int(chapter_num or 0) <= 1:
+        return None
+    try:
+        prev = book_mgr.load_chapter(book_id, int(chapter_num) - 1) or {}
+    except Exception:  # noqa: BLE001 — 取不到上一章不该阻断写作
+        return None
+    text = str(prev.get("content") or "")
+    if not text.strip():
+        return None
+    return {"source": "previous_chapter", "text": text[-CONTINUITY_TAIL_CHARS:]}
+
+
+def _live_sample_digest(profile, saved_style: dict | None) -> str | None:
+    """无锚时按实时样文池算 digest（legacy 路径的判据）。profile 缺失 → None 表示不可判。"""
+    from libraries.style_snapshot import selected_sample_digest
+    if profile is None:
+        return None
+    sample_id = str((saved_style or {}).get("sample_id") or "")
+    try:
+        return selected_sample_digest(profile, sample_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _chapter_anchor_of(draft: dict | None, chapter_num: int) -> dict | None:
+    """读本章样文锚；章号不符或缺冻结正文 → None（视为没有锚）。"""
+    a = (draft or {}).get("style_anchor")
+    if not isinstance(a, dict):
+        return None
+    if int(a.get("chapter_num") or 0) != int(chapter_num or 0):
+        return None
+    s = a.get("sample")
+    if not isinstance(s, dict) or not str(s.get("rendered_text") or "").strip():
+        return None
+    return a
+
+
+def _chapter_anchor_extra(anchor: dict | None) -> dict:
+    """锚的身份（进 snapshot digest）：同一样文属于不同章锚时必须可区分。"""
+    a = anchor or {}
+    return {"scope": "chapter", "chapter_num": int(a.get("chapter_num") or 0),
+            "anchor_id": str(a.get("anchor_id") or "")}
+
+
+def _make_anchor_id(chapter_num: int, sample_id: str, content_digest: str) -> str:
+    """锚 id = 章号 + 样文身份摘要（内容派生，非随机 UUID——重算可复现）。"""
+    return f"chapter:{int(chapter_num)}:{_semantic_digest([sample_id, content_digest])[:16]}"
+
+
+def _inherit_anchor_receipt(draft: dict | None, profile) -> dict | None:
+    """在途章的过渡路径：草稿已有正文但还没锚时，试着沿用**本章已实际用过**的那篇样文。
+
+    只在这一篇现在仍能渲染出同样 digest 时才采纳（否则说明样文已被编辑/删除，沿用会
+    让本章后半段的参考与前半段不一致）。采纳失败就返回 None，由调用方新抽一篇并标
+    migration_mode——**不伪造「整章同一篇」的审计结论**。
+    """
+    from libraries.style_snapshot import selected_sample_digest
+    bridges = list((draft or {}).get("bridges") or [])
+    if not bridges or profile is None:
+        return None
+    r = bridges[0].get("sample_receipt")
+    if not isinstance(r, dict):
+        return None
+    sid, saved = str(r.get("sample_id") or ""), str(r.get("content_digest") or "")
+    if not sid or not saved:
+        return None
+    try:
+        current = selected_sample_digest(profile, sid)
+    except Exception:  # noqa: BLE001 — 池读取异常按「无法沿用」处理
+        return None
+    if not current or current != saved:
+        return None
+    return {"sample_id": sid, "profile_id": str(r.get("profile_id") or getattr(profile, "id", "")),
+            "content_digest": saved, "plot_id": str(bridges[0].get("plot_id") or "")}
+
+
+def _create_chapter_anchor(book_id: str, tl, p, chapter_num: int, profile,
+                           style_card: str) -> dict | None:
+    """新章锚：算章级 query → 抽 1 篇（k=1）→ 记一次避重历史 → **冻结渲染正文**。
+
+    整章只调一次。冻结正文（而非只存 id + digest）是刻意的：章内第 2..N 个情节段直接
+    用这份文本，样文库之后怎么改只影响**下一章**，避免「同一个锚 id、实际文本已变」。
+    """
+    from libraries.plot_dims import chapter_plot_window, infer_chapter_query
+    from libraries.style_snapshot import rendered_sample_digest
+
+    inherited = _inherit_anchor_receipt(_draft_read(book_id), profile)
+    if inherited:
+        # 沿用：不再抽样、不再记避重历史（那篇当初已经记过）
+        try:
+            pool = style_samples.pool_for(profile)
+        except Exception:  # noqa: BLE001
+            pool = []
+        rendered = ""
+        for s in pool:
+            if s.id == inherited["sample_id"]:
+                rendered = style_samples.render_reference([s])
+                break
+        if rendered and rendered_sample_digest(rendered) == inherited["content_digest"]:
+            sample = {"sample_id": inherited["sample_id"], "profile_id": inherited["profile_id"],
+                      "content_digest": inherited["content_digest"], "rendered_text": rendered,
+                      "selected_at": time.time()}
+            return _anchor_doc(chapter_num, sample, query={}, window_ids=[],
+                               migration_mode="inherited_from_first_bridge")
+
+    ordered = _ordered_plots(tl)
+    idx = next((i for i, q in enumerate(ordered) if q.id == p.id), 0)
+    window = chapter_plot_window(ordered[idx:], target_words=int(getattr(tl, "words_per_chapter", 0) or 3000))
+    query = infer_chapter_query(window, tl)
+    picked = pick_plot_sample(book_id, query=query)   # 模块级调用：测试可打桩计数
+    if not (picked.get("ok") and (picked.get("text") or "").strip()):
+        return None
+    receipt = dict(picked.get("sample_receipt") or {})
+    sample = {"sample_id": str(receipt.get("sample_id") or ""),
+              "profile_id": str(receipt.get("profile_id") or getattr(profile, "id", "")),
+              "content_digest": str(receipt.get("content_digest") or ""),
+              "rendered_text": picked.get("text") or "",
+              "selected_at": time.time()}
+    return _anchor_doc(chapter_num, sample, query=query,
+                       window_ids=[q.id for q in window])
+
+
+def _anchor_doc(chapter_num: int, sample: dict, *, query: dict, window_ids: list,
+                migration_mode: str = "") -> dict:
+    from libraries.style_snapshot import CHAPTER_ANCHOR_SELECTOR_VERSION
+    doc = {"schema_version": 1, "scope": "chapter", "chapter_num": int(chapter_num),
+           "selector_version": CHAPTER_ANCHOR_SELECTOR_VERSION,
+           "anchor_id": _make_anchor_id(chapter_num, sample.get("sample_id", ""),
+                                        sample.get("content_digest", "")),
+           "chapter_query": dict(query or {}), "window_plot_ids": list(window_ids or []),
+           "sample": sample}
+    if migration_mode:
+        doc["migration_mode"] = migration_mode
+    return doc
+
+
+def _ensure_chapter_anchor(book_id: str, tl, p, draft: dict | None, chapter_num: int,
+                           profile, style_card: str) -> dict | None:
+    """取本章锚；没有就建一个并落草稿。返回 None = 无可用样文（按 style card 保底写作）。"""
+    anchor = _chapter_anchor_of(draft, chapter_num)
+    if anchor:
+        return anchor
+    created = _create_chapter_anchor(book_id, tl, p, chapter_num, profile, style_card)
+    if not created:
+        return None
+    # 只写锚、不动 bridges：本章已写的正文由 _save_plot_draft_legacy 负责带过去。
+    merged = dict(draft or {})
+    merged["chapter_num"] = int(draft.get("chapter_num") or 0) or int(chapter_num)
+    merged.setdefault("buffer", [])
+    merged.setdefault("words", 0)
+    merged.setdefault("bridges", [])
+    merged["style_anchor"] = created
+    try:
+        _draft_write(book_id, merged)
+    except Exception as exc:  # noqa: BLE001 — 锚写盘失败不该阻断写作（下轮会重建）
+        _log.warning("章锚落草稿失败 book=%s chapter=%s: %s", book_id, chapter_num, exc)
+    return created
 
 
 def _text_metrics(text: str) -> dict:
@@ -143,7 +347,8 @@ def _json_source_digest(path: str) -> str:
 
 
 def _context_version_vector(book_id: str, tl, draft: dict | None,
-                            style_snapshot: dict | None = None) -> dict:
+                            style_snapshot: dict | None = None,
+                            continuity_tail: dict | None = None) -> dict:
     """Return revisions for semantic sources used by a prepared Plot.
 
     This intentionally hashes canonical source state, not the rendered packet:
@@ -155,9 +360,19 @@ def _context_version_vector(book_id: str, tl, draft: dict | None,
     book_dir = os.path.join(_ROOT, "books", book_id)
     return {
         "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+        # style_anchor **必须**进 draft_revision：章级样文锚是章内所有 Plot 的共享输入，
+        # 不进哈希就会出现「换了锚但指纹没变」→ token 校验放行按旧锚写的快照。
         "draft_revision": _semantic_digest({
             "chapter_num": draft.get("chapter_num", 0),
             "bridges": draft.get("bridges") or [],
+            "style_anchor": draft.get("style_anchor") or {},
+        }),
+        # 连续正文尾巴的 source+摘要。跨章时尾巴取自**上一章已落盘正文**，不在 draft 里，
+        # 所以上一章被修订时 draft_revision 不会变——这条负责让旧快照失效。只哈希摘要，
+        # 不把长正文塞进 version vector。
+        "continuity_tail_revision": _semantic_digest({
+            "source": (continuity_tail or {}).get("source", ""),
+            "text_digest": _semantic_digest((continuity_tail or {}).get("text", "") or ""),
         }),
         "staged_revision": _semantic_digest({
             "chapter_num": staged.get("chapter_num", 0),
@@ -873,13 +1088,37 @@ def prepare_plot_run(book_id: str) -> dict:
     # Materialize planning state before deriving the retry key; first and
     # subsequent prepares must observe the same source set.
     ps = load_planning_state(book_id, tl, book)
-    from libraries.style_snapshot import (build_snapshot, selected_sample_digest,
-                                           snapshot_matches)
-    base_style_snapshot = build_snapshot(style_profile, style_card)
-    base_version_vector = _context_version_vector(book_id, tl, draft, base_style_snapshot)
+    from libraries.style_snapshot import (CHAPTER_ANCHOR_SELECTOR_VERSION, build_snapshot,
+                                          snapshot_matches)
+    # 章号：草稿里有就用它；没有（新章第一个 Plot）用「已落盘章数 + 1」。
+    chapter_num = (int(draft.get("chapter_num") or 0)
+                   or int(getattr(book, "current_chapter", 0) or 0) + 1)
+    continuity_tail = _build_continuity_tail(book_id, draft, chapter_num)
+    # ── 章级样文锚：一章抽一次、章内所有 Plot 复用同一份**冻结正文** ──
+    # 抽取时机必须在 find_prepared 之前**挡住重复**（选样会写避重历史），因此这里
+    # 先取锚（已有则零副作用），再用锚算指纹去查旧快照——命中就直接返回，never 重抽。
+    anchor = _ensure_chapter_anchor(book_id, tl, p, draft, chapter_num,
+                                    style_profile, style_card)
+    anchor_receipt = dict((anchor or {}).get("sample") or {})
+    anchor_extra = _chapter_anchor_extra(anchor)
+    # **统一版本向量的输入视图**：首次 prepare 时锚刚被创建（读 draft 时还没有），
+    # 第二次时才从盘上读到它——若直接拿各自的 draft 算，两次的 draft_revision 不同、
+    # prepared_key 就不同 → 重试找不到原快照、白抽一次样。这里显式把「章号 + 本章锚」
+    # 归一，使首次与后续 prepare 看到同一份来源集合。
+    draft_for_version = {**draft, "chapter_num": chapter_num}
+    if anchor:
+        draft_for_version["style_anchor"] = anchor
+    style_snapshot = (build_snapshot(style_profile, style_card, anchor_receipt,
+                                     selector_version=CHAPTER_ANCHOR_SELECTOR_VERSION,
+                                     anchor_extra=anchor_extra)
+                      if anchor else build_snapshot(style_profile, style_card))
+    version_vector = _context_version_vector(book_id, tl, draft_for_version, style_snapshot,
+                                             continuity_tail)
     run["context_fingerprint"] = _context_fingerprint(
-        book_id, tl, raw_run, profile, style_snapshot=base_style_snapshot,
-        version_vector=base_version_vector)
+        book_id, tl, raw_run, profile, style_snapshot=style_snapshot,
+        version_vector=version_vector)
+    # 锚已存在时读锚无副作用，选样前的 key 与选样后完全一致——两套指纹合一，
+    # 消掉「prepared_key 与 context_fingerprint 表达不同语义」这个错误面。
     prepared_key = run["context_fingerprint"]
     flow_id = os.environ.get("NOVEL_WRITE_FLOW_ID", "adhoc")
     child_run_id = os.environ.get("NOVEL_WRITE_CHILD_RUN_ID", run["id"])
@@ -895,10 +1134,11 @@ def prepare_plot_run(book_id: str) -> dict:
     if existing:
         snapshot = existing[1].get("prepared_snapshot")
         saved_style = ((snapshot or {}).get("style") or {}).get("snapshot")
-        sample_id = (saved_style or {}).get("sample_id", "")
-        current_digest = selected_sample_digest(style_profile, sample_id) if style_profile else ""
+        # 锚路径**只比锚内记录的 digest**（冻结语义：样文文件被编辑不影响本章）。
+        current_digest = (str(anchor_receipt.get("content_digest") or "") if anchor
+                          else _live_sample_digest(style_profile, saved_style))
         if isinstance(snapshot, dict) and saved_style and current_digest is not None and snapshot_matches(
-                style_profile, style_card, saved_style, current_digest):
+                style_profile, style_card, saved_style, current_digest, anchor_extra=anchor_extra):
             return snapshot
     execution = dict(raw_run["plot"])
     # 新数据 roles 是严格契约；旧数据仅用结构化字段补齐，不从正文猜角色。
@@ -924,10 +1164,14 @@ def prepare_plot_run(book_id: str) -> dict:
     recent = []
     for i, bridge in enumerate(reversed(bridges[-2:])):
         text = str(bridge.get("text") or "")
-        recent.append({"distance": i + 1, "plot_id": bridge.get("plot_id"),
-                       "plot_name": bridge.get("plot_name"),
-                       "summary": (bridge.get("facts") or {}),
-                       "ending": text[-800:] if i == 0 else text[-500:]})
+        # 最近一段**不给 ending**：正文尾巴的唯一通道是 continuity_tail（否则同一段文本
+        # 会被注入两次，且这里的尾巴还会被 memory 预算裁掉）。次近一段可留，且可裁。
+        entry = {"distance": i + 1, "plot_id": bridge.get("plot_id"),
+                 "plot_name": bridge.get("plot_name"),
+                 "summary": (bridge.get("facts") or {})}
+        if i > 0:
+            entry["ending"] = text[-500:]
+        recent.append(entry)
     terms = list(getattr(p, "roles", None) or []) + [getattr(p, "thread_id", ""), getattr(p, "name", "")]
     # horizon 与剩余计数都走 _ordered_plots（弧→阶段→次序），与写作顺序同一口径
     indraft = _draft_plot_ids(draft)
@@ -943,32 +1187,24 @@ def prepare_plot_run(book_id: str) -> dict:
         storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
         last_replan=ps.get("last_replan") or {})
     status = chapter_status(book_id, tl, draft, needs_replan=bool(boundary.get("needs_replan")))
-    # 风格卡已在幂等检查前解析；本次只在没有可恢复快照时选一篇样文。
-    sample = {"text": "", "receipt": {}, "meta": {}}
-    sample_problem = ""
-    try:
-        picked = pick_plot_sample(book_id, query=raw_run.get("style_query") or {})
-        if picked.get("ok") and (picked.get("text") or "").strip():
-            sample = {"text": picked.get("text") or "", "receipt": picked.get("sample_receipt") or {},
-                      "meta": picked.get("sample") or {}}
-        else:
-            sample_problem = str(picked.get("error") or picked.get("message") or "样文池未返回可用样文")
-    except Exception as exc:  # noqa: BLE001
-        sample_problem = f"取样异常：{exc}"
-    if sample_problem:
-        # 设计取舍：样文池不可用时**仍允许写作**（style card 是保底，样文本就是可选参考），
-        # 但绝不假装取到了样文——快照里显式标 unavailable、回执不记 digest，并留日志，
-        # 让「这次没有样文」在审计面可辨（此前静默降级成空样文 + 空回执）。
-        sample["receipt"] = {"status": "unavailable", "reason": sample_problem}
-        _log.warning("Plot 取样不可用，按无样文继续（style card 保底）book=%s plot=%s: %s",
-                     book_id, p.id, sample_problem)
-    # pick_plot_sample 的独立旧入口不带动态 cast；prepare 是唯一 Writer 入口，
-    # 所以在这里以完整七 Packet 的指纹重新绑定 receipt。
-    style_snapshot = build_snapshot(style_profile, style_card, sample["receipt"])
-    version_vector = _context_version_vector(book_id, tl, draft, style_snapshot)
-    run["context_fingerprint"] = _context_fingerprint(
-        book_id, tl, raw_run, profile, style_snapshot=style_snapshot,
-        version_vector=version_vector)
+    # 样文来自**本章锚**（章首抽一次、章内复用冻结正文）；没有锚 = 样文池不可用。
+    # 池不可用时仍允许写作（style card 保底），但绝不假装取到了样文——快照显式标
+    # unavailable、不记 digest，并留日志，让「这次没有样文」在审计面可辨。
+    if anchor and str((anchor.get("sample") or {}).get("rendered_text") or "").strip():
+        sample = {"text": anchor["sample"]["rendered_text"], "receipt": dict(anchor_receipt),
+                  "meta": {"id": anchor_receipt.get("sample_id", ""),
+                           "chapter_anchor_id": anchor.get("anchor_id", ""),
+                           "migration_mode": anchor.get("migration_mode", "")}}
+    else:
+        sample = {"text": "", "receipt": {"status": "unavailable",
+                                          "reason": "本章未取到可用样文（样文池为空或不可用）"},
+                  "meta": {}}
+        _log.warning("章级取样不可用，按无样文继续（style card 保底）book=%s chapter=%s plot=%s",
+                     book_id, chapter_num, p.id)
+    # 章内单段的轻量节奏提示（不换样文）：章锚决定「整章像谁写的」，这里决定
+    # 「这一段在整章里快一点/慢一点、对话多一点」。
+    from libraries.plot_dims import infer_scene_modulation
+    scene_modulation = infer_scene_modulation(p, tl)
     sample["receipt"]["context_fingerprint"] = run["context_fingerprint"]
     brief = raw_run.get("execution_brief") or {}
     must = list(brief.get("must_happen") or [])
@@ -976,6 +1212,13 @@ def prepare_plot_run(book_id: str) -> dict:
     may = list(brief.get("may_happen") or [])
     execution.update({"entry_state": brief.get("entry_state") or {}, "success_criteria": brief.get("success_criteria") or must,
                       "must": must, "should": should, "may": may,
+                      "primary_turn": str(getattr(p, "primary_turn", "") or ""),
+                      "word_budget": {"planned": int(getattr(p, "words", 0) or 0),
+                                      "preferred_max": PLOT_PREFERRED_MAX,
+                                      "hard_max": PLOT_HARD_MAX},
+                      # 开章标记：本章还没有正文 → Writer 需一并给出章节标题候选
+                      # （章界由运行时字数门禁动态决定，规划期无法预知谁开章）。
+                      "is_chapter_opening": not bridges,
                       "chapter_progress": {"target_words": status["target_words"], "written_words": status["written_words"],
                                            "plot_index": len(bridges) + 1, "is_likely_last_plot": bool(status["chapter_ready"] or not status["has_next_committed_plot"])}})
     configured_memory_budget = int(os.environ.get("WRITE_MEMORY_BUDGET", "2500") or 2500)
@@ -997,6 +1240,9 @@ def prepare_plot_run(book_id: str) -> dict:
                 "context_version_vector": version_vector},
         "execution": execution,
         "previous_change": previous_change(book_id),
+        # 上一段正文尾巴（章内 = 上一 Plot / 新章 = 上一章）。**顶层**：它是已发生正文的
+        # 衔接材料，不是本 Plot 的目标与边界；`memory` 是可裁剪回忆，它不可裁。
+        "continuity_tail": continuity_tail,
         "cast": {**_staged_cast_projection(raw_run.get("cast_pack") or {}, staged), "resolution": resolution},
         "memory": {"budget_tokens": memory_budget, "recent": recent, "retrieved": retrieved},
         "horizon": {"preserve": list(getattr(horizon_plots[0], "expected_facts", None) or []) if horizon_plots else [],
@@ -1006,7 +1252,15 @@ def prepare_plot_run(book_id: str) -> dict:
         # 当前线程态（最小契约要求 current_thread 明示；只投影最近已写 + 未写计数/前几个 id，
         # 不把整条线程的 id 列表塞进快照——那是导航信息，不是上下文主体）。
         "thread": _thread_projection(raw_run.get("thread")),
-        "style": {"card": style_card, "sample": sample, "snapshot": style_snapshot},
+        # chapter_style_anchor：显式声明「本章共用这一篇」——章内第 2..N 个 Plot 会看到
+        # 同一个 sample_id 与逐字相同的 text，Writer 据此不必每段重建文风。
+        "style": {"card": style_card, "sample": sample, "snapshot": style_snapshot,
+                  "chapter_style_anchor": ({"anchor_id": anchor.get("anchor_id", ""),
+                                            "chapter_num": anchor.get("chapter_num", 0),
+                                            "chapter_query": anchor.get("chapter_query") or {},
+                                            "migration_mode": anchor.get("migration_mode", "")}
+                                           if anchor else None),
+                  "scene_modulation": scene_modulation},
     }
     token = issue_commit_token(
         book_id=book_id, flow_id=flow_id, child_run_id=child_run_id,
@@ -2130,16 +2384,13 @@ def _save_plot_draft_legacy(book_id: str, chapter_num: int, plot_id: str,
                "resource_changes", "promise_updates", "new_story_questions"):
         _facts[_k] = checked_outcome[_k]
     _facts["character_events"] = list(character_events or []) if isinstance(character_events, list) else []
-    dp = os.path.join(_ROOT, "books", book_id, "draft_chapter.json")
-    draft = {}
-    try:
-        if os.path.exists(dp):
-            with open(dp, encoding="utf-8") as f:
-                draft = json.load(f)
-    except Exception:
-        draft = {}
+    draft = _draft_read(book_id) or {}
     cur_ch = int(draft.get("chapter_num") or 0)
     bridges = list(draft.get("bridges") or [])
+    # 章级字段（style_anchor / chapter_title）必须跨 Plot 存活——下面的落盘是**整份重建**，
+    # 旧实现只写 {chapter_num,buffer,words,bridges}，于是每保存一个情节段就把本章样文锚
+    # 和标题丢掉：章内第 2 段会重新抽样（文风断层），章末标题也回到「第N章」。换章才清。
+    carried = _draft_carried(draft, chapter_num)
     if cur_ch != chapter_num:
         # 新章节草稿：重置
         bridges = []
@@ -2171,10 +2422,8 @@ def _save_plot_draft_legacy(book_id: str, chapter_num: int, plot_id: str,
     buffer = [b.get("text", "") for b in bridges]
     words = sum(count_prose_units(b) for b in buffer)
     try:
-        os.makedirs(os.path.dirname(dp) or ".", exist_ok=True)
-        with open(dp, "w", encoding="utf-8") as f:
-            json.dump({"chapter_num": chapter_num, "buffer": buffer, "words": words,
-                       "bridges": bridges}, f, ensure_ascii=False, indent=2)
+        _draft_write(book_id, {"chapter_num": chapter_num, "buffer": buffer, "words": words,
+                               "bridges": bridges, **carried})
     except Exception as e:
         raise RuntimeError(f"保存情节段草稿失败: {e}")
     # Plot 即事务边界：仅用结构化 facts reconcile，通过后进入可恢复 staged ledger，
@@ -2241,7 +2490,9 @@ def save_plot_draft(commit_token: str, text: str, plot_summary: str = "",
     # W1：本函数签名不含 book_id（Writer 只带回 commit_token），`_wrap_book_lock` 取不到锁目标，
     # 因此在这里解析出归属书后**显式**加锁，覆盖「版本校验 → 落草稿/staged → 记账本 → 推进 flow」
     # 全过程：令牌只防重放，不防与 Web 进程 / 另一 MCP 客户端同书并发写盘。
-    # 注意：BookLock 不可重入，故本函数不得再出现在 _LOCKED_TOOLS 里（否则 wrapper 会二次加锁死锁）。
+    # 注意：本函数不能进 _LOCKED_TOOLS——签名里没有 book_id，wrapper 取不到锁目标。
+    # （BookLock 同线程可重入，重复加锁本身不会死锁；挡的是「wrapper 加错书」这种错。）
+
     from libraries.book_lock import BookBusyError, BookLock
     lock = BookLock(book_id)
     if not lock.acquire(timeout=30.0, purpose="save_plot_draft"):
@@ -2376,8 +2627,10 @@ def _commit_plot_draft_locked(book_id: str, commit_token: str, text: str, summar
     prepared_snapshot = record.get("prepared_snapshot") or {}
     saved_style = ((prepared_snapshot.get("style") or {}).get("snapshot")
                    if isinstance(prepared_snapshot, dict) else None)
+    chapter_num = int((draft or {}).get("chapter_num") or ((getattr(book_mgr.get(book_id), "current_chapter", 0) or 0) + 1))
     if saved_style:
-        from libraries.style_snapshot import selected_sample_digest, snapshot_matches
+        from libraries.style_snapshot import (CHAPTER_ANCHOR_SELECTOR_VERSION,
+                                              selected_sample_digest, snapshot_matches)
         profile = _profile_for(tl)
         if profile is None:
             try:
@@ -2385,17 +2638,30 @@ def _commit_plot_draft_locked(book_id: str, commit_token: str, text: str, summar
             except Exception:
                 pass
         current_card = profile.build_style_card() if profile else _default_style_card()
-        sample_id = saved_style.get("sample_id", "")
-        current_sample_digest = selected_sample_digest(profile, sample_id) if profile else ""
-        if current_sample_digest is None or not snapshot_matches(
-                profile, current_card, saved_style, current_sample_digest):
-            raise RuntimeError("commit_token 风格上下文已失效；请重新 prepare_plot_run")
+        if (saved_style.get("selector_version") or "") == CHAPTER_ANCHOR_SELECTOR_VERSION:
+            # 章锚路径：样文**冻结在本章草稿里**，池子怎么改都不影响本章——这正是冻结的
+            # 语义（否则「编辑样文 → 本章第 3 个 Plot 悄悄换参考」）。这里不比实时池。
+            pass
+        else:
+            sample_id = saved_style.get("sample_id", "")
+            current_sample_digest = selected_sample_digest(profile, sample_id) if profile else ""
+            if current_sample_digest is None or not snapshot_matches(
+                    profile, current_card, saved_style, current_sample_digest):
+                raise RuntimeError("commit_token 风格上下文已失效；请重新 prepare_plot_run")
     recorded_vector = record.get("version_vector") or {}
     if recorded_vector:
-        current_vector = _context_version_vector(book_id, tl, draft, saved_style or {})
+        # 复现 prepare 时的同一来源集合：草稿视图要带上锚（prepare 时显式归一过），
+        # 尾巴用快照里存的那一份（跨章尾巴取自上一章正文，重算未必与当时一致）。
+        anchor_now = _chapter_anchor_of(draft, chapter_num)
+        draft_for_version = {**draft, "chapter_num": chapter_num}
+        if anchor_now:
+            draft_for_version["style_anchor"] = anchor_now
+        tail_now = (prepared_snapshot.get("continuity_tail")
+                    if isinstance(prepared_snapshot, dict) else None)
+        current_vector = _context_version_vector(book_id, tl, draft_for_version,
+                                                 saved_style or {}, tail_now)
         if current_vector != recorded_vector:
             raise RuntimeError("commit_token 权威上下文已变化；请重新 prepare_plot_run")
-    chapter_num = int((draft or {}).get("chapter_num") or ((getattr(book_mgr.get(book_id), "current_chapter", 0) or 0) + 1))
     result = _save_plot_draft_legacy(
         book_id, chapter_num, current.id, current.name, text,
         character_events=character_events, outcome=outcome,
@@ -3987,7 +4253,7 @@ _LOCKED_TOOLS = {
 
 # 自持锁工具：签名里没有 book_id（只有 commit_token），wrapper 取不到锁目标，
 # 由函数体在解析出归属书后自行 BookLock（见 save_plot_draft / _commit_plot_draft_locked）。
-# 仅用于工具元数据如实标注 locked，切勿加进 _LOCKED_TOOLS（BookLock 不可重入 → 双重加锁死锁）。
+# 仅用于工具元数据如实标注 locked，切勿加进 _LOCKED_TOOLS（wrapper 取不到 book_id，会加错锁）。
 _SELF_LOCKED_TOOLS = {"save_plot_draft"}
 
 

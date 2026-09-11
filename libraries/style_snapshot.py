@@ -44,8 +44,12 @@ def build_snapshot(profile, style_card: str, sample_receipt: dict | None = None,
         "sample_content_digest": receipt.get("content_digest", "") or "",
     }
     for k, v in (anchor_extra or {}).items():
-        if v not in ("", None, [], {}):
-            semantic[k] = v
+        # 空值一律不进 digest：缺键与「键存在但为空」必须等价，否则同一次 prepare 因为
+        # 「有没有传 empty 的 anchor_extra」而算出两个指纹。`0` 也算空（chapter_num=0
+        # 表示未设置）。
+        if v in ("", None, [], {}, 0, False):
+            continue
+        semantic[k] = v
     return {**semantic, "digest": _digest(semantic)}
 
 

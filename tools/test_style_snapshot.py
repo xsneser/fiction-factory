@@ -83,9 +83,52 @@ def test_prepare_save_style_stale():
         bm.delete(bid)
 
 
+def test_anchor_selector_version_isolated():
+    """章锚走独立版本号：不动全局 SELECTOR_VERSION，两条链互不干扰。"""
+    from libraries.style_snapshot import (CHAPTER_ANCHOR_SELECTOR_VERSION, SELECTOR_VERSION,
+                                           build_snapshot, rendered_sample_digest,
+                                           snapshot_matches)
+
+    profile = SimpleNamespace(id="profile-test")
+    digest = rendered_sample_digest("# STYLE REFERENCE\n样文甲")
+    receipt = {"sample_id": "s1", "content_digest": digest}
+
+    # 1) 全局版本号没被改名——legacy pick_plot_sample 的账仍按 plot-sample-v1 记
+    assert SELECTOR_VERSION == "plot-sample-v1", SELECTOR_VERSION
+    assert CHAPTER_ANCHOR_SELECTOR_VERSION != SELECTOR_VERSION
+
+    legacy = build_snapshot(profile, "卡", receipt)
+    assert legacy["selector_version"] == SELECTOR_VERSION
+    assert snapshot_matches(profile, "卡", legacy, digest), "legacy 路径被破坏"
+
+    # 2) 章锚快照带 anchor 身份；同一样文属于不同章锚时不可互相匹配
+    a1 = build_snapshot(profile, "卡", receipt,
+                        selector_version=CHAPTER_ANCHOR_SELECTOR_VERSION,
+                        anchor_extra={"scope": "chapter", "chapter_num": 1, "anchor_id": "chapter:1:x"})
+    a2 = build_snapshot(profile, "卡", receipt,
+                        selector_version=CHAPTER_ANCHOR_SELECTOR_VERSION,
+                        anchor_extra={"scope": "chapter", "chapter_num": 2, "anchor_id": "chapter:2:x"})
+    assert a1["selector_version"] == CHAPTER_ANCHOR_SELECTOR_VERSION
+    assert a1["digest"] != a2["digest"], "不同章锚用了同一 digest"
+    extra1 = {"scope": "chapter", "chapter_num": 1, "anchor_id": "chapter:1:x"}
+    assert snapshot_matches(profile, "卡", a1, digest, anchor_extra=extra1)
+    # 传错 anchor_extra（模拟按另一章复现）→ 必须不匹配，而不是静默通过
+    assert not snapshot_matches(profile, "卡", a1, digest,
+                                anchor_extra={"scope": "chapter", "chapter_num": 2,
+                                              "anchor_id": "chapter:2:x"})
+    # 3) 空值的 anchor_extra 不污染 digest（首章无锚时不带这些键）
+    plain = build_snapshot(profile, "卡", receipt,
+                           selector_version=CHAPTER_ANCHOR_SELECTOR_VERSION)
+    blank = build_snapshot(profile, "卡", receipt,
+                           selector_version=CHAPTER_ANCHOR_SELECTOR_VERSION,
+                           anchor_extra={"anchor_id": "", "chapter_num": 0})
+    assert plain["digest"] == blank["digest"], (plain, blank)
+
+
 def main():
     test_unrelated_sample_does_not_stale()
     test_prepare_save_style_stale()
+    test_anchor_selector_version_isolated()
     print("style snapshot: OK")
 
 
