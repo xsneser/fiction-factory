@@ -47,6 +47,9 @@ from libraries.storyline import PLOT_HARD_MAX, PLOT_PREFERRED_MAX, OutlineSlot, 
     outline_payload_problems, plot_size_problems, signature_phrases_of, \
     voice_keys_with_content  # noqa: E402
 from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
+# 章节标题归一（展示层规范）：唯一实现在 book_manager，这里只做别名引入，
+# 避免两处各写一份正则、日后只改一处。
+from libraries.book_manager import normalize_chapter_title  # noqa: E402
 from libraries.tool_policy import _wrap_phase_gate  # noqa: E402
 from libraries import style_md  # noqa: E402  # 样本驱动:styles/<pen>.md 与 STYLE REFERENCE 样本
 from libraries import style_samples  # noqa: E402  # 样文池 samples.json + 预算选样注入
@@ -118,6 +121,18 @@ def _draft_carried(draft: dict | None, chapter_num: int) -> dict:
 
 
 CONTINUITY_TAIL_CHARS = 800
+
+# 章节标题在**展示端**自带前缀（publisher 是 f"第{n}章 {title}"、阅读器是 '第N章 '+title），
+# 所以库里统一存**裸标题**。存量第 1~4 章的标题是「第1章 天闪裂空」这种带前缀的旧数据，
+# 不迁移；读取/展示时用本函数剥掉，否则会渲染成「第1章 第1章 天闪裂空」。
+def _chapter_title_for(tl, num: int, draft: dict | None) -> str:
+    """章节落盘时的标题：优先草稿里开章时定下的那个（裸标题）。
+
+    取不到就返回空串——**不要**回落到 `f"第{n}章"`：那样导出/阅读器会渲染成
+    「第5章 第5章」（book_002 的第 5~7 章就是这么来的）。宁可没有标题。
+    """
+    t = normalize_chapter_title((draft or {}).get("chapter_title"))
+    return t
 
 
 def _build_continuity_tail(book_id: str, draft: dict | None, chapter_num: int) -> dict | None:
@@ -2425,6 +2440,30 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
             "chapter_delta": chapter_delta}
 
 
+CHAPTER_SUMMARY_MIN_CHARS = 300
+CHAPTER_SUMMARY_MAX_CHARS = 500
+
+
+def _chapter_summary(bridges: list, *, min_chars: int = CHAPTER_SUMMARY_MIN_CHARS,
+                     max_chars: int = CHAPTER_SUMMARY_MAX_CHARS) -> str:
+    """章节摘要：全部情节段的 plot_summary 参与，总预算按段数**均匀分配**。
+
+    旧实现 `"；".join(summaries[:3])` 在「一章 4~6 个情节段」之后会丢掉后半章的高潮与
+    收束——而章摘要是下一章连续性语境与检索的输入。这里给每段分配 `max_chars / 段数`
+    的配额（不足则整段），全文超出上限时按配额再压一次。**确定性、无 LLM**。
+    """
+    sums = [str(b.get("plot_summary") or "").strip() for b in (bridges or [])]
+    sums = [s for s in sums if s]
+    if not sums:
+        return ""
+    quota = max(40, max_chars // len(sums))
+    picked = [s if len(s) <= quota else s[:quota].rstrip("，。；、 ") for s in sums]
+    out = "；".join(picked)
+    if len(out) > max_chars:                      # 极端长句兜底
+        out = out[:max_chars].rstrip("，。；、 ")
+    return out
+
+
 def finalize_draft_chapter(book_id: str, flow_id: str = "") -> dict:
     """服务端从已签收的 draft 提交章节 + 执行质量门禁（不暴露给 Writer）。
 
@@ -2445,12 +2484,14 @@ def finalize_draft_chapter(book_id: str, flow_id: str = "") -> dict:
     if chapter_num < 1:
         raise RuntimeError("草稿缺少章节号")
     text = "\n\n".join(str(x.get("text") or "") for x in bridges)
-    # Plot summary 不进入事实层，只做面向读者的章节摘要来源（取前若干段拼接，不硬截断句子）。
-    summaries = [str(x.get("plot_summary") or "").strip() for x in bridges if x.get("plot_summary")]
-    summary = "；".join(summaries[:3])
+    # 章节摘要 = 全部情节段参与、按 Plot 数**均匀分配**预算（300~500 字）。
+    # 旧实现只取前 3 段：情节段细到 4~6 个后，后半章真正的转折会从章节记忆里消失
+    # （下一章的连续性语境与检索都吃这个摘要）。不新增 LLM 调用，纯确定性截取。
+    summary = _chapter_summary(bridges)
     state_error = None
+    chapter_title = _chapter_title_for(None, chapter_num, draft)
     try:
-        result = save_chapter_text(book_id, chapter_num, text, title=f"第{chapter_num}章",
+        result = save_chapter_text(book_id, chapter_num, text, title=chapter_title,
                                    summary=summary, plot_segments=[{"plot_id": x.get("plot_id"),
                                    "plot_name": x.get("plot_name"), "text": x.get("text") or ""} for x in bridges])
     except ChapterCommittedStateError as exc:
@@ -2514,7 +2555,8 @@ def _save_plot_draft_legacy(book_id: str, chapter_num: int, plot_id: str,
                       expected_facts: list | None = None, run_id: str = "",
                       based_on_storyline_revision: int | None = None,
                       context_fingerprint: str = "", sample_receipt: dict | None = None,
-                      plot_summary: str = "", verified_record: dict | None = None) -> dict:
+                      plot_summary: str = "", verified_record: dict | None = None,
+                      chapter_title: str = "") -> dict:
     """[薄工具] 保存单个情节段到进行中草稿（draft_chapter.json，断点续写保底）。
 
     agent 逐情节段生成后调用：规则去AI味 → 追加进草稿（含 buffer/words/bridges），
@@ -2593,6 +2635,19 @@ def _save_plot_draft_legacy(book_id: str, chapter_num: int, plot_id: str,
         # 新章节草稿：重置
         bridges = []
         cur_ch = chapter_num
+    # 章节标题：**只接受本章第一条 bridge 的那一次**。章界由运行时字数门禁动态决定，
+    # 规划期无法预知谁开章，所以由实际开章的那个 Plot Writer 给候选，服务端一章只收一次。
+    title_now = str(carried.get("chapter_title") or "").strip()
+    incoming = normalize_chapter_title(chapter_title)
+    if incoming:
+        if bridges or title_now:
+            if incoming != title_now:
+                _log.warning("本章标题已定，忽略后续候选 book=%s chapter=%s: %r",
+                             book_id, chapter_num, incoming)
+        else:
+            title_now = incoming
+    if title_now:
+        carried["chapter_title"] = title_now
     entry = {"plot_id": plot_id or "", "plot_name": plot_name or "", "text": text,
              "character_events": (character_events or []) if isinstance(character_events, list) else []}
     entry["plot_summary"] = str(plot_summary or "").strip()
@@ -2645,7 +2700,8 @@ def _save_plot_draft_legacy(book_id: str, chapter_num: int, plot_id: str,
 
 
 def save_plot_draft(commit_token: str, text: str, plot_summary: str = "",
-                    outcome: dict | None = None, character_events: list | None = None) -> dict:
+                    outcome: dict | None = None, character_events: list | None = None,
+                    chapter_title: str = "") -> dict:
     """提交当前 Plot 正文及实际结构化变化。
 
     token 必须来自 prepare_plot_run；成功后暂存事实生效且当前 Writer Run 结束。
@@ -2697,7 +2753,8 @@ def save_plot_draft(commit_token: str, text: str, plot_summary: str = "",
         raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
     try:
         return _commit_plot_draft_locked(book_id, commit_token, text, summary,
-                                         outcome, character_events, summary_problems)
+                                         outcome, character_events, summary_problems,
+                                         chapter_title)
     finally:
         lock.release()
 
@@ -2801,7 +2858,8 @@ def _recover_partial_plot_commit(book_id: str, commit_token: str, tl, draft: dic
 
 def _commit_plot_draft_locked(book_id: str, commit_token: str, text: str, summary: str,
                               outcome: dict | None, character_events: list | None,
-                              summary_problems: list | None = None) -> dict:
+                              summary_problems: list | None = None,
+                              chapter_title: str = "") -> dict:
     """save_plot_draft 的锁内主体：调用方负责持有 `books/<id>/.lock`。"""
     from libraries.plot_commit_tokens import verify
     tl = book_mgr.load_storyline(book_id)
@@ -2868,7 +2926,7 @@ def _commit_plot_draft_locked(book_id: str, commit_token: str, text: str, summar
         based_on_storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
         context_fingerprint=record.get("context_fingerprint") or "",
         sample_receipt=record.get("sample_receipt") or {},
-        plot_summary=summary, verified_record=record)
+        plot_summary=summary, verified_record=record, chapter_title=chapter_title)
     if summary_problems:
         # 非阻断的契约问题如实回报（摘要超长会被截断为 120，问题清单里保留原长）
         result["summary_problems"] = list(summary_problems)

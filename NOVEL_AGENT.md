@@ -52,7 +52,19 @@
 - 弧须给**一组完整跨度（结构必填）**：`start_word/end_word` 成对整数（0 基、start 含/end 不含、`0<=start_word<end_word`，落盘权威），或 `start_chapter/end_chapter` 成对整数（`1<=start_chapter<=end_chapter`）；只给半组（如只有 `end_word`）/全缺会被 set_outline/save_outlines **直接拒绝**（不再自动按每章字数换算兜底）；可两组同传（字坐标为权威）。
 - **顶层弧须覆盖故事线全纵轴**（0 到总字数，任意一点都有顶层弧占据；出现叙事空白必须补弧或扩弧）。
 - **情节段仅挂最底层弧**（不包含其他弧的弧）；情节段在弧内按其目标字数累计定位。
-- **情节段字数由内容浓淡决定（反印刷感）**：每个情节段带 `words`（目标字数，0 基整数，300~2500：过渡/日常 300~600、常规推进 800~1600、关键转折/高潮 1800~2500）；**同弧/全书不要全部相等**。未给 `words` 时系统回退节拍制 `cover_beats`×200 封顶 1200（默认 cover_beats=4→800，全默认即"印刷感"来源）。
+- **一个情节段 = 一个主要戏剧变化**（2026-09-11 重基线）：每个情节段必带
+  `primary_turn`（一句话说清这一段**唯一**的那一转；缺了会被拒收）与 `words`（目标字数）。
+  一章通常 **4~6 段**，字数按类型给：过渡/信息 **250~450**、普通推进 **450~700**、
+  冲突/人物变化 **600~850**、关键转折 **800~1050**、高潮 **850~1100**；建议不超过 1100，
+  **硬上限 1200（新情节段超过直接拒收）**。同弧/全书不要全部相等。
+  另带 `chapter_break_after` ∈ `preferred|allowed|avoid`：写完这一段**是否适合断章**，
+  由你表达语义、Server 结合字数预算决定（不填默认 allowed）。未给 `words` 时系统回退
+  节拍制 `cover_beats`×200 封顶 1200（默认 cover_beats=4→800）。
+- **何时必须拆段（强生成规则）**：出现任一条件，默认就要拆成多个情节段——
+  ① 明显时间跳跃；② 主要场景地点转换；③ 主导冲突对象发生变化；
+  ④ 前一个问题已解决、又启动一个可独立成立的新问题；⑤ 同时含两个独立高潮/兑现点。
+  反例（勿做）：把「研发成功 + 路线争执 + 外使施压 + 危机预警」四件事塞进一个 2000 字
+  的情节段——它字数上超限，但**根本问题是有四个戏剧转向**。
 - **弧字数跨度 = 该弧情节段 `words` 之和**（≈内容真实预算）：**不要先拍章数/总字数再按 words_per_chapter 均分**；跨度远超内容时拆子弧/缩弧跨度/补情节段，避免弧内大片空白。
 - **全书规模与承诺区分离**：`target_word_budget` 默认约 9万~18万字；建书只正式生成约 **1.5万~3万字 committed**，远期只留 future intents。后续临近边界时由 `novel-replan` 延伸。
 - **结构自查**：生成后调 `validate_storyline`，若返回 `structure_hints`（叶弧跨度全相等/情节段字数全相同）属软提示——**必须重排至消除，或如实向用户说明原因**（见下条校验）。
@@ -79,9 +91,14 @@
     让 set_outline/save_outlines 直接报错**（不再自动按每章字数换算兜底）；
     `parent_arc_id` 指向父弧 `id` 支持弧树嵌套（缺省=顶层弧）；**弧=树状目标节点（定义见 1.1），
     字数跨度由剧情结构决定、不设固定章数；仅最底层弧可拥有情节段**。
-  - **plots 每项 `{id, name, outline_id, order, category?, thread_id?, roles?, words?, cover_beats?, template_structure?}`**——
+  - **plots 每项 `{id, name, outline_id, order, primary_turn, words, category?, thread_id?, roles?, chapter_break_after?, cover_beats?, template_structure?}`**——
     `id` 唯一必填、`outline_id` 必填（指向所属弧的 `id`，**该弧须为最底层弧**）、`order` 弧内序号；
-    **`words` = 该情节段目标字数**（0 基整数，按场景浓淡 300~2500：过渡/日常 300~600、常规推进 800~1600、关键转折/高潮 1800~2500；**同弧/全书不要全部相等**），决定 planned_words 与弧跨度、整书章数；未给回退 `cover_beats`×200（cover_beats=节拍数 2~6，可选）；
+    **`primary_turn` 必填**（一句话说清这一段唯一的主要戏剧变化）；**缺 primary_turn 或
+    `words > 1200` 会被直接拒收**（存量旧情节段例外，只提示不拒收）；
+    **`words` = 该情节段目标字数**（0 基整数，一个主要戏剧变化，一章 4~6 段：过渡/信息 250~450、
+    普通推进 450~700、冲突/人物变化 600~850、关键转折 800~1050、高潮 850~1100；**同弧/全书不要全部相等**），
+    决定 planned_words 与弧跨度、整书章数；未给回退 `cover_beats`×200（cover_beats=节拍数 2~6，可选）；
+    **`chapter_break_after`** ∈ `preferred|allowed|avoid`（写完这段适不适合断章，缺省 allowed）；
     （情节段在弧内按目标字数累计定位）；**每情节段 `id` 非空唯一、`outline_id` 必填且指向存在的
     最底层（叶）弧**——缺 id/outline_id 或 outline_id 悬空/非叶会让 set_outline/save_outlines 直接报错
     （不再由前端代填/代分），也避免故事线图情节段全部不显示、弧备注丢失。
@@ -93,10 +110,19 @@
   - **`relations` 必须 `[{name, relation}]` 对象数组**（传字符串会让前端渲染中断、后续角色全部丢失）。
   - 每项含 **`faction`（所属势力名，必须与 `set_world` 的 `factions[].name` 逐字一致，不要带括号描述）**；
     **每个势力至少 1 个对应人物**（无人物归属的势力不要创建）。
-  - 行为注入（可选，主角建议给）：`behavior` = `{decision_style:{under_pressure,danger,betrayal},
+  - 行为注入（**建议每个具名人物都给**）：`behavior` = `{decision_style:{under_pressure,danger,betrayal},
     communication_style:{stranger,friend,enemy}, emotion_expression:{anger,fear,sadness}}`（情境→一贯反应，每格 1-3 短句；
-    人物稳定感=不同刺激下反应一致）；`speech_profile` = `{rhythm?,tone?,habits[],forbidden[]}`（**语言倾向**，非固定口头禅复读；
-    缺省把 catchphrase 视作 habits 之一）；`development_plan` = 一句成长方向（如「从独行者成为领导者」）——只规划、不绑 Storyline。
+    人物稳定感=不同刺激下反应一致）；`development_plan` = 一句成长方向（如「从独行者成为领导者」）——只规划、不绑 Storyline。
+  - **`speech_profile` = 语言生成规律，不是台词表**（2026-09-11）：`{rhythm?,tone?,logic?,emotion?,social_register?,habits[],forbidden[]}`
+    ——`rhythm` 句长节奏、`logic` 判断问题的习惯、`emotion` 情绪如何改变说话方式、`social_register` 对不同对象怎么称呼；
+    建议至少两项有实质内容。**`habits` 只准写句式/思维/表达倾向（如「少用形容词」「先给结论再补理由」），
+    绝不允许写「先说某句」这类字面台词**——那是口癖标签化的源头，会让模型把口头禅当人物 ID 复读。
+  - **标志短语 `signature_phrases` 完全可选**：`[{text, frequency: rare|occasional|often, contexts:[情境]}]`。
+    多数好角色**不需要**标志短语；确要给也只标 `rare` + 具体情境（如「仅正式任务部署时」）。
+    已有 `catchphrase` 会按 `rare` 处理（不要求人人有，也不是辨识度的必需品）。
+  - **人物差异靠「说话算法」而不是口癖**：同一个人的说话方式应随**对象**变化（对下属 / 对老搭档 /
+    对敌人 / 对技术伙伴），这正是 `relationship.relationship_mode` 要表达的；对白也可以用动作、误解、
+    回避、打断、潜台词承载，不必都靠问答与汇报。
 - `submit`：`actor=user_only`。Agent 不得调用；只能由用户在向导中点击创建。
 - `set_review`（提取页命令，非建书命令）：把五库候选呈现成**可勾选审查卡**，**停在页面等用户确认，不直接入库**。
   payload：`{title, platform?, folder?, downloaded_chapters?, profile_id?, profile_name?, plots?, structures?, gags?, characters?, style_rules?}`——
@@ -120,8 +146,10 @@
 - `save_outlines`：保存 outlines/plots/threads/themes → 落盘。含 plots 且书未 ready → phase=plots（config 补弧后待用户在书详情确认）；**已 ready 书追加弧保持 ready**（续写/扩写不降级；深化已并入建书步3，正常新书由 submit 直接 phase=ready，不经 save_outlines）。**ready 只由用户动作触发**——正常建书=用户在向导点提交（agent 不调 submit）；config 补弧落 plots 后须用户在书详情页「确认弧+情节段」（/api/book/&lt;id&gt;/confirm-storyline）——agent 无 fill_gags/confirm_outlines 等翻 ready 工具，**不得臆造翻转**。弧的字数跨度、情节段叶弧规则见 1.2 故事线数据规则；**每条弧 `notes` 存「本弧目标 + 偏离库模板的点」**（落库可复核，供蓝图/用户过目）。结构门槛与 set_outline 相同（见 1.2）：每条弧/情节段缺 id/name/完整跨度/叶弧归属，工具 raise 拒收；append/续写可只传 plots 挂到已落盘弧（outlines 留空）。
 - `save_plot_draft`：**write profile 的一次性 Plot 提交**（Writer 唯二工具之一）。只接受
   `prepare_plot_run` 签发的 `commit_token` + 语义输出 `(commit_token, text, plot_summary, outcome,
-  character_events)`——token 已在服务端绑定 Plot / flow / storyline_revision / context_fingerprint /
-  sample_receipt 与该 Plot 的写前预测（expected_facts 来自 Plot 配置，不再由 Writer 传）。保存成功后本
+  character_events, chapter_title?)`——token 已在服务端绑定 Plot / flow / storyline_revision / context_fingerprint /
+  sample_receipt 与该 Plot 的写前预测（expected_facts 来自 Plot 配置，不再由 Writer 传）。
+  `chapter_title` 仅在 `execution.is_chapter_opening=true` 时给（**裸标题**，如「铁城之夜」；
+  服务端只接受本章第一条 bridge 的那一次，重复候选会被忽略并记 warning）。保存成功后本
   Writer Run 必须结束，Writer 绝不自行决定下一 Plot / 收章 / 续规划。语义输出：
   - `outcome={choices_made[], information_revealed[], relationship_changes[], resource_changes[], promise_updates[], new_story_questions[]}`——本段**结构化结果**；平台**不从正文推断语义**（禁止指望从正文猜 facts），你没上报就没有 facts → reconcile 永远空。
   - `character_events=[{name, events:[{type,from?,to?,reason?}]}]`——本段剧情造成的人物变化，随草稿落账、章满并入角色状态机；type ∈ goal_shift|power_shift|location_shift|arc_stage|trust_change|relationship|note，**不报 mood/secret/conflict（推断字段禁直写）**。
@@ -154,7 +182,8 @@
 - 工具被 phase 门控拒绝或抛 `BookBusyError` 时调整策略或稍后重试；同一只读工具同参调用超过 3 次即循环，应停止并如实汇报。
 - 预算/额度触发 `budget_paused` 时停下，向用户如实汇报，不继续烧额度。
 - 薄工具（`save_outlines` / `save_chapter_text`）可能阻塞数分钟属正常，等待结果，不要反复同参重查。
-- **笔名风格强约束（write run 由服务端解析）**：一次性 Writer 每段调 `prepare_plot_run`，返回里已含该笔名**精简风格卡 `style.card`** 与**唯一单篇样文 `style.sample`**（服务端按该笔名全量规则 + 情节段 query 加权随机取样并绑定回执）。Writer 不自行调 `get_pen_style` / `pick_plot_sample`（不在 write profile）；仅 legacy 全量工具面自行写作时才需先 `get_pen_style(no_ref=True)` 再 `pick_plot_sample`。未拿到风格不得写正文。
+- **笔名风格强约束（write run 由服务端解析）**：一次性 Writer 每段调 `prepare_plot_run`，返回里已含该笔名**精简风格卡 `style.card`**、**本章唯一主样文 `style.sample`**（服务端按该笔名全量规则 + **章级** query 加权随机取样并绑定回执）与 `style.chapter_style_anchor`。**样文是章级的**：本章第一个情节段抽一次并冻结正文，章内后续情节段拿到逐字相同的 `style.sample.text`——Plot 是 LLM 事务边界，但**不是文风边界**，不得因新 Run 重建文风。Writer 不自行调 `get_pen_style` / `pick_plot_sample`（不在 write profile）；仅 legacy 全量工具面自行写作时才需先 `get_pen_style(no_ref=True)` 再 `pick_plot_sample`。未拿到风格不得写正文。
+- **接续与章级信息（write run）**：`continuity_tail`（顶层）= 上一段正文的语言尾巴（章内取上一情节段 / 新章取上一章已落盘正文）——延续它的叙述人称、句长、段落密度与语言惯性，**不要重新起一种文风**；`previous_change` 说「发生了什么」（结构化事实），两者分工不同。`execution.chapter_progress` 给出本章字数区间（soft_min/soft_max/hard_max）与 `is_likely_last_plot`（**仅提示，不得据此截断本段**——情节段仍是不可切分的提交单元）。`execution.is_chapter_opening=true` 时这是**本章第一个情节段**，请在 `save_plot_draft` 时一并给 `chapter_title`（裸标题，不带「第N章」；一章只接受第一次）。
 - 工具结果可能被 dsh 裁剪（>8KB 只保留头尾）：信息不足时用 `prepare_plot_run(book_id)` 按当前情节段重新准备（Writer 唯二工具之一）；legacy 全量工具面才另可用 `get_pen_style`。**不要臆测「spill 文件」**（本环境禁用了文件工具，不存在可读的 spill 文件）。
 - **故事线完整性**：用 `validate_storyline(book_id)` 校验「顶层弧覆盖故事线纵轴（无叙事空白）」与「情节段仅挂最底层弧」两条硬规则；发现不合规如实汇报，不要静默硬写。
 - **`storyline_revision`（乐观并发事实状态版本）**：代表「所有会影响下一次故事规划的事实状态」的版本——不只 outlines/plots，也含 basic_info 与已写章节（每落盘一章 +1）。读到它的返回都应记住；replan 提交时把上次读到的值作为 `expected_revision` 回传，陈旧会返 `stale_storyline(expected/actual)` → 刷新后重规划，不要强覆盖。

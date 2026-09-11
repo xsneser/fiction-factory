@@ -18,6 +18,7 @@ from core.json_store import read_json, write_json_atomic
 from core.safe_paths import ensure_child_path, is_safe_book_id
 from core.text_utils import count_prose_units
 import libraries.book_meta as book_meta
+from libraries.book_manager import chapter_display_title
 
 # 文件名非法字符（Windows / 常见平台通用）
 _ILLEGAL_FILENAME = re.compile(r'[\\/:*?"<>|\r\n\t]')
@@ -292,16 +293,18 @@ class Publisher:
 
         files = []
         for ch in chapters:
-            title = (ch.get("title") or f"第{ch.get('num')}章").strip()
-            safe_title = self._safe_filename(title) or f"第{ch.get('num')}章"
-            fname = f"第{ch.get('num'):03d}章_{safe_title}.txt"
+            num = ch.get("num")
+            # 裸标题：存量库里存的是「第1章 天闪裂空」，不归一就会导出「第1章 第1章 …」
+            bare = chapter_display_title(ch)
+            safe_title = self._safe_filename(bare) if bare else ""
+            fname = f"第{num:03d}章_{safe_title}.txt" if safe_title else f"第{num:03d}章.txt"
             path = export_dir / fname
             path.write_text(ch.get("content") or "", encoding="utf-8")
             files.append(fname)
 
         # 全书合并
         book_txt = "\n\n".join(
-            f"第{ch.get('num')}章 {ch.get('title') or ''}\n\n{ch.get('content') or ''}"
+            f"第{ch.get('num')}章 {chapter_display_title(ch)}\n\n{ch.get('content') or ''}"
             for ch in chapters)
         (export_dir / "book.txt").write_text(book_txt, encoding="utf-8")
         files.append("book.txt")

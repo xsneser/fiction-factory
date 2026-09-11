@@ -6,11 +6,40 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime
 import logging
+import re
 
 from core.json_store import read_json, write_json_atomic
 from core.safe_paths import ensure_child_path, is_safe_book_id
 
 logger = logging.getLogger("novel-engine.book_manager")
+
+# 章节标题**库里存裸标题**（「天闪裂空」），前缀由展示端加：`publisher` 是
+# `f"第{n}章 {title}"`、阅读器是 `'第'+num+'章 '+title`。存量第 1~4 章的标题是
+# 「第1章 天闪裂空」这种带前缀的旧数据（不迁移），读取/展示时必须剥掉，否则渲染成
+# 「第1章 第1章 天闪裂空」。这是**展示层**的规范，不是写入口的一次性清洗——
+# 写入口的修改不会自动修好已经落盘的章节。
+_TITLE_PREFIX = re.compile(r"^\s*第\s*[0-9一二三四五六七八九十百千零两]+\s*章[\s:：·\-—]*")
+
+
+def normalize_chapter_title(title, *, limit: int = 30) -> str:
+    """章节标题归一：剥「第N章」前缀与装饰、压空白、限长。空 → ""。
+
+    `limit` 是**关键字限定**的：曾有调用方把章号当第二个位置参数传进来，结果标题被截成
+    一个字（limit=5）。这类静默截断不值得靠 review 拦，直接用签名拦住。
+    """
+    t = str(title or "").strip()
+    if not t:
+        return ""
+    t = re.sub(r"\s+", " ", _TITLE_PREFIX.sub("", t)).strip(" ·-—:：")
+    return t[:limit].strip()
+
+
+def chapter_display_title(ch, num: int = 0) -> str:
+    """章节的**可读标题**（不含前缀）：裸标题 → 归一后的存量标题 → 空串。
+
+    调用方自己决定前缀怎么加（导出是「第N章 标题」，文件名场景不要前缀）。
+    """
+    return normalize_chapter_title((ch or {}).get("title"))
 
 
 @dataclass

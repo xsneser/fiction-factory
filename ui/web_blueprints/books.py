@@ -3,6 +3,7 @@ import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
+from urllib.parse import quote
 from .ctx import *
 
 bp = Blueprint("books", __name__)
@@ -200,6 +201,58 @@ def book_detail(book_id):
         storyline_data=storyline_data,
         basic_info=basic_info,
         draft=draft)
+
+
+@bp.route("/books/<book_id>/export-txt")
+def book_export_txt(book_id):
+    """书详情：一键导出全部章节（标题+正文）为 .txt 文件（含未固化草稿）。"""
+    from libraries.book_manager import chapter_display_title
+    book_mgr.list_all()   # mtime 感知重扫，与详情页同一数据口径
+    book = book_mgr.get(book_id)
+    if not book:
+        return "Not found", 404
+    title = book.title or "(待定)"
+    lines = [f"《{title}》",
+             f"笔名：{book.pen_name or ''}",
+             f"导出时间：{time.strftime('%Y-%m-%d %H:%M:%S')}",
+             ""]
+    sep = "=" * 40
+    wrote = False
+    for n in range(1, book.current_chapter + 1):
+        ch = book_mgr.load_chapter(book_id, n)
+        if not ch:
+            continue
+        wrote = True
+        lines.append(sep)
+        # 裸标题（存量「第1章 xxx」不归一就会显示成「第1章 第1章 xxx」）；没标题只写章号
+        _bare = chapter_display_title(ch)
+        lines.append(f"第{n}章 {_bare}" if _bare else f"第{n}章")
+        lines.append(sep)
+        lines.append((ch.get("content") or "").strip())
+        lines.append("")
+    # 进行中草稿（详情页同样展示，导出时一并带上，避免丢内容）
+    draft_path = f"books/{book_id}/draft_chapter.json"
+    if os.path.exists(draft_path):
+        try:
+            with open(draft_path, encoding="utf-8") as f:
+                _d = json.load(f)
+            _buf = _d.get("buffer") or []
+            if _buf:
+                wrote = True
+                lines.append(sep)
+                lines.append(f"第{_d.get('chapter_num', '?')}章 进行中草稿（未固化）")
+                lines.append(sep)
+                lines.append("\n\n".join(_buf))
+                lines.append("")
+        except Exception as e:
+            logger.warning("导出时读取章节草稿失败: %s", e)
+    if not wrote:
+        lines.append("（本书暂无已固化章节）")
+    txt = "\n".join(lines)
+    filename = re.sub(r'[\\/:*?"<>|\r\n]', "_", f"{title}_{time.strftime('%Y%m%d_%H%M%S')}.txt")
+    resp = Response(txt, mimetype="text/plain")
+    resp.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return resp
 
 
 @bp.route("/api/book/<book_id>/confirm-storyline", methods=["POST"])
