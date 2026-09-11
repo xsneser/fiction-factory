@@ -241,7 +241,7 @@ def _inherit_anchor_receipt(draft: dict | None, profile) -> dict | None:
 
 
 def _create_chapter_anchor(book_id: str, tl, p, chapter_num: int, profile,
-                           style_card: str) -> dict | None:
+                           style_card: str, draft: dict | None = None) -> dict | None:
     """新章锚：算章级 query → 抽 1 篇（k=1）→ 记一次避重历史 → **冻结渲染正文**。
 
     整章只调一次。冻结正文（而非只存 id + digest）是刻意的：章内第 2..N 个情节段直接
@@ -250,7 +250,8 @@ def _create_chapter_anchor(book_id: str, tl, p, chapter_num: int, profile,
     from libraries.plot_dims import chapter_plot_window, infer_chapter_query
     from libraries.style_snapshot import rendered_sample_digest
 
-    inherited = _inherit_anchor_receipt(_draft_read(book_id), profile)
+    inherited = _inherit_anchor_receipt(draft if draft is not None else _draft_read(book_id),
+                                       profile)
     if inherited:
         # 沿用：不再抽样、不再记避重历史（那篇当初已经记过）
         try:
@@ -306,7 +307,7 @@ def _ensure_chapter_anchor(book_id: str, tl, p, draft: dict | None, chapter_num:
     anchor = _chapter_anchor_of(draft, chapter_num)
     if anchor:
         return anchor
-    created = _create_chapter_anchor(book_id, tl, p, chapter_num, profile, style_card)
+    created = _create_chapter_anchor(book_id, tl, p, chapter_num, profile, style_card, draft)
     if not created:
         return None
     # 只写锚、不动 bridges：本章已写的正文由 _save_plot_draft_legacy 负责带过去。
@@ -3991,8 +3992,12 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
       behavior 可选 {decision_style:{under_pressure,danger,betrayal},
       communication_style:{stranger,friend,enemy}, emotion_expression:{anger,fear,sadness}}（情境→一贯反应，每格 1-3 短句；
       人物稳定感=不同刺激下反应一致）；
-      speech_profile 可选 {rhythm,tone:str, habits:[句式/表达倾向], forbidden:[绝不说]}（语言倾向，非固定口头禅复读；
-      缺省把 catchphrase 视作 habits 之一）；
+      speech_profile 可选 {rhythm,tone,logic,emotion,social_register:str, habits:[句式/表达倾向], forbidden:[绝不说],
+      signature_phrases:[{text,frequency:rare|occasional|often,contexts:[情境]}]}——**语言生成规律，不是台词表**：
+      rhythm 句长节奏 / logic 判断问题的习惯 / emotion 情绪如何改变说话 / social_register 对不同对象怎么称呼；
+      **habits 只准写句式与思维倾向（如「少用形容词」），不得写「先说某句」这类字面台词**；
+      signature_phrases **完全可选**（多数角色不需要），确要给只标 rare + 具体情境；
+      catchphrase 保留为数据字段但不再当「口头禅」注入，缺失不算问题；
       development_plan 可选（一句成长方向，如「从独行者成为领导者」，或 {growth_target,notes}）——只规划不绑 Storyline
     - set_candidates: {candidates: [{title, one_liner?, world_brief?}]}   title 必填
     - add_candidate: {candidate: {title, one_liner?, world_brief?}}   title 必填，增量追加 1 张候选卡
