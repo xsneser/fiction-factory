@@ -126,7 +126,8 @@ async def main():
                                     {"book_id": bid, "outlines": [{"id": "outline_0001", "name": "开篇",
                                                                    "start_chapter": 1, "end_chapter": 30}],
                                      "plots": [{"id": "plot_0001", "name": "穿越开局", "outline_id": "outline_0001",
-                                                "cover_beats": 6, "words": 1400, "roles": ["王小明"]}],
+                                                "cover_beats": 6, "words": 1100, "roles": ["王小明"],
+                                                "primary_turn": "王小明在陌生世界醒来，第一次确认读心术存在"}],
                                      "validate": False})
                 check("save_outlines OK", r.get("ok") and r.get("outlines") == 1,
                       f"{r}")
@@ -148,8 +149,8 @@ async def main():
                     return False
                 sl = await call_json(session, "get_storyline", {"book_id": bid})
                 check("save_outlines 保留 cover_beats/words",
-                      _find_val(sl, "words", 1400) and _find_val(sl, "cover_beats", 6),
-                      "情节段 words=1400/cover_beats=6 应落库")
+                      _find_val(sl, "words", 1100) and _find_val(sl, "cover_beats", 6),
+                      "情节段 words=1100/cover_beats=6 应落库（且未被默认值重置）")
                 # Plot-Run 写作入口要求 ready；冒烟直建绕过 UI 确认，故此处模拟用户确认。
                 tl_ready = bm.load_storyline(bid)
                 tl_ready.phase = "ready"
@@ -164,6 +165,23 @@ async def main():
                       and (cp.get("protagonists")[0].get("name") or "") == "王小明"
                       and isinstance(cp.get("active"), list) and isinstance(cp.get("referenced"), list),
                       f"protagonists={[c.get('name') for c in (cp.get('protagonists') or [])]}")
+                # prepare 载荷体积护栏：dsh 侧 tool-result-pruner 默认 disabled
+                # （dsh_bridge 注入），但逃生口 NE_KEEP_TOOL_PRUNE=1 会恢复 8192 阈值把
+                # 中段裁掉。这里钉一条上限，让「载荷悄悄长到会被裁」在冒烟阶段就暴露。
+                # 只在**裁剪真的开着**时才要求载荷不超阈值：默认 overlay 把
+                # tool-result-pruner 设为 disabled（dsh_bridge 注入），此时 >8KB 完全正常；
+                # 逃生口 NE_KEEP_TOOL_PRUNE=1 恢复 8192 阈值，那才需要这条上限。
+                _pl_size = len(json.dumps(ctx, ensure_ascii=False))
+                if os.environ.get("NE_KEEP_TOOL_PRUNE"):
+                    check("prepare_plot_run 载荷在裁剪阈值内（NE_KEEP_TOOL_PRUNE=1）",
+                          _pl_size < 8192, f"{_pl_size} 字符，超阈值会被裁中段")
+                else:
+                    print(f"  ℹ️  prepare_plot_run 载荷 {_pl_size} 字符"
+                          f"（裁剪默认关闭，无硬阈值；设 NE_KEEP_TOOL_PRUNE=1 时为 8192）")
+                check("prepare_plot_run 带章级样文锚/接续尾巴字段",
+                      "chapter_style_anchor" in (ctx.get("style") or {})
+                      and "continuity_tail" in ctx,
+                      f"style keys={(ctx.get('style') or {}).keys()}")
                 ps = await call_json(session, "get_pen_style", {"book_id": bid})
                 check("get_pen_style 返回风格权威（style_rules/forbidden 非空）",
                       bool((ps.get("style_rules") or "")) and bool(ps.get("forbidden")),

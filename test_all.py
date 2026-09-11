@@ -251,8 +251,8 @@ _v_invalid = validate_storyline(outlines=[
     {"id": "a2", "name": "弧2", "parent_arc_id": "", "start_word": 12000, "end_word": 20000},
     {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 5000},
 ], plots=[
-    {"id": "p1", "name": "桥1", "outline_id": "a1"},
-    {"id": "p2", "name": "桥2", "outline_id": "a1b"},
+    {"id": "p1", "name": "桥1", "outline_id": "a1", "primary_turn": "第一个主要戏剧变化"},
+    {"id": "p2", "name": "桥2", "outline_id": "a1b", "primary_turn": "第二个主要戏剧变化"},
 ])
 assert_ok("校验-叙事空白+非叶弧", _v_invalid["passed"] is False
           and len(_v_invalid["coverage"]["gaps"]) == 1
@@ -260,7 +260,7 @@ assert_ok("校验-叙事空白+非叶弧", _v_invalid["passed"] is False
 _v_valid = validate_storyline(outlines=[
     {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 1000},
     {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 1000},
-], plots=[{"id": "p1", "name": "桥1", "outline_id": "a1b"}])
+], plots=[{"id": "p1", "name": "桥1", "outline_id": "a1b", "primary_turn": "唯一的主要戏剧变化"}])
 assert_ok("校验-合法通过", _v_valid["passed"] is True and _v_valid["issue_count"] == 0)
 
 # 弧内空白（arc_fill：跨度远超情节段 planned_words）
@@ -268,8 +268,8 @@ _v_fill = validate_storyline(outlines=[
     {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 80000},
     {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 80000},
 ], plots=[
-    {"id": "p1", "name": "桥1", "outline_id": "a1b"},
-    {"id": "p2", "name": "桥2", "outline_id": "a1b"},
+    {"id": "p1", "name": "桥1", "outline_id": "a1b", "primary_turn": "第一个主要戏剧变化"},
+    {"id": "p2", "name": "桥2", "outline_id": "a1b", "primary_turn": "第二个主要戏剧变化"},
 ])
 assert_ok("校验-弧内空白", _v_fill["arc_fill"]["passed"] is False
           and len(_v_fill["arc_fill"]["issues"]) == 1)
@@ -277,7 +277,8 @@ assert_ok("校验-弧内空白", _v_fill["arc_fill"]["passed"] is False
 _v_fill2 = validate_storyline(outlines=[
     {"id": "a1", "name": "弧1", "parent_arc_id": "", "start_word": 0, "end_word": 24000},
     {"id": "a1b", "name": "子弧", "parent_arc_id": "a1", "start_word": 0, "end_word": 24000},
-], plots=[{"id": "p%d" % i, "name": "桥%d" % i, "outline_id": "a1b", "cover_beats": 8} for i in range(10)])
+], plots=[{"id": "p%d" % i, "name": "桥%d" % i, "outline_id": "a1b", "cover_beats": 8,
+           "primary_turn": "第 %d 个主要戏剧变化" % i} for i in range(10)])
 assert_ok("校验-跨度远超内容硬失败", _v_fill2["passed"] is False
           and len(_v_fill2["arc_fill"]["issues"]) == 1)
 
@@ -309,7 +310,10 @@ _csm.register("李哥", "同事", gender="男", personality="老油条",
               catchphrase="这破公司", brief="工位老同事")
 _ctx = _csm.build_context_prompt()
 assert_ok("角色-注册性别性格", "性别：男" in _ctx and "性格：老油条" in _ctx)
-assert_ok("角色-惯用语句", "这破公司" in _ctx)
+# 2026-09-11：`catchphrase` **不再**以「惯用语句」注入（那是口癖标签化的源头，
+# book_002 里「情况是这样」七章 15 次）；它保留为数据字段（UI/兼容），
+# 说话方式改由 speech_profile 的生成规律 + signature_phrases（稀疏）表达。
+assert_ok("角色-口癖不再当惯用语句注入", "这破公司" not in _ctx and "惯用语句" not in _ctx)
 import json as _json
 _csm2 = CharacterStateMachine.from_dict(_json.loads(_json.dumps(_csm.to_dict())))
 assert_ok("角色-序列化往返", _csm2.get("李哥").gender == "男" and _csm2.get("李哥").catchphrase == "这破公司")
@@ -699,19 +703,20 @@ assert_ok("载荷-plot缺id拒", _opp([{"id": "A", "name": "a", "start_word": 0,
 assert_ok("载荷-plot挂非叶拒", any("叶弧" in s for s in _opp(
     [{"id": "A", "name": "顶层", "start_word": 0, "end_word": 6000},
      {"id": "B", "name": "子", "start_word": 0, "end_word": 3000, "parent_arc_id": "A"}],
-    [{"id": "p1", "name": "挂顶层", "outline_id": "A"}])), "非叶应拒")
+    [{"id": "p1", "name": "挂顶层", "outline_id": "A", "primary_turn": "一转"}])), "非叶应拒")
 assert_ok("载荷-plot挂叶放行", _opp(
     [{"id": "A", "name": "顶层", "start_word": 0, "end_word": 6000},
      {"id": "B", "name": "子", "start_word": 0, "end_word": 3000, "parent_arc_id": "A"}],
-    [{"id": "p2", "name": "挂子", "outline_id": "B"}]) == [])
+    [{"id": "p2", "name": "挂子", "outline_id": "B", "primary_turn": "一转"}]) == [])
 assert_ok("载荷-outline_id悬空拒", _opp([{"id": "A", "name": "a", "start_word": 0, "end_word": 1000}],
-                                        [{"id": "p3", "name": "x", "outline_id": "NOPE"}]) != [])
-assert_ok("载荷-append挂既有叶放行", _opp([], [{"id": "p4", "name": "x", "outline_id": "old_leaf"}],
+                                        [{"id": "p3", "name": "x", "outline_id": "NOPE",
+                                          "primary_turn": "一转"}]) != [])
+assert_ok("载荷-append挂既有叶放行", _opp([], [{"id": "p4", "name": "x", "outline_id": "old_leaf", "primary_turn": "一转"}],
                                          known_outlines=[{"id": "old_leaf", "name": "旧叶",
                                                           "start_word": 0, "end_word": 3000}]) == [])
 assert_ok("载荷-append挂被夺叶拒", _opp(
     [{"id": "new_child", "name": "新子", "start_word": 0, "end_word": 1500, "parent_arc_id": "old_leaf"}],
-    [{"id": "p5", "name": "x", "outline_id": "old_leaf"}],
+    [{"id": "p5", "name": "x", "outline_id": "old_leaf", "primary_turn": "一转"}],
     known_outlines=[{"id": "old_leaf", "name": "旧叶", "start_word": 0, "end_word": 3000}]) != [])
 
 # drive_ui(set_outline) 入口：patch 入队 → 无跨度拒（消息含跨度）、完整跨度放行并入队
@@ -746,14 +751,16 @@ try:
     except RuntimeError as _e:
         _msg_semi = str(_e)
     assert_ok("载荷-save_outlines半组拒", _bad_semi and ("跨度" in _msg_semi), _msg_semi)
-    _r2 = _so(_tbid2, plots=[{"id": "pl1", "name": "桥1", "outline_id": "arc1", "words": 800}], mode="append", validate=False)
+    _r2 = _so(_tbid2, plots=[{"id": "pl1", "name": "桥1", "outline_id": "arc1", "words": 800,
+               "primary_turn": "第一个主要戏剧变化"}], mode="append", validate=False)
     assert_ok("载荷-append挂既有叶过", _r2.get("ok") and _r2.get("plots") == 1, str(_r2))
     _r3 = _so(_tbid2, outlines=[{"id": "sub1", "name": "子弧", "start_word": 0, "end_word": 3000,
                                  "parent_arc_id": "arc1"}], mode="append", validate=False)
     assert_ok("载荷-append加子弧过", _r3.get("ok"), str(_r3))
     _bad_nl, _msg_nl = True, ""
     try:
-        _so(_tbid2, plots=[{"id": "pl2", "name": "桥2", "outline_id": "arc1"}], mode="append", validate=False)
+        _so(_tbid2, plots=[{"id": "pl2", "name": "桥2", "outline_id": "arc1",
+                                    "primary_turn": "第二个主要戏剧变化"}], mode="append", validate=False)
         _bad_nl = False
     except RuntimeError as _e:
         _msg_nl = str(_e)
@@ -829,9 +836,12 @@ try:
     _build_session_path(_sid2).unlink()
     _rev1 = _so(_tbid3,
                 outlines=[{"id": "r1", "name": "开篇", "start_word": 0, "end_word": 3000}],
-                plots=[{"id": "rp1", "name": "起势", "outline_id": "r1", "words": 800},
-                       {"id": "rp2", "name": "受阻", "outline_id": "r1", "words": 1000},
-                       {"id": "rp3", "name": "转折", "outline_id": "r1", "words": 1200}],
+                plots=[{"id": "rp1", "name": "起势", "outline_id": "r1", "words": 800,
+                        "primary_turn": "起势"}, 
+                       {"id": "rp2", "name": "受阻", "outline_id": "r1", "words": 1000,
+                        "primary_turn": "受阻"},
+                       {"id": "rp3", "name": "转折", "outline_id": "r1", "words": 1200,
+                        "primary_turn": "转折"}],
                 mode="replace", expected_revision=0,
                 planning_patch={"target_word_budget": 120000, "future_intents": ["扩大冲突"]})
     assert_ok("revision-成功加一", _rev1.get("storyline_revision") == 1, str(_rev1))
@@ -856,12 +866,12 @@ try:
         "outlines": [{"id": "r2", "name": "下一弧", "start_word": 3000, "end_word": 6000}],
         # 批次下限与 planning_state.REPLAN_BATCH_MIN 同源（曾为 3 → 现 6；
         # 夹具未同步会让下面直接 RuntimeError，属历史失效夹具）
-        "plots": [{"id": "rp4", "name": "逼迫", "outline_id": "r2", "words": 1000},
-                  {"id": "rp5", "name": "选择", "outline_id": "r2", "words": 1000},
-                  {"id": "rp6", "name": "代价", "outline_id": "r2", "words": 1000},
-                  {"id": "rp7", "name": "反扑", "outline_id": "r2", "words": 1000},
-                  {"id": "rp8", "name": "抉择", "outline_id": "r2", "words": 1000},
-                  {"id": "rp9", "name": "落子", "outline_id": "r2", "words": 1000}],
+        "plots": [{"id": "rp4", "name": "逼迫", "outline_id": "r2", "words": 1000, "primary_turn": "逼迫"},
+                  {"id": "rp5", "name": "选择", "outline_id": "r2", "words": 1000, "primary_turn": "选择"},
+                  {"id": "rp6", "name": "代价", "outline_id": "r2", "words": 1000, "primary_turn": "代价"},
+                  {"id": "rp7", "name": "反扑", "outline_id": "r2", "words": 1000, "primary_turn": "反扑"},
+                  {"id": "rp8", "name": "抉择", "outline_id": "r2", "words": 1000, "primary_turn": "抉择"},
+                  {"id": "rp9", "name": "落子", "outline_id": "r2", "words": 1000, "primary_turn": "落子"}],
         "planning_patch": {"future_intents": ["扩大冲突"]},
     }
     _at.drive_ui("set_replan_preview", _preview_args)
@@ -903,7 +913,7 @@ def _mkout(_id, _n, _sw, _ew, _parent=""):
 _out_u = [_mkout("top", "顶层A", 0, 9000),
           _mkout("l1", "叶1", 0, 3000, "top"), _mkout("l2", "叶2", 3000, 6000, "top"), _mkout("l3", "叶3", 6000, 9000, "top")]
 _pl_u = [{"id": "p%d" % i, "name": "桥%d" % i, "outline_id": ["l1", "l1", "l1", "l2", "l2", "l2", "l3", "l3", "l3"][i],
-          "order": i % 3 + 1, "words": 1000} for i in range(9)]
+          "order": i % 3 + 1, "words": 1000, "primary_turn": "第 %d 转" % i} for i in range(9)]
 _r_u = _at.validate_storyline(outlines=_out_u, plots=_pl_u, words_per_chapter=3000)
 assert_ok("validate-均匀叶弧/全同字数报软提示",
           _r_u.get("structure_hints", {}).get("uniform_leaf_spans") is True
@@ -918,7 +928,8 @@ _pl_v, _idx = [], 0
 for _leaf, _ws in _wv.items():
     for _w in _ws:
         _idx += 1
-        _pl_v.append({"id": "q%d" % _idx, "name": "桥V%d" % _idx, "outline_id": _leaf, "order": _idx, "words": _w})
+        _pl_v.append({"id": "q%d" % _idx, "name": "桥V%d" % _idx, "outline_id": _leaf, "order": _idx,
+                      "words": _w, "primary_turn": "第 %d 转" % _idx})
 _r_v = _at.validate_storyline(outlines=_out_v, plots=_pl_v, words_per_chapter=3000)
 assert_ok("validate-差异化不报软提示",
           _r_v.get("structure_hints", {}).get("uniform_leaf_spans") is False
@@ -927,8 +938,10 @@ assert_ok("validate-差异化不报软提示",
           str(_r_v.get("structure_hints")))
 # 深拆软提示：两层 + 大叶弧(span≥3×wpc=9000) → deep_split_suggested=True 且 passed 不受影响
 _out_big = [_mkout("tb", "顶层B2", 0, 12000), _mkout("lb", "大叶弧", 0, 12000, "tb")]
-_pl_big = [{"id": "big%d" % i, "name": "桥B%d" % i, "outline_id": "lb", "order": i, "words": 1500}
-           for i in range(8)]
+# words 取 1200（新粒度硬上限）：旧夹具的 1500 现在会被拒收；弧跨度仍由 outline 的
+# start/end 决定（12000 ≥ 3×wpc），deep_split 的判据不受影响
+_pl_big = [{"id": "big%d" % i, "name": "桥B%d" % i, "outline_id": "lb", "order": i, "words": 1200,
+            "primary_turn": "第 %d 转" % i} for i in range(8)]
 _r_big = _at.validate_storyline(outlines=_out_big, plots=_pl_big, words_per_chapter=3000)
 assert_ok("validate-大叶弧提示可拆第三层",
           _r_big.get("structure_hints", {}).get("max_arc_depth") == 2
