@@ -77,7 +77,7 @@ def main():
     # ── 5. 预测式：再塞一个完整情节段会冲破 hard_max → 现在收 ──
     s = status(2500, 1200)
     assert s["chapter_ready"] and s["reason"] == "next_plot_would_exceed_hard_max", s
-    assert s["forced_budget_boundary"] is True and s["next_plot_allowed"] is False
+    assert s["forced_budget_boundary"] is True and s["chapter_ready"] is True
     assert s["predicted_words_after_next_plot"] == 3700
     # 严格大于才是「超」：2500+1100=3600 恰好等于 hard_max → 继续
     s = status(2500, 1100)

@@ -174,7 +174,10 @@ def chapter_status(book_id: str, tl, draft: dict | None, *, needs_replan: bool,
             "has_next_committed_plot": next_exists, "has_legal_closure": closure,
             "next_plot_planned_words": next_words,
             "predicted_words_after_next_plot": predicted,
-            "next_plot_allowed": not ready,
+            # 「这一章还会不会再开一个新情节段」= `not chapter_ready` —— 本设计里两者是同一件事
+            # （FSM 的动作只有「收章」与「继续写」两种），所以**不另立一个必然相等的字段**：
+            # 名字承诺了一个独立判定、实现却恒等，读者会以为存在第二种状态。
+            # 真正需要区分的是**为什么**收章：见 reason / forced_budget_boundary。
             "forced_budget_boundary": forced,
             "next_plot_break_after": break_after}
 
@@ -192,7 +195,7 @@ def next_action(status: dict) -> str:
     """
     if status.get("chapter_ready"):
         return "COMMITTING_CHAPTER"
-    if status.get("has_next_committed_plot") and status.get("next_plot_allowed", True):
+    if status.get("has_next_committed_plot"):
         return "PREPARING_PLOT"
     if status.get("reason") == "plot_exhausted_needs_replan":
         return "REPLANNING"
