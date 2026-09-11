@@ -80,6 +80,96 @@ def _txt(plot, tl=None):
     return "".join(parts)
 
 
+def infer_scene_modulation(plot, tl=None) -> dict:
+    """章内单 Plot 的轻量调制（**不换样文**，只提示本段在整章声音里的偏置）。
+
+    与 `infer_plot_query` 同源同判据，只是产出给 Writer 当节奏提示而非给选择器当 query。
+    """
+    text = _txt(plot, tl)
+    out: dict = {}
+    q = infer_plot_query(plot, tl)
+    if "pace" in q:
+        out["pace"] = q["pace"]
+    if "dialogue_density" in q:
+        out["dialogue_density"] = q["dialogue_density"]
+    scenes = q.get("scene") or []
+    if any(s in ("action", "danger", "confrontation", "death") for s in scenes):
+        out["tension"] = "high"
+    elif any(s in ("quiet", "aftermath", "transition") for s in scenes):
+        out["tension"] = "low"
+    elif scenes:
+        out["tension"] = "mid"
+    return out
+
+
+def chapter_plot_window(ordered_plots, *, target_words: int) -> list:
+    """从有序情节段列表**首项**起向后取，直到累计 planned_words ≥ target_words。
+
+    首项强制纳入（当前段落必写），因此返回值至少 1 项（列表空时返回空）。
+    `ordered_plots` 必须已按叙事顺序排好且**首项是当前待写段**（调用方用
+    `_ordered_plots` 切好后传入）；本函数不排序、不查 written_chapter。
+    """
+    window, total = [], 0
+    for p in (ordered_plots or []):
+        window.append(p)
+        total += _planned_words(p)
+        if total >= int(target_words or 0):
+            break
+    return window
+
+
+def infer_chapter_query(window, tl=None) -> dict:
+    """章级样文 query：对整章预计覆盖的情节段做**按 planned_words 加权**的维度合并。
+
+    用途是给「一章一篇主样文」选样——比单段 query 更能代表本章主导场景，避免整章
+    固定的那篇样文只匹配了开篇那一段。仍然只读情节段内容字段（不读 thread/promise）。
+    """
+    plots = [p for p in (window or []) if p is not None]
+    if not plots:
+        return {}
+    per_plot = [(max(1, _planned_words(p)), infer_plot_query(p, tl)) for p in plots]
+    scene_score: dict[str, float] = {}
+    scene_first: dict[str, int] = {}
+    for i, (w, q) in enumerate(per_plot):
+        scenes = list(q.get("scene") or [])
+        for rank, sc in enumerate(scenes):
+            scene_score[sc] = scene_score.get(sc, 0.0) + w * (len(scenes) - rank)
+            scene_first.setdefault(sc, i)
+    out: dict = {}
+    if scene_score:
+        ordered = sorted(scene_score.items(),
+                         key=lambda kv: (-kv[1], scene_first.get(kv[0], 999), kv[0]))
+        out["scene"] = [sc for sc, _ in ordered[:SCENE_CAP]]
+    for dim in ("cast", "dialogue_density", "pace"):
+        tally: dict[str, float] = {}
+        for w, q in per_plot:
+            val = q.get(dim)
+            if val:
+                tally[val] = tally.get(val, 0.0) + w
+        if not tally:
+            continue
+        best = max(tally.values())
+        tied = sorted(v for v, s in tally.items() if s == best)
+        if len(tied) == 1:
+            out[dim] = tied[0]
+            continue
+        # 并列：取窗口中**最早出现**且在并列集合里的那个值（确定性，不依赖 dict 序）
+        for _w, q in per_plot:
+            if q.get(dim) in tied:
+                out[dim] = q[dim]
+                break
+    return out
+
+
+def _planned_words(plot) -> int:
+    """情节段目标字数（与 storyline_writer.planned_words 同一口径；函数内导入避免环）。"""
+    from .storyline_writer import planned_words
+    try:
+        return int(planned_words(plot) or 0)
+    except Exception:  # noqa: BLE001 — 纯规则层的防御：取不到就当 0，不影响 query 合并
+        return 0
+
+
 def infer_plot_query(plot, tl=None) -> dict:
     """PlotSlot(+可选已 load 的 storyline)→ 样文选择 query(英文键)。
 

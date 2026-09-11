@@ -307,24 +307,33 @@ def attach_build_session(session_id: str, book_id: str, tl, book=None) -> dict:
     return state
 
 
-# ── H0 承诺批次策略（阈值与批大小必须同源）──────────────────────────────
-# 计划器一次续规划产出的 committed 情节段数，与「剩余多少就请求续规划」的阈值必须联动：
+# ── H0 承诺批次策略（按**承诺字数**控制 horizon，阈值与目标必须同源）──────────
 # 早期实现是「触发阈值 ≤2 段」+「每次只补 3–8 段」，等于每 1–7 段就要跑一整轮计划器会话
 # （一次会话 ≈ 10 轮 LLM + 12KB NOVEL_AGENT.md + skills + 10 个工具 schema），
-# 规划开销与写作产出严重失衡。现在一次补 6–12 段、阈值取批大小的三分之一。
-REPLAN_BATCH_MIN = 6
-REPLAN_BATCH_MAX = 12
+# 规划开销与写作产出严重失衡。
+#
+# 2026-09-11 改基线：Plot 粒度从「一大段故事发展」(平均 ~1300 字) 收到「一个主要戏剧变化」
+# (~600 字)，**批次不能再按段数定义**——同样的 6–12 段，承诺字数直接腰斩，replan 会翻倍触发；
+# 而把段数翻到 10–20 只是补偿，下次 Plot 平均字数再变又要改一次。改成按承诺字数定 horizon：
+# 计划器生成 Plot 直到累计 committed 字数达到 REPLAN_TARGET_WORDS，段数只作安全上限。
+#
+# 注意：触发阈值与批次目标仍然必须同源（就是本节开头那个论证）——只是单位从段数换成字数。
+REPLAN_TARGET_WORDS = 9000        # 计划器单批承诺目标（≈3 章 @3000）
+REPLAN_MIN_REMAINING_WORDS = 2500  # 承诺余量低于此即请求续规划
+REPLAN_MAX_PLOTS = 20             # 安全上限（不是目标）
+REPLAN_MIN_PLOTS = 2              # PLOTS_LOW 安全下限（= 原 max(2, 6//3)，行为不变）
 
 
 def replan_low_plot_threshold() -> int:
-    """剩余情节段 ≤ 此值即请求续规划（按最小批次推导，避免与批大小脱节）。"""
-    return max(2, REPLAN_BATCH_MIN // 3)
+    """剩余情节段 ≤ 此值即请求续规划（段数只是兜底安全网，horizon 主体由字数定）。"""
+    return REPLAN_MIN_PLOTS
 
 
 def detect_story_boundary(*, written_until_word: int, committed_until_word: int,
-                          remaining_plots: int, words_per_batch: int,
+                          remaining_plots: int, words_per_batch: int = 0,
                           storyline_revision: int, last_replan: dict | None = None,
-                          low_plot_threshold: int | None = None) -> dict:
+                          low_plot_threshold: int | None = None,
+                          replan_min_remaining_words: int | None = None) -> dict:
     """纯函数：剩余 plot 低于阈值 或 承诺余量不足一个批次时请求 replan。
 
     注意两个信号的角色：它们是**续规划信号**（UI 横幅 + 计划器输入），不是「停写」信号。
@@ -332,11 +341,15 @@ def detect_story_boundary(*, written_until_word: int, committed_until_word: int,
     所以情节段没耗尽时不会为了边界中断写作（`write_flow.next_action`）。
     """
     threshold = replan_low_plot_threshold() if low_plot_threshold is None else int(low_plot_threshold)
+    # 字数阈值优先用显式入参；未给时回退旧口径（words_per_batch=words_per_chapter）。
+    min_remaining = (int(replan_min_remaining_words) if replan_min_remaining_words is not None
+                     else (int(words_per_batch) if words_per_batch
+                           else REPLAN_MIN_REMAINING_WORDS))
     remaining_words = max(0, int(committed_until_word or 0) - int(written_until_word or 0))
     reasons = []
     if int(remaining_plots or 0) <= threshold:
         reasons.append("PLOTS_LOW")
-    if remaining_words <= max(1, int(words_per_batch or 0)):
+    if remaining_words <= max(1, min_remaining):
         reasons.append("WORDS_LOW")
     last = last_replan or {}
     same_revision = int(last.get("from_revision", -1) or -1) == int(storyline_revision or 0)
@@ -345,4 +358,7 @@ def detect_story_boundary(*, written_until_word: int, committed_until_word: int,
     return {"needs_replan": bool(reasons) and not debounced, "reason_codes": reasons,
             "remaining_plots": max(0, int(remaining_plots or 0)), "remaining_words": remaining_words,
             "low_plot_threshold": threshold,
+            "replan_min_remaining_words": min_remaining,
+            "replan_target_words": REPLAN_TARGET_WORDS,
+            "replan_max_plots": REPLAN_MAX_PLOTS,
             "debounced": debounced, "storyline_revision": int(storyline_revision or 0)}

@@ -22,7 +22,8 @@ def _server_last_replan(book_id: str, from_revision: int, preview_id: str) -> di
     「上次续规划在哪个版本、因为什么」记录。
     """
     from agent_tools import _draft_read, _runtime_written_words, book_mgr, load_tl
-    from libraries.planning_state import detect_story_boundary, load_planning_state
+    from libraries.planning_state import (REPLAN_MIN_REMAINING_WORDS, detect_story_boundary,
+                                          load_planning_state)
     import time as _time
     tl = load_tl(book_id)
     book = book_mgr.get(book_id)
@@ -37,7 +38,7 @@ def _server_last_replan(book_id: str, from_revision: int, preview_id: str) -> di
         written_until_word=_runtime_written_words(book_id, tl, book, draft),
         committed_until_word=int(state.get("committed_until_word") or 0),
         remaining_plots=remaining,
-        words_per_batch=int(tl.words_per_chapter or 3000),
+        replan_min_remaining_words=REPLAN_MIN_REMAINING_WORDS,
         storyline_revision=int(from_revision or 0),
         last_replan={})
     return {"from_revision": int(from_revision or 0),

@@ -55,6 +55,11 @@ _BEHAVIOR_SLOT_KEYS = {
     "emotion_expression": ("anger", "fear", "sadness"),
 }
 _SPEECH_LIST_KEYS = ("habits", "forbidden")
+# 语言**生成规律**（描述「怎么说话」，不是台词表）。四键任一有内容即算有 voice。
+_SPEECH_STR_KEYS = ("rhythm", "tone", "logic", "emotion", "social_register")
+# 标志短语的稀疏度档位；非法值降 rare（绝不升格——口癖越少越好）
+_SIGNATURE_FREQ = ("rare", "occasional", "often")
+_SIGNATURE_DEFAULT_FREQ = "rare"
 
 
 def _norm_behavior(v) -> dict:
@@ -68,17 +73,72 @@ def _norm_behavior(v) -> dict:
     return out
 
 
+def _norm_signature_phrases(v) -> list[dict]:
+    """归一 signature_phrases → [{text, frequency, contexts}]。
+
+    text 空则丢、同名去重；frequency 非法一律降 `rare`（不是升格——口癖越少越好）；
+    允许 `["台词"]` 这类字符串简写。**完全可选**：多数好角色不需要标志短语。
+    """
+    out, seen = [], set()
+    for item in (v or []):
+        if isinstance(item, str):
+            item = {"text": item}
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text", "") or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        freq = str(item.get("frequency", "") or "").strip().lower()
+        if freq not in _SIGNATURE_FREQ:
+            freq = _SIGNATURE_DEFAULT_FREQ
+        out.append({"text": text, "frequency": freq,
+                    "contexts": [str(c).strip() for c in (item.get("contexts") or [])
+                                 if isinstance(c, str) and str(c).strip()]})
+    return out
+
+
 def _norm_speech_profile(v) -> dict:
-    """归一 speech_profile：{rhythm,tone:str, habits/forbidden:list[str]}（语言倾向）。"""
+    """归一 speech_profile：语言**生成规律**，不是台词表。
+
+    rhythm/tone/logic/emotion/social_register 描述「怎么说话」；
+    habits/forbidden 是句式与表达倾向、绝不说（**不得装字面台词**——「每次先说某句」
+    属于 signature_phrases，且那也应是稀疏特征而非每条出场都复读）。
+    """
     if not isinstance(v, dict):
         v = {}
     _lst = lambda x: [str(i).strip() for i in (x or []) if isinstance(i, str) and str(i).strip()]
-    return {
-        "rhythm": str(v.get("rhythm", "") or "").strip(),
-        "tone": str(v.get("tone", "") or "").strip(),
-        "habits": _lst(v.get("habits")),
-        "forbidden": _lst(v.get("forbidden")),
-    }
+    out = {k: str(v.get(k, "") or "").strip() for k in _SPEECH_STR_KEYS}
+    out["habits"] = _lst(v.get("habits"))
+    out["forbidden"] = _lst(v.get("forbidden"))
+    out["signature_phrases"] = _norm_signature_phrases(v.get("signature_phrases"))
+    return out
+
+
+def voice_keys_with_content(sp) -> list[str]:
+    """speech_profile 里**有实质内容**的生成规律键（四键之一，tone 不算）。
+
+    「有 voice」的判据是这个，不是有没有 catchphrase/signature_phrases——
+    要求人人有标志短语只会把模型逼回「给每个角色造一句口癖」的老路。
+    """
+    sp = sp if isinstance(sp, dict) else {}
+    return [k for k in ("rhythm", "logic", "emotion", "social_register")
+            if str(sp.get(k, "") or "").strip()]
+
+
+def signature_phrases_of(char) -> list[dict]:
+    """角色的标志短语（稀疏特征）——**可选**。
+
+    `signature_phrases` 为空时把 legacy `catchphrase` 降级成一条 `rare`（保留既有
+    人物的辨识点，但不再当「每次出场都要说」的台词表用；`frequency` 只降不升）。
+    """
+    char = char if isinstance(char, dict) else {}
+    sp = char.get("speech_profile") if isinstance(char.get("speech_profile"), dict) else {}
+    phrases = _norm_signature_phrases(sp.get("signature_phrases"))
+    if phrases:
+        return phrases
+    legacy = str(char.get("catchphrase", "") or "").strip()
+    return [{"text": legacy, "frequency": _SIGNATURE_DEFAULT_FREQ, "contexts": []}] if legacy else []
 
 
 def _norm_development_plan(v):
@@ -323,13 +383,28 @@ def _plot_fields(p):
             str(getattr(p, "outline_id", "") or "").strip())
 
 
-def outline_payload_problems(outlines, plots, known_outlines=(), known_plots=()):
+def _plot_size_fields(p) -> tuple:
+    """dict 或 PlotSlot → (words, primary_turn)（粒度校验用；缺权威 → (0, "")）。"""
+    get = (p.get if isinstance(p, dict) else lambda k, d=None: getattr(p, k, d))
+    try:
+        words = int(get("words", 0) or 0)
+    except (TypeError, ValueError):
+        words = 0
+    return words, str(get("primary_turn", "") or "").strip()
+
+
+def outline_payload_problems(outlines, plots, known_outlines=(), known_plots=(),
+                             legacy_plot_ids=()):
     """校验提交的 outlines/plots 载荷结构（结构必填，缺则拒收、不自动换算兜底）。
 
     每条弧须 id 非空唯一 + name 非空 + 一组完整跨度（字数对 0<=start<end 或 章对
     1<=start<=end；半组/全缺非法）。每个情节段须 id 非空唯一 + outline_id 指向
     存在的最底层（叶）弧。known_outlines/known_plots 只作上下文（save_outlines
     append 可把 plots 挂到已落盘弧、防 id 撞），自身不被校验。
+
+    `legacy_plot_ids`：已在盘上的存量情节段 id 集合。**新情节段**（不在该集合里）额外
+    强制粒度规则——`words <= PLOT_HARD_MAX` 且 `primary_turn` 非空，违反即拒收；存量
+    情节段两条都只当 warning（旧书按 300~2500 规划，整批打成非法等于无法读写旧书）。
     返回问题字符串列表，空 = 通过。"""
     probs = []
     new_arcs = [_arc_fields(o) for o in (outlines or [])]
@@ -380,7 +455,90 @@ def outline_payload_problems(outlines, plots, known_outlines=(), known_plots=())
             probs.append(f"情节段[id={pid or '?'}] outline_id={oid} 未指向任何弧")
         elif oid in non_leaf:
             probs.append(f"情节段[id={pid or '?'}] outline_id={oid} 非叶弧（{oid} 含子弧，情节段只能挂最底层弧）")
+    # 粒度硬规则：只卡**新情节段**（存量走 legacy_plot_size_warnings）。
+    probs.extend(plot_size_problems(plots, legacy_plot_ids=legacy_plot_ids))
     return probs
+
+
+def plot_size_problems(plots, legacy_plot_ids=()) -> list[str]:
+    """新情节段的粒度硬规则：`words <= PLOT_HARD_MAX` 且 `primary_turn` 非空。
+
+    **独立函数**（不是 outline_payload_problems 的内联片段）——validate_storyline 需要对
+    盘上情节段单独跑这一条，而那时它没有弧列表，内联版本会因 id_set 为空把每个情节段都误判成
+    「outline_id 未指向任何弧」。存量的提示语见 legacy_plot_size_warnings()。
+    """
+    legacy_ids = {str(x or "").strip() for x in (legacy_plot_ids or [])}
+    out = []
+    for p in (plots or []):
+        pid, pname, _oid = _plot_fields(p)
+        if pid and pid in legacy_ids:
+            continue
+        words, turn = _plot_size_fields(p)
+        who = f"情节段「{pname or pid or '未命名'}」"
+        if words > PLOT_HARD_MAX:
+            out.append(f"{who} 目标字数 {words} 超过硬上限 {PLOT_HARD_MAX}："
+                       f"一个情节段 = 一个主要戏剧变化，请按拆段判据（时间跳跃/地点转换/"
+                       f"主导冲突对象变化/新问题/双高潮）拆成多个情节段。{plot_word_guidance()}")
+        if not turn:
+            out.append(f"{who} 缺 primary_turn（本段唯一的主要戏剧变化，一句话）；"
+                       f"没有它无法判断这一段是否其实是几个戏剧转向合写。")
+    return out
+
+
+def legacy_plot_size_warnings(plots, legacy_plot_ids=()) -> list[str]:
+    """存量情节段的粒度提示（**不拒收**）：返回 warning 文案列表，供 decision_points 展示。
+
+    与 outline_payload_problems 的新段硬规则互补——同一条规则，两种强度：
+    新段违反 = 拒收（写入端拦住，从此不再产生 2200 字 Plot）；
+    存量违反 = 提示（旧书照常读写，不迁移）。
+    """
+    legacy_ids = {str(x or "").strip() for x in (legacy_plot_ids or [])}
+    out = []
+    for p in (plots or []):
+        pid, pname, _oid = _plot_fields(p)
+        if not pid or pid not in legacy_ids:
+            continue
+        words, turn = _plot_size_fields(p)
+        who = f"情节段「{pname or pid}」"
+        if words > PLOT_HARD_MAX:
+            out.append(f"{who} 是存量情节段且目标字数 {words} > {PLOT_HARD_MAX}（legacy_oversized_plot）："
+                       f"旧书不迁移、照常写作；续写/扩展时请按新粒度拆段")
+        if not turn:
+            out.append(f"{who} 是存量情节段且缺 primary_turn（legacy_missing_turn）："
+                       f"不影响旧书写作；新规情节段必须填")
+    return out
+
+
+# ═══════════════════════════════════════════
+# 情节段字数粒度（2026-09-11 重基线）
+# ═══════════════════════════════════════════
+# 旧口径「300~2500」把 Plot 当成「一大段故事发展」，实测生成了 2200 字的单段
+# （book_002 pl15 ≈ 该章 73%），一章只切出 2~3 段、每段还各抽一篇样文 → 章内文风断层。
+# 新口径：Plot = 一个主要戏剧变化（见 PlotSlot.primary_turn），一章 4~6 段。
+#
+# **注意 `MAX_PLAN_WORDS`（storyline_writer.py:25）不随本表下调**：那是 planned_words 的
+# 钳位上限，下调会静默改写存量 Plot 的规划字数，让弧内覆盖校验把旧书报成大段叙事空白。
+# 这里的新上限只用于**新 Plot 的校验拒收**（legacy 走 outline_payload_problems 白名单）。
+PLOT_WORD_BANDS = {
+    "transition": (250, 450),    # 过渡/信息
+    "normal":     (450, 700),    # 普通推进
+    "conflict":   (600, 850),    # 冲突/人物变化
+    "key":        (800, 1050),   # 关键转折
+    "climax":     (850, 1100),   # 高潮
+}
+PLOT_PREFERRED_MAX = 1100        # 超此值即「建议再拆」，不拒收
+PLOT_HARD_MAX = 1200             # 新 Plot 硬上限：超过直接拒收（legacy 只 warning）
+
+# chapter_break_after 合法值（Planner 表达语义，Server 结合字数预算决定是否断章）
+PLOT_BREAK_AFTER = ("preferred", "allowed", "avoid")
+
+
+def plot_word_guidance() -> str:
+    """给指令层/校验提示复用的一段字数口径文案（避免多处手写漂移）。"""
+    bands = "、".join(f"{k} {lo}~{hi}" for k, (lo, hi) in PLOT_WORD_BANDS.items())
+    return (f"一个情节段 = 一个主要戏剧变化（primary_turn），一章通常 4~6 段；"
+            f"目标字数按类型给（{bands}），建议不超过 {PLOT_PREFERRED_MAX}，"
+            f"硬上限 {PLOT_HARD_MAX}（新情节段超过直接拒收）")
 
 
 @dataclass
@@ -426,6 +584,15 @@ class PlotSlot:
     order: int = 0                 # 阶段内排序
     cover_beats: int = 4           # 预计覆盖多少个节拍
     words: int | None = None       # 目标字数（agent 按内容浓淡给的规划字数；0/None=回退 cover_beats×200）
+    # 剧情单位自洽性（2026-09-11）：一个 Plot = 一个主要戏剧变化。
+    # primary_turn 是**硬校验字段**（新 Plot 必填）——没有它，validator 无法判「这一段到底
+    # 是几个戏剧转向」，字数上限就只是唯一可查的代理指标（book_002 的 pl15 写了 2200 字、
+    # 一章塞 4 个转向，正是这个洞）。时间跳跃/地点转换/第二冲突等判据不可自动校验，留在
+    # 指令层当强生成规则；这里只强制「你必须说出这一段唯一的那一转」。
+    primary_turn: str = ""         # 本 Plot 唯一的主要戏剧变化（一句话）
+    # 写完这一段是否适合断章：preferred 建议断 | allowed 可以断 | avoid 尽量不断。
+    # 由 Planner 表达语义、Server 结合字数预算决定（见 write_flow.chapter_status）。
+    chapter_break_after: str = "allowed"
     template_structure: str = ""   # 情节段模板结构字符串（箭头流程）
     slots: list = field(default_factory=list)  # 变量槽位
 
@@ -524,6 +691,8 @@ class BookStoryline:
                 "children_plot_ids": p.children_plot_ids,
                 "order": p.order, "cover_beats": p.cover_beats,
                 "words": p.words,
+                "primary_turn": p.primary_turn,
+                "chapter_break_after": p.chapter_break_after,
                 "template_structure": p.template_structure,
                 "slots": p.slots,
                 "gag_ids": p.gag_ids, "theme_hints": p.theme_hints,
@@ -600,6 +769,8 @@ class BookStoryline:
             children_plot_ids=p.get("children_plot_ids", []),
             order=p.get("order", 0), cover_beats=p.get("cover_beats", 4),
             words=p.get("words"),
+            primary_turn=p.get("primary_turn", ""),
+            chapter_break_after=p.get("chapter_break_after", "allowed"),
             template_structure=p.get("template_structure", ""),
             slots=p.get("slots", []),
             gag_ids=p.get("gag_ids", []),

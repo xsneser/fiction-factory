@@ -42,14 +42,15 @@ from ui.web_blueprints.ctx import (  # noqa: E402
 )
 from core.text_utils import count_prose_units  # noqa: E402
 from libraries.reviewer import HARD_MIN_RATIO  # noqa: E402
-from libraries.storyline import OutlineSlot, annotate_plot_roles, \
-    get_mc, get_characters, normalize_basic_info, \
-    outline_payload_problems  # noqa: E402
+from libraries.storyline import PLOT_HARD_MAX, OutlineSlot, annotate_plot_roles, \
+    get_mc, get_characters, normalize_basic_info, outline_payload_problems, \
+    plot_size_problems, signature_phrases_of, voice_keys_with_content  # noqa: E402
 from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
 from libraries.tool_policy import _wrap_phase_gate  # noqa: E402
 from libraries import style_md  # noqa: E402  # 样本驱动:styles/<pen>.md 与 STYLE REFERENCE 样本
 from libraries import style_samples  # noqa: E402  # 样文池 samples.json + 预算选样注入
 from libraries.planning_state import (  # noqa: E402
+    REPLAN_MAX_PLOTS, REPLAN_MIN_REMAINING_WORDS, REPLAN_TARGET_WORDS,
     detect_story_boundary, load_planning_state, merge_state, planning_path,
     save_planning_state, validate_patch,
 )
@@ -796,7 +797,7 @@ def _deprecated_get_writing_context(book_id: str) -> dict:
             written_until_word=int(runtime["display_written_words"]),
             committed_until_word=int(ps.get("committed_until_word") or 0),
             remaining_plots=remaining,
-            words_per_batch=int(tl.words_per_chapter or 3000),
+            replan_min_remaining_words=REPLAN_MIN_REMAINING_WORDS,
             storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
             last_replan=ps.get("last_replan") or {},
         )
@@ -2451,8 +2452,12 @@ def save_outlines(book_id: str, outlines: list | None = None,
         raise RuntimeError("mode 只允许 replace 或 append")
     _known_arcs = [] if mode == "replace" else (candidate.outlines or [])
     _known_plots = [] if mode == "replace" else (candidate.plots or [])
+    # legacy 白名单取**持久化集合**而非 _known_plots：replace 模式下 _known_plots 为空，
+    # 会把整份重提交的旧书（含 1300~2200 字的存量情节段）全打成非法。
+    _legacy_plot_ids = {getattr(p, "id", "") for p in (tl.plots or [])}
     _probs = outline_payload_problems(outlines or [], plots or [],
-                                      known_outlines=_known_arcs, known_plots=_known_plots)
+                                      known_outlines=_known_arcs, known_plots=_known_plots,
+                                      legacy_plot_ids=_legacy_plot_ids)
     if _probs:
         raise RuntimeError("save_outlines 拒绝：outlines/plots 结构不完整——" + "；".join(_probs))
     if mode == "replace":
@@ -2496,6 +2501,8 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 order=int(p.get("order") or 0),
                 cover_beats=int(p.get("cover_beats") or 4),
                 words=int(p.get("words")) if p.get("words") is not None else None,
+                primary_turn=str(p.get("primary_turn", "") or ""),
+                chapter_break_after=str(p.get("chapter_break_after", "allowed") or "allowed"),
                 thread_id=p.get("thread_id", "主线"),
                 resolves_plot_id=p.get("resolves_plot_id", ""),
                 resolves_name=p.get("resolves_name", ""),
@@ -2525,6 +2532,7 @@ def save_outlines(book_id: str, outlines: list | None = None,
             outlines=candidate.to_dict().get("outlines") or [],
             plots=candidate.to_dict().get("plots") or [],
             words_per_chapter=candidate.words_per_chapter,
+            legacy_plot_ids=_legacy_plot_ids,
         )
         if not report.get("passed"):
             raise RuntimeError("save_outlines 校验失败：" + str(report.get("summary") or report))
@@ -3046,14 +3054,19 @@ def chapter_quality_gate(book_id: str, chapter_num: int = 0, recent_n: int = 5) 
 
 
 def validate_storyline(book_id: str = "", outlines: list | None = None,
-                       plots: list | None = None, words_per_chapter: int = 3000) -> dict:
+                       plots: list | None = None, words_per_chapter: int = 3000,
+                       legacy_plot_ids: list | None = None) -> dict:
     """故事线校验（规则层，零成本）：检查两条硬规则——①顶层弧完整覆盖故事线纵轴（无叙事空白）、
     ②情节段仅挂最底层弧（不包含其他弧的弧）。只报告不修复，问题作 decision_points 由 agent/用户补弧或移情节段。
 
     双模式：传 book_id 校验已落盘书；或步3 未建书时传 outlines/plots dict（内联模式，agent 提交前自查用，
     因为步3 时 book 尚未创建、get_book_detail/get_storyline 不可用）。返回 compact 报告：
-    passed/issue_count/summary 置前 + coverage/leaf_arcs 明细 + decision_points。"""
-    from libraries.storyline import OutlineSlot, PlotSlot, reconcile_outline
+    passed/issue_count/summary 置前 + coverage/leaf_arcs 明细 + decision_points。
+
+    `legacy_plot_ids`：存量情节段 id 白名单。落盘书模式自动取盘上 id（旧书按老口径规划，
+    不该被新粒度规则判非法）；内联/可写模式默认空 = 全部当新情节段硬校验。"""
+    from libraries.storyline import (OutlineSlot, PlotSlot, legacy_plot_size_warnings,
+                                     plot_size_problems, reconcile_outline)
 
     # 数据源解析：book_id 模式从落盘读（字段已 reconcile）；内联模式用传入 dict
     if book_id:
@@ -3063,6 +3076,8 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
         _arcs = list(tl.outlines or [])
         _plots = list(tl.plots or [])
         wpc = int((tl.words_per_chapter or 0) or words_per_chapter or 3000)
+        if legacy_plot_ids is None:
+            legacy_plot_ids = [getattr(p, "id", "") for p in (tl.plots or [])]
     else:
         _arcs = []
         wpc = int(words_per_chapter or 3000)
@@ -3130,6 +3145,13 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
                           "outline_name": _oname, "reason": "非最底层弧"})
     _leaf_passed = not _leaf_issues
 
+    # ②b 粒度：新情节段硬卡（≤PLOT_HARD_MAX 且 primary_turn 非空）；存量降级为提示。
+    # **复用 storyline 里那两个互补函数**，不在这里重写规则（两处口径必然漂移）。
+    _legacy_ids = list(legacy_plot_ids or [])
+    _size_issues = plot_size_problems(_plots, legacy_plot_ids=_legacy_ids)
+    _size_notes = legacy_plot_size_warnings(_plots, legacy_plot_ids=_legacy_ids)
+    _size_passed = not _size_issues
+
     # ③ 弧内覆盖：顶层弧跨度 vs 其叶弧后代情节段 planned_words 之和（warning 级，不计硬失败）
     # 口径与 libraries/storyline_writer.planned_words 一致：plot.words(agent 目标字数) 优先，
     # 未给回退 cover_beats×200 封顶 1200（两处同步，勿单改）。
@@ -3178,7 +3200,7 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
             _fill_issues.append(f"顶层弧「{a.name}」跨度 {span} 字、情节段 planned 仅 {content} 字，约 {gap_words} 字空白（ratio {ratio:.1f}），建议拆子弧/缩弧跨度/补情节段")
     _fill_passed = not _fill_issues
 
-    passed = _cov_passed and _leaf_passed and _fill_passed
+    passed = _cov_passed and _leaf_passed and _fill_passed and _size_passed
     parts = []
     if _cov_issues:
         parts.append(f"弧树覆盖 {len(_cov_issues)} 处问题（{len(_gaps)} 处叙事空白）")
@@ -3186,11 +3208,18 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
         parts.append(f"情节段叶弧 {len(_leaf_issues)} 处问题")
     if _fill_issues:
         parts.append(f"弧内空白 {len(_fill_issues)} 处（跨度远超情节段内容）")
+    if _size_issues:
+        parts.append(f"情节段粒度 {len(_size_issues)} 处不合规（新情节段：字数上限 {PLOT_HARD_MAX} + "
+                     f"primary_turn 必填）")
     if not parts:
-        parts.append("弧树覆盖、情节段叶弧与弧内填充均通过")
+        parts.append("弧树覆盖、情节段叶弧、弧内填充与情节段粒度均通过")
     decision_points = [{"check": "storyline", "severity": "warning",
                         "description": str(s)[:60], "location": "", "suggestion": ""}
-                       for s in (_cov_issues + _leaf_issues + _fill_issues)[:20]]
+                       for s in (_cov_issues + _leaf_issues + _fill_issues + _size_issues)[:20]]
+    # 存量情节段的粒度提示：**不进 passed**，只作决策点展示（旧书不迁移）
+    decision_points += [{"check": "plot_granularity", "severity": "info",
+                         "description": str(s)[:80], "location": "", "suggestion": ""}
+                        for s in _size_notes[:10]]
     suggestions = []
     if leading_gap:
         suggestions.append("在故事线开头补一个从 0 字开始的顶层弧，或把首个顶层弧 start_word 调到 0")
@@ -3216,7 +3245,7 @@ def validate_storyline(book_id: str = "", outlines: list | None = None,
     _bridge_words = sorted({_pw_of(p) for p in _plots})
     _uniform_bridge = len(_plots) >= 6 and len(_bridge_words) == 1
     if _uniform_bridge:
-        _lattice.append(f"情节段目标字数全相同（{len(_plots)} 个情节段均 {_bridge_words[0]} 字，常见=全默认 cover_beats=4→800），疑似模板印刷，建议按场景浓淡差异化（words 300~2500）")
+        _lattice.append(f"情节段目标字数全相同（{len(_plots)} 个情节段均 {_bridge_words[0]} 字，常见=全默认 cover_beats=4→800），疑似模板印刷，建议按类型差异化——过渡 250~450 / 推进 450~700 / 冲突 600~850 / 关键 800~1050 / 高潮 850~1100")
 
     # ⑤ 深度下探建议（可选，不强制、不改 passed）：两层树 + 存在 ≥3×wpc 的大叶弧 → 提示可拆第三层
     _by_arc_id = {(getattr(a, "id", "") or ""): a for a in _arcs}
@@ -3537,13 +3566,15 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
         if not isinstance(args.get("diagnosis"), dict):
             raise RuntimeError(f"命令 {cmd} 需 diagnosis 对象")
         outs, plots = args.get("outlines"), args.get("plots")
-        # 批大小与「剩余多少就续规划」的阈值同源（planning_state.REPLAN_BATCH_*），
-        # 否则一次补太少 + 阈值太高 → 每 1–7 段就烧一整轮计划器会话。
-        from libraries.planning_state import REPLAN_BATCH_MAX, REPLAN_BATCH_MIN
-        if not isinstance(outs, list) or not (isinstance(plots, list)
-                                             and REPLAN_BATCH_MIN <= len(plots) <= REPLAN_BATCH_MAX):
-            raise RuntimeError(f"命令 {cmd} 需 outlines 数组及 "
-                               f"{REPLAN_BATCH_MIN}-{REPLAN_BATCH_MAX} 个 plots")
+        # horizon 由**承诺字数**定，段数只是安全上限（planning_state 里有完整论证：
+        # 按段数定义批次会在 Plot 粒度变化时失准，翻段数只是补偿）。因此这里只卡上限；
+        # 承诺字数不足 REPLAN_TARGET_WORDS 落进 decision_points 当提示，**不 hard-fail**
+        # ——「这一批只需短批次」是合法预览，拒掉它比放过它更糟。
+        if not isinstance(outs, list) or not (isinstance(plots, list) and plots):
+            raise RuntimeError(f"命令 {cmd} 需 outlines 数组及非空 plots 数组")
+        if len(plots) > REPLAN_MAX_PLOTS:
+            raise RuntimeError(f"命令 {cmd} 的 plots 数 {len(plots)} 超过安全上限 "
+                               f"{REPLAN_MAX_PLOTS}（horizon 目标是累计约 {REPLAN_TARGET_WORDS} 字）")
         problems = outline_payload_problems(outs, plots,
                                             known_outlines=tl.outlines or [],
                                             known_plots=tl.plots or [])
@@ -3555,6 +3586,17 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
         selected = str(args.get("selected_direction_id") or "")
         if selected not in {str(x.get("id")) for x in directions}:
             problems.append("selected_direction_id 未指向 directions 中的方向")
+        # 承诺字数软提示：不到目标就提示（供 agent 决定要不要补几段），绝不阻断。
+        try:
+            from libraries.storyline_writer import planned_words as _pw_preview
+            committed_words = sum(int(_pw_preview(x) or 0) for x in plots)
+        except Exception:  # noqa: BLE001 — 提示性计算，失败不影响预览落盘
+            committed_words = 0
+        preview_notes = []
+        if committed_words < int(REPLAN_TARGET_WORDS * 0.6):
+            preview_notes.append(
+                f"本批承诺字数约 {committed_words}，低于目标 {REPLAN_TARGET_WORDS} 的六成；"
+                f"若这不是有意的短批次，请补足情节段后再提交（不阻断）")
         if not problems:
             combined = tl.to_dict()
             combined["outlines"] = list(combined.get("outlines") or []) + outs
@@ -3562,6 +3604,8 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
             report = globals()["validate_storyline"](
                 outlines=combined["outlines"], plots=combined["plots"],
                 words_per_chapter=tl.words_per_chapter,
+                # 存量情节段照旧（旧书按 300~2500 规划）；只有本批新加的 plots 受新粒度硬规则约束
+                legacy_plot_ids=[getattr(p, "id", "") for p in (tl.plots or [])],
             )
             if not report.get("passed"):
                 problems.append(str(report.get("summary") or report))
@@ -3571,7 +3615,8 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
             "selected_direction_id": selected,
             "outlines": outs, "plots": plots, "threads": args.get("threads") or [],
             "themes": args.get("themes") or [], "planning_patch": checked_patch,
-            "validation": {"passed": not problems, "problems": problems},
+            "validation": {"passed": not problems, "problems": problems,
+                           "notes": preview_notes, "committed_words": committed_words},
         }
         from libraries.planning_state import save_replan_preview
         saved = save_replan_preview(book_id, preview)

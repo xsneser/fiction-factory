@@ -1212,7 +1212,8 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
     """
     from agent_tools import (_draft_read, _runtime_written_words, finalize_draft_chapter,
                              load_tl)
-    from libraries.planning_state import detect_story_boundary, load_planning_state
+    from libraries.planning_state import (REPLAN_MIN_REMAINING_WORDS, detect_story_boundary,
+                                          load_planning_state)
     from libraries.write_flow import (chapter_status, next_action, load_flow, transition,
                                       start_flow, active_flow_id)
     import re
@@ -1256,7 +1257,7 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
             written_until_word=_runtime_written_words(bid, tl, None, draft),
             committed_until_word=int(ps.get("committed_until_word") or 0),
             remaining_plots=remaining,
-            words_per_batch=int(tl.words_per_chapter or 3000),
+            replan_min_remaining_words=REPLAN_MIN_REMAINING_WORDS,
             storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
             last_replan=ps.get("last_replan") or {})
         status = chapter_status(bid, tl, draft, needs_replan=bool(boundary.get("needs_replan")))

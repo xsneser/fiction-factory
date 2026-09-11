@@ -782,16 +782,26 @@ assert_ok("profile-write工具数", len(_filter_registry(_at.TOOL_REGISTRY, "wri
 _rp = _resolve_profile("build", book_exists=False, pen_selected=True)
 assert_ok("profile-无书隐藏弧候选", "arc_material_candidates" not in _rp["allowed_tools"])
 assert_ok("profile-已选笔名隐藏查询", "query_profiles" not in _rp["allowed_tools"])
+# 2026-09-11：horizon 改按承诺**字数**控制（REPLAN_MIN_REMAINING_WORDS=2500），
+# 段数只是安全下限（PLOTS_LOW）。夹具改用新参数名，并单列一条字数阈值边界断言。
+from libraries.planning_state import REPLAN_MIN_REMAINING_WORDS as _RMRW
 _bd1 = _detect_boundary(written_until_word=1000, committed_until_word=10000,
-                        remaining_plots=5, words_per_batch=3000, storyline_revision=2)
+                        remaining_plots=5, replan_min_remaining_words=_RMRW, storyline_revision=2)
 assert_ok("boundary-未临界不触发", not _bd1["needs_replan"])
 _bd2 = _detect_boundary(written_until_word=8000, committed_until_word=10000,
-                        remaining_plots=2, words_per_batch=3000, storyline_revision=2)
+                        remaining_plots=2, replan_min_remaining_words=_RMRW, storyline_revision=2)
 assert_ok("boundary-低余量触发", _bd2["needs_replan"] and "PLOTS_LOW" in _bd2["reason_codes"])
 _bd3 = _detect_boundary(written_until_word=8000, committed_until_word=10000,
-                        remaining_plots=2, words_per_batch=3000, storyline_revision=2,
+                        remaining_plots=2, replan_min_remaining_words=_RMRW, storyline_revision=2,
                         last_replan={"from_revision": 2, "reason_codes": _bd2["reason_codes"]})
 assert_ok("boundary-同版本防抖", not _bd3["needs_replan"] and _bd3["debounced"])
+# 字数阈值：余量 2×2500 不触发；余量 1×2500 触发 WORDS_LOW（段数充足，排除 PLOTS_LOW 干扰）
+_bd4 = _detect_boundary(written_until_word=5000, committed_until_word=10000,
+                        remaining_plots=20, replan_min_remaining_words=_RMRW, storyline_revision=2)
+_bd5 = _detect_boundary(written_until_word=7500, committed_until_word=10000,
+                        remaining_plots=20, replan_min_remaining_words=_RMRW, storyline_revision=2)
+assert_ok("boundary-字数阈值边界", not _bd4["needs_replan"]
+          and _bd5["reason_codes"] == ["WORDS_LOW"], (_bd4, _bd5))
 
 _shape = _at.validate_world(basic_info={"factions": [{"name": "错层"}], "characters": []})
 assert_ok("world-shape明确报错", _shape.get("error") == "invalid_input_shape"
