@@ -125,14 +125,13 @@ CONTINUITY_TAIL_CHARS = 800
 # 章节标题在**展示端**自带前缀（publisher 是 f"第{n}章 {title}"、阅读器是 '第N章 '+title），
 # 所以库里统一存**裸标题**。存量第 1~4 章的标题是「第1章 天闪裂空」这种带前缀的旧数据，
 # 不迁移；读取/展示时用本函数剥掉，否则会渲染成「第1章 第1章 天闪裂空」。
-def _chapter_title_for(tl, num: int, draft: dict | None) -> str:
-    """章节落盘时的标题：优先草稿里开章时定下的那个（裸标题）。
+def _chapter_title_for(draft: dict | None) -> str:
+    """章节落盘时的标题：草稿里开章时定下的那个（裸标题）。
 
-    取不到就返回空串——**不要**回落到 `f"第{n}章"`：那样导出/阅读器会渲染成
-    「第5章 第5章」（book_002 的第 5~7 章就是这么来的）。宁可没有标题。
+    取不到就返回空串——**不要**回落到 `f"第{n}章"`：那样导出端（自带前缀）会渲染成
+    「第5章 第5章」，book_002 的第 5~7 章就是这么来的。宁可没有标题。
     """
-    t = normalize_chapter_title((draft or {}).get("chapter_title"))
-    return t
+    return normalize_chapter_title((draft or {}).get("chapter_title"))
 
 
 def _build_continuity_tail(book_id: str, draft: dict | None, chapter_num: int) -> dict | None:
@@ -2490,7 +2489,7 @@ def finalize_draft_chapter(book_id: str, flow_id: str = "") -> dict:
     # （下一章的连续性语境与检索都吃这个摘要）。不新增 LLM 调用，纯确定性截取。
     summary = _chapter_summary(bridges)
     state_error = None
-    chapter_title = _chapter_title_for(None, chapter_num, draft)
+    chapter_title = _chapter_title_for(draft)
     try:
         result = save_chapter_text(book_id, chapter_num, text, title=chapter_title,
                                    summary=summary, plot_segments=[{"plot_id": x.get("plot_id"),
