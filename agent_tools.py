@@ -150,6 +150,17 @@ def _build_continuity_tail(book_id: str, draft: dict | None, chapter_num: int) -
     return {"source": "previous_chapter", "text": text[-CONTINUITY_TAIL_CHARS:]}
 
 
+def _planned_words_of(plot) -> int | None:
+    """情节段目标字数（`storyline_writer.planned_words` 的宽容包装；None=无情节段）。"""
+    if plot is None:
+        return None
+    from libraries.storyline_writer import planned_words
+    try:
+        return int(planned_words(plot) or 0)
+    except Exception:  # noqa: BLE001 — 取不到就当 0，不阻断门禁
+        return 0
+
+
 def _live_sample_digest(profile, saved_style: dict | None) -> str | None:
     """无锚时按实时样文池算 digest（legacy 路径的判据）。profile 缺失 → None 表示不可判。"""
     from libraries.style_snapshot import selected_sample_digest
@@ -431,7 +442,9 @@ def _runtime_projection(book_id: str, tl=None, book=None, draft=None) -> dict:
     next_p = _next_plot(tl, draft) if tl else None
     committed_units, committed_codepoints = _committed_metrics(book_id, book) if book else (0, 0)
     dmetrics = _draft_metrics(draft)
-    planned = int(getattr(next_p, "words", 0) or 0) if next_p else 0
+    # 统一口径：用 storyline_writer.planned_words（words 优先、缺省回退节拍制），
+    # 与章节门禁/故事线图同源；直接读 plot.words 会在未填时给出 0。
+    planned = int(_planned_words_of(next_p) or 0)
     return {
         "next_plot": next_p,
         "current_plot": ({"id": next_p.id, "name": next_p.name, "outline_id": next_p.outline_id,
@@ -637,25 +650,180 @@ def _dyn_of(csm, name) -> dict:
     return out
 
 
+_VOICE_LABELS = (("rhythm", "句长节奏"), ("logic", "判断习惯"), ("emotion", "情绪如何改变说话"),
+                 ("social_register", "对谁说/怎么称呼"), ("tone", "语气"))
+
+
+def _voice_basis(c) -> str:
+    """legacy 兜底：**从已有设定推出**说话倾向（role + personality + behavior + relation）。
+
+    存量书大量角色 `speech_profile` 是空的（book_002 七个里四个全空），而这套改造刻意
+    不迁移旧数据。空 voice 时若只报 `voice_missing`，等于对老书毫无改善；这里用已经写好
+    的人设（性格/决策风格/沟通风格/关系）拼一句**派生描述**。
+
+    两条硬约束：**不生成固定台词**（那正是口癖标签化的来源），**不写回 bible**（只在
+    prepare 快照里给本轮用）。
+    """
+    bits = []
+    role = str(c.get("role", "") or "").strip()
+    if role:
+        bits.append(f"身份定位:{role}")
+    if str(c.get("personality", "") or "").strip():
+        bits.append("性格:" + str(c["personality"]).strip())
+    beh = c.get("behavior") if isinstance(c.get("behavior"), dict) else {}
+    comm = beh.get("communication_style") if isinstance(beh.get("communication_style"), dict) else {}
+    dec = beh.get("decision_style") if isinstance(beh.get("decision_style"), dict) else {}
+    emo = beh.get("emotion_expression") if isinstance(beh.get("emotion_expression"), dict) else {}
+    pairs = [("对陌生人", comm.get("stranger")), ("对朋友", comm.get("friend")),
+             ("对敌人", comm.get("enemy")), ("受压时", dec.get("under_pressure")),
+             ("危急时", dec.get("danger")), ("生气时", emo.get("anger")),
+             ("害怕时", emo.get("fear"))]
+    said = [f"{k}:{str(v).strip()}" for k, v in pairs if str(v or "").strip()]
+    if said:
+        bits.append("情境反应:" + "、".join(said[:4]))
+    rels = [str(r.get("relation", "") or "").strip() for r in (c.get("relations") or [])
+            if isinstance(r, dict) and str(r.get("relation", "") or "").strip()]
+    if rels:
+        bits.append("与主角关系:" + "、".join(rels[:2]))
+    if not bits:
+        return ""
+    return ("（以下由既有设定派生，非固定台词）" + "；".join(bits))
+
+
+def _signature_hint(c) -> str:
+    """标志短语提示：**稀疏**，只标「什么情境下才用」，不写成每段必说的口癖。"""
+    phrases = signature_phrases_of(c)
+    if not phrases:
+        return ""
+    freq_zh = {"rare": "极少", "occasional": "偶尔", "often": "较常"}
+    bits = []
+    for sp in phrases[:3]:
+        ctx = "、".join(sp.get("contexts") or [])
+        bits.append(f"「{sp['text']}」({freq_zh.get(sp['frequency'], '极少')}"
+                    + (f"，仅 {ctx}" if ctx else "") + ")")
+    return "标志短语（**稀疏点缀，不是每段必说**）:" + "；".join(bits)
+
+
+# 关系档位规则：**顺序即优先级**（先命中的先赢）。放 adversary 最前面是因为
+# 「垂涎其技术的帝国对手」这种串同时含「技术」与「对手」，必须先判敌对。
+_REL_MODE_RULES = (
+    ("adversary", ("敌", "仇", "对手", "反派", "宿敌", "对手")),
+    ("subordinate", ("部下", "下属", "上级", "长官", "领导", "兵")),
+    ("old_comrade", ("搭档", "战友", "同袍", "伙伴", "兄弟", "同伴")),
+    ("family", ("父", "母", "妻", "夫", "儿子", "女儿", "兄", "弟", "姐", "妹", "亲")),
+    ("professional", ("技术", "同事", "师", "学生", "徒弟", "医生")),
+)
+
+
+def _relationship_of(c, mc_name: str, csm=None) -> dict:
+    """关系态语音：同一个人对**不同对象**应有不同说话方式。
+
+    `relationship_mode` 由 static relations 确定性映射（档位，不是逐对白模板）；
+    `current_tension` 取角色状态台账里最近一次关系向变化（relationship/trust_change）。
+    """
+    name = str(c.get("name", "") or "")
+    rel_text = ""
+    if name and name != mc_name:
+        for r in (c.get("relations") or []):
+            if isinstance(r, dict) and str(r.get("name", "") or "").strip() == mc_name:
+                rel_text = str(r.get("relation", "") or "")
+                break
+    mode = "neutral"
+    for m, keys in _REL_MODE_RULES:
+        if any(k in rel_text for k in keys):
+            mode = m
+            break
+    out = {"relationship_mode": mode}
+    if rel_text:
+        out["relation_to_mc"] = rel_text
+    cs = None
+    if csm is not None and name:
+        try:
+            cs = csm.get(name)
+        except Exception:  # noqa: BLE001
+            cs = None
+    if cs is not None:
+        for ev in reversed(list(getattr(cs, "events", None) or [])):
+            if not isinstance(ev, dict) or ev.get("type") not in ("relationship", "trust_change"):
+                continue
+            note = str(ev.get("to") or ev.get("reason") or "").strip()
+            if note:
+                out["current_tension"] = _clip(note, 40)
+            break
+    return out
+
+
+def _recent_chapter_texts(book_id: str, limit: int = 3) -> list[str]:
+    """最近 N 章已落盘正文（用于标志短语冷却扫描；越新越靠后）。"""
+    book = book_mgr.get(book_id)
+    last = int(getattr(book, "current_chapter", 0) or 0)
+    out = []
+    for n in range(max(1, last - limit + 1), last + 1):
+        try:
+            ch = book_mgr.load_chapter(book_id, n) or {}
+        except Exception:  # noqa: BLE001
+            continue
+        txt = str(ch.get("content") or "")
+        if txt:
+            out.append(txt)
+    return out
+
+
+def phrase_cooldown(book_id: str, characters: list, *, recent_n: int = 3) -> dict:
+    """标志短语冷却（**全局短语级，不做 speaker 归因**）。
+
+    在正文里搜到「情况是这样」并不能可靠判定是谁说的（可能是旁白、引用、模仿），所以
+    这里只回答「这个短语最近出现过吗」，把结果挂到**该短语所属角色**的 avoid 列表上，
+    措辞不声称说话人。只扫**登记过的** `signature_phrases` 且 **长度 ≥4**——像「报告」
+    这类军队高频普通词因此天然不进规则。
+    """
+    texts = _recent_chapter_texts(book_id, recent_n)
+    if not texts:
+        return {}
+    joined = "\n".join(texts)
+    out: dict[str, list[str]] = {}
+    for c in (characters or []):
+        if not isinstance(c, dict):
+            continue
+        name = str(c.get("name", "") or "").strip()
+        if not name:
+            continue
+        hits = [p["text"] for p in signature_phrases_of(c) if len(p["text"]) >= 4
+                and joined.count(p["text"]) >= 2]
+        if hits:
+            out[name] = hits[:3]
+    return out
+
+
 def _speech_compact(c) -> str:
-    """speech_profile 压缩成一句（语言倾向）；空则回退 catchphrase 作「情绪高点点缀」。"""
-    sp = c.get("speech_profile") or {}
+    """speech_profile → Writer 可用的「语言生成规律」一句。
+
+    输出的是**怎么说话**，不是台词表；**永不出现「口头禅」字样**——旧实现把
+    `catchphrase` 当「口癖」注入，模型于是把它当人物 ID 用（book_002 里「情况是这样」
+    七章出现 15 次）。标志短语改走 `_signature_hint`（带稀疏度与情境）。
+    """
+    sp = c.get("speech_profile") if isinstance(c.get("speech_profile"), dict) else {}
     parts = []
-    if str(sp.get("rhythm", "") or "").strip():
-        parts.append("句长倾向:" + str(sp["rhythm"]).strip())
-    if str(sp.get("tone", "") or "").strip():
-        parts.append("语气:" + str(sp["tone"]).strip())
+    for key, label in _VOICE_LABELS:
+        val = str(sp.get(key, "") or "").strip()
+        if val:
+            parts.append(f"{label}:{val}")
     habits = [str(x).strip() for x in (sp.get("habits") or []) if str(x).strip()]
     if habits:
-        parts.append("说话习惯:" + "、".join(habits[:3]))
+        parts.append("表达倾向:" + "、".join(habits[:3]))
     forb = [str(x).strip() for x in (sp.get("forbidden") or []) if str(x).strip()]
     if forb:
         parts.append("绝不说:" + "、".join(forb[:2]))
+    sig = _signature_hint(c)
     if parts:
-        return "；".join(parts)
-    if str(c.get("catchphrase", "") or "").strip():
-        return "口癖(仅情绪高点一次点缀):" + str(c["catchphrase"]).strip()
-    return ""
+        return "；".join(parts + ([sig] if sig else []))
+    # 没有 speech_profile：**先给派生 voice basis，再补标志短语**。不能因为「有 catchphrase」
+    # 就把 basis 短路掉——存量书正是「有 catchphrase + speech_profile 全空」，只回一句口癖
+    # 就是旧的失败模式（人物被标签化、无语音差异）。
+    basis = _voice_basis(c)
+    if basis:
+        return "；".join([basis] + ([sig] if sig else []))
+    return sig if sig else "voice_missing"
 
 
 def _dev_goal_of(c) -> str:
@@ -708,6 +876,8 @@ def _build_cast_pack(tl, p, csm=None) -> dict:
             "brief": _clip(c.get("brief"), 60),
             "speech": _speech_compact(c),
             "relation_to_mc": _rel_of(c, mc_name),
+            # 关系态语音：说话方式 = 人物 voice × 与谁说话 × 当前张力
+            "relationship": _relationship_of(c, mc_name, csm),
             "behavior": c.get("behavior") or {},
             "speech_profile": c.get("speech_profile") or {},
         }
@@ -1186,7 +1356,10 @@ def prepare_plot_run(book_id: str) -> dict:
         words_per_batch=int(tl.words_per_chapter or 3000),
         storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
         last_replan=ps.get("last_replan") or {})
-    status = chapter_status(book_id, tl, draft, needs_replan=bool(boundary.get("needs_replan")))
+    # 预测式门禁要「下一个待写情节段的目标字数」：p 就是它（prepare 一次只准备一个段）。
+    status = chapter_status(book_id, tl, draft, needs_replan=bool(boundary.get("needs_replan")),
+                            next_plot_planned_words=_planned_words_of(p),
+                            next_plot_break_after=str(getattr(p, "chapter_break_after", "allowed") or "allowed"))
     # 样文来自**本章锚**（章首抽一次、章内复用冻结正文）；没有锚 = 样文池不可用。
     # 池不可用时仍允许写作（style card 保底），但绝不假装取到了样文——快照显式标
     # unavailable、不记 digest，并留日志，让「这次没有样文」在审计面可辨。
@@ -1219,8 +1392,21 @@ def prepare_plot_run(book_id: str) -> dict:
                       # 开章标记：本章还没有正文 → Writer 需一并给出章节标题候选
                       # （章界由运行时字数门禁动态决定，规划期无法预知谁开章）。
                       "is_chapter_opening": not bridges,
-                      "chapter_progress": {"target_words": status["target_words"], "written_words": status["written_words"],
-                                           "plot_index": len(bridges) + 1, "is_likely_last_plot": bool(status["chapter_ready"] or not status["has_next_committed_plot"])}})
+                      "chapter_progress": {
+                          "plot_index": len(bridges) + 1,
+                          "target_words": status["target_words"],
+                          "soft_min_words": status["soft_min_words"],
+                          "soft_max_words": status["soft_max_words"],
+                          "hard_max_words": status["hard_max_words"],
+                          "written_words": status["written_words"],
+                          "next_plot_planned_words": status["next_plot_planned_words"],
+                          "predicted_words_after_next_plot": status["predicted_words_after_next_plot"],
+                          # 提示字段，**Writer 不得据此截断本段**——情节段仍是不可切分的提交单元。
+                          "is_likely_last_plot": bool(
+                              status["chapter_ready"]
+                              or (status["predicted_words_after_next_plot"] is not None
+                                  and status["predicted_words_after_next_plot"] > status["soft_max_words"])
+                              or not status["has_next_committed_plot"])}})
     configured_memory_budget = int(os.environ.get("WRITE_MEMORY_BUDGET", "2500") or 2500)
     context_budget = int(os.environ.get("WRITE_CONTEXT_BUDGET", "12000") or 12000)
     output_reserve = int(os.environ.get("WRITE_OUTPUT_RESERVE", "3000") or 3000)
@@ -1233,6 +1419,18 @@ def prepare_plot_run(book_id: str) -> dict:
     recent = recent[:2]
     used = sum(len(str(x.get("ending") or "")) // 2 for x in recent)
     retrieved = retrieved_memory(book_id, terms, limit=max(1, min(6, (memory_budget - min(memory_budget, used)) // 250 or 1)))
+    prepared_cast = _staged_cast_projection(raw_run.get("cast_pack") or {}, staged)
+    # 标志短语冷却（全局短语级）：最近出现过 ≥2 次的标志短语挂到所属角色卡上，供 Writer
+    # 本轮避开。不做 speaker 归因——正文里搜到某短语并不等于知道是谁说的。
+    try:
+        cooldown = phrase_cooldown(book_id, (tl.basic_info or {}).get("characters") or [])
+    except Exception:  # noqa: BLE001 — 冷却只是提示，读不到不影响写作
+        cooldown = {}
+    if cooldown:
+        for group in ("protagonists", "active"):
+            for card in (prepared_cast.get(group) or []):
+                if isinstance(card, dict) and card.get("name") in cooldown:
+                    card["avoid_recent"] = cooldown[card["name"]]
     prepared = {
         "ok": True,
         "run": {"id": run["id"], "expires_in_seconds": 20 * 60,
@@ -1243,7 +1441,7 @@ def prepare_plot_run(book_id: str) -> dict:
         # 上一段正文尾巴（章内 = 上一 Plot / 新章 = 上一章）。**顶层**：它是已发生正文的
         # 衔接材料，不是本 Plot 的目标与边界；`memory` 是可裁剪回忆，它不可裁。
         "continuity_tail": continuity_tail,
-        "cast": {**_staged_cast_projection(raw_run.get("cast_pack") or {}, staged), "resolution": resolution},
+        "cast": {**prepared_cast, "resolution": resolution},
         "memory": {"budget_tokens": memory_budget, "recent": recent, "retrieved": retrieved},
         "horizon": {"preserve": list(getattr(horizon_plots[0], "expected_facts", None) or []) if horizon_plots else [],
                     "do_not_resolve_yet": [], "next_function": (horizon_plots[0].category or horizon_plots[0].name) if horizon_plots else None,
@@ -4026,6 +4224,41 @@ def _character_issues(characters: list | None) -> list:
     return issues
 
 
+def _character_voice_notes(characters: list | None) -> list[dict]:
+    """人物语音的**提示级**决策点（不阻断落盘）。
+
+    刻意不做两件事：
+    ① **不要求人人有标志短语**——那会把模型逼回「给每个角色造一句口癖」的老路，而
+       很多好角色本就不需要 signature phrase；
+    ② 不把「缺 catchphrase」当问题（`catchphrase` 已在 2026-09-11 降级为可选的稀疏特征）。
+    真正该有信息量的是 rhythm/logic/emotion/social_register（描述「怎么说话」）。
+    """
+    notes = []
+    for i, c in enumerate(characters or []):
+        if not isinstance(c, dict):
+            continue
+        nm = str(c.get("name") or "").strip() or f"characters[{i}]"
+        if not nm or str(c.get("role") or "") == "其他":
+            continue
+        sp = c.get("speech_profile") if isinstance(c.get("speech_profile"), dict) else {}
+        filled = voice_keys_with_content(sp)
+        if len(filled) < 2:
+            notes.append({"check": "character_voice", "severity": "info", "location": nm,
+                          "description": f"人物「{nm}」的语言生成规律仅 {len(filled)} 项有内容"
+                                         f"（建议 rhythm/logic/emotion/social_register 至少两项）",
+                          "suggestion": "补「怎么说话」而不是补口头禅：句长节奏、判断问题的习惯、"
+                                        "情绪如何改变说话方式、对不同对象怎么称呼"})
+        # habits 里塞字面台词是口癖标签化的源头（旧数据里很常见）
+        bad = [h for h in (sp.get("habits") or [])
+               if isinstance(h, str) and any(k in h for k in ("先说", "口头禅", "每次", "开场白"))]
+        if bad:
+            notes.append({"check": "character_voice", "severity": "info", "location": nm,
+                          "description": f"人物「{nm}」的 habits 像字面台词：{'、'.join(bad[:2])}",
+                          "suggestion": "habits 只写句式/思维/表达倾向；确要固定短语请放进 "
+                                        "signature_phrases（frequency=rare + contexts），它是稀疏点缀、不是每段必说"})
+    return notes
+
+
 def get_build_context(build_session_id: str = "") -> dict:
     """[步 3 第一步] 读回本次建书的**全部权威事实**——世界观/人物/故事线一律据此生成。
 
@@ -4129,6 +4362,9 @@ def validate_build(world: dict | None = None, storyline: dict | None = None,
             structure_hints.extend(storyline_report.get("structure_hints") or [])
 
     issues.extend(_character_issues(characters))
+    # 语音提示只进 decision_points（不阻断）——旧书大量角色 speech_profile 为空，
+    # 若当 issue 会让存量全部非法；新建书由指令层要求补，工具侧只如实提示。
+    decision_points.extend(_character_voice_notes(characters))
 
     passed = not issues
     return {"ok": True, "passed": passed, "issue_count": len(issues), "issues": issues,

@@ -1260,7 +1260,14 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
             replan_min_remaining_words=REPLAN_MIN_REMAINING_WORDS,
             storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
             last_replan=ps.get("last_replan") or {})
-        status = chapter_status(bid, tl, draft, needs_replan=bool(boundary.get("needs_replan")))
+        # 预测式门禁要多一个「下一个待写情节段的目标字数」。必须用 `_next_plot`（同一个
+        # 草稿排除规则 + `_ordered_plots` 的稳定叙事顺序），不能自行取 tl.plots[0]。
+        from agent_tools import _next_plot, _planned_words_of
+        nxt = _next_plot(tl, draft)
+        status = chapter_status(
+            bid, tl, draft, needs_replan=bool(boundary.get("needs_replan")),
+            next_plot_planned_words=_planned_words_of(nxt),
+            next_plot_break_after=str(getattr(nxt, "chapter_break_after", "allowed") or "allowed"))
         return status, next_action(status)
 
     book_id = _book_in(task)

@@ -214,8 +214,9 @@ class CharacterStateMachine:
                 parts.append(f"身份：{c.identity}")
             if c.personality:
                 parts.append(f"性格：{c.personality}")
-            if c.catchphrase:
-                parts.append(f"惯用语句：{c.catchphrase}")
+            # `catchphrase` 不再以「惯用语句」注入：把它当每次都要说的台词是口癖标签化的
+            # 源头（book_002 七章 15 次）。留作数据字段（UI/兼容），提示改走稀疏标志短语。
+            # 这里只保留「与主角关系」等真正影响说话方式的状态量。
             if c.location:
                 parts.append(f"位置：{c.location}")
             if c.mood:

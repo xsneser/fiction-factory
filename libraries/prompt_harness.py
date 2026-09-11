@@ -62,9 +62,31 @@ DEFAULT_ENEMY_LOSS = "对手付出代价或计划受挫"
 # 角色档案字段分类（竞品借鉴：AI-NWA character_hard_facts）——
 # 硬事实不得写反；软倾向只作语气参考，不写成旁白确认的事实
 _HARD_FIELDS = ("identity", "faction", "power_level", "location")
-_SOFT_FIELDS = ("personality", "catchphrase", "mood", "brief")
+# `catchphrase` **不在**软倾向里（2026-09-11）：把它当「口头禅」注入等于把人物标签化，
+# 模型会把它当人物 ID 用（book_002「情况是这样」七章 15 次）。改走 _voice_line 的
+# 语言生成规律 + 稀疏标志短语。
+_SOFT_FIELDS = ("personality", "mood", "brief")
 _HARD_LABELS = {"identity": "身份", "faction": "势力", "power_level": "境界/实力", "location": "位置"}
-_SOFT_LABELS = {"personality": "性格", "catchphrase": "口头禅", "mood": "情绪", "brief": "简介"}
+_SOFT_LABELS = {"personality": "性格", "mood": "情绪", "brief": "简介"}
+
+_VOICE_KEYS = (("rhythm", "句长节奏"), ("logic", "判断习惯"),
+               ("emotion", "情绪如何改变说话"), ("social_register", "对谁说/怎么称呼"))
+
+
+def _voice_line(c: dict) -> str:
+    """角色「怎么说话」的一句（供旧流式写章路径；live 路径见 agent_tools._speech_compact）。
+
+    与 agent_tools 同口径但**刻意不 import 它**（prompt_harness 是低层模块，反向依赖会成环）。
+    """
+    sp = c.get("speech_profile") if isinstance(c.get("speech_profile"), dict) else {}
+    parts = [f"{lbl}:{str(sp.get(k) or '').strip()}" for k, lbl in _VOICE_KEYS
+             if str(sp.get(k) or "").strip()]
+    ph = [p for p in (sp.get("signature_phrases") or []) if isinstance(p, dict) and p.get("text")]
+    if not ph and str(c.get("catchphrase") or "").strip():
+        ph = [{"text": str(c["catchphrase"]).strip(), "frequency": "rare"}]
+    if ph:
+        parts.append("标志短语（稀疏，非每段必说）:" + "、".join(f"「{p['text']}」" for p in ph[:2]))
+    return "；".join(parts)
 
 
 def _tail_paragraphs(text: str, max_chars: int = 150) -> str:
@@ -349,7 +371,9 @@ class PromptHarness:
             role = c.get("identity", "")       # 旧 role(职位) → identity
             rel = relation_to_mc(c, bi)
             personality = (c.get("personality", "") or "")[:40]
-            catchphrase = (c.get("catchphrase", "") or "")[:40]
+            # 语言倾向（怎么说话）——**不再注入 catchphrase 当「口头禅」**：那会把
+            # 人物退化成口头禅 NPC（book_002 里「情况是这样」七章 15 次就是这么来的）。
+            speech = _voice_line(c)
             seg = f"- 配角：{name}"
             if title:
                 seg += f"（{title}）"
@@ -361,8 +385,8 @@ class PromptHarness:
                 seg += f"，与主角{rel}"
             if personality:
                 seg += f"，性格{personality}"
-            if catchphrase:
-                seg += f"，口头禅「{catchphrase}」"
+            if speech:
+                seg += f"，说话方式：{speech}"
             lines.append(seg)
         return "\n".join(lines)
 
@@ -822,8 +846,8 @@ class PromptHarness:
                     f"- 「{rname}」（{'主角的' + rel if rel else '配角'}）："
                     f"对{event_txt}做出符合其性格的反应，去向跟随剧情走向；"
                     f"给一句符合人设的言行或心声，与主角声线区分；"
-                    f"性格（软倾向，只作语气参考）：{str(c.get('personality', ''))[:30] or '待定'}，"
-                    f"口头禅「{str(c.get('catchphrase', ''))[:20] or '无'}」")
+                    f"性格（软倾向，只作语气参考）：{str(c.get('personality', ''))[:30] or '待定'}；"
+                    f"说话方式（与主角声线区分）：{_voice_line(c) or '按性格自然推断，不要用固定口头禅凑辨识度'}")
         if not lines:
             return ""
         return ("\n【STATE｜分角色态势表——每个出场角色要有各自的行动/去向/内心/语气，避免同质化】\n"

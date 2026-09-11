@@ -109,23 +109,74 @@ def transition(book_id: str, flow_id: str, phase: str, **updates) -> dict:
     return save_flow(book_id, flow)
 
 
-def chapter_status(book_id: str, tl, draft: dict | None, *, needs_replan: bool) -> dict:
+def _chapter_bands(target: int) -> dict:
+    """章节字数区间：由 target 按比例推导（**单点计算**，不要散到 agent_tools / dsh_bridge）。
+
+    只有下限（`ready = words >= target`）会让 3000 字的章一路写到 5000
+    （book_002 第 6 章实测 4260）；而「到 target 就机械换章」又会把剧情切断。
+    """
+    from libraries.reviewer import HARD_MIN_RATIO
+    t = max(1, int(target or 0))
+    return {"soft_min": round(t * 0.90), "soft_max": round(t * 1.10), "hard_max": round(t * 1.20),
+            "commit_floor": int(t * HARD_MIN_RATIO)}
+
+
+def chapter_status(book_id: str, tl, draft: dict | None, *, needs_replan: bool,
+                   next_plot_planned_words: int | None,
+                   next_plot_break_after: str = "allowed") -> dict:
+    """章节进度 + **预测式**收章判定。
+
+    `next_plot_planned_words=None` 表示没有待写 committed 情节段（**不要用 0 当哨兵**：
+    0 与「没有下一个」是两回事）。调用方一律用 `storyline_writer.planned_words(next_plot)`。
+
+    收章只在情节段边界发生（本函数由 FSM 在每次 Writer 提交后调用），所以「正在写的
+    不可切断高潮」天然不会被拦腰截断——不存在「写到一半强制收章」的时点。
+    """
     draft = draft or {}
-    words = int(draft.get("words") or count_prose_units("\n\n".join(str(x.get("text") or "") for x in draft.get("bridges") or [])))
+    words = int(draft.get("words") or count_prose_units(
+        "\n\n".join(str(x.get("text") or "") for x in draft.get("bridges") or [])))
     target = int(getattr(tl, "words_per_chapter", 0) or 3000)
+    bands = _chapter_bands(target)
     drafted = {str(x.get("plot_id") or "") for x in draft.get("bridges") or []}
-    next_exists = any(not getattr(p, "written_chapter", 0) and p.id not in drafted for p in (tl.plots or []))
-    ready = bool(words >= target and drafted)
-    if ready:
-        reason = "target_reached"
-    elif next_exists:
-        reason = "need_more_words"
-    elif needs_replan:
-        reason = "plot_exhausted_needs_replan"
-    else:
-        reason = "plot_exhausted_without_replan"
+    next_exists = any(not getattr(p, "written_chapter", 0) and p.id not in drafted
+                      for p in (tl.plots or []))
+    next_words = int(next_plot_planned_words) if next_plot_planned_words is not None else None
+    predicted = (words + next_words) if next_words is not None else None
+    break_after = str(next_plot_break_after or "allowed").lower()
+    if break_after not in ("preferred", "allowed", "avoid"):
+        break_after = "allowed"
+    closure = bool(drafted and draft.get("bridges"))
+    ready, reason = False, "need_more_words"
+    forced = False
+    can_commit = closure and words >= bands["commit_floor"]
+    if closure and words >= bands["hard_max"]:
+        ready, reason = True, "hard_max_reached"
+    elif closure and words >= bands["soft_max"] and break_after in ("preferred", "allowed"):
+        ready, reason = True, "soft_max_reached"
+    elif next_exists and predicted is not None and predicted > bands["hard_max"] and can_commit:
+        # 预测式：再塞一个完整情节段会冲破硬上限 → 这次就收章（**不是**到 target 就换章）。
+        # `can_commit` 守卫是给 legacy 超长情节段的：章内字数还没到落盘下限时收章会被
+        # save_chapter_text 拒（0.6×target），结果是「既不能继续写也不能收章」的死锁。
+        # 新情节段（≤1200）走不到这条分支——触发它需要 words>2400，本就高于下限。
+        ready, reason, forced = True, "next_plot_would_exceed_hard_max", True
+    elif (next_exists and predicted is not None and predicted > bands["soft_max"]
+          and break_after == "preferred" and can_commit):
+        ready, reason = True, "predicted_crosses_soft_max"
+    elif not next_exists and closure and words >= bands["soft_min"]:
+        # 情节段耗尽但已过软下限 → 自然收束，不为凑满 target 强启一段新剧情。
+        ready, reason = True, "plot_exhausted_at_soft_min"
+    elif not next_exists:
+        reason = "plot_exhausted_needs_replan" if needs_replan else "plot_exhausted_without_replan"
     return {"chapter_ready": ready, "reason": reason, "written_words": words,
-            "target_words": target, "has_next_committed_plot": next_exists}
+            "target_words": target,
+            "soft_min_words": bands["soft_min"], "soft_max_words": bands["soft_max"],
+            "hard_max_words": bands["hard_max"], "commit_floor": bands["commit_floor"],
+            "has_next_committed_plot": next_exists, "has_legal_closure": closure,
+            "next_plot_planned_words": next_words,
+            "predicted_words_after_next_plot": predicted,
+            "next_plot_allowed": not ready,
+            "forced_budget_boundary": forced,
+            "next_plot_break_after": break_after}
 
 
 def next_action(status: dict) -> str:
@@ -136,12 +187,12 @@ def next_action(status: dict) -> str:
     「还有可写 Plot」优先于边界信号：`detect_story_boundary` 给出的 PLOTS_LOW/WORDS_LOW
     是**续规划信号**（UI 横幅 + 计划器输入），不是「停写」信号。已承诺的情节段是已经向读者
     承诺的内容，写它们不需要新规划；在情节段耗尽前为边界中断写作只会白烧一轮计划器会话
-    （一次 ≈ 10 轮 LLM）。相应地：审查/改动这里前请先读 planning_state.detect_story_boundary
-    的注释与批次策略（REPLAN_BATCH_*），别顺手把边界提到 has_next 之前。
+    （一次 ≈ 10 轮 LLM）。相应地：审查/改动这里前请先读 planning_state 的注释与批次策略
+    （REPLAN_TARGET_WORDS / REPLAN_MIN_REMAINING_WORDS），别顺手把边界提到 has_next 之前。
     """
     if status.get("chapter_ready"):
         return "COMMITTING_CHAPTER"
-    if status.get("has_next_committed_plot"):
+    if status.get("has_next_committed_plot") and status.get("next_plot_allowed", True):
         return "PREPARING_PLOT"
     if status.get("reason") == "plot_exhausted_needs_replan":
         return "REPLANNING"

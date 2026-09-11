@@ -17,7 +17,8 @@ try:
     book_mgr.save_storyline(bid, BookStoryline(book_title=book.title, pen_name=book.pen_name, phase="ready"))
     first = save_outlines(
         bid, outlines=[{"id": "a1", "name": "第一弧", "start_word": 0, "end_word": 3000}],
-        plots=[{"id": f"p{i}", "name": f"段{i}", "outline_id": "a1", "words": 1000} for i in range(1, 4)],
+        plots=[{"id": f"p{i}", "name": f"段{i}", "outline_id": "a1", "words": 1000,
+                "primary_turn": f"第{i}个主要戏剧变化"} for i in range(1, 4)],
         mode="replace", expected_revision=0,
         planning_patch={"committed_until_word": 3000, "future_intents": ["远方威胁"]},
     )
@@ -28,7 +29,8 @@ try:
         "directions": [{"id": "d1", "title": "迎战"}, {"id": "d2", "title": "撤退"}],
         "selected_direction_id": "d1",
         "outlines": [{"id": "a2", "name": "第二弧", "start_word": 3000, "end_word": 6000}],
-        "plots": [{"id": f"p{i}", "name": f"段{i}", "outline_id": "a2", "words": 1000} for i in range(4, 7)],
+        "plots": [{"id": f"p{i}", "name": f"段{i}", "outline_id": "a2", "words": 1000,
+                   "primary_turn": f"第{i}个主要戏剧变化"} for i in range(4, 7)],
         "planning_patch": {"committed_until_word": 6000, "future_intents": ["更远威胁"]},
         "validation": {"passed": True, "problems": []},
     })

@@ -45,7 +45,8 @@ def _seed_first_arc(bid):
     _bootstrap_storyline(bid)
     res = agent_tools.save_outlines(
         bid, outlines=[{"id": "a1", "name": "第一弧", "start_word": 0, "end_word": 3000}],
-        plots=[{"id": "p1", "name": "段1", "outline_id": "a1", "words": 1000, "roles": ["顾衡"]}],
+        plots=[{"id": "p1", "name": "段1", "outline_id": "a1", "words": 1000, "roles": ["顾衡"],
+                "primary_turn": "顾衡第一次确认异常来源"}],
         mode="replace", expected_revision=0,
         planning_patch={"committed_until_word": 3000})
     assert res.get("ok"), res
@@ -58,11 +59,13 @@ def _seed_first_arc(bid):
 
 
 def _preview_args(bid, revision, next_plot_id=2):
-    """一份能通过 set_replan_preview 全部校验的预览参数（一批 6 个情节段 + 新叶弧）。
+    """一份能通过 set_replan_preview 全部校验的预览参数（一批情节段 + 新叶弧）。
 
-    批大小取自 planning_state.REPLAN_BATCH_MIN（与「剩余多少就续规划」阈值同源）。
+    段落数**由弧跨度推导**（6000 字跨度 ÷ 每段 1000 字），而不是取某个批次常量——
+    2026-09-11 起 horizon 按承诺**字数**控制、段数只是安全上限，段数与跨度必须自洽
+    否则会被弧内覆盖校验（`_fill_issues`，gap > 一章即报）拒掉。
     """
-    from libraries.planning_state import REPLAN_BATCH_MIN
+    _N_PLOTS = (9000 - 3000) // 1000     # 与下面 a2 的跨度严格对应
     return {
         "book_id": bid, "expected_revision": revision,
         "diagnosis": {"current_pressure": "承诺区将尽", "reader_question": "他能否守住？"},
@@ -70,8 +73,8 @@ def _preview_args(bid, revision, next_plot_id=2):
         "selected_direction_id": "d1",
         "outlines": [{"id": "a2", "name": "第二弧", "start_word": 3000, "end_word": 9000}],
         "plots": [{"id": f"p{i}", "name": f"段{i}", "outline_id": "a2", "words": 1000,
-                   "roles": ["顾衡"]}
-                  for i in range(next_plot_id, next_plot_id + REPLAN_BATCH_MIN)],
+                   "primary_turn": f"第{i}个主要戏剧变化", "roles": ["顾衡"]}
+                  for i in range(next_plot_id, next_plot_id + _N_PLOTS)],
         # 故意塞一个假的 last_replan：服务端必须以自己算的为准覆盖它
         "planning_patch": {"committed_until_word": 9000,
                            "last_replan": {"from_revision": 999, "reason_codes": ["BOGUS"]}},
@@ -112,8 +115,7 @@ def main():
         assert not load_replan_preview(bid), "提交成功后应删除预览"
         tl_after = bm.load_storyline(bid)
         assert int(tl_after.storyline_revision) == revision + 1, tl_after.storyline_revision
-        from libraries.planning_state import REPLAN_BATCH_MIN as _BMIN
-        expect_ids = ["p1"] + [f"p{i}" for i in range(2, 2 + _BMIN)]
+        expect_ids = ["p1"] + [f"p{i}" for i in range(2, 2 + 6)]   # 与 _preview_args 的 _N_PLOTS 一致
         assert [p.id for p in tl_after.plots] == expect_ids, [p.id for p in tl_after.plots]
         state = load_planning_state(bid, tl_after, bm.get(bid), persist=False)
         last = state.get("last_replan") or {}
@@ -135,7 +137,7 @@ def main():
                 "selected_direction_id": "d1",
                 "outlines": [{"id": "z1", "name": "开局弧", "start_word": 0, "end_word": 6000}],
                 "plots": [{"id": f"z{i}", "name": f"开篇{i}", "outline_id": "z1", "words": 1000,
-                           "roles": ["顾衡"]}
+                           "primary_turn": f"开篇第{i}个主要戏剧变化", "roles": ["顾衡"]}
                           for i in range(1, 7)],
                 "planning_patch": {"committed_until_word": 3000},
             })

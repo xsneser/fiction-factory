@@ -32,7 +32,8 @@ def _seed(bm, agent_tools, title, word_units=4400, created=None):
     book_mgr.save_storyline(bid, tl)
     res = agent_tools.save_outlines(
         bid, outlines=[{"id": "a1", "name": "第一弧", "start_word": 0, "end_word": 3000}],
-        plots=[{"id": "p1", "name": "段1", "outline_id": "a1", "words": 1500, "roles": ["顾衡"]}],
+        plots=[{"id": "p1", "name": "段1", "outline_id": "a1", "words": 1000, "roles": ["顾衡"],
+                "primary_turn": "顾衡在旧工区找到转移装置仍在运转的证据"}],
         mode="replace", expected_revision=0, planning_patch={"committed_until_word": 3000})
     assert res.get("ok"), res
     run = agent_tools.prepare_plot_run(bid)
@@ -45,7 +46,7 @@ def _seed(bm, agent_tools, title, word_units=4400, created=None):
 
 def main():
     from libraries.book_manager import BookManager
-    from libraries.planning_state import REPLAN_BATCH_MAX, REPLAN_BATCH_MIN, replan_low_plot_threshold
+    from libraries.planning_state import REPLAN_MAX_PLOTS, replan_low_plot_threshold
     from libraries.write_flow import active_flow_id, load_flow, start_flow
     import agent_tools
     from ui.web_blueprints.ctx import book_mgr
@@ -105,18 +106,30 @@ def main():
             "未达下限不应写章节文件"
         print("[OK] 字数硬下限独立于审查器（过短正文不落盘）")
 
-        # ── 4) 批大小与阈值同源 ──
-        assert replan_low_plot_threshold() == max(2, REPLAN_BATCH_MIN // 3)
-        assert replan_low_plot_threshold() < REPLAN_BATCH_MIN, "阈值必须小于最小批次，否则每批都要立刻续规划"
-        from libraries.planning_state import detect_story_boundary
+        # ── 4) 续规划阈值与目标同源（2026-09-11：单位从段数改为**承诺字数**）──
+        from libraries.planning_state import (REPLAN_MIN_PLOTS, REPLAN_MIN_REMAINING_WORDS,
+                                              REPLAN_TARGET_WORDS, detect_story_boundary)
+        assert replan_low_plot_threshold() == REPLAN_MIN_PLOTS == 2, replan_low_plot_threshold()
+        assert REPLAN_MIN_PLOTS < REPLAN_TARGET_WORDS, "阈值必须远小于批次目标，否则每批都要立刻续规划"
+        assert REPLAN_MIN_REMAINING_WORDS < REPLAN_TARGET_WORDS, "余量阈值必须小于批次目标"
         common = dict(committed_until_word=100000, words_per_batch=3000, storyline_revision=1,
                       last_replan={})
-        assert detect_story_boundary(written_until_word=0, remaining_plots=REPLAN_BATCH_MIN, **common)["needs_replan"] is False
+        # 余量充足 + 段数充足 → 不触发
+        assert detect_story_boundary(written_until_word=0, remaining_plots=REPLAN_MIN_PLOTS + 5,
+                                     **common)["needs_replan"] is False
+        # 段数落到下限 → PLOTS_LOW
         assert "PLOTS_LOW" in detect_story_boundary(
             written_until_word=0, remaining_plots=replan_low_plot_threshold(), **common)["reason_codes"]
+        # 承诺余量落到字数阈值 → WORDS_LOW（段数充足，排除 PLOTS_LOW 干扰）
+        _wd = dict(committed_until_word=5000, remaining_plots=20, storyline_revision=1, last_replan={})
+        assert "WORDS_LOW" in detect_story_boundary(
+            written_until_word=5000 - REPLAN_MIN_REMAINING_WORDS, **_wd)["reason_codes"]
+        assert "WORDS_LOW" not in detect_story_boundary(
+            written_until_word=5000 - REPLAN_MIN_REMAINING_WORDS * 2, **_wd)["reason_codes"]
         # 预览校验用同一批大小：低于下限 / 高于上限都被拒
         rev_now = int(bm.load_storyline(bid).storyline_revision)   # 必须与当前版本一致（否则先被版本校验拒）
-        for bad in (REPLAN_BATCH_MIN - 1, REPLAN_BATCH_MAX + 1):
+        # horizon 按承诺字数控制，段数只作**安全上限**（planning_state.REPLAN_MAX_PLOTS）。
+        for bad in (0, REPLAN_MAX_PLOTS + 1):
             try:
                 agent_tools.drive_ui("set_replan_preview", {
                     "book_id": bid, "expected_revision": rev_now,
@@ -124,12 +137,12 @@ def main():
                     "selected_direction_id": "d1",
                     "outlines": [{"id": "a9", "name": "弧", "start_word": 0, "end_word": 100}],
                     "plots": [{"id": f"q{i}", "name": "段", "outline_id": "a9", "words": 10,
-                               "roles": ["顾衡"]} for i in range(bad)],
+                               "primary_turn": f"第{i}转", "roles": ["顾衡"]} for i in range(bad)],
                 })
                 raise AssertionError(f"{bad} 个 plots 竟然被接受")
             except RuntimeError as e:
-                assert str(REPLAN_BATCH_MIN) in str(e), e
-        print(f"[OK] 批大小 {REPLAN_BATCH_MIN}-{REPLAN_BATCH_MAX} 与阈值 {replan_low_plot_threshold()} 同源，越界被拒")
+                assert str(REPLAN_MAX_PLOTS) in str(e) or "非空" in str(e), e
+        print(f"[OK] plots 段数上限 {REPLAN_MAX_PLOTS} 与阈值 {replan_low_plot_threshold()} 同源，越界被拒")
     finally:
         agent_tools.chapter_quality_gate = orig_gate
         book_mgr.save_storyline = orig_save_tl
