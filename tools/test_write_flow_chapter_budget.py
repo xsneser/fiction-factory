@@ -136,6 +136,47 @@ def main():
     assert s["next_plot_break_after"] == "allowed" and s["chapter_ready"], s
     print("[10] 非法 break_after 回落 OK")
 
+    # ── 11. 模拟 FSM 走完一章：确认收章位置与落点字数 ──
+    # 复用「章内决策」逻辑（chapter_status + next_action），不调 LLM、不落盘。
+    # 口径：`plan` = 该章依次要写的情节段目标字数；末尾追加一个「下一章首段」哨兵，
+    # 让每一步的「下一段预算」都有定义（这正是 FSM 每轮的真实输入）。
+    SENTINEL = 1200   # 下一章首段（典型新情节段上限）
+
+    def simulate(plans, *, break_afters=None):
+        """返回 (本章收章时写掉的段数, 本章字数)。"""
+        seq = list(plans) + [SENTINEL]
+        ba = list(break_afters or []) + ["allowed"] * (len(seq) - len(break_afters or []))
+        written, used = 0, 0
+        for i, w in enumerate(seq):
+            # 第 i 步是「要不要写 seq[i]」：预测 = 当前已写 + **这一段**的目标字数，
+            # break_after 也取这一段的。取 seq[i+1] 是经典差一错（会把下一段的预算
+            # 算进这一次的决策里）。
+            s = chapter_status("book_t", tl(), draft(written, bridges=max(1, used)),
+                               needs_replan=False, next_plot_planned_words=seq[i],
+                               next_plot_break_after=ba[i])
+            if next_action(s) == "COMMITTING_CHAPTER":
+                break
+            written += w
+            used += 1
+        return used, written
+
+    # 新粒度：一章 4~6 个情节段（500~700 字/段）→ 收章字数落在软区间内
+    for plan in ([700, 700, 700, 700, 700], [600, 600, 600, 600, 600, 600],
+                 [500, 650, 700, 600, 650, 550]):
+        n, w = simulate(plan)
+        assert 4 <= n <= 6, (plan, n, w)                  # 不再是「一章两三段」
+        assert 2700 <= w <= 3600, (plan, n, w)            # soft_min ~ hard_max
+    # break_after 真的影响落点：同一组情节段，标 preferred 会更早收章
+    n_a, w_a = simulate([700] * 5, break_afters=["allowed"] * 5)
+    n_p, w_p = simulate([700] * 5, break_afters=["preferred"] * 5)
+    assert w_p <= w_a, (w_a, w_p)
+    # 旧粒度（一条 2200 字的长情节段）：**情节段不可切分**，所以章只能在段边界收。
+    # 收在 2200（一条）——低于 soft_min 2700，但 ≥ 落盘下限 1800 且比旧行为（两条 4400）
+    # 更贴近 target 3000。这是「不迁移旧数据」下情节段原子性的必然结果，不是缺陷。
+    n, w = simulate([2200, 2200])
+    assert n == 1 and w == 2200, (n, w)
+    print("[11] FSM 模拟：新粒度 4~6 段落在区间内；旧粒度按段边界收（2200）OK")
+
     print()
     print("章节字数门禁：全部通过")
 

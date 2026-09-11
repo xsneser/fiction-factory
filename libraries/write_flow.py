@@ -158,6 +158,11 @@ def chapter_status(book_id: str, tl, draft: dict | None, *, needs_replan: bool,
         # `can_commit` 守卫是给 legacy 超长情节段的：章内字数还没到落盘下限时收章会被
         # save_chapter_text 拒（0.6×target），结果是「既不能继续写也不能收章」的死锁。
         # 新情节段（≤1200）走不到这条分支——触发它需要 words>2400，本就高于下限。
+        #
+        # legacy 的真实现状（`tools/test_write_flow_chapter_budget.py` 的 FSM 模拟钉住）：
+        # 一条 2200 字的老情节段，章会在**一条之后**收（2200 字）——低于 soft_min 2700，
+        # 但 ≥ 落盘下限、且比旧行为（两条 4400）更贴近 target 3000。情节段不可切分，
+        # 所以这是「不迁移旧数据」下的必然结果，不是缺陷；旧书续写正常，新情节段自然更细。
         ready, reason, forced = True, "next_plot_would_exceed_hard_max", True
     elif (next_exists and predicted is not None and predicted > bands["soft_max"]
           and break_after == "preferred" and can_commit):
