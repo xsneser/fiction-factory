@@ -46,10 +46,18 @@ STORYLINE = {
         {"id": "B", "name": "骨誓与铁", "start_word": 3000, "end_word": 6000, "notes": "目标：把部族变成盟友"},
     ],
     "plots": [
-        {"id": "p1", "name": "醒于刑台", "outline_id": "A", "order": 1, "words": 1500},
-        {"id": "p2", "name": "一纸弃令", "outline_id": "A", "order": 2, "words": 1500},
-        {"id": "p3", "name": "雪夜合围", "outline_id": "B", "order": 1, "words": 1800},
-        {"id": "p4", "name": "骨誓为证", "outline_id": "B", "order": 2, "words": 1200},
+        # 新情节段粒度：primary_turn 必填、字数硬上限 1200。
+        # 注：本夹具此前没有这两项却"校验通过"——那是 validate_build 取
+        # storyline_report["issues"]（该键根本不存在）导致结构错误被静默吞掉；
+        # 修掉吞错误后按文档规则如实拒收，故这里补成真正合法的情节段。
+        {"id": "p1", "name": "醒于刑台", "outline_id": "A", "order": 1, "words": 1000,
+         "primary_turn": "从刑台上活下来，并接掌流放营"},
+        {"id": "p2", "name": "一纸弃令", "outline_id": "A", "order": 2, "words": 1000,
+         "primary_turn": "确认母国不会接回他们，只能自建"},
+        {"id": "p3", "name": "雪夜合围", "outline_id": "B", "order": 1, "words": 1100,
+         "primary_turn": "第一次守住围城，部族开始相信他"},
+        {"id": "p4", "name": "骨誓为证", "outline_id": "B", "order": 2, "words": 1000,
+         "primary_turn": "与部族结成正式同盟"},
     ],
     "threads": [{"id": "t1", "name": "记忆的贴现", "type": "foreshadow"}],
     "planning": {"future_intents": [{"id": "fi1", "kind": "arc_intent", "desc": "星门清算"}]},

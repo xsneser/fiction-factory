@@ -46,7 +46,10 @@ CHARACTERS = [
 ]
 STORYLINE = {
     "outlines": [{"id": "A", "name": "断脊立足", "start_word": 0, "end_word": 3000, "notes": "目标：立起防线"}],
-    "plots": [{"id": "p1", "name": "醒于刑台", "outline_id": "A", "order": 1, "words": 1500}],
+    # 新情节段粒度：primary_turn 必填、字数硬上限 1200（修掉"validate_build 吞掉
+    # storyline 结构错误"之后，缺这两项的草稿会被如实拒收）
+    "plots": [{"id": "p1", "name": "醒于刑台", "outline_id": "A", "order": 1, "words": 1000,
+               "primary_turn": "从刑台上活下来并接掌流放营"}],
 }
 
 

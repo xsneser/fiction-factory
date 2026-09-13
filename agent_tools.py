@@ -1520,6 +1520,12 @@ def get_story_state(book_id: str) -> dict:
         name = str(getattr(cs, "name", "") or "")
         if name:
             char_dyn.append({"name": name, **_dyn_of(csm, name)})
+    # 续规划的阶段状态与清单（权威在 preview，见 _replan_plan_meta）
+    from libraries import build_checklist
+    plan_meta = _replan_plan_meta(book_id)
+    checklist = build_checklist.replan_checklist(
+        tl, state, diagnosis=_replan_diagnosis(book_id),
+        stale_phases=plan_meta.get("stale_phases"))
     return {
         "ok": True,
         "book_id": book_id,
@@ -1554,8 +1560,34 @@ def get_story_state(book_id: str) -> dict:
         "target_word_budget": int(state.get("target_word_budget") or 0),
         "boundary": boundary,
         "last_replan": state.get("last_replan") or {},
+        # 流程走到哪（续规划的阶段权威**只在 preview**——未确认前不往 planning_state 里
+        # 塞半份未提交的 phase，否则 preview 崩溃/被拒后会留下悬空的规划态）+ 待填清单
+        "plan_meta": plan_meta,
+        "checklist": checklist,
         "runtime": {k: v for k, v in runtime.items() if k not in ("next_plot", "draft")},
     }
+
+
+def _load_replan_preview(book_id: str) -> dict:
+    try:
+        from libraries.planning_state import load_replan_preview
+        return load_replan_preview(book_id) or {}
+    except Exception:   # noqa: BLE001 —— 读不到预览不该让状态查询崩
+        return {}
+
+
+def _replan_plan_meta(book_id: str) -> dict:
+    """续规划阶段状态：权威在 preview（proposed），无预览时给 replan 入口的初始态。"""
+    from libraries import build_phases
+    preview = _load_replan_preview(book_id)
+    meta = preview.get("plan_meta") if isinstance(preview, dict) else None
+    return build_phases.coerce_meta(meta, entry=build_phases.ENTRY_REPLAN)
+
+
+def _replan_diagnosis(book_id: str) -> dict:
+    preview = _load_replan_preview(book_id)
+    diag = preview.get("diagnosis") if isinstance(preview, dict) else None
+    return diag if isinstance(diag, dict) else {}
 
 
 def _staged_story_state_for_api(book_id: str) -> dict:
@@ -4347,11 +4379,22 @@ def get_build_context(build_session_id: str = "") -> dict:
         warnings.append(f"服务端记录的 step={rec.get('step')}（非 3）：步 3 工具不该在这一步使用。")
     if not rec.get("selected_candidate") and not rec.get("candidates"):
         warnings.append("记录里既没有选中候选也没有候选列表（用户可能是「跳过，手动设定」进步 3）。")
+    # 阶段权威 + 待填清单：**纯读，不落盘**（读工具零副作用，phase 不由读动作推进）
+    from libraries import build_checklist, build_phases
+    meta = rec.get("plan_meta")
+    checklist = build_checklist.build_checklist(
+        rec.get("draft"),
+        stale_phases=(meta or {}).get("stale_phases"),
+        validated=(meta or {}).get("validated"),
+    ) if rec.get("draft") else None
+    if checklist and not build_draft.exists(sid):
+        checklist = None
     return {
         "ok": True,
         "session": {"build_session_id": rec.get("session_id") or sid,
                     "step": int(rec.get("step") or 1),
                     "revision": int(rec.get("revision") or 0),
+                    "content_revision": int(rec.get("content_revision") or 0),
                     "exists": build_draft.exists(sid)},
         "idea": rec.get("idea") or "",
         "tags": list(rec.get("tags") or []),
@@ -4359,8 +4402,31 @@ def get_build_context(build_session_id: str = "") -> dict:
         "selected_candidate": rec.get("selected_candidate"),
         "existing_draft": rec.get("draft"),
         "candidates_count": len(rec.get("candidates") or []),
+        # 流程走到哪（权威）：phase / 已完成 / 已失效 / 对镜证据
+        "plan_meta": meta,
+        "next_phase": build_phases.next_phase(meta),
+        # 东西填得怎么样（readiness）：与 phase 严格分工
+        "checklist": checklist,
         "warnings": warnings,
     }
+
+
+def _storyline_issue_texts(report: dict) -> list:
+    """把 `validate_storyline` 的硬问题从子报告里摊平出来。
+
+    它返回的是 `coverage` / `leaf_arcs` / `arc_fill` 三个子报告各自带 `issues`，
+    **没有顶层 `issues` 键**。取 `report["issues"]` 会恒为空，等于把结构错误静默吞掉。
+    """
+    if not isinstance(report, dict) or report.get("passed", True):
+        return []
+    out = []
+    for key in ("coverage", "leaf_arcs", "arc_fill"):
+        sub = report.get(key)
+        if isinstance(sub, dict):
+            out.extend(str(x) for x in (sub.get("issues") or []) if str(x).strip())
+    if not out:
+        out.append(str(report.get("summary") or "故事线结构校验未通过"))
+    return out
 
 
 def validate_build(world: dict | None = None, storyline: dict | None = None,
@@ -4416,8 +4482,11 @@ def validate_build(world: dict | None = None, storyline: dict | None = None,
             storyline_report = validate_storyline(
                 outlines=outs, plots=plots,
                 words_per_chapter=int(words_per_chapter or 3000))
+            # 硬问题分散在子报告里（coverage / leaf_arcs / arc_fill），**没有顶层 issues**——
+            # 此前这里取 `storyline_report["issues"]` 恒为空，于是"情节段挂非叶弧""顶层弧有
+            # 叙事空白"这类结构错误会被 validate_build 静默放行（只要 outlines/plots 非空）。
             if not storyline_report.get("passed", True):
-                issues.extend(storyline_report.get("issues") or [])
+                issues.extend(_storyline_issue_texts(storyline_report))
             decision_points.extend(storyline_report.get("decision_points") or [])
             structure_hints.extend(storyline_report.get("structure_hints") or [])
 
@@ -4427,8 +4496,21 @@ def validate_build(world: dict | None = None, storyline: dict | None = None,
     decision_points.extend(_character_voice_notes(characters))
 
     passed = not issues
+    # 待填清单 + 硬门禁：门禁是 issues 的**真子集**（世界观为空 / 弧或情节段为空 /
+    # 没有主角这三项今天就已经报 issue），passed 语义一字不改——所以只能保证
+    # 「门禁不过 ⇒ 整体不过」，反过来不成立（还有非门禁 issue 时门禁可能已过）。
+    from libraries import build_checklist
+    meta = rec.get("plan_meta") or {}
+    checklist = build_checklist.build_checklist(
+        {"world": wb, "storyline": storyline, "characters": characters},
+        stale_phases=meta.get("stale_phases"),
+        validated=meta.get("validated"),
+        storyline_problems=_storyline_issue_texts(storyline_report or {}),
+        validation_ran=storyline_report is not None,
+    )
     return {"ok": True, "passed": passed, "issue_count": len(issues), "issues": issues,
             "decision_points": decision_points, "structure_hints": structure_hints,
+            "gates": checklist.get("gates"), "checklist": checklist,
             "world": world_report, "storyline": storyline_report,
             "next": ("校验通过，可以 save_build_draft 落盘"
                      if passed else "按 issues / decision_points 修正后重新 validate_build")}

@@ -203,17 +203,26 @@ def build_draft_get():
 
     `draft.world` 已在 build_draft.load 内归一为 `{world_building: {...}}`（老记录兼容）。
     """
-    from libraries import build_draft
+    from libraries import build_checklist, build_draft, build_phases
     sid = str(request.args.get("sid") or "").strip()
     if not sid:
         return jsonify({"ok": False, "error": "sid 缺失"}), 400
     rec = build_draft.load(sid)
+    exists = build_draft.exists(sid)
+    meta = rec.get("plan_meta")
+    # 侧栏待填清单 + 阶段：页面已在轮询本端点，不需要新的轮询通道
+    checklist = build_checklist.build_checklist(
+        rec.get("draft"),
+        stale_phases=(meta or {}).get("stale_phases"),
+        validated=(meta or {}).get("validated"),
+    ) if (exists and rec.get("draft")) else None
     return jsonify({
         "ok": True,
-        "exists": build_draft.exists(sid),
+        "exists": exists,
         "build_session_id": rec.get("session_id") or sid,
         "step": rec.get("step"),
         "revision": int(rec.get("revision") or 0),
+        "content_revision": int(rec.get("content_revision") or 0),
         "draft": rec.get("draft"),
         "selected_candidate": rec.get("selected_candidate"),
         "idea": rec.get("idea") or "",
@@ -223,6 +232,10 @@ def build_draft_get():
         "book_id": rec.get("book_id") or "",
         "submit_error": rec.get("submit_error") or "",
         "updated_at": rec.get("updated_at") or "",
+        # 流程走到哪（权威）/ 东西填得怎么样（readiness）——两者严格分工
+        "plan_meta": meta,
+        "next_phase": build_phases.next_phase(meta),
+        "checklist": checklist,
     })
 
 
