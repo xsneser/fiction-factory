@@ -175,6 +175,34 @@ def main():
         check("canonical 来源但服务端没草稿 → 409", no_draft.status_code == 409,
               f"status={no_draft.status_code}")
 
+        # ── 7) 前端契约（无浏览器，用源码契约钉住接线，防被后人删掉） ──
+        tpl = open(os.path.join(ROOT, "ui", "templates", "start_book.html"),
+                   encoding="utf-8").read()
+        panel = open(os.path.join(ROOT, "ui", "static", "js", "agent_panel.js"),
+                     encoding="utf-8").read()
+        check("向导页有 syncCanonicalDraft / applyCanonicalRecord",
+              "syncCanonicalDraft: function" in tpl and "applyCanonicalRecord: function" in tpl)
+        check("回灌顺序 world → characters → storyline",
+              tpl.index("dispatch('set_world'") < tpl.index("dispatch('set_characters'")
+              < tpl.index("dispatch('set_outline'"))
+        check("进步 3 / pageshow / build_draft_status 都会同步",
+              "if (n === 3 && !this.bookId) this.syncCanonicalDraft();" in tpl
+              and "addEventListener('pageshow'" in tpl
+              and "addEventListener('ne:build-draft-status'" in tpl)
+        check("有草稿状态/错误区与恢复按钮",
+              'id="wz-agent-draft-status"' in tpl and 'id="wz-agent-draft-errors"' in tpl
+              and 'id="wz-restore-canonical"' in tpl)
+        check("提交带 build_source（canonical/form 二选一）",
+              "this.state.build_source = 'canonical'" in tpl
+              and "this.state.build_source = 'form'" in tpl)
+        check("用户改过表单则不自动覆盖（dirty 守卫）",
+              "markStep3Dirty: function" in tpl and "_step3Dirty) {" in tpl)
+        check("侧栏转发 build_draft_status 且不受 busy 守卫",
+              "ne:build-draft-status" in panel and "build_draft_status" in panel
+              and "} else if (t === 'build_draft_status') {" in panel)
+        check("侧栏 error 写进 history（刷新不丢）",
+              "history.push({ role: 'assistant', content: '⚠️ '" in panel)
+
     finally:
         AT._current_build_session = real_session
         NI._PATH = real_nav_path
