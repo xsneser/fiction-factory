@@ -31,8 +31,10 @@ if "%PYTHON%"=="" (
 echo [OK] Python: %PYTHON%
 
 :: --- Check api.json ---
-:: 缺失时只复制一份空配置**继续启动**：API 地址与 Key 由用户在 /settings 页面填写，
-:: 引擎与 dsh 都从这一份 api.json 读，不必先手工编辑文件（别再 notepad + exit）。
+:: Keep this file ASCII-only: cmd.exe reads .bat in the OEM codepage (GBK here),
+:: so UTF-8 Chinese comments get mis-decoded and eat neighbouring characters
+:: (an "echo" can turn into "cho"), which kills the whole script.
+:: Missing api.json -> copy template and CONTINUE (configure API at /settings).
 if not exist "api.json" (
     if exist "api.example.json" (
         copy /y "api.example.json" "api.json" >nul
