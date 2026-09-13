@@ -31,6 +31,7 @@ import os
 import time
 
 from core.json_store import process_file_lock, read_json, write_json_atomic
+from libraries import build_phases, plan_diff
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DIR = os.path.join(_ROOT, "storage", "build_drafts")
@@ -45,7 +46,15 @@ STEP_TO_PROFILE = {1: "build-candidates", 2: "build-candidates", 3: "build"}
 _DEFAULTS = {
     "session_id": "",
     "step": 1,                 # 权威步号（服务端 transition 推进）
-    "revision": 0,             # 每次 canonical 变更 +1（CAS：save_build_draft / 提交校验）
+    # **两个正交的版本轴**（2026-09-13）：
+    #   revision          —— CAS 唯一依据，任何 canonical 写都 +1（内容写 + 流程元数据写）；
+    #   content_revision  —— **只有** world/storyline/characters 的语义内容真变了才 +1。
+    # 混用一个数的后果：用户点一下"确认本阶段"就把刚通过的校验判失效，小说一个字没变。
+    "revision": 0,
+    "content_revision": 0,
+    "content_digest": "",      # 当前草稿的语义摘要（plan_diff.semantic_digest）
+    # 规划阶段状态机（阶段/失效/锁定/对镜证据/校验回执），权威定义见 libraries/build_phases.py
+    "plan_meta": None,
     "idea": "",
     "tags": [],
     "pen_name": "",
@@ -60,6 +69,15 @@ _DEFAULTS = {
     "submit_error": "",
     "updated_at": "",
 }
+
+
+class StaleRevision(Exception):
+    """CAS 失败：调用方拿的 revision 已过期（在**锁内**判定，见 update()）。"""
+
+    def __init__(self, current: int, expected: int):
+        super().__init__(f"revision_conflict: 期望 {expected}，当前 {current}")
+        self.current = int(current)
+        self.expected = int(expected)
 
 
 # 世界观里属于**表单顶层**而非 world_building 本体的键（start_book.html 的 set_world
@@ -122,6 +140,9 @@ def _coerce(data: dict) -> dict:
     out["session_id"] = str(out.get("session_id") or "")
     out["step"] = int(out.get("step") or 1)
     out["revision"] = int(out.get("revision") or 0)
+    out["content_revision"] = int(out.get("content_revision") or 0)
+    out["content_digest"] = str(out.get("content_digest") or "")
+    out["plan_meta"] = build_phases.coerce_meta(out.get("plan_meta"))
     out["tags"] = [t.strip() for t in (out.get("tags") or []) if isinstance(t, str) and t.strip()]
     out["pen_name"] = str(out.get("pen_name") or "")
     out["created"] = bool(out.get("book_id"))
@@ -164,20 +185,44 @@ def _prune(keep_name: str) -> None:
             pass
 
 
-def update(session_id: str, *, bump: bool = True, **fields) -> dict:
+def _bump_content_revision(cur: dict) -> None:
+    """语义内容真变了才 +1（digest 不覆盖 revision/plan_meta/时间戳等元数据）。"""
+    digest = plan_diff.semantic_digest(cur.get("draft"))
+    if digest != str(cur.get("content_digest") or ""):
+        cur["content_digest"] = digest
+        cur["content_revision"] = int(cur.get("content_revision") or 0) + 1
+
+
+def update(session_id: str, *, bump: bool = True, expected_revision: int | None = None,
+           on_meta=None, **fields) -> dict:
     """合并写 canonical 记录（原子）。`bump=False` 时不动 revision。
 
     只接受 `_DEFAULTS` 内的键，其余静默丢弃——避免调用方把 UI 专用字段混进来。
+
+    `expected_revision`：**在同一临界区内**做 CAS 比对（此前 `save_build_draft` 先
+    `load` 再 `update`，guard 与写入不在同一临界区，并发写会静默丢版本）；不匹配抛
+    `StaleRevision`，调用方转成既有的 `revision_conflict` 返回体。
+
+    `on_meta`：可选的 `plan_meta -> plan_meta|None` 变换，在锁内应用——阶段转移与内容
+    写入因此是一次原子写，不会出现"内容落了、阶段没推"的中间态。
     """
     path = path_for(session_id)
     os.makedirs(_DIR, exist_ok=True)
     with process_file_lock(path):
         cur = _coerce(read_json(path, {}) or {})
+        if expected_revision is not None and int(cur.get("revision") or 0) != int(expected_revision):
+            raise StaleRevision(int(cur.get("revision") or 0), int(expected_revision))
         if not cur.get("session_id"):
             cur["session_id"] = _safe_sid(session_id)
         for k, v in fields.items():
             if k in _DEFAULTS and k not in ("session_id", "revision"):
                 cur[k] = v
+        if "draft" in fields or on_meta is not None:
+            # canonical 只存规范形状（裸 world 本体在读写两侧都归一）
+            cur["draft"] = normalize_draft(cur.get("draft"))
+        if on_meta is not None:
+            cur["plan_meta"] = build_phases.coerce_meta(on_meta(cur.get("plan_meta")))
+        _bump_content_revision(cur)
         if bump:
             cur["revision"] = int(cur.get("revision") or 0) + 1
         cur["created"] = bool(cur.get("book_id"))
