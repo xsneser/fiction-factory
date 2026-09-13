@@ -4445,6 +4445,29 @@ def validate_build(world: dict | None = None, storyline: dict | None = None,
     decision_points 改到 passed=true 再 save_build_draft**——save 复用同一套校验，
     没过不会落盘。
     """
+    return _validate_build_impl(world=world, storyline=storyline, characters=characters,
+                                words_per_chapter=words_per_chapter,
+                                build_session_id=build_session_id, families=None)
+
+
+def _validate_build_impl(world: dict | None = None, storyline: dict | None = None,
+                         characters: list | None = None, words_per_chapter: int = 3000,
+                         build_session_id: str = "", families: set | None = None) -> dict:
+    """按 **validator family 集合**跑的校验实现（`families=None` = 全量，即今天的语义）。
+
+    为什么要有这一层（而不是给工具加参数）：分阶段落盘时，"还没有轮到"的 section 必须
+    跳过校验——立命题阶段只想存 `core_conflict`，若跑全量会立刻要求
+    `geography`/`rules`/`factions`，阶段 1 根本存不下去。但**这个开关不能暴露给 agent**
+    （否则它可以自行降级校验强度），所以强度只由服务端按"当前 phase + 本次实际写入的
+    字段路径"推导（见 `libraries/build_checklist.validators_for_paths`）。
+    """
+    from libraries import build_checklist
+    run_all = families is None
+    want = set(families or ())
+
+    def _wants(*fams):
+        return run_all or any(f in want for f in fams)
+
     from libraries import build_draft
     sid = _current_build_session(build_session_id)
     rec = build_draft.load(sid) if sid else {}
@@ -4461,18 +4484,19 @@ def validate_build(world: dict | None = None, storyline: dict | None = None,
     structure_hints: list = []
     world_report, storyline_report = None, None
 
-    if not wb:
-        issues.append("world 为空：世界观必填")
-    else:
-        world_report = validate_world(basic_info={"world_building": wb.get("world_building") or {},
-                                                  "characters": characters or []})
-        if not world_report.get("passed", True):
-            issues.extend(world_report.get("issues") or [])
-        decision_points.extend(world_report.get("decision_points") or [])
+    if _wants(build_checklist.V_THESIS, build_checklist.V_WORLD, build_checklist.V_CHARACTERS):
+        if not wb:
+            issues.append("world 为空：世界观必填")
+        elif _wants(build_checklist.V_WORLD, build_checklist.V_CHARACTERS):
+            world_report = validate_world(basic_info={"world_building": wb.get("world_building") or {},
+                                                      "characters": characters or []})
+            if not world_report.get("passed", True):
+                issues.extend(world_report.get("issues") or [])
+            decision_points.extend(world_report.get("decision_points") or [])
 
-    if not sl:
+    if _wants(build_checklist.V_H0) and not sl:
         issues.append("storyline 为空：开篇弧 + 情节段必填")
-    else:
+    elif _wants(build_checklist.V_H0):
         outs, plots = sl.get("outlines"), sl.get("plots")
         if not (isinstance(outs, list) and outs):
             issues.append("storyline.outlines 需非空列表")
@@ -4490,23 +4514,24 @@ def validate_build(world: dict | None = None, storyline: dict | None = None,
             decision_points.extend(storyline_report.get("decision_points") or [])
             structure_hints.extend(storyline_report.get("structure_hints") or [])
 
-    issues.extend(_character_issues(characters))
-    # 语音提示只进 decision_points（不阻断）——旧书大量角色 speech_profile 为空，
-    # 若当 issue 会让存量全部非法；新建书由指令层要求补，工具侧只如实提示。
-    decision_points.extend(_character_voice_notes(characters))
+    if _wants(build_checklist.V_CHARACTERS):
+        issues.extend(_character_issues(characters))
+        # 语音提示只进 decision_points（不阻断）——旧书大量角色 speech_profile 为空，
+        # 若当 issue 会让存量全部非法；新建书由指令层要求补，工具侧只如实提示。
+        decision_points.extend(_character_voice_notes(characters))
 
     passed = not issues
     # 待填清单 + 硬门禁：门禁是 issues 的**真子集**（世界观为空 / 弧或情节段为空 /
     # 没有主角这三项今天就已经报 issue），passed 语义一字不改——所以只能保证
     # 「门禁不过 ⇒ 整体不过」，反过来不成立（还有非门禁 issue 时门禁可能已过）。
-    from libraries import build_checklist
     meta = rec.get("plan_meta") or {}
+    h0_ran = _wants(build_checklist.V_H0) and storyline_report is not None
     checklist = build_checklist.build_checklist(
         {"world": wb, "storyline": storyline, "characters": characters},
         stale_phases=meta.get("stale_phases"),
         validated=meta.get("validated"),
-        storyline_problems=_storyline_issue_texts(storyline_report or {}),
-        validation_ran=storyline_report is not None,
+        storyline_problems=_storyline_issue_texts(storyline_report or {}) if h0_ran else None,
+        validation_ran=h0_ran,
     )
     return {"ok": True, "passed": passed, "issue_count": len(issues), "issues": issues,
             "decision_points": decision_points, "structure_hints": structure_hints,
@@ -4533,16 +4558,12 @@ def save_build_draft(world: dict | None = None, storyline: dict | None = None,
 
     参数都可省略——省略即复用服务端已落盘的草稿（只提交改动过的那一部分）。
     """
-    from libraries import build_draft
+    from libraries import build_checklist, build_draft, build_phases, plan_diff, plan_paths
     sid = _current_build_session(build_session_id)
     if not sid:
         return {"ok": False, "saved": False, "error": "no_build_session",
                 "message": "拿不到建书会话 id；请从任务文本里的 [build_session=…] 原样回传。"}
     rec = build_draft.load(sid)
-    if expected_revision is not None and int(rec.get("revision") or 0) != int(expected_revision):
-        return {"ok": False, "saved": False, "error": "revision_conflict",
-                "current_revision": int(rec.get("revision") or 0),
-                "message": "草稿在服务端已被改动（revision 不匹配）：请重新 get_build_context 再提交。"}
 
     old = rec.get("draft") or {}
     # 归一后再存：canonical 必须存规范形状，否则投影与提交两个消费端都取不到世界观
@@ -4552,25 +4573,67 @@ def save_build_draft(world: dict | None = None, storyline: dict | None = None,
         "storyline": storyline if storyline is not None else old.get("storyline"),
         "characters": characters if characters is not None else old.get("characters"),
     }
-    report = validate_build(world=merged["world"], storyline=merged["storyline"],
-                            characters=merged["characters"],
-                            words_per_chapter=words_per_chapter,
-                            build_session_id=sid)
+    meta = rec.get("plan_meta") or {}
+    phase = str(meta.get("phase") or "")
+
+    # 用户锁定的字段**以用户版本为准**（此前整段替换会把用户的编辑静默吞掉）
+    merged, protected = plan_paths.apply_locked(old, merged, meta.get("locked_fields") or [])
+
+    # 本次**实际写入的字段路径** = 语义差异 → 由此推导校验强度（服务端决定，无 agent 参数）
+    wrote_paths = plan_diff.changed_paths(plan_diff.semantic_diff(old, merged))
+    families = build_checklist.validators_for_paths(wrote_paths, phase=phase)
+
+    report = _validate_build_impl(world=merged["world"], storyline=merged["storyline"],
+                                 characters=merged["characters"],
+                                 words_per_chapter=words_per_chapter,
+                                 build_session_id=sid, families=families)
     if not report.get("passed"):
         return {"ok": False, "saved": False, "validation": report,
+                "checked": sorted(families),
                 "message": "校验未通过，未落盘（按 issues 修正后重试）"}
 
-    rec = build_draft.update(sid, draft=merged)
+    def _on_meta(m):
+        """阶段转移 + 失效标记：与内容写入同一次原子写。"""
+        m = build_phases.coerce_meta(m)
+        m = build_phases.mark_stale(
+            m, build_phases.stale_for_paths(wrote_paths, entry=m["entry"]))
+        # validate 阶段靠"跑通了校验"推进，其余阶段靠"写了自己的目标路径"
+        event = ("validation_pass" if m["phase"] == build_phases.P_VALIDATE else "agent_save")
+        m = build_phases.advance(m, event, wrote_paths=wrote_paths) or m
+        # 对镜证据可能**先于**立命题就齐了（agent 先查库再落盘）：那这次落盘把它推进
+        # 到 mirror 后不该卡住——补一次 mirror_done。两个事件各自只触发一次转移。
+        if m.get("phase") == build_phases.P_MIRROR:
+            m = build_phases.advance(m, "mirror_done",
+                                     mirror_evidence=m.get("mirror_evidence")) or m
+        return m
+
+    try:
+        rec = build_draft.update(sid, draft=merged, expected_revision=expected_revision,
+                                 on_meta=_on_meta, validated_receipt={"passed": True})
+    except build_draft.StaleRevision as e:
+        return {"ok": False, "saved": False, "error": "revision_conflict",
+                "current_revision": int(e.current),
+                "message": "草稿在服务端已被改动（revision 不匹配）：请重新 get_build_context 再提交。"}
 
     # **不做 UI 投影**：早先在这里调 drive_ui 把三条命令写进 nav_intent 队列，但 agent 忙时
     # 浏览器会取走清空该队列（防与 SSE ui_command 双触发），内部投影没有 SSE 伴随事件 →
     # canonical 成功、表单永远空白（2026-09-13 事故）。现在页面按 revision 从
     # GET /api/build/draft 拉取并应用；这里只回报会话与版本号。
+    new_meta = rec.get("plan_meta") or {}
     return {"ok": True, "saved": True,
             "build_session_id": sid,
             "revision": int(rec.get("revision") or 0),
+            "content_revision": int(rec.get("content_revision") or 0),
+            "phase": new_meta.get("phase"),
+            "next_phase": build_phases.next_phase(new_meta),
+            "stale_phases": new_meta.get("stale_phases") or [],
+            "wrote_paths": wrote_paths,
+            "checked": sorted(families),
+            "protected_field_conflicts": protected,
+            "ignored_agent_changes": protected,
             "validation": {"passed": True, "decision_points": report.get("decision_points") or [],
-                           "structure_hints": report.get("structure_hints") or []},
+                           "structure_hints": report.get("structure_hints") or [],
+                           "gates": report.get("gates")},
             "message": "草稿已落服务端（canonical）。页面会自动按 revision 拉取并填入步 3 表单；"
                        "请向用户汇报蓝图，由用户自己点「创建并进入写作台」提交（agent 不提交）。"}
 

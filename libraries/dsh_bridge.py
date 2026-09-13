@@ -773,6 +773,24 @@ def _domain_event_from_tool(name, args, msg) -> dict | None:
 _MIRROR_TOOL_KEYS = {"query_arc_library": "arc_query", "query_plots": "plot_query"}
 
 
+def _mirror_ready(meta: dict) -> bool:
+    ev = (meta or {}).get("mirror_evidence") or {}
+    return bool(ev.get("arc_query") and ev.get("plot_query"))
+
+
+def _with_mirror_step(meta: dict, key: str, run_id: str = "") -> dict:
+    """记证据，并在**两条齐 + 正停在 mirror** 时推进 `mirror → scaffold`。
+
+    `mirror_done` 的触发点就在这里：事件的本义是"服务器观测到对镜真的发生过"，
+    所以由观测动作本身触发，而不是等下一次落盘。
+    """
+    from libraries import build_phases
+    m = build_phases.record_mirror_evidence(meta, run_id=run_id or "", **{key: True})
+    if _mirror_ready(m):
+        m = build_phases.advance(m, "mirror_done") or m
+    return m
+
+
 def _note_mirror_evidence(sse: dict, sid: str, seen: set, run_id: str = "") -> None:
     """把「查库对镜真的发生过」记进建书 canonical 的 `plan_meta.mirror_evidence`。
 
@@ -795,10 +813,8 @@ def _note_mirror_evidence(sse: dict, sid: str, seen: set, run_id: str = "") -> N
         meta = build_draft.load(sid).get("plan_meta") or {}
         if (meta.get("mirror_evidence") or {}).get(key):
             return
-        build_draft.update(
-            sid, bump=False,
-            on_meta=lambda m: build_phases.record_mirror_evidence(
-                m, run_id=run_id or "", **{key: True}))
+        build_draft.update(sid, bump=False, on_meta=lambda m: _with_mirror_step(
+            m, key, run_id))
         _log.debug("mirror evidence recorded: %s sid=%s", key, sid)
     except Exception as e:  # noqa: BLE001 —— 记证据失败不该打断 agent run
         _log.warning("记录对镜证据失败: %s", e)

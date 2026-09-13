@@ -194,7 +194,7 @@ def _bump_content_revision(cur: dict) -> None:
 
 
 def update(session_id: str, *, bump: bool = True, expected_revision: int | None = None,
-           on_meta=None, **fields) -> dict:
+           on_meta=None, validated_receipt: dict | None = None, **fields) -> dict:
     """合并写 canonical 记录（原子）。`bump=False` 时不动 revision。
 
     只接受 `_DEFAULTS` 内的键，其余静默丢弃——避免调用方把 UI 专用字段混进来。
@@ -205,6 +205,10 @@ def update(session_id: str, *, bump: bool = True, expected_revision: int | None 
 
     `on_meta`：可选的 `plan_meta -> plan_meta|None` 变换，在锁内应用——阶段转移与内容
     写入因此是一次原子写，不会出现"内容落了、阶段没推"的中间态。
+
+    `validated_receipt`：校验回执 `{passed, at?}`。**绑定写入后的 `content_revision`
+    与 `content_digest`**——所以它必须在本临界区、`_bump_content_revision` **之后**生成，
+    否则会差一版（绑定到旧版本，用户一改就"莫名失效"或谎报有效）。
     """
     path = path_for(session_id)
     os.makedirs(_DIR, exist_ok=True)
@@ -223,6 +227,15 @@ def update(session_id: str, *, bump: bool = True, expected_revision: int | None 
         if on_meta is not None:
             cur["plan_meta"] = build_phases.coerce_meta(on_meta(cur.get("plan_meta")))
         _bump_content_revision(cur)
+        if validated_receipt is not None:
+            meta = build_phases.coerce_meta(cur.get("plan_meta"))
+            meta["validated"] = {
+                "passed": bool(validated_receipt.get("passed")),
+                "content_revision": int(cur.get("content_revision") or 0),
+                "content_digest": str(cur.get("content_digest") or ""),
+                "at": str(validated_receipt.get("at") or time.strftime("%Y-%m-%d %H:%M:%S")),
+            }
+            cur["plan_meta"] = meta
         if bump:
             cur["revision"] = int(cur.get("revision") or 0) + 1
         cur["created"] = bool(cur.get("book_id"))

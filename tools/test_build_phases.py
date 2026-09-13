@@ -160,7 +160,9 @@ def main():
 
     # ── 6) stale frontier 逐项推进（不能一刀切清空）─────────────────────────
     meta = bp.default_meta(bp.ENTRY_BUILD)
-    meta["completed_phases"] = ["planning_thesis", "mirror", "scaffold"]
+    # 全链都做过（否则"没做过的阶段"不该被标失效——见 mark_stale 的说明）
+    meta["completed_phases"] = ["planning_thesis", "mirror", "scaffold",
+                                "executable_horizon", "forecast_horizon", "validate"]
     meta = bp.mark_stale(meta, ["scaffold", "executable_horizon", "forecast_horizon", "validate"])
     check("stale 记入 4 项", meta["stale_phases"] ==
           ["scaffold", "executable_horizon", "forecast_horizon", "validate"],
@@ -209,9 +211,9 @@ def main():
         DB._note_mirror_evidence(
             {"type": "tool_call", "name": "mcp__novelengine__query_plots"}, sid, set())
         rec = BD.load(sid)
+        # 证据齐了**当场**推进（mirror_done 的触发点就是观测动作本身），不必等下一次落盘
         check("两条齐后 mirror → scaffold 放行",
-              (bp.advance(rec["plan_meta"], "mirror_done") or {}).get("phase") == bp.P_SCAFFOLD,
-              str(rec["plan_meta"]["mirror_evidence"]))
+              rec["plan_meta"]["phase"] == bp.P_SCAFFOLD, rec["plan_meta"]["phase"])
     finally:
         if os.path.exists(BD.path_for(sid)):
             os.remove(BD.path_for(sid))

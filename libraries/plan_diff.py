@@ -174,14 +174,33 @@ def _index(items):
     return out
 
 
+def _leaves(node, base: str) -> list:
+    """整段新增/删除时摊平到**叶字段**。
+
+    只记容器路径（如 `world.world_building`）会让下游把这一笔当成"整个世界观都写了"：
+    校验强度按路径推导，粒度一粗，立命题阶段就会被要求补齐 geography/factions。
+    """
+    if isinstance(node, dict):
+        out = []
+        for k, v in node.items():
+            out.extend(_leaves(v, _join(base, str(k))))
+        return out or [base]
+    if isinstance(node, list):
+        out = []
+        for item in node:
+            out.extend(_leaves(item, _list_path(base, item)))
+        return out or [base]
+    return [base]
+
+
 def _walk(path: str, old, new, out: dict) -> None:
     if isinstance(old, dict) and isinstance(new, dict):
         for key in sorted(set(old) | set(new), key=str):
             sub = _join(path, str(key))
             if key not in new:
-                out["removed"].append(sub)
+                out["removed"].extend(_leaves(old[key], sub))
             elif key not in old:
-                out["added"].append(sub)
+                out["added"].extend(_leaves(new[key], sub))
             else:
                 _walk(sub, old[key], new[key], out)
         return

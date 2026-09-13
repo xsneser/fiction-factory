@@ -90,22 +90,19 @@ _PATH_RULES = (
     ("planning.future_intents", P_FORECAST),
 )
 
-# 各种"本 phase 该写什么"的目标路径（`agent_save` 命中其一才算推进）
-THESIS_PATHS = ("world.world_building.core_conflict", "world.world_building.differentiation",
-                "world.tone", "world.target_audience", "world.pov", "world.era_language")
-SCAFFOLD_PATHS = ("world", "characters")
-H0_PATHS = ("storyline.outlines", "storyline.plots", "storyline.threads", "storyline.themes")
-FORECAST_PATHS = ("storyline.planning.horizon.h1", "storyline.planning.future_intents",
-                  "planning.horizon.h1", "planning.future_intents")
-PROMISE_PATHS = ("storyline.promises", "storyline.plots")
-
-PHASE_TARGET_PATHS = {
-    P_THESIS: THESIS_PATHS,
-    P_MIRROR: SCAFFOLD_PATHS,     # 对镜的结论落进骨架
-    P_SCAFFOLD: SCAFFOLD_PATHS,
-    P_H0: H0_PATHS,
-    P_FORECAST: FORECAST_PATHS,
-    P_PROMISE: PROMISE_PATHS,
+# "本 phase 该写什么"= 归属哪个**内容级别**（`agent_save` 命中才算推进）。
+#
+# 用**级别**而不是字段前缀表：前缀表会踩"粗前缀吞细路径"的坑——曾用
+# `("world", "characters")` 当骨架的目标，于是改 `world.world_building.core_conflict`
+# （命题级）也匹配 `world.`，一次顺手的命题修改会把"重做骨架"判成已完成。
+# 归属判定只有一个真源：`phase_for_path()`。
+_PHASE_TARGET_LEVEL = {
+    P_THESIS: P_THESIS,
+    P_MIRROR: P_SCAFFOLD,      # 对镜的结论落进骨架
+    P_SCAFFOLD: P_SCAFFOLD,
+    P_H0: P_H0,
+    P_FORECAST: P_FORECAST,
+    P_PROMISE: P_PROMISE,
 }
 
 # 改了某个级别的内容 → 哪些下游阶段失效
@@ -234,9 +231,12 @@ def next_phase(meta: dict) -> str:
 
 # ── 转移 ────────────────────────────────────────────────────────────────────
 
-def _matches_any(path: str, prefixes) -> bool:
-    p = str(path or "")
-    return any(p == q or p.startswith(q + ".") or p.startswith(q + "[") for q in prefixes)
+def _hits_phase_targets(paths, phase: str) -> bool:
+    """本次写入的字段路径里，有没有"属于当前 phase 该写的那一级"的。"""
+    level = _PHASE_TARGET_LEVEL.get(str(phase or ""))
+    if not level:
+        return False
+    return any(phase_for_path(p) == level for p in (paths or []))
 
 
 def advance(meta: dict, event: str, *, wrote_paths=None,
@@ -257,10 +257,8 @@ def advance(meta: dict, event: str, *, wrote_paths=None,
         return None
     if str(event or "") != EVENT_FOR.get(phase):
         return None
-    if event == "agent_save":
-        targets = PHASE_TARGET_PATHS.get(phase) or ()
-        if not any(_matches_any(p, targets) for p in (wrote_paths or [])):
-            return None
+    if event == "agent_save" and not _hits_phase_targets(wrote_paths, phase):
+        return None
     if event == "mirror_done":
         ev = mirror_evidence or m.get("mirror_evidence") or {}
         if not (ev.get("arc_query") and ev.get("plot_query")):
@@ -277,15 +275,29 @@ def advance(meta: dict, event: str, *, wrote_paths=None,
 
 
 def mark_stale(meta: dict, phases) -> dict:
-    """把阶段加入失效集（只增不减；清除由 `advance` 逐项做）。"""
+    """把阶段加入失效集（只增不减；清除由 `advance` 逐项做）。
+
+    **只对"做过的阶段"生效**：`completed_phases` 之外的阶段还没有内容，谈不上失效。
+    否则一本刚立完命题的新书会立刻显示"还有 4 个阶段要重新检查"——那是噪音，
+    不是状态。
+    """
     m = coerce_meta(meta)
-    chain = set(chain_for(m["entry"]))
-    add = [str(p) for p in (phases or []) if str(p) in chain]
-    merged = [p for p in chain_for(m["entry"]) if p in set(m["stale_phases"]) | set(add)]
+    chain = chain_for(m["entry"])
+    done = set(m["completed_phases"])
+    add = [str(p) for p in (phases or []) if str(p) in set(chain) and str(p) in done]
+    merged = [p for p in chain if p in set(m["stale_phases"]) | set(add)]
     if merged == m["stale_phases"]:
         return m
     out = dict(m)
     out["stale_phases"] = merged
+    # 失效意味着"回到最早的失效阶段重做"——游标跟着回退，否则 agent 重做时落盘
+    # 推进不了（phase 还停在更靠后的位置，甚至停在 stop_B）。`completed_phases`
+    # 不回退：它是审计，仍如实记录"曾经做过"。
+    if merged:
+        idx = chain.index(merged[0])
+        cur = chain.index(m["phase"]) if m["phase"] in chain else 0
+        if idx < cur:
+            out["phase"] = chain[idx]
     out["phase_revision"] = int(m["phase_revision"]) + 1
     return out
 
