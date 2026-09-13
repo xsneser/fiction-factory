@@ -187,6 +187,22 @@
 - 工具结果可能被 dsh 裁剪（>8KB 只保留头尾）：信息不足时用 `prepare_plot_run(book_id)` 按当前情节段重新准备（Writer 唯二工具之一）；legacy 全量工具面才另可用 `get_pen_style`。**不要臆测「spill 文件」**（本环境禁用了文件工具，不存在可读的 spill 文件）。
 - **故事线完整性**：用 `validate_storyline(book_id)` 校验「顶层弧覆盖故事线纵轴（无叙事空白）」与「情节段仅挂最底层弧」两条硬规则；发现不合规如实汇报，不要静默硬写。
 - **`storyline_revision`（乐观并发事实状态版本）**：代表「所有会影响下一次故事规划的事实状态」的版本——不只 outlines/plots，也含 basic_info 与已写章节（每落盘一章 +1）。读到它的返回都应记住；replan 提交时把上次读到的值作为 `expected_revision` 回传，陈旧会返 `stale_storyline(expected/actual)` → 刷新后重规划，不要强覆盖。
+- **规划阶段是显式状态（`plan_meta`）**：建书步 3 的阶段推进由 canonical 记录的
+  `plan_meta.phase` 持有，**不由草稿内容完整度派生**——"世界观已经填满了"不代表
+  "查库对镜做过"，所以阶段与清单是两件事（清单答"东西填得怎么样"，阶段答"流程走到哪"）。
+  一个 event 至多触发一次确定转移；`stop_A` 只认用户的「继续下一阶段」，其它阶段调用
+  no-op。从断点续跑时先看 `plan_meta.phase` 与 `plan_meta.stale_phases`。
+- **两个正交的版本轴**：`revision`（CAS 用，任何写都 +1）与 `content_revision`
+  （**只有** world/storyline/characters 的语义内容真变了才 +1）。校验回执绑定
+  `content_revision` + 内容摘要，所以"用户点了个确认"这类纯流程写不会让刚通过的校验失效。
+- **下游失效（stale）**：改了上游内容 ⇒ 已做过的下游阶段进 `stale_phases`，游标回退到
+  最早的失效阶段；**重做一个阶段只移除它自己**（下游仍基于旧结论，继续留在 stale 里）。
+  没做过的阶段不会被标失效。旧内容保留、不删。
+- **伏笔六态**：`planned`（规划承诺，**还不算欠读者的债**）→（设局段正文写入本章）
+  `pending` → `advanced` → `fulfilled`；另可 `cancelled` / `superseded`。
+  **批准规划也仍是 planned**——只有写进正文才是故事事实。身份主键是 `promise.id`，
+  `setup_plot_id` 只是索引（一段可埋多条）；兑现端用 `resolves_promise_ids` /
+  `foreshadow[{kind:"payoff", promise_id}]` **精确兑现**，`resolves_plot_id` 是 plot 级 legacy。
 - **规划边界自动交接（服务端 FSM 负责）**：Writer 每段 `prepare_plot_run` 的 `horizon.boundary` 仅告知；是否收章/续规划由服务端 `_writer_fsm` 判定——章满→`finalize_draft_chapter` 收章，无剩余可写 Plot 且到边界→按 `REPLAN_POLICY`（auto=原子提交后续写 / confirm=停在预览等界面确认）自动 spawn replan。**write 轮内不要调 replan 工具 / save_outlines 扩弧，也不要自行收章**；一次性 Writer 只写当前 Plot、保存后即停。replan 轮内不写正文。
 - **章末规划增量**：一章产生的新读者问题 / 人物意图变化，由写 run 的 structured `outcome`（如 new_story_questions）经服务端 Plot/章提交时语义合并进 planning_state——`story_questions` 用稳定 id 且状态 ∈ open/progressed/answered/superseded（同题 update 去重、终态不复开），`character_intents` 按人物 upsert；不靠 Writer 回传 planning_patch。
 - **「删书」无 skill**——`navigate('/books')` 让用户手动点删除（直删工具不在工具面）。

@@ -16,7 +16,16 @@ Spike 结论与 dsh 现状见 `docs/架构总览.md` §七(3 摩擦点;spike 文
 1. `cordis.patch.yml`(本目录)拷到 `~/.dsh/profiles/headless/cordis.patch.yml` —— 挂 `python mcp_server.py` 为 MCP 客户端 + 注入四阶段 persona。
 
 > 运行入口说明：dsh 是主支持入口，由 `dsh_bridge` 按任务动态选择 profile。项目 `.mcp.json` 与通用外部 MCP 客户端接入仅作 Deprecated 兼容用途；多服务注册不等于单 session 只启一个 profile，legacy 只能显式启用。
-2. **skill 镜像**：`agent-sidecar/skills/<name>/SKILL.md` 是源；改后 `cp` 到 `D:\NovelEngine\.dsh\skills\<name>\SKILL.md`（profiles-on 时 bridge 直读源注入，不依赖镜像；fallback/原生 skill 发现仍扫 `.dsh/skills`）。契约测试 `tools/test_skill_profile_contract.py` 会校验引用⊆profile 与镜像 byte-identical。
+2. **skill 镜像**：`agent-sidecar/skills/<name>/SKILL.md` 是源；改后跑
+   `python tools/sync_skills_mirror.py` 同步到 `.dsh/skills/`（profiles-on 时 bridge 直读源注入，
+   不依赖镜像；fallback/原生 skill 发现仍扫 `.dsh/skills`）。契约测试
+   `tools/test_skill_profile_contract.py` 校验引用⊆profile 与镜像 byte-identical。
+3. **规划流程内核**：`agent-sidecar/skills/_shared/plan-core.md` 是**唯一 authoring 真源**
+   （建书步 3 与续写大纲共用的七步构思流程）。它被**逐字节内联**进两个入口的
+   `<!-- plan-core:begin/end -->` 标记块——dsh 的 skill 注入只读单个 SKILL.md，外部引用收不到。
+   改内核后跑 `python tools/sync_plan_core.py`（刷两个标记块 + 同步镜像）。
+   内核里**不许出现任何工具名**（`referenced_tools()` 是整词匹配注册表名，连"不要调 X"里的
+   X 也算引用，而两个 profile 的工具面交集只有两个查询工具）。
 3. 首次 `dsh --profile headless` 自动初始化 profile。
 
 ## 运行
