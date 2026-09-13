@@ -46,6 +46,16 @@ def _planning_ui_payload(book_id):
         "h1": h1,
         "h2": state.get("future_intents") or [],
     }
+    # 规划期伏笔（未落笔）：与写作期台账在**同一个面板**连续呈现，不另开面板
+    try:
+        from libraries import build_checklist
+        planned_promises = [q for q in (getattr(tl, "promises", None) or [])
+                            if isinstance(q, dict) and q.get("status") == "planned"]
+        state["checklist"] = build_checklist.replan_checklist(tl, state)
+    except Exception:  # noqa: BLE001 —— 清单算不出来不该让规划面板整页挂掉
+        planned_promises = []
+        state["checklist"] = None
+    state["planned_promises"] = planned_promises
     state = dict(state)
     state["written_until_word"] = written_now
     state["storyline_revision"] = int(getattr(tl, "storyline_revision", 0) or 0)

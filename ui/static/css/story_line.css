@@ -257,3 +257,17 @@
 /* 展开后的横向卡片矩阵（复用 planning-metrics / planning-grid） */
 .planning-cards { margin-top:8px; padding-top:10px; border-top:1px dashed var(--border-soft); }
 .planning-cards .planning-metrics { margin-bottom:8px; }
+
+/* 远期（预测）通道：斜纹底 + 虚线边——一眼能看出"这是预测、不是已承诺的正文" */
+.sl-lane-forecast .sl-lane-body { display: flex; flex-direction: column; gap: 3px; padding: 3px; }
+.sl-forecast-card {
+  font-size: 10px; line-height: 1.4; padding: 2px 4px; border-radius: 3px;
+  border: 1px dashed var(--sl-border, #30363d);
+  background: repeating-linear-gradient(45deg, rgba(139,148,158,.10) 0 4px, transparent 4px 8px);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sl-forecast-layer {
+  font-size: 9px; opacity: .75; border: 1px solid var(--sl-border, #30363d);
+  border-radius: 2px; padding: 0 2px; margin-right: 2px;
+}
+.sl-forecast-fh { font-size: 9px; opacity: .8; }

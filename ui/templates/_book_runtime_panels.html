@@ -290,8 +290,8 @@ function runPunchPoints(n){
     /* ⏳ 读者承诺台账 */
     fetch('/api/book/'+BOOK+'/promises').then(function(r){ return r.json(); }).then(function(d){
         var el = document.getElementById('rp-promises'); if(!el) return;
-        if(!d || !(d.counts||{}).total){ el.innerHTML = '<div class="empty">还没有读者承诺（大纲设局/收局情节段会生成）</div>'; return; }
-        var OP = {seed:'刚埋设', touch:'维持', pressure:'施压', partial_reveal:'部分揭示', payoff:'兑现'};
+        if(!d || !(d.counts||{}).total){ el.innerHTML = '<div class="empty">还没有读者承诺（规划期的设局/收局情节段会登记）</div>'; return; }
+        var OP = {seed:'刚埋设', touch:'维持', pressure:'施压', partial_reveal:'部分揭示', payoff:'兑现', planned:'已规划·未落笔'};
         function rows(list){
             return list.map(function(q){
                 var op = OP[q.op] || q.op || '';
@@ -304,6 +304,9 @@ function runPunchPoints(n){
         var groups = [
             ['🔴 逾期', d.overdue||[]], ['🔵 推进', d.advanced||[]],
             ['⚪ 停滞', d.stalled||[]], ['✅ 近期兑现', d.fulfilled_recently||[]],
+            // 规划中（未落笔）：**还不是欠读者的债**，所以单列一组、不进逾期/停滞
+            ['🧭 规划中（未落笔）', d.planned||[]],
+            ['🚫 已取消/替代', d.cancelled||[]],
         ];
         var sug = (d.suggestions||[]).map(function(s){ return '<div class="hint" style="display:block;color:var(--fg-muted)">'+_rp_esc(s)+'</div>'; }).join('');
         var html = sug;

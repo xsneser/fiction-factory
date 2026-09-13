@@ -364,8 +364,16 @@ var WZ = {
             plots: (d.plots && d.plots.length) ? d.plots : [],
             threads: (d.threads && d.threads.length) ? d.threads : [],
             themes: (d.themes && d.themes.length) ? d.themes : [],
-            promises: []
-        }, {scrollable: true});
+            promises: (d.promises && d.promises.length) ? d.promises : []
+        }, {
+            scrollable: true,
+            // 步 3 也要能画「🔮 远期（预测）」通道：H1/H2 来自 canonical 草稿的
+            // storyline.planning（建书期的 staging 位置）
+            planning: (d.planning && typeof d.planning === 'object') ? {
+                horizon: d.planning.horizon || {},
+                future_intents: d.planning.future_intents || []
+            } : {}
+        });
     },
 
     validate: function(n) {

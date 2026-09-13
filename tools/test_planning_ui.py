@@ -72,7 +72,26 @@ try:
         assert state.json["storyline_snapshot"]["revision"] == 0
         assert not _ppath(lbid).exists()  # persist=False 只读聚合，不建文件
         print("[OK] legacy book planning-state empty state / no file created")
+
     finally:
         book_mgr.delete(lbid)
 finally:
     book_mgr.delete(bid)
+
+    # ── 故事线 UI 契约：远期通道 + 清单徽标 + 台账"规划中"组（源码级，防接线回退）──
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sl_js = open(os.path.join(root, "ui", "static", "js", "story_line.js"), encoding="utf-8").read()
+    sl_css = open(os.path.join(root, "ui", "static", "css", "story_line.css"), encoding="utf-8").read()
+    pu_js = open(os.path.join(root, "ui", "static", "js", "planning_ui.js"), encoding="utf-8").read()
+    panels = open(os.path.join(root, "ui", "templates", "_book_runtime_panels.html"), encoding="utf-8").read()
+    start_tpl = open(os.path.join(root, "ui", "templates", "start_book.html"), encoding="utf-8").read()
+    assert "sl-lane-forecast" in sl_js and "renderForecast" in sl_js
+    assert "sl-forecast-card" in sl_css and "repeating-linear-gradient" in sl_css
+    # 远期数据只认 horizon.h1 与 future_intents（H2 不另存一份）
+    assert "planning.horizon && planning.horizon.h1" in sl_js
+    assert "planning.future_intents" in sl_js
+    assert "renderChecklist" in pu_js and "planning-checklist" in pu_js
+    assert "🧭 规划中（未落笔）" in panels and "d.planned" in panels
+    # 步 3 的 Gantt 也要拿得到 planning（否则建书期看不到远期通道）
+    assert "planning: (d.planning" in start_tpl
+    print("[OK] 故事线 UI：远期通道 / 清单徽标 / 台账规划中组 / 步3 planning 接线")

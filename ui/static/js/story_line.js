@@ -753,6 +753,27 @@
   }
 
   /* ─── 渲染：进度光标（字数轴：currentWord=累计已写字数；兼容 currentChapter×WPC） ─── */
+  /* 远期（预测）卡片：斜纹底 + 虚线边，明确区别于"已承诺"的实体条。
+     它**不在字数轴上**，所以是列表式排布，不做横向定位（跨轴连线会坐标不可比）。 */
+  function renderForecast(body, forecast, tooltip, onShow, onMove, onHide) {
+    if (!body) return;
+    if (!forecast || !forecast.length) { body.innerHTML = ''; return; }
+    var html = '';
+    for (var i = 0; i < forecast.length; i++) {
+      var f = forecast[i] || {};
+      var fh = '';
+      var list = f.foreshadow || [];
+      for (var j = 0; j < list.length; j++) {
+        var z = list[j] || {};
+        fh += '<div class="sl-forecast-fh">⟢ ' + escHtml(z.desc || z.id || '') + '</div>';
+      }
+      html += '<div class="sl-forecast-card">'
+        + '<span class="sl-forecast-layer">' + escHtml(f.layer) + '</span> '
+        + escHtml(f.title || '') + fh + '</div>';
+    }
+    body.innerHTML = html;
+  }
+
   function renderCursor(contentArea, currentWord, currentChapter) {
     if (WRITTEN_UNTIL_WORD > 0) currentWord = WRITTEN_UNTIL_WORD;
     if (currentWord === undefined || currentWord === null || currentWord === 0) {
@@ -838,6 +859,10 @@
         '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">📋 弧</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
         '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">🔗 情节段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
         '<div class="sl-lane" style="flex:2"><div class="sl-lane-header">🧵 线程</div><div class="sl-lane-body" id="' + mountId + '-tb"></div></div>' +
+        /* 远期（预测）通道：条带式而不是拉长字轴——forecast 不在已承诺字数轴上，
+           硬塞进同一根轴要改 TOTAL_WORDS / 弧跨度归一 / 刻度算法，风险远大于收益，
+           而且那是"制造不存在的 plot"。这里只画 intent。 */
+        '<div class="sl-lane sl-lane-forecast" style="flex:2" id="' + mountId + '-fl"><div class="sl-lane-header">🔮 远期（预测）</div><div class="sl-lane-body" id="' + mountId + '-fb"></div></div>' +
         '</div></div>' +
         '<div class="sl-legend">' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#f97583"></span> 弧</div>' +
@@ -861,7 +886,25 @@
       var outlineBody = document.getElementById(mountId + '-ob');
       var plotBody = document.getElementById(mountId + '-pb');
       var threadBody = document.getElementById(mountId + '-tb');
+      var forecastLane = document.getElementById(mountId + '-fl');
+      var forecastBody = document.getElementById(mountId + '-fb');
       var contentArea = document.getElementById(mountId + '-ct');
+      // 远期数据来自规划状态（H1 = horizon.h1；H2 = future_intents，唯一真源）
+      var planning = opts.planning || {};
+      var forecast = [];
+      var h1Rows = (planning.horizon && planning.horizon.h1) || [];
+      for (var f1 = 0; f1 < h1Rows.length; f1++) {
+        var r1 = h1Rows[f1] || {};
+        forecast.push({layer: 'H1', title: r1.title || r1.arc_intent || '',
+                       desc: r1.arc_intent || '', foreshadow: r1.foreshadow || []});
+      }
+      var fi = planning.future_intents || [];
+      for (var f2 = 0; f2 < fi.length; f2++) {
+        var r2 = fi[f2] || {};
+        forecast.push({layer: 'H2', title: r2.title || r2.intent || '',
+                       desc: r2.intent || '', foreshadow: r2.foreshadow || []});
+      }
+      if (forecastLane) forecastLane.style.display = forecast.length ? '' : 'none';
 
       // 纵向缩放控件：记录需改高度的面板 + 绑定 + / − / 1x 按钮
       _scrollableMode = !!opts.scrollable;
@@ -881,6 +924,7 @@
         renderOutlines(outlineBody, tooltip, tt.show, tt.move, tt.hide);
         renderPlots(plotBody, tooltip, tt.show, tt.move, tt.hide);
         renderThreads(threadBody, tooltip, tt.show, tt.move, tt.hide);
+        renderForecast(forecastBody, forecast, tooltip, tt.show, tt.move, tt.hide);
         var existing = contentArea.querySelector('.sl-cursor');
         if (existing) existing.remove();
         var oldBoundary = contentArea.querySelector('.sl-boundary');

@@ -42,6 +42,7 @@
     current = data;
     var ps = data.planning_state || {}, hz = ps.display_horizon || {}, snap = data.storyline_snapshot || {};
     document.getElementById('planning-revision').textContent = '故事线版本 ' + (snap.revision || 0);
+    renderChecklist(ps.checklist);
     if (compact) {
       renderCompact(data, ps, hz, snap);
     } else {
@@ -55,6 +56,30 @@
     window.__PLANNING_BOUNDARY__ = data.boundary || {};
     window.dispatchEvent(new CustomEvent('ne:planning-updated', {detail: data}));
   }
+  /* 待填清单徽标：与"故事线版本"并排，一眼看到"还差什么没填"。
+     阶段（流程走到哪）与清单（东西填得怎么样）刻意分开表述。 */
+  function renderChecklist(cl) {
+    var head = document.querySelector('.planning-panel-head');
+    if (!head) return;
+    var el = document.getElementById('planning-checklist');
+    if (!el) {
+      el = document.createElement('span');
+      el.id = 'planning-checklist';
+      el.className = 'hint';
+      el.style.marginLeft = '8px';
+      head.appendChild(el);
+    }
+    if (!cl || !cl.items) { el.textContent = ''; return; }
+    var pending = (cl.pending || []).length;
+    var blocking = (cl.gates && cl.gates.blocking) || [];
+    el.textContent = cl.summary || ('待填 ' + pending + ' 项');
+    el.style.color = blocking.length ? 'var(--danger, #f85149)'
+      : (pending ? 'var(--warn, #d29922)' : 'var(--fg-dim)');
+    if ((cl.summary || '').indexOf('硬门禁未过') >= 0) {
+      el.textContent += '（' + blocking.join('、') + '）';
+    }
+  }
+
   function trunc(v, n) { var s = String(v == null ? '' : v); return s.length > n ? s.slice(0, n) + '…' : s; }
   /* 写作台 compact：默认 Mini Bar 单行（60-90px），点「展开规划」恢复原横向 6 卡矩阵，可折叠 */
   function renderCompact(data, ps, hz, snap) {
