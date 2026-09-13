@@ -188,6 +188,44 @@ def build_transition():
     return jsonify({"ok": True, "step": rec["step"], "revision": rec["revision"]})
 
 
+@bp.route("/api/build/draft", methods=["GET"])
+def build_draft_get():
+    """读 canonical 建书草稿（**只读**）——步 3 页面填充表单的唯一数据源。
+
+    query: ?sid=<build_session_id>
+    返回: {ok, exists, build_session_id, step, revision, draft, selected_candidate, ...}
+
+    为什么改成"页面来拉"而不是"服务端推"：早先 save_build_draft 内部用 drive_ui 把三条
+    命令写进 nav_intent 队列，但 agent 忙时浏览器会取走清空那条队列（防与 SSE ui_command
+    双触发），而内部投影没有 SSE 伴随事件 —— canonical 落盘成功、表单永远空白
+    （2026-09-13 事故）。canonical 本就是提交源，页面按 revision 幂等拉取即可，
+    刷新/断线/换标签页都能恢复，也不再受"保存那一刻浏览器是否开着向导页"影响。
+
+    `draft.world` 已在 build_draft.load 内归一为 `{world_building: {...}}`（老记录兼容）。
+    """
+    from libraries import build_draft
+    sid = str(request.args.get("sid") or "").strip()
+    if not sid:
+        return jsonify({"ok": False, "error": "sid 缺失"}), 400
+    rec = build_draft.load(sid)
+    return jsonify({
+        "ok": True,
+        "exists": build_draft.exists(sid),
+        "build_session_id": rec.get("session_id") or sid,
+        "step": rec.get("step"),
+        "revision": int(rec.get("revision") or 0),
+        "draft": rec.get("draft"),
+        "selected_candidate": rec.get("selected_candidate"),
+        "idea": rec.get("idea") or "",
+        "tags": rec.get("tags") or [],
+        "pen_name": rec.get("pen_name") or "",
+        "created": bool(rec.get("book_id")),
+        "book_id": rec.get("book_id") or "",
+        "submit_error": rec.get("submit_error") or "",
+        "updated_at": rec.get("updated_at") or "",
+    })
+
+
 @bp.route("/api/build/pick", methods=["POST"])
 def build_pick():
     """选定候选方向（服务端持久化）——用户点候选卡时调用。

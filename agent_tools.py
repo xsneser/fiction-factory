@@ -4387,9 +4387,7 @@ def validate_build(world: dict | None = None, storyline: dict | None = None,
     storyline = storyline if storyline is not None else (draft.get("storyline") if draft else None)
     characters = characters if characters is not None else (draft.get("characters") if draft else None)
 
-    wb = world if isinstance(world, dict) else {}
-    if wb and not isinstance(wb.get("world_building"), dict):
-        wb = {"world_building": wb}   # 容忍直接给 world_building 本体
+    wb = build_draft.normalize_world(world) or {}   # 容忍裸 world_building 本体（归一到规范形状）
     sl = storyline if isinstance(storyline, dict) else {}
 
     issues: list = []
@@ -4465,8 +4463,10 @@ def save_build_draft(world: dict | None = None, storyline: dict | None = None,
                 "message": "草稿在服务端已被改动（revision 不匹配）：请重新 get_build_context 再提交。"}
 
     old = rec.get("draft") or {}
+    # 归一后再存：canonical 必须存规范形状，否则投影与提交两个消费端都取不到世界观
     merged = {
-        "world": world if world is not None else old.get("world"),
+        "world": build_draft.normalize_world(
+            world if world is not None else old.get("world")),
         "storyline": storyline if storyline is not None else old.get("storyline"),
         "characters": characters if characters is not None else old.get("characters"),
     }
@@ -4480,25 +4480,17 @@ def save_build_draft(world: dict | None = None, storyline: dict | None = None,
 
     rec = build_draft.update(sid, draft=merged)
 
-    # 投影到浏览器步 3 表单：载荷**已整体校验通过**，这里的逐条 drive_ui 只可能因
-    # 浏览器侧问题失败（向导页没开、步不对），收集成 project_errors 如实回报，不回滚已落盘草稿。
-    projected, project_errors = [], []
-    for cmd, payload in (("set_world", merged["world"]),
-                         ("set_outline", merged["storyline"]),
-                         ("set_characters", {"characters": merged["characters"]})):
-        if not payload:
-            continue
-        try:
-            drive_ui(cmd, dict(payload))
-            projected.append(cmd)
-        except Exception as e:  # noqa: BLE001
-            project_errors.append(f"{cmd}: {e}")
-    return {"ok": True, "saved": True, "revision": int(rec.get("revision") or 0),
-            "projected": projected, "project_errors": project_errors,
+    # **不做 UI 投影**：早先在这里调 drive_ui 把三条命令写进 nav_intent 队列，但 agent 忙时
+    # 浏览器会取走清空该队列（防与 SSE ui_command 双触发），内部投影没有 SSE 伴随事件 →
+    # canonical 成功、表单永远空白（2026-09-13 事故）。现在页面按 revision 从
+    # GET /api/build/draft 拉取并应用；这里只回报会话与版本号。
+    return {"ok": True, "saved": True,
+            "build_session_id": sid,
+            "revision": int(rec.get("revision") or 0),
             "validation": {"passed": True, "decision_points": report.get("decision_points") or [],
                            "structure_hints": report.get("structure_hints") or []},
-            "message": "草稿已落服务端并投影到步 3 表单；请向用户汇报蓝图，"
-                       "由用户自己点「创建并进入写作台」提交（agent 不提交）。"}
+            "message": "草稿已落服务端（canonical）。页面会自动按 revision 拉取并填入步 3 表单；"
+                       "请向用户汇报蓝图，由用户自己点「创建并进入写作台」提交（agent 不提交）。"}
 
 
 # ═══════════════════════════════════════════════════

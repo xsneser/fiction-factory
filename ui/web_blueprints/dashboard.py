@@ -66,12 +66,23 @@ def start_new_book():
         if build_session_id and is_json:
             from libraries import build_draft as _bd
             _rec = _bd.load(build_session_id)
+            # build_draft.load 已把 old 记录的裸 world 归一为 {world_building: {...}}
             _draft = _rec.get("draft") or {}
             _rev = data.get("build_revision")
+            _source = str(data.get("build_source") or "").strip()
             try:
                 _rev_ok = _rev is not None and int(_rec.get("revision") or 0) == int(_rev)
             except (TypeError, ValueError):
                 _rev_ok = False
+            if _source == "canonical":
+                # 页面明确声明"表单就是服务端草稿的投影"：那么草稿在、版本却说不上来，
+                # 就是真冲突（陈旧页面），**不能再静默回退空表单**——那会建出一本没有
+                # 世界观/人物/故事线的书（2026-09-13 事故的最后一环）。
+                if not _draft:
+                    return jsonify({"ok": False, "error": "服务端没有该会话的草稿，请让 agent 重新生成后再提交"}), 409
+                if not _rev_ok:
+                    return jsonify({"ok": False, "error": "草稿已在服务端更新（版本不一致），请刷新页面或点「从服务端恢复 Agent 草稿」后再提交",
+                                    "current_revision": int(_rec.get("revision") or 0)}), 409
             if _draft and _rev_ok:
                 # 草稿各段的形状 = 对应 drive_ui 命令的参数（见 agent_tools.save_build_draft）
                 _w = _draft.get("world")

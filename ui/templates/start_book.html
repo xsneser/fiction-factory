@@ -95,6 +95,13 @@
                 <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
             </div>
             <div class="form-row hint" id="wz-world-status">进入本步时已由 AI 自动补全，可手动微调。</div>
+            <!-- agent 草稿状态：canonical 拉取结果 + 允许从服务端恢复（用户改过表单时不自动覆盖） -->
+            <div class="form-row hint" id="wz-agent-draft-status" role="status" aria-live="polite"></div>
+            <div class="form-row" id="wz-agent-draft-errors" role="alert" style="display:none"></div>
+            <div class="form-row">
+                <button type="button" id="wz-restore-canonical" class="btn" style="display:none;padding:8px 16px"
+                        onclick="WZ.syncCanonicalDraft({force:true})">↻ 从服务端恢复 Agent 草稿</button>
+            </div>
             <div class="form-row">
                 <label>设定概述 world_summary</label>
                 <textarea id="wz-wb-world_summary" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea>
@@ -229,6 +236,9 @@ main { overflow-y:auto; }   /* 页面可上下滚动：workspace.css 的 main{ov
 <script>
 var WZ = {
     cur: 1, bookId: '', creating: false, _picked: false, submitError: '',
+    // 步 3 草稿同步：_buildRevision = 提交时用的 canonical 版本号（CAS）；
+    // _canonicalRevision = 已回灌进表单的版本（幂等）；_step3Dirty = 回灌后用户手工改过
+    _buildRevision: null, _canonicalRevision: null, _step3Dirty: false, _syncingCanonical: false,
     _worldFilled: false, _worldFilling: false,
     _agentDriving: false,   // 已挑选完毕 → 已把步 3 交给 agent 驱动（抑制 show(3) 自动一键补全）
     _task2Fired: false,   // 本次候选下已触发过第二个建书任务（重选候选后复位允许再触发）
@@ -275,6 +285,9 @@ var WZ = {
             s.onclick = (sn < n && !self.bookId) ? function() { self.show(sn); } : null;
         });
         this.cur = n;
+        // 进步 3 就同步一次 canonical 草稿：agent 可能已经写过（页面没开的时候写完、
+        // 或投影事件丢失），按 revision 幂等，重复触发是 no-op。
+        if (n === 3 && !this.bookId) this.syncCanonicalDraft();
         // 步3 两栏布局放宽（故事线左栏 + 世界观表单右栏），其余步保持 800px 卡片
         var wrap = document.querySelector('.wz-panels');
         if (wrap) wrap.classList.toggle('wide', n === 3);
@@ -1216,15 +1229,28 @@ var WZ = {
             return;
         }
         if (this.creating) return;
+        // 提交前再同步一次 canonical：agent 可能刚写过、或本页还没同步过。拿到最新 revision
+        // 才不会因版本不等而回退表单；用户改过表单时不会覆盖（走 form 模式）。
+        var self0 = this;
+        this.syncCanonicalDraft().then(function() { self0._submitBook(); });
+    },
+    _submitBook: function() {
+        if (this.creating) return;
         this.creating = true;
         this.submitError = '';   // 清旧错误,防 agent 读到上一次失败
         this.reportStatus();
         this.ensureBuildSession();
         this.collect();
-        // canonical 草稿优先：带上会话 id + revision，服务端命中即用**它校验过的草稿**建书
-        // （表单只是投影）；手填模式（无草稿/无 revision）服务端自动回退表单 payload。
+        // canonical 草稿优先：带上会话 id + revision + 来源，服务端命中即用**它校验过的
+        // 草稿**建书（表单只是投影）；用户手工改过（或本来就没有草稿）走 form 模式。
         this.state.build_session_id = this.ensureBuildSession();
-        if (this._buildRevision != null) this.state.build_revision = this._buildRevision;
+        if (this._canonicalRevision != null && !this._step3Dirty) {
+            this.state.build_source = 'canonical';
+            this.state.build_revision = this._canonicalRevision;
+        } else {
+            this.state.build_source = 'form';
+            delete this.state.build_revision;
+        }
         var btn = this.el('wz-submit');
         btn.disabled = true; btn.textContent = '⏳ 创建中…';
         var self = this;
@@ -1353,12 +1379,139 @@ var WZ = {
         if (s.borrow && s.borrow.tweak) this.el('wz-borrow-tweak').value = s.borrow.tweak;
         // 人物卡（按所属势力分组还原）
         this.renderCharCards(s.characters || []);
+    },
+    /* ─── 步 3 草稿：从 canonical 拉取并回灌表单 ───
+
+       canonical（服务端 storage/build_drafts/<sid>.json）是提交源，表单只是它的投影。
+       早先由 save_build_draft 内部 push 三条 ui 命令过来，但那条队列在 agent 忙时会被
+       浏览器取走清空（防与 SSE ui_command 双触发），而内部投影没有 SSE 伴随事件
+       → 草稿在服务端、表单永远空白（2026-09-13 事故）。
+       现在页面主动拉：进步 3 / 页面初始化 / 收到 build_draft_status 事件 / 刷新（pageshow）
+       各同步一次，按 revision 幂等，因此刷新、断线、换标签页都能恢复。 */
+    syncCanonicalDraft: function(opts) {
+        opts = opts || {};
+        var sid = opts.sid || this.ensureBuildSession();
+        if (!sid || this._syncingCanonical) return Promise.resolve(false);
+        this._syncingCanonical = true;
+        var self = this;
+        return fetch('/api/build/draft?sid=' + encodeURIComponent(sid))
+            .then(function(r) { return r.json(); })
+            .then(function(rec) {
+                if (!rec || !rec.ok || !rec.exists || !rec.draft) return false;
+                if (rec.build_session_id !== self.ensureBuildSession()) return false;   // 别把别的会话灌进来
+                return self.applyCanonicalRecord(rec, opts);
+            })
+            .catch(function(e) {
+                if (opts.force) self.showDraftIssues(['服务端草稿读取失败：' + (e && e.message || e)]);
+                return false;
+            })
+            .then(function(ok) { self._syncingCanonical = false; return ok; });
+    },
+    applyCanonicalRecord: function(rec, opts) {
+        opts = opts || {};
+        var rev = Number(rec.revision || 0);
+        if (!opts.force && this._canonicalRevision != null && rev <= this._canonicalRevision) {
+            return false;                                  // 同版本幂等：重复触发不再动表单
+        }
+        if (!opts.force && this._step3Dirty) {
+            // 用户改过投影内容 → 不覆盖，只提示可以手动恢复
+            this.showDraftStatus('服务端草稿已更新到 revision ' + rev + '，但你在页面上改过内容，未自动覆盖。', 'warning');
+            this.showRestoreButton(true);
+            return false;
+        }
+        var draft = rec.draft || {};
+        var dispatch = function(cmd, args) {
+            window.dispatchEvent(new CustomEvent('ne:command', { detail: { cmd: cmd, args: args } }));
+        };
+        // 顺序固定 world → characters → storyline：set_world 会重建势力 DOM，人物卡是按势力
+        // 分组渲染的，先画人物会被随后重建的势力区覆盖掉。
+        if (draft.world) dispatch('set_world', draft.world);
+        if (draft.characters) dispatch('set_characters', { characters: draft.characters });
+        if (draft.storyline) dispatch('set_outline', draft.storyline);
+        this._canonicalRevision = rev;
+        this._buildRevision = rev;                         // 提交时 CAS 用，必须同步到最新
+        this._step3Dirty = false;
+        var name = (rec.selected_candidate && rec.selected_candidate.title) || this.state.title || '';
+        this.showDraftStatus('已从服务端载入 agent 草稿（revision ' + rev + '）'
+            + (name ? '：' + name : '') + '，请 review 后自己点「创建并进入写作台」提交。', 'success');
+        this.showRestoreButton(false);
+        this.persist();
+        this.reportStatus();
+        return true;
+    },
+    // 用户手工改过步 3 的投影内容（程序化回灌的 isTrusted=false 不算）
+    markStep3Dirty: function(ev) {
+        if (this.cur !== 3 || this._canonicalRevision == null) return;
+        if (ev && ev.isTrusted === false) return;
+        this._step3Dirty = true;
+    },
+    showDraftStatus: function(text, kind) {
+        var el = this.el('wz-agent-draft-status');
+        if (!el) return;
+        el.style.color = kind === 'error' ? '#f85149' : kind === 'warning' ? '#d29922' : '#3fb950';
+        el.textContent = !text ? ''
+            : (kind === 'error' ? '❌ ' : kind === 'warning' ? '⚠️ ' : '✅ ') + text;
+    },
+    showDraftIssues: function(items) {
+        var el = this.el('wz-agent-draft-errors');
+        if (!el) return;
+        var list = (items || []).filter(Boolean);
+        if (!list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        var esc = (typeof escapeHtml === 'function') ? escapeHtml : function(s) { return String(s); };
+        el.style.display = 'block';
+        el.innerHTML = '<div class="alert error" style="margin:0">Agent 校验/落盘问题：'
+            + '<ul style="margin:6px 0 0 18px">'
+            + list.map(function(s) { return '<li>' + esc(String(s)) + '</li>'; }).join('')
+            + '</ul></div>';
+    },
+    showRestoreButton: function(on) {
+        var b = this.el('wz-restore-canonical');
+        if (b) b.style.display = on ? 'inline-block' : 'none';
     }
 };
 // 初始化：恢复草稿（若有）→ 显示对应步骤；否则从第 1 步开始
 var __restored = WZ.restore();
 if (__restored) WZ.applyState();
 WZ.show(__restored ? WZ.cur : 1);
+
+// canonical 草稿同步（步 3）：
+//  - URL 带 ?build_session=<sid>&restore=1 → 显式恢复某个会话（救回"agent 写完了但
+//    表单是空的"那种会话，不必让 agent 重跑）
+//  - 否则若当前就停在步 3，静默同步一次（刷新/断线后恢复）
+(function() {
+    var params = new URLSearchParams(window.location.search);
+    var recover = params.get('build_session');
+    if (recover) {
+        WZ.state.build_session_id = recover;
+        WZ.show(3);
+        WZ.syncCanonicalDraft({ sid: recover, force: true });
+    }
+})();
+window.addEventListener('pageshow', function() {
+    if (WZ.cur === 3 && !WZ.bookId) WZ.syncCanonicalDraft();
+});
+// 侧栏派发的建书草稿状态（save_build_draft / validate_build 的压缩结果）
+window.addEventListener('ne:build-draft-status', function(e) {
+    var d = (e && e.detail) || {};
+    if (d.build_session_id && d.build_session_id !== WZ.ensureBuildSession()) return;   // 别的会话
+    if (d.issues && d.issues.length) {
+        WZ.showDraftIssues(d.issues);
+    } else if (d.tool === 'save_build_draft' && !d.saved) {
+        WZ.showDraftIssues([d.message || 'Agent 未成功落盘']);
+    } else {
+        WZ.showDraftIssues([]);
+    }
+    // 有 revision 或落盘成功 → 拉一次 canonical（validate 失败时不会落盘，不必拉）
+    if (d.saved || d.revision) WZ.syncCanonicalDraft();
+});
+// 用户在步 3 手工改过投影内容 → 之后 canonical 更新只提示、不自动覆盖（避免抹掉用户编辑）
+(function() {
+    var panel = document.getElementById('panel-3');
+    if (!panel) return;
+    ['input', 'change'].forEach(function(ev) {
+        panel.addEventListener(ev, function(e) { WZ.markStep3Dirty(e); }, true);
+    });
+})();
 // 角色原型库：晚于首次渲染到达时回填所有 .char-archetype 下拉（保留当前/agent 选中）
 fetch('/api/characters')
     .then(function(r){ return r.json(); })

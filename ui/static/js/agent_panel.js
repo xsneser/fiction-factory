@@ -661,8 +661,15 @@ console.log('[agent-panel] v28 events-stream');
             history.push({ role: 'assistant', content: evt.content, ts: Date.now() / 1000 });   // ts 供刷新后与卡片按时间交错
             saveHistory(history);
         } else if (t === 'error') {
+            // 写进 history：否则刷新/切页后这条错误气泡消失，用户只看到一个"正常结束"的任务
             addMsg('assistant', '⚠️ ' + (evt.message || '发生错误'));
+            history.push({ role: 'assistant', content: '⚠️ ' + (evt.message || '发生错误'), ts: Date.now() / 1000 });
+            saveHistory(history);
             if (currentToolRun) finishToolCard(currentToolRun, '❌ 失败');
+        } else if (t === 'build_draft_status') {
+            // 建书薄工具的压缩结果：转发给向导页（进步 3 / 刷新 / 校验失败都要能看到）。
+            // 注意**不能**放进 busy 守卫里——它本来就是在 agent 忙的时候产生的。
+            window.dispatchEvent(new CustomEvent('ne:build-draft-status', { detail: evt }));
         } else if (t === 'done') {
             if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }   // 会话结束清实时行
             // 任务结束：移除任务卡（建书/写作）上的停止按钮
@@ -699,8 +706,10 @@ console.log('[agent-panel] v28 events-stream');
     var navTimer = null;
     // 消费意图队列。onlyCmds 非空时只处理指定的 ui_command（busy 中用）。
     // dsh 会话中（busy）所有向导命令（set_field/set_world/set_characters/set_outline/next/submit…）
-    // 均由 drive_ui → SSE ui_command 实时推送（generate_outline_preview 已废弃、无后端直推），
-    // 轮询消费会双触发——busy 时只取走清空队列、不派发，残留由 done 后 C1 drain 丢弃。
+    // 均由 drive_ui → SSE ui_command 实时推送，轮询消费会双触发——busy 时只取走清空队列、
+    // 不派发，残留由 done 后 C1 drain 丢弃。
+    // ⚠️ 因此这条队列**不能**用来做服务端内部的数据投影（没有 SSE 伴随事件、busy 时必被丢）。
+    // 步 3 草稿改为页面从 canonical 拉取（见 start_book.html 的 syncCanonicalDraft）。
     function consumeNavIntents(onlyCmds) {
         return fetch('/api/agent/nav-intents')
             .then(function(r) { return r.json(); })
@@ -946,6 +955,12 @@ console.log('[agent-panel] v28 events-stream');
                         }
                     } else if (e.type === 'llm_call') {
                         addLlmCallCard(e);
+                    } else if (e.type === 'error') {
+                        // 持久化的错误：刷新/切页后仍看得到（此前 error 只即时追加、不落盘，
+                        // 用户回来只看得到一个"正常结束"的任务）
+                        addMsg('assistant', '⚠️ ' + (e.message || '发生错误'));
+                    } else if (e.type === 'build_draft_status') {
+                        window.dispatchEvent(new CustomEvent('ne:build-draft-status', { detail: e }));
                     }
                 }
             });

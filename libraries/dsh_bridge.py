@@ -630,6 +630,39 @@ def _extract_result_text(msg) -> str:
     return text
 
 
+def _build_draft_status_event(name, args, msg) -> dict | None:
+    """把建书薄工具的 tool/result 折成一个紧凑的 `build_draft_status` 事件。
+
+    为什么单独发：步 3 页面需要知道"草稿变了/校验没过"，才能去 canonical 拉取并提示问题。
+    而内层 `save_build_draft` **不再**经 nav_intent 队列推投影（那条队列在 agent 忙时会被
+    浏览器取走清空），所以这条 SSE 事件是页面唯一的实时信号；它只带 revision 与问题清单，
+    **不带**草稿正文（正文由页面 GET /api/build/draft 取，避免 SSE 体积回退）。
+    """
+    if name not in ("save_build_draft", "validate_build"):
+        return None
+    try:
+        result = json.loads(_extract_result_text(msg))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(result, dict):
+        return None
+    validation = result.get("validation") if isinstance(result.get("validation"), dict) else {}
+    return {
+        "type": "build_draft_status",
+        "tool": name,
+        "ok": not result.get("error"),
+        "build_session_id": (result.get("build_session_id")
+                             or (args or {}).get("build_session_id") or ""),
+        "saved": bool(result.get("saved")),
+        "passed": bool(validation.get("passed", result.get("passed", False))),
+        "revision": result.get("revision"),
+        "issues": (validation.get("issues") or result.get("issues") or [])[:20],
+        "decision_points": (validation.get("decision_points")
+                            or result.get("decision_points") or [])[:20],
+        "message": result.get("message") or result.get("error") or "",
+    }
+
+
 def _zh_tool_summary(name, args, msg):
     """把 tool/result 的消息转成中文一行摘要（前端直接展示，不带英文 key）。"""
     text = _extract_result_text(msg)
@@ -825,6 +858,12 @@ def _map_dsh_event(evt: dict, pending: dict):
             _dom = _domain_event_from_tool(name, p.get("args"), msg)
             if _dom:
                 yield {"type": "domain", **_dom}
+        # 建书草稿状态：save_build_draft / validate_build 的**压缩**结果单独成事件，
+        # 让步 3 页面能（a）按 revision 去 canonical 拉取草稿、（b）显示校验问题，
+        # 并让"agent 声称完成但没落盘"可被前端与服务端同时看见。
+        _bd = _build_draft_status_event(name, p.get("args"), msg)
+        if _bd:
+            yield _bd
     elif t == "llm/call":
         # 调试模式（NOVEL_AGENT_DEBUG=1 时 events-runner 才 emit）：一次 LLM 调用的
         # 提示词/MCP工具/返回JSON，前端渲染「LLM 调用」调试卡。不持久化 task_events。
@@ -1000,7 +1039,9 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
                         sse.setdefault("flow_id", flow_id)
                     if child_run_id:
                         sse.setdefault("child_run_id", child_run_id)
-                    # 持久化所有可渲染卡片（工具卡 + 调试模式 LLM 调用卡），供刷新后重建卡片流
+                    # 持久化所有可渲染卡片（工具卡 + 调试模式 LLM 调用卡），供刷新后重建卡片流。
+                    # error / build_draft_status 由 run_dsh_flow 统一补（那里能同时覆盖 FSM
+                    # 自己产出的错误），此处不再重复写，避免刷新后重复渲染。
                     if sse.get("type") in ("tool_call", "tool_result", "llm_call"):
                         _append_task_event(sse)
                     if sse.get("type") == "done":
@@ -1587,14 +1628,34 @@ def _build_child_task(session_id: str) -> str:
             "用户自己点提交，不要代提交。")
 
 
-def _stage_progressed(stage: dict) -> bool:
-    """快照是否显示该阶段已出产物（用于把连败计数归零）。
+def _build_draft_state(session_id: str) -> tuple[bool, int]:
+    """canonical 建书草稿是否真有内容 + 当前 revision。返回 (有内容, revision)。"""
+    if not session_id:
+        return False, 0
+    try:
+        from libraries import build_draft
+        rec = build_draft.load(session_id) or {}
+    except Exception:  # noqa: BLE001 —— 读不到就当没内容，不该让建书流程崩
+        return False, 0
+    draft = rec.get("draft") or {}
+    has = bool(draft.get("world") or draft.get("storyline") or draft.get("characters"))
+    return has, int(rec.get("revision") or 0)
+
+
+def _stage_progressed(stage: dict, session_id: str = "") -> bool:
+    """本轮子 run 是否真的产出了东西（用于把连败计数归零）。
 
     **注意不要拿它当「已完成」判据**：步 3 的 `has_outline` 可能是向导自己的
     `fill_world` 兜底骨架（不查 profile 就能写），本事件里正是它让人误以为故事线已生成。
     所以只用于记账归零，绝不据此跳过真正的生成。
+
+    步 3 优先看 **canonical 草稿**：快照的 has_world/has_outline 取决于页面上的投影是否
+    落地，而投影曾因异步队列被吞而永不更新 —— 用它判进度会把"其实已经写好"的轮次记成
+    空转，两轮后误判 no_progress 直接停掉建书（2026-09-13）。
     """
     if stage.get("phase") == "BUILDING":
+        if _build_draft_state(session_id)[0]:
+            return True
         return bool(stage.get("has_world") or stage.get("has_outline"))
     return bool(stage.get("picked"))
 
@@ -1729,7 +1790,7 @@ def _build_fsm(task: str, history: list | None, debug: bool):
     flow = load_flow(session_id) if ledger else None
     attempts = int((flow or {}).get("attempts") or 0)
     same_stage = (flow or {}).get("resume_point") == target
-    attempts = attempts + 1 if (same_stage and not _stage_progressed(stage)) else 1
+    attempts = attempts + 1 if (same_stage and not _stage_progressed(stage, session_id)) else 1
     if ledger and attempts > MAX_BUILD_ATTEMPTS:
         try:
             transition(session_id, "FAILED", attempts=attempts, error="no_progress")
@@ -1769,14 +1830,38 @@ def _build_fsm(task: str, history: list | None, debug: bool):
                f"建书子任务（{prof}）执行出错，本轮未完成。可以重发一次；"
                "若仍失败，请在向导页面手动填写。"}
     elif prof == "build":
-        yield {"type": "reply", "content":
-               "步 3 内容已发起填写（表单由浏览器异步应用，几秒后生效）。请在页面 review "
-               "世界观 / 弧与情节段 / 人物，确认无误后**自己点「创建并进入写作台」**"
-               "——提交只能由你点，agent 不代提交。"}
+        # 不再无条件宣称"已发起填写"：先说 canonical 里到底有没有草稿（服务端真源），
+        # 否则就是"agent 说写完了、页面什么都没有"（2026-09-13 事故的可见性那一环）。
+        _has_draft, _rev = _build_draft_state(session_id)
+        if _has_draft:
+            yield {"type": "reply", "content":
+                   f"步 3 草稿已落服务端（revision {_rev}），页面会自动载入。请在页面 review "
+                   "世界观 / 弧与情节段 / 人物，确认无误后**自己点「创建并进入写作台」**"
+                   "——提交只能由你点，agent 不代提交。"}
+        else:
+            yield {"type": "error", "message":
+                   "本轮没有产出草稿：服务端 canonical 里 world / storyline / characters 都是空的。"
+                   "请查看侧栏工具卡——通常是 validate_build 报了 issues、或 save_build_draft 被拒；"
+                   "修正后重发一次即可（也可以直接在向导页手动填写）。"}
     else:
         yield {"type": "reply", "content":
                "候选已逐张呈现在步 2。挑一个方向后点「已挑选完毕」，我会接着做步 3 的故事线。"}
     yield {"type": "done"}
+
+
+def _persist_flow_events(gen):
+    """把 SSE 流里**非卡片**类的可诊断事件落 `task_events.jsonl`（刷新后仍可见）。
+
+    `run_dsh_task` 只持久化工具卡/LLM 卡；`error` 与 `build_draft_status` 由这里统一补，
+    这样 FSM 自己产出的错误（no_progress、本轮没产出草稿）也能被刷新后的页面重建出来。
+    """
+    for evt in gen:
+        try:
+            if evt.get("type") in ("error", "build_draft_status"):
+                _append_task_event(evt)
+        except Exception:  # noqa: BLE001 —— 记账失败不该打断任务
+            pass
+        yield evt
 
 
 def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
@@ -1792,12 +1877,12 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
     if _profiles_enabled():
         prof = _task_tool_profile(task)
         if prof == "write":
-            yield from _writer_fsm(task, history, debug, policy)
+            yield from _persist_flow_events(_writer_fsm(task, history, debug, policy))
             return
         # build 与 build-candidates **一并**交给 _build_fsm：两段交接文本不可分
         # （都含「候选」），阶段由它读向导快照定，别在这里按文本二选一。
         if prof in ("build", "build-candidates"):
-            yield from _build_fsm(task, history, debug)
+            yield from _persist_flow_events(_build_fsm(task, history, debug))
             return
         if not prof:
             # 未分类：不静默回落只读面（此前「大纲生成失败」只换来一串只读工具调用），

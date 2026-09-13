@@ -51,6 +51,10 @@ def push_ui_command(cmd: str, args: dict = None) -> dict:
 
     cmd ∈ drive_ui 白名单（agent_tools._WIZARD_CMDS）；args 传给浏览器
     start_book.html 的 window.onnecommand 执行。
+
+    **不要用这条队列做服务端内部的数据投影**：agent 忙时浏览器会取走清空队列以
+    避免与 SSE `ui_command` 双触发，内部投影（没有 SSE 伴随事件）会被静默丢弃。
+    步 3 的草稿投影走 canonical 拉取（见 agent_tools.save_build_draft 的说明）。
     """
     return _push({
         "id": uuid.uuid4().hex[:12],

@@ -54,6 +54,13 @@ def main():
                  mcp_profile=""):
         calls.append({"task": task, "mcp_profile": mcp_profile, "flow_id": flow_id,
                       "child_run_id": child_run_id, "history": history})
+        # 模拟真实 build 子 run 的**副作用**：把草稿落 canonical。收尾文案与"本轮是否产出
+        # 草稿"的护栏都以 canonical 为准（不再无条件宣称"已发起填写"），夹具不写就会被
+        # 判成空转/无产出。
+        if mcp_profile == "build" and flow_id:
+            BD.update(flow_id, draft={"world": {"world_building": {"core_conflict": "测试"}},
+                                      "storyline": {"outlines": [{"id": "o1"}], "plots": [{"id": "p1"}]},
+                                      "characters": [{"name": "甲", "role": "主角", "importance": 1}]})
         yield {"type": "tool_call", "name": "drive_ui"}
         yield {"type": "reply", "content": "（子 run 回复）"}
         yield {"type": "done"}          # 子 done 必须被吞掉，不能透传给前端

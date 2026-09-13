@@ -62,6 +62,46 @@ _DEFAULTS = {
 }
 
 
+# 世界观里属于**表单顶层**而非 world_building 本体的键（start_book.html 的 set_world
+# 处理器、dashboard 的提交读取都是这么拆的）
+_WORLD_TOP_KEYS = ("tone", "target_audience", "pov", "era_language")
+
+
+def normalize_world(world) -> dict | None:
+    """把 `draft.world` 归一到**所有消费端都认**的形状（幂等）。
+
+    规范形状 = `{"world_building": {...本体...}, tone?, target_audience?, pov?, era_language?}`。
+
+    为什么非归一不可（2026-09-13 事故）：agent 常把 world_building 本体直接摊在 world 顶层
+    （core_conflict/factions/geography 就在 world 顶上）。此前只有校验端容忍这种裸本体，
+    另外两个消费端都只认带外层键的形状——于是"校验通过、投影报缺少 world_building、
+    成书时世界观被丢掉"。归一到这一个函数，读（load）写（update）两侧都过一遍，
+    老记录因此无需迁移。
+    """
+    if not isinstance(world, dict) or not world:
+        return None
+    if isinstance(world.get("world_building"), dict):
+        return world
+    out = {"world_building": {k: v for k, v in world.items() if k not in _WORLD_TOP_KEYS}}
+    for k in _WORLD_TOP_KEYS:
+        if world.get(k):
+            out[k] = world[k]
+    return out
+
+
+def normalize_draft(draft) -> dict | None:
+    """归一化整份步 3 草稿（world 包一层；storyline/characters 形状已是最终形态）。"""
+    if not isinstance(draft, dict):
+        return None
+    out = dict(draft)
+    out["world"] = normalize_world(draft.get("world"))
+    if not isinstance(out.get("storyline"), dict):
+        out["storyline"] = None
+    if not isinstance(out.get("characters"), list):
+        out["characters"] = None
+    return out
+
+
 def _safe_sid(session_id: str) -> str:
     safe = "".join(c for c in str(session_id or "") if c.isalnum() or c in "-_")
     if not safe:
@@ -89,8 +129,8 @@ def _coerce(data: dict) -> dict:
     out["candidates"] = [c for c in (out.get("candidates") or []) if isinstance(c, dict)]
     if not isinstance(out.get("selected_candidate"), dict):
         out["selected_candidate"] = None
-    if not isinstance(out.get("draft"), dict):
-        out["draft"] = None
+    # 读写两侧都过归一：老记录（裸 world）读出来就是规范形状，无需迁移脚本
+    out["draft"] = normalize_draft(out.get("draft"))
     return out
 
 
