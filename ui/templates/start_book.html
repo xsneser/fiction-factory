@@ -95,6 +95,15 @@
                 <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
             </div>
             <div class="form-row hint" id="wz-world-status">进入本步时已由 AI 自动补全，可手动微调。</div>
+            <!-- 规划进度：阶段（流程走到哪）+ 待填清单（东西填得怎么样）。
+                 数据来自 GET /api/build/draft（页面已在轮询），不额外开通道。 -->
+            <div class="form-row" id="wz-stale-banner" role="alert" style="display:none"></div>
+            <details id="wz-checklist" style="display:none;margin:4px 0 10px">
+                <summary style="cursor:pointer;font-weight:600">
+                    🧭 规划进度 <span class="hint" id="wz-checklist-summary"></span>
+                </summary>
+                <div id="wz-checklist-body" style="margin-top:6px"></div>
+            </details>
             <!-- agent 草稿状态：canonical 拉取结果 + 允许从服务端恢复（用户改过表单时不自动覆盖） -->
             <div class="form-row hint" id="wz-agent-draft-status" role="status" aria-live="polite"></div>
             <div class="form-row" id="wz-agent-draft-errors" role="alert" style="display:none"></div>
@@ -234,6 +243,13 @@ main { overflow-y:auto; }   /* 页面可上下滚动：workspace.css 的 main{ov
 
 <script src="/static/js/story_line.js?v=4"></script>
 <script>
+// 规划阶段的中文名（与 libraries/build_phases.py 的 CHAINS 同源；只影响显示）
+var WZ_PHASE_LABEL = {
+    planning_thesis: '立命题', mirror: '查库对镜', scaffold: '世界观与人物',
+    stop_A: '等你确认骨架', executable_horizon: '近期规划', forecast_horizon: '远期规划',
+    promise_reconciliation: '伏笔对账', validate: '自查回打', stop_B: '等你提交',
+    preview_confirm: '等你确认预览', done: '完成',
+};
 var WZ = {
     cur: 1, bookId: '', creating: false, _picked: false, submitError: '',
     // 步 3 草稿同步：_buildRevision = 提交时用的 canonical 版本号（CAS）；
@@ -1397,8 +1413,12 @@ var WZ = {
         return fetch('/api/build/draft?sid=' + encodeURIComponent(sid))
             .then(function(r) { return r.json(); })
             .then(function(rec) {
-                if (!rec || !rec.ok || !rec.exists || !rec.draft) return false;
+                if (!rec || !rec.ok) return false;
                 if (rec.build_session_id !== self.ensureBuildSession()) return false;   // 别把别的会话灌进来
+                // 清单/阶段独立于草稿应用：用户脏表单时 applyCanonicalRecord 会早退，
+                // 但"还差什么没填"仍然要如实刷新
+                self.renderChecklist(rec);
+                if (!rec.exists || !rec.draft) return false;
                 return self.applyCanonicalRecord(rec, opts);
             })
             .catch(function(e) {
@@ -1438,6 +1458,44 @@ var WZ = {
         this.persist();
         this.reportStatus();
         return true;
+    },
+    /* ─── 规划进度：阶段（流程走到哪）+ 待填清单（东西填得怎么样）───
+       两者刻意分开：内容填满了不代表"查库对镜"发生过，反之亦然。 */
+    renderChecklist: function(rec) {
+        var box = this.el('wz-checklist');
+        var body = this.el('wz-checklist-body');
+        var sum = this.el('wz-checklist-summary');
+        if (!box || !body) return;
+        var meta = (rec && rec.plan_meta) || {};
+        this.renderStale(meta);
+        var cl = rec && rec.checklist;
+        if (!cl) { box.style.display = 'none'; body.innerHTML = ''; return; }
+        box.style.display = '';
+        var label = WZ_PHASE_LABEL[meta.phase] || meta.phase || '';
+        if (sum) sum.textContent = (cl.summary || '') + (label ? ' · 现在：' + label : '');
+        var esc = (typeof escapeHtml === 'function') ? escapeHtml : function(s) { return String(s); };
+        var color = {missing: '#f85149', thin: '#d29922', ok: '#3fb950', validated: '#3fb950'};
+        var mark = {missing: '✗', thin: '△', ok: '✓', validated: '✓'};
+        body.innerHTML = (cl.items || []).map(function(it) {
+            var c = color[it.status] || '#8b949e';
+            return '<div style="display:flex;gap:6px;padding:2px 0;font-size:12px;line-height:1.5">'
+                + '<span style="color:' + c + ';width:12px;flex:none">' + (mark[it.status] || '·') + '</span>'
+                + '<span style="flex:none;' + (it.gate ? 'font-weight:600' : '') + '">' + esc(it.title) + '</span>'
+                + (it.gate ? '<span style="flex:none;color:#f85149;font-size:11px">门禁</span>' : '')
+                + '<span class="hint" style="flex:1">' + esc(it.detail || '') + '</span>'
+                + '</div>';
+        }).join('');
+    },
+    renderStale: function(meta) {
+        var el = this.el('wz-stale-banner');
+        if (!el) return;
+        var stale = (meta && meta.stale_phases) || [];
+        if (!stale.length) { el.style.display = 'none'; el.textContent = ''; return; }
+        el.style.display = '';
+        el.style.color = '#d29922';
+        el.textContent = '⚠ 上游内容改过了，这些阶段需要重新检查：'
+            + stale.map(function(p) { return WZ_PHASE_LABEL[p] || p; }).join('、')
+            + '——让 Agent 从最靠前的那个重做。';
     },
     // 用户手工改过步 3 的投影内容（程序化回灌的 isTrusted=false 不算）
     markStep3Dirty: function(ev) {

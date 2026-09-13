@@ -195,6 +195,14 @@ def main():
         check("有草稿状态/错误区与恢复按钮",
               'id="wz-agent-draft-status"' in tpl and 'id="wz-agent-draft-errors"' in tpl
               and 'id="wz-restore-canonical"' in tpl)
+        # 规划进度面板：阶段（流程走到哪）+ 待填清单（东西填得怎么样）
+        check("步 3 有 checklist / stale 面板",
+              'id="wz-checklist"' in tpl and 'id="wz-stale-banner"' in tpl
+              and "renderChecklist: function" in tpl and "renderStale: function" in tpl)
+        check("清单渲染在草稿守卫**之前**（用户脏表单时仍如实刷新）",
+              tpl.index("self.renderChecklist(rec)") < tpl.index("if (!rec.exists || !rec.draft) return false;"))
+        check("阶段中文字典与 build_phases 同源",
+              "planning_thesis: '立命题'" in tpl and "promise_reconciliation: '伏笔对账'" in tpl)
         check("提交带 build_source（canonical/form 二选一）",
               "this.state.build_source = 'canonical'" in tpl
               and "this.state.build_source = 'form'" in tpl)

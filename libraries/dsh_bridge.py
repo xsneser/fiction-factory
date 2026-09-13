@@ -770,6 +770,40 @@ def _domain_event_from_tool(name, args, msg) -> dict | None:
     return ev
 
 
+_MIRROR_TOOL_KEYS = {"query_arc_library": "arc_query", "query_plots": "plot_query"}
+
+
+def _note_mirror_evidence(sse: dict, sid: str, seen: set, run_id: str = "") -> None:
+    """把「查库对镜真的发生过」记进建书 canonical 的 `plan_meta.mirror_evidence`。
+
+    **为什么必须由服务器记**：agent 自报不算证据——这次引入显式 phase 的初衷恰恰是
+    "'世界观已经填了'不能证明'对镜过程做过'"。所以在桥层按**实际 tool_call** 落证据，
+    build 入口的 `mirror → scaffold` 转移以它为准（replan 是 optional，不要求）。
+
+    用 `bump=False` 写：证据是派生遥测、不是内容状态，不该动 `revision`——否则 agent
+    在 query 之后、save 之前拿到的 `expected_revision` 会被自己刚做的查询判过期，
+    凭空制造一次 revision_conflict。
+    """
+    if not sid or (sse or {}).get("type") != "tool_call":
+        return
+    key = _MIRROR_TOOL_KEYS.get(_short_name(sse.get("name") or ""))
+    if not key or key in seen:
+        return
+    seen.add(key)
+    try:
+        from libraries import build_draft, build_phases
+        meta = build_draft.load(sid).get("plan_meta") or {}
+        if (meta.get("mirror_evidence") or {}).get(key):
+            return
+        build_draft.update(
+            sid, bump=False,
+            on_meta=lambda m: build_phases.record_mirror_evidence(
+                m, run_id=run_id or "", **{key: True}))
+        _log.debug("mirror evidence recorded: %s sid=%s", key, sid)
+    except Exception as e:  # noqa: BLE001 —— 记证据失败不该打断 agent run
+        _log.warning("记录对镜证据失败: %s", e)
+
+
 def _map_dsh_event(evt: dict, pending: dict):
     """一行 NDJSON 事件 → SSE 事件（生成器，可产 0..N 条）。
 
@@ -1015,6 +1049,9 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
         threading.Thread(target=_stderr_reader, daemon=True).start()
 
         pending = {}
+        # 对镜证据：由**本次 run 实际发生的 tool call** 记录（不让 agent 自报）
+        mirror_sid = _parse_build_session(task)
+        mirror_seen: set = set()
         started = time.time()
         while True:
             try:
@@ -1044,6 +1081,7 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
                     # 自己产出的错误），此处不再重复写，避免刷新后重复渲染。
                     if sse.get("type") in ("tool_call", "tool_result", "llm_call"):
                         _append_task_event(sse)
+                    _note_mirror_evidence(sse, mirror_sid, mirror_seen, child_run_id)
                     if sse.get("type") == "done":
                         saw_done_event = True
                     yield sse

@@ -180,6 +180,42 @@ def main():
           and not bp.is_phase_effective(meta, bp.P_H0),
           str(bp.effective_completed(meta)))
 
+    # ── 7) 对镜证据由**服务器按实际 tool call** 记录，且不动 revision ────────
+    from libraries import build_draft as BD  # noqa: E402
+    from libraries import dsh_bridge as DB  # noqa: E402
+    sid = "selftest-mirror-evidence"
+    try:
+        if os.path.exists(BD.path_for(sid)):
+            os.remove(BD.path_for(sid))
+        BD.transition(sid, step=3, idea="对镜证据", tags=["测试"], pen_name="枫落")
+        # 先立命题把 phase 推到 mirror（对镜证据是**离开 mirror** 的条件）
+        BD.update(sid, on_meta=lambda m: bp.advance(
+            m, "agent_save", wrote_paths=["world.world_building.core_conflict"]))
+        check("推进到 mirror 待对镜", BD.load(sid)["plan_meta"]["phase"] == bp.P_MIRROR)
+        rev_before = BD.load(sid)["revision"]
+        DB._note_mirror_evidence(
+            {"type": "tool_call", "name": "mcp__novelengine__query_arc_library"}, sid, set())
+        rec = BD.load(sid)
+        check("桥层记下 arc_query", rec["plan_meta"]["mirror_evidence"]["arc_query"] is True)
+        check("记证据不动 revision（否则 agent 自己查询会把自己的 CAS 判过期）",
+              rec["revision"] == rev_before, f"{rev_before} → {rec['revision']}")
+        check("只记了一条时 mirror → scaffold 仍不放行",
+              bp.advance(rec["plan_meta"], "mirror_done") is None)
+        # 无关的工具调用不产生证据
+        DB._note_mirror_evidence(
+            {"type": "tool_call", "name": "mcp__novelengine__validate_build"}, sid, set())
+        check("无关工具不记证据",
+              BD.load(sid)["plan_meta"]["mirror_evidence"]["plot_query"] is False)
+        DB._note_mirror_evidence(
+            {"type": "tool_call", "name": "mcp__novelengine__query_plots"}, sid, set())
+        rec = BD.load(sid)
+        check("两条齐后 mirror → scaffold 放行",
+              (bp.advance(rec["plan_meta"], "mirror_done") or {}).get("phase") == bp.P_SCAFFOLD,
+              str(rec["plan_meta"]["mirror_evidence"]))
+    finally:
+        if os.path.exists(BD.path_for(sid)):
+            os.remove(BD.path_for(sid))
+
     print("\n" + "=" * 60)
     print(f"  规划阶段状态机验收: {len(PASS)} 通过 / {len(FAIL)} 失败")
     if FAIL:
