@@ -83,6 +83,23 @@ def start_new_book():
                 if not _rev_ok:
                     return jsonify({"ok": False, "error": "草稿已在服务端更新（版本不一致），请刷新页面或点「从服务端恢复 Agent 草稿」后再提交",
                                     "current_revision": int(_rec.get("revision") or 0)}), 409
+                # 规划完整性门禁（四个条件，全部来自 canonical，不信浏览器）：校验回执必须
+                # 对应**当前**内容版本，且没有失效阶段。用 `content_revision` + 语义摘要而不是
+                # `revision`——用户点「确认本阶段」这类纯流程写会让 revision 涨，但不该让
+                # 已经通过的校验失效。
+                _meta = _rec.get("plan_meta") or {}
+                _v = _meta.get("validated") or {}
+                _cr = int(_rec.get("content_revision") or 0)
+                _stale = list(_meta.get("stale_phases") or [])
+                if not (_v.get("passed")
+                        and int(_v.get("content_revision") or -1) == _cr
+                        and str(_v.get("content_digest") or "") == str(_rec.get("content_digest") or "")
+                        and not _stale):
+                    _why = ("还有阶段需要重新检查：" + "、".join(_stale)) if _stale else \
+                           "规划尚未通过一次完整校验（或校验之后内容又改过）"
+                    return jsonify({"ok": False, "error": _why + "；请让 Agent 补完/重做后再提交",
+                                    "stale_phases": _stale,
+                                    "current_revision": int(_rec.get("revision") or 0)}), 409
             if _draft and _rev_ok:
                 # 草稿各段的形状 = 对应 drive_ui 命令的参数（见 agent_tools.save_build_draft）
                 _w = _draft.get("world")

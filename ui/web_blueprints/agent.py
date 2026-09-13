@@ -239,6 +239,106 @@ def build_draft_get():
     })
 
 
+@bp.route("/api/build/phase-save", methods=["POST"])
+def build_phase_save():
+    """用户把**表单当前内容**回写 canonical —— 分阶段编辑的正式落点。
+
+    body: `{build_session_id, expected_revision, sections:{world?,characters?,storyline?},
+            lock_fields?: [...], unlock_fields?: [...]}`
+
+    护栏：revision CAS 不等 → 409（不覆盖并发写）；**只由浏览器调用**——它不是
+    drive_ui 命令，agent 工具面看不到，因此不会变成 agent 的第二条提交路径。
+    用户编辑**不推进 phase**（推进只由 agent 落盘 / 用户显式 ack 触发）。
+    """
+    from libraries import (build_checklist, build_draft, build_phases, plan_diff,
+                           plan_paths)
+    data = request.get_json(silent=True) or {}
+    sid = str(data.get("build_session_id") or "").strip()
+    if not sid or not build_draft.exists(sid):
+        return jsonify({"ok": False, "error": "unknown_session"}), 404
+    expected = data.get("expected_revision")
+    if isinstance(expected, bool) or not isinstance(expected, int):
+        return jsonify({"ok": False, "error": "expected_revision 必须是整数"}), 400
+
+    rec = build_draft.load(sid)
+    old = rec.get("draft") or {}
+    sections = data.get("sections") or {}
+    merged = build_draft.normalize_draft({
+        "world": build_draft.normalize_world(sections["world"])
+        if "world" in sections else old.get("world"),
+        "storyline": sections.get("storyline") if "storyline" in sections
+        else old.get("storyline"),
+        "characters": sections.get("characters") if "characters" in sections
+        else old.get("characters"),
+    })
+
+    meta = rec.get("plan_meta") or {}
+    want_lock = [str(x) for x in (data.get("lock_fields") or [])]
+    want_unlock = [str(x) for x in (data.get("unlock_fields") or [])]
+    problems = plan_paths.lockable_problems(want_lock, merged)
+    if problems:
+        # 结构身份字段（id / order / start_word …）不可锁——锁住会让重新规划无从下手
+        return jsonify({"ok": False, "error": "unlockable_fields",
+                        "problems": problems}), 400
+    locked = [p for p in (meta.get("locked_fields") or []) if p not in want_unlock]
+    locked += [p for p in want_lock if p not in locked]
+
+    wrote_paths = plan_diff.changed_paths(plan_diff.semantic_diff(old, merged))
+
+    def _on_meta(m):
+        m = build_phases.coerce_meta(m)
+        m["locked_fields"] = list(locked)
+        # 用户改上游 ⇒ 下游失效（与 agent 落盘同一套规则，不因为"是谁改的"而不同）
+        return build_phases.mark_stale(
+            m, build_phases.stale_for_paths(wrote_paths, entry=m["entry"]))
+
+    try:
+        rec = build_draft.update(sid, draft=merged, expected_revision=expected,
+                                 on_meta=_on_meta)
+    except build_draft.StaleRevision as e:
+        return jsonify({"ok": False, "error": "revision_conflict",
+                        "current_revision": int(e.current)}), 409
+
+    new_meta = rec.get("plan_meta") or {}
+    return jsonify({
+        "ok": True,
+        "revision": int(rec.get("revision") or 0),
+        "content_revision": int(rec.get("content_revision") or 0),
+        "plan_meta": new_meta,
+        "checklist": build_checklist.build_checklist(
+            rec.get("draft"), stale_phases=new_meta.get("stale_phases"),
+            validated=new_meta.get("validated")),
+        "changed_paths": wrote_paths,
+    })
+
+
+@bp.route("/api/build/phase-ack", methods=["POST"])
+def build_phase_ack():
+    """用户在停点点「➡ 继续下一阶段」——`stop_A --user_ack--> executable_horizon` 的唯一触发点。
+
+    其它 phase 调用一律 no-op（不改状态）：**一个 event 只触发一次确定转移**，否则会出现
+    "agent 落盘推一级 + 用户点继续再推一级"跳过整段。
+    """
+    from libraries import build_draft, build_phases
+    data = request.get_json(silent=True) or {}
+    sid = str(data.get("build_session_id") or "").strip()
+    if not sid or not build_draft.exists(sid):
+        return jsonify({"ok": False, "error": "unknown_session"}), 404
+    rec = build_draft.load(sid)
+    phase_before = str((rec.get("plan_meta") or {}).get("phase") or "")
+    # `or m`：没有转移时 advance 返回 None，直接交给 update 会把 plan_meta 重置成默认值
+    rec = build_draft.update(sid, on_meta=lambda m: build_phases.advance(m, "user_ack") or m)
+    meta = rec.get("plan_meta") or {}
+    return jsonify({
+        "ok": True,
+        "advanced": str(meta.get("phase") or "") != phase_before,
+        "phase": meta.get("phase"),
+        "next_phase": build_phases.next_phase(meta),
+        "revision": int(rec.get("revision") or 0),
+        "plan_meta": meta,
+    })
+
+
 @bp.route("/api/build/pick", methods=["POST"])
 def build_pick():
     """选定候选方向（服务端持久化）——用户点候选卡时调用。

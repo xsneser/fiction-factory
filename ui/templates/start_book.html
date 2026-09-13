@@ -110,6 +110,8 @@
             <div class="form-row">
                 <button type="button" id="wz-restore-canonical" class="btn" style="display:none;padding:8px 16px"
                         onclick="WZ.syncCanonicalDraft({force:true})">↻ 从服务端恢复 Agent 草稿</button>
+                <button type="button" id="wz-next-phase" class="btn" style="display:none;padding:8px 16px"
+                        onclick="WZ.continuePhase()">➡ 继续下一阶段</button>
             </div>
             <div class="form-row">
                 <label>设定概述 world_summary</label>
@@ -252,6 +254,9 @@ var WZ_PHASE_LABEL = {
 };
 var WZ = {
     cur: 1, bookId: '', creating: false, _picked: false, submitError: '',
+    // 脏标记按**字段**记（不是全局布尔）：分阶段落盘下，一次脏就永久拒绝回灌，会让
+    // 「改过阶段 1 的字段后，阶段 2/3 的内容再也灌不进来」。
+    _dirtyFields: {}, _lastCanonicalDraft: null, _phaseAcking: false,
     // 步 3 草稿同步：_buildRevision = 提交时用的 canonical 版本号（CAS）；
     // _canonicalRevision = 已回灌进表单的版本（幂等）；_step3Dirty = 回灌后用户手工改过
     _buildRevision: null, _canonicalRevision: null, _step3Dirty: false, _syncingCanonical: false,
@@ -391,7 +396,7 @@ var WZ = {
                     return;
                 }
                 self.show(3);
-                var task = '请继续建这本新书（步 2 已选定候选「' + (self.state.title || '') + '」），自主生成填写步 3 内容表单及故事线：挑选弧 → 构建核心矛盾core_conflict → 创建势力 → 挑选情节段 → 创建各势力人物适配 → 补全其余表单 → 评判合理性及阅读吸引力并修改。填完表单后停下，向用户汇报设定概要并等待确认；用户明确确认后再提交建书。'
+                var task = '请继续建这本新书（步 2 已选定候选「' + (self.state.title || '') + '」），按 novel-build 的**分阶段构思**流程推进：先 get_build_context 读回权威输入，看清 plan_meta.phase 与 plan_meta.stale_phases，**从当前阶段续跑**（有失效阶段就从最靠前的那个重做；已经落过盘的内容不要重复生成），每完成一个阶段就 save_build_draft 落一版草稿。到停点 A（世界观与人物落盘后）停下，向用户汇报本阶段产出与待填清单并等用户确认；用户确认后再继续排弧与近期/远期规划。'
                     + ' [build_session=' + self.ensureBuildSession() + ']';   // 机器标记：服务端据此把本次任务钉到本向导会话（build_status 是全局单快照）
                 if (typeof window.agentSendTask === 'function') {
                     window.agentSendTask(task, { card: true });
@@ -1433,28 +1438,38 @@ var WZ = {
         if (!opts.force && this._canonicalRevision != null && rev <= this._canonicalRevision) {
             return false;                                  // 同版本幂等：重复触发不再动表单
         }
-        if (!opts.force && this._step3Dirty) {
-            // 用户改过投影内容 → 不覆盖，只提示可以手动恢复
-            this.showDraftStatus('服务端草稿已更新到 revision ' + rev + '，但你在页面上改过内容，未自动覆盖。', 'warning');
-            this.showRestoreButton(true);
-            return false;
-        }
         var draft = rec.draft || {};
+        this._lastCanonicalDraft = draft;
         var dispatch = function(cmd, args) {
             window.dispatchEvent(new CustomEvent('ne:command', { detail: { cmd: cmd, args: args } }));
         };
         // 顺序固定 world → characters → storyline：set_world 会重建势力 DOM，人物卡是按势力
         // 分组渲染的，先画人物会被随后重建的势力区覆盖掉。
-        if (draft.world) dispatch('set_world', draft.world);
-        if (draft.characters) dispatch('set_characters', { characters: draft.characters });
-        if (draft.storyline) dispatch('set_outline', draft.storyline);
+        // **段级跳过**：只跳过用户改过的那一段，其余照常回灌——不是一次脏就全部冻结
+        var skipped = [];
+        if (draft.world) {
+            if (this._hasDirtyIn('wz-wb-')) { skipped.push('世界观'); }
+            else { dispatch('set_world', draft.world); this._clearDirtyIn('wz-wb-'); }
+        }
+        if (draft.characters) {
+            if (this._hasDirtyIn('wz-char-')) { skipped.push('人物'); }
+            else { dispatch('set_characters', { characters: draft.characters }); this._clearDirtyIn('wz-char-'); }
+        }
+        // 空故事线不 dispatch：set_outline 传空结构会把左栏 Gantt 清空
+        var sl = draft.storyline || {};
+        if ((sl.outlines || []).length || (sl.plots || []).length) dispatch('set_outline', sl);
         this._canonicalRevision = rev;
         this._buildRevision = rev;                         // 提交时 CAS 用，必须同步到最新
-        this._step3Dirty = false;
         var name = (rec.selected_candidate && rec.selected_candidate.title) || this.state.title || '';
-        this.showDraftStatus('已从服务端载入 agent 草稿（revision ' + rev + '）'
-            + (name ? '：' + name : '') + '，请 review 后自己点「创建并进入写作台」提交。', 'success');
-        this.showRestoreButton(false);
+        if (skipped.length) {
+            this.showDraftStatus('服务端草稿已更新到 revision ' + rev + '；' + skipped.join('、')
+                + ' 你改过，未自动覆盖（点「➡ 继续下一阶段」会先保存你的版本）。', 'warning');
+            this.showRestoreButton(true);
+        } else {
+            this.showDraftStatus('已从服务端载入 agent 草稿（revision ' + rev + '）'
+                + (name ? '：' + name : '') + '，请 review 后自己点「创建并进入写作台」提交。', 'success');
+            this.showRestoreButton(false);
+        }
         this.persist();
         this.reportStatus();
         return true;
@@ -1468,6 +1483,15 @@ var WZ = {
         if (!box || !body) return;
         var meta = (rec && rec.plan_meta) || {};
         this.renderStale(meta);
+        var nextBtn = this.el('wz-next-phase');
+        if (nextBtn) {
+            var atStop = meta.phase === 'stop_A';
+            nextBtn.style.display = atStop ? '' : 'none';
+            if (atStop) {
+                nextBtn.textContent = '➡ 继续下一阶段（先保存我在表单里的修改）';
+                nextBtn.disabled = !!this._phaseAcking;
+            }
+        }
         var cl = rec && rec.checklist;
         if (!cl) { box.style.display = 'none'; body.innerHTML = ''; return; }
         box.style.display = '';
@@ -1501,7 +1525,67 @@ var WZ = {
     markStep3Dirty: function(ev) {
         if (this.cur !== 3 || this._canonicalRevision == null) return;
         if (ev && ev.isTrusted === false) return;
+        var id = (ev && ev.target && ev.target.id) || '';
+        if (id) this._dirtyFields[id] = true;
         this._step3Dirty = true;
+    },
+    _hasDirtyIn: function(prefix) {
+        var f = this._dirtyFields || {};
+        for (var k in f) { if (f[k] && k.indexOf(prefix) === 0) return true; }
+        return false;
+    },
+    _clearDirtyIn: function(prefix) {
+        var f = this._dirtyFields || {};
+        for (var k in f) { if (k.indexOf(prefix) === 0) delete f[k]; }
+        this._step3Dirty = Object.keys(f).length > 0;
+    },
+    /* 继续下一阶段：把用户改过的段回写 canonical → 确认停点 → 派发下一轮构思。
+       为什么先回写：用户改的是表单，而 agent 的权威输入是 canonical；不回写等于用户白改。
+       顺序也不能颠倒——先派任务的话，agent 读到的是旧草稿。 */
+    continuePhase: function() {
+        var self = this;
+        var sid = this.ensureBuildSession();
+        if (!sid || this._phaseAcking) return;
+        this._phaseAcking = true;
+        var sections = {};
+        var prev = (this._lastCanonicalDraft && this._lastCanonicalDraft.world) || {};
+        if (this._hasDirtyIn('wz-wb-') || this._hasDirtyIn('wz-title') || this._hasDirtyIn('wz-words')) {
+            var w = { world_building: this.worldToBi() };
+            // world 顶层的 tone/pov/… 表单没有编辑控件，照抄旧值，别在归一里丢掉
+            ['tone', 'target_audience', 'pov', 'era_language'].forEach(function(k) {
+                if (prev[k]) w[k] = prev[k];
+            });
+            sections.world = w;
+        }
+        if (this._hasDirtyIn('wz-char-')) sections.characters = this.collectCharCards();
+        fetch('/api/build/phase-save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ build_session_id: sid, expected_revision: this._buildRevision,
+                                   sections: sections })
+        }).then(function(r) { return r.json().then(function(d) { return { status: r.status, d: d }; }); })
+            .then(function(res) {
+                if (!res.d.ok) throw new Error(res.d.error || '保存失败');
+                return fetch('/api/build/phase-ack', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ build_session_id: sid })
+                }).then(function(r) { return r.json(); });
+            })
+            .then(function(d) {
+                if (!d.ok) throw new Error(d.error || '阶段确认失败');
+                self._phaseAcking = false;
+                self._dirtyFields = {};
+                self._step3Dirty = false;
+                self.syncCanonicalDraft();
+                var task = '继续建书步 3 的下一个阶段：先 get_build_context 看清 plan_meta.phase 与 '
+                    + 'plan_meta.stale_phases，从当前阶段继续（有失效阶段就从最靠前的重做），'
+                    + '完成后落一版草稿。 [build_session=' + sid + ']';
+                if (typeof window.agentSendTask === 'function') window.agentSendTask(task, { card: true });
+            })
+            .catch(function(e) {
+                self._phaseAcking = false;
+                if (typeof showToast === 'function') showToast('继续下一阶段失败：' + e.message, 'error');
+                self.syncCanonicalDraft();
+            });
     },
     showDraftStatus: function(text, kind) {
         var el = this.el('wz-agent-draft-status');

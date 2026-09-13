@@ -203,6 +203,22 @@ def main():
               tpl.index("self.renderChecklist(rec)") < tpl.index("if (!rec.exists || !rec.draft) return false;"))
         check("阶段中文字典与 build_phases 同源",
               "planning_thesis: '立命题'" in tpl and "promise_reconciliation: '伏笔对账'" in tpl)
+        # 分阶段填写：脏标记必须**按段**跳过，不能一次脏就永久冻结
+        # （否则"改过阶段 1 的字段后，阶段 2/3 的内容再也灌不进来"）
+        check("脏标记按字段记 + 段级跳过",
+              "_dirtyFields" in tpl and "_hasDirtyIn: function" in tpl
+              and "_clearDirtyIn: function" in tpl)
+        check("不再有「一次脏就整份不覆盖」的分支",
+              "if (!opts.force && this._step3Dirty) {" not in tpl)
+        check("空故事线不 dispatch（否则会清空左栏 Gantt）",
+              "(sl.outlines || []).length || (sl.plots || []).length" in tpl)
+        # 「➡ 继续下一阶段」：先回写表单 → 再确认停点 → 最后才派任务（顺序反了 agent 读到旧草稿）
+        check("继续按钮存在且只在 stop_A 显示",
+              'id="wz-next-phase"' in tpl and "meta.phase === 'stop_A'" in tpl)
+        check("继续流程按 phase-save → phase-ack → 派任务 的顺序",
+              "continuePhase: function" in tpl
+              and tpl.index("'/api/build/phase-save'") < tpl.index("'/api/build/phase-ack'")
+              < tpl.rindex("window.agentSendTask(task"))   # 最后一次 = continuePhase 里那次
         check("提交带 build_source（canonical/form 二选一）",
               "this.state.build_source = 'canonical'" in tpl
               and "this.state.build_source = 'form'" in tpl)
