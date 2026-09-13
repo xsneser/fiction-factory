@@ -17,6 +17,7 @@ api.json 落地，所以 dsh 不必自己认识这些配置；而 api.json 每�
 import codecs
 import json
 import os
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -434,17 +435,41 @@ class _Handler(BaseHTTPRequestHandler):
 _started = threading.Event()
 
 
+class _ProxyServer(ThreadingHTTPServer):
+    """Windows 上必须关掉 allow_reuse_address。
+
+    socketserver 默认 allow_reuse_address=1（映射到 SO_REUSEADDR），Windows 的
+    SO_REUSEADDR 语义与 Linux 不同：它允许**抢占**另一个进程已监听的端口 ——
+    两个进程会同时"socket 监听成功"并瓜分进来的连接（实测：平台在跑的时候，
+    另一个进程也能 ensure_proxy() 返回 True，然后 /chat/completions 与 /token-usage
+    被两个进程分别应答，token 统计直接错乱）。关掉它，"端口已被占用"才会如实报错，
+    dsh_bridge 的 fail-closed 护栏才成立。
+    """
+    allow_reuse_address = False
+
+
+def _port_in_use(port: int, host: str = "127.0.0.1", timeout: float = 0.5) -> bool:
+    """先探一次连接：有人监听就别再 bind（Windows 下 bind 不会失败）。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        return s.connect_ex((host, port)) == 0
+
+
 def ensure_proxy() -> bool:
     """确保代理在跑（幂等；dsh_bridge / web_ui 惰性拉起 daemon 线程）。
 
-    返回 False 表示**本进程没能成为代理**（通常是端口被别的进程占着）。
+    返回 False 表示**本进程没能成为代理**（端口被别的进程占着）。
     此时 dsh 的流量会落进那个进程 —— 若它是旧代码的残留代理，表现就是
     "改完设置不生效"。调用方（dsh_bridge）据此 fail closed 并提示用户清进程。
     """
     if _started.is_set():
         return True
+    if _port_in_use(PROXY_PORT):
+        print(f"[token-proxy] 127.0.0.1:{PROXY_PORT} 已被占用，本进程不再监听"
+              "（另一个 NovelEngine / 残留进程在跑；用 /health 确认它是不是当前代码）")
+        return False
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", PROXY_PORT), _Handler)
+        server = _ProxyServer(("127.0.0.1", PROXY_PORT), _Handler)
     except Exception as e:  # 端口占用等
         print(f"[token-proxy] 无法监听 127.0.0.1:{PROXY_PORT}: {e}")
         return False
