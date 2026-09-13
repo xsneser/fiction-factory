@@ -35,11 +35,15 @@ def _planning_ui_payload(book_id):
         last_replan=state.get("last_replan") or {},
     )
     raw_horizon = state.get("horizon") if isinstance(state.get("horizon"), dict) else {}
-    h1 = raw_horizon.get("h1") or raw_horizon.get("near") or []
+    # H1 只认 `horizon.h1`（不再兼容 `near` 别名：两套形状会让"这一条到底属于哪一层"
+    # 没有唯一答案）。H2 的唯一真源是 `future_intents`，这里直接映射，不再另存一份。
+    h1 = raw_horizon.get("h1")
+    if not isinstance(h1, list):
+        h1 = []
     display = {
         "h0": [{"id": p.id, "name": p.name, "outline_id": p.outline_id,
                 "words": int(p.words or 0)} for p in unwritten[:8]],
-        "h1": h1 if isinstance(h1, (list, dict, str)) else [],
+        "h1": h1,
         "h2": state.get("future_intents") or [],
     }
     state = dict(state)

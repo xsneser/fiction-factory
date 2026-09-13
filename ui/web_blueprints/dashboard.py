@@ -119,9 +119,15 @@ def start_new_book():
                         "themes": _sl.get("themes") or [],
                         "basic_info": {},
                     }
+                    # 建书期的 H1/H2 staging 在 canonical BuildDraft 的 storyline.planning 里
+                    # （那时 Book 还没创建、planning_state.json 还不存在）。这里做**一次确定性
+                    # 投影**——不是双真源：建书前 BuildDraft 是权威，建书后 planning_state 是权威。
                     _planning = _sl.get("planning") or {}
                     data["future_intents"] = (_planning.get("future_intents")
                                               or _sl.get("future_intents") or [])
+                    _h1 = (_planning.get("horizon") or {}).get("h1")
+                    if isinstance(_h1, list) and _h1:
+                        data["horizon"] = {"h1": _h1}
         if build_session_id:
             from libraries.planning_state import save_build_session
             outline_preview = data.get("_outline_data") or {}
@@ -132,6 +138,7 @@ def start_new_book():
                 "target_word_budget": max(int(data.get("target_word_budget") or 0), committed),
                 "committed_until_word": committed,
                 "future_intents": data.get("future_intents") or [],
+                **({"horizon": data["horizon"]} if data.get("horizon") else {}),
                 "story_questions": data.get("story_questions") or [],
                 "decision_points": data.get("decision_points") or [],
             })

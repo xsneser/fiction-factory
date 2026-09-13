@@ -566,6 +566,12 @@ class OutlineSlot:
     narrative: str = "chronological"   # chronological(顺叙)|flashback(倒叙)|interleaved(插叙)
     narrative_target: str = ""         # flashback: 回忆的时间段/章节；interleaved: 所嵌入的主弧 id
 
+    # 结构化设计意图 {goal, conflict_function, deviation}：本弧目标 / 在全局冲突里承担什么 /
+    # 偏离库模板的地方。**刻意做成结构化字段而不是"从 notes 里搜关键词"**——后者最后只会
+    # 得到满屏"目标：… 目标：…"，UI 绿了但内容不一定更好（与人物语音从字面台词改成
+    # 生成规律的方向一致）。notes 仍是自由备注，不做格式要求。
+    design_intent: dict = field(default_factory=dict)
+
 
 @dataclass
 class PlotSlot:
@@ -611,6 +617,15 @@ class PlotSlot:
     resolves_plot_id: str = ""       # 收局槽位：解决/呼应哪个设局情节段 id（非空=收局）
     resolves_name: str = ""          # 冗余存设局情节段名，供 prompt/前端免查
 
+    # 规划期伏笔（**一等公民**，不再只在写作期由规则从 resolves_plot_id 反推）：
+    #   [{id, kind: "setup"|"payoff", desc, promise_id?, deadline_word?, note?}]
+    # 同一段可以埋多条（"钥匙来源""第三层禁区""角色身份"），所以身份靠 promise.id，
+    # setup_plot_id 只是索引——一个 plot 三条 promise 时必须能各归各。
+    foreshadow: list[dict] = field(default_factory=list)
+    # 收局端：**精确**兑现哪几条 promise（resolves_plot_id 是 plot 级的 legacy，
+    # 无法表达"同一 setup 埋的三条只兑现其中一条"）。
+    resolves_promise_ids: list[str] = field(default_factory=list)
+
     # 出场人物（主角恒在；配角按名规则匹配到情节段事件/骨架/槽位）
     roles: list[str] = field(default_factory=list)
     no_named_cast: bool = False     # 合法的无具名人物场景；否则 roles 必须为角色 bible 中的名字
@@ -646,9 +661,16 @@ class BookStoryline:
     # 叙事线程定义（[{"id","name","desc"}, ...]）
     threads: list[dict] = field(default_factory=list)
 
-    # 读者承诺台账（设局→收局的伏笔生命周期，写作时免费规则登记/兑现）
-    # 每项: {id, setup_plot_id, type, desc, status: pending|advanced|fulfilled,
-    #        setup_chapter, deadline_chapter, payoff_plot_id, payoff_chapter}
+    # 读者承诺台账（设局→收局的伏笔生命周期）。
+    # 每项: {id, setup_plot_id, type, desc, status, setup_chapter, deadline_chapter,
+    #        payoff_plot_id, payoff_chapter, source?, payoff_arc_id?, payoff_intent_id?,
+    #        cancelled_reason?, superseded_by?}
+    # **六态**：planned -（设局情节段的正文写入并提交章节）-> pending -> advanced
+    #          -> fulfilled；planned 另可 -> cancelled（规划放弃了该设局）
+    #          / superseded（被新版承诺替代）。
+    # **只有 pending 及以后才是"故事事实层欠读者的债"**；planned 只是规划承诺——
+    # 批准规划也依然不是故事事实（replan 确认后仍停 planned）。
+    # 身份主键是 promise.id，`setup_plot_id` 只是索引（允许一对多）。
     promises: list[dict] = field(default_factory=list)
 
     # 全书贯穿元素
@@ -675,6 +697,7 @@ class BookStoryline:
                 "narrative": o.narrative,
                 "narrative_target": o.narrative_target,
                 "parent_arc_id": o.parent_arc_id,
+                "design_intent": o.design_intent,
             }
         return {
             "book_title": self.book_title,
@@ -703,6 +726,8 @@ class BookStoryline:
                 "thread_id": p.thread_id, "thread_seq": p.thread_seq,
                 "resolves_plot_id": p.resolves_plot_id,
                 "resolves_name": p.resolves_name,
+                "foreshadow": p.foreshadow,
+                "resolves_promise_ids": p.resolves_promise_ids,
                 "roles": p.roles,
                 "no_named_cast": p.no_named_cast,
                 "protocol_version": p.protocol_version,
@@ -757,6 +782,7 @@ class BookStoryline:
                 narrative=o.get("narrative", "chronological"),
                 narrative_target=o.get("narrative_target", ""),
                 parent_arc_id=o.get("parent_arc_id", ""),
+                design_intent=o.get("design_intent") or {},
             )
             reconcile_outline(_slot, tl.words_per_chapter or 3000)
             tl.outlines.append(_slot)
@@ -783,6 +809,8 @@ class BookStoryline:
             thread_seq=p.get("thread_seq", 0),
             resolves_plot_id=p.get("resolves_plot_id", ""),
             resolves_name=p.get("resolves_name", ""),
+            foreshadow=p.get("foreshadow", []),
+            resolves_promise_ids=p.get("resolves_promise_ids", []),
             roles=p.get("roles", []),
             no_named_cast=bool(p.get("no_named_cast", False)),
             protocol_version=int(p.get("protocol_version", 1) or 1),

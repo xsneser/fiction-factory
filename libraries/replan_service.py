@@ -109,6 +109,19 @@ def commit_replan_preview(book_id: str, preview_id: str, expected_revision) -> d
         out = dict(result)
         out["status"] = status
         return out
+    # 规划正式成为事实之后，才结算"规划已放弃"的 planned 伏笔（cancelled / superseded）。
+    # 放在 commit 之后而不是 preview 阶段，是因为预测层不得改写事实层——批准规划本身
+    # 也不是故事事实，但**放弃一条规划**只在这时才作数。
+    try:
+        from libraries.book_manager import BookManager
+        from libraries.promise_ledger import reconcile_planned_promises
+        tl = BookManager().load_storyline(book_id)
+        stats = reconcile_planned_promises(tl)
+        if stats.get("cancelled") or stats.get("superseded"):
+            BookManager().save_storyline(book_id, tl)
+            result["promise_reconcile"] = stats
+    except Exception as e:  # noqa: BLE001 —— 结算失败不该回滚已提交的规划
+        result["promise_reconcile_error"] = str(e)
 
     delete_replan_preview(book_id, preview.get("preview_id") or "")
 

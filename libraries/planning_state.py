@@ -15,8 +15,13 @@ from core.json_store import read_json, write_json_atomic
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_VERSION = 1
-DEFAULT_HORIZON = {"h0_executable_plots": 3, "h1_near_arcs": 2, "h2_intents": 4}
+SCHEMA_VERSION = 2
+# 配置与内容**分开**（v1 把两者混在 `horizon` 一个字段里：`h1_near_arcs: 2` 是配置、
+# `h1: [...]` 是内容，语义同层，读的人分不清哪个是数、哪个是方向）。
+#   horizon_policy = 配置（每层要几条）
+#   horizon        = 内容（目前只有 h1；H2 的唯一真源是 future_intents，不再另存一份）
+DEFAULT_HORIZON_POLICY = {"h0": 3, "h1": 2, "h2": 4}
+_LEGACY_HORIZON_KEYS = {"h0_executable_plots": "h0", "h1_near_arcs": "h1", "h2_intents": "h2"}
 _LIST_FIELDS = {
     "story_questions", "active_threads", "critical_promises", "character_intents",
     "future_intents", "decision_points",
@@ -24,8 +29,9 @@ _LIST_FIELDS = {
 _FIELDS = {
     "schema_version", "book_id", "storyline_revision", "mode",
     "target_word_budget", "written_until_word", "committed_until_word", "current",
-    "horizon", "tension", "story_questions", "active_threads", "critical_promises",
-    "character_intents", "future_intents", "decision_points", "last_replan",
+    "horizon", "horizon_policy", "tension", "story_questions", "active_threads",
+    "critical_promises", "character_intents", "future_intents", "decision_points",
+    "last_replan",
 }
 
 
@@ -71,7 +77,8 @@ def default_state(book_id: str, tl, book=None, target_word_budget: int = 0) -> d
         "written_until_word": _written(book),
         "committed_until_word": committed,
         "current": {"arc_id": "", "plot_id": ""},
-        "horizon": dict(DEFAULT_HORIZON),
+        "horizon": {"h1": []},                      # 内容（H2 走 future_intents，不另存）
+        "horizon_policy": dict(DEFAULT_HORIZON_POLICY),
         "tension": {},
         "story_questions": [],
         "active_threads": [],
@@ -95,7 +102,7 @@ def validate_patch(patch: dict | None) -> dict:
     for key in _LIST_FIELDS:
         if key in out and not isinstance(out[key], list):
             raise ValueError(f"planning_patch.{key} 必须是 list")
-    for key in ("current", "horizon", "tension", "last_replan"):
+    for key in ("current", "horizon", "horizon_policy", "tension", "last_replan"):
         if key in out and not isinstance(out[key], dict):
             raise ValueError(f"planning_patch.{key} 必须是 object")
     for key in ("target_word_budget", "written_until_word", "committed_until_word", "storyline_revision"):
@@ -225,9 +232,39 @@ def load_planning_state(book_id: str, tl, book=None, persist: bool = True) -> di
         # 因此边界判定对「被替换掉的那段承诺」仍按旧水位理解——这是刻意选择（宁可多补一批，
         # 也不要让已向读者承诺的内容失去边界保护）。
         data["committed_until_word"] = max(int(data.get("committed_until_word") or 0), _max_committed(tl))
+        _normalize_horizon(data)
         if persist and data != original:
             write_json_atomic(path, data)
     return data
+
+
+def _normalize_horizon(data: dict) -> None:
+    """v1 → v2：把 `horizon` 里的**配置型数字键**搬到 `horizon_policy`（读侧兼容，无需迁移脚本）。
+
+    v1 把配置和内容混在同一个 `horizon` 字段里（`h1_near_arcs: 2` 是"要几条"，
+    `h1: [...]` 是"是哪几条"），读的人分不清。存量书打开时顺手搬一次、落盘即完成。
+    """
+    hz = data.get("horizon")
+    if not isinstance(hz, dict):
+        data["horizon"] = {"h1": []}
+        hz = data["horizon"]
+    policy = data.get("horizon_policy")
+    if not isinstance(policy, dict):
+        policy = {}
+    for legacy, new_key in _LEGACY_HORIZON_KEYS.items():
+        if legacy in hz:
+            if isinstance(hz[legacy], int) and not isinstance(hz[legacy], bool):
+                policy.setdefault(new_key, hz[legacy])
+            del hz[legacy]
+        if new_key not in policy:
+            policy[new_key] = DEFAULT_HORIZON_POLICY[new_key]
+    for key in ("h0", "h1", "h2"):
+        if key in hz and not isinstance(hz[key], list):
+            del hz[key]
+    hz.setdefault("h1", [])
+    hz.pop("h2", None)          # H2 的唯一真源是 future_intents，历史残留一并清掉
+    data["horizon"] = hz
+    data["horizon_policy"] = policy
 
 
 def save_planning_state(book_id: str, state: dict) -> None:

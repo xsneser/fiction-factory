@@ -490,32 +490,80 @@ class NovelEngine:
             "payoff_chapter": 0,
         }
 
-    def _update_promises_ledger(self, chapter_num: int) -> None:
-        """情节段写完后的免费规则承诺登记：设局情节段 → 新增 pending；收局情节段 → 标记 fulfilled。
+    def _update_promises_ledger(self, chapter_num: int) -> dict:
+        """情节段写完后的承诺登记：设局 → pending（含 planned 提升）、收局 → fulfilled。
 
         模拟人类作者的"伏笔账本"：埋了记下，还了勾销；逾期由 render_bridge_prompt 注入提醒。
+
+        **身份主键是 `promise.id`**，`setup_plot_id` 只是索引（允许一对多：同一段可以埋
+        "钥匙来源""第三层禁区""角色身份"三条）。收局端优先按 `resolves_promise_ids` /
+        `foreshadow[kind=payoff].promise_id` **精确兑现**；`resolves_plot_id` 是 plot 级
+        legacy，只在没给精确 id 时回落（兑现该设局名下所有未兑现项）。
+
+        规划期写入的 `planned` 伏笔**只在这里**（设局段的正文真正写入本章时）提升为
+        `pending`——批准规划不是故事事实，写进正文才是。
         """
+        stats = {"promoted": 0, "fulfilled": 0, "appended": 0}
         if not self.storyline:
-            return
+            return stats
         promises = list(getattr(self.storyline, "promises", None) or [])
-        by_setup = {p.get("setup_plot_id", ""): p for p in promises if p.get("setup_plot_id")}
+        by_setup: dict = {}
+        by_id: dict = {}
+        for q in promises:
+            sid = str(q.get("setup_plot_id") or "")
+            if sid:
+                by_setup.setdefault(sid, []).append(q)
+            pid = str(q.get("id") or "")
+            if pid:
+                by_id[pid] = q
         changed = False
+
+        def _fulfil(q: dict, plot_id: str) -> None:
+            nonlocal changed
+            if q.get("status") == "fulfilled":
+                return
+            q["status"] = "fulfilled"
+            q["op"] = "payoff"
+            q["payoff_plot_id"] = plot_id
+            q["payoff_chapter"] = chapter_num
+            changed = True
+            stats["fulfilled"] += 1
+
         for p in self.storyline.plots:
             if (getattr(p, "written_chapter", 0) or 0) != chapter_num:
                 continue
-            rpid = getattr(p, "resolves_plot_id", "") or ""
-            # 收局：兑现对应承诺
-            if rpid and rpid in by_setup and by_setup[rpid].get("status") != "fulfilled":
-                by_setup[rpid]["status"] = "fulfilled"
-                by_setup[rpid]["op"] = "payoff"
-                by_setup[rpid]["payoff_plot_id"] = p.id
-                by_setup[rpid]["payoff_chapter"] = chapter_num
+            rpid = str(getattr(p, "resolves_plot_id", "") or "")
+            # 收局①：精确兑现（新书走这条——同一设局的三条能只兑现其中一条）
+            exact = [str(x) for x in (getattr(p, "resolves_promise_ids", None) or []) if str(x)]
+            for f in (getattr(p, "foreshadow", None) or []):
+                if (isinstance(f, dict) and f.get("kind") == "payoff"
+                        and str(f.get("promise_id") or "")):
+                    exact.append(str(f["promise_id"]))
+            for pid in exact:
+                if pid in by_id:
+                    _fulfil(by_id[pid], p.id)
+            # 收局②：legacy plot 级回落（老书 / 没写精确 id 时）
+            if not exact and rpid:
+                for q in by_setup.get(rpid, []):
+                    _fulfil(q, p.id)
+            # 设局：本段写入 ⇒ 提升它名下的 planned；没有任何登记且被收局段引用 ⇒ 新登记
+            owned = list(by_setup.get(p.id) or [])
+            for q in owned:
+                if q.get("status") == "planned":
+                    q["status"] = "pending"
+                    q["setup_chapter"] = chapter_num
+                    q["op"] = promise_op(q, chapter_num)
+                    changed = True
+                    stats["promoted"] += 1
+            if (not rpid and not exact and not owned
+                    and any(getattr(q, "resolves_plot_id", "") == p.id
+                            for q in self.storyline.plots if q.id != p.id)):
+                item = self._build_promise_from_setup(p)
+                promises.append(item)
+                by_id[str(item.get("id") or "")] = item
+                by_setup.setdefault(p.id, []).append(item)
                 changed = True
-            # 设局：被收局情节段引用且未登记 → 新增 pending 承诺
-            if (not rpid and p.id not in by_setup
-                    and any(q.resolves_plot_id == p.id for q in self.storyline.plots if q.id != p.id)):
-                promises.append(self._build_promise_from_setup(p))
-                changed = True
+                stats["appended"] += 1
         # 六操作分级随章节推进演化：pending 承诺按 deadline 距离重定 op（seed→touch→pressure→payoff）
         for q in promises:
             if q.get("status") == "pending" and q.get("op") != promise_op(q, chapter_num):
@@ -525,8 +573,12 @@ class NovelEngine:
             self.storyline.promises = promises
             try:
                 self.book_mgr.save_storyline(self.state.book_id, self.storyline)
+                logger.info("承诺台账更新（第 %d 章）：提升 %d / 兑现 %d / 新登记 %d",
+                            chapter_num, stats["promoted"], stats["fulfilled"],
+                            stats["appended"])
             except Exception as e:
                 logger.warning("保存读者承诺台账失败: %s", e)
+        return stats
 
     def _route_continue(self) -> Instruction:
         """♻️ 续写路由"""

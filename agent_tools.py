@@ -1556,7 +1556,9 @@ def get_story_state(book_id: str) -> dict:
         },
         "story_questions": state.get("story_questions") or [],
         "active_threads": state.get("active_threads") or tl.threads or [],
-        "critical_promises": state.get("critical_promises") or tl.promises or [],
+        # 显式合并两处承诺（此前是 `or`：state 里一有值就把正式台账整个遮掉，
+        # 于是"规划期登记的 planned 伏笔"在续规划看不到）
+        "critical_promises": _merge_promises(state.get("critical_promises"), tl.promises),
         "target_word_budget": int(state.get("target_word_budget") or 0),
         "boundary": boundary,
         "last_replan": state.get("last_replan") or {},
@@ -1566,6 +1568,22 @@ def get_story_state(book_id: str) -> dict:
         "checklist": checklist,
         "runtime": {k: v for k, v in runtime.items() if k not in ("next_plot", "draft")},
     }
+
+
+def _merge_promises(state_promises, ledger_promises) -> list:
+    """合并"规划态承诺投影"与"正式承诺台账"（按 promise.id 去重，state 侧优先）。"""
+    out, seen = [], set()
+    for src in (state_promises or [], ledger_promises or []):
+        for q in src:
+            if not isinstance(q, dict):
+                continue
+            pid = str(q.get("id") or "")
+            key = pid or f"?{q.get('desc', '')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(q)
+    return out
 
 
 def _load_replan_preview(book_id: str) -> dict:
@@ -3038,6 +3056,9 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 narrative=o.get("narrative", "chronological"),
                 narrative_target=o.get("narrative_target", ""),
                 notes=o.get("notes", ""),
+                # 结构化设计意图必须显式带上：这里漏一处，agent 写的 design_intent
+                # 就会在落盘时被静默丢掉（replan 走的正是这条路径）。
+                design_intent=o.get("design_intent") or {},
             ))
         for _o in candidate.outlines:
             reconcile_outline(_o, candidate.words_per_chapter or 3000)
@@ -3060,6 +3081,9 @@ def save_outlines(book_id: str, outlines: list | None = None,
                 thread_id=p.get("thread_id", "主线"),
                 resolves_plot_id=p.get("resolves_plot_id", ""),
                 resolves_name=p.get("resolves_name", ""),
+                # 规划期伏笔：设局/收局两端都要带（收局端靠 promise_id 精确兑现）
+                foreshadow=p.get("foreshadow") or [],
+                resolves_promise_ids=p.get("resolves_promise_ids") or [],
                 roles=p.get("roles") or [],
                 no_named_cast=bool(p.get("no_named_cast", False)),
                 protocol_version=int(p.get("protocol_version", 2) or 2),
