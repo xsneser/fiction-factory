@@ -149,7 +149,7 @@ class OutlineAgent:
         try:
             from core.llm_client import extract_json
             raw = self.llm.call("你只返回 JSON。", prompt,
-                                temperature=0.2, max_tokens=2048)
+                                temperature=0.2)
             data = json.loads(extract_json(raw))
             if not isinstance(data, dict):
                 raise ValueError("解析结果不是对象")

@@ -7,6 +7,10 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
 from .ctx import *
 
+from core.api_config import (
+    api_config_path, api_config_from_mapping, is_api_configured, load_api_config_raw,
+)
+
 bp = Blueprint("settings", __name__)
 
 @bp.route("/api/status/tasks")
@@ -32,23 +36,6 @@ def status_tasks_close():
     return jsonify({"ok": False, "error": "missing id"})
 
 
-def _api_config_path() -> str:
-    """项目根 api.json —— 引擎（ctx.get_llm 及各工具）统一读取的配置文件。
-
-    不能从 web_blueprints 只往上退一层（那是 ui/api.json，引擎不读、保存了也不生效），
-    必须退到项目根，与 ctx.get_llm / fanqie_scout / tools 等保持一致。
-    """
-    return os.path.join(_REPO_ROOT, "api.json")
-
-
-def _load_api_config() -> dict:
-    """读取项目根 api.json（不存在返回空 dict）"""
-    api_path = _api_config_path()
-    if os.path.exists(api_path):
-        return read_json(api_path, {})
-    return {}
-
-
 def _mask_api_key(key: str) -> str:
     """掩码 API key：保留前 8 位，其余用 **** 代替（含 **** 即视为"未修改"）"""
     if not key:
@@ -59,20 +46,22 @@ def _mask_api_key(key: str) -> str:
 @bp.route("/settings")
 def settings_page():
     """设置页面 — 纯静态渲染，不发起 API 请求"""
-    cfg = _load_api_config()
+    cfg = load_api_config_raw()
+    typed = api_config_from_mapping(cfg)
 
     # 不调用 LLM API，只检查本地配置是否存在（瞬间完成）
-    api_configured = bool(cfg.get("api_key") and cfg.get("base_url"))
+    # 占位 key（示例文件里那个）不算已配置，否则会误报"已就绪"
+    api_configured = is_api_configured(typed)
 
     return render_template("settings.html",
         config={
             # 只回传掩码，明文 key 不进入 HTML（防止源码泄露）
-            "api_key_masked": _mask_api_key(cfg.get("api_key", "")),
-            "base_url": cfg.get("base_url", "https://api.deepseek.com"),
-            "model": cfg.get("model", "deepseek-chat"),
-            "http_timeout_seconds": cfg.get("http_timeout_seconds", 300),
-            "context_budget_tokens": cfg.get("context_budget_tokens", 300000),
-            "url_strict": cfg.get("url_strict", False),
+            "api_key_masked": _mask_api_key(typed.api_key),
+            "base_url": typed.base_url,
+            "model": typed.model,
+            "http_timeout_seconds": typed.http_timeout_seconds,
+            "context_budget_tokens": typed.context_budget_tokens,
+            "url_strict": typed.url_strict,
         },
         llm_ok=api_configured,
     )
@@ -82,10 +71,10 @@ def settings_page():
 def settings_save():
     """保存设置"""
     data = request.json or {}
-    api_path = _api_config_path()
+    api_path = api_config_path()
 
     # 读取当前配置，只覆盖传入的字段
-    cfg = _load_api_config()
+    cfg = load_api_config_raw()
 
     # API Key 掩码值（含 ****）表示未修改，保留已保存的原 key
     new_key = data.get("api_key", "")
@@ -97,10 +86,10 @@ def settings_save():
         if key in data:
             cfg[key] = data[key]
 
-    cfg["http_timeout_seconds"] = parse_int(
-        cfg.get("http_timeout_seconds"), 300, min_value=5, max_value=1800)
-    cfg["context_budget_tokens"] = parse_int(
-        cfg.get("context_budget_tokens"), 300000, min_value=8000, max_value=2000000)
+    # 数值字段经统一加载器归一（范围真源在 core/api_config，避免前后端各写一套）
+    _norm = api_config_from_mapping(cfg)
+    cfg["http_timeout_seconds"] = _norm.http_timeout_seconds
+    cfg["context_budget_tokens"] = _norm.context_budget_tokens
 
     # 校验
     if not cfg.get("api_key"):
@@ -109,7 +98,7 @@ def settings_save():
         return jsonify({"ok": False, "error": "API 地址不能为空"}), 400
 
     try:
-        write_json_atomic(api_path, cfg)
+        write_json_atomic(str(api_path), cfg)
     except Exception as e:
         return jsonify({"ok": False, "error": f"写入失败: {e}"}), 500
 
@@ -124,24 +113,26 @@ def settings_test():
     """测试 LLM 连接"""
     data = request.json or {}
 
-    from core.llm_client import LLMClient
-    from core.models import APIConfig
+    from dataclasses import replace
 
-    saved = _load_api_config()
+    from core.llm_client import LLMClient
+
+    # 以已保存配置为底，只覆盖表单传回的三个字段；其余（verify_ssl / url_strict /
+    # max_tokens 等未在界面展示的）一律沿用文件值 —— 测试与实际生成必须走同一条路径，
+    # 否则 verify_ssl=false 或 url_strict=true 的环境会"测试通过、实际失败"。
+    api_cfg = api_config_from_mapping(load_api_config_raw())
 
     # 前端传回掩码/空值 → 用当前已保存的 key 测试（避免 key 进入浏览器后回传）
     api_key = data.get("api_key", "")
     if not api_key or "****" in api_key:
-        api_key = saved.get("api_key", "")
+        api_key = api_cfg.api_key
 
-    # 证书开关等未在前端展示的字段回退到已保存配置，
-    # 保证"测试连接"与实际生成走完全相同的 TLS 路径（否则 verify_ssl=false 环境会误报失败）
-    api_cfg = APIConfig(
+    api_cfg = replace(
+        api_cfg,
         api_key=api_key,
-        base_url=data.get("base_url") or saved.get("base_url") or "https://api.deepseek.com",
-        model=data.get("model") or saved.get("model") or "deepseek-chat",
-        verify_ssl=saved.get("verify_ssl", True),
-        http_timeout_seconds=10,
+        base_url=(data.get("base_url") or api_cfg.base_url).strip(),
+        model=(data.get("model") or api_cfg.model).strip(),
+        http_timeout_seconds=10,   # 连接测试不该按生成用的 300s 干等
     )
 
     try:

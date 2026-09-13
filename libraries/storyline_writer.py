@@ -23,8 +23,8 @@ from core.text_utils import count_prose_units
 CHARS_PER_BEAT = 200          # 每个节拍预计写多少个汉字（用于情节段字数规划）
 MAX_BRIDGE_WORDS = 1200       # 节拍制单个情节段字数上限（与 frontend story_line.js 共用同一公式）
 MAX_PLAN_WORDS = 3000         # agent 直接给的目标字数 plot.words 的上限（≈一章上限级，防单桥虚高）
-WRITER_MAX_TOKENS = 1600      # 情节段写作输出上限：3-5 短句正文 + flash 推理余量
-                              # （flash 先推理再输出，推理过长会吃掉 max_tokens 导致 content 为空）
+# 输出预算不在这里设：全站统一走 core.llm_client.DSH_MAX_TOKENS（推理型模型的思考
+# token 会吃掉预算，按功能给小值会导致 content 为空）。
 WRITER_EMPTY_RETRIES = 2      # 写作空响应重试次数（模型偶发返回空内容）
 REPAIR_STALL_THRESHOLD = 3    # 连续失败阈值：空响应/重写无改善累计达此值 → repair_stalled 主动停
 OPENING_WORD_LIMIT = 800      # 炸裂开场：第一章前 800 字
@@ -42,7 +42,6 @@ WRITER_SYSTEM = ("你是一位专业的中文网络小说作者，擅长对话�
 
 SELF_CHECK_ENABLED = True     # 有界自评总开关（设计文档 §2.3 设计 B）：每短句组 flash 自检
 SELF_CHECK_THRESHOLD = 6      # 自评分 <6 或 has_rewrite=true → 触发一次重写
-SELF_CHECK_MAX_TOKENS = 2048  # 自检输出小（≤150字），留 flash 推理余量即可
 
 
 def opening_mode_active(chapter_num: int, chapter_words: int, written_count: int) -> bool:
@@ -346,7 +345,7 @@ class StorylineChapterWriter:
             self._input_texts.append(cont_prompt)
             try:
                 raw = self.llm.call(WRITER_SYSTEM, cont_prompt,
-                                    temperature=0.6, max_tokens=WRITER_MAX_TOKENS)
+                                    temperature=0.6)
             except Exception:
                 break
             extra = (raw or "").strip().lstrip('"“')
@@ -401,7 +400,7 @@ class StorylineChapterWriter:
                 self._input_texts.append(p_attempt)
                 raw = self.llm.call(
                     WRITER_SYSTEM,
-                    p_attempt, temperature=0.7, max_tokens=WRITER_MAX_TOKENS)
+                    p_attempt, temperature=0.7)
                 text = (raw or "").strip().lstrip('"“')
                 if not text:
                     retry_hint = "上一组输出为空，请重新输出本组正文。"
@@ -515,7 +514,7 @@ class StorylineChapterWriter:
             from core.llm_client import extract_json
             raw = self.llm.call(
                 "你是资深网文审校编辑。只返回JSON，不要任何额外文字。", prompt,
-                temperature=0.2, max_tokens=SELF_CHECK_MAX_TOKENS)
+                temperature=0.2)
             data = json.loads(extract_json(raw))
             try:
                 score = int(data.get("score", 10) or 10)
@@ -548,7 +547,7 @@ class StorylineChapterWriter:
                         f"请重写这一段：改进上述问题，仍写情节段「{bridge_name}」的正文，"
                         f"3-5 个句子（约150-250字），一句一行，只输出正文。")
             raw = self.llm.call(WRITER_SYSTEM, user,
-                                temperature=0.7, max_tokens=WRITER_MAX_TOKENS)
+                                temperature=0.7)
             rewritten = (raw or "").strip().lstrip('"“')
             if not rewritten or has_repeated_token(rewritten):
                 return text

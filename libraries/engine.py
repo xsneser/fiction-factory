@@ -670,7 +670,7 @@ class NovelEngine:
         try:
             from core.llm_client import extract_json
             raw = self.llm.call(d["system"], d["user"],
-                                temperature=0.3, max_tokens=1024)
+                                temperature=0.3)
             data = json.loads(extract_json(raw))
             s = (data.get("summary") or "").strip()
             return s[:150] if s else ""
@@ -701,7 +701,7 @@ class NovelEngine:
             title_prompt = book_meta.build_title_prompt(genre, sub_genre, platform, ch1)
             raw_title = self.llm.call(
                 "你是一位专业的网文编辑。请只返回JSON，不要加任何额外文字。",
-                title_prompt, temperature=0.8, max_tokens=1024)
+                title_prompt, temperature=0.8)
             title_data = json.loads(extract_json(raw_title))
             best = (title_data.get("best") or "").strip() or best
         except Exception as e:
@@ -711,7 +711,7 @@ class NovelEngine:
             synopsis_prompt = book_meta.build_synopsis_prompt(genre, sub_genre, platform, ch1)
             raw_syn = self.llm.call(
                 "你是一位专业的网文编辑。请只返回JSON，不要加任何额外文字。",
-                synopsis_prompt, temperature=0.8, max_tokens=1024)
+                synopsis_prompt, temperature=0.8)
             syn_data = json.loads(extract_json(raw_syn))
             synopsis = (syn_data.get("synopsis") or "").strip()
         except Exception as e:

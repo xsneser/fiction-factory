@@ -12,8 +12,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["NOVEL_ENGINE_DIR"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+from core.api_config import load_api_config, is_api_configured
 from core.llm_client import LLMClient
-from core.models import APIConfig
 from libraries.outline_generator import OutlineGenerator
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
@@ -29,14 +29,10 @@ def main():
     ap.add_argument("--save", default="")
     args = ap.parse_args()
 
-    cfg_data = json.load(open("api.json", encoding="utf-8"))
-    api_cfg = APIConfig(
-        api_key=cfg_data.get("api_key", ""),
-        base_url=cfg_data.get("base_url", "https://api.deepseek.com"),
-        model=cfg_data.get("model", "deepseek-chat"),
-        http_timeout_seconds=cfg_data.get("http_timeout_seconds", 300),
-        verify_ssl=cfg_data.get("verify_ssl", True),
-    )
+    # 配置一律走 core.api_config（仓库根 api.json，与 cwd 无关）
+    api_cfg = load_api_config()
+    if not is_api_configured(api_cfg):
+        raise RuntimeError("LLM 未配置：请先在 /settings 保存 API 地址与 Key")
     llm = LLMClient(api_cfg)
 
     gen = OutlineGenerator(

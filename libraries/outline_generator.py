@@ -111,7 +111,7 @@ class OutlineGenerator:
         return f"{prefix}_{self._id_counter:04d}"
 
     def _stream_decision_content(self, kind: str, system: str, prompt: str,
-                                 temperature: float = 0.7, max_tokens: int = 8192):
+                                 temperature: float = 0.7):
         """流式调用 LLM 并转发思考事件，返回 content 全文。
 
         生成器：对每个 delta 块 yield ("thinking", kind, {"stream": text, "mode": delta_key})，
@@ -121,7 +121,7 @@ class OutlineGenerator:
         collected = []
         if self.llm:
             for delta_key, text in self.llm.stream_deltas(
-                    system, prompt, temperature=temperature, max_tokens=max_tokens):
+                    system, prompt, temperature=temperature):
                 yield ("thinking", kind, {"stream": text, "mode": delta_key})
                 if delta_key == "content":
                     collected.append(text)
@@ -409,7 +409,7 @@ class OutlineGenerator:
             from core.llm_client import extract_json
             raw = self.llm.call(
                 "你是一位资深网文策划编辑。请严格以JSON格式返回，不要加任何额外文字。",
-                prompt, temperature=0.7, max_tokens=2048)
+                prompt, temperature=0.7)
             data = json.loads(extract_json(raw))
             return data
         except Exception:
@@ -660,7 +660,7 @@ class OutlineGenerator:
                 raw = yield from self._stream_decision_content(
                     "outline_choice",
                     "你是专业网文策划编辑。只返回JSON，不要加额外文字。",
-                    prompt, temperature=0.7, max_tokens=8192)
+                    prompt, temperature=0.7)
                 data = json.loads(extract_json(raw))
                 outlines_data = data.get("outlines", [])
             except Exception:
@@ -768,7 +768,7 @@ class OutlineGenerator:
             from core.llm_client import extract_json
             raw = yield from self._stream_decision_content(
                 "outline_review", "你是网文编辑。只返回JSON。", prompt,
-                temperature=0.3, max_tokens=8192)
+                temperature=0.3)
             data = json.loads(extract_json(raw))
             swaps = data.get("swaps") or []
             applied = 0
@@ -1002,7 +1002,7 @@ class OutlineGenerator:
                 from core.llm_client import extract_json
                 raw = yield from self._stream_decision_content(
                     "plot_choice", "你是网文编辑。只返回JSON。", prompt,
-                    temperature=0.5, max_tokens=8192)
+                    temperature=0.5)
                 data = json.loads(extract_json(raw))
                 reason = data.get("reason", "")
                 ids = data.get("plot_ids", [])
@@ -1212,15 +1212,15 @@ class OutlineGenerator:
   "splits": [{{"plot_id":"","payoff_after_stage":2,"payoff_name":"","payoff_thread":""}}],
   "reason": "一句话说明线程/拆分思路"}}"""
 
-        # 非流式 + 空响应重试：max_tokens 必须留足推理余量（该任务输出含全部情节段分配，
-        # 8192 会被推理+正文吃满导致 content 空；16384 实测稳定）。
+        # 非流式 + 空响应重试：预算由 LLMClient 统一给足（DSH_MAX_TOKENS），
+        # 该任务输出含全部情节段分配，推理+正文一起吃预算时小值会返回空 content。
         data = None
         for _attempt in range(3):
             try:
                 from core.llm_client import extract_json
                 raw = self.llm.call(
                     "你是网文策划编辑，负责叙事线程与钩子呼应规划。只返回JSON。",
-                    prompt, temperature=0.3, max_tokens=16384)
+                    prompt, temperature=0.3)
                 if not raw or not raw.strip():
                     continue  # flash 偶发空返回 → 重试
                 data = json.loads(extract_json(raw))
@@ -1280,7 +1280,7 @@ class OutlineGenerator:
             from core.llm_client import extract_json
             raw = yield from self._stream_decision_content(
                 "theme_review", "你是网文编辑，负责内涵复查。只返回JSON。",
-                prompt, temperature=0.3, max_tokens=8192)
+                prompt, temperature=0.3)
             data = json.loads(extract_json(raw))
 
             corrections = data.get("corrections", []) or []
@@ -1384,7 +1384,7 @@ class OutlineGenerator:
             from core.llm_client import extract_json
             raw = yield from self._stream_decision_content(
                 "validate", "你是资深网文策划，审查故事线。只返回JSON。",
-                prompt, temperature=0.3, max_tokens=8192)
+                prompt, temperature=0.3)
             data = json.loads(extract_json(raw))
             yield ("decision", "validate", {
                 "step": "一致性验证",

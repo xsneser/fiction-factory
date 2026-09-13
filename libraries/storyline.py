@@ -968,7 +968,7 @@ class StorylineBuilder:
         try:
             raw = self.llm.call(
                 "你是一位专业的网络小说策划编辑。请只返回JSON，不要加任何额外文字。",
-                prompt, temperature=0.7, max_tokens=2048)
+                prompt, temperature=0.7)
             from core.llm_client import extract_json
             data = json.loads(extract_json(raw))
             outlines_data = data.get("outlines", [])

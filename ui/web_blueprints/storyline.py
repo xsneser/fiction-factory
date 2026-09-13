@@ -274,7 +274,7 @@ def generate_title(storyline_id):
     try:
         from core.llm_client import extract_json
         raw = llm.call("你是网文书名策划。只返回JSON。", prompt,
-                       temperature=0.8, max_tokens=1024)
+                       temperature=0.8)
         data = json.loads(extract_json(raw))
         titles = [t for t in (data.get("titles") or [])
                   if isinstance(t, str) and t.strip()]

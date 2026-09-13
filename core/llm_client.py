@@ -10,6 +10,15 @@ import urllib3
 from urllib3 import PoolManager
 from urllib3.util import create_urllib3_context
 
+# 全站统一的输出预算（max_tokens），**不按功能区分**。
+# 取值对齐 dsh 侧 DeepSeek adapter 的默认值：DEFAULT_MAX_TOKENS = 256e3
+# （vendor/dsh-ne/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js:786-794），
+# dsh-llm 会在调用方未指定时把它物化进每次调用配置（dsh-llm/lib/index.js:1356），
+# adapter 再序列化成线上的 max_tokens（dsh-llm-deepseek/lib/index.js:229）。
+# 推理型模型（deepseek-v4-flash / gemini-3.8-flash 等）会先烧数百上千个思考 token，
+# 预算给小了正文会被截断甚至只剩空串 —— 与 dsh 保持一致最省心。
+DSH_MAX_TOKENS = 256_000
+
 
 def _make_ssl_context(verify: bool = True):
     """创建 SSL 上下文。
@@ -50,8 +59,15 @@ def _http_post(url: str, headers: dict, json_data: dict, timeout: int = 300,
     body = json.dumps(json_data).encode('utf-8')
     headers = {**headers, 'Content-Type': 'application/json'}
     if stream:
-        return http.request('POST', url, body=body, headers=headers,
+        resp = http.request('POST', url, body=body, headers=headers,
                             timeout=req_timeout, preload_content=False)
+        # 流式分支同样要查状态码：否则 401/400 的错误 JSON 会被 SSE 解析器
+        # 当成"没有 delta 的行"整条静默吃掉，最终表现为"模型返回空正文"。
+        if resp.status != 200:
+            detail = resp.data.decode('utf-8', errors='replace')[:500]
+            resp.release_conn()
+            raise IOError(f"HTTP {resp.status}: {detail}")
+        return resp
     resp = http.request('POST', url, body=body, headers=headers, timeout=req_timeout)
     if resp.status != 200:
         raise IOError(f"HTTP {resp.status}: {resp.data.decode('utf-8', errors='replace')[:500]}")
@@ -100,9 +116,24 @@ class LLMClient:
     def api_url(self):
         return normalize_base_url(self.cfg.base_url, self.cfg.url_strict)
 
+    def _max_tokens(self) -> int:
+        """输出预算：全站同一个值，不按功能区分。
+
+        默认取 `DSH_MAX_TOKENS`（与 dsh 侧一致）。`api.json.max_tokens` 只在
+        显式填了正数时覆盖 —— 那是给"上游拒绝大 max_tokens"准备的逃生阀，
+        不在设置界面暴露。
+        """
+        try:
+            configured = int(self.cfg.max_tokens or 0)
+        except (TypeError, ValueError):
+            configured = 0
+        return configured if configured > 0 else DSH_MAX_TOKENS
+
     def call(self, system_prompt: str, user_prompt: str,
-             temperature: float = 0.7, max_tokens: int = 4096) -> str:
-        """同步调用 LLM（经本地 API 代理，token 流量被检测）"""
+             temperature: float = 0.7) -> str:
+        """同步调用 LLM（直连 cfg.base_url；dsh 侧的流量才经本地代理计数）"""
+        # 顺带确保本地 token 代理在跑（幂等；只在 Web 进程没拉起它时兜底）。
+        # 注意：本方法**不**经代理转发 —— 代理只服务 dsh（见 libraries/token_proxy.py）。
         from libraries.token_proxy import ensure_proxy
         ensure_proxy()
         messages = []
@@ -112,14 +143,19 @@ class LLMClient:
 
         headers = {"Authorization": f"Bearer {self.cfg.api_key}"}
         body = {"model": self.cfg.model, "messages": messages,
-                "temperature": temperature, "max_tokens": max_tokens or 4096}
+                "temperature": temperature, "max_tokens": self._max_tokens()}
 
         last_err = None
         for attempt in range(3):
             try:
                 data = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds,
                                   verify=self.cfg.verify_ssl)
-                return json.loads(data)["choices"][0]["message"]["content"]
+                # 少数中转（如 api.claudecode.net.cn）可能返回 choices 为空
+                # 的 usage-only 响应；旧写法直接下标会抛 IndexError。
+                choices = json.loads(data).get("choices") or []
+                if not choices:
+                    raise IOError(f"响应缺少 choices: {data[:200]}")
+                return choices[0]["message"]["content"]
             except Exception as e:
                 last_err = e
                 # 401/403/404/连接类错误重试无意义，立即抛出
@@ -130,8 +166,7 @@ class LLMClient:
         raise last_err
 
     def stream_deltas(self, system_prompt: str, user_prompt: str,
-                      temperature: float = 0.7,
-                      max_tokens: int = 4096):
+                      temperature: float = 0.7):
         """流式调用 LLM，逐个 yield (delta_key, text)。
 
         delta_key ∈ {"reasoning", "content"}：
@@ -153,7 +188,7 @@ class LLMClient:
 
         headers = {"Authorization": f"Bearer {self.cfg.api_key}"}
         body = {"model": self.cfg.model, "messages": messages,
-                "temperature": temperature, "max_tokens": max_tokens or 4096,
+                "temperature": temperature, "max_tokens": self._max_tokens(),
                 "stream": True}
 
         resp = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds,
@@ -172,21 +207,27 @@ class LLMClient:
                         return
                     try:
                         event = json.loads(data)
-                        delta = event["choices"][0].get("delta", {})
+                        # 中转常在 [DONE] 前补发一个 choices 为空的 usage chunk
+                        # （api.claudecode.net.cn 就会），空 choices 直接跳过，
+                        # 否则 event["choices"][0] 抛 IndexError 打断整条流。
+                        choices = event.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {}) or {}
                         if delta.get("reasoning_content"):
                             yield ("reasoning", delta["reasoning_content"])
                         if delta.get("content"):
                             yield ("content", delta["content"])
-                    except (json.JSONDecodeError, KeyError):
+                    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
                         continue
         finally:
             resp.release_conn()
 
     def test_connection(self) -> dict:
         try:
-            # max_tokens 需留足推理余量：deepseek-v4-flash 是推理型模型，
-            # 预算过小会被思考耗尽，content 为空/None 导致误报"连接失败"
-            result = self.call("", "Hi", max_tokens=2048)
+            # 预算与真实生成同一套（DSH_MAX_TOKENS）——推理型模型的思考 token
+            # 会吃掉预算，给少了 content 为空，会被误报成"连接失败"。
+            result = self.call("", "Hi")
             return {"success": True, "sample": (result or "")[:100]}
         except Exception as e:
             return {"success": False, "error": str(e)}

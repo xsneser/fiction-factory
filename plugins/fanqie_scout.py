@@ -868,7 +868,7 @@ class NovelAnalyzer:
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的网文拆书分析师。只返回JSON。",
-                                prompt, temperature=0.5, max_tokens=4096)
+                                prompt, temperature=0.5)
             from core.llm_client import extract_json
             data = json.loads(extract_json(raw))
             return data.get("plots", [])
@@ -914,7 +914,7 @@ class NovelAnalyzer:
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的小说结构分析师。只返回JSON。",
-                                prompt, temperature=0.5, max_tokens=4096)
+                                prompt, temperature=0.5)
             from core.llm_client import extract_json
             data = json.loads(extract_json(raw))
             return data.get("structures", [])
@@ -946,7 +946,7 @@ class NovelAnalyzer:
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的喜剧写作分析师。只返回JSON。",
-                                prompt, temperature=0.5, max_tokens=4096)
+                                prompt, temperature=0.5)
             from core.llm_client import extract_json
             data = json.loads(extract_json(raw))
             return data.get("gags", [])
@@ -1411,22 +1411,15 @@ if __name__ == "__main__":
     book_count = int(sys.argv[2]) if len(sys.argv) > 2 else 3
     chapters = int(sys.argv[3]) if len(sys.argv) > 3 else 30
 
-    # 初始化 LLM
-    api_path = Path("api.json")
-    if api_path.exists():
-        cfg = json.loads(api_path.read_text(encoding="utf-8"))
-        from core.models import APIConfig
-        from core.llm_client import LLMClient
-        api_cfg = APIConfig(
-            api_key=cfg.get("api_key",""),
-            base_url=cfg.get("base_url","https://api.deepseek.com"),
-            model=cfg.get("model","deepseek-chat"),
-            http_timeout_seconds=cfg.get("http_timeout_seconds",300),
-        )
+    # 初始化 LLM（配置一律走 core.api_config：仓库根 api.json，与 cwd 无关）
+    from core.api_config import load_api_config, is_api_configured
+    from core.llm_client import LLMClient
+    api_cfg = load_api_config()
+    if is_api_configured(api_cfg):
         llm = LLMClient(api_cfg)
     else:
         llm = None
-        print("No api.json found, running in download-only mode")
+        print("No usable api.json found, running in download-only mode")
 
     # 初始化库
     from libraries.plot import PlotLibrary

@@ -21,7 +21,8 @@ def check(name, ok, detail=""):
 
 
 def have_llm():
-    return os.path.exists("api.json")
+    from core.api_config import load_api_config, is_api_configured
+    return is_api_configured(load_api_config())
 
 
 def main():

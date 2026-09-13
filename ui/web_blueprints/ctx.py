@@ -21,6 +21,7 @@ from libraries.de_ai import DeAIEngine
 from libraries.character_state import CharacterStateMachine
 from libraries.reviewer import ContentReviewer
 from libraries.engine import NovelEngine, BookMode, Op, Instruction
+from core.api_config import load_api_config, is_api_configured
 from core.llm_client import LLMClient
 from core.models import APIConfig
 from core.json_store import read_json, write_json_atomic
@@ -45,32 +46,30 @@ book_mgr = BookManager("books")
 _llm_client = None
 
 def get_llm():
+    """共享 LLM 客户端（按 api.json 构造；未配置好则返回 None）。
+
+    配置一律经 core.api_config 读取，不要在这里手写字段 —— 手写必然漏字段。
+    """
     global _llm_client
     if _llm_client is not None:
         return _llm_client
-    api_path = os.path.join(_REPO_ROOT, "api.json")
-    if os.path.exists(api_path):
-        cfg = read_json(api_path, {})
-        api_cfg = APIConfig(
-            api_key=cfg.get("api_key",""),
-            base_url=cfg.get("base_url","https://api.deepseek.com"),
-            model=cfg.get("model","deepseek-chat"),
-            http_timeout_seconds=cfg.get("http_timeout_seconds",300),
-            # verify_ssl 跟随 api.json：默认开启；旧证书环境可显式设为 false
-            verify_ssl=cfg.get("verify_ssl", True),
-        )
-        _llm_client = LLMClient(api_cfg)
-        return _llm_client
-    return None
+    api_cfg = load_api_config()
+    if not is_api_configured(api_cfg):
+        return None
+    _llm_client = LLMClient(api_cfg)
+    return _llm_client
 
 
 def invalidate_llm():
-    """清除缓存的 LLM 客户端：设置保存后调用，使下一次 get_llm() 按新配置重建。
+    """清除缓存的 LLM 客户端与引擎实例：设置保存后调用，使下一次请求按新配置重建。
 
     必须在本模块内改全局（from .ctx import * 只会拷贝引用，外部赋值清不掉缓存）。
+    `_engines` 里的 NovelEngine 持有构造时注入的旧 client（DeAIEngine/ContentReviewer 同理），
+    只清 `_llm_client` 会让已缓存的那本书继续用旧地址/旧 key —— 这正是"改了设置不生效"的来源。
     """
     global _llm_client
     _llm_client = None
+    _engines.clear()
 
 
 def sse_stream_response(gen):

@@ -210,11 +210,10 @@ class WorldBuildingGenerator:
         from core.llm_client import extract_json
         for attempt in range(3):
             try:
-                # 推理型模型：max_tokens 留足推理+内容余量——flash 先推理再输出，
-                # 复杂结构化 prompt 推理可达上万 token（实测 8192 会被吃满致 content 空，
-                # 同 outline_generator 大输出用 16384 实测稳定）
+                # 输出预算由 LLMClient 统一给足（DSH_MAX_TOKENS）——推理型模型先思考再输出，
+                # 按调用点给小预算会把 content 吃空。
                 raw = self.llm.call(WORLD_CANDIDATES_SYSTEM, prompt,
-                                    temperature=0.9, max_tokens=16384)
+                                    temperature=0.9)
                 data = json.loads(extract_json(raw))
                 cands = [c for c in (data.get("candidates") or [])
                          if isinstance(c, dict) and c.get("one_liner")][:count]
@@ -240,7 +239,7 @@ class WorldBuildingGenerator:
             try:
                 # 单候选但给足推理余量：flash 先推理再输出，推理链长不截断
                 raw = self.llm.call(WORLD_CANDIDATES_SYSTEM, prompt,
-                                    temperature=0.9, max_tokens=16384)
+                                    temperature=0.9)
                 data = json.loads(extract_json(raw))
                 cands = [c for c in (data.get("candidates") or [])
                          if isinstance(c, dict) and c.get("one_liner")]
@@ -272,7 +271,7 @@ class WorldBuildingGenerator:
                 # 角色输出 8 人×14 字段，flash 推理链实测吃满 8192 致 content 空（JSONDecodeError）；
                 # 16384 实测稳定（推理 ~12k + 正文 ~4k，finish_reason=stop）
                 raw = self.llm.call("你只返回 JSON。", prompt,
-                                    temperature=0.8, max_tokens=16384)
+                                    temperature=0.8)
                 data = json.loads(extract_json(raw))
                 protags = [p for p in (data.get("protagonists") or [])
                            if isinstance(p, dict) and str(p.get("name", "") or "").strip()][:3]
@@ -294,7 +293,7 @@ class WorldBuildingGenerator:
         for attempt in range(3):
             try:
                 raw = (self.llm.call("你只返回核心矛盾一句话。", prompt,
-                                     temperature=0.7, max_tokens=1024) or "").strip()
+                                     temperature=0.7) or "").strip()
                 text = raw.strip('" \n')
                 if text.startswith("```"):
                     text = text.strip("`").strip(" \n").strip('"')
@@ -321,7 +320,7 @@ class WorldBuildingGenerator:
         for attempt in range(3):
             try:
                 raw = self.llm.call("你只返回 JSON。", prompt,
-                                    temperature=0.7, max_tokens=2048)
+                                    temperature=0.7)
                 data = json.loads(extract_json(raw))
                 factions = [f for f in (data.get("factions") or [])
                             if isinstance(f, dict) and str(f.get("name", "") or "").strip()][:4]
@@ -399,9 +398,9 @@ class WorldBuildingGenerator:
         for attempt in range(3):
             collected = []
             try:
-                # 推理型模型：max_tokens 必须留足推理余量（同 outline_generator 用 8192）
+                # 输出预算由 LLMClient 统一给足（DSH_MAX_TOKENS）
                 for delta_key, text in self.llm.stream_deltas(
-                        WORLD_BUILD_SYSTEM, prompt, temperature=0.8, max_tokens=4096):
+                        WORLD_BUILD_SYSTEM, prompt, temperature=0.8):
                     yield ("thinking", "world_draft", {"stream": text, "mode": delta_key})
                     if delta_key == "content":
                         collected.append(text)
@@ -423,9 +422,9 @@ class WorldBuildingGenerator:
                 world_summary=summary, idea=idea, seed_basic_info=seed_basic_info, profile=self.profile)
             collected = []
             try:
-                # 推理型模型：max_tokens 留足推理+大 JSON 余量（同 outline_generator 用 8192）
+                # 输出预算由 LLMClient 统一给足（DSH_MAX_TOKENS）
                 for delta_key, text in self.llm.stream_deltas(
-                        WORLD_BUILD_STRUCT_SYSTEM, prompt, temperature=0.5, max_tokens=8192):
+                        WORLD_BUILD_STRUCT_SYSTEM, prompt, temperature=0.5):
                     yield ("thinking", "world_struct", {"stream": text, "mode": delta_key})
                     if delta_key == "content":
                         collected.append(text)
