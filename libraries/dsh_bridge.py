@@ -34,7 +34,9 @@ import time
 
 _log = logging.getLogger("novel-engine")
 
-from libraries.token_proxy import ensure_proxy   # 拉起本地 token 检测代理（dsh 走它计 token）
+from libraries.token_proxy import (   # 拉起本地 token 检测代理（dsh 走它计 token）
+    PROXY_PORT, ensure_proxy, probe_proxy, token_proxy_base_url,
+)
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _OVERLAY_PATH = os.path.join(_ROOT, "storage", "dsh_runtime.yml")
@@ -906,8 +908,18 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
     _log.info("dsh task start: %s…", (task or "").strip()[:80])
     try:
         try:
-            ensure_proxy()   # 保证本地 token 代理(58082)已监听，dsh 的 LLM 调用才能走它计 token
-            env = {**os.environ, "DEEPSEEK_BASE_URL": "http://127.0.0.1:58082"}
+            # 本地 token 代理是 dsh 的**唯一** LLM 出口（地址/模型/key/TLS 都在代理层
+            # 按 api.json 统一落地）。拉不起来时必须 fail closed：否则 dsh 会把请求发给
+            # 占用该端口的那个进程——若是旧代码的残留代理，表现就是"设置改了不生效"。
+            if not ensure_proxy():
+                probe = probe_proxy()
+                yield {"type": "error",
+                       "message": (f"本地 LLM 代理启动失败：127.0.0.1:{PROXY_PORT} 已被占用"
+                                   f"（{probe.get('error', '未知原因')}）。"
+                                   "请关闭旧的 NovelEngine / 残留 python 进程后重启服务再试。")}
+                yield {"type": "done"}
+                return
+            env = {**os.environ, "DEEPSEEK_BASE_URL": token_proxy_base_url()}
             if flow_id:
                 env["NOVEL_WRITE_FLOW_ID"] = flow_id
             if child_run_id:

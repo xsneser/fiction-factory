@@ -14,3 +14,6 @@ class APIConfig:
     http_timeout_seconds: int = 300
     context_budget_tokens: int = 300000
     verify_ssl: bool = True  # 是否校验 TLS 证书（默认开启，关闭仅用于兼容旧证书环境）
+    # 旧版配置遗留：当 base_url 指向本地 token 代理自身时，代理用它作为上游。
+    # 新配置的 base_url 直接就是真实上游，本字段留空即可。
+    real_base_url: str = ""

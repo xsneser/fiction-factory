@@ -31,13 +31,12 @@ if "%PYTHON%"=="" (
 echo [OK] Python: %PYTHON%
 
 :: --- Check api.json ---
+:: 缺失时只复制一份空配置**继续启动**：API 地址与 Key 由用户在 /settings 页面填写，
+:: 引擎与 dsh 都从这一份 api.json 读，不必先手工编辑文件（别再 notepad + exit）。
 if not exist "api.json" (
     if exist "api.example.json" (
         copy /y "api.example.json" "api.json" >nul
-        echo [WARN] api.json created. Edit it first!
-        start notepad "api.json"
-        pause
-        exit /b 0
+        echo [INFO] api.json created. Configure API address / Key at http://localhost:58080/settings
     ) else (
         echo [ERROR] api.json and api.example.json missing
         pause

@@ -82,7 +82,7 @@ def api_config_from_mapping(data: Mapping[str, Any] | None) -> APIConfig:
     raw: Mapping[str, Any] = data or {}
     return APIConfig(
         api_key=_as_text(raw.get("api_key")),
-        base_url=_as_text(raw.get("base_url")) or DEFAULT_BASE_URL,
+        base_url=_as_text(raw.get("base_url")).rstrip("/") or DEFAULT_BASE_URL,
         url_strict=_as_bool(raw.get("url_strict"), DEFAULT_URL_STRICT),
         model=_as_text(raw.get("model")) or DEFAULT_MODEL,
         # 0 = 交给 LLMClient 用 DSH_MAX_TOKENS（见 core/llm_client.py）
@@ -94,6 +94,8 @@ def api_config_from_mapping(data: Mapping[str, Any] | None) -> APIConfig:
             raw.get("context_budget_tokens"), DEFAULT_CONTEXT_BUDGET_TOKENS,
             min_value=CONTEXT_BUDGET_MIN, max_value=CONTEXT_BUDGET_MAX),
         verify_ssl=_as_bool(raw.get("verify_ssl"), DEFAULT_VERIFY_SSL),
+        # 旧版字段：仅当 base_url 指向本地 token 代理时才被代理当成上游
+        real_base_url=_as_text(raw.get("real_base_url")),
     )
 
 

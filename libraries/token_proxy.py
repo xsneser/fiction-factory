@@ -1,8 +1,16 @@
 """本地 LLM API 代理 + token 流量实时检测器（show-me-the-story 模式）。
 
-拦截 dsh Node 与 Python LLMClient 的 DeepSeek 调用（api.json base_url 指向本代理，
-real_base_url 为真实 DeepSeek），转发时注入 include_usage:true，从每个响应解析
-usage 实时累计，暴露 /token-usage 供前端轮询。无 usage 时按 ~1.5 tokens/字估算兜底。
+**只服务 dsh**：`dsh_bridge` 把 dsh 子进程的 `DEEPSEEK_BASE_URL` 指向本代理，
+代理再把请求转发到用户在 `/settings` 配置的**真实上游**，顺手注入
+`include_usage:true` 并从响应里解析 usage 实时累计，暴露 `/token-usage` 供侧栏轮询
+（无 usage 时按 ~1.5 tokens/字估算兜底）。Python 侧 LLMClient 不经这里。
+
+代理同时是**配置执行点**：上游地址、模型名、API key、TLS 开关都在这一层统一按
+api.json 落地，所以 dsh 不必自己认识这些配置；而 api.json 每次请求都重读，
+改完设置对 dsh 立即生效、无需重启。
+
+上游地址 = 设置页的 `base_url`；只有当它指向本代理自身（防自环）时才回退旧版的
+`real_base_url`。两者都没有则明确报配置错误，不再静默兜底 api.deepseek.com。
 
 用法：from libraries.token_proxy import ensure_proxy, get_token_usage, clear_token_usage
 """
@@ -10,13 +18,32 @@ import codecs
 import json
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, urlunsplit
 
 import requests  # noqa: E402
 
+from core.api_config import load_api_config
+from core.llm_client import normalize_base_url
+from core.models import APIConfig
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROXY_PORT = int(os.environ.get("NE_TOKEN_PROXY_PORT", "58082"))
+
+
+def token_proxy_port() -> int:
+    """代理端口（NE_TOKEN_PROXY_PORT 非法时回退 58082）。"""
+    try:
+        port = int(os.environ.get("NE_TOKEN_PROXY_PORT", "58082"))
+    except (TypeError, ValueError):
+        return 58082
+    return port if 1 <= port <= 65535 else 58082
+
+
+PROXY_PORT = token_proxy_port()
+
+# 本机回环地址：用于判定某 URL 是否指向代理自身（防转发自环）
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
 
 
 class _UsageAccumulator:
@@ -92,16 +119,63 @@ class _UsageAccumulator:
 USAGE = _UsageAccumulator()
 
 
-def _api_config():
-    """真实 DeepSeek URL + api_key（real_base_url 优先，兜底旧 base_url）。"""
+def token_proxy_base_url(port: int | None = None) -> str:
+    """本代理的监听地址（dsh_bridge 注入 DEEPSEEK_BASE_URL 用，认 NE_TOKEN_PROXY_PORT）。"""
+    return f"http://127.0.0.1:{port or PROXY_PORT}"
+
+
+def is_token_proxy_url(url: str, port: int | None = None) -> bool:
+    """该地址是否指向本代理自身 —— 用于防止把代理再转发给代理（自环）。"""
+    parsed = urlsplit((url or "").strip())
+    if not parsed.hostname or parsed.hostname.lower() not in LOOPBACK_HOSTS:
+        return False
     try:
-        with open(os.path.join(_ROOT, "api.json"), encoding="utf-8") as f:
-            cfg = json.load(f)
-    except Exception:
-        cfg = {}
-    real = (cfg.get("real_base_url") or "").strip() or "https://api.deepseek.com"
-    key = (cfg.get("api_key") or "").strip()
-    return real, key
+        effective = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return False
+    return effective == (port or PROXY_PORT)
+
+
+def resolve_upstream(cfg: APIConfig | None) -> str:
+    """代理的上游地址 = 设置页 `base_url`。
+
+    仅当 base_url 指向代理自身（旧配置把本地代理写成 API 地址）时才回退
+    `real_base_url`。都没有则返回空串 —— 由调用方 fail closed，不做静默兜底。
+    """
+    if cfg is None:
+        return ""
+    base = (cfg.base_url or "").strip()
+    if base and not is_token_proxy_url(base):
+        return base
+    legacy = (cfg.real_base_url or "").strip()
+    if legacy and not is_token_proxy_url(legacy):
+        return legacy
+    return ""
+
+
+def _proxy_config() -> tuple[APIConfig | None, str, str]:
+    """返回 (配置, 上游地址, 错误说明)。错误说明非空时不得发起上游请求。"""
+    cfg = load_api_config()
+    if cfg is None:
+        return None, "", "api.json 不存在"
+    if not cfg.api_key:
+        return cfg, "", "未配置 API Key"
+    upstream = resolve_upstream(cfg)
+    if not upstream:
+        return cfg, "", "API 地址为空或指向本地代理自身"
+    return cfg, upstream, ""
+
+
+# 最近一次转发摘要（供 /health 诊断；只放 origin/model，绝不放 key）
+_LAST_REQUEST: dict = {}
+
+
+def _origin_of(url: str) -> str:
+    """只取 scheme://netloc —— 日志/健康检查里不回显路径与查询串。"""
+    parsed = urlsplit((url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def _estimate_tokens(chars):
@@ -178,16 +252,22 @@ def _local_http_proxy_fallbacks(url: str) -> dict:
     return fixed if changed else {}
 
 
-def _forward(target: str, payload: dict, headers: dict):
-    """Forward once normally, then retry a local HTTPS-proxy mismatch as HTTP."""
+def _forward(target: str, payload: dict, headers: dict, verify_ssl: bool = True,
+             timeout_seconds: int = 600):
+    """转发到上游；TLS 校验跟随 api.json 的 verify_ssl（上游证书有兼容问题时才关）。
+
+    两条路径（直连 + ProxyError 后的本机代理纠正）都必须带同一个 verify，
+    否则"关掉校验"的配置只在一种情形下生效，表现为偶发证书报错。
+    """
     try:
-        return requests.post(target, json=payload, headers=headers, stream=True, timeout=600)
+        return requests.post(target, json=payload, headers=headers, stream=True,
+                             timeout=timeout_seconds, verify=verify_ssl)
     except requests.exceptions.ProxyError:
         fallback = _local_http_proxy_fallbacks(target)
         if not fallback:
             raise
         return requests.post(target, json=payload, headers=headers, proxies=fallback,
-                             stream=True, timeout=600)
+                             stream=True, timeout=timeout_seconds, verify=verify_ssl)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -204,10 +284,26 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.rstrip("/") == "/token-usage":
-            self._send_json({"ok": True, **USAGE.snapshot()})
+            # last_request 只含 origin/model，便于肉眼确认 dsh 打到了哪个上游
+            self._send_json({"ok": True, **USAGE.snapshot(),
+                             "last_request": dict(_LAST_REQUEST)})
         elif self.path.rstrip("/") == "/token-usage/clear":
             USAGE.clear()
             self._send_json({"ok": True})
+        elif self.path.rstrip("/") == "/health":
+            # 供 dsh_bridge / 人工排查：这个端口上跑的到底是不是当前代码的代理，
+            # 以及它把流量发去了哪里（只回 origin + 模型名，绝不回 key）。
+            cfg, upstream, err = _proxy_config()
+            self._send_json({
+                "ok": not err,
+                "service": "novelengine-token-proxy",
+                "port": PROXY_PORT,
+                "error": err,
+                "upstream": _origin_of(upstream),
+                "model": (cfg.model if cfg else ""),
+                "verify_ssl": (cfg.verify_ssl if cfg else None),
+                "last_request": dict(_LAST_REQUEST),
+            })
         else:
             self._send_json({"ok": False, "error": "not found"}, 404)
 
@@ -222,32 +318,49 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:
             self._send_json({"ok": False, "error": "bad json"}, 400)
             return
-        # 注入 include_usage（流式需 stream_options），让响应带 usage
+        # 注入 include_usage（流式需 stream_options），让响应带 usage。
+        # 合并而非整体覆盖：别丢掉调用方自己加的 stream_options。
         if payload.get("stream"):
-            payload["stream_options"] = {"include_usage": True}
-        real_url, api_key = _api_config()
-        target = real_url.rstrip("/") + self.path
+            stream_options = dict(payload.get("stream_options") or {})
+            stream_options["include_usage"] = True
+            payload["stream_options"] = stream_options
+
+        cfg, upstream, err = _proxy_config()
+        if err:
+            # fail closed：宁可明确报"去设置页配置"，也不要静默打到别的上游
+            self._send_json({"ok": False, "error":
+                             f"token proxy 配置不可用：{err}（请在 /settings 保存 API 地址与 Key）"}, 502)
+            return
+
+        # 路径归一：dsh 请求的是 `<代理>/chat/completions`，上游 base 可能已带 /v1
+        # 或完整 endpoint —— 直接用 normalize_base_url 生成，与 Python 侧完全一致。
+        target = normalize_base_url(upstream, cfg.url_strict)
+
+        # 模型与 key 都以设置页为准：dsh 发的是它自己的 deepseek-v4-flash 和
+        # ~/.dsh/.env 里的旧 key，直接透传会打不动用户新配的中转。
+        if cfg.model:
+            payload["model"] = cfg.model
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream" if payload.get("stream") else "application/json",
         }
-        # 优先透传调用方自带的 Authorization（dsh 用 ~/.dsh/.env 的 key），
-        # 仅当缺失时回退 api.json 的 key——避免 dsh 流量被静默改记到平台 key 名下。
         incoming_auth = self.headers.get("Authorization")
-        if incoming_auth:
+        if cfg.api_key:
+            headers["Authorization"] = "Bearer " + cfg.api_key
+        elif incoming_auth:
+            # 设置页没填 key 时才退回 dsh 自带的（仅为了不把请求发成匿名）
             headers["Authorization"] = incoming_auth
-        elif api_key:
-            headers["Authorization"] = "Bearer " + api_key
+
+        _LAST_REQUEST.update({
+            "upstream": _origin_of(target),
+            "model": payload.get("model", ""),
+            "verify_ssl": cfg.verify_ssl,
+            "at": time.time(),
+        })
         try:
-            resp = _forward(target, payload, headers)
-            # dsh may carry a stale user-level key while the project api.json
-            # key is valid. Retry auth failures once with the configured project
-            # credential, without exposing either value in logs or responses.
-            if (resp.status_code in (401, 403) and api_key and incoming_auth
-                    and incoming_auth != "Bearer " + api_key):
-                resp.close()
-                headers["Authorization"] = "Bearer " + api_key
-                resp = _forward(target, payload, headers)
+            resp = _forward(target, payload, headers,
+                            verify_ssl=cfg.verify_ssl,
+                            timeout_seconds=max(60, int(cfg.http_timeout_seconds or 600)))
         except Exception as e:
             self._send_json({"ok": False, "error": f"proxy forward failed: {e}"}, 502)
             return
@@ -321,18 +434,36 @@ class _Handler(BaseHTTPRequestHandler):
 _started = threading.Event()
 
 
-def ensure_proxy():
-    """确保代理在跑（幂等；dsh_bridge / LLMClient 惰性拉起 daemon 线程）。"""
+def ensure_proxy() -> bool:
+    """确保代理在跑（幂等；dsh_bridge / web_ui 惰性拉起 daemon 线程）。
+
+    返回 False 表示**本进程没能成为代理**（通常是端口被别的进程占着）。
+    此时 dsh 的流量会落进那个进程 —— 若它是旧代码的残留代理，表现就是
+    "改完设置不生效"。调用方（dsh_bridge）据此 fail closed 并提示用户清进程。
+    """
     if _started.is_set():
         return True
     try:
         server = ThreadingHTTPServer(("127.0.0.1", PROXY_PORT), _Handler)
-    except Exception as e:
-        return False  # 端口占用等：忽略，不影响主链路
+    except Exception as e:  # 端口占用等
+        print(f"[token-proxy] 无法监听 127.0.0.1:{PROXY_PORT}: {e}")
+        return False
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     _started.set()
     return True
+
+
+def probe_proxy(timeout: float = 1.5) -> dict:
+    """探测该端口上跑的是不是当前代码的 token 代理（排查残留进程用）。"""
+    try:
+        resp = requests.get(token_proxy_base_url() + "/health", timeout=timeout)
+        data = resp.json()
+    except Exception as e:
+        return {"ok": False, "error": f"端口 {PROXY_PORT} 无响应或不是本代理: {e}"}
+    if data.get("service") != "novelengine-token-proxy":
+        return {"ok": False, "error": f"端口 {PROXY_PORT} 被其他程序占用"}
+    return data
 
 
 def get_token_usage() -> dict:
