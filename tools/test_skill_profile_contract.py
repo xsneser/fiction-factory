@@ -121,6 +121,12 @@ def main():
           "契约不匹配" in (err.get("message") or "") and any(e.get("type") == "done" for e in evs),
           (err.get("message") or "")[:100])
 
+    # 规划流程内核：两个入口共用同一段流程文本，刷在标记块里（单一真源防漂移）
+    import tools.test_plan_core as TPC
+    TPC.report()
+    PASS.extend(TPC.PASS)
+    FAIL.extend(TPC.FAIL)
+
     print("\n" + "=" * 60)
     print("  每 profile 工具数:", {p: len(s) for p, s in sorted(PROFILE_TOOLS.items())})
     for skill, profile in SKILL_PROFILE_MAP.items():

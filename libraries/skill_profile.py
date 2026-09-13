@@ -83,5 +83,86 @@ def dsh_mirror_mismatch() -> list:
             out.append(f"{skill}: 源缺失")
             continue
         if not dst.exists() or dst.read_bytes() != src.read_bytes():
-            out.append(f"{skill}: 镜像与源不一致（请 cp agent-sidecar/skills/{skill}/SKILL.md .dsh/skills/{skill}/）")
+            out.append(f"{skill}: 镜像与源不一致（跑 `python tools/sync_skills_mirror.py`）")
     return out
+
+
+# ── 规划流程内核：单一真源 + 标记块内联 ──────────────────────────────────────
+# 两个入口（novel-build / novel-replan）共用同一段"怎么想"的流程文本。dsh 的 skill
+# 注入路径只读 SKILL.md 一个文件（`dsh_bridge._skill_text_for_profile`），所以内核
+# 必须**内联**进各自的 SKILL.md；`_shared/plan-core.md` 是 authoring 真源，
+# `tools/sync_plan_core.py` 负责把它刷进两个标记块，本模块只提供抽取与比对，
+# 供契约测试（`tools/test_plan_core.py`）与同步脚本共用同一份解析。
+PLAN_CORE_SKILLS = ("novel-build", "novel-replan")
+PLAN_CORE_BEGIN = "<!-- plan-core:begin -->"
+PLAN_CORE_END = "<!-- plan-core:end -->"
+PLAN_CORE_RELPATH = "agent-sidecar/skills/_shared/plan-core.md"
+
+
+def plan_core_path() -> Path:
+    return ROOT / PLAN_CORE_RELPATH
+
+
+@functools.lru_cache(maxsize=1)
+def plan_core_text() -> str:
+    """内核正文（authoring 真源）。"""
+    return plan_core_path().read_text(encoding="utf-8")
+
+
+def extract_plan_core_block(text: str):
+    """SKILL.md 里标记块的内容（不含两行标记本身）；缺失/重复/换行形态异常返回 None。
+
+    约定：`begin` 标记行后必须紧跟一个换行，块正文自下一行起、到 `end` 标记行的行首为止
+    ——因此块内容与 `plan-core.md` 逐字节相同（含末尾换行）。
+    """
+    src = text or ""
+    if src.count(PLAN_CORE_BEGIN) != 1 or src.count(PLAN_CORE_END) != 1:
+        return None
+    _, rest = src.split(PLAN_CORE_BEGIN, 1)
+    body, _ = rest.split(PLAN_CORE_END, 1)
+    if not body.startswith("\n"):
+        return None
+    return body[1:]
+
+
+def plan_core_mismatch() -> list:
+    """内核块漂移清单：缺标记 / 与内核文件不一致 / 两入口互相不一致。"""
+    out, blocks = [], {}
+    try:
+        kernel = plan_core_text()
+    except FileNotFoundError:
+        return [f"内核文件缺失：{PLAN_CORE_RELPATH}"]
+    for skill in PLAN_CORE_SKILLS:
+        try:
+            text = skill_text(skill)
+        except FileNotFoundError:
+            out.append(f"{skill}: skill 缺失")
+            continue
+        block = extract_plan_core_block(text)
+        if block is None:
+            out.append(f"{skill}: 缺少 plan-core 标记块（`{PLAN_CORE_BEGIN}` 与 `{PLAN_CORE_END}` 各一次，"
+                       "且 begin 标记行后需换行）")
+            continue
+        blocks[skill] = block
+        if block != kernel:
+            out.append(f"{skill}: 内核块与 {PLAN_CORE_RELPATH} 不一致（跑 `python tools/sync_plan_core.py`）")
+    if len(blocks) == 2 and blocks[PLAN_CORE_SKILLS[0]] != blocks[PLAN_CORE_SKILLS[1]]:
+        out.append("两个入口的内核块互相不一致")
+    return out
+
+
+def plan_core_tool_leaks() -> list:
+    """内核里出现的真实工具名（必须为空——内核只写认知步骤，不写能力名）。"""
+    try:
+        return sorted(referenced_tools(plan_core_text()))
+    except FileNotFoundError:
+        return []
+
+
+def splice_plan_core(text: str, kernel: str) -> str:
+    """把内核刷进标记块，返回新正文；缺标记抛错（不静默改写）。"""
+    if text.count(PLAN_CORE_BEGIN) != 1 or text.count(PLAN_CORE_END) != 1:
+        raise ValueError("缺少 plan-core 标记块，无法内联内核")
+    head, rest = text.split(PLAN_CORE_BEGIN, 1)
+    _, tail = rest.split(PLAN_CORE_END, 1)
+    return f"{head}{PLAN_CORE_BEGIN}\n{kernel}{PLAN_CORE_END}{tail}"
