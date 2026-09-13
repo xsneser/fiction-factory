@@ -4609,7 +4609,8 @@ def save_build_draft(world: dict | None = None, storyline: dict | None = None,
 
     try:
         rec = build_draft.update(sid, draft=merged, expected_revision=expected_revision,
-                                 on_meta=_on_meta, validated_receipt={"passed": True})
+                                 on_meta=_on_meta, validated_receipt={"passed": True},
+                                 snapshot=True, actor="agent")
     except build_draft.StaleRevision as e:
         return {"ok": False, "saved": False, "error": "revision_conflict",
                 "current_revision": int(e.current),

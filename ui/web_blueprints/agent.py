@@ -236,7 +236,32 @@ def build_draft_get():
         "plan_meta": meta,
         "next_phase": build_phases.next_phase(meta),
         "checklist": checklist,
+        # 迭代留痕：只回摘要（正文按需拉 /api/build/version），保持本端点薄
+        "versions": (build_draft.read_history(sid, limit=20).get("entries") or [])
+        if exists else [],
     })
+
+
+@bp.route("/api/build/version", methods=["GET"])
+def build_version_get():
+    """取某一版的**完整快照**（回退用）。列表走 `/api/build/draft` 的 `versions` 摘要，
+    点某版时才拉这一份——避免把十几版正文塞进每次轮询的响应里。
+
+    query: ?sid=<build_session_id>&revision=<n>
+    """
+    from libraries import build_draft
+    sid = str(request.args.get("sid") or "").strip()
+    rev = request.args.get("revision")
+    try:
+        rev = int(rev)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "revision 必须是整数"}), 400
+    if not sid:
+        return jsonify({"ok": False, "error": "sid 缺失"}), 400
+    row = build_draft.read_version(sid, rev)
+    if not row:
+        return jsonify({"ok": False, "error": "version_not_found"}), 404
+    return jsonify({"ok": True, **row})
 
 
 @bp.route("/api/build/phase-save", methods=["POST"])
@@ -294,7 +319,7 @@ def build_phase_save():
 
     try:
         rec = build_draft.update(sid, draft=merged, expected_revision=expected,
-                                 on_meta=_on_meta)
+                                 on_meta=_on_meta, snapshot=True, actor="user")
     except build_draft.StaleRevision as e:
         return jsonify({"ok": False, "error": "revision_conflict",
                         "current_revision": int(e.current)}), 409

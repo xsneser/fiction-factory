@@ -5,6 +5,7 @@ storyline/章节仍是事实源；本模块只保存可重建的规划导航状�
 from __future__ import annotations
 
 import copy
+import json
 import os
 import time
 import uuid
@@ -259,9 +260,67 @@ def save_replan_preview(book_id: str, preview: dict) -> dict:
         raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
     try:
         write_json_atomic(replan_preview_path(book_id), data)
+        # 迭代留痕：**同一把书锁内**追加一行（含完整 plots/outlines 快照）。
+        # 预览本身仍是单份覆盖——它是提交目标，按 preview_id 校验，出现第二份就产生
+        # "提交哪一份"的歧义；历史只作审计与对照，不参与提交。
+        _append_replan_history(book_id, data)
     finally:
         lock.release()
     return data
+
+
+def replan_history_path(book_id: str) -> Path:
+    return ROOT / "books" / book_id / "replan_history.jsonl"
+
+
+def _append_replan_history(book_id: str, data: dict) -> None:
+    """记一行续规划历史（append-only，失败不阻断预览落盘）。"""
+    try:
+        row = {
+            "preview_id": data.get("preview_id"),
+            "expected_revision": data.get("expected_revision"),
+            "at": data.get("created_at"),
+            "direction_ids": [d.get("id") for d in (data.get("directions") or [])
+                              if isinstance(d, dict)],
+            "selected_direction_id": data.get("selected_direction_id"),
+            "plots_count": len(data.get("plots") or []),
+            "outlines_count": len(data.get("outlines") or []),
+            "planned_promises": sum(1 for p in (data.get("plots") or [])
+                                    if isinstance(p, dict)
+                                    for f in (p.get("foreshadow") or [])
+                                    if isinstance(f, dict)),
+            "validation_passed": bool((data.get("validation") or {}).get("passed")),
+            "snapshot": {"outlines": data.get("outlines") or [],
+                         "plots": data.get("plots") or [],
+                         "planning_patch": data.get("planning_patch") or {}},
+        }
+        with open(replan_history_path(book_id), "a", encoding="utf-8", newline="") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def load_replan_history(book_id: str, limit: int = 20) -> list:
+    """续规划历史（最近 limit 条，倒序由调用方决定）。"""
+    path = replan_history_path(book_id)
+    if not path.exists():
+        return []
+    out = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    out.append(row)
+    except OSError:
+        return []
+    return out[-limit:]
 
 
 def delete_replan_preview(book_id: str, preview_id: str = "") -> bool:

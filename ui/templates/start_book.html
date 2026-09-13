@@ -104,6 +104,14 @@
                 </summary>
                 <div id="wz-checklist-body" style="margin-top:6px"></div>
             </details>
+            <!-- 构建历史：每次落盘留一版**完整快照**（可无损回退）。回退不删历史，
+                 而是写成新的一版——历史同时是审计。 -->
+            <details id="wz-history" style="display:none;margin:4px 0 10px">
+                <summary style="cursor:pointer;font-weight:600">
+                    🕘 构建历史 <span class="hint" id="wz-history-summary"></span>
+                </summary>
+                <div id="wz-history-body" style="margin-top:6px"></div>
+            </details>
             <!-- agent 草稿状态：canonical 拉取结果 + 允许从服务端恢复（用户改过表单时不自动覆盖） -->
             <div class="form-row hint" id="wz-agent-draft-status" role="status" aria-live="polite"></div>
             <div class="form-row" id="wz-agent-draft-errors" role="alert" style="display:none"></div>
@@ -1492,6 +1500,7 @@ var WZ = {
                 nextBtn.disabled = !!this._phaseAcking;
             }
         }
+        this.renderHistory(rec);
         var cl = rec && rec.checklist;
         if (!cl) { box.style.display = 'none'; body.innerHTML = ''; return; }
         box.style.display = '';
@@ -1509,6 +1518,74 @@ var WZ = {
                 + '<span class="hint" style="flex:1">' + esc(it.detail || '') + '</span>'
                 + '</div>';
         }).join('');
+    },
+    /* 构建历史：列表只回摘要，点「查看」才拉那一版的正文；「回退」= 把该版快照
+       通过 phase-save 写成**新的一版**（append-only，审计不丢）。 */
+    renderHistory: function(rec) {
+        var box = this.el('wz-history');
+        var body = this.el('wz-history-body');
+        var sum = this.el('wz-history-summary');
+        if (!box || !body) return;
+        var rows = (rec && rec.versions) || [];
+        if (!rows.length) { box.style.display = 'none'; body.innerHTML = ''; return; }
+        box.style.display = '';
+        if (sum) sum.textContent = rows.length + ' 版（最近在最后）';
+        var esc = (typeof escapeHtml === 'function') ? escapeHtml : function(s) { return String(s); };
+        body.innerHTML = rows.slice().reverse().map(function(v) {
+            var d = v.diff_summary || {};
+            var bits = [];
+            var ch = d.changed || [];
+            ch.slice(0, 3).forEach(function(c) {
+                bits.push(esc(c.path) + '：' + esc(c.before) + ' → ' + esc(c.after));
+            });
+            if ((d.added || []).length) bits.push('新增 ' + d.added.length + ' 项');
+            if ((d.removed || []).length) bits.push('删除 ' + d.removed.length + ' 项');
+            var c = v.counts || {};
+            return '<div style="border-top:1px solid #30363d;padding:4px 0;font-size:12px">'
+                + '<b>r' + esc(v.revision) + '</b> '
+                + '<span class="hint">' + esc(WZ_PHASE_LABEL[v.phase] || v.phase || '')
+                + ' · ' + esc(v.actor || '') + ' · ' + esc(v.at || '') + '</span> '
+                + '<span class="hint">弧 ' + (c.outlines || 0) + ' / 情节段 ' + (c.plots || 0)
+                + ' / 人物 ' + (c.characters || 0) + '</span>'
+                + (v.recovery ? ' <span style="color:#d29922">（崩溃恢复补记）</span>' : '')
+                + (bits.length ? '<div class="hint">' + bits.join('；') + '</div>' : '')
+                + '<button type="button" class="btn-secondary" style="margin-top:3px;padding:2px 8px" '
+                + 'onclick="WZ.rollbackVersion(' + Number(v.revision) + ')">↩ 回退到此版本</button>'
+                + '</div>';
+        }).join('');
+    },
+    rollbackVersion: function(revision) {
+        var self = this;
+        var sid = this.ensureBuildSession();
+        if (!sid) return;
+        fetch('/api/build/version?sid=' + encodeURIComponent(sid) + '&revision=' + revision)
+            .then(function(r) { return r.json(); })
+            .then(function(rec) {
+                if (!rec.ok) throw new Error(rec.error || '读取该版本失败');
+                var snap = rec.snapshot || {};
+                return fetch('/api/build/phase-save', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ build_session_id: sid,
+                                           expected_revision: self._buildRevision,
+                                           sections: { world: snap.world,
+                                                       characters: snap.characters,
+                                                       storyline: snap.storyline } })
+                }).then(function(r) { return r.json(); });
+            })
+            .then(function(d) {
+                if (!d.ok) throw new Error(d.error || '回退失败');
+                // 回退后强制回灌表单（否则"回退了但界面还是旧的"）
+                self._dirtyFields = {};
+                self._step3Dirty = false;
+                return self.syncCanonicalDraft({ force: true });
+            })
+            .then(function() {
+                if (typeof showToast === 'function')
+                    showToast('已回退到 r' + revision + '（记为新的一版，历史不丢）', 'success');
+            })
+            .catch(function(e) {
+                if (typeof showToast === 'function') showToast('回退失败：' + e.message, 'error');
+            });
     },
     renderStale: function(meta) {
         var el = this.el('wz-stale-banner');

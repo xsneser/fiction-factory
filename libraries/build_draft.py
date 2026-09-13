@@ -27,6 +27,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 
@@ -131,6 +132,17 @@ def path_for(session_id: str) -> str:
     return os.path.join(_DIR, f"{_safe_sid(session_id)}.json")
 
 
+def history_path(session_id: str) -> str:
+    """版本快照旁挂文件（JSONL，append-only）。
+
+    为什么不塞进 canonical 里当一个数组：`update()` 是整字段替换、`_coerce()` 还会深拷
+    一份 draft，历史会随版本线性膨胀；而 `/books/start` 与 `get_build_context` 都读
+    canonical，等于把历史拖进热路径。历史是**可裁剪的审计 + 恢复源**，与"当前事实"的
+    生命周期不同。
+    """
+    return os.path.join(_DIR, f"{_safe_sid(session_id)}.history.jsonl")
+
+
 def _coerce(data: dict) -> dict:
     """补默认 + 清洗（与 build_status 同形：别把 _DEFAULTS 里的可变对象递出去）。"""
     out = dict(_DEFAULTS)
@@ -194,7 +206,8 @@ def _bump_content_revision(cur: dict) -> None:
 
 
 def update(session_id: str, *, bump: bool = True, expected_revision: int | None = None,
-           on_meta=None, validated_receipt: dict | None = None, **fields) -> dict:
+           on_meta=None, validated_receipt: dict | None = None,
+           snapshot: bool = False, actor: str = "agent", **fields) -> dict:
     """合并写 canonical 记录（原子）。`bump=False` 时不动 revision。
 
     只接受 `_DEFAULTS` 内的键，其余静默丢弃——避免调用方把 UI 专用字段混进来。
@@ -218,6 +231,7 @@ def update(session_id: str, *, bump: bool = True, expected_revision: int | None 
             raise StaleRevision(int(cur.get("revision") or 0), int(expected_revision))
         if not cur.get("session_id"):
             cur["session_id"] = _safe_sid(session_id)
+        prev_draft = cur.get("draft")          # 留痕要在合并之前拿到旧值，diff 才有意义
         for k, v in fields.items():
             if k in _DEFAULTS and k not in ("session_id", "revision"):
                 cur[k] = v
@@ -240,9 +254,104 @@ def update(session_id: str, *, bump: bool = True, expected_revision: int | None 
             cur["revision"] = int(cur.get("revision") or 0) + 1
         cur["created"] = bool(cur.get("book_id"))
         cur["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        # **canonical first, history second**，且共用这一把 session lock：
+        # 反过来写（先历史后 canonical）崩在中间会留下"历史超前"的孤儿版本；这个顺序
+        # 崩在中间最多丢一版历史，由 read_history 的双向对账补一条 recovery 快照。
         write_json_atomic(path, cur)
+        if snapshot:
+            _append_history(path, cur, prev_draft=prev_draft, actor=actor)
     _prune(os.path.basename(path))
     return cur
+
+
+def _append_history(path: str, rec: dict, *, prev_draft=None, actor: str = "agent") -> None:
+    """追加一版**完整快照**（可无损恢复）。
+
+    `diff_summary` 只是给人看的展示，**绝不作为恢复数据**——只存 80 字摘要却承诺
+    "点某版回退"是恢复不了的。
+    """
+    entry = {
+        "revision": int(rec.get("revision") or 0),
+        "content_revision": int(rec.get("content_revision") or 0),
+        "at": rec.get("updated_at") or time.strftime("%Y-%m-%d %H:%M:%S"),
+        "phase": str((rec.get("plan_meta") or {}).get("phase") or ""),
+        "actor": str(actor or "agent"),
+        "snapshot": rec.get("draft"),
+        "diff_summary": plan_diff.semantic_diff(prev_draft or {}, rec.get("draft") or {}),
+        "counts": plan_diff.counts_of(rec.get("draft") or {}),
+    }
+    with open(history_path_of(path), "a", encoding="utf-8", newline="") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def history_path_of(canonical_path: str) -> str:
+    return canonical_path[:-len(".json")] + ".history.jsonl"
+
+
+def _read_history_lines(session_id: str) -> list:
+    try:
+        with open(history_path(session_id), encoding="utf-8") as f:
+            out = []
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict):
+                    out.append(row)
+            return out
+    except FileNotFoundError:
+        return []
+
+
+def read_history(session_id: str, limit: int = 20) -> dict:
+    """版本列表（**不含** snapshot，保持薄）+ 双向对账。
+
+    两文件不是事务性的，接受最终一致，但**必须定好恢复规则**：
+      - `canonical.revision > 历史最后一版` → 自动补一条 recovery 快照
+        （崩在 canonical 写成功、history append 之前）；
+      - `历史最后一版 > canonical.revision` → 只标 `orphan` 并告警，
+        **绝不反向用历史推进 canonical**（可能来自旧 bug / 手工改文件 / 恢复中断）。
+    """
+    rows = _read_history_lines(session_id)
+    rec = load(session_id)
+    rev = int(rec.get("revision") or 0)
+    recovered = orphan = False
+    if rows:
+        last = int(rows[-1].get("revision") or 0)
+        if rev > last:
+            recovery = {"revision": rev, "content_revision": int(rec.get("content_revision") or 0),
+                        "at": rec.get("updated_at") or "", "recovery": True, "actor": "system",
+                        "phase": str((rec.get("plan_meta") or {}).get("phase") or ""),
+                        "snapshot": rec.get("draft"), "diff_summary": {"added": [], "removed": [],
+                                                                      "changed": []},
+                        "counts": plan_diff.counts_of(rec.get("draft") or {})}
+            _append_entry(session_id, recovery)
+            rows.append(recovery)
+            recovered = True
+        elif last > rev:
+            orphan = True
+    elif rev:
+        orphan = False
+    entries = [{k: v for k, v in row.items() if k != "snapshot"} for row in rows[-limit:]]
+    return {"entries": entries, "orphan": orphan, "recovered": recovered,
+            "canonical_revision": rev, "count": len(rows)}
+
+
+def read_version(session_id: str, revision: int) -> dict | None:
+    """取某一版的**完整快照**（回退用；UI 先列表、点某版时才拉这一份）。"""
+    for row in reversed(_read_history_lines(session_id)):
+        if int(row.get("revision") or -1) == int(revision):
+            return row
+    return None
+
+
+def _append_entry(session_id: str, entry: dict) -> None:
+    with open(history_path(session_id), "a", encoding="utf-8", newline="") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def transition(session_id: str, *, step: int | None = None, **fields) -> dict:

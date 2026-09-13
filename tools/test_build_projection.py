@@ -215,6 +215,13 @@ def main():
         # 「➡ 继续下一阶段」：先回写表单 → 再确认停点 → 最后才派任务（顺序反了 agent 读到旧草稿）
         check("继续按钮存在且只在 stop_A 显示",
               'id="wz-next-phase"' in tpl and "meta.phase === 'stop_A'" in tpl)
+        # 构建历史：列表薄、正文按需拉；回退写成新版本（历史 append-only）
+        check("有构建历史面板 + 回退入口",
+              'id="wz-history"' in tpl and "renderHistory: function" in tpl
+              and "rollbackVersion: function" in tpl)
+        check("回退先拉该版快照再 phase-save（不是本地拼）",
+              tpl.index("'/api/build/version?sid='") < tpl.index("rollbackVersion: function") + 3000
+              and "rollbackVersion" in tpl)
         check("继续流程按 phase-save → phase-ack → 派任务 的顺序",
               "continuePhase: function" in tpl
               and tpl.index("'/api/build/phase-save'") < tpl.index("'/api/build/phase-ack'")
