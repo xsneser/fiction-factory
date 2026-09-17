@@ -31,6 +31,7 @@ import subprocess
 import sys
 import threading
 import time
+import re
 
 _log = logging.getLogger("novel-engine")
 
@@ -296,12 +297,21 @@ def _write_runtime_overlay(timeout_ms: int = 600000, mcp_profile: str = "") -> s
     # persona 每行缩进 6 空格（YAML `>-` 折叠标量的块缩进），经 {persona_block} 值替换插入 f-string——
     # 值内 {{model}}/{{cwd}} 不会被 f-string 二次解析，保持字面供 dsh 插值。
     is_writer = mcp_profile == "write"
+    is_orchestrate = mcp_profile == "orchestrate"
     # 建书两段子 run 与 writer 同样**自带完整契约**（skill 注入在任务文本上 + 工具面就是
     # 它需要的全部能力），所以不再注入 NOVEL_AGENT.md：那份 workspace 指令 25.3KB 而预算
     # 只给 20KB，尾部「第二部分：护栏」一直被静默截断——既浪费 token 又恰好丢掉护栏。
     is_build = mcp_profile in ("build", "build-candidates")
-    writer_persona = """You are a Plot Writer. Use only the two provided NovelEngine MCP tools.
-Prepare exactly one Plot, write it, save it once, and stop. The server owns all routing and planning."""
+    writer_persona = """You are a Plot Writer. Use only the provided NovelEngine writer MCP tools.
+Prepare exactly one Plot, write it, save it once, or complete one explicitly requested revision, and stop.
+The server owns all routing and planning."""
+    orchestrator_persona = """You are the NovelEngine Main Orchestrator. You coordinate narrow Writer,
+Planner, Critic, Build and Publish subagents through the delegate tools. You do not write prose
+or invent facts directly: read authoritative MCP state, delegate one bounded action, inspect the
+returned rule report, and refresh state after every mutation. Hard integrity errors, user-only
+submit actions, revision conflicts and locks cannot be overridden. Stop at user confirmation
+boundaries and enforce the run budget.
+"""
     build_persona = """You are the NovelEngine Build Agent. Complete exactly one build step using the
 authoritative build context and the tools exposed in this profile.
 Design world, factions, characters and the opening committed storyline as one coherent system.
@@ -312,31 +322,63 @@ user decisions remain. Never submit the book yourself, never change phases, neve
         persona = writer_persona
     elif is_build:
         persona = build_persona
+    elif is_orchestrate:
+        persona = orchestrator_persona
     else:
         persona = _PERSONA
     persona_block = "\n".join("      " + ln for ln in persona.strip().splitlines())
-    instruction_candidates = "[]" if (is_writer or is_build) else "['NOVEL_AGENT.md']"
-    # 非建书/写作 profile 仍拿 NOVEL_AGENT.md：预算提到能装下全文，先止住静默截断
-    # （文档拆分留作后续——那时才谈得上「压到 20KB」）。
-    instruction_budget = "0" if (is_writer or is_build) else "30000"
+    instruction_candidates = "[]" if (is_writer or is_build or is_orchestrate) else "['NOVEL_AGENT.md']"
+    # 编排器使用独立 skill，避免把完整全局契约重复注入主 Agent；legacy profile 保持原行为。
+    instruction_budget = "0" if (is_writer or is_build or is_orchestrate) else "30000"
     yaml_text = (
         "# dsh 运行期 overlay（dsh_bridge 生成）—— 强制长工具超时 + 事件流 runner。\n"
         "# 注意：dsh patch 对 id-targeted entry 整体替换 config，必须给全；\n"
         "# 与 headless profile / agent-sidecar/cordis.patch.yml 保持同步。\n"
-        "- id: mcp-novelengine\n"
-        "  config:\n"
-        "    serverName: novelengine\n"
-        "    transport: stdio\n"
-        # 钉到「能 import mcp」的解释器(_python_with_mcp):若裸 `python` 从 PATH 或服务
-        # 进程解释器未装 mcp,mcp_server.py import 失败 → 工具服务器起不来 → dsh 任务
-        # 零工具,模型只能猜 mcp__novelengine__* 名字 → 满屏 unknown tool(2026-09-06 实测)。
-        f"    command: '{_python_with_mcp()}'\n"
-        "    # --source dsh：mcp_server 据此把工具日志 source 记为 dsh（不写 JSONL），\n"
-        "    # 右侧「工具日志」页签只展示外部 agent（source=mcp）调用，内部 dsh 不混入\n"
-        "    args: ['mcp_server.py', '--source', 'dsh'" +
-        (f", '--profile', '{mcp_profile}'" if mcp_profile else "") + "]\n"
-        f"    cwd: '{cwd}'\n"
-        f"    toolCallTimeoutMs: {timeout_ms}\n"
+    )
+    if mcp_profile == "orchestrate":
+        # 运行期 overlay 位于用户 profile patch 之后：即使旧 headless profile 仍把
+        # subagent/provider 或单一 mcp-novelengine 标成 disabled，也在编排模式显式修正。
+        yaml_text += (
+            "- id: mcp-novelengine\n"
+            "  disabled: true\n"
+            "- id: subagent\n"
+            "  disabled: false\n"
+            "- id: subagent-spawn-in-process\n"
+            "  disabled: false\n"
+        )
+        # 主 Agent 固定挂载各角色 MCP server；子代理通过精确 toolFilter 选择其中一组。
+        # serverName 只属于 dsh-mcp-client 配置，不作为 mcp_server.py 参数传入。
+        for role, profile_name in (
+            ("orch", "orchestrate"), ("write", "write"), ("plan", "replan"),
+            ("critic", "critic"), ("candidates", "build-candidates"),
+            ("build", "build"), ("publish", "publish"), ("scout", "scout"),
+            ("style", "style"),
+        ):
+            yaml_text += (
+                f"- id: mcp-novelengine-{role}\n"
+                "  config:\n"
+                f"    serverName: novelengine-{role}\n"
+                "    transport: stdio\n"
+                f"    command: '{_python_with_mcp()}'\n"
+                f"    args: ['mcp_server.py', '--source', 'dsh', '--profile', '{profile_name}']\n"
+                f"    cwd: '{cwd}'\n"
+                f"    toolCallTimeoutMs: {timeout_ms}\n"
+                "    failOnStartupError: true\n"
+            )
+    else:
+        # legacy / 叶子 profile：保持单 MCP 实例，供回退路径与现有测试使用。
+        yaml_text += (
+            "- id: mcp-novelengine\n"
+            "  config:\n"
+            "    serverName: novelengine\n"
+            "    transport: stdio\n"
+            f"    command: '{_python_with_mcp()}'\n"
+            "    args: ['mcp_server.py', '--source', 'dsh'" +
+            (f", '--profile', '{mcp_profile}'" if mcp_profile else "") + "]\n"
+            f"    cwd: '{cwd}'\n"
+            f"    toolCallTimeoutMs: {timeout_ms}\n"
+        )
+    yaml_text += (
         "# Writer 不接收全局 NOVEL_AGENT；非 Writer 保持原开发/路由指令。\n"
         "- id: agent-instructions\n"
         "  config:\n"
@@ -371,8 +413,8 @@ user decisions remain. Never submit the book yourself, never change phases, neve
         for plugin in ("tool-web", "web", "web-search-deepseek", "tool-skill", "skill", "skill-filesystem",
                        "tool-plan", "plan-mode"):
             yaml_text += f"- id: {plugin}\n  disabled: true\n"
-    elif is_build:
-        # 建书子 run 同样不需要联网 / skill catalog / 计划模式：
+    elif is_build or is_orchestrate:
+        # 建书子 run / Main Orchestrator 不需要联网 / skill catalog / 计划模式：
         # · skill 由 bridge 直接注入在**任务文本**上（见 run_dsh_task），stock skill 工具是冗余的；
         #   更要紧的是 skill catalog 由 dsh 插件自行发现，不受 profile 约束——agent 会在目录里
         #   看到 novel-scout 等同级技能、却被工具面挡在外面（「被告知有这本事，却没有这工具」）。
@@ -512,7 +554,8 @@ def _unscoped_tools_allowed() -> bool:
 # libraries/skill_profile.SKILL_PROFILE_MAP，_build_fsm 的 spawn 不变量校验两者互指）。
 _SKILL_FOR_PROFILE = {"build-candidates": "novel-build-candidates", "build": "novel-build",
                       "write": "novel-story", "replan": "novel-replan",
-                      "publish": "novel-publish", "scout": "novel-scout"}
+                      "publish": "novel-publish", "scout": "novel-scout",
+                      "orchestrate": "novel-orchestrator"}
 
 
 def _skill_name_for_profile(profile: str) -> str:
@@ -532,14 +575,20 @@ def _skill_text_for_profile(profile: str) -> str:
 
 # ─── NDJSON 事件 → SSE 事件映射 ───
 
+def _mcp_tool_parts(name: str) -> tuple[str, str, str]:
+    """解析 MCP 公共工具名，返回 (server_name, raw_name, full_name)。"""
+    full = str(name or "")
+    if full.startswith("mcp__"):
+        rest = full[5:]
+        server, sep, raw = rest.partition("__")
+        if sep and server and raw:
+            return server, raw, full
+    return "", full, full
+
+
 def _short_name(name: str) -> str:
     """MCP 客户端工具名 `mcp__<server>__<tool>` → `<tool>`。"""
-    if not name:
-        return ""
-    for prefix in ("mcp__novelengine__", "mcp__novel-engine__", "mcp__"):
-        if name.startswith(prefix):
-            return name[len(prefix):]
-    return name
+    return _mcp_tool_parts(name)[1]
 
 
 def _parse_args(raw) -> dict:
@@ -630,6 +679,22 @@ def _extract_result_text(msg) -> str:
     return text
 
 
+def _extract_error_brief(msg) -> str:
+    """从失败的 tool/result 里抽一行可读错误（优先 data.error，其次 content 文本）。"""
+    try:
+        err = msg.get("error")
+        if isinstance(err, dict):
+            for key in ("message", "code"):
+                val = err.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+        elif isinstance(err, str) and err.strip():
+            return err.strip()
+    except Exception:
+        pass
+    return _extract_result_text(msg).strip()
+
+
 def _build_draft_status_event(name, args, msg) -> dict | None:
     """把建书薄工具的 tool/result 折成一个紧凑的 `build_draft_status` 事件。
 
@@ -663,9 +728,16 @@ def _build_draft_status_event(name, args, msg) -> dict | None:
     }
 
 
-def _zh_tool_summary(name, args, msg):
-    """把 tool/result 的消息转成中文一行摘要（前端直接展示，不带英文 key）。"""
+def _zh_tool_summary(name, args, msg, ok: bool = True):
+    """把 tool/result 的消息转成中文一行摘要（前端直接展示，不带英文 key）。
+
+    `ok=False` 时**不能**沿用成功文案：失败的 drive_ui 曾一律显示「已暂存续规划预览」，
+    让工具卡把校验失败说成成功（真实错误已由 MCP isError 回给 Agent，这里只求展示如实）。
+    """
     text = _extract_result_text(msg)
+    if not ok:
+        brief = _extract_error_brief(msg) or text.strip()
+        return ("失败：" + brief[:200]) if brief else "调用失败"
     if name == "drive_ui":
         cmd = (args or {}).get("cmd", "") if isinstance(args, dict) else ""
         zh = _CMD_ZH.get(cmd, cmd or "")
@@ -730,6 +802,8 @@ _DOMAIN_BY_TOOL = {
     "save_chapter_text": "chapter_changed",
     "save_outlines": "plan_committed",
     "chapter_quality_gate": "quality_gate",
+    "plot_quality_gate": "plot_quality_gate",
+    "accept_plot_draft": "plot_review_changed",
 }
 
 
@@ -834,10 +908,14 @@ def _map_dsh_event(evt: dict, pending: dict):
     t = evt.get("type")
     data = evt.get("data") or {}
     if t == "tool/call":
-        name = _short_name(data.get("name", ""))
+        full_name = str(data.get("name", "") or "")
+        server_name, name, _ = _mcp_tool_parts(full_name)
         call_id = data.get("callId", "")
+        session_id = str(data.get("sessionId") or data.get("session_id") or "root")
         args = _parse_args(data.get("arguments"))
-        pending[call_id] = {"name": name, "callId": call_id, "args": args}
+        pending[(session_id, call_id)] = {"name": name, "full_name": full_name,
+                                          "server_name": server_name, "session_id": session_id,
+                                          "callId": call_id, "args": args}
         if name in ("read_crawled_novel", "ingest_library_assets"):
             try:
                 from libraries.extract_progress import read_extract_progress, update_extract_progress
@@ -859,7 +937,9 @@ def _map_dsh_event(evt: dict, pending: dict):
                     )
             except Exception:
                 pass
-        yield {"type": "tool_call", "name": name, "args": args, "callId": call_id,
+        yield {"type": "tool_call", "name": name, "full_name": full_name,
+               "server_name": server_name, "session_id": session_id,
+               "args": args, "callId": call_id,
                "usage": data.get("usage")}   # dsh agent 该工具调用的真实 token 用量（events-runner 转发）
         if name == "navigate":
             url = args.get("url") if isinstance(args, dict) else ""
@@ -891,7 +971,8 @@ def _map_dsh_event(evt: dict, pending: dict):
         msg = data.get("message") or {}
         source = msg.get("source") or {}
         call_id = source.get("callId") or ""
-        p = pending.pop(call_id, {}) or {}
+        session_id = str(data.get("sessionId") or data.get("session_id") or "root")
+        p = pending.pop((session_id, call_id), None) or pending.pop(call_id, {}) or {}
         name = p.get("name") or ""
         ok = not data.get("error") and not _result_error(msg)
         try:
@@ -900,9 +981,12 @@ def _map_dsh_event(evt: dict, pending: dict):
             pass
         yield {"type": "tool_result",
                "name": name,
+               "full_name": p.get("full_name") or name,
+               "server_name": p.get("server_name") or "",
+               "session_id": p.get("session_id") or session_id,
                "callId": call_id or p.get("callId") or "",
                "ok": ok,
-               "summary": _zh_tool_summary(name, p.get("args"), msg)}
+               "summary": _zh_tool_summary(name, p.get("args"), msg, ok)}
         # WS6：写作相关工具成功后追加领域事件（与既有事件同流下发，events-runner 无需改）
         if ok:
             _dom = _domain_event_from_tool(name, p.get("args"), msg)
@@ -914,6 +998,16 @@ def _map_dsh_event(evt: dict, pending: dict):
         _bd = _build_draft_status_event(name, p.get("args"), msg)
         if _bd:
             yield _bd
+    elif t in ("subagent/start", "subagent/end"):
+        # 子 Agent 生命周期（cordis 事件，非 session/event）：payload 形状
+        # {runId, provider, sessionId, local, [stopReason/lastAssistantText]}。
+        # 只作 UI 遥测——子代理的最终文本仍只经 delegate tool result 回主 Agent。
+        yield {"type": t.replace("/", "_"),
+               "runId": data.get("runId") or "",
+               "provider": data.get("provider") or "",
+               "session_id": str(data.get("sessionId") or ""),
+               "stop_reason": data.get("stopReason") or "",
+               "last_text": data.get("lastAssistantText") or ""}
     elif t == "llm/call":
         # 调试模式（NOVEL_AGENT_DEBUG=1 时 events-runner 才 emit）：一次 LLM 调用的
         # 提示词/MCP工具/返回JSON，前端渲染「LLM 调用」调试卡。不持久化 task_events。
@@ -1013,6 +1107,10 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
                 env["NOVEL_WRITE_FLOW_ID"] = flow_id
             if child_run_id:
                 env["NOVEL_WRITE_CHILD_RUN_ID"] = child_run_id
+            if _needs_review_gate(profile):
+                # 编排路径：Writer 写/改完的段必须被主 Agent 接受，才能写下一段或收章。
+                # legacy FSM 不注入这个变量——它没有 accept 环节，注入会当场锁死老路径。
+                env["NOVEL_REVIEW_GATE"] = "1"
             if book_id:
                 # 让 save_plot_draft 免去「全库扫令牌账本」：子进程只带回 commit_token，
                 # 归属书由服务端注入 → 只查一本书（O(1)），且提示不符时 fail-closed。
@@ -1092,6 +1190,11 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
                         sse.setdefault("flow_id", flow_id)
                     if child_run_id:
                         sse.setdefault("child_run_id", child_run_id)
+                        # Planner 子 run 的校验失败是给 Agent 自己看的（MCP error 已回模型）；
+                        # 标记 internal 让侧栏不把它渲染成用户可见的工具卡/错误气泡，
+                        # 后台 task_events 仍保留供诊断。
+                        if str(child_run_id).startswith("planner:"):
+                            sse.setdefault("internal", True)
                     # 持久化所有可渲染卡片（工具卡 + 调试模式 LLM 调用卡），供刷新后重建卡片流。
                     # error / build_draft_status 由 run_dsh_flow 统一补（那里能同时覆盖 FSM
                     # 自己产出的错误），此处不再重复写，避免刷新后重复渲染。
@@ -1181,7 +1284,7 @@ def _replan_policy(policy: str | None) -> str:
 
 def _replan_phase_task(book_id: str, reason: str, policy: str) -> str:
     if policy == "confirm":
-        mode = "本任务只生成并暂存续规划预览即结束；等待用户在界面确认后才提交，请勿自行提交。"
+        mode = "本任务只生成并暂存续规划预览即结束；等待兼容调用方确认后才提交，请勿自行提交。"
     else:
         mode = "本任务由系统自动触发，生成的预览会被系统自动原子提交并继续写作；请勿等待界面确认。"
     return (f"[系统自动触发续规划] 书 {book_id} 已临近已承诺故事边界"
@@ -1224,19 +1327,28 @@ def _replan_attempts(book_id: str, flow_id: str) -> int:
         return 0
 
 
-def _fresh_replan_preview(book_id: str, revision: int) -> dict:
-    """在途预览只有在 `expected_revision` 等于当前故事线版本时才可复用。
-
-    陈旧预览必须重新规划——否则提交时会被 CAS 拒绝，白跑一轮计划器还中断写作。
-    """
+def _fresh_replan_preview(book_id: str, revision: int, flow_id: str = "",
+                          child_run_id: str | None = None) -> dict:
+    """读取当前 Flow 可复用的有效预览；standalone/坏预览不能被自动写作捡起。"""
     from libraries.planning_state import load_replan_preview
     preview = load_replan_preview(book_id) or {}
-    if not preview:
+    if not preview or not (preview.get("validation") or {}).get("passed"):
         return {}
     expected = preview.get("expected_revision")
-    if isinstance(expected, bool) or not isinstance(expected, int):
+    if isinstance(expected, bool) or not isinstance(expected, int) or int(expected) != int(revision):
         return {}
-    return preview if int(expected) == int(revision) else {}
+    if flow_id and str(preview.get("owner_flow_id") or "") != str(flow_id):
+        return {}
+    if child_run_id and str(preview.get("owner_child_run_id") or "") != str(child_run_id):
+        return {}
+    try:
+        from libraries.replan_service import _preview_dynamic_problems
+        if _preview_dynamic_problems(book_id, preview):
+            return {}
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("replan preview dynamic validation failed book=%s: %s", book_id, exc)
+        return {}
+    return preview
 
 
 def _commit_pending_replan(book_id: str) -> dict:
@@ -1308,7 +1420,8 @@ def _fail_flow(book_id: str, flow_id: str, error: str, message: str):
     yield {"type": "done"}
 
 
-def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None):
+def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None,
+                explicit_book_id: str | None = None):
     """一个父 Flow 调度多个独立 Writer 子进程；模型从不决定下一状态。
 
     每轮先从磁盘草稿状态判定动作（含首轮，避免满章草稿 / 规划边界先空跑一个注定无法提交的
@@ -1377,9 +1490,10 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
             next_plot_break_after=str(getattr(nxt, "chapter_break_after", "allowed") or "allowed"))
         return status, next_action(status)
 
-    book_id = _book_in(task)
+    book_id = str(explicit_book_id or _book_in(task) or "").strip()
     flow_id = active_flow_id(book_id) if book_id else ""
     child_no = 0
+    replan_commit_failures = 0
     while True:
         status, action = _evaluate(book_id)
         # ── 收章：草稿已满但尚未落盘为章节（含中断恢复，不必先 spawn 写手）──
@@ -1419,7 +1533,9 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
             # 多次合法的续规划会被误判成死循环而中断写作。
             attempts = _replan_attempts(book_id, flow_id)
             # 在途预览（且版本仍新鲜）直接复用：不重复起计划器，不烧第二次 LLM 会话。
-            preview = _fresh_replan_preview(book_id, revision)
+            preview = _fresh_replan_preview(
+                book_id, revision, flow_id,
+                f"planner:{attempts}" if attempts > 0 else None)
             if not preview:
                 if attempts >= MAX_REPLAN_ATTEMPTS:
                     yield from _fail_flow(
@@ -1441,14 +1557,16 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
                         if evt.get("type") == "error": ok = False
                         if evt.get("type") != "done": yield evt
                 # 计划器可能改过故事线，按最新版本再判一次新鲜度。
-                preview = _fresh_replan_preview(book_id, _current_revision(book_id)) if ok else {}
+                preview = (_fresh_replan_preview(
+                    book_id, _current_revision(book_id), flow_id, f"planner:{attempts + 1}")
+                           if ok else {})
                 if not preview:
                     detail = "计划器执行出错" if not ok else "计划器未暂存可用预览（或预览版本已过期）"
                     yield {"type": "reply", "content":
                            f"{detail}，将重试续规划（第 {attempts + 1}/{MAX_REPLAN_ATTEMPTS} 轮）。"}
                     continue     # 回到顶部重试；连续超限由上面的 attempts 上限兜住
             if pol == "confirm":
-                # 只暂存预览即停，等用户在故事线面板确认（commit-plan 走同一 replan_service）。
+                # 兼容 confirm 调用方只暂存预览即停（commit-plan 走同一 replan_service）。
                 # 租约保留在 WAIT_CONFIRM 上（无进程在跑；下一次「继续写」会复用同一 Flow 并命中
                 # 在途预览分支，不会重复起计划器）。
                 try:
@@ -1459,22 +1577,37 @@ def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None
                     _log.warning("flow 置 WAIT_CONFIRM 失败 book=%s flow=%s: %s", book_id, flow_id, exc)
                 yield {"type": "reply", "content":
                        "本章尚未达到目标字数且已承诺 Plot 用尽；续规划预览已生成，"
-                       "请在故事线面板确认后再次「继续写」。"}
+                       "请由兼容调用方确认后再次触发写作。"}
                 yield {"type": "done"}
                 return
             # auto：经共享 service 原子提交（在途预览直接复用）。
-            result = _commit_pending_replan(book_id)
+            try:
+                result = _commit_pending_replan(book_id)
+            except Exception as exc:  # noqa: BLE001 —— 自动流程不能因锁/提交异常空转
+                result = {"commit_ok": False, "error": "commit_exception", "message": str(exc)}
             if not result.get("commit_ok"):
+                replan_commit_failures += 1
                 reason = result.get("error") or result.get("message") or "未知原因"
+                if replan_commit_failures >= MAX_REPLAN_ATTEMPTS:
+                    yield from _fail_flow(
+                        book_id, flow_id, "replan_commit_failed",
+                        "自动续规划未能完成，本轮写作已停止；已写内容已保留，"
+                        "请在写作台重新点「继续写正文」重试。")
+                    return
                 yield {"type": "reply", "content":
-                       f"续规划提交未成功（{reason}），将重试续规划"
-                       f"（第 {attempts + 1}/{MAX_REPLAN_ATTEMPTS} 轮）。"}
+                       f"自动续规划提交未成功，将重试"
+                       f"（第 {replan_commit_failures}/{MAX_REPLAN_ATTEMPTS} 次）。"}
+                _log.warning("replan commit failed book=%s flow=%s reason=%s",
+                             book_id, flow_id, reason)
                 continue
+            replan_commit_failures = 0
             try:
                 transition(book_id, flow_id, "PREPARING_PLOT",
                            replan_state={"reason": "", "attempts": 0})   # 出品成功 → 计数归零
             except Exception:
                 pass
+            yield {"type": "domain", "name": "plan_committed", "book_id": book_id,
+                   "flow_id": flow_id, "storyline_revision": _current_revision(book_id)}
             continue   # 故事线已前移 → 回顶部应出现可写 Plot
         if action == "FAILED":
             # plot_exhausted_without_replan / 不变量：没有可写 Plot 且未满足续规划条件
@@ -1918,16 +2051,72 @@ def _persist_flow_events(gen):
         yield evt
 
 
+def _orchestrator_profile_ready() -> bool:
+    profile = os.path.expanduser("~/.dsh/profiles/headless/cordis.patch.yml")
+    try:
+        text = open(profile, encoding="utf-8").read()
+        return "mcp-novelengine-orch" in text and "tool-subagent-writer" in text
+    except OSError:
+        return False
+
+
+def _orchestrator_enabled() -> bool:
+    """按显式开关或已部署的新 headless profile 启用主 Agent 编排。"""
+    raw = os.environ.get("NOVEL_DSH_ORCHESTRATOR")
+    if raw is not None:
+        return raw.strip().lower() not in {"", "0", "false", "off", "no"}
+    return _orchestrator_profile_ready()
+
+
+def _needs_review_gate(profile: str) -> bool:
+    """该 run 是否启用「未评审不得续写/收章」门禁。
+
+    只有承载评审环节的编排路径需要它。门禁变量由 root run 注入，随环境继承给它的
+    所有 MCP 子进程——包括 Writer 子代理：它自己写的时候不受管，但下一次
+    `prepare_plot_run` 会被拦（那正是主 Agent 忘了 accept 的检测点）。
+    """
+    return str(profile or "") == "orchestrate"
+
+
+def _book_id_from_task(task: str) -> str:
+    match = re.search(r"\b(book[_-][A-Za-z0-9_-]+)\b", task or "", re.I)
+    return match.group(1) if match else ""
+
+
 def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
-                 policy: str | None = None):
+                 policy: str | None = None, flow_mode: str | None = None,
+                 explicit_book_id: str | None = None):
     """带 NEED_REPLAN 自动交接的多阶段 dsh 流（R5）。
 
     写作 / 建书两类走各自的服务端 FSM（阶段与 profile 由服务端状态决定，不问模型）；
     其余阶段（replan/publish/scout/style/inspect）走下面的通用单任务 + NEED_REPLAN 链。
     单次普通任务 → 与 run_dsh_task 等价（多一层 done 归一）。检测到 [NEED_REPLAN]
-    交接则链式跑 replan（auto：提交后续写；confirm：停在预览等 UI 确认）。
+    交接则链式跑 replan（auto：提交后续写；confirm：停在预览交给兼容调用方确认）。
     子 run 的 done 一律吞掉，全程只发一个尾部 done。
     """
+    # 新路径：一个 root dsh Agent 持有编排权，Writer/Planner/Critic 由其委派。
+    # 默认仍关闭（NOVEL_DSH_ORCHESTRATOR=1 显式启用），便于在真实书上完成组合探针后切换。
+    if _orchestrator_enabled() and _profiles_enabled():
+        if not _orchestrator_profile_ready():
+            yield {"type": "error", "message":
+                   "主 Agent 编排已启用，但用户态 dsh profile 未同步；请先运行 "
+                   "python tools/sync_dsh_headless_profile.py --apply"}
+            yield {"type": "done"}
+            return
+        prof = _task_tool_profile(task)
+        if flow_mode == "chapter_to_completion" or prof in {
+                "write", "build", "build-candidates", "replan", "publish", "scout", "style"}:
+            for evt in run_dsh_task(
+                    task, history, debug=debug, book_id=explicit_book_id or _book_id_from_task(task),
+                    mcp_profile="orchestrate"):
+                yield evt
+            return
+
+    # 结构化写作入口优先于任务文本：即使 history/task 带有 novel-replan 标记，也必须进入章级 FSM。
+    if flow_mode == "chapter_to_completion":
+        yield from _persist_flow_events(_writer_fsm(
+            task, history, debug, "auto", explicit_book_id=explicit_book_id))
+        return
     if _profiles_enabled():
         prof = _task_tool_profile(task)
         if prof == "write":
@@ -1979,7 +2168,7 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
             continue  # auto 下吞 replan 的散文回复，用 orchestrator 自己的状态行替代
         yield evt
     if not replan_ok:
-        yield {"type": "error", "message": "自动续规划阶段出错，已停止。请稍后手动触发续规划。"}
+        yield {"type": "error", "message": "自动续规划阶段出错，已停止；本章草稿已保留，请稍后再次续写。"}
         yield {"type": "done"}
         return
 
@@ -1996,7 +2185,7 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
     except Exception as e:  # noqa: BLE001
         _log_local.warning("auto replan commit failed: %s", e)
     if not committed:
-        yield {"type": "error", "message": "自动续规划提交未成功：请检查 replan 预览后在界面手动确认。"}
+        yield {"type": "error", "message": "自动续规划提交未成功；本章草稿已保留，请稍后再次续写。"}
         yield {"type": "done"}
         return
 

@@ -3,16 +3,97 @@
 # 语法要点:dsh 的 patch 层只支持 id-targeted override;新增条目必须用 `insert`(不带 id)。
 # 运行:cd D:/NovelEngine && dsh --profile headless "任务"
 - insert:
-    - id: mcp-novelengine
+    # 每个角色使用独立 serverName；子代理通过精确 toolFilter 选择角色工具面。
+    - id: mcp-novelengine-orch
       name: '@deepseek-ai/dsh-mcp-client'
       config:
-        serverName: novelengine
+        serverName: novelengine-orch
         transport: stdio
         command: python
-        args: ['mcp_server.py']
+        args: ['mcp_server.py', '--source', 'dsh', '--profile', 'orchestrate']
         cwd: 'D:/NovelEngine'
-        # 长耗时工具(generate_full_outline 等)必须 > 10 分钟,否则被掐断
         toolCallTimeoutMs: 600000
+        failOnStartupError: true
+    - id: mcp-novelengine-write
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: novelengine-write
+        transport: stdio
+        command: python
+        args: ['mcp_server.py', '--source', 'dsh', '--profile', 'write']
+        cwd: 'D:/NovelEngine'
+        toolCallTimeoutMs: 600000
+        failOnStartupError: true
+    - id: mcp-novelengine-plan
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: novelengine-plan
+        transport: stdio
+        command: python
+        args: ['mcp_server.py', '--source', 'dsh', '--profile', 'replan']
+        cwd: 'D:/NovelEngine'
+        toolCallTimeoutMs: 600000
+        failOnStartupError: true
+    - id: mcp-novelengine-critic
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: novelengine-critic
+        transport: stdio
+        command: python
+        args: ['mcp_server.py', '--source', 'dsh', '--profile', 'critic']
+        cwd: 'D:/NovelEngine'
+        toolCallTimeoutMs: 600000
+        failOnStartupError: true
+    - id: mcp-novelengine-candidates
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: novelengine-candidates
+        transport: stdio
+        command: python
+        args: ['mcp_server.py', '--source', 'dsh', '--profile', 'build-candidates']
+        cwd: 'D:/NovelEngine'
+        toolCallTimeoutMs: 600000
+        failOnStartupError: true
+    - id: mcp-novelengine-build
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: novelengine-build
+        transport: stdio
+        command: python
+        args: ['mcp_server.py', '--source', 'dsh', '--profile', 'build']
+        cwd: 'D:/NovelEngine'
+        toolCallTimeoutMs: 600000
+        failOnStartupError: true
+    - id: mcp-novelengine-publish
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: novelengine-publish
+        transport: stdio
+        command: python
+        args: ['mcp_server.py', '--source', 'dsh', '--profile', 'publish']
+        cwd: 'D:/NovelEngine'
+        toolCallTimeoutMs: 600000
+        failOnStartupError: true
+    - id: mcp-novelengine-scout
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: novelengine-scout
+        transport: stdio
+        command: python
+        args: ['mcp_server.py', '--source', 'dsh', '--profile', 'scout']
+        cwd: 'D:/NovelEngine'
+        toolCallTimeoutMs: 600000
+        failOnStartupError: true
+    - id: mcp-novelengine-style
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: novelengine-style
+        transport: stdio
+        command: python
+        args: ['mcp_server.py', '--source', 'dsh', '--profile', 'style']
+        cwd: 'D:/NovelEngine'
+        toolCallTimeoutMs: 600000
+        failOnStartupError: true
 # workspace instructions:只注入小说写作指令(NOVEL_AGENT.md),不注入给 Claude Code 的工程 CLAUDE.md
 - id: agent-instructions
   config:
@@ -29,9 +110,9 @@
       You drive the NovelEngine novel-creation platform through its MCP tools (mcp__novelengine__*).
       Follow the workflow, routing, and guardrails in NOVEL_AGENT.md (your workspace instructions)
       — it is the single source of truth.
-# ── 禁用 dsh 系统工具（护栏：只留 MCP + 联网）──
-# 用户拍板完全禁用系统工具（dsh 只能经 MCP 驱动平台，不能直操文件/shell/子代理/任务）；
-# 保留联网（tool-web/web/web-search-deepseek）+ mcp__novelengine__*。语法：
+# ── 禁用 dsh 系统工具；只开放受限的具名子代理 ──
+# dsh 只能经 MCP 驱动平台，不能直操文件/shell；Writer/Planner/Critic 等子代理
+# 只通过精确 toolFilter 使用对应 serverName，通用 subagent/fork/后台任务仍禁用。语法：
 # patch 层 id-targeted override `disabled: true`（dsh-headless 自身以此禁 hmr）。
 # 文件
 - id: tool-fs
@@ -49,15 +130,157 @@
   disabled: true
 - id: pwsh-sandbox
   disabled: true
-# 子代理 / 工作流
-- id: subagent
-  disabled: true
-- id: subagent-spawn-in-process
-  disabled: true
+# 子代理：启用 spawn provider；通用 subagent 工具仍关闭，只开放具名角色委派。
 - id: subagent-fork-in-process
   disabled: true
 - id: tool-subagent
   disabled: true
+
+# Main Orchestrator 的具名子代理：前台 one-shot、独立 spawn、禁止二次委派。
+- insert:
+    - id: tool-subagent-writer
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: delegate_writer
+        enableRunInBackground: false
+        backgroundMode: one-shot
+        maxDepth: 1
+        persona: >-
+          You are the NovelEngine Plot Writer. Use only the writer MCP tools. Complete exactly one
+          Plot draft or requested revision, save it once, report the receipt, and stop. Never plan,
+          finalize a chapter, modify metadata, or delegate.
+        toolFilter:
+          allow:
+            - mcp__novelengine-write__prepare_plot_run
+            - mcp__novelengine-write__save_plot_draft
+            - mcp__novelengine-write__prepare_plot_revision
+            - mcp__novelengine-write__save_plot_revision
+- insert:
+    - id: tool-subagent-planner
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: delegate_planner
+        enableRunInBackground: false
+        backgroundMode: one-shot
+        maxDepth: 1
+        persona: >-
+          You are the NovelEngine Planner. Read current state, generate one bounded replan preview,
+          validate it, save the preview, and stop. Never write prose or commit the preview.
+        toolFilter:
+          allow:
+            - mcp__novelengine-plan__get_story_state
+            - mcp__novelengine-plan__validate_storyline
+            - mcp__novelengine-plan__validate_world
+            - mcp__novelengine-plan__query_arc_library
+            - mcp__novelengine-plan__query_plots
+            - mcp__novelengine-plan__drive_ui
+- insert:
+    - id: tool-subagent-critic
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: delegate_critic
+        enableRunInBackground: false
+        backgroundMode: one-shot
+        maxDepth: 1
+        persona: >-
+          You are the NovelEngine Critic. Read the supplied review context, identify concrete problems,
+          and return a concise verdict: accept, revise_text, patch_character, replan, or stop. Do not write.
+        toolFilter:
+          allow:
+            - mcp__novelengine-critic__get_plot_review_context
+- insert:
+    - id: tool-subagent-candidates
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: delegate_candidates
+        enableRunInBackground: false
+        backgroundMode: one-shot
+        maxDepth: 1
+        toolFilter:
+          allow:
+            - mcp__novelengine-candidates__navigate
+            - mcp__novelengine-candidates__drive_ui
+            - mcp__novelengine-candidates__get_build_status
+            - mcp__novelengine-candidates__query_profiles
+    - id: tool-subagent-builder
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: delegate_builder
+        enableRunInBackground: false
+        backgroundMode: one-shot
+        maxDepth: 1
+        toolFilter:
+          allow:
+            - mcp__novelengine-build__get_build_context
+            - mcp__novelengine-build__query_arc_library
+            - mcp__novelengine-build__query_plots
+            - mcp__novelengine-build__validate_build
+            - mcp__novelengine-build__save_build_draft
+    - id: tool-subagent-publisher
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: delegate_publisher
+        enableRunInBackground: false
+        backgroundMode: one-shot
+        maxDepth: 1
+        toolFilter:
+          allow:
+            - mcp__novelengine-publish__get_book_detail
+            - mcp__novelengine-publish__save_book_meta
+            - mcp__novelengine-publish__publish_check
+            - mcp__novelengine-publish__publish_book
+            - mcp__novelengine-publish__mark_finished
+            - mcp__novelengine-publish__export_book
+    - id: tool-subagent-scout
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: delegate_scout
+        enableRunInBackground: false
+        backgroundMode: one-shot
+        maxDepth: 1
+        toolFilter:
+          allow:
+            - mcp__novelengine-scout__drive_ui
+            - mcp__novelengine-scout__fetch_book
+            - mcp__novelengine-scout__fetch_novel
+            - mcp__novelengine-scout__fetch_webnovel
+            - mcp__novelengine-scout__discover_hot
+            - mcp__novelengine-scout__list_rankings
+            - mcp__novelengine-scout__list_crawled_novels
+            - mcp__novelengine-scout__read_crawled_novel
+            - mcp__novelengine-scout__extract_state
+            - mcp__novelengine-scout__judge_extraction
+            - mcp__novelengine-scout__ingest_library_assets
+            - mcp__novelengine-scout__query_plots
+            - mcp__novelengine-scout__query_arc_library
+            - mcp__novelengine-scout__query_gags
+            - mcp__novelengine-scout__query_characters
+    - id: tool-subagent-style
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: delegate_style
+        enableRunInBackground: false
+        backgroundMode: one-shot
+        maxDepth: 1
+        toolFilter:
+          allow:
+            - mcp__novelengine-style__query_profiles
+            - mcp__novelengine-style__get_pen_style
+            - mcp__novelengine-style__add_style_rule
+            - mcp__novelengine-style__delete_style_rule
+            - mcp__novelengine-style__add_style_sample
+            - mcp__novelengine-style__delete_style_sample
+            - mcp__novelengine-style__list_style_samples
+            - mcp__novelengine-style__get_style_sample
+
 - id: tool-subagent-control
   disabled: true
 - id: tool-subagent-list-agents

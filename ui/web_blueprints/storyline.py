@@ -9,11 +9,14 @@ from libraries.world_tags import genre_from_tags
 bp = Blueprint("storyline", __name__)
 
 
-def _planning_ui_payload(book_id):
-    """聚合故事合同与规划草稿；UI 只消费本结果，不在浏览器推断边界。"""
+def _planning_ui_payload(book_id, include_preview: bool = False):
+    """聚合故事合同与规划草稿；UI 只消费本结果，不在浏览器推断边界。
+
+    `include_preview=False`（默认，也是页面用的公开 GET）：只给正式规划事实。
+    preview 草稿的校验明细、owner、revision 属于 Agent/内部诊断面，不回浏览器。
+    """
     from libraries.storyline import load_storyline
-    from libraries.planning_state import (detect_story_boundary, load_planning_state,
-                                           load_replan_preview)
+    from libraries.planning_state import detect_story_boundary, load_planning_state
     tl = load_storyline(_storyline_filepath(book_id))
     book = book_mgr.get(book_id)
     if tl is None or book is None:
@@ -60,7 +63,7 @@ def _planning_ui_payload(book_id):
     state["written_until_word"] = written_now
     state["storyline_revision"] = int(getattr(tl, "storyline_revision", 0) or 0)
     state["display_horizon"] = display
-    return {
+    payload = {
         "ok": True, "book_id": book_id, "planning_state": state,
         "storyline_snapshot": {
             "revision": int(getattr(tl, "storyline_revision", 0) or 0),
@@ -71,8 +74,12 @@ def _planning_ui_payload(book_id):
                         for t in (tl.threads or [])],
             "promise_count": len(tl.promises or []),
         },
-        "boundary": boundary, "replan_preview": load_replan_preview(book_id),
+        "boundary": boundary,
     }
+    if include_preview:
+        from libraries.planning_state import load_replan_preview
+        payload["replan_preview"] = load_replan_preview(book_id)
+    return payload
 
 
 @bp.route("/api/storyline/<book_id>/planning-state", methods=["GET"])

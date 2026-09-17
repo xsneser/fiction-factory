@@ -46,6 +46,30 @@
   var _baseScrollH = 720;   // scrollable 模式下未缩放的基准内容高度
   var _panels = [];         // 需随缩放改高度的面板（轴/内容区）
   var _scrollableMode = false;
+  var _highlightTarget = null;
+  var _SCROLL_EPSILON = 12;
+
+  function captureScrollState(mount) {
+    var main = mount && mount.querySelector ? mount.querySelector('.sl-main') : null;
+    if (!main) return null;
+    var max = Math.max(0, main.scrollHeight - main.clientHeight);
+    return {
+      scrollTop: main.scrollTop,
+      bottomGap: Math.max(0, max - main.scrollTop),
+      atBottom: max > 0 && (max - main.scrollTop) <= _SCROLL_EPSILON,
+      highlightTarget: _highlightTarget ? {
+        outline_id: _highlightTarget.outline_id || '',
+        plot_id: _highlightTarget.plot_id || ''
+      } : null
+    };
+  }
+  function restoreScrollState(main, state) {
+    if (!main || !state) return;
+    var max = Math.max(0, main.scrollHeight - main.clientHeight);
+    main.scrollTop = state.atBottom
+      ? max
+      : Math.min(Math.max(0, state.scrollTop), max);
+  }
 
   function zoomHeight() {
     return Math.max(300, Math.min(8000, Math.round((_baseScrollH || 720) * _zoom)));
@@ -753,25 +777,47 @@
   }
 
   /* ─── 渲染：进度光标（字数轴：currentWord=累计已写字数；兼容 currentChapter×WPC） ─── */
-  /* 远期（预测）卡片：斜纹底 + 虚线边，明确区别于"已承诺"的实体条。
-     它**不在字数轴上**，所以是列表式排布，不做横向定位（跨轴连线会坐标不可比）。 */
-  function renderForecast(body, forecast, tooltip, onShow, onMove, onHide) {
+  /* H1/H2 是没有字数坐标的可变方向：放在 Gantt 底部整条带中，分行展示，不伪装成 plot。 */
+  function forecastRows(planning) {
+    planning = planning || {};
+    var rawH1 = planning.horizon && planning.horizon.h1;
+    var rawH2 = planning.future_intents;
+    var h1 = Array.isArray(rawH1) ? rawH1 : (rawH1 ? [rawH1] : []);
+    var h2 = Array.isArray(rawH2) ? rawH2 : (rawH2 ? [rawH2] : []);
+    return {h1: h1, h2: h2};
+  }
+  function forecastTitle(row, layer) {
+    row = row || {};
+    return layer === 'H1'
+      ? (row.title || row.arc_intent || intentText(row))
+      : (row.title || row.intent || intentText(row));
+  }
+  function renderForecastRow(body, rows, layer, emptyText) {
     if (!body) return;
-    if (!forecast || !forecast.length) { body.innerHTML = ''; return; }
+    if (!rows || !rows.length) {
+      body.innerHTML = '<div class="sl-forecast-empty">' + escHtml(emptyText) + '</div>';
+      return;
+    }
     var html = '';
-    for (var i = 0; i < forecast.length; i++) {
-      var f = forecast[i] || {};
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i] || {};
       var fh = '';
-      var list = f.foreshadow || [];
+      var list = Array.isArray(row.foreshadow) ? row.foreshadow : [];
       for (var j = 0; j < list.length; j++) {
-        var z = list[j] || {};
-        fh += '<div class="sl-forecast-fh">⟢ ' + escHtml(z.desc || z.id || '') + '</div>';
+        fh += '<div class="sl-forecast-fh">⟢ ' + escHtml(intentText(list[j])) + '</div>';
       }
       html += '<div class="sl-forecast-card">'
-        + '<span class="sl-forecast-layer">' + escHtml(f.layer) + '</span> '
-        + escHtml(f.title || '') + fh + '</div>';
+        + '<span class="sl-forecast-layer">' + escHtml(layer) + '</span> '
+        + escHtml(forecastTitle(row, layer)) + fh + '</div>';
     }
     body.innerHTML = html;
+  }
+  function renderForecast(strip, h1Body, h2Body, planning) {
+    if (!strip) return;
+    var rows = forecastRows(planning);
+    strip.style.display = '';
+    renderForecastRow(h1Body, rows.h1, 'H1', '尚未形成近期方向');
+    renderForecastRow(h2Body, rows.h2, 'H2', '远期保持开放');
   }
 
   function renderCursor(contentArea, currentWord, currentChapter) {
@@ -789,8 +835,9 @@
   }
 
   function renderBoundary(contentArea, planning, boundary) {
+    if (!contentArea || !plots.length || COMMITTED_UNTIL_WORD <= 0) return;
     var committed = COMMITTED_UNTIL_WORD || parseInt((planning || {}).committed_until_word || TOTAL_WORDS, 10) || TOTAL_WORDS;
-    var y = wordToPercent(Math.min(Math.max(0, committed), TOTAL_WORDS));
+    committed = Math.min(Math.max(0, committed), TOTAL_WORDS);
     var line = document.createElement('div');
     line.className = 'sl-boundary'; line.style.top = wordToLaneY(contentArea, committed);
     line.title = '已承诺至约 ' + fmtW(committed) + ' · 剩余 ' + ((boundary || {}).remaining_plots || 0) + ' plots';
@@ -815,16 +862,40 @@
     return { show: show, move: move, hide: hide };
   }
 
+  function applyHighlight(mount, target) {
+    if (!mount) return null;
+    var prev = mount.querySelectorAll('.sl-bar.sl-highlight');
+    for (var i = 0; i < prev.length; i++) prev[i].classList.remove('sl-highlight');
+    if (!target || (!target.outline_id && !target.plot_id)) return null;
+    var sel = [];
+    if (target.outline_id) sel.push('.sl-bar-outline[data-oid="' + _escAttr(target.outline_id) + '"]');
+    if (target.plot_id) {
+      sel.push('.sl-bar-plot[data-pid="' + _escAttr(target.plot_id) + '"]');
+      var pbar = mount.querySelector('.sl-bar-plot[data-pid="' + _escAttr(target.plot_id) + '"]');
+      if (pbar && pbar.dataset.oid) sel.push('.sl-bar-outline[data-oid="' + _escAttr(pbar.dataset.oid) + '"]');
+      var tid = _plotThreadOf(target.plot_id);
+      if (tid) sel.push('.sl-bar-thread[data-tid="' + _escAttr(tid) + '"]');
+    }
+    if (!sel.length) return null;
+    var els = mount.querySelectorAll(sel.join(','));
+    var anchor = null;
+    for (var j = 0; j < els.length; j++) {
+      els[j].classList.add('sl-highlight');
+      if (!anchor) anchor = els[j];
+    }
+    return anchor;
+  }
+
   /* ─── 对外入口 ─── */
   window.StoryLine = {
     init: function (mountId, bt, opts) {
       var mount = document.getElementById(mountId);
       if (!mount) return;
+      var previousScroll = captureScrollState(mount);
       opts = opts || {};
       adapt(bt, opts);
-      // 可选：按章节数拉长内容（仍是百分比渲染 → 每个百分比映射更多像素 → 条间距更大、可上下滚动）。
-      // 内容条用 min-height（非 height）：内容短于容器 → flex stretch 填满容器、无滚动条（空故事线=干净固定容器）；
-      // 内容长于容器 → 内部 .sl-main 滚动，画布随内容增长（无限长）。仅 scrollable 调用方生效。
+      // 可选：按章节数拉长正式区（仍是百分比渲染 → 每个百分比映射更多像素 → 条间距更大、可上下滚动）。
+      // 正式区与 H1/H2 方向区共享 .sl-main；方向区不进入字数坐标，只作为正式区之后的自然流内容。
       var scrollH = 0;
       if (opts.scrollable) {
         var totalCh = Math.max(1, Math.round(TOTAL_WORDS / Math.max(WPC, 1)));   // 预计章数（字数轴）
@@ -854,15 +925,17 @@
         '<div class="sl-header-right">' + zoomHtml +
         '<div class="sl-meta">已承诺 <span class="sl-meta-committed">' + fmtW(COMMITTED_UNTIL_WORD || TOTAL_WORDS) + '</span> · 每章约 <span>' + WPC + '</span> 字 · 弧 <span>' + outlines.length + '</span> · 情节段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
         '<div class="sl-main">' +
+        '<div class="sl-formal-row">' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
         '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
         '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">📋 弧</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
         '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">🔗 情节段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
         '<div class="sl-lane" style="flex:2"><div class="sl-lane-header">🧵 线程</div><div class="sl-lane-body" id="' + mountId + '-tb"></div></div>' +
-        /* 远期（预测）通道：条带式而不是拉长字轴——forecast 不在已承诺字数轴上，
-           硬塞进同一根轴要改 TOTAL_WORDS / 弧跨度归一 / 刻度算法，风险远大于收益，
-           而且那是"制造不存在的 plot"。这里只画 intent。 */
-        '<div class="sl-lane sl-lane-forecast" style="flex:2" id="' + mountId + '-fl"><div class="sl-lane-header">🔮 远期（预测）</div><div class="sl-lane-body" id="' + mountId + '-fb"></div></div>' +
+        '</div></div>' +
+        /* H1/H2 没有字数坐标，但属于同一纵向滚动画布，紧随正式故事线之后。 */
+        '<div class="sl-forecast-strip" id="' + mountId + '-fs">' +
+        '<div class="sl-forecast-row sl-forecast-h1"><div class="sl-forecast-row-title">🧭 近期方向 H1</div><div class="sl-forecast-cards" id="' + mountId + '-h1b"></div></div>' +
+        '<div class="sl-forecast-row sl-forecast-h2"><div class="sl-forecast-row-title">🔭 远期方向 H2</div><div class="sl-forecast-cards" id="' + mountId + '-h2b"></div></div>' +
         '</div></div>' +
         '<div class="sl-legend">' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#f97583"></span> 弧</div>' +
@@ -886,25 +959,10 @@
       var outlineBody = document.getElementById(mountId + '-ob');
       var plotBody = document.getElementById(mountId + '-pb');
       var threadBody = document.getElementById(mountId + '-tb');
-      var forecastLane = document.getElementById(mountId + '-fl');
-      var forecastBody = document.getElementById(mountId + '-fb');
+      var forecastStrip = document.getElementById(mountId + '-fs');
+      var forecastH1Body = document.getElementById(mountId + '-h1b');
+      var forecastH2Body = document.getElementById(mountId + '-h2b');
       var contentArea = document.getElementById(mountId + '-ct');
-      // 远期数据来自规划状态（H1 = horizon.h1；H2 = future_intents，唯一真源）
-      var planning = opts.planning || {};
-      var forecast = [];
-      var h1Rows = (planning.horizon && planning.horizon.h1) || [];
-      for (var f1 = 0; f1 < h1Rows.length; f1++) {
-        var r1 = h1Rows[f1] || {};
-        forecast.push({layer: 'H1', title: r1.title || r1.arc_intent || '',
-                       desc: r1.arc_intent || '', foreshadow: r1.foreshadow || []});
-      }
-      var fi = planning.future_intents || [];
-      for (var f2 = 0; f2 < fi.length; f2++) {
-        var r2 = fi[f2] || {};
-        forecast.push({layer: 'H2', title: r2.title || r2.intent || '',
-                       desc: r2.intent || '', foreshadow: r2.foreshadow || []});
-      }
-      if (forecastLane) forecastLane.style.display = forecast.length ? '' : 'none';
 
       // 纵向缩放控件：记录需改高度的面板 + 绑定 + / − / 1x 按钮
       _scrollableMode = !!opts.scrollable;
@@ -920,32 +978,41 @@
       }
 
       function renderAll() {
+        var scrollState = captureScrollState(mount);
         renderAxis(axisPanel);
         renderOutlines(outlineBody, tooltip, tt.show, tt.move, tt.hide);
         renderPlots(plotBody, tooltip, tt.show, tt.move, tt.hide);
         renderThreads(threadBody, tooltip, tt.show, tt.move, tt.hide);
-        renderForecast(forecastBody, forecast, tooltip, tt.show, tt.move, tt.hide);
+        renderForecast(forecastStrip, forecastH1Body, forecastH2Body, opts.planning || {});
         var existing = contentArea.querySelector('.sl-cursor');
         if (existing) existing.remove();
         var oldBoundary = contentArea.querySelector('.sl-boundary');
         if (oldBoundary) oldBoundary.remove();
         renderCursor(contentArea, opts.currentWord, opts.currentChapter);
         renderBoundary(contentArea, opts.planning || {}, opts.boundary || {});
+        applyHighlight(mount, _highlightTarget);
+        restoreScrollState(mount.querySelector('.sl-main'), scrollState);
       }
       _lastRender = renderAll;
       _lastMountId = mountId;
-      _progressState = {mount: mount, contentArea: contentArea, options: opts};
+      _progressState = {mount: mount, main: mount.querySelector('.sl-main'), contentArea: contentArea, options: opts,
+                        forecastStrip: forecastStrip, forecastH1Body: forecastH1Body, forecastH2Body: forecastH2Body};
       renderAll();
+      restoreScrollState(_progressState.main, previousScroll);
     },
 
-    /* 只移动进度线/承诺线，不重建 Gantt，因而保留缩放、滚动与高亮。 */
+    /* 增量刷新进度线、承诺线与底部预测条带，不重建正式区，因而保留缩放、滚动与高亮。 */
     updateProgress: function (state) {
       if (!_progressState || !_progressState.contentArea) return;
       state = state || {};
       var ps = _progressState;
       var opts = ps.options;
+      var scrollState = captureScrollState(ps.mount);
       if (state.currentWord !== undefined) opts.currentWord = state.currentWord;
-      if (state.planning) opts.planning = state.planning;
+      if (state.planning) {
+        opts.planning = state.planning;
+        renderForecast(ps.forecastStrip, ps.forecastH1Body, ps.forecastH2Body, opts.planning);
+      }
       if (state.boundary) opts.boundary = state.boundary;
       var cursor = ps.contentArea.querySelector('.sl-cursor');
       if (cursor) cursor.remove();
@@ -955,36 +1022,23 @@
       renderBoundary(ps.contentArea, opts.planning || {}, opts.boundary || {});
       var committed = ps.mount.querySelector('.sl-meta-committed');
       if (committed) committed.textContent = fmtW(COMMITTED_UNTIL_WORD || TOTAL_WORDS);
+      restoreScrollState(ps.main, scrollState);
     },
 
-    /* 高亮：按 outline_id / plot_id 给故事线里对应的弧/情节段条加高亮并滚动到可见位置。
+    /* 高亮：按 outline_id / plot_id 给正式故事线里对应的弧/情节段条加高亮并滚动到可见位置。
        写作流页面在 plot_start / plot_done 时调用。plot_id 时联动同弧 + 同线程 band。 */
     highlight: function (target) {
       var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
       if (!mount) return;
+      _highlightTarget = target && (target.outline_id || target.plot_id) ? {
+        outline_id: target.outline_id || '', plot_id: target.plot_id || ''
+      } : null;
       var main = mount.querySelector('.sl-main');
-      var prev = mount.querySelectorAll('.sl-bar.sl-highlight');
-      for (var i = 0; i < prev.length; i++) prev[i].classList.remove('sl-highlight');
-      var sel = [];
-      // 用类限定：弧条只匹配 sl-bar-outline；情节段条只匹配 sl-bar-plot（避免 data-oid 把整个弧的情节段全点亮）
-      if (target && target.outline_id) sel.push('.sl-bar-outline[data-oid="' + target.outline_id + '"]');
-      if (target && target.plot_id) {
-        sel.push('.sl-bar-plot[data-pid="' + target.plot_id + '"]');
-        // 反向高亮联动：命中 plot 时同弧 + 同线程 band 一并高亮（正文段 → Gantt 定位）
-        var pbar = mount.querySelector('.sl-bar-plot[data-pid="' + _escAttr(target.plot_id) + '"]');
-        if (pbar && pbar.dataset.oid) sel.push('.sl-bar-outline[data-oid="' + _escAttr(pbar.dataset.oid) + '"]');
-        var tid = _plotThreadOf(target.plot_id);
-        if (tid) sel.push('.sl-bar-thread[data-tid="' + _escAttr(tid) + '"]');
-      }
-      if (!sel.length) return;
-      var els = mount.querySelectorAll(sel.join(','));
-      var anchor = null;
-      for (var j = 0; j < els.length; j++) {
-        els[j].classList.add('sl-highlight');
-        if (!anchor) anchor = els[j];
-      }
+      var anchor = applyHighlight(mount, target);
       if (anchor && main) {
-        main.scrollTop = Math.max(0, anchor.offsetTop - main.clientHeight * 0.3);
+        var mainRect = main.getBoundingClientRect();
+        var anchorRect = anchor.getBoundingClientRect();
+        main.scrollTop = Math.max(0, main.scrollTop + anchorRect.top - mainRect.top - main.clientHeight * 0.3);
       }
     },
 
@@ -1001,7 +1055,22 @@
       if (!anchor && target && target.outline_id) {
         anchor = mount.querySelector('.sl-bar-outline[data-oid="' + target.outline_id + '"]');
       }
-      if (anchor && main) main.scrollTop = Math.max(0, anchor.offsetTop - main.clientHeight * 0.3);
+      if (anchor && main) {
+        var mainRect = main.getBoundingClientRect();
+        var anchorRect = anchor.getBoundingClientRect();
+        main.scrollTop = Math.max(0, main.scrollTop + anchorRect.top - mainRect.top - main.clientHeight * 0.3);
+      }
+    },
+
+    /* 滚到同一故事线画布的底部方向区，不创建第二个滚动容器。 */
+    scrollToDirections: function () {
+      var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
+      var main = mount && mount.querySelector('.sl-main');
+      var strip = mount && mount.querySelector('.sl-forecast-strip');
+      if (!main || !strip) return;
+      var mainRect = main.getBoundingClientRect();
+      var stripRect = strip.getBoundingClientRect();
+      main.scrollTop = Math.max(0, main.scrollTop + stripRect.bottom - mainRect.bottom);
     },
 
     /* 纵向缩放：调整内容高度（放大=条间距更大可细看，缩小=更紧凑看全貌）。

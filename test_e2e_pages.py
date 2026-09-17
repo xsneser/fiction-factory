@@ -242,8 +242,9 @@ def run_tests():
                           "window.StoryLine.init('detail-storyline'" in r.text
                           and "/static/js/story_line.js" in r.text,
                           "storyline Gantt not wired in detail")
-                    check(f"Detail planning panel ({bid})", 'id="planning-state-panel"' in r.text,
-                          "incremental planning panel missing")
+                    check(f"Detail planning panel ({bid})", 'id="planning-state-panel"' in r.text
+                          and 'data-compact="0"' in r.text,
+                          "full planning panel missing from detail")
                     ps = get(f"/api/storyline/{bid}/planning-state")
                     check(f"Planning state API ({bid})", ps.status_code == 200
                           and isinstance(ps.json().get("boundary"), dict), f"got {ps.status_code}")
@@ -261,9 +262,20 @@ def run_tests():
                 check(f"Write flow title in page",
                       "✍️ 写作台" in r.text or bid in r.text,
                       f"write flow marker not found for {bid}")
-                check(f"Write flow boundary/replan UI ({bid})",
-                      'id="boundary-banner"' in r.text and 'id="replan-drawer"' in r.text,
-                      "boundary banner or replan drawer missing")
+                check(f"Write flow planning is compact ({bid})",
+                      'id="planning-state-panel"' in r.text
+                      and 'data-compact="1"' in r.text
+                      and '/static/js/planning_ui.js?v=10' in r.text,
+                      "write flow should use the reduced planning prompt bar")
+                check(f"Write flow autonomous chapter UI ({bid})",
+                      'id="planning-state-panel"' in r.text
+                      and 'id="wf-continue-card"' in r.text
+                      and 'id="wf-stop-btn"' in r.text
+                      and 'flowMode' in r.text
+                      and 'id="replan-drawer"' not in r.text
+                      and 'id="replan-backdrop"' not in r.text
+                      and 'id="boundary-banner"' not in r.text,
+                      "autonomous chapter-writing UI or drawer removal missing")
 
             # /world 已并入详情页：始终 302 到书详情（旧入口/书签兼容；confirm 会 mutate，交给 tools/smoke_world_card.py）
             r = s.get(urljoin(BASE, f"/books/{bid}/world"), timeout=15, allow_redirects=False)
@@ -314,10 +326,31 @@ def run_tests():
                               ("/static/js/story_line.js", "story_line.js loaded"),
                               ("/static/js/planning_ui.js", "planning_ui.js loaded")]:
             check(f"Write flow {label}", marker in tl_editor.text, f"'{marker}' missing")
-        check("Write flow Chinese current-plot title", "🎯 当前情节" in tl_editor.text,
-              "current plot panel is not localized")
-        check("Write flow Chinese outcome title", "上一情节造成的变化" in tl_editor.text,
-              "outcome panel is not localized")
+        # 全宽三列对照区：断言真实 DOM 挂载点存在（只匹配 JS 字面量会假阳性）
+        check("Write flow compare panel mounted",
+              all(x in tl_editor.text for x in ('id="wf-compare"', 'id="wf-cmp-prev"',
+                                                'id="wf-cmp-axis"', 'id="wf-cmp-next"',
+                                                'id="wf-cmp-grid"'))
+              and "上一情节段" in tl_editor.text and "对照字段" in tl_editor.text
+              and "当前情节段" in tl_editor.text
+              and "上一段" in tl_editor.text and "本段" in tl_editor.text
+              and "写作重点" in tl_editor.text and "完整状态审计" in tl_editor.text,
+              "compare mount or semantic headers missing")
+        check("Write flow compare is full-width above the two columns",
+              tl_editor.text.index('id="wf-compare"') < tl_editor.text.index('class="editor-split"'),
+              "compare must sit above .editor-split (full-width, not nested in a column)")
+        check("Write flow comparison rows are collapsible",
+              'class="wfc-group"' in tl_editor.text and 'data-detail-key' in tl_editor.text
+              and 'class="wfc-label-cell"' in tl_editor.text,
+              "collapsible comparison row/table markers missing")
+        check("Write flow old stacked panels removed",
+              all(x not in tl_editor.text for x in ('id="wf-plot-run"', 'id="wf-plot-outcome"',
+                                                    'id="wpr-body"', 'id="wf-left-panels"')),
+              "old stacked panels should be gone")
+        check("Write flow stale status strip removed",
+              "wf-context-strip" not in tl_editor.text and "wf-past-meta" not in tl_editor.text
+              and "wf-current-meta" not in tl_editor.text and "wf-dir-btn" not in tl_editor.text,
+              "stale status strip should be gone (panels carry the context)")
 
     story_js = get("/static/js/story_line.js")
     if story_js.status_code == 200:

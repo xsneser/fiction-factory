@@ -105,11 +105,51 @@ def validate_patch(patch: dict | None) -> dict:
     for key in ("current", "horizon", "horizon_policy", "tension", "last_replan"):
         if key in out and not isinstance(out[key], dict):
             raise ValueError(f"planning_patch.{key} 必须是 object")
+    if isinstance(out.get("horizon"), dict):
+        if "h2" in out["horizon"]:
+            raise ValueError("planning_patch 禁止使用 horizon.h2，远期方向必须写入 future_intents")
+        if "h1" in out["horizon"] and not isinstance(out["horizon"]["h1"], list):
+            raise ValueError("planning_patch.horizon.h1 必须是 list")
     for key in ("target_word_budget", "written_until_word", "committed_until_word", "storyline_revision"):
         if key in out:
             if isinstance(out[key], bool) or not isinstance(out[key], int) or out[key] < 0:
                 raise ValueError(f"planning_patch.{key} 必须是非负整数")
     return out
+
+
+def validate_replan_patch(patch: dict | None) -> dict:
+    """严格校验续规划预览的 planning_patch。
+
+    通用章节 patch 可以只更新问题或人物意图；续规划预览则必须同时携带结构化 H1/H2，
+    否则 preview 看似成功、正式提交后才会静默丢失方向。
+    """
+    if not isinstance(patch, dict):
+        raise ValueError("续规划 planning_patch 必须是 object（含 horizon 与 future_intents）")
+    if "horizon" not in patch or not isinstance(patch.get("horizon"), dict):
+        raise ValueError("续规划 planning_patch 必须包含 horizon object，"
+                         '形如 {"h1": [{"title": "近期方向", "arc_intent": "承接当前压力继续推进"}]}')
+    if "h2" in patch["horizon"]:
+        raise ValueError("续规划禁止使用 horizon.h2，远期方向必须写入 future_intents")
+    h1 = patch["horizon"].get("h1")
+    if not isinstance(h1, list) or not h1:
+        raise ValueError("续规划 planning_patch.horizon.h1 必须是非空 list（不能是字符串或单个对象），"
+                         '每项形如 {"title": "…", "arc_intent": "…"}')
+    for i, item in enumerate(h1):
+        if not isinstance(item, dict):
+            raise ValueError(f"续规划 horizon.h1[{i}] 必须是 object，实际收到 {type(item).__name__}；"
+                             '每项形如 {"title": "…", "arc_intent": "…"}')
+        if not any(str(item.get(k) or "").strip() for k in ("title", "arc_intent", "intent")):
+            raise ValueError(f"续规划 horizon.h1[{i}] 缺 title/arc_intent/intent——三者至少给一个非空字符串")
+    h2 = patch.get("future_intents")
+    if not isinstance(h2, list) or not h2:
+        raise ValueError("续规划 planning_patch.future_intents 必须是非空 list，"
+                         '每项形如 {"title": "…", "intent": "…"}')
+    for i, item in enumerate(h2):
+        if not isinstance(item, dict):
+            raise ValueError(f"续规划 future_intents[{i}] 必须是 object，实际收到 {type(item).__name__}")
+        if not any(str(item.get(k) or "").strip() for k in ("title", "intent")):
+            raise ValueError(f"续规划 future_intents[{i}] 缺 title/intent——至少给一个非空字符串")
+    return validate_patch(patch)
 
 
 def merge_state(base: dict, patch: dict | None) -> dict:

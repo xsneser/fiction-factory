@@ -20,6 +20,7 @@ SKILL_PROFILE_MAP = {
     "novel-replan": "replan",
     "novel-publish": "publish",
     "novel-scout": "scout",
+    "novel-orchestrator": "orchestrate",
 }
 
 

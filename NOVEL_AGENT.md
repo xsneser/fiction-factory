@@ -144,7 +144,7 @@
 
 ### 落盘工具
 - `save_outlines`：保存 outlines/plots/threads/themes → 落盘。含 plots 且书未 ready → phase=plots（config 补弧后待用户在书详情确认）；**已 ready 书追加弧保持 ready**（续写/扩写不降级；深化已并入建书步3，正常新书由 submit 直接 phase=ready，不经 save_outlines）。**ready 只由用户动作触发**——正常建书=用户在向导点提交（agent 不调 submit）；config 补弧落 plots 后须用户在书详情页「确认弧+情节段」（/api/book/&lt;id&gt;/confirm-storyline）——agent 无 fill_gags/confirm_outlines 等翻 ready 工具，**不得臆造翻转**。弧的字数跨度、情节段叶弧规则见 1.2 故事线数据规则；**每条弧 `notes` 存「本弧目标 + 偏离库模板的点」**（落库可复核，供蓝图/用户过目）。结构门槛与 set_outline 相同（见 1.2）：每条弧/情节段缺 id/name/完整跨度/叶弧归属，工具 raise 拒收；append/续写可只传 plots 挂到已落盘弧（outlines 留空）。
-- `save_plot_draft`：**write profile 的一次性 Plot 提交**（Writer 唯二工具之一）。只接受
+- `save_plot_draft`：**write profile 的一次性 Plot 提交**（Writer 初稿工具）。只接受
   `prepare_plot_run` 签发的 `commit_token` + 语义输出 `(commit_token, text, plot_summary, outcome,
   character_events, chapter_title?)`——token 已在服务端绑定 Plot / flow / storyline_revision / context_fingerprint /
   sample_receipt 与该 Plot 的写前预测（expected_facts 来自 Plot 配置，不再由 Writer 传）。
@@ -154,6 +154,7 @@
   - `outcome={choices_made[], information_revealed[], relationship_changes[], resource_changes[], promise_updates[], new_story_questions[]}`——本段**结构化结果**；平台**不从正文推断语义**（禁止指望从正文猜 facts），你没上报就没有 facts → reconcile 永远空。
   - `character_events=[{name, events:[{type,from?,to?,reason?}]}]`——本段剧情造成的人物变化，随草稿落账、章满并入角色状态机；type ∈ goal_shift|power_shift|location_shift|arc_stage|trust_change|relationship|note，**不报 mood/secret/conflict（推断字段禁直写）**。
   - `plot_summary` 50~120 字，仅供展示/检索/章节摘要，非事实源。
+- `prepare_plot_revision` → `save_plot_revision`：主 Agent 评审要求改稿时使用独立一次性 revision token；只允许当前章最后一个未收章 Plot，不能重放旧 `commit_token`，改稿后必须重新跑 Plot gate/评审。
 - `save_chapter_text` / `chapter_quality_gate` / `finalize_draft_chapter`：**整章提交与门禁不在 write profile
   暴露**——由服务端 FSM（`_writer_fsm` → `finalize_draft_chapter`）在草稿字数达标时原子拼章落盘
   （规则去 AI 味/审查/角色状态含 character_events 落账/承诺台账/清草稿）并跑质量门禁，返回 reconcile 与
@@ -203,7 +204,7 @@
   **批准规划也仍是 planned**——只有写进正文才是故事事实。身份主键是 `promise.id`，
   `setup_plot_id` 只是索引（一段可埋多条）；兑现端用 `resolves_promise_ids` /
   `foreshadow[{kind:"payoff", promise_id}]` **精确兑现**，`resolves_plot_id` 是 plot 级 legacy。
-- **规划边界自动交接（服务端 FSM 负责）**：Writer 每段 `prepare_plot_run` 的 `horizon.boundary` 仅告知；是否收章/续规划由服务端 `_writer_fsm` 判定——章满→`finalize_draft_chapter` 收章，无剩余可写 Plot 且到边界→按 `REPLAN_POLICY`（auto=原子提交后续写 / confirm=停在预览等界面确认）自动 spawn replan。**write 轮内不要调 replan 工具 / save_outlines 扩弧，也不要自行收章**；一次性 Writer 只写当前 Plot、保存后即停。replan 轮内不写正文。
+- **规划边界自动交接（服务端 FSM 负责）**：Writer 每段 `prepare_plot_run` 的 `horizon.boundary` 仅告知；是否收章/续规划由服务端 `_writer_fsm` 判定——章满→`finalize_draft_chapter` 收章，无剩余可写 Plot 且到边界→按 `REPLAN_POLICY`（auto=原子提交后续写 / confirm=停在预览交给兼容调用方确认）自动 spawn replan。**write 轮内不要调 replan 工具 / save_outlines 扩弧，也不要自行收章**；一次性 Writer 只写当前 Plot、保存后即停。replan 轮内不写正文。写作台“继续写正文”入口使用章级 `chapter_to_completion` 模式并固定 auto，父 Flow 直到 `chapter_changed` 才算一章完成；Writer 子 run 的停止不等于用户写作任务结束。
 - **章末规划增量**：一章产生的新读者问题 / 人物意图变化，由写 run 的 structured `outcome`（如 new_story_questions）经服务端 Plot/章提交时语义合并进 planning_state——`story_questions` 用稳定 id 且状态 ∈ open/progressed/answered/superseded（同题 update 去重、终态不复开），`character_intents` 按人物 upsert；不靠 Writer 回传 planning_patch。
 - **「删书」无 skill**——`navigate('/books')` 让用户手动点删除（直删工具不在工具面）。
 - 拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」，不跨阶段硬做。

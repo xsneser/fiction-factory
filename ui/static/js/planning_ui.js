@@ -16,6 +16,19 @@
       return x && typeof x === 'object' && String(x.intent || '').trim();
     });
   }
+  function openStoryQuestions(items) {
+    var terminal = {answered: true, superseded: true, resolved: true, closed: true};
+    return (Array.isArray(items) ? items : []).filter(function (x) {
+      if (!x || (typeof x !== 'string' && typeof x !== 'object')) return false;
+      var status = typeof x === 'object' ? String(x.status || '').toLowerCase() : '';
+      var text = typeof x === 'string' ? x : (x.question || x.title || x.text || x.summary || '');
+      return !terminal[status] && String(text).trim();
+    });
+  }
+  function compareHasCurrentPlot() {
+    var compare = document.getElementById('wf-compare');
+    return !!(compare && !compare.hidden && window.__NE_COMPARE_HAS_CURRENT__);
+  }
   function characterIntents(items) {
     items = validCharacterIntents(items);
     if (!items.length) return '<div class="planning-empty">暂无人物意图</div>';
@@ -26,35 +39,99 @@
   var panel = document.getElementById('planning-state-panel');
   if (!panel) return;
   var bookId = panel.getAttribute('data-book-id') || '';
-  /* 写作台 = compact（Mini Bar + 详情抽屉，信息减法）；书详情 = 完整 6 卡矩阵 */
+  /* 写作台 = compact 提示条；书详情 = 完整 4 卡矩阵。这里只观察规划，不发起规划任务。 */
   var compact = panel.getAttribute('data-compact') === '1';
-  var detailOpen = false;
-  var current = null;
-  var drawer = document.getElementById('replan-drawer');
-  var backdrop = document.getElementById('replan-backdrop');
-  function openDrawer() { if (drawer) { drawer.classList.add('open'); drawer.setAttribute('aria-hidden', 'false'); } if (backdrop) backdrop.hidden = false; }
-  function closeDrawer() { if (drawer) { drawer.classList.remove('open'); drawer.setAttribute('aria-hidden', 'true'); } if (backdrop) backdrop.hidden = true; }
+  var latestData = null;
   function reasonLabel(codes) {
-    var labels = {PLOTS_LOW:'剩余可写情节段不足', WORDS_LOW:'承诺字数即将耗尽', PLAN_INVALIDATED:'新事实推翻了原规划', MAJOR_CHARACTER_CHANGE:'人物状态发生重大变化', NEW_HIGH_PRIORITY_QUESTION:'出现高优先级故事问题'};
-    return (codes || []).map(function (x) { return labels[x] || x; }).join('、');
+    var labels = {
+      PLOTS_LOW: '剩余可写情节段不足',
+      WORDS_LOW: '承诺字数即将耗尽',
+      PLAN_INVALIDATED: '新事实推翻了原规划',
+      MAJOR_CHARACTER_CHANGE: '人物状态发生重大变化',
+      NEW_HIGH_PRIORITY_QUESTION: '出现高优先级故事问题'
+    };
+    codes = Array.isArray(codes) ? codes : [];
+    var text = codes.map(function (x) { return labels[x] || x; }).filter(Boolean).join('、');
+    return text || '规划余量不足';
+  }
+  function storylineRevision(sl) {
+    return Number(sl && (sl.storyline_revision != null ? sl.storyline_revision : sl.revision) || 0);
+  }
+  function lastReplanLabel(value) {
+    if (!value || typeof value !== 'object') return String(value || '');
+    var bits = [];
+    if (value.at) bits.push(String(value.at));
+    if (Array.isArray(value.reason_codes) && value.reason_codes.length) {
+      bits.push(reasonLabel(value.reason_codes));
+    }
+    if (value.from_revision != null) bits.push('从版本 ' + value.from_revision);
+    return bits.join(' · ');
+  }
+  var storylineSyncInFlight = null;
+  var storylineSyncTarget = 0;
+  function mergeStorylineRuntimeFields(next) {
+    var old = window.__BOOK_STORYLINE__ || {};
+    var oldPlots = {};
+    (old.plots || []).forEach(function (p) { if (p && p.id) oldPlots[String(p.id)] = p; });
+    (next.plots || []).forEach(function (p) {
+      var oldPlot = p && p.id ? oldPlots[String(p.id)] : null;
+      if (oldPlot && oldPlot.actual_words != null && p.actual_words == null) p.actual_words = oldPlot.actual_words;
+    });
+    return next;
+  }
+  function syncStoryline(targetRevision) {
+    storylineSyncTarget = Math.max(storylineSyncTarget, Number(targetRevision || 0));
+    var currentRevision = storylineRevision(window.__BOOK_STORYLINE__);
+    if (!bookId || (window.__BOOK_STORYLINE__ && currentRevision >= storylineSyncTarget)) return Promise.resolve(false);
+    if (storylineSyncInFlight) return storylineSyncInFlight;
+    var requestedRevision = storylineSyncTarget;
+    storylineSyncInFlight = fetch('/api/storyline/' + encodeURIComponent(bookId))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok || !d.storyline) return false;
+        var incoming = d.storyline;
+        var incomingRevision = storylineRevision(incoming);
+        var latestRevision = storylineRevision(window.__BOOK_STORYLINE__);
+        if (incomingRevision < latestRevision || incomingRevision < requestedRevision) return false;
+        incoming = mergeStorylineRuntimeFields(incoming);
+        window.__BOOK_STORYLINE__ = incoming;
+        window.dispatchEvent(new CustomEvent('ne:storyline-updated', {detail: {
+          storyline: incoming, revision: incomingRevision
+        }}));
+        return true;
+      })
+      .catch(function () { return false; })
+      .finally(function () {
+        storylineSyncInFlight = null;
+      });
+    return storylineSyncInFlight;
   }
   function render(data) {
-    current = data;
+    data = data || {};
+    latestData = data;
     var ps = data.planning_state || {}, hz = ps.display_horizon || {}, snap = data.storyline_snapshot || {};
-    document.getElementById('planning-revision').textContent = '故事线版本 ' + (snap.revision || 0);
-    renderChecklist(ps.checklist);
-    if (compact) {
-      renderCompact(data, ps, hz, snap);
-    } else {
-      document.getElementById('planning-panel-body').innerHTML =
-        '<div class="planning-metrics"><div><b>' + fmt(ps.written_until_word) + '</b><span>已写</span></div><div><b>' + fmt(ps.committed_until_word) + '</b><span>已承诺</span></div><div><b>' + (snap.remaining_plot_count || 0) + '</b><span>可执行情节段</span></div></div>' +
-        '<div class="planning-grid"><section><h4>现在执行</h4>' + list(hz.h0, '暂无可执行情节段') + '</section><section><h4>下一段方向</h4>' + list(hz.h1, '尚未形成近期方向') + '</section><section><h4>远期方向</h4>' + list(hz.h2, '远期保持开放') + '</section><section><h4>待解决问题</h4>' + list(ps.story_questions, '暂无待解决问题') + '</section><section><h4>人物当前意图</h4>' + characterIntents(ps.character_intents) + '</section><section><h4>最近续规划</h4>' + list(ps.last_replan && Object.keys(ps.last_replan).length ? [ps.last_replan] : [], '尚未续规划') + '</section></div>';
-    }
-    renderBoundary(data.boundary || {});
-    renderPreview(data.replan_preview);
+    /* 先发布权威状态，再渲染 DOM；面板小故障不能阻断故事线/写作台刷新。 */
     window.__PLANNING_STATE__ = ps;
     window.__PLANNING_BOUNDARY__ = data.boundary || {};
-    window.dispatchEvent(new CustomEvent('ne:planning-updated', {detail: data}));
+    if (snap.revision != null) syncStoryline(snap.revision);
+    try {
+      document.getElementById('planning-revision').textContent = '故事线版本 ' + (snap.revision || 0);
+      renderChecklist(ps.checklist);
+      if (compact) {
+        renderCompact(data, ps, hz, snap);
+      } else {
+        var replanLabel = lastReplanLabel(ps.last_replan);
+        document.getElementById('planning-panel-body').innerHTML =
+          '<div class="planning-metrics"><div><b>' + fmt(ps.written_until_word) + '</b><span>已写</span></div><div><b>' + fmt(ps.committed_until_word) + '</b><span>已承诺</span></div><div><b>' + (snap.remaining_plot_count || 0) + '</b><span>可执行情节段</span></div></div>' +
+          '<div class="planning-grid"><section><h4>现在执行</h4>' + list(hz.h0, '暂无可执行情节段') + '</section><section><h4>待解决问题</h4>' + list(openStoryQuestions(ps.story_questions), '暂无待解决问题') + '</section><section><h4>人物当前意图</h4>' + characterIntents(ps.character_intents) + '</section><section><h4>最近续规划</h4>' + list(replanLabel ? [replanLabel] : [], '尚未续规划') + '</section></div>';
+      }
+    } catch (err) {
+      var body = document.getElementById('planning-panel-body');
+      if (body) body.innerHTML = '<div class="planning-error">规划面板渲染失败，状态仍已同步；请刷新页面重试。</div>';
+      if (window.console && console.error) console.error('规划面板渲染失败', err);
+    } finally {
+      window.dispatchEvent(new CustomEvent('ne:planning-updated', {detail: data}));
+    }
   }
   /* 待填清单徽标：与"故事线版本"并排，一眼看到"还差什么没填"。
      阶段（流程走到哪）与清单（东西填得怎么样）刻意分开表述。 */
@@ -81,106 +158,71 @@
   }
 
   function trunc(v, n) { var s = String(v == null ? '' : v); return s.length > n ? s.slice(0, n) + '…' : s; }
-  /* 写作台 compact：默认 Mini Bar 单行（60-90px），点「展开规划」恢复原横向 6 卡矩阵，可折叠 */
+  /* 写作台 compact：只保留会影响当前写作决策的提示，详情页才展示完整规划矩阵。 */
   function renderCompact(data, ps, hz, snap) {
     panel.classList.add('compact');
+    panel.hidden = false;
     var body = document.getElementById('planning-panel-body');
-    var h0s = hz.h0 || [], h1s = hz.h1 || [], h2s = hz.h2 || [];
-    var h0Name = h0s.length ? trunc(textOf(h0s[0]), 14) : '—';
-    var h1Txt = h1s.length ? trunc(textOf(h1s[0]), 12) : '未规划';
-    var h2Txt = h2s.length ? trunc(textOf(h2s[0]), 12) : '开放';
+    if (!body) return;
+    var h0s = hz.h0 || [];
+    var h0Name = h0s.length ? trunc(textOf(h0s[0]), 14) : '';
     var b = data.boundary || {};
-    var bCls, bHtml;
-    if (b.needs_replan) {
-      bCls = (b.remaining_plots || 0) === 0 ? 'crit' : 'warn';
-      bHtml = (bCls === 'crit' ? '🔴' : '🟡') + ' ' + trunc(reasonLabel(b.reason_codes), 16);
-    } else {
-      bCls = 'ok'; bHtml = '🟢 规划充足';
-    }
     var alerts = '';
-    if ((ps.story_questions || []).length) alerts += '<span class="pm-alert">🟡 ' + (ps.story_questions || []).length + ' 个开放问题</span>';
+    var questions = openStoryQuestions(ps.story_questions);
     var visibleIntents = validCharacterIntents(ps.character_intents);
+    var checklist = ps.checklist || {};
+    var blocking = Array.isArray(checklist.gates && checklist.gates.blocking)
+      ? checklist.gates.blocking : [];
+
+    /* 无边界时不占一块醒目的常驻状态；只有真的需要续规划时才提示原因和余量。 */
+    if (b.needs_replan) {
+      var bCls = (b.remaining_plots || 0) === 0 ? 'crit' : 'warn';
+      var remaining = [];
+      if (b.remaining_plots != null) remaining.push('剩 ' + b.remaining_plots + ' 段');
+      if (b.remaining_words != null) remaining.push(fmt(b.remaining_words) + ' 字余量');
+      alerts += '<span class="pm-boundary ' + bCls + '">' +
+        (bCls === 'crit' ? '🔴' : '🟡') + ' ' + esc(reasonLabel(b.reason_codes)) +
+        (remaining.length ? ' · ' + esc(remaining.join(' · ')) : '') + '</span>';
+    }
+    if (questions.length) alerts += '<span class="pm-alert">🟡 ' + questions.length + ' 个待解问题</span>';
     if (visibleIntents.length) alerts += '<span class="pm-alert">👥 ' + visibleIntents.length + ' 个人物意图</span>';
-    var lr = (ps.last_replan && Object.keys(ps.last_replan).length) ? trunc(textOf(ps.last_replan), 12) : '';
-    if (lr) alerts += '<span class="pm-alert">🔄 ' + lr + '</span>';
+    if (blocking.length) alerts += '<span class="pm-alert pm-alert-danger">⛔ ' + blocking.length + ' 项规划门禁未过</span>';
+    else if (Array.isArray(checklist.pending) && checklist.pending.length) {
+      alerts += '<span class="pm-alert">📝 待填 ' + checklist.pending.length + ' 项</span>';
+    }
+
+    /* 对照区已有本段时会直接显示当前 Plot；只在它没有可用当前段时保留 H0 兜底。 */
+    var currentHint = !compareHasCurrentPlot() && h0Name
+      ? '<span class="pm-h0">下一段：' + esc(h0Name) + '</span>' : '';
+    if (!currentHint && !alerts) {
+      panel.hidden = true;
+      body.innerHTML = '';
+      return;
+    }
     body.innerHTML =
-      '<div class="planning-minibar">'
-      + '<span class="pm-chip">版本 ' + esc(snap.revision || 0) + '</span>'
-      + '<span class="pm-sep"></span>'
-      + '<span class="pm-words"><b>' + fmt(ps.written_until_word) + '</b> 已写 / <b>' + fmt(ps.committed_until_word) + '</b> 已承诺</span>'
-      + '<span class="pm-sep"></span>'
-      + '<span class="pm-rem">剩 ' + (snap.remaining_plot_count || 0) + ' 个情节段</span>'
-      + '<span class="pm-sep"></span>'
-      + '<span class="pm-h0">当前执行：' + esc(h0Name) + '</span>'
-      + '<span class="pm-sep"></span>'
-      + '<span class="pm-h1">下一段：' + esc(h1Txt) + '</span>'
-      + '<span class="pm-sep"></span>'
-      + '<span class="pm-h2">远期：' + esc(h2Txt) + '</span>'
-      + '<span class="pm-boundary ' + bCls + '">' + bHtml + '</span>'
+      '<div class="planning-minibar" role="status" aria-label="写作提示">'
+      + currentHint
       + alerts
-      + '<button type="button" class="pm-detail-btn" data-planning-toggle>' + (detailOpen ? '收起 ▴' : '展开规划 ▾') + '</button>'
-      + '</div>'
-      + (detailOpen
-        ? '<div class="planning-cards">'
-          + '<div class="planning-metrics"><div><b>' + fmt(ps.written_until_word) + '</b><span>已写</span></div><div><b>' + fmt(ps.committed_until_word) + '</b><span>已承诺</span></div><div><b>' + (snap.remaining_plot_count || 0) + '</b><span>可执行情节段</span></div></div>'
-          + '<div class="planning-grid"><section><h4>现在执行</h4>' + list(hz.h0, '暂无可执行情节段') + '</section><section><h4>下一段方向</h4>' + list(hz.h1, '尚未形成近期方向') + '</section><section><h4>远期方向</h4>' + list(hz.h2, '远期保持开放') + '</section><section><h4>待解决问题</h4>' + list(ps.story_questions, '暂无待解决问题') + '</section><section><h4>人物当前意图</h4>' + characterIntents(ps.character_intents) + '</section><section><h4>最近续规划</h4>' + list(ps.last_replan && Object.keys(ps.last_replan).length ? [ps.last_replan] : [], '尚未续规划') + '</section></div>'
-          + '</div>'
-        : '');
-    var tgl = body.querySelector('[data-planning-toggle]');
-    if (tgl) tgl.onclick = function () { detailOpen = !detailOpen; renderCompact(data, ps, hz, snap); };
-  }
-  function renderBoundary(b) {
-    var el = document.getElementById('boundary-banner'); if (!el) return;
-    if (compact) { el.hidden = true; return; }   // 写作台：边界状态已并入 Mini Bar，横幅让位
-    if (!b.needs_replan) { el.hidden = true; return; }
-    el.hidden = false;
-    el.className = 'boundary-banner ' + ((b.remaining_plots || 0) === 0 ? 'critical' : 'warning');
-    el.innerHTML = '<div><strong>⚠️ 临近规划边界</strong><span>' + esc(reasonLabel(b.reason_codes)) + ' · 剩余 ' + (b.remaining_plots || 0) + ' 个情节段 / ' + fmt(b.remaining_words) + ' 字</span></div><button type="button" class="small" id="boundary-replan-btn">规划下一段</button>';
-    document.getElementById('boundary-replan-btn').onclick = requestReplan;
-  }
-  function renderPreview(p) {
-    var body = document.getElementById('replan-body'); if (!body) return;
-    if (!p) { body.innerHTML = '<div class="empty">尚无规划预览</div>'; return; }
-    var diag = p.diagnosis || {}, dirs = p.directions || [], validation = p.validation || {};
-    body.innerHTML = '<section class="replan-section"><h4>当前诊断</h4>' + list([diag.current_pressure || diag.main_tension, diag.reader_question, diag.urgent_problem].filter(Boolean), '尚未提供诊断') + '</section>' +
-      '<section class="replan-section"><h4>候选方向</h4><div class="replan-directions">' + dirs.map(function (d) { var active = String(d.id) === String(p.selected_direction_id); return '<button type="button" class="replan-direction ' + (active ? 'active' : '') + '" data-direction="' + esc(d.id) + '"><b>' + esc(d.title) + '</b><span>' + esc(d.reason || d.summary || '') + '</span></button>'; }).join('') + '</div></section>' +
-      '<section class="replan-section"><h4>待提交情节段</h4>' + list(p.plots || [], '没有可执行情节段') + '</section>' +
-      (!validation.passed ? '<div class="replan-errors">' + list(validation.problems, '预览校验未通过') + '</div>' : '') +
-      '<div class="replan-actions"><button type="button" class="small" id="replan-redraft">重拟</button><button type="button" class="small danger" id="replan-discard">丢弃</button><button type="button" class="btn" id="replan-commit" ' + (validation.passed ? '' : 'disabled') + '>确认并提交</button></div>';
-    body.querySelectorAll('[data-direction]').forEach(function (el) { el.onclick = function () { if (String(el.dataset.direction) !== String(p.selected_direction_id)) requestReplan(el.dataset.direction); }; });
-    document.getElementById('replan-redraft').onclick = function () { requestReplan(p.selected_direction_id, true); };
-    document.getElementById('replan-discard').onclick = function () { fetch('/api/storyline/' + encodeURIComponent(bookId) + '/replan-preview/' + encodeURIComponent(p.preview_id), {method:'DELETE'}).then(refresh); closeDrawer(); };
-    document.getElementById('replan-commit').onclick = function () { commitPreview(p); };
-  }
-  function requestReplan(direction, redraw) {
-    openDrawer();
-    var rev = current && current.storyline_snapshot ? current.storyline_snapshot.revision : 0;
-    var suffix = direction ? '用户选择方向 id=' + direction + '，请只为这个方向生成完整可执行预览。' : '请比较 2-3 个方向并选择推荐方向。';
-    if (redraw) suffix += '这是重拟请求，请换一种具体方案。';
-    var task = '请为 book ' + bookId + '生成增量续规划预览，不要提交正式故事线。先 get_story_state，再生成下一批 3-8 个可写情节段；最后必须调用 drive_ui(set_replan_preview)，expected_revision=' + rev + '。' + suffix;
-    if (window.switchAgentTab) window.switchAgentTab('chat');
-    if (window.agentSendTask) window.agentSendTask(task, {card:true, cardLabel:'🔭 续规划预览'});
-  }
-  function showConflict(p) {
-    var modal = document.getElementById('revision-modal'); if (!modal) return;
-    document.getElementById('revision-message').textContent = '预览基于版本 ' + p.expected + '，当前故事线已经是版本 ' + p.actual + '，系统没有覆盖新内容。';
-    modal.hidden = false;
-  }
-  function commitPreview(p) {
-    var btn = document.getElementById('replan-commit'); if (btn) btn.disabled = true;
-    fetch('/api/storyline/' + encodeURIComponent(bookId) + '/commit-plan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({preview_id:p.preview_id, expected_revision:p.expected_revision})})
-      .then(function (r) { return r.json(); }).then(function (d) { if (d.error === 'stale_storyline') { showConflict(d); return; } if (!d.ok) throw new Error(d.message || d.error || '提交失败'); closeDrawer(); render(d); if (window.showToast) showToast('规划已提交', 'success'); })
-      .catch(function (e) { if (window.showToast) showToast(e.message, 'error'); }).finally(function () { if (btn) btn.disabled = false; });
+      + '</div>';
   }
   function refresh() { return fetch('/api/storyline/' + encodeURIComponent(bookId) + '/planning-state').then(function (r) { return r.json(); }).then(function (d) { if (d.ok) render(d); }); }
-  panel.addEventListener('click', function () { if (current && current.replan_preview) openDrawer(); });
-  if (backdrop) backdrop.onclick = closeDrawer;
-  document.querySelectorAll('[data-replan-close]').forEach(function (x) { x.onclick = closeDrawer; });
-  var cancel = document.querySelector('[data-revision-cancel]'); if (cancel) cancel.onclick = function () { document.getElementById('revision-modal').hidden = true; };
-  var retry = document.querySelector('[data-revision-refresh]'); if (retry) retry.onclick = function () { document.getElementById('revision-modal').hidden = true; refresh().then(function () { requestReplan('', true); }); };
+  /* Planner 仍会通过 drive_ui 暂存预览；自动写作路径只刷新状态，不再打开人工抽屉。 */
   window.__nePageReceiver = true;
   var previousReceiver = window.onnecommand;
-  window.onnecommand = function (e) { var d = e.detail || {}; if (d.cmd === 'set_replan_preview' && (!d.args.book_id || d.args.book_id === bookId)) { refresh().then(openDrawer); return; } if (typeof previousReceiver === 'function') previousReceiver(e); };
-  window.NEPlanning = {refresh:refresh, open:openDrawer, requestReplan:requestReplan};
+  window.onnecommand = function (e) {
+    var d = e.detail || {};
+    if (d.cmd === 'set_replan_preview' && (!d.args || !d.args.book_id || d.args.book_id === bookId)) {
+      refresh();
+      return;
+    }
+    if (typeof previousReceiver === 'function') previousReceiver(e);
+  };
+  /* 对照区异步出现/消失时重绘提示条，避免首屏竞态让 H0 与本段标题同时显示。 */
+  window.addEventListener('ne:compare-updated', function () {
+    if (!compact || !latestData) return;
+    var ps = latestData.planning_state || {};
+    renderCompact(latestData, ps, ps.display_horizon || {}, latestData.storyline_snapshot || {});
+  });
+  window.NEPlanning = {refresh:refresh, syncStoryline:syncStoryline};
   refresh();
 })();

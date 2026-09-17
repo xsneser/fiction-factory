@@ -1,4 +1,6 @@
-# 梳理：书详情页 / 写作台 —— 页面架构 · UI 结构 · 数据链路（供 LLM 研判）
+### 3.3 🎯 Plot Run 面板逐区块（你问的「这一部分是干什么的」）
+
+渲染函数 `renderPlotRun`（`storyline_write_flow.html:458-533`）与 `renderRecentOutcome`（`:544-625`），数据 = `desk_chapters_api` 里的 `plot_run` / `recent_plot_outcome`，**与 Agent 侧共用同一组装（`agent_tools._build_plot_run`）**——UI 显示什么，Agent 下一步就写什么：
 
 > 日期：2026-09-08　定位：**梳理/速查档**，聚焦两个页面：① 书详情页 `/books/<id>`（book_detail.html）；② 写作台 `/books/<id>/continue`（storyline_write_flow.html）。给大体量模型做 UI 架构分析、组件与数据流研判、以及「读者台账 vs 增量规划」「质量诊断 vs 审查」相似性比对。
 > 事实源：代码是最终真相。数据模型 / 弧·情节段·线程关系 / agent·dsh 工具面参照 `docs/梳理文档-故事线关系与角色注入与架构.md`（2026-09-08，本档不重复其模型定义，只补「页面层怎么消费模型」）。**行号为探索时锚点，字段增删以代码为准。**
@@ -79,34 +81,46 @@
 |---|---|---|
 | 1 | 面包屑 + h1 ✍️ 写作台 | 书库 › 书名 › 写作台 |
 | 2 | info_bar | 书名 · 笔名 · 进度（第 N 章 · 共 M 字）· 状态 badge · 每章 N 字 |
-| 3 | 🧭 增量规划面板 | `planning_write_mode=true`：额外启用顶部 `boundary-banner`（⚠️ 临近规划边界，让 Agent 规划下一段） |
-| 4 | 左栏 editor-left | 可折叠（`toggleStorylinePanel`）、可拖拽分栏（20%–70%，localStorage `ne_storyline_w` 持久化，`storyline_write_flow.html:234-266`） |
-| 5 | 🎯 Plot Run 面板 | `#wf-plot-run`（标题「当前情节段运行 · 每次只写一段 · 单篇样文参考」）+ `#wf-plot-outcome`（写后对照），数据来自 `/api/desk/chapters/<bid>`（§3.3） |
+| 3 | 🧭 增量规划面板 | 只读规划状态（H0 / 已写·已承诺 / 边界）；规划由章级写作 Flow 自动完成，无手工抽屉 |
+| 3.5 | ⬅➡ 情节段对照区（全宽） | `#wf-compare`，置于**两栏布局之上**（继续写正文之上）：左栏 `#wf-cmp-prev-body` = 上一情节段已提交的事实；右栏 `#wf-cmp-next-body` = 本情节段的写前上下文。数据来自 `/api/desk/chapters/<bid>`（§3.3）。原 Past/Current/Future 三卡与 🔭 方向入口、Agent 检查器、跟随写作开关均已删除 |
+| 4 | 左栏 editor-left | 可拖拽分栏（20%–70%，localStorage `ne_storyline_w` 持久化，`storyline_write_flow.html:266-297`）；本栏只剩故事线 Gantt |
 | 6 | 📋 故事线 Gantt | `#editor-storyline`（story_line.js 挂载，scrollable 模式，含缩放控件） |
 | 7 | 右栏 editor-mid | 顶部 ✍️ 继续写正文卡（`runWritingTask` → 侧栏 Agent；运行态 ⏳ 续写运行中… / ⏹ 停止）；下方分页阅读器 |
 | 8 | 分页阅读器 | `ReaderCore` 双容器推入动画；章节渲染把正文按情节段包成 `span.m-bridge[data-bridge=plot_id]`（草稿加徽标）；工具栏 📑目录/⬅上一页/「第 N 章 · 第 N 页」/下一页➡；目录抽屉右侧滑出 |
 | 9 | 双向高亮 | 点 Gantt 情节段/弧 → 右栏跳页高亮对应正文（`sl:plot-click`/`sl:outline-click` → `highlightBridgeContent`/`highlightOutlineContent`）；agent 高亮 `StoryLine.highlight` 反向 |
-| 10 | 轮询 | 进页立即 + 3s 轮询 `/api/desk/chapters/<bid>`：刷新 Plot Run、Prediction→Fact、章节（`Reader.setChapters` 保留当前页/高亮、`_activePid` 恢复） |
+| 10 | 轮询 | 进页立即 + 3s 轮询 `/api/desk/chapters/<bid>`：刷新对照区两栏（`renderCompare`）与章节（`Reader.setChapters` 保留当前页/高亮、`_activePid` 恢复） |
 
-### 3.3 🎯 Plot Run 面板逐区块（你问的「这一部分是干什么的」）
+### 3.3 ⬅➡ 情节段对照区（当前执行简报 | 上段承接 | 完整审计）
 
-渲染函数 `renderPlotRun`（`storyline_write_flow.html:345-380`），数据 = `desk_chapters_api` 里的 `plot_run`，**与 Agent 侧共用同一组装（`agent_tools._build_plot_run`）**——UI 显示什么，Agent 下一步就写什么：
+渲染入口仍是 `renderCompare(prev, next, chapterNum, comparison)`，页面不再把所有状态平铺成对称审计表，而是由 desk API 在同一次响应中生成 `comparison` 投影，再由 `renderCompareTable` 生成共享结构。对照区仍位于 `.editor-split` 之上，轮询仍只调用一次 `renderCompare`，所以不会因两套渲染器的高度差而错位。
 
-> ⚠️ 历史标注（2026-09-10）：本文写作时 Agent 读的是 `get_writing_context`；现行写 profile 只有
-> `prepare_plot_run` / `save_plot_draft` 两个工具（其快照由 prepare 在 `_build_plot_run` 之上再组装），
-> 但「UI 与 Agent 同源」这一结论仍然成立。详见 `docs/架构总览.md` §六。
+默认信息层级是：
 
-| 区块 | 数据字段 | 含义（示例） |
-|---|---|---|
-| 📌 当前情节段 | `plot_run.plot` | 这一轮要写的情节段：名称 + `↪ 收局/解决「X」` 徽标 + 分类 · 目标约 N 字 · 出场角色。例：猎头巴雅尔 · 战斗 · 目标约 1900 字 · 出场 秦戈、巴雅尔 |
-| 📋 所在弧 | `plot_run.arc_goal` | 弧路径（父弧链 `/` 拼接，`_outline_name_chain`）+ 阶段 + **弧内待写约 N 字**（该弧下所有未写情节段目标字数合计）。例：残炉立锥 / 火枪与矿脉 · 弧内待写约 5700 字 |
-| 🧵 所属线程 | `plot_run.thread` | 线程名 + `chain_note`（「`<thread_id>` 已写 X 条 / 未写 Y 条」，X=该线程已写情节段数，Y=未写数，`agent_tools.py:464`）。例：商会与霜脊·盟线 · t_allies 已写 1 条 / 未写 8 条 |
-| ✅/⏳ 承诺 | `plot_run.promise_state` | 设局/收局指向本情节段的伏笔：描述 + 已兑现/待兑现 + 约第 N 章 |
-| 🎯⚔️🧭🔄❓🪝 执行简报 | `plot_run.execution_brief` | 戏剧目标/冲突来源/人物选择/不可逆变化/读者问题/结尾钩子（情节段自带，写前对齐） |
-| 👤 写前人物影响预测 | `plot_run.character_impact` | 本情节段预计造成的人物变化（写前） |
-| 👤 Prediction → Fact | `recent_plot_outcome` | 最近写完情节段的「预测 vs 实际 vs 结果」对照（从草稿 bridges 的 `character_events` 现取，`desk.py:107-116`） |
+1. **本段 · 待写**：名称只在页眉出现一次；`execution_brief` 展示戏剧目标、冲突来源、人物选择、不可逆变化、读者问题和结尾钩子，所有 expected 内容明确是「预计 / 写前计划」。
+2. **上一段 · 已发生**：只显示 agent 上报的结构化事实和承接约束，并在情节段组显示 `clean / prediction_drift / missed_prediction / unpredicted_fact` 对账结果。
+3. **完整状态审计**：人物、场景位置、弧与线程、承诺、待解问题按需展开；没有变化的组不在首屏占位。
 
-> 一句话：**Plot Run = 「当前这一轮写什么」的驾驶舱**。🎯 指定写哪段，📋 提示弧目标与字数余量，🧵 提示线程进度（已写/未写条数），✅⏳ 提示欠读者什么承诺，底部把「写前预期」和「写后事实」对齐成闭环。
+> ⚠️ 现行写 profile 只有 `prepare_plot_run` / `save_plot_draft` 两个工具；
+> `comparison` 只做确定性展示归一化，不写盘、不调用 LLM，不改变 Writer 看到的故事事实。详见 `docs/架构总览.md` §六。
+
+| 区域 | 默认用途 | 已发生侧 | 待写侧 |
+|---|---|---|---|
+| 情节段 | 当前执行简报 | 上一段已上报的选择、信息、关系、资源 | 当前 `execution_brief` 与 `expected_facts` |
+| 人物 | 当前相关人物与预期变化 | 上一段 `character_events` 的事实 | `cast_pack` 累计状态 + 当前段预计变化 |
+| 场景位置 | 位置变化 | 带人物归属的已发生位置 | 当前人物位置或明确预计去向 |
+| 弧与线程 | 结构承接 | 历史 Plot 可查到的弧/线程归属 | `arc_goal` / `thread` |
+| 承诺 | 本段相关承诺 | 上一段 `promise_updates` | 当前 `promise_state` |
+| 待解问题 | 本段相关开放问题 | 上一段新增问题 | 当前 planning 的开放问题 |
+
+人物默认按“本段主角 → 本段主动出场 → 有预期变化 → 上段只出现”排序；只有名字而无动态、也不影响本段的 referenced 角色进入审计层。位置保留人物归属，避免把「甲从旧港移动到新城」压成无主体地点集合。承诺和问题按稳定 id 配对，缺 id 时才按规范化文本回退；新增、删除、重排不强行对齐。
+
+> ⚠️ **数据口径**：
+> ① 左侧只来自 `recent_plot_outcome` / agent 上报事实，绝不从正文推断；
+> ② 右侧人物状态来自 `character_states.json` 的已收章累计值，章内未收章变化由 `_staged_cast_projection` 覆盖并标「本章已上报」；
+> ③ `dyn` 整体缺失标「状态未记录」，字段值为空串则不渲染该字段；`referenced` 人物没有动态状态时不误标缺失；
+> ④ expected 永远标为预计，`clean/drift/missed/unpredicted` 只作对账状态，不把预计变化伪装成事实；
+> ⑤ 没有数据的组不渲染 `0 项` 空卡，单侧数据不保留不可见列和固定高度空单元格；
+> ⑥ 地点只能由 `dyn.location` 与 `location_shift` 证明，不能生成“情节段目标地点”。
 
 ### 3.4 API 面（desk.py）
 

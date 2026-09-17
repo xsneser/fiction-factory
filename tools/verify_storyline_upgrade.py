@@ -105,8 +105,23 @@ try:
       mount.id = 'upgrade-mock-mount';
       mount.style.cssText = 'height:900px; margin:10px;';
       document.body.appendChild(mount);
-      window.StoryLine.init('upgrade-mock-mount', mock, {scrollable: true});
+      window.StoryLine.init('upgrade-mock-mount', mock, {scrollable: true,
+        planning: {horizon: {h1: [{title: '近期方向测试'}]}, future_intents: [{intent: '远期方向测试'}]}});
+      var root = document.querySelector('#upgrade-mock-mount .sl-root');
+      var main = root && root.querySelector('.sl-main');
+      var formal = main && main.querySelector('.sl-formal-row');
+      var forecast = main && main.querySelector('.sl-forecast-strip');
+      var boundary = root && root.querySelector('.sl-boundary');
       return {
+        mainFlexDirection: main ? getComputedStyle(main).flexDirection : null,
+        formalIsMainChild: !!(formal && formal.parentElement === main),
+        forecastIsMainChild: !!(forecast && forecast.parentElement === main),
+        forecastAfterFormal: !!(formal && forecast && formal.nextElementSibling === forecast),
+        forecastOverflowY: forecast ? getComputedStyle(forecast).overflowY : null,
+        forecastMaxHeight: forecast ? getComputedStyle(forecast).maxHeight : null,
+        boundaryParent: boundary ? boundary.parentElement.className : null,
+        forecastHasBoundary: !!(forecast && forecast.querySelector('.sl-boundary')),
+
         nestedArc: document.querySelectorAll('#upgrade-mock-mount .sl-bar-outline.level-1').length,
         setupBadges: document.querySelectorAll('#upgrade-mock-mount .sl-setup-badge').length,
         payoffBadges: document.querySelectorAll('#upgrade-mock-mount .sl-payoff-badge').length,
@@ -140,13 +155,27 @@ try:
         check("mock_target_marks", (js_out.get("targetMarks") or 0) >= 1, f"targetMarks={js_out.get('targetMarks')}")
         check("mock_legend_setup", "设局" in (js_out.get("legend") or ""), f"legend={js_out.get('legend')!r}"[:120])
         # 字数轴断言：Xk字 刻度、弧按真实字数跨度定位、子弧垂直落在父弧内、header 总字数
-        check("mock_axis_word_ticks", any("字" in (x or "") for x in (js_out.get("axisLabels") or [])),
+        check("mock_axis_word_ticks", any("字" in (x or "") or "K" in (x or "") for x in (js_out.get("axisLabels") or [])),
               f"labels={js_out.get('axisLabels')}")
         check("mock_arc1_top_0", (js_out.get("arc1Top") or "") == "0%", f"arc1Top={js_out.get('arc1Top')}")
         check("mock_child_inside_parent", 0 < _pct(js_out.get("childH")) < _pct(js_out.get("arc1H")),
               f"child={js_out.get('childH')} parent={js_out.get('arc1H')}")
-        check("mock_header_total_words", "总字数" in (js_out.get("headerMeta") or ""),
+        check("mock_header_committed_words", "已承诺" in (js_out.get("headerMeta") or ""),
               f"meta={js_out.get('headerMeta')}")
+        check("mock_single_scroll_canvas", js_out.get("mainFlexDirection") == "column" and
+              js_out.get("formalIsMainChild") and js_out.get("forecastIsMainChild") and
+              js_out.get("forecastAfterFormal"), str(js_out))
+        check("mock_forecast_no_nested_scroll", js_out.get("forecastOverflowY") != "auto" and
+              js_out.get("forecastMaxHeight") == "none", str(js_out))
+        check("mock_boundary_stays_formal", js_out.get("boundaryParent") == "sl-content-area" and
+              not js_out.get("forecastHasBoundary"), str(js_out))
+        scroll = driver.execute_script("""
+          var m = document.querySelector('#upgrade-mock-mount .sl-main');
+          window.StoryLine.scrollToDirections();
+          return {top: m.scrollTop, max: Math.max(0, m.scrollHeight - m.clientHeight)};
+        """)
+        check("mock_scroll_to_directions", scroll.get("max", 0) == 0 or
+              scroll.get("top", 0) >= scroll.get("max", 0) - 2, str(scroll))
     errs = page_errors("mock")
     check("mock_no_console_errors", len(errs) == 0, "; ".join(errs[:3]))
     driver.execute_script("document.getElementById('upgrade-mock-mount').scrollIntoView({block:'start'});")

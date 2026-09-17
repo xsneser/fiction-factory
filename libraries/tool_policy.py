@@ -22,10 +22,18 @@ PHASE_GATES = {
     "save_plot_draft": {"ready"},
     "save_chapter_text": {"ready"},
     "prepare_plot_run": {"ready"},
+    "prepare_plot_revision": {"ready"},
+    "save_plot_revision": {"ready"},
+    "get_orchestration_state": {"ready"},
+    "get_plot_review_context": {"ready"},
+    "plot_quality_gate": {"ready"},
+    "accept_plot_draft": {"ready"},
     # 写作风格取样 —— Plot Run 每段抽单篇样文
     "pick_plot_sample": {"ready"},
-    # 建书规划 —— config 落基本盘；plots 草案期放行（深化弧/补差异化命题时改 basic_info，ready 后禁）
-    "save_basic_info": {"config", "plots"},
+    # 建书规划 —— config 落基本盘；plots 草案期放行。
+    # ready 期仅在 save_basic_info 内部走「受限人物修正」分支（只准 characters + 必带 revision），
+    # 世界观/书名/POV 等在写作期由函数内硬拒，不放给 Agent。
+    "save_basic_info": {"config", "outlines", "plots", "ready"},
     # 上架 —— 需已有正文
     "publish_check": {"ready"},
     "publish_book": {"ready"},

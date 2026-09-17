@@ -37,7 +37,7 @@ os.chdir(_ROOT)   # 让 mcp_server 子进程的 books/、storage/ 相对路径�
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-EXPECT_MCP_TOOLS = 48  # 建书步 3 薄工具 +3（get_build_context/validate_build/save_build_draft）
+EXPECT_MCP_TOOLS = 54  # 编排状态/Plot 评审/改稿协议新增 6 个薄工具
 PASS, FAIL = [], []
 
 

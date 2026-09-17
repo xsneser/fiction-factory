@@ -54,6 +54,17 @@ def agent_chat():
     data = request.get_json(silent=True) or {}
     raw_messages = data.get("messages") or []
     debug = bool(data.get("debug"))   # 调试模式：前端 🔍 开关，透传给 dsh 子进程 emit llm/call
+    flow_mode = data.get("flow_mode") or ""
+    explicit_book_id = str(data.get("book_id") or "").strip()
+    busy_policy = data.get("busy_policy") or ""
+    if flow_mode not in ("", "chapter_to_completion"):
+        return jsonify({"ok": False, "error": "invalid_flow_mode"}), 400
+    if flow_mode == "chapter_to_completion" and not explicit_book_id:
+        return jsonify({"ok": False, "error": "book_id_required"}), 400
+    if busy_policy not in ("", "reject"):
+        busy_policy = ""
+    # 写作台章级入口必须跨越规划边界自动继续；其它侧栏任务不改变全局 policy。
+    policy = "auto" if flow_mode == "chapter_to_completion" else None
     messages = []
     for m in raw_messages:
         role = m.get("role")
@@ -70,7 +81,14 @@ def agent_chat():
             if history and history[-1].get("role") == "user":
                 last = history.pop(-1)
                 task = last.get("content", "")
-            for evt in run_dsh_flow(task, history, debug=debug):
+            if busy_policy == "reject" and get_current_task_status().get("running"):
+                yield emit({"type": "error", "code": "agent_busy",
+                            "message": "已有 Agent 任务正在运行，请等待或停止后再续写。"})
+                yield emit({"type": "done"})
+                return
+            for evt in run_dsh_flow(task, history, debug=debug, policy=policy,
+                                     flow_mode=flow_mode or None,
+                                     explicit_book_id=explicit_book_id or None):
                 yield emit(evt)
         except Exception as e:
             import traceback

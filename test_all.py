@@ -872,7 +872,12 @@ try:
                   {"id": "rp7", "name": "反扑", "outline_id": "r2", "words": 1000, "primary_turn": "反扑"},
                   {"id": "rp8", "name": "抉择", "outline_id": "r2", "words": 1000, "primary_turn": "抉择"},
                   {"id": "rp9", "name": "落子", "outline_id": "r2", "words": 1000, "primary_turn": "落子"}],
-        "planning_patch": {"future_intents": ["扩大冲突"]},
+        # 续规划 patch 必须自带结构化 horizon.h1（validate_replan_patch 的硬要求）；
+        # 夹具未同步会让下面直接 RuntimeError，属历史失效夹具。
+        "planning_patch": {
+            "horizon": {"h1": [{"title": "近期方向", "arc_intent": "承接当前压力继续推进"}]},
+            "future_intents": [{"title": "扩大冲突", "intent": "把对手从暗处逼到台面"}],
+        },
     }
     _at.drive_ui("set_replan_preview", _preview_args)
     _preview = _load_replan_preview(_tbid3) or {}

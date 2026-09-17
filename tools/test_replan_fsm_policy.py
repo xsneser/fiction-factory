@@ -75,8 +75,12 @@ def _preview_args(bid, revision, next_plot_id=2):
         "plots": [{"id": f"p{i}", "name": f"段{i}", "outline_id": "a2", "words": 1000,
                    "primary_turn": f"第{i}个主要戏剧变化", "roles": ["顾衡"]}
                   for i in range(next_plot_id, next_plot_id + _N_PLOTS)],
-        # 故意塞一个假的 last_replan：服务端必须以自己算的为准覆盖它
+        # 故意塞一个假的 last_replan：服务端必须以自己算的为准覆盖它；H1/H2 是结构化方向。
         "planning_patch": {"committed_until_word": 9000,
+                           "horizon": {"h1": [{"id": "h1_test", "title": "第二弧方向",
+                                                 "arc_intent": "承接当前压力继续推进"}]},
+                           "future_intents": [{"intent_id": "h2_test", "title": "远期威胁",
+                                                "intent": "更远的威胁逐步浮现"}],
                            "last_replan": {"from_revision": 999, "reason_codes": ["BOGUS"]}},
     }
 
@@ -106,6 +110,16 @@ def main():
             assert "版本" in str(e), e
         assert not load_replan_preview(bid), "被拒绝的预览不应落盘"
 
+        # malformed H1 必须在预览阶段拒绝，不能等读取时静默丢失。
+        malformed = _preview_args(bid, revision)
+        malformed["planning_patch"]["horizon"]["h1"] = "错误的字符串方向"
+        try:
+            agent_tools.drive_ui("set_replan_preview", malformed)
+            raise AssertionError("malformed H1 竟然被接受")
+        except RuntimeError as e:
+            assert "h1" in str(e), e
+        assert not load_replan_preview(bid), "被拒绝的 malformed preview 不应落盘"
+
         # ── B. 预览落盘 + 元数据提交（revision 0 的边界由独立书验证，见 B2）──
         agent_tools.drive_ui("set_replan_preview", _preview_args(bid, revision))
         preview = load_replan_preview(bid)
@@ -118,6 +132,10 @@ def main():
         expect_ids = ["p1"] + [f"p{i}" for i in range(2, 2 + 6)]   # 与 _preview_args 的 _N_PLOTS 一致
         assert [p.id for p in tl_after.plots] == expect_ids, [p.id for p in tl_after.plots]
         state = load_planning_state(bid, tl_after, bm.get(bid), persist=False)
+        assert state["horizon"]["h1"][0]["id"] == "h1_test"
+        assert state["future_intents"][0]["intent_id"] == "h2_test"
+        story_state = agent_tools.get_story_state(bid)
+        assert story_state["forecast"]["horizon"]["h1"][0]["id"] == "h1_test"
         last = state.get("last_replan") or {}
         assert last.get("from_revision") == revision, last
         assert last.get("reason_codes") and last["reason_codes"] != ["BOGUS"], last
@@ -139,7 +157,11 @@ def main():
                 "plots": [{"id": f"z{i}", "name": f"开篇{i}", "outline_id": "z1", "words": 1000,
                            "primary_turn": f"开篇第{i}个主要戏剧变化", "roles": ["顾衡"]}
                           for i in range(1, 7)],
-                "planning_patch": {"committed_until_word": 3000},
+                "planning_patch": {
+                    "committed_until_word": 3000,
+                    "horizon": {"h1": [{"title": "开篇方向", "arc_intent": "建立初始冲突"}]},
+                    "future_intents": [{"title": "远期威胁", "intent": "远期威胁逐步显现"}],
+                },
             })
             zero_commit = bridge._commit_pending_replan(zero_bid)
             assert zero_commit.get("commit_ok") is True, zero_commit
@@ -159,7 +181,17 @@ def main():
                 if "续规划" in (task or ""):
                     planner_calls.append(task)
                     assert "请勿自行提交" in task, task      # confirm 文案必须禁止自提交
-                    agent_tools.drive_ui("set_replan_preview", _preview_args(confirm_bid, crevision))
+                    old_ids = {k: os.environ.get(k) for k in env_keys}
+                    os.environ["NOVEL_WRITE_FLOW_ID"] = kwargs.get("flow_id") or cflow["flow_id"]
+                    os.environ["NOVEL_WRITE_CHILD_RUN_ID"] = kwargs.get("child_run_id") or "planner:1"
+                    try:
+                        agent_tools.drive_ui("set_replan_preview", _preview_args(confirm_bid, crevision))
+                    finally:
+                        for k, v in old_ids.items():
+                            if v is None:
+                                os.environ.pop(k, None)
+                            else:
+                                os.environ[k] = v
                     yield {"type": "reply", "content": "预览已暂存，等待确认。"}
                     yield {"type": "done"}
                     return
@@ -218,7 +250,17 @@ def main():
             def fake_run(task, history=None, debug=False, **kwargs):
                 if "续规划" in (task or ""):
                     calls.append("replan")
-                    agent_tools.drive_ui("set_replan_preview", _preview_args(e2e_bid, erevision))
+                    old = {k: os.environ.get(k) for k in env_keys}
+                    os.environ["NOVEL_WRITE_FLOW_ID"] = kwargs.get("flow_id") or eflow["flow_id"]
+                    os.environ["NOVEL_WRITE_CHILD_RUN_ID"] = kwargs.get("child_run_id") or "planner:1"
+                    try:
+                        agent_tools.drive_ui("set_replan_preview", _preview_args(e2e_bid, erevision))
+                    finally:
+                        for k, v in old.items():
+                            if v is None:
+                                os.environ.pop(k, None)
+                            else:
+                                os.environ[k] = v
                     yield {"type": "reply", "content": "预览已暂存。"}
                     yield {"type": "done"}
                     return

@@ -47,6 +47,36 @@ def _server_last_replan(book_id: str, from_revision: int, preview_id: str) -> di
             "preview_id": str(preview_id or "")}
 
 
+def _preview_dynamic_problems(book_id: str, preview: dict) -> list[str]:
+    """按当前正式模型复核预览，不能只相信 preview 写入时的 validation 快照。"""
+    from agent_tools import load_tl
+    from libraries.planning_state import validate_replan_patch
+    from libraries.storyline import outline_payload_problems
+    problems = []
+    try:
+        validate_replan_patch(preview.get("planning_patch"))
+    except ValueError as exc:
+        problems.append(str(exc))
+    tl = load_tl(book_id)
+    if tl is None:
+        return problems + [f"书 {book_id} 无故事线"]
+    outlines = preview.get("outlines") or []
+    plots = preview.get("plots") or []
+    problems.extend(outline_payload_problems(
+        outlines, plots, known_outlines=tl.outlines or [], known_plots=tl.plots or [],
+        legacy_plot_ids=[getattr(p, "id", "") for p in (tl.plots or [])]))
+    known_names = {str(c.get("name") or "") for c in ((tl.basic_info or {}).get("characters") or [])}
+    if known_names:
+        for plot in plots:
+            roles = plot.get("roles") or []
+            unknown = [str(name) for name in roles if str(name) not in known_names]
+            if unknown:
+                problems.append(f"情节段「{plot.get('name') or plot.get('id') or '未命名'}」包含未知角色：{'、'.join(unknown)}")
+            if int(plot.get("protocol_version", 2) or 2) >= 2 and not plot.get("no_named_cast") and not roles:
+                problems.append(f"情节段「{plot.get('name') or plot.get('id') or '未命名'}」缺 roles；无具名角色请显式 no_named_cast=true")
+    return problems
+
+
 def commit_replan_preview(book_id: str, preview_id: str, expected_revision) -> dict:
     """原子提交 replan preview。
 
@@ -78,10 +108,21 @@ def commit_replan_preview(book_id: str, preview_id: str, expected_revision) -> d
     if expected_revision != int(stored_revision):
         return {"ok": False, "error": "preview_revision_mismatch",
                 "expected": stored_revision, "actual": expected_revision, "status": 400}
+    from agent_tools import load_tl
+    current_tl = load_tl(book_id)
+    actual_revision = int(getattr(current_tl, "storyline_revision", 0) or 0) if current_tl else 0
+    if expected_revision != actual_revision:
+        return {"ok": False, "error": "stale_storyline",
+                "expected": expected_revision, "actual": actual_revision,
+                "action": "refresh_and_replan", "status": 409}
     validation = preview.get("validation") or {}
     if not validation.get("passed"):
         return {"ok": False, "error": "preview_invalid",
                 "problems": validation.get("problems") or [], "status": 400}
+    dynamic_problems = _preview_dynamic_problems(book_id, preview)
+    if dynamic_problems:
+        return {"ok": False, "error": "preview_invalid",
+                "problems": dynamic_problems, "status": 400}
 
     lock = BookLock(book_id)
     if not lock.acquire(timeout=30.0, purpose="commit_plan"):
@@ -129,7 +170,8 @@ def commit_replan_preview(book_id: str, preview_id: str, expected_revision) -> d
     payload = None
     try:
         from ui.web_blueprints.storyline import _planning_ui_payload
-        payload = _planning_ui_payload(book_id) or {"ok": True}
+        # 提交结果需要回带 preview 归属信息（内部/兼容面）；页面用的公开 GET 不含它。
+        payload = _planning_ui_payload(book_id, include_preview=True) or {"ok": True}
     except Exception:
         payload = {"ok": True}
     payload["commit"] = result

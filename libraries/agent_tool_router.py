@@ -16,9 +16,18 @@ PROFILE_TOOLS = {
     "build": {"get_build_context", "query_arc_library", "query_plots",
               "validate_build", "save_build_draft"},
     # Writer 是一次性 Plot 生成器：其余流程由服务端 FSM 负责。
-    "write": {"prepare_plot_run", "save_plot_draft"},
-    "replan": {"get_story_state", "save_outlines", "validate_storyline", "validate_world",
+    "write": {"prepare_plot_run", "save_plot_draft", "prepare_plot_revision", "save_plot_revision"},
+    # Planner 只生成并暂存 preview；正式故事线由服务端 replan_service 原子提交。
+    "replan": {"get_story_state", "validate_storyline", "validate_world",
                "query_arc_library", "query_plots", "drive_ui"},
+    # Main Orchestrator：读取权威运行状态、评审 Plot、接受草稿/收章，
+    # 但不直接获得 Writer/Planner 的原始写作工具。
+    "orchestrate": {"list_books", "get_book_detail", "get_book_state", "get_storyline",
+                    "get_story_state", "get_build_status", "get_build_context",
+                    "get_orchestration_state", "get_plot_review_context", "plot_quality_gate",
+                    "accept_plot_draft", "save_basic_info", "validate_world", "navigate", "drive_ui"},
+    # Critic 只读当前 Plot 的最小评审上下文；结构化 verdict 由 dsh 委派层负责。
+    "critic": {"get_plot_review_context"},
     "publish": {"get_book_detail", "save_book_meta", "publish_check", "publish_book",
                  "mark_finished", "export_book"},
     "scout": {"drive_ui", "fetch_book", "fetch_novel", "fetch_webnovel", "discover_hot",
@@ -186,13 +195,18 @@ def manifest(registry: list[dict]) -> list[dict]:
 
 def tool_metadata(name: str, *, allowed_phases=None, locked: bool = False) -> dict:
     profiles = sorted(profile for profile, names in PROFILE_TOOLS.items() if name in names)
-    write_prefixes = ("save_", "add_", "delete_", "publish", "mark_", "ingest_", "fetch_", "drive_ui")
+    write_prefixes = ("save_", "add_", "delete_", "publish", "mark_", "ingest_", "fetch_", "drive_ui",
+                      "plot_quality_gate", "accept_plot_draft", "prepare_plot_revision",
+                      "save_plot_revision")
     read_write = "write" if name.startswith(write_prefixes) else "read"
     requires_book = name in {
-        "get_book_state", "prepare_plot_run", "get_storyline", "get_story_state", "get_book_detail",
+        "get_book_state", "prepare_plot_run", "prepare_plot_revision", "save_plot_revision",
+        "get_storyline", "get_story_state", "get_book_detail",
         "save_basic_info", "save_outlines", "save_book_meta", "arc_material_candidates",
         "save_plot_draft", "save_chapter_text", "publish_check", "mark_finished", "publish_book",
         "export_book", "chapter_quality_gate", "pick_plot_sample",
+        "get_orchestration_state", "get_plot_review_context", "plot_quality_gate",
+        "accept_plot_draft", "finalize_draft_chapter", "commit_replan_preview",
     }
     return {
         "profiles": profiles,

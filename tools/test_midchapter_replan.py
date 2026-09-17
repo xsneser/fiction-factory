@@ -56,14 +56,29 @@ def main():
         def fake_run(task, history=None, debug=False, **kwargs):
             calls.append(("replan" if "续规划" in (task or "") else "write", kwargs))
             if "续规划" in (task or ""):
-                # 计划器必须留下**基于当前版本**的预览，FSM 才会提交它（服务端不再替计划器臆造预览）
+                # 计划器必须留下基于当前版本、当前 Flow/子 run 的合法预览，FSM 才会提交它。
                 from libraries.planning_state import save_replan_preview
-                save_replan_preview(bid, {
-                    "preview_id": "pv-midchapter", "expected_revision": 0,
-                    "outlines": [], "plots": [],
-                    "validation": {"passed": True, "problems": []},
-                    "planning_patch": {},
-                })
+                old_ids = {k: os.environ.get(k) for k in ("NOVEL_WRITE_FLOW_ID", "NOVEL_WRITE_CHILD_RUN_ID")}
+                os.environ["NOVEL_WRITE_FLOW_ID"] = kwargs.get("flow_id") or flow["flow_id"]
+                os.environ["NOVEL_WRITE_CHILD_RUN_ID"] = kwargs.get("child_run_id") or "planner:1"
+                try:
+                    save_replan_preview(bid, {
+                        "preview_id": "pv-midchapter", "expected_revision": 0,
+                        "outlines": [{"id": "a2", "name": "回声", "start_word": 6000, "end_word": 7000}],
+                        "plots": [{"id": "p2", "name": "追查回声", "outline_id": "a2", "words": 1000,
+                                   "primary_turn": "追查到新的线索", "roles": ["顾衡"]}],
+                        "validation": {"passed": True, "problems": []},
+                        "planning_patch": {
+                            "horizon": {"h1": [{"title": "追查方向", "arc_intent": "继续追查回声"}]},
+                            "future_intents": [{"title": "远期威胁", "intent": "远期威胁浮现"}],
+                        },
+                    })
+                finally:
+                    for k, v in old_ids.items():
+                        if v is None:
+                            os.environ.pop(k, None)
+                        else:
+                            os.environ[k] = v
                 yield {"type": "reply", "content": "续规划已准备。"}
                 yield {"type": "done"}
                 return

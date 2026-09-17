@@ -3,21 +3,4 @@
   <div id="planning-panel-body" class="planning-panel-body"><div class="empty">正在读取规划状态…</div></div>
 </section>
 
-{% if planning_write_mode %}
-<div id="boundary-banner" class="boundary-banner" hidden></div>
-{% endif %}
-
-<div class="replan-backdrop" id="replan-backdrop" hidden></div>
-<aside class="replan-drawer" id="replan-drawer" aria-hidden="true">
-  <div class="replan-head"><div><strong>🔭 规划下一段</strong><div class="hint">候选不会修改正式故事线，确认后才提交</div></div><button type="button" class="replan-close" data-replan-close>×</button></div>
-  <div class="replan-body" id="replan-body"><div class="empty">尚无规划预览</div></div>
-</aside>
-
-<div class="revision-modal" id="revision-modal" hidden>
-  <div class="revision-dialog">
-    <h3>⚠️ 故事线版本已变化</h3>
-    <p id="revision-message"></p>
-    <div class="revision-actions"><button type="button" class="small" data-revision-cancel>保留预览</button><button type="button" class="btn" data-revision-refresh>刷新并重新规划</button></div>
-  </div>
-</div>
-<script src="/static/js/planning_ui.js?v=3"></script>
+<script src="/static/js/planning_ui.js?v=10"></script>

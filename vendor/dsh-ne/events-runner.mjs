@@ -151,19 +151,35 @@ async function run(ctx, task, io) {
 		}
 	});
 	await agent.whenIdle();
-	const firstSeq = agent.session.seq;
+	const rootSessionId = String(agent.session.id || "root");
+	const firstSeqBySession = new Map([[rootSessionId, agent.session.seq]]);
+	// 子代理拥有独立 Session；usage、LLM 配对和事件边界按 session 隔离，
+	// 避免并行 Writer/Critic 串账。
+	const lastUsageBySession = new Map();
+	const pendingLlmBySession = new Map();
+	const sessionMeta = (session) => {
+		const id = String(session?.id || "");
+		const header = session?.header || session?.meta || {};
+		return {
+			sessionId: id || rootSessionId,
+			parentSessionId: String(header?.parentSession || header?.parentSessionId || ""),
+			origin: header?.origin || (id === rootSessionId ? "root" : "subagent"),
+			delegationDepth: header?.delegationDepth ?? (id === rootSessionId ? 0 : 1)
+		};
+	};
 	// 捕获 dsh agent 的 token usage，挂到 tool/call 事件：
 	// usage 来源有两处——流式 assistant/chunk(type=usage) 的 chunk.usage、整段 assistant/message 的 data.usage。
 	// 归因：每个 tool/call 前必有 LLM 回合，取最近一次 usage；同回合并行 tool/call 共享（不清 lastUsage，
 	// 待无 usage 的 assistant/message 到达才清，防串到下一回合）。
-	let lastUsage = null;
 	// 调试模式：llm/stream 快照请求（提示词 + MCP 工具），assistant/message 配对响应 →
 	// 每条 LLM 调用 emit 一条 llm/call。llmSeq 逐调用递增、pendingLlm 单槽（agent-loop 严格
 	// 串行，一次只有一轮在跑；isAgentLoopRequest 过滤掉内部 summarize/探测调用防串号）。
 	let llmSeq = 0;
-	let pendingLlm = null;
 	ctx.on("session/event", (session, event) => {
-		if (event.seq < firstSeq) return;
+		const meta = sessionMeta(session);
+		const sid = meta.sessionId;
+		if (!firstSeqBySession.has(sid)) firstSeqBySession.set(sid, event.seq ?? 0);
+		if ((event.seq ?? 0) < firstSeqBySession.get(sid)) return;
 		let u = null;
 		if (event.type === "assistant/message") {
 			u = event.data?.usage ?? null;
@@ -171,18 +187,19 @@ async function run(ctx, task, io) {
 			u = event.data.chunk.usage ?? null;
 		}
 		if (u) {
-			lastUsage = {
+			lastUsageBySession.set(sid, {
 				input: u.inputTokens,
 				output: u.outputTokens,
 				cache_read: u.cacheReadTokens,
 				cache_write: u.cacheWriteTokens
-			};
+			});
 		} else if (event.type === "assistant/message") {
-			lastUsage = null;   // 本回合无 usage：清掉，避免上一回合残留串到后续 tool/call
+			lastUsageBySession.delete(sid);   // 本回合无 usage：清掉，避免跨回合串账
 		}
 		// 调试模式：assistant/message 是 LLM 回合终点，配对 llm/stream 快照 emit llm/call
 		//（response = 组装后的完整 assistant 消息，含 tool-call 块与 arguments，即「返回 JSON 原文」）。
 		// 载荷做有界裁剪（capDeep/capTools）：保留结构、裁长内容，防大上下文下事件体积失控。
+		const pendingLlm = pendingLlmBySession.get(sid);
 		if (DEBUG && event.type === "assistant/message" && pendingLlm) {
 			const msgs = Array.isArray(pendingLlm.messages) ? pendingLlm.messages.slice(-12) : pendingLlm.messages;
 			// 完整载荷（未裁剪的 request + response）写文件供调试卡按需 fetch，SSE 仍只发裁剪预览，
@@ -207,17 +224,37 @@ async function run(ctx, task, io) {
 					total_messages: Array.isArray(pendingLlm.messages) ? pendingLlm.messages.length : 0
 				},
 				response: capDeep(event.data.message, 1500),
-				usage: lastUsage,
+				usage: lastUsageBySession.get(sid) || null,
 				input_budget: inputBudget(pendingLlm)
 			}});
-			pendingLlm = null;
+			pendingLlmBySession.delete(sid);
 		}
 		if (!FORWARD.has(event.type)) return;
 		let data = event.data;
-		if (event.type === "tool/call" && lastUsage) {
-			data = { ...event.data, usage: lastUsage };
+		if (event.type === "tool/call" && lastUsageBySession.get(sid)) {
+			data = { ...event.data, usage: lastUsageBySession.get(sid) };
 		}
-		emit(io, { type: event.type, data });
+		emit(io, { type: event.type, data: { ...data, ...meta } });
+	});
+	// 子代理生命周期：**不是 session/event**，而是 ctx.subagents 在父作用域派发的 cordis 事件
+	// （createLifecycleEmitter → ctx.events.dispatch("emit", …)）。根 ctx 上的无 scope 监听器
+	// 能收到全部子作用域，因此这里直接挂；payload 形状 {runId, provider, id(=子会话 id), local}
+	//，end 另带 stopReason / lastAssistantMessage（只做有界裁剪，不复制全文进父上下文）。
+	ctx.on("subagent/start", (info) => {
+		emit(io, { type: "subagent/start", data: {
+			runId: info?.runId ?? "", provider: info?.provider ?? "",
+			sessionId: String(info?.id ?? ""), local: !!info?.local
+		}});
+	});
+	ctx.on("subagent/end", (info) => {
+		const last = Array.isArray(info?.lastAssistantMessage) ? info.lastAssistantMessage : [];
+		const joined = last.map((b) => (b?.type === "text" ? b.text : "")).join("");
+		emit(io, { type: "subagent/end", data: {
+			runId: info?.runId ?? "", provider: info?.provider ?? "",
+			sessionId: String(info?.id ?? ""), local: !!info?.local,
+			stopReason: info?.stopReason ?? "",
+			lastAssistantText: capText(joined, 400)
+		}});
 	});
 	// 调试模式：监听 llm/stream（与 dsh-agent-loop/lib/invariant.js 同款 global 注册），
 	// 只快照不改请求（options 是 deepFreeze，直接引用即可）。关闭时不注册，零开销。
@@ -225,14 +262,15 @@ async function run(ctx, task, io) {
 		ctx.on("llm/stream", (options, next) => {
 			if (!isAgentLoopRequest(options)) return next();   // 排除内部 summarize/探测调用
 			llmSeq += 1;
-			pendingLlm = {
+			const sid = String(options.sessionId || options.session?.id || rootSessionId);
+			pendingLlmBySession.set(sid, {
 				seq: llmSeq,
 				provider: options.provider,
 				model: options.model,
 				system: options.system ?? null,
 				messages: options.messages ?? [],
 				tools: options.tools ?? []
-			};
+			});
 			return next();
 		}, { global: true, prepend: true });
 	}
@@ -242,7 +280,7 @@ async function run(ctx, task, io) {
 	}));
 	await agent.whenIdle();
 	await sessions.flush(agent.session);
-	const outcome = summarize(agent.session.events, firstSeq);
+	const outcome = summarize(agent.session.events, firstSeqBySession.get(rootSessionId) || 0);
 	if (outcome.reason?.kind === "error") {
 		emit(io, {
 			type: "error",

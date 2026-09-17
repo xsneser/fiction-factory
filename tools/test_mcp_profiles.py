@@ -10,8 +10,8 @@ from mcp.client.stdio import stdio_client
 
 
 EXPECTED = {
-    "write": {"prepare_plot_run", "save_plot_draft"},
-    "replan": {"get_story_state", "save_outlines", "validate_storyline", "validate_world",
+    "write": {"prepare_plot_run", "save_plot_draft", "prepare_plot_revision", "save_plot_revision"},
+    "replan": {"get_story_state", "validate_storyline", "validate_world",
                "query_arc_library", "query_plots", "drive_ui"},
     # 建书步 3 = 5 个薄工具（工具面即能力边界；含 drive_ui 在内的旧面已移出）
     "build": {"get_build_context", "query_arc_library", "query_plots",

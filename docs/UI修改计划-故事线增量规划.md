@@ -11,7 +11,7 @@
 
 | # | v1 的问题 | v2 修正 |
 |---|---|---|
-| ① | `future_plan` / `planning` 挂进 `storyline.to_dict()` | 语义分层：`storyline.json` = 合同（仅加 `revision`）；`planning_state.json` = 思考草稿（H0/H1/H2、future_intents、questions、decision_log）。UI 经 GET planning-state **聚合两者**，不改 `storyline.to_dict()` 结构 |
+| ① | `future_plan` / `planning` 挂进 `storyline.to_dict()` | 语义分层：`storyline.json` = 合同（保留 `storyline_revision`）；`planning_state.json` = 思考草稿（H0/H1/H2、future_intents、questions、decision_log）。UI 经 GET planning-state **聚合两者**，不改 `storyline.to_dict()` 结构 |
 | ② | 依赖 MCP 新工具 `get_story_state` / `commit_story_plan` / `get_planning_candidates` | 不新增这些 MCP 工具。UI 数据源 = `get_writing_context` 扩展 + `planning_state.json` + `extend_storyline`；HTTP `/commit-plan` 仅是 UI→后端交互 API，与 MCP 层分离 |
 | ③ | Forecast 区画了 p19/p20「未来 plot」条 | Forecast 区**只画 intent**（H1 下一弧方向 / Open Question / Character Intent / H2 远期方向），不制造不存在的 plot；除非未来出现独立的 `speculative plot` 类型 |
 | ④ | Planning 进度显示「已承诺 24,000 / 42,000 字」 | 去掉总字数终点假象，改为「已写 18k / 已承诺 24k / 当前可执行 3 plots / 未来方向 H1·H2」 |
@@ -61,7 +61,7 @@
 
 ## 3. 设计原则（最终规范）
 
-1. **视觉双区、语义分明**：垂直 Gantt 方向**锁死不改**（字数轴纵向、三通道横向并列、写作光标水平、承诺边界水平）。Committed 区 = 实色；Forecast 区 = 斜纹底 + 虚线边 + intent 卡，两区以水平承诺边界线分隔。
+1. **视觉双区、语义分明**：垂直 Gantt 的正式区保持字数轴纵向、三通道横向并列、写作光标水平、承诺边界水平；H1/H2 作为同一纵向滚动画布中正式区之后的方向区。Committed 区 = 实色；Forecast 区 = 斜纹底 + 虚线边 + intent 卡。
 2. **UI 不渲染思维链，只展示决策状态**（decision state）：当前事实 → 当前故事问题 → 当前规划结果 → 执行 → 实际结果。不显示「我先考虑 A 又想到 B 所以决定 C」。
 3. **合同 / 草稿分层**：`storyline.json` 承载合同（outlines/plots/threads/promises/revision）；`planning_state.json` 承载草稿（committed_until_word/horizon/future_intents/story_questions/character_intents/last_replan/decision_log）。UI 只聚合，不跨层写。
 4. **不制造假象**：不画不存在的未来 plot；不用总字数终点暗示全书已规划；不把 intent 显示成 storyline。
@@ -73,27 +73,23 @@
 ### 4.1 承诺边界线与写作光标（双线并存）
 
 > 系统存在三个不同概念，**不能再混成一个进度**：
-> `current_word`（已写到哪里，红线） / `committed_until_word`（已正式决定到哪里，黄虚线） / `future_intents`（之后大致可能往哪里走，边界线以下）。
+> `current_word`（已写到哪里，红线） / `committed_until_word`（已正式决定到哪里，黄虚线） / `future_intents`（之后大致可能往哪里走，正式故事线底部的方向区）。
 
-- `story_line.js` 在 `renderCursor` 同级新增 `renderBoundary(contentArea, committedUntilWord)`：在 `committed_until_word` 对应高度画**横跨三通道的水平琥珀色虚线**，z-index 与光标同层。写作光标（红）在已写字数处，随写作下移；承诺边界（黄虚线）在已承诺字数处，两者位置不同、必须同时存在。
+- `story_line.js` 在正式区的 `renderCursor` 同级维护 `renderBoundary(contentArea, committedUntilWord)`：在 `committed_until_word` 对应高度画**横跨三通道的水平琥珀色虚线**，z-index 与光标同层。写作光标（红）在已写字数处，随写作下移；承诺边界（黄虚线）在已承诺字数处，两者位置不同、必须同时存在；两条线均不进入底部方向区。
 - tooltip：边界线悬停显示「已承诺至约 N 字 / 剩余已规划 plot 数 / 最近 replan 时间」。
 - 视觉语言（直接保留为最终规范）：**实色 = 已承诺；斜纹 = 可变未来；红线 = 写到哪里；黄线 = 决定到哪里。**
 
 ### 4.2 Forecast 区（只画 intent，不画假 plot）
 
-- `renderForecast(contentArea, futurePlan)`：承诺边界线**下方**（垂直字数轴更远处）铺斜纹低透明度底纹，**不渲染任何 plot 条**。
-- 区内只放 intent 卡（`.sl-future-intent`），横向/纵向排布四类：
+- `renderForecast(forecastStrip, futurePlan)`：作为 `.sl-main` 内正式区之后的自然流内容，随同一纵向滚动条位于故事线最底部；**不渲染任何 plot 条**，也不参与字数轴。
+- 区内只放 H1/H2 两行 intent 卡（`.sl-forecast-card`），横向流动并允许折行：
 
 ```text
-┌──────────────────────────┐   ┌──────────────────────────┐
-│ H1 · 下一弧方向            │   │ Open Question             │
-│ 工区级问题 → 天梯安全      │   │ 谁提前知道天梯故障？       │
-│ 关键转折：未决定           │   └──────────────────────────┘
-└──────────────────────────┘   ┌──────────────────────────┐
-┌──────────────────────────┐   │ Character Intent          │
-│ H2 · 远期方向              │   │ 顾衡：证明自己 → 承担责任  │
-│ 深空威胁 / promise 03 / 07 │   └──────────────────────────┘
-└──────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│ 🧭 近期方向 H1 │ 工区级问题 → 天梯安全 · 关键转折未决定       │
+├────────────────────────────────────────────────────────────┤
+│ 🔭 远期方向 H2 │ 深空威胁 · ⟢ promise 03 / 07                │
+└────────────────────────────────────────────────────────────┘
 ```
 
 - 数据：全部来自 `planning_state`（H1 ← horizon.h1；H2 ← future_intents；Open Question ← story_questions；Character Intent ← character_intents）。
@@ -101,26 +97,22 @@
 
 ### 4.3 数据输入
 
-- `storyline.to_dict()` **只加一个字段**：`revision`（int，来自 storyline.json）。不加 planning / future_plan。
+- `storyline.to_dict()` 保持合同字段（含 `storyline_revision`）；不加 planning / future_plan。
 - 前端注入：模板同时注入 `window.__BOOK_STORYLINE__`（合同）与 `window.__PLANNING_STATE__`（草稿，来自 GET planning-state）；`story_line.js adapt()` 分别解析，Gantt 条只消费合同，Forecast 区只消费草稿。
 
 ## 5. 核心改造二：Planning State 面板
 
-### 5.1 展示内容（书详情顶部 + 写作台左栏，折叠式）
+### 5.1 展示内容（书详情完整面板 + 写作台必要提示条）
 
-- **三指标行**（**不用总字数终点**）：
-
-```text
-已写 18k    已承诺 24k    当前可执行 3 plots
-  ↑            ↑
-写作光标     承诺边界
-```
-
-- **Horizon 三层**：H0 = 当前真正可执行的 plot 列表（来自 planning_state.horizon.h0，可点击跳转）；H1 = 接下来这一小段可能怎么走（horizon.h1）；H2 = 更远期方向性想法（future_intents）。
-- **Open Questions**：`story_questions`（question + priority + status）。
-- **Character Intents**：`character_intents`（角色当前目标方向）。
-- **Last Replan**：`last_replan`（时间/原因/位置）。
-- 空态：无 planning_state 时显示「Agent 尚未建立规划状态」，不报错。
+- **书详情页**保留完整规划摘要，供跨章节复盘：
+  - 三指标行（**不用总字数终点**）：已写 / 已承诺 / 当前可执行 plots；
+  - H0、Open Questions、Character Intents、Last Replan；
+  - 空态：无 planning_state 时显示「Agent 尚未建立规划状态」，不报错。
+- **写作台**只显示会影响当前操作的低高度提示条：
+  - 仅在 boundary 真的需要续规划时显示触发原因和剩余 Plot/字数；无预警时不显示常驻「规划充足」；
+  - 对照区尚未提供当前 Plot 时，才显示 H0 第一项作为下一段兜底；对照区已有当前 Plot 时不重复显示；
+  - Open Questions / Character Intents 只显示开放条目数量徽标，不展开跨章节详情；问题终态不计入徽标；
+  - 不在写作台重复显示版本号、已写/已承诺/剩余段常驻指标或最近续规划审计 JSON，它们分别由 Gantt/页面头部、书详情和后端日志承担。
 
 ### 5.2 数据来源
 
@@ -145,43 +137,47 @@
 ```
 
 - 预留 trigger 扩展（UI 无需随之改动）：`PLAN_INVALIDATED` / `MAJOR_CHARACTER_CHANGE` / `NEW_HIGH_PRIORITY_QUESTION`。
-- 呈现：写作台顶部 `#boundary-banner`，按 `status` 分级（info/warning/critical）+ 显示 `trigger` 的中文说明 + 剩余 plot/字数 + 按钮「让 Agent 规划下一段」。
+- 呈现：写作台只显示只读的规划状态；`needs_replan` 不再显示“规划下一段”按钮，也不打断续写。用户点击一次“继续写正文”后，由父 `_writer_fsm` 自主决定写 Plot、续规划或收章。
 
-### 6.2 Replan：预览 → 确认 → 落库（非模态）
+### 6.2 Replan：父 Flow 内自动预览 → 原子提交 → 继续写作
 
 ```text
-Boundary 预警
-   ↓ 让 Agent 重新规划（agentSendTask → novel-replan skill，停在结果预览）
-诊断 → 候选方向 → 选择方向 → 预览 next_plots → 用户确认 → POST /commit-plan
+点击继续写正文（chapter_to_completion / policy=auto）
    ↓
-服务端：验证 expected_revision → 调用 extend_storyline → validate_storyline → 更新 planning_state
-   ↓
-Gantt / Planning UI 增量刷新
+_writer_fsm：章满？还有已承诺 Plot？是否到规划边界？
+   ├─ Writer 子 run → save_plot_draft → 回 FSM
+   ├─ Planner 子 run → set_replan_preview → replan_service 原子提交 → 回 FSM
+   └─ chapter_changed → 完成一章
 ```
 
-- `#replan-panel` 半屏抽屉、可取消、不阻塞阅读器轮询；结构：诊断区（current_state/main_tension/most_urgent_problem/reader_question）→ 候选方向（单选）→ 选定方案（next_arc 摘要 + next_plots 只读预览 + future_plan_updates）→ 操作（提交 / 重拟 / 取消）。
-- validate 失败：面板展示 problems 并禁止提交。
-- **层次分离（重要）**：`POST /commit-plan` 是 UI→后端的交互 API，**不是** MCP 世界的新工具；MCP 层不新增 `commit_story_plan`，真正的结构写入由服务端复用 `extend_storyline` 完成。
+- UI 不再提供 `#replan-drawer`、候选方向选择、重拟、丢弃或手工确认；H1/H2 只在故事线底部作为方向信息展示。
+- Planner 的 `set_replan_preview` 仍是内部事件，页面仅刷新只读 planning/storyline 状态；不会打开人工面板。
+- **层次分离（重要）**：`POST /commit-plan` 仍是兼容客户端与测试使用的 UI→后端 API，不是 MCP 世界的新工具；一键写作入口由服务端复用 `replan_service.commit_replan_preview` 自动提交。
 
 ## 7. 核心改造四：Plot Run 升级（execution brief + Prediction → Fact）
 
 - `plot_run` 扩展返回 `execution_brief`：`dramatic_goal / conflict_source / character_choice / irreversible_change / reader_question / ending_hook`（把「我要写什么」升级为「这一段为什么存在」）。
-- 新增**写前预测 → 写后事实**对照（核心状态，必须明显）：
+- 新增**当前执行简报 + 上段承接约束 + 按需事实审计**对照区：
 
 ```text
-👤 顾衡
-  预测：证明自己 → 越权调查
-  实际：越权行为被系统记录
-  结果：承担调查责任
+本段 · 待写
+戏剧目标 / 冲突来源 / 人物选择 / 不可逆变化 / 结尾钩子
+
+上一段 · 已发生
+结构化事实 → clean / 偏离 / 预计未发生 / 新事实
+
+完整状态审计（按需）
+人物 / 场景位置 / 弧与线程 / 承诺 / 待解问题
 ```
 
-- 数据：预测来自 `plot_run.character_impact`（写前）；实际/结果来自 `save_plot_draft` 的 `character_events`（写后，desk 轮询返回）；UI 并排展示，让用户看到 Agent 如何根据故事发展调整人物。
-- `storyline_write_flow.html renderPlotRun()` 增加：📌 目标（dramatic_goal + reader_question 徽标）、🔄 不可逆变化、👤 预测→事实折叠区。
+- 数据：左侧来自 `recent_plot_outcome` 的 agent 上报事实与对账；右侧来自同一次 desk 响应的 `plot_run.cast_pack`、`expected_facts`、`execution_brief`、`arc_goal` 和 `promise_state`；后端只做确定性 `comparison` 投影，UI 不新增故事状态推断。
+- `storyline_write_flow.html` 保留一个共享渲染器和三列审计骨架，但默认优先展示当前 Plot 的执行简报；中间轴使用“写作重点/承接→推进”文案，`aria-label` 保留对照字段语义。没有变化的分组进入“完整状态审计”，单侧数据不保留不可见列或固定高度空单元格。
+- 对账结果必须实际呈现为 `clean / prediction_drift / missed_prediction / unpredicted_fact` 徽标或行动提示；不再另设“实际变化/身后变化”列表。地点只显示带人物归属的 `dyn.location` / `location_shift`，不生成 plot-level 目标地点；承诺和问题按稳定 id 配对。
 
-## 8. 核心改造五：Revision 冲突弹层
+## 8. 核心改造五：Revision 与自动失败状态
 
-- 所有带 `expected_revision` 的写操作（commit-plan 等）返回 `{error:"stale_storyline", expected, actual}` 时，全局弹层：「⚠️ 故事线已被另一方更新（版本 12 → 13），不能静默覆盖」→ 操作：刷新并重规划 / 取消。
-- 实现：`base.js` 加 `showRevisionConflict(payload)` + `_book_runtime_panels.html` 加弹层模板。
+- 一键写作由服务端 FSM 持有 `expected_revision` 并在 `replan_service` 原子提交；出现 stale/无效预览/锁冲突时结束为明确 error，保留草稿，不弹出已删除的人工规划面板。
+- `commit-plan` 的 stale 响应仍保留给兼容客户端；当前页面不再渲染 revision modal，也不把失败伪装成章节完成。
 
 ## 9. 降级为 P2 的组件（第一版不做或弱化）
 
@@ -195,16 +191,17 @@ Gantt / Planning UI 增量刷新
 
 | 文件 | 改动 |
 |---|---|
-| `ui/static/js/story_line.js` | `adapt()` 解析 `revision`（合同）与 `__PLANNING_STATE__`（草稿）；`renderBoundary()`、`renderForecast()`（仅 intent 卡）；「显示预测区」开关 |
-| `ui/static/css/story_line.css` | `.sl-boundary`、`.sl-forecast-zone`、`.sl-future-intent`、`.sl-replan-cta` 样式（对齐现有令牌） |
-| `ui/templates/storyline_write_flow.html` | `#boundary-banner`、`#replan-panel`、`#planning-state-panel` 容器；`renderPlotRun()` 升级（execution brief + Prediction→Fact）；REPLAN_TASK 文本 |
-| `ui/templates/book_detail.html` | 顶部 Planning State 摘要卡（已写/已承诺/可执行 + H0/H1/H2 + Open Q + Character Intent） |
-| `ui/templates/_book_runtime_panels.html` | 可复用面板片段（planning/replan/conflict） |
+| `ui/static/js/story_line.js` | `.sl-main` 内正式区 + 底部 H1/H2 方向区；`renderBoundary()`、`renderForecast()`（仅 intent 卡）；滚动锚点、正式合同刷新、方向区跳转 |
+| `ui/static/css/story_line.css` | `.sl-formal-row`、`.sl-forecast-strip`、`.sl-forecast-card` 与单一纵向滚动布局（对齐现有令牌） |
+| `ui/templates/storyline_write_flow.html` | `#planning-state-panel`、一键章级续写/停止/状态文案；故事线方向跳转与正式合同刷新；`renderPlotRun()` 升级（execution brief + Prediction→Fact） |
+| `ui/templates/book_detail.html` | 顶部 Planning State 摘要卡（已写/已承诺/可执行 + H0 + Open Q + Character Intent）；故事线合同刷新 |
+| `ui/templates/_planning_ui.html` | 只读规划状态容器（不再包含 boundary banner、replan drawer 或 revision modal） |
 | `ui/web_blueprints/storyline.py` | `GET /planning-state`（纯读聚合）、`POST /commit-plan`（验证 revision → 调 extend_storyline → validate → 更新 planning_state） |
 | `ui/web_blueprints/desk.py` | `/api/desk/chapters` 响应附 `boundary`；`plot_run` 附 `execution_brief/character_impact/character_events`（透传） |
 | `ui/web_blueprints/books.py` | 书详情注入 planning_state 摘要 |
-| `ui/static/js/agent_panel.js` | 「当前可用工具数」小徽标（弱化版 profile 可视化）；replan 任务卡类型 |
-| `ui/static/js/base.js` | `showRevisionConflict()`、`showReplanPanel()` 通用工具 |
+| `ui/static/js/agent_panel.js` | 章级 flow mode / busy reject / task 生命周期事件；普通侧栏仍保留原有接力行为 |
+| `ui/web_blueprints/agent.py` | `chapter_to_completion` → policy=auto；章级入口 busy 拒绝兜底 |
+| `libraries/dsh_bridge.py` | 复用 `_writer_fsm`；自动续规划提交事件与提交失败有界处理 |
 | `ui/static/css/base.css` | 新增 `--forecast-border` / `--boundary` 语义令牌 |
 
 ## 11. 实施波次与验收标准（按评审重排）
@@ -213,10 +210,10 @@ Gantt / Planning UI 增量刷新
 
 | 波次 | 内容 | 验收 |
 |---|---|---|
-| **Wave A**（P0） | Planning State 面板 + Gantt 双区（承诺边界 + 未来 intent 区 + 开关）+ H0/H1/H2 | 书详情/写作台可见「已写 / 已承诺 / 可执行 plots」；Gantt 一眼可分双区，**Forecast 区无任何 plot 条**；旧书无 planning 数据渲染不回归 |
-| **Wave B**（P0） | Boundary 预警条（纯消费后端 trigger）+ Replan 结果抽屉 + `/commit-plan`（revision 校验 + extend_storyline） | 后端返回 warning 时写作台出现预警；点按钮 → 侧栏 replan → 预览/确认/取消；确认后 Gantt 增量刷新且 validate 通过 |
+| **Wave A**（P0） | Planning State 面板 + Gantt 正式区/底部 H1-H2 方向区（单一纵向滚动）+ H0 | 书详情/写作台可见「已写 / 已承诺 / 可执行 plots」；向上看三泳道、滑到底看 H1/H2；Forecast 无任何 plot 条；旧书无 planning 数据仍正常 |
+| **Wave B**（P0） | 章级一键续写（写作 / 自动续规划 / 收章）+ 最新正式故事线拉取 | 点击一次后父 FSM 持续运行；自动续规划后新弧/情节段立即出现在正式区，黄线推进，方向区仍在最底部，滚动/高亮不丢 |
 | **Wave C**（P1） | Plot Run 升级（execution brief）+ Prediction→Fact 对照 + Open Question 卡 | 写作时可见「这一段为什么存在」；写前预测 vs 写后事实并排显示 |
-| **Wave D**（P0 补齐） | Revision 冲突弹层 | 旧版本提交被拦，给出 expected/actual + 刷新引导，不静默覆盖 |
+| **Wave D**（P0 补齐） | 自动任务错误/暂停状态 + revision 保护 | 自动续规划或写作失败时明确提示、保留草稿、释放租约；不显示章节已完成假象 |
 | **Wave E**（P2 + 收尾） | Tension Panel（弱化版）+ 软评分（JSON 展示）+ 响应式适配 + 侧栏工具小徽标 + 全页回归 | `test_e2e_pages.py` 通过；窄窗口无竖排截断 |
 
 ## 12. 唯一数据真相表（联调标准，评审确认）
@@ -232,15 +229,15 @@ Gantt / Planning UI 增量刷新
 | 已承诺 plot | `storyline.plots` |
 | 线程 | `storyline.threads` |
 | Promises | `storyline.promises` |
-| H0 | `planning_state.horizon.h0` |
-| H1 | `planning_state.horizon.h1` |
-| H2 | `planning_state.future_intents` |
+| H0 | 未写正式情节段的派生执行列表（UI 投影 `display_horizon.h0`） |
+| H1 | `planning_state.horizon.h1`，在同一 Gantt 滚动画布底部展示 |
+| H2 | `planning_state.future_intents`，在同一 Gantt 滚动画布底部展示 |
 | Open Questions | `planning_state.story_questions` |
 | Character Intent | `planning_state.character_intents` |
 | 最近 Replan | `planning_state.last_replan` |
 | Boundary | 后端 boundary detector（`{status, trigger, remaining_plots, remaining_words}`） |
-| Revision | `storyline.revision` |
-| Forecast | `planning_state.future_intents` 的 UI 投影（只画 intent） |
+| Revision | `storyline.storyline_revision` |
+| Forecast | `planning_state.horizon.h1` + `planning_state.future_intents` 的 UI 投影（只画 intent，位于同一滚动画布的正式区之后） |
 | Plot Run | `get_writing_context` / `plot_run` |
 | 写后角色事实 | `save_plot_draft` / character state |
 | 软评分 | review / review-skill 输出 |
@@ -254,10 +251,10 @@ Gantt / Planning UI 增量刷新
 
 ## 13. 风险与不变量
 
-- **不变量**：不修改 `storyline.json` 既有结构（仅加 revision）；不改变 `validate_storyline`/`validate_world` 硬规则；不动 `BookLock`；不把 planning_state 内容写进 outlines。
+- **不变量**：不修改 `storyline.json` 既有结构（仅使用 `storyline_revision`）；不改变 `validate_storyline`/`validate_world` 硬规则；不动 `BookLock`；不把 planning_state 内容写进 outlines；方向区不进入 `TOTAL_WORDS`，红黄线不进入方向区。
 - **风险 1：契约不一致** → §12 表 + 空态兜底 + 联调一次。
 - **风险 2：Forecast 被误解为已确定剧情** → 斜纹底 + 虚线 + 「方向性意图，可随写作改变」文案 + 图例；Forecast 区无 plot 条。
-- **风险 3：replan 面板打断写作流** → 半屏抽屉 + 可取消，不阻塞轮询。
+- **风险 3：自动写作中途失败或重复点击** → 入口 busy reject；服务端 auto 续规划提交失败有限重试，错误保留草稿且不伪报章节完成。
 - **风险 4：旧书无 planning 数据** → 所有新组件空态降级，回归现状。
 
 ## 14. 与主 Agent 的协调

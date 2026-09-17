@@ -11,7 +11,8 @@ from libraries.agent_tool_router import PROFILE_TOOLS  # noqa: E402
 
 
 def main() -> None:
-    assert PROFILE_TOOLS["write"] == {"prepare_plot_run", "save_plot_draft"}
+    assert PROFILE_TOOLS["write"] == {"prepare_plot_run", "save_plot_draft",
+                                        "prepare_plot_revision", "save_plot_revision"}
 
     overlay_path = Path(DB._write_runtime_overlay(mcp_profile="write"))
     overlay = overlay_path.read_text(encoding="utf-8")
@@ -74,8 +75,17 @@ def main() -> None:
                    "save_outlines", "navigate", "get_book_detail"):
         assert banned not in build_skill, banned
 
-    print("[OK] writer overlay and two-tool contract")
+    # ── 工具卡摘要必须如实：失败的 drive_ui 曾一律显示「已暂存续规划预览」 ──
+    fail_msg = {"content": [{"isError": True, "content": [
+        {"type": "text", "text": "Error: 命令 set_replan_preview planning_patch 校验失败：h1 必须是非空 list"}]}]}
+    fail_summary = DB._zh_tool_summary("drive_ui", {"cmd": "set_replan_preview"}, fail_msg, False)
+    assert fail_summary.startswith("失败：") and "已暂存" not in fail_summary, fail_summary
+    ok_msg = {"content": [{"content": [{"type": "text", "text": "{}"}]}]}
+    assert DB._zh_tool_summary("drive_ui", {"cmd": "set_replan_preview"}, ok_msg, True) == "已暂存续规划预览"
+
+    print("[OK] writer overlay and write/revision contract")
     print("[OK] build/build-candidates overlay: 自带契约 + stock 工具已禁")
+    print("[OK] 工具卡摘要如实：失败的 drive_ui 不再显示「已暂存」")
 
 
 if __name__ == "__main__":

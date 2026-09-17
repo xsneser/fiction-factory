@@ -12,6 +12,7 @@
 
 用法：python tools/test_chapter_commit_semantics.py
 """
+import json
 import os
 import sys
 
@@ -138,11 +139,50 @@ def main():
                     "outlines": [{"id": "a9", "name": "弧", "start_word": 0, "end_word": 100}],
                     "plots": [{"id": f"q{i}", "name": "段", "outline_id": "a9", "words": 10,
                                "primary_turn": f"第{i}转", "roles": ["顾衡"]} for i in range(bad)],
+                    "planning_patch": {
+                        "horizon": {"h1": [{"title": "下一步", "arc_intent": "推进冲突"}]},
+                        "future_intents": [{"title": "远期方向", "intent": "扩大冲突"}],
+                    },
                 })
                 raise AssertionError(f"{bad} 个 plots 竟然被接受")
             except RuntimeError as e:
                 assert str(REPLAN_MAX_PLOTS) in str(e) or "非空" in str(e), e
         print(f"[OK] plots 段数上限 {REPLAN_MAX_PLOTS} 与阈值 {replan_low_plot_threshold()} 同源，越界被拒")
+
+        # ── 5) 混合协议收章（v1 段 + v2 段同章）：canonical 集合必须是**全部草稿段** ──
+        # 只比 v2 子集会让混合章永远收不了章；而一旦侥幸相等，v1 段正文会被静默丢掉。
+        mix_bid = _seed(bm, agent_tools, "混合协议收章验收", created=created)
+        draft_path = os.path.join(bm.dir, mix_bid, "draft_chapter.json")
+        with open(draft_path, encoding="utf-8") as f:
+            draft = json.load(f)
+        assert draft.get("bridges"), draft
+        draft["bridges"][0]["protocol_version"] = 1          # 旧段：v1
+        for seg in draft["bridges"][1:]:
+            seg["protocol_version"] = 2                      # 同章后续段：v2
+        draft["bridges"].append({**draft["bridges"][0], "plot_id": "p2", "protocol_version": 2,
+                                 "text": "第二段正文用于验证混合协议不丢字。" * 60})
+        with open(draft_path, "w", encoding="utf-8") as f:
+            json.dump(draft, f, ensure_ascii=False)
+        segs = [{"plot_id": b.get("plot_id"), "plot_name": b.get("plot_name"),
+                 "text": b.get("text") or ""} for b in draft["bridges"]]
+        try:
+            agent_tools.save_chapter_text(mix_bid, int(draft["chapter_num"]),
+                                          "\n\n".join(x["text"] for x in segs),
+                                          plot_segments=segs[:1])          # 少提交一段
+            raise AssertionError("混合协议下提交段子集竟然被接受")
+        except RuntimeError as e:
+            assert "plot_segments" in str(e), e
+        ok = agent_tools.save_chapter_text(mix_bid, int(draft["chapter_num"]),
+                                           "\n\n".join(x["text"] for x in segs),
+                                           plot_segments=segs)
+        assert ok.get("ok"), ok
+        saved = json.load(open(os.path.join(bm.dir, mix_bid, "chapters",
+                                            f"{int(draft['chapter_num']):04d}.json"), encoding="utf-8"))
+        content = saved.get("content") or ""
+        for seg in segs:
+            head = (seg["text"] or "")[:24]
+            assert head and head in content, f"混合协议收章丢了段：{seg['plot_id']}"
+        print("[OK] 混合协议（v1+v2）收章：全量段提交成功且不丢字，子集提交仍被拒")
     finally:
         agent_tools.chapter_quality_gate = orig_gate
         book_mgr.save_storyline = orig_save_tl

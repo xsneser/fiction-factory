@@ -202,10 +202,10 @@ def _h0_item(*, outlines, plots, problems, validation_ran=False) -> dict:
 def _h1_item(h1) -> dict:
     rows = [x for x in (h1 or []) if isinstance(x, dict)]
     if not rows:
-        return _item("h1", "远期方向 H1", GROUP_COMMON, bp.P_FORECAST, THIN,
+        return _item("h1", "近期方向 H1", GROUP_COMMON, bp.P_FORECAST, THIN,
                      detail="还没有近期方向", hint="下一小段往哪走、承接当前的什么")
     ok = all(_txt(x.get("title") or x.get("arc_intent")) for x in rows)
-    return _item("h1", "远期方向 H1", GROUP_COMMON, bp.P_FORECAST, OK if ok else THIN,
+    return _item("h1", "近期方向 H1", GROUP_COMMON, bp.P_FORECAST, OK if ok else THIN,
                  detail=f"{len(rows)} 条方向")
 
 

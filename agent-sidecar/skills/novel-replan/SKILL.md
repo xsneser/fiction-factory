@@ -5,8 +5,7 @@ description: 续写大纲。临近已承诺故事边界或既有预测被事实�
 
 # 增量续规划（novel-replan）
 
-护栏：**不直接调用 `save_outlines`**。规划只暂存预览，**提交只能由用户在写作台抽屉确认**，
-确认后才由服务端原子提交。规划轮内不写正文。
+护栏：Planner 只生成并暂存预览，不直接调用正式故事线落盘能力；章级写作父 Flow 由服务端自动原子提交，独立规划调用方若需提交必须走明确的用户动作。规划轮内不写正文。
 
 ## 构思流程（与「建书内容构建」共用同一内核）
 
@@ -78,7 +77,7 @@ description: 续写大纲。临近已承诺故事边界或既有预测被事实�
 | 远期规划 | `planning_patch.horizon.h1`（近期方向）+ `planning_patch.future_intents`（远期意图） | 随预览暂存 |
 | 伏笔对账 | 近期埋的 + 远期拟埋的；已被新规划放弃的标取消 | 随预览暂存 |
 | 自查回打 | `validate_storyline` 与 `validate_world` 的 `decision_points` 对着改 | `validate_storyline`、`validate_world` |
-| 提交 | 暂存预览即停，等用户抽屉确认（服务端原子提交） | `drive_ui` |
+| 提交 | 章级写作由服务端自动提交；独立规划只暂存预览并等待明确用户动作 | `drive_ui` |
 
 ## 入口策略（与 build 的差异）
 

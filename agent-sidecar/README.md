@@ -26,7 +26,8 @@ Spike 结论与 dsh 现状见 `docs/架构总览.md` §七(3 摩擦点;spike 文
    改内核后跑 `python tools/sync_plan_core.py`（刷两个标记块 + 同步镜像）。
    内核里**不许出现任何工具名**（`referenced_tools()` 是整词匹配注册表名，连"不要调 X"里的
    X 也算引用，而两个 profile 的工具面交集只有两个查询工具）。
-3. 首次 `dsh --profile headless` 自动初始化 profile。
+3. 首次 `dsh --profile headless` 自动初始化 profile；编排模式上线前运行
+   `python tools/sync_dsh_headless_profile.py --apply`，或用 `--check` 验证仓库模板与用户态配置一致。
 
 ## 运行
 
@@ -55,7 +56,7 @@ node vendor/dsh-ne/lib/bin.js --profile headless \
 - **循环失控**:phase 未达 ready 时 agent 会反复轮询 `get_book_detail`,需护栏层熔断。
 - **建书保真度**:set_field/set_tags/pick_candidate 未忠实传达任务设定,需向导状态保护。
 - **护栏**:直建/直删工具不存在(45 工具),建书必须经浏览器向导 drive_ui。
-- **系统工具已禁(2026-08-20)**:dsh 自带 tool-fs/tool-bash/subagent 等系统工具默认会暴露(cwd=D:/NovelEngine 无沙箱,可绕过 MCP 直操文件)。`cordis.patch.yml` 已用 `disabled: true` 批量禁掉,只留 MCP + 联网(web 三件;skill 已于 2026-08-24 删除)。改此模板须同步 `~/.dsh/profiles/headless/cordis.patch.yml`。
+- **系统工具护栏**：dsh 的 filesystem/shell 仍全部禁用，防止绕过 MCP 直操文件；主 Agent 编排所需的 spawn provider 与具名 Writer/Planner/Critic 委派工具按精确 MCP allowlist 开放，通用 subagent、fork、后台 jobs、workflow 仍禁用。修改此模板须同步 `~/.dsh/profiles/headless/cordis.patch.yml`。
 
 ## 结论
 

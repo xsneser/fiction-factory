@@ -56,7 +56,7 @@ from libraries import style_samples  # noqa: E402  # 样文池 samples.json + �
 from libraries.planning_state import (  # noqa: E402
     REPLAN_MAX_PLOTS, REPLAN_MIN_REMAINING_WORDS, REPLAN_TARGET_WORDS,
     detect_story_boundary, load_planning_state, merge_state, planning_path,
-    save_planning_state, validate_patch,
+    save_planning_state, validate_patch, validate_replan_patch,
 )
 from libraries.agent_tool_router import check_ui_command, selected_profile, tool_metadata  # noqa: E402
 
@@ -1254,6 +1254,10 @@ def prepare_plot_run(book_id: str) -> dict:
     tl = _require_tl(book_id)
     book = book_mgr.get(book_id)
     draft = _draft_read(book_id) or {}
+    pending = _pending_review_plot(draft)
+    if pending:
+        # 上一段还没被接受就先别写下一段：否则改动后的正文与后续内容建立在未复核的事实上。
+        raise RuntimeError(f"情节段 {pending} 尚未评审接受；请先 accept_plot_draft 再继续写作")
     runtime = _runtime_projection(book_id, tl, book, draft)
     p = runtime["next_plot"]
     profile = _profile_for(tl)
@@ -1550,6 +1554,9 @@ def get_story_state(book_id: str) -> dict:
             "remaining_plot_count": len(unwritten),
         },
         "forecast": {
+            "horizon": {"h1": ((state.get("horizon") or {}).get("h1") or [])},
+            # 兼容旧消费者保留 h1 平铺别名；新 Planner 统一读取 forecast.horizon.h1。
+            "h1": ((state.get("horizon") or {}).get("h1") or []),
             "future_intents": state.get("future_intents") or [],
             "character_intents": state.get("character_intents") or [],
             "decision_points": state.get("decision_points") or [],
@@ -2092,6 +2099,10 @@ def save_basic_info(book_id: str, basic_info: dict, expected_revision: int | Non
 
     expected_revision 省略=不校验；给则与磁盘 storyline_revision 不一致返 stale_storyline
     （storyline_revision 代表所有影响下次故事规划的事实状态，见 R3 修订）。
+
+    写作期（phase=ready）是**受限人物修正**入口：必须带 expected_revision、只准提交完整
+    characters 数组、不得删人物、不得顺带改世界观/书名/POV；成功后自动跑 validate_world
+    并 bump 版本，使旧 commit_token / 旧 replan preview 全部失效。
     """
     tl = book_mgr.load_storyline(book_id)
     if tl is None:
@@ -2101,6 +2112,10 @@ def save_basic_info(book_id: str, basic_info: dict, expected_revision: int | Non
     if expected_revision is not None and int(expected_revision) != _cur:
         return {"ok": False, "error": "stale_storyline", "expected": int(expected_revision),
                 "actual": _cur, "action": "refresh_and_replan"}
+    if str(getattr(tl, "phase", "") or "") == "ready":
+        where = _guard_ready_character_patch(book_id, tl, basic_info, expected_revision)
+    else:
+        where = ""
     bi = dict(tl.basic_info or {})
     if isinstance(basic_info.get("characters"), list):
         bi["characters"] = basic_info["characters"]
@@ -2129,7 +2144,79 @@ def save_basic_info(book_id: str, basic_info: dict, expected_revision: int | Non
     tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
     save_tl(book_id, tl)
     _drop_engine(book_id)
-    return {"ok": True, "storyline_revision": tl.storyline_revision}
+    result = {"ok": True, "storyline_revision": tl.storyline_revision}
+    if where:
+        # 人物改动会影响后续写作与规划：如实回报一致性检查，并让调用方知道旧令牌已失效。
+        try:
+            result["world_check"] = validate_world(book_id=book_id)
+        except Exception as exc:  # noqa: BLE001
+            result["world_check"] = {"skipped": True, "error": str(exc)[:160]}
+        result["scope"] = where
+        result["note"] = "人物已更新：旧 commit_token / replan preview 已随版本失效，请刷新上下文。"
+    return result
+
+
+def _guard_ready_character_patch(book_id: str, tl, basic_info: dict,
+                                 expected_revision: int | None) -> str:
+    """写作期 save_basic_info 的硬边界；返回作用域标记，越界直接 raise。
+
+    为什么收这么紧：写作期改人物会动摇已写正文的前提，也会让在途 commit_token /
+    replan preview 的版本绑定失效。所以只开「完整人物数组 + 显式版本」这一个口子，
+    其余字段一律拒绝——宁可让 Agent 明确失败，也不要它顺手改掉世界观。
+    """
+    if expected_revision is None:
+        raise RuntimeError("写作期修正人物必须带 expected_revision（先读 get_orchestration_state）")
+    allowed = {"characters"}
+    extra = sorted(k for k in (basic_info or {}) if k not in allowed)
+    if extra:
+        raise RuntimeError(f"写作期只允许提交 characters，不支持：{'、'.join(extra)}")
+    chars = basic_info.get("characters")
+    if not isinstance(chars, list) or not chars:
+        raise RuntimeError("写作期必须提交完整且非空的 characters 数组")
+    existing = {str((c or {}).get("name") or "") for c in (get_characters(tl.basic_info) or [])} - {""}
+    incoming = {str((c or {}).get("name") or "") for c in chars} - {""}
+    dropped = sorted(existing - incoming)
+    if dropped:
+        raise RuntimeError(f"写作期不允许删除人物：{'、'.join(dropped)}")
+    for c in chars:
+        if not str((c or {}).get("name") or "").strip():
+            raise RuntimeError("每个角色必须带 name")
+        if not str((c or {}).get("role") or "").strip():
+            raise RuntimeError(f"角色 {c.get('name')} 缺 role")
+        if (c or {}).get("importance") is None:
+            raise RuntimeError(f"角色 {c.get('name')} 缺 importance")
+    if _has_unaccepted_draft_plot(book_id):
+        raise RuntimeError("存在尚未评审接受的 Plot 草稿；请先完成评审再修正人物")
+    return "ready_character_patch"
+
+
+def _has_unaccepted_draft_plot(book_id: str) -> bool:
+    """草稿里是否有未评审接受的段（用于挡住改人物与在途评审互相打架）。"""
+    for bridge in (_draft_read(book_id) or {}).get("bridges") or []:
+        if str(((bridge.get("review") or {}).get("state")) or "") != "accepted":
+            return True
+    return False
+
+
+def _review_gate_on() -> bool:
+    """评审门禁是否生效。只由编排路径（`novelengine-write` 子进程）注入。
+
+    为什么用环境变量而不是无条件开启：legacy 的一次性 Writer 从不调 accept，
+    无条件门禁会当场锁死老路径。所以「盖章 pending」无害地总是发生，**是否据此
+    拦截**由这条开关决定——一条链路要么全程受门禁管，要么完全不受影响。
+    """
+    return str(os.environ.get("NOVEL_REVIEW_GATE") or "").strip() not in ("", "0", "false", "off", "no")
+
+
+def _pending_review_plot(draft: dict | None) -> str:
+    """返回第一个「进入过评审流程但尚未接受」的 plot_id；门禁关闭时恒为空串。"""
+    if not _review_gate_on():
+        return ""
+    for bridge in (draft or {}).get("bridges") or []:
+        review = bridge.get("review")
+        if isinstance(review, dict) and str(review.get("state") or "") != "accepted":
+            return str(bridge.get("plot_id") or "")
+    return ""
 
 
 def _apply_chapter_planning_patch(book_id: str, tl, book, planning_patch: dict | None) -> dict | None:
@@ -2220,6 +2307,7 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
     # 0.55) 读进行中草稿的 per-plot facts/run 快照（agent 经 save_plot_draft(outcome=) 上报的
     #       **结构化结果**）。commit 原样搬进 chapter bridge——平台不推断正文，只搬运 structured facts（修订 2）。
     _draft_by_plot = {}
+    _draft_bridges_ordered = []   # 草稿段按文件顺序（canonical 集合与正文重建都以此为准）
     try:
         _dp0 = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
         if os.path.exists(_dp0):
@@ -2228,18 +2316,22 @@ def save_chapter_text(book_id: str, chapter_num: int, text: str,
             for _b in (_dd.get("bridges") or []):
                 if isinstance(_b, dict) and _b.get("plot_id"):
                     _draft_by_plot[str(_b["plot_id"])] = _b
+                    _draft_bridges_ordered.append(_b)
     except Exception:
         _draft_by_plot = {}
+        _draft_bridges_ordered = []
 
     # protocol v2 的草稿是章节 canonical source：提交参数只能确认段集合，不能静默覆盖已签收文本。
-    _v2_draft = [b for b in _draft_by_plot.values() if int(b.get("protocol_version", 1) or 1) >= 2]
-    if _v2_draft:
+    # 集合口径必须是**全部草稿段、按草稿顺序**（v1/v2 混合章同样成立）：只比 v2 子集会让
+    # 混合协议章永远收不了章（期望 {v2 段} ≠ 提交 {全部段}），而一旦侥幸相等，下面的
+    # text 重建就会把 v1 段正文静默丢掉——两个后果都不可接受。
+    if any(int(b.get("protocol_version", 1) or 1) >= 2 for b in _draft_by_plot.values()):
+        expected_ids = [str(b.get("plot_id") or "") for b in _draft_bridges_ordered]
         submitted_ids = [str((b or {}).get("plot_id") or "") for b in (plot_segments or [])]
-        expected_ids = [str(b.get("plot_id") or "") for b in _v2_draft]
         if not plot_segments or set(submitted_ids) != set(expected_ids):
             raise RuntimeError("protocol_v2：save_chapter_text 必须提交与已保存草稿完全一致的 plot_segments")
         plot_segments = [{"plot_id": b.get("plot_id"), "plot_name": b.get("plot_name"),
-                          "text": b.get("text") or ""} for b in _v2_draft]
+                          "text": b.get("text") or ""} for b in _draft_bridges_ordered]
         text = "\n\n".join(b["text"] for b in plot_segments)
 
     # 1) 规则去AI味（词替换+段落节奏，无 LLM）；有情节段则逐段去并保持桥梁结构。
@@ -2530,6 +2622,11 @@ def finalize_draft_chapter(book_id: str, flow_id: str = "") -> dict:
     bridges = list(draft.get("bridges") or [])
     if not bridges:
         raise RuntimeError("没有可提交的章节草稿")
+    pending = _pending_review_plot(draft)
+    if pending:
+        # 只对进入过评审流程的段生效（legacy 不写 review，不受影响）：改过或写过的段
+        # 必须先被接受才允许收章，防主 Agent 漏掉 accept 就一路写下去。
+        raise RuntimeError(f"情节段 {pending} 尚未评审接受，不能收章；请先 accept_plot_draft 或改稿复评")
     chapter_num = int(draft.get("chapter_num") or 0)
     if chapter_num < 1:
         raise RuntimeError("草稿缺少章节号")
@@ -2802,11 +2899,36 @@ def save_plot_draft(commit_token: str, text: str, plot_summary: str = "",
     if not lock.acquire(timeout=30.0, purpose="save_plot_draft"):
         raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
     try:
-        return _commit_plot_draft_locked(book_id, commit_token, text, summary,
-                                         outcome, character_events, summary_problems,
-                                         chapter_title)
+        result = _commit_plot_draft_locked(book_id, commit_token, text, summary,
+                                           outcome, character_events, summary_problems,
+                                           chapter_title)
     finally:
         lock.release()
+    # Plot 级规则体检是固定副作用，但不阻断正文提交；主 Agent 读取报告后决定
+    # accept / revision / character patch / replan。
+    plot_id = str(result.get("plot_id") or "")
+    if _review_gate_on() and plot_id:
+        _stamp_review(book_id, plot_id, {"state": "pending", "reason": "awaiting_review"})
+    try:
+        gate = plot_quality_gate(book_id, plot_id)
+        result["quality_gate"] = gate
+    except Exception as exc:  # noqa: BLE001
+        result["quality_gate"] = {"skipped": True, "error": str(exc)[:160]}
+    return result
+
+
+def _stamp_review(book_id: str, plot_id: str, review: dict) -> None:
+    """把评审状态写到草稿 bridge 上（调用方负责已持锁或已确认并发安全）。"""
+    draft = _draft_read(book_id) or {}
+    bridges = list(draft.get("bridges") or [])
+    touched = False
+    for item in bridges:
+        if str(item.get("plot_id") or "") == str(plot_id or ""):
+            item["review"] = review
+            touched = True
+    if touched:
+        draft["bridges"] = bridges
+        _draft_write(book_id, draft)
 
 
 def _finish_plot_commit(book_id: str, commit_token: str, record: dict, plot,
@@ -4161,10 +4283,26 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
                                             known_outlines=tl.outlines or [],
                                             known_plots=tl.plots or [])
         try:
-            checked_patch = validate_patch(args.get("planning_patch"))
+            checked_patch = validate_replan_patch(args.get("planning_patch"))
         except ValueError as e:
-            problems.append(str(e))
-            checked_patch = {}
+            raise RuntimeError(f"命令 {cmd} planning_patch 校验失败：{e}") from e
+        # replan preview 必须复现 save_outlines 对具名角色的硬门禁，避免 validation=true
+        # 但 commit 时才因缺 roles 失败。
+        known_names = {str(c.get("name") or "") for c in ((tl.basic_info or {}).get("characters") or [])}
+        if known_names:
+            for idx, p in enumerate(plots):
+                who = f"plots[{idx}]「{p.get('name') or p.get('id') or '未命名'}」"
+                roles = p.get("roles") or []
+                if any(str(name) not in known_names for name in roles):
+                    unknown = [str(name) for name in roles if str(name) not in known_names]
+                    problems.append(f"{who} 包含未知角色：{'、'.join(unknown)}"
+                                    f"（不在 basic_info.characters 里）；请改用已登记角色的精确姓名，"
+                                    f"或先把该角色登记进角色 bible")
+                if int(p.get("protocol_version", 2) or 2) >= 2 and not p.get("no_named_cast") and not roles:
+                    problems.append(f"{who} 缺 roles。protocol_version>=2 且 no_named_cast=false 时，"
+                                    f"roles 必须是角色设定中已登记姓名的字符串数组（如 [\"陆凌舟\"]）；"
+                                    f"若该段确实没有具名角色，请显式设 no_named_cast=true，"
+                                    f"不要用空 roles 冒充无具名角色场景")
         selected = str(args.get("selected_direction_id") or "")
         if selected not in {str(x.get("id")) for x in directions}:
             problems.append("selected_direction_id 未指向 directions 中的方向")
@@ -4191,6 +4329,8 @@ def drive_ui(cmd: str, args: dict = None) -> dict:
             )
             if not report.get("passed"):
                 problems.append(str(report.get("summary") or report))
+        if problems:
+            raise RuntimeError(f"命令 {cmd} 预览校验失败：" + "；".join(problems))
         preview = {
             "expected_revision": int(args["expected_revision"]),
             "diagnosis": args["diagnosis"], "directions": directions,
@@ -4709,12 +4849,13 @@ _LOCKED_TOOLS = {
     "save_basic_info",     # 会 bump storyline_revision（影响规划），必须与写作/续规划互斥
     # 首次读取会 lazy bootstrap planning_state，故也需同书锁（不做快照）。
     "get_story_state", "prepare_plot_run",
+    "plot_quality_gate", "accept_plot_draft",
 }
 
 # 自持锁工具：签名里没有 book_id（只有 commit_token），wrapper 取不到锁目标，
 # 由函数体在解析出归属书后自行 BookLock（见 save_plot_draft / _commit_plot_draft_locked）。
 # 仅用于工具元数据如实标注 locked，切勿加进 _LOCKED_TOOLS（wrapper 取不到 book_id，会加错锁）。
-_SELF_LOCKED_TOOLS = {"save_plot_draft"}
+_SELF_LOCKED_TOOLS = {"save_plot_draft", "save_plot_revision"}
 
 
 def _wrap_book_lock(fn):
@@ -5169,6 +5310,272 @@ def judge_extraction(plots: list | None = None, structures: list | None = None,
                                     gag_lib=gag_lib, char_lib=char_lib)}
 
 
+def _orchestration_plot(book_id: str, plot_id: str = ""):
+    """返回当前 draft bridge 与对应 Plot；只读，不推进任何运行状态。"""
+    tl = load_tl(book_id)
+    if tl is None:
+        raise RuntimeError(f"书 {book_id} 无故事线")
+    draft = _draft_read(book_id) or {}
+    bridges = list(draft.get("bridges") or draft.get("plots") or [])
+    target_id = str(plot_id or "")
+    bridge = None
+    if target_id:
+        bridge = next((b for b in bridges if str(b.get("plot_id") or "") == target_id), None)
+    elif bridges:
+        bridge = bridges[-1]
+    if bridge is None:
+        raise RuntimeError("当前没有可评审的 Plot 草稿")
+    plot = next((p for p in (getattr(tl, "plots", None) or [])
+                 if str(getattr(p, "id", "")) == str(bridge.get("plot_id") or "")), None)
+    if plot is None:
+        raise RuntimeError(f"草稿 Plot 不在当前故事线中：{bridge.get('plot_id')}")
+    return tl, draft, bridge, plot
+
+
+def get_orchestration_state(book_id: str, flow_id: str = "") -> dict:
+    """读取主 Agent 编排所需的权威状态；纯读，不替代服务端硬校验。"""
+    from libraries.write_flow import (active_flow_id, chapter_status, next_action)
+    from libraries.planning_state import load_planning_state
+    tl = load_tl(book_id)
+    if tl is None:
+        raise RuntimeError(f"书 {book_id} 无故事线")
+    draft = _draft_read(book_id) or {}
+    ps = load_planning_state(book_id, tl, None, persist=False)
+    drafted = {str(x.get("plot_id")) for x in (draft.get("bridges") or []) if x.get("plot_id")}
+    remaining = [p for p in (getattr(tl, "plots", None) or [])
+                 if not getattr(p, "written_chapter", 0) and str(getattr(p, "id", "")) not in drafted]
+    from agent_tools import _next_plot, _planned_words_of, _runtime_written_words
+    nxt = _next_plot(tl, draft)
+    boundary = detect_story_boundary(
+        written_until_word=_runtime_written_words(book_id, tl, None, draft),
+        committed_until_word=int(ps.get("committed_until_word") or 0),
+        remaining_plots=len(remaining),
+        replan_min_remaining_words=REPLAN_MIN_REMAINING_WORDS,
+        storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+        last_replan=ps.get("last_replan") or {},
+    )
+    status = chapter_status(
+        book_id, tl, draft, needs_replan=bool(boundary.get("needs_replan")),
+        next_plot_planned_words=_planned_words_of(nxt),
+        next_plot_break_after=str(getattr(nxt, "chapter_break_after", "allowed") or "allowed"),
+    )
+    action = next_action(status)
+    return {
+        "book_id": book_id,
+        "flow_id": flow_id or active_flow_id(book_id) or "",
+        "next_action": action,
+        "chapter_status": status,
+        "current_plot": ({"id": nxt.id, "name": nxt.name,
+                          "words": _planned_words_of(nxt)} if nxt else None),
+        "draft": {"chapter_num": draft.get("chapter_num", 0),
+                  "words": draft.get("words", 0),
+                  "bridges": len(draft.get("bridges") or [])},
+        "remaining_plots": len(remaining),
+        "boundary": boundary,
+        "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+        "limits": {"max_plots_per_run": 1, "max_revisions_per_plot": 2},
+    }
+
+
+def _plot_gate_digest(report: dict) -> str:
+    return hashlib.sha256(json.dumps(report, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def plot_quality_gate(book_id: str, plot_id: str = "", flow_id: str = "") -> dict:
+    """对当前 Plot 草稿执行规则体检并保存报告；不自动修改正文。"""
+    tl, draft, bridge, plot = _orchestration_plot(book_id, plot_id)
+    text = str(bridge.get("text") or "")
+    planned = int(getattr(plot, "words", 0) or 0)
+    actual = count_prose_units(text)
+    issues = []
+    if not text.strip():
+        issues.append({"severity": "error", "code": "EMPTY_TEXT", "message": "正文为空"})
+    if actual == 0 or (planned and actual < max(80, int(planned * 0.25))):
+        issues.append({"severity": "warning", "code": "WORD_COUNT_LOW",
+                       "message": f"正文 {actual} 字，目标 {planned} 字"})
+    try:
+        review = ContentReviewer().review(text, chapter_num=int(draft.get("chapter_num") or 0),
+                                          chapter_title=str(draft.get("chapter_title") or "Plot"),
+                                          target_words=max(planned, 1))
+        review_report = {"passed": bool(review.passed), "score": review.score,
+                         "issues": [{"severity": x.severity, "category": x.category,
+                                     "description": str(x.description)[:160]}
+                                    for x in (review.issues or [])[:10]]}
+        for item in review_report["issues"]:
+            if item.get("severity") in ("error", "warning"):
+                issues.append({"severity": item["severity"], "code": "REVIEW",
+                               "message": item.get("description", "")})
+    except Exception as exc:
+        review_report = {"skipped": True, "error": str(exc)[:160]}
+    report = {
+        "schema_version": 1, "book_id": book_id, "flow_id": flow_id or "",
+        "plot_id": str(bridge.get("plot_id") or ""),
+        "text_digest": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "planned_words": planned, "actual_words": actual,
+        "passed": not any(x.get("severity") == "error" for x in issues),
+        "blocking_hard_issues": [x for x in issues if x.get("severity") == "error"],
+        "issues": issues, "checks": {"review": review_report},
+    }
+    report["gate_digest"] = _plot_gate_digest(report)
+    bridges = list(draft.get("bridges") or [])
+    for item in bridges:
+        if str(item.get("plot_id") or "") == str(bridge.get("plot_id") or ""):
+            item["quality_gate"] = report
+            break
+    draft["bridges"] = bridges
+    gates = dict(draft.get("plot_gates") or {})
+    gates[str(bridge.get("plot_id") or "")] = report
+    draft["plot_gates"] = gates
+    _draft_write(book_id, draft)
+    return report
+
+
+def get_plot_review_context(book_id: str, plot_id: str = "", gate_digest: str = "") -> dict:
+    """给 Critic 的最小评审快照；正文和规则报告来自服务端草稿。"""
+    tl, draft, bridge, plot = _orchestration_plot(book_id, plot_id)
+    report = (bridge.get("quality_gate") or
+              (draft.get("plot_gates") or {}).get(str(bridge.get("plot_id") or "")))
+    if not report:
+        report = plot_quality_gate(book_id, str(bridge.get("plot_id") or ""))
+    if gate_digest and gate_digest != report.get("gate_digest"):
+        raise RuntimeError("Plot 评审报告已过期，请重新读取")
+    return {
+        "book_id": book_id, "plot_id": bridge.get("plot_id"),
+        "text": bridge.get("text") or "", "plot": plot.to_dict() if hasattr(plot, "to_dict") else {},
+        "quality_gate": report, "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+        "draft": {"chapter_num": draft.get("chapter_num", 0), "words": draft.get("words", 0)},
+    }
+
+
+def accept_plot_draft(book_id: str, plot_id: str = "", flow_id: str = "",
+                      gate_digest: str = "", critic_verdict: dict | None = None) -> dict:
+    """记录主 Agent 对 Plot 评审的接受决定；硬规则问题不可被覆盖。"""
+    tl, draft, bridge, _plot = _orchestration_plot(book_id, plot_id)
+    report = bridge.get("quality_gate") or (draft.get("plot_gates") or {}).get(str(bridge.get("plot_id") or ""))
+    if not report:
+        report = plot_quality_gate(book_id, str(bridge.get("plot_id") or ""), flow_id)
+    if gate_digest and gate_digest != report.get("gate_digest"):
+        raise RuntimeError("gate_digest 已过期，请重新评审")
+    if report.get("blocking_hard_issues"):
+        raise RuntimeError("Plot 存在硬性门禁问题，不能接受")
+    verdict = critic_verdict if isinstance(critic_verdict, dict) else {}
+    if str(verdict.get("verdict") or "accept") not in ("accept", "approved", ""):
+        raise RuntimeError("Critic 尚未给出 accept verdict")
+    accepted = dict(bridge.get("review") or {})
+    accepted.update({"state": "accepted", "gate_digest": report.get("gate_digest"),
+                     "critic_verdict": verdict, "flow_id": flow_id or ""})
+    bridge["review"] = accepted
+    for item in draft.get("bridges") or []:
+        if str(item.get("plot_id") or "") == str(bridge.get("plot_id") or ""):
+            item["review"] = accepted
+    _draft_write(book_id, draft)
+    return {"ok": True, "plot_id": bridge.get("plot_id"), "review": accepted,
+            "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0)}
+
+
+def prepare_plot_revision(book_id: str, plot_id: str = "", expected_text_digest: str = "",
+                          rewrite_brief: dict | None = None) -> dict:
+    """为当前章最后一个 Plot 签发一次性改稿令牌。"""
+    tl, draft, bridge, plot = _orchestration_plot(book_id, plot_id)
+    bridges = list(draft.get("bridges") or [])
+    if not bridges or bridges[-1] is not bridge:
+        raise RuntimeError("只允许改写当前章最后一个 Plot")
+    text = str(bridge.get("text") or "")
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if expected_text_digest and expected_text_digest != digest:
+        raise RuntimeError("正文已变化，请重新读取评审上下文")
+    from libraries.plot_revision_tokens import issue
+    token = issue(book_id, {
+        "plot_id": str(bridge.get("plot_id") or ""),
+        "chapter_num": int(draft.get("chapter_num") or 0),
+        "text_digest": digest,
+        "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+        "rewrite_brief": rewrite_brief if isinstance(rewrite_brief, dict) else {},
+    })
+    return {"ok": True, "revision_token": token, "book_id": book_id,
+            "plot_id": bridge.get("plot_id"), "text": text,
+            "plot": plot.to_dict() if hasattr(plot, "to_dict") else {},
+            "quality_gate": bridge.get("quality_gate") or {},
+            "rewrite_brief": rewrite_brief if isinstance(rewrite_brief, dict) else {},
+            "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0)}
+
+
+def save_plot_revision(revision_token: str, text: str, plot_summary: str = "",
+                       outcome: dict | None = None,
+                       character_events: list | None = None) -> dict:
+    """替换当前章最后一个 Plot，并重新对账/体检；不接受旧 commit_token。"""
+    from libraries.plot_revision_tokens import resolve, verify, accept
+    book_id, _ = resolve(revision_token)
+    if not book_id:
+        raise RuntimeError("revision_token 无效；请重新 prepare_plot_revision")
+    record = verify(book_id, revision_token)
+    if not (text or "").strip():
+        raise RuntimeError("text 必填")
+    lock = BookLock(book_id)
+    if not lock.acquire(timeout=30.0, purpose="save_plot_revision"):
+        raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
+    try:
+        tl, draft, old_bridge, plot = _orchestration_plot(book_id, record.get("plot_id") or "")
+        bridges = list(draft.get("bridges") or [])
+        if not bridges or bridges[-1] is not old_bridge:
+            raise RuntimeError("当前 Plot 已不是本章最后一段，不能改写")
+        current_digest = hashlib.sha256(str(old_bridge.get("text") or "").encode("utf-8")).hexdigest()
+        if current_digest != record.get("text_digest"):
+            raise RuntimeError("草稿正文已变化，revision_token 失效")
+        if int(record.get("storyline_revision") or 0) != int(getattr(tl, "storyline_revision", 0) or 0):
+            raise RuntimeError("故事线版本已变化，revision_token 失效")
+        revised = str(text).strip()
+        try:
+            revised = DeAIEngine().process_rule_based(revised).processed
+        except Exception:
+            pass
+        entry = dict(old_bridge)
+        entry["text"] = revised
+        entry.update(_text_metrics(revised))
+        # 改稿＝新的未评审正文：必须清掉上一版的接受状态，否则「改过的段」会带着
+        # accepted 继续往下走，等于绕过复评（gate/review 都会指向旧正文）。
+        entry["review"] = {"state": "pending", "reason": "revision_applied"}
+        entry["quality_gate"] = {}
+        if plot_summary:
+            entry["plot_summary"] = str(plot_summary).strip()[:120]
+        if isinstance(outcome, dict):
+            entry["facts"] = {k: list(outcome.get(k) or []) for k in (
+                "choices_made", "information_revealed", "relationship_changes",
+                "resource_changes", "promise_updates", "new_story_questions")}
+        if isinstance(character_events, list):
+            entry["character_events"] = character_events
+            facts = dict(entry.get("facts") or {})
+            facts["character_events"] = character_events
+            entry["facts"] = facts
+        bridges[-1] = entry
+        draft["bridges"] = bridges
+        draft["buffer"] = [b.get("text", "") for b in bridges]
+        draft["words"] = sum(count_prose_units(x) for x in draft["buffer"])
+        gates = dict(draft.get("plot_gates") or {})
+        gates.pop(str(plot.id), None)      # 旧体检报告对应旧正文，必须作废
+        draft["plot_gates"] = gates
+        _draft_write(book_id, draft)
+        from libraries.reconcile import reconcile_run
+        from libraries.plot_run_state import make_plot_delta, stage_delta
+        reconcile = reconcile_run(plot=plot, bridge=entry,
+                                 based_on_storyline_revision=int(entry.get("based_on_storyline_revision") or 0),
+                                 current_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+                                 chapter_num=int(draft.get("chapter_num") or 0))
+        stage_delta(book_id, make_plot_delta(
+            plot_id=plot.id, plot_name=plot.name, chapter_num=int(draft.get("chapter_num") or 0),
+            facts=entry.get("facts") or {}, text=revised, run_id=entry.get("run_id") or "",
+            reconcile=reconcile, plot_summary=entry.get("plot_summary") or "",
+            arc_id=getattr(plot, "outline_id", "") or ""))
+        gate = plot_quality_gate(book_id, plot.id)
+        result = {"ok": True, "book_id": book_id, "plot_id": plot.id,
+                  "words": draft["words"], "reconcile": reconcile, "quality_gate": gate}
+        accept(book_id, revision_token, result)
+        return result
+    finally:
+        lock.release()
+
+
 def _build_registry():
     # 顺序有讲究：导航/建书向导驱动排最前（flash 对列表前部工具更敏感，能保证
     # "打开页面"请求正确触发 navigate），其次只读摸底，再创作链/上架/工具。
@@ -5186,9 +5593,12 @@ def _build_registry():
         save_outlines, save_book_meta,
         arc_material_candidates,
         # 写作 / 元数据（薄工具：agent 生成后落盘）
-        save_plot_draft, save_chapter_text,
+        save_plot_draft, prepare_plot_revision, save_plot_revision, save_chapter_text,
         add_style_rule, delete_style_rule,
         add_style_sample, delete_style_sample, list_style_samples, get_style_sample,
+        # 主 Agent 编排 / Plot 评审（规则层薄工具）
+        get_orchestration_state, get_plot_review_context, plot_quality_gate,
+        accept_plot_draft,
         # 上架 / 质量门禁 / 校验
         publish_check, mark_finished, publish_book, export_book,
         chapter_quality_gate, validate_storyline, validate_world,
