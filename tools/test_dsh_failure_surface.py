@@ -55,6 +55,13 @@ for raw in ("TIMEOUT: MCP tool call timed out after 600000ms",
             "Error: 命令 set_replan_preview planning_patch 校验失败：h1 必须是非空 list"):
     check(f"模糊/非 LLM 错误原样返回：{raw[:28]}…", DB._llm_failure_note(raw) == raw,
           DB._llm_failure_note(raw))
+check("幂等：同一条错误过两遍不叠提示",
+      DB._llm_failure_note(note).count("诊断提示：") == 1, DB._llm_failure_note(note))
+check("幂等：_writer_failure_message 里也不会出现两段提示",
+      DB._writer_failure_message(note, "", "book_003").count("诊断提示：") == 1,
+      DB._writer_failure_message(note, "", "book_003"))
+check("幂等：run 级出口 + 子 run 文案串起来仍只有一段提示",
+      DB._writer_failure_message(DB._llm_failure_note(EMPTY), "", "book_003").count("诊断提示：") == 1)
 check("认不出码时 _llm_failure_code 返回空", DB._llm_failure_code("TIMEOUT: x") == "",
       DB._llm_failure_code("TIMEOUT: x"))
 check("EMPTY_RESPONSE 的码被认出", DB._llm_failure_code(EMPTY) == "EMPTY_RESPONSE")

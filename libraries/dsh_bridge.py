@@ -1461,8 +1461,14 @@ def _llm_failure_note(raw: str) -> str:
 
     返回「原始错误 + 诊断提示」而不是覆盖原文：原始错误是排查的第一手信息。
     提示只讲 LLM 出口（换模型/换中转/测试连接），绝不提编排回退开关——那是另一类问题。
+
+    **幂等**：同一条错误会经过两处（`_map_dsh_event` 的 run 级错误出口 + Writer 子 run 的
+    失败文案），已经带过提示的文本原样返回——否则用户会看到同一段诊断提示叠两遍
+    （2026-09-19 实测）。
     """
     text = str(raw or "")
+    if "诊断提示：" in text:
+        return text
     code = _llm_failure_code(text)
     if not code:
         return text
