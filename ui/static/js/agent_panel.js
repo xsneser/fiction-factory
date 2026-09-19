@@ -701,6 +701,12 @@ console.log('[agent-panel] v28 events-stream');
             addMsg('assistant', evt.content);
             history.push({ role: 'assistant', content: evt.content, ts: Date.now() / 1000 });   // ts 供刷新后与卡片按时间交错
             saveHistory(history);
+        } else if (t === 'notice') {
+            // 非阻塞提示（如「主 Agent 编排未启用 → 本次走 legacy FSM」）：不是失败，
+            // 但必须让用户看见——否则他会以为自己在跑新编排。同样写 history。
+            addMsg('assistant', 'ℹ️ ' + (evt.message || ''));
+            history.push({ role: 'assistant', content: 'ℹ️ ' + (evt.message || ''), ts: Date.now() / 1000 });
+            saveHistory(history);
         } else if (t === 'error') {
             // 写进 history：否则刷新/切页后这条错误气泡消失，用户只看到一个"正常结束"的任务
             addMsg('assistant', '⚠️ ' + (evt.message || '发生错误'));

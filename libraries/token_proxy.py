@@ -179,6 +179,19 @@ def _origin_of(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def llm_exit_info() -> dict:
+    """当前 LLM 出口的可公开摘要：{"model", "upstream"}（**绝不回 key**）。
+
+    供错误提示与出口预检复用：说清「是哪个模型、打到哪个上游」是排查上游故障的
+    最小信息量，而这些都不敏感。
+    """
+    cfg, upstream, _err = _proxy_config()
+    return {
+        "model": (cfg.model if cfg else "") or "",
+        "upstream": _origin_of(upstream) if upstream else "",
+    }
+
+
 def _estimate_tokens(chars):
     """兜底估算：API 未返回 usage 时 ~1.5 tokens/字（show-me-the-story EstimateTokensFromRunes）。"""
     return int(float(chars) * 1.5)

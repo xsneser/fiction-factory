@@ -36,7 +36,7 @@ import re
 _log = logging.getLogger("novel-engine")
 
 from libraries.token_proxy import (   # 拉起本地 token 检测代理（dsh 走它计 token）
-    PROXY_PORT, ensure_proxy, probe_proxy, token_proxy_base_url,
+    PROXY_PORT, ensure_proxy, llm_exit_info, probe_proxy, token_proxy_base_url,
 )
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -281,6 +281,16 @@ def _python_with_mcp():
     return _PY_WITH_MCP
 
 
+# 编排气（orchestrate）与用户态 profile 同步后的角色 MCP server 清单：
+# 唯一真源，运行期 overlay 与 readiness 检查都从这里取，避免两处各写一份。
+_ROLE_MCP_SERVERS = (
+    ("orch", "orchestrate"), ("write", "write"), ("plan", "replan"),
+    ("critic", "critic"), ("candidates", "build-candidates"),
+    ("build", "build"), ("publish", "publish"), ("scout", "scout"),
+    ("style", "style"),
+)
+
+
 def _write_runtime_overlay(timeout_ms: int = 600000, mcp_profile: str = "") -> str:
     """写运行期 overlay（storage/dsh_runtime.yml）：长工具超时 + 事件流 runner。
 
@@ -348,12 +358,7 @@ user decisions remain. Never submit the book yourself, never change phases, neve
         )
         # 主 Agent 固定挂载各角色 MCP server；子代理通过精确 toolFilter 选择其中一组。
         # serverName 只属于 dsh-mcp-client 配置，不作为 mcp_server.py 参数传入。
-        for role, profile_name in (
-            ("orch", "orchestrate"), ("write", "write"), ("plan", "replan"),
-            ("critic", "critic"), ("candidates", "build-candidates"),
-            ("build", "build"), ("publish", "publish"), ("scout", "scout"),
-            ("style", "style"),
-        ):
+        for role, profile_name in _ROLE_MCP_SERVERS:
             yaml_text += (
                 f"- id: mcp-novelengine-{role}\n"
                 "  config:\n"
@@ -378,6 +383,13 @@ user decisions remain. Never submit the book yourself, never change phases, neve
             f"    cwd: '{cwd}'\n"
             f"    toolCallTimeoutMs: {timeout_ms}\n"
         )
+        # 角色 server 必须在这里**显式关掉**：用户态 profile 一旦同步成仓库模板，
+        # 那 9 个角色 MCP server 就是 enable 状态，而 leaf 运行期 overlay 是叠加在
+        # 用户 profile 之后的——只定义 mcp-novelengine 不足以把它们挤掉，结果是
+        # legacy Writer 子 run 的工具面从 4 个被放大到全量（write=4 契约在运行期失效）。
+        # dsh patch 对不存在的 id 只 warn（dsh-app-boot/lib/index.js），故加了也安全。
+        for role, _profile_name in _ROLE_MCP_SERVERS:
+            yaml_text += f"- id: mcp-novelengine-{role}\n  disabled: true\n"
     yaml_text += (
         "# Writer 不接收全局 NOVEL_AGENT；非 Writer 保持原开发/路由指令。\n"
         "- id: agent-instructions\n"
@@ -1024,7 +1036,10 @@ def _map_dsh_event(evt: dict, pending: dict):
     elif t == "reply":
         yield {"type": "reply", "content": data.get("text") or ""}
     elif t == "error":
-        yield {"type": "error", "message": data.get("message") or "dsh 任务出错"}
+        # 来自 dsh 事件流的 run 级错误（events-runner 的 `<CODE>: <message>`）。只有**明确
+        # 的 LLM adapter 码**会被追加诊断提示，其余原样透传（见 _llm_failure_note）。
+        yield {"type": "error",
+               "message": _llm_failure_note(data.get("message") or "dsh 任务出错")}
     elif t == "done":
         yield {"type": "done"}
 
@@ -1411,6 +1426,76 @@ def _lease_heartbeat(book_id: str, flow_id: str, interval: float = 60.0):
             thread.join(timeout=1.0)
 
 
+# ─── LLM 出口故障的可诊断化 ───
+#
+# 为什么只认这几个码：`EMPTY_RESPONSE` / `STREAM_CLOSED` / `MALFORMED_RESPONSE` 是
+# dsh-llm-deepseek 适配器**在解析上游流式响应时**产生的（`EMPTY_RESPONSE` 的判据是
+# 「finish_reason=stop 且一个 block 都没有」，见 dsh-llm-deepseek/lib/index.js 的 translate()），
+# 只有真正的上游响应才可能触发，transport 层伪造不出来。
+#
+# 反过来，`TIMEOUT` / `TRANSPORT` / `RATE_LIMIT` 这类**模糊码一律不改写**：MCP 工具超时、
+# subagent 超时、文件锁超时都报这些，把它们改写成「模型超时」就是误诊——第 16 章那次，
+# 用户正是被误导性的归因带偏的。
+_LLM_FAILURE_CODES = {
+    "EMPTY_RESPONSE": "上游对这次请求返回了「正常结束但没有任何内容」的回复（重试 5 次仍为空）",
+    "STREAM_CLOSED": "上游的流式响应在收到结束标记前就断了",
+    "MALFORMED_RESPONSE": "上游返回了无法解析的流式数据",
+}
+_LLM_FAILURE_RE = re.compile(
+    r"(?:^|[\s:（(])(?P<code>" + "|".join(_LLM_FAILURE_CODES) + r")(?=[:\s)）]|$)")
+
+
+def _llm_failure_code(raw: str) -> str:
+    """从错误文本里认出**明确的 LLM adapter 码**；认不出返回空串。"""
+    text = str(raw or "")
+    m = _LLM_FAILURE_RE.search(text)
+    if m:
+        return m.group("code")
+    if "model stopped:" in text:   # adapter 对未知 finish_reason 的分支
+        return "MODEL_STOPPED"
+    return ""
+
+
+def _llm_failure_note(raw: str) -> str:
+    """给「明确的 LLM adapter 故障」**追加**一句诊断提示；其余错误原样返回。
+
+    返回「原始错误 + 诊断提示」而不是覆盖原文：原始错误是排查的第一手信息。
+    提示只讲 LLM 出口（换模型/换中转/测试连接），绝不提编排回退开关——那是另一类问题。
+    """
+    text = str(raw or "")
+    code = _llm_failure_code(text)
+    if not code:
+        return text
+    detail = _LLM_FAILURE_CODES.get(code, "上游这次回复以非正常原因结束")
+    info = llm_exit_info()
+    where = ""
+    if info.get("model") or info.get("upstream"):
+        where = (f"（model={info.get('model') or '未知'}，"
+                 f"upstream={info.get('upstream') or '未知'}）")
+    return (f"{text}\n诊断提示：{detail}{where}。这属于**上游/中转**问题，不是写作流程或 "
+            f"Writer 的问题：请在 /settings 点「测试连接」，必要时换模型或换中转后重试；"
+            f"需要分层定位时运行 probe_llm_exit(mode=\"diagnose\")。")
+
+
+def _writer_failure_message(child_error: str, child_tail: str, book_id: str) -> str:
+    """Writer 子 run 没产出可提交片段时的失败文案（纯函数，便于离线测试）。
+
+    有 run 级错误 → 以**原始错误**为主（+ 诊断提示）：把「上游空回复」写成
+    「Writer 未完成有效 Plot 提交」会让用户照着这个方向查 Writer，永远查不到真因。
+    无错误 → 保留原文案（真·没提交，且确实没有错误事件）。
+    """
+    if child_error:
+        msg = f"Writer 子 run 报错：{_llm_failure_note(child_error)}"
+    else:
+        msg = "Writer 未完成有效 Plot 提交；流程已停止。"
+    if book_id:
+        msg += f" book={book_id}"
+    tail = str(child_tail or "").strip()
+    if tail:
+        msg += " " + tail[:200]
+    return msg
+
+
 def _fail_flow(book_id: str, flow_id: str, error: str, message: str):
     """统一的失败出口：转 FAILED + **释放租约** + 一个 error 与 done。
 
@@ -1640,6 +1725,7 @@ def _legacy_writer_fsm(task: str, history: list | None, debug: bool, policy: str
         c_hist = None if book_id else history
         saved = None
         child_tail = ""
+        child_error = ""
         with _lease_heartbeat(book_id, flow_id):   # 长子 run 期间持续续租，防租约到期易主
             for evt in run_dsh_task(c_task, c_hist, debug=debug, flow_id=flow_id,
                                     child_run_id=child_id, book_id=book_id):
@@ -1649,6 +1735,10 @@ def _legacy_writer_fsm(task: str, history: list | None, debug: bool, policy: str
                     saved = evt
                 if evt.get("type") == "reply":
                     child_tail = evt.get("content") or ""
+                if evt.get("type") == "error":
+                    # 子 run 的 run 级报错（LLM 出口故障、dsh 崩溃…）必须留住：否则
+                    # 「上游空回复」会被下面报成「Writer 未完成有效 Plot 提交」。
+                    child_error = evt.get("message") or ""
                 if evt.get("type") != "done":
                     yield evt
         if not book_id:
@@ -1669,15 +1759,14 @@ def _legacy_writer_fsm(task: str, history: list | None, debug: bool, policy: str
                 yield {"type": "domain", "name": "write_flow_recovered", "book_id": book_id,
                        "flow_id": flow_id, "phase": "EVALUATING"}
         if not saved or not flow_id or not book_id:
-            # 已判定「有可写 Plot」（或探路）却无任何提交 → 真实 Writer 失败，带上书号与子 run 尾回复便于排查
-            msg = "Writer 未完成有效 Plot 提交；流程已停止。"
-            if book_id:
-                msg += f" book={book_id}"
-            tail = child_tail.strip()
-            if tail:
-                msg += " " + tail[:200]
-            yield {"type": "error", "message": msg}
-            yield {"type": "done"}
+            # 已判定「有可写 Plot」（或探路）却无任何提交 → 真实失败。文案按「有没有 run 级
+            # 错误」分流：有错误就报错误本身（+诊断提示），别把上游故障说成 Writer 没提交。
+            # 走 _fail_flow 统一出口：标 FAILED + 释放租约（此前这条分支只 error+done 就
+            # return，flow 停在中途、租约白占 15 分钟，且失败没有可审计记录）。
+            code = _llm_failure_code(child_error)
+            yield from _fail_flow(book_id, flow_id,
+                                  f"writer_failed:{code or 'no_submission'}",
+                                  _writer_failure_message(child_error, child_tail, book_id))
             return
         # 子 Run 是 parent Flow 的可恢复审计记录，前端可按 flow 展开显示。
         flow = load_flow(book_id, flow_id) or {}
@@ -2139,6 +2228,33 @@ def _orchestrator_enabled() -> bool:
     return _orchestrator_profile_ready()
 
 
+# 会交给 orchestrator root run 的任务类别：唯一真源，路由分支与「未启用」notice 共用，
+# 避免提示口径和实际路由分叉。
+_ORCHESTRATED_PROFILES = frozenset({
+    "write", "build", "build-candidates", "replan", "publish", "scout", "style"})
+
+
+def _is_orchestrated_task(task: str, flow_mode: str | None = None) -> bool:
+    if flow_mode == "chapter_to_completion":
+        return True
+    return _task_tool_profile(task) in _ORCHESTRATED_PROFILES
+
+
+def _orchestrator_fallback_notice(status: dict) -> str:
+    """auto 模式回落 legacy 时给用户看的一句话（**只讲编排/配置**）。
+
+    LLM 出口故障、写作失败等提示一律走别的通道——把「编排回退开关」和「LLM 出口修复」
+    混进同一条消息，会让用户以为关掉编排就能解决上游空回复（第 16 章那次恰好相反：
+    故障就发生在 legacy Writer 上）。
+    """
+    problems = [str(p) for p in (status.get("problems") or [])]
+    head = ("主 Agent 编排未启用（用户态 dsh profile 未同步或已过期）→ 本次走 legacy FSM。"
+            "启用：运行 python tools/sync_dsh_headless_profile.py --apply 后完整重启 58080")
+    if problems:
+        head += "；当前问题：" + "；".join(problems[:2])
+    return head + "。若暂不想切新路径：设 NOVEL_DSH_ORCHESTRATOR=0 后重启。"
+
+
 def _needs_review_gate(profile: str) -> bool:
     """该 run 是否启用「未评审不得续写/收章」门禁。
 
@@ -2182,9 +2298,7 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
                    + f"。请先运行 `{status['action']}`（或设 NOVEL_DSH_ORCHESTRATOR=0 显式走 legacy）"}
             yield {"type": "done"}
             return
-        prof = _task_tool_profile(task)
-        if flow_mode == "chapter_to_completion" or prof in {
-                "write", "build", "build-candidates", "replan", "publish", "scout", "style"}:
+        if _is_orchestrated_task(task, flow_mode):
             for evt in run_dsh_task(
                     task, history, debug=debug, book_id=explicit_book_id or _book_id_from_task(task),
                     mcp_profile="orchestrate"):
@@ -2198,6 +2312,17 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
                "裁剪的 profile 工具面。请去掉 AGENT_TOOL_PROFILES=0，或显式设 NOVEL_DSH_ORCHESTRATOR=0。"}
         yield {"type": "done"}
         return
+
+    # auto 模式（未显式设 NOVEL_DSH_ORCHESTRATOR）走到这里 = 就绪检查没过 → 回落 legacy。
+    # 静默回落是 I3 有意为之（不是错），但用户会**以为**自己跑的是新编排：第 16 章那次
+    # 「EMPTY_RESPONSE + Writer 未完成有效 Plot 提交」就被读成新编排的 bug，实际是新编排
+    # 从未启动。所以这里补一条**非阻塞** notice，且只讲「编排/配置」这一件事——
+    # LLM 出口故障的提示在别处，两种建议绝不混在一条消息里。
+    if _profiles_enabled() and not _orchestrator_explicit() and _is_orchestrated_task(task, flow_mode):
+        status = _orchestrator_profile_status()
+        if not status["ready"]:
+            _log.warning("主 Agent 编排未启用（auto 模式回落 legacy）：%s", status["problems"])
+            yield {"type": "notice", "message": _orchestrator_fallback_notice(status)}
 
     # 结构化写作入口优先于任务文本：即使 history/task 带有 novel-replan 标记，也必须进入章级 FSM。
     if flow_mode == "chapter_to_completion":
