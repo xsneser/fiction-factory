@@ -111,7 +111,7 @@ def main():
 
         replan_service.commit_replan_preview = fake_commit
         bridge.run_dsh_task = fake_run
-        events = list(bridge._writer_fsm(f"继续写 {bid}", None, False, "auto"))
+        events = list(bridge._legacy_writer_fsm(f"继续写 {bid}", None, False, "auto"))
         event_types = [e.get("type") for e in events]
         assert "chapter_changed" in [e.get("name") for e in events if e.get("type") == "domain"]
         assert "error" not in event_types, events

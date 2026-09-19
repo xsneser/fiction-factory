@@ -6,11 +6,13 @@
 > `get_writing_context → get_pen_style → pick_plot_sample → save_plot_draft(book_id, chapter_num, …)`。
 > **该入口已不存在于写工具面**。现行实现是：
 >
-> - 写 profile 只有 **2 个工具**：`prepare_plot_run(book_id)` / `save_plot_draft(commit_token, text, …)`；
->   样文与风格由服务端在 prepare 内解析（每段**恰好 1 篇**样文 + `sample_receipt`），
->   Writer 不选材、不读文件、不跑门禁。
-> - 流程状态由**服务端 FSM**（`libraries/dsh_bridge._writer_fsm`）持有：每段 spawn 一个一次性
->   Writer 子 run，先判后动（章满→收章、情节段耗尽且到边界→spawn 计划器→原子提交→续写）。
+> - 写 profile 只有 **4 个工具**：`prepare_plot_run(book_id)` / `save_plot_draft(commit_token, text, …)`
+>   (+ `prepare_plot_revision` / `save_plot_revision` 一次性改稿)；样文与风格由服务端在 prepare 内解析
+>   （每段**恰好 1 篇**样文 + `sample_receipt`），Writer 不选材、不读文件、不跑门禁。
+> - 流程状态与**调度权**：编排开启时由 orchestrator root Agent 持有（`novel-orchestrator`，逐段委派 +
+>   亲自 `finalize_draft_chapter` 收章）；关闭/未就绪时回退服务端 `_legacy_writer_fsm`（已冻结）。
+>   两种路径下「哪些动作此刻合法」都由服务端 `libraries/orchestration_policy` 判定
+>   （`get_orchestration_state.advisory.decision_options` 与各 mutation 守卫同源）。
 > - 承诺水位/边界/远期意图落在 `planning_state.json`（`detect_story_boundary` 纯函数判边界），
 >   续规划走 `replan_preview` + `replan_service.commit_replan_preview`（UI `commit-plan` 与
 >   auto 编排共用同一原子提交点，revision CAS）。

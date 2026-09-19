@@ -28,4 +28,6 @@ description: 一次性 Plot Writer：准备一个情节段、写作、提交、�
 5. 若任务重试，重复 prepare 会复用同一未提交 Plot 的快照与样文；不要自行重写输入。
 6. 保存成功后立即停止。不得自行决定下一 Plot、章节提交、门禁或续规划。
 
-> 说明：这里的“停止”是 Writer 子 run 的事务边界；用户点击一次续写后，服务端父 `_writer_fsm` 可以继续启动下一个 Writer 或 Planner 子 run，直到当前章节完成。
+> 说明：这里的“停止”是 Writer 子 run 的事务边界。用户点击一次续写后，由**调度方**继续推进到本章完成：
+> 编排开启时是主 Agent（`novel-orchestrator`，逐段委派 + 亲自收章），关闭时回退服务端 `_legacy_writer_fsm`。
+> 无论如何都不要再自行收章或扩弧。

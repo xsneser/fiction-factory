@@ -12,8 +12,14 @@ from libraries import dsh_bridge as DB  # noqa: E402
 
 def main() -> None:
     assert "orchestrate" in PROFILE_TOOLS
-    assert PROFILE_TOOLS["critic"] == {"get_plot_review_context"}
+    # 收章在主 Agent 的工具面上；判决写入点只给 Critic（I1 的能力边界）。
+    assert "finalize_draft_chapter" in PROFILE_TOOLS["orchestrate"]
+    assert "record_plot_review" in PROFILE_TOOLS["critic"]
+    assert "record_plot_review" not in PROFILE_TOOLS["orchestrate"], \
+        "主 Agent 不得持有判决写入工具，否则评审门禁在能力边界上是假的"
     assert {"prepare_plot_revision", "save_plot_revision"} <= PROFILE_TOOLS["write"]
+    for leaf in ("write", "replan", "build", "publish", "scout", "style", "inspect"):
+        assert "finalize_draft_chapter" not in PROFILE_TOOLS[leaf], leaf
 
     parts = DB._mcp_tool_parts("mcp__novelengine-write__prepare_plot_run")
     assert parts == ("novelengine-write", "prepare_plot_run",
@@ -59,7 +65,17 @@ def main() -> None:
     }, {}))
     assert ended[0]["type"] == "subagent_end" and ended[0]["stop_reason"] == "completed", ended
 
+    # 编排就绪检查必须给出具体问题，且与同步脚本同一套 digest 语义（不再只探两个字符串）
+    status = DB._orchestrator_profile_status()
+    for key in ("ready", "problems", "source_digest", "target_digest", "action"):
+        assert key in status, status
+    assert isinstance(status["problems"], list), status
+    # 域事件：收章与判决各自触发 UI 刷新信号
+    assert DB._DOMAIN_BY_TOOL["finalize_draft_chapter"] == "chapter_changed"
+    assert DB._DOMAIN_BY_TOOL["record_plot_review"] == "plot_review_changed"
+
     print("[OK] orchestrator profiles, namespaced events, review gate scope, subagent lifecycle")
+    print("[OK] 收章在主 Agent 面 / 判决写入点只在 Critic 面（I1）/ readiness 报告具体问题")
 
 
 if __name__ == "__main__":

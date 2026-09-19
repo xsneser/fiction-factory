@@ -20,14 +20,18 @@ PROFILE_TOOLS = {
     # Planner 只生成并暂存 preview；正式故事线由服务端 replan_service 原子提交。
     "replan": {"get_story_state", "validate_storyline", "validate_world",
                "query_arc_library", "query_plots", "drive_ui"},
-    # Main Orchestrator：读取权威运行状态、评审 Plot、接受草稿/收章，
-    # 但不直接获得 Writer/Planner 的原始写作工具。
+    # Main Orchestrator：读取权威运行状态、评审 Plot、接受草稿、**收章**，
+    # 但不直接获得 Writer/Planner 的原始写工具（save_chapter_text / save_outlines 都不给）。
+    # **刻意不含 record_plot_review**：判决只能由 Critic 写入，root 没有伪造通路（不变量 I1）。
     "orchestrate": {"list_books", "get_book_detail", "get_book_state", "get_storyline",
                     "get_story_state", "get_build_status", "get_build_context",
                     "get_orchestration_state", "get_plot_review_context", "plot_quality_gate",
-                    "accept_plot_draft", "save_basic_info", "validate_world", "navigate", "drive_ui"},
-    # Critic 只读当前 Plot 的最小评审上下文；结构化 verdict 由 dsh 委派层负责。
-    "critic": {"get_plot_review_context"},
+                    "accept_plot_draft", "finalize_draft_chapter",
+                    "save_basic_info", "validate_world", "navigate", "drive_ui"},
+    # Critic 读评审上下文 + **把判决写回服务端换取 receipt**。
+    # record_plot_review 是 Critic 独有的写入点：只在 critic profile 里，orchestrate 没有它，
+    # 这就是「评审门禁在能力边界上为真」的保证（不变量 I1）。
+    "critic": {"get_plot_review_context", "record_plot_review"},
     "publish": {"get_book_detail", "save_book_meta", "publish_check", "publish_book",
                  "mark_finished", "export_book"},
     "scout": {"drive_ui", "fetch_book", "fetch_novel", "fetch_webnovel", "discover_hot",
@@ -197,7 +201,7 @@ def tool_metadata(name: str, *, allowed_phases=None, locked: bool = False) -> di
     profiles = sorted(profile for profile, names in PROFILE_TOOLS.items() if name in names)
     write_prefixes = ("save_", "add_", "delete_", "publish", "mark_", "ingest_", "fetch_", "drive_ui",
                       "plot_quality_gate", "accept_plot_draft", "prepare_plot_revision",
-                      "save_plot_revision")
+                      "save_plot_revision", "finalize_draft_chapter", "record_plot_review")
     read_write = "write" if name.startswith(write_prefixes) else "read"
     requires_book = name in {
         "get_book_state", "prepare_plot_run", "prepare_plot_revision", "save_plot_revision",
@@ -206,7 +210,8 @@ def tool_metadata(name: str, *, allowed_phases=None, locked: bool = False) -> di
         "save_plot_draft", "save_chapter_text", "publish_check", "mark_finished", "publish_book",
         "export_book", "chapter_quality_gate", "pick_plot_sample",
         "get_orchestration_state", "get_plot_review_context", "plot_quality_gate",
-        "accept_plot_draft", "finalize_draft_chapter", "commit_replan_preview",
+        "accept_plot_draft", "finalize_draft_chapter", "record_plot_review",
+        "commit_replan_preview",
     }
     return {
         "profiles": profiles,

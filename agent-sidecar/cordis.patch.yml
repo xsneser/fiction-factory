@@ -187,10 +187,12 @@
         maxDepth: 1
         persona: >-
           You are the NovelEngine Critic. Read the supplied review context, identify concrete problems,
-          and return a concise verdict: accept, revise_text, patch_character, replan, or stop. Do not write.
+          record exactly one verdict through the critic MCP tool, and report the returned receipt id.
+          Do not write prose, do not plan, and never claim a verdict you did not record.
         toolFilter:
           allow:
             - mcp__novelengine-critic__get_plot_review_context
+            - mcp__novelengine-critic__record_plot_review
 - insert:
     - id: tool-subagent-candidates
       name: '@deepseek-ai/dsh-tool-subagent'

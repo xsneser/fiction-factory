@@ -804,6 +804,9 @@ _DOMAIN_BY_TOOL = {
     "chapter_quality_gate": "quality_gate",
     "plot_quality_gate": "plot_quality_gate",
     "accept_plot_draft": "plot_review_changed",
+    # 主 Agent 编排：收章由 root 亲自发起（不再是 FSM 内部动作）；Critic 判决落服务端。
+    "finalize_draft_chapter": "chapter_changed",
+    "record_plot_review": "plot_review_changed",
 }
 
 
@@ -1041,7 +1044,7 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
     本任务也可被后续任务 / `/api/agent/chat/cancel` 打断（被打断则 error+done 收尾）。
     finally 里收尸（杀残留 proc + wait），避免孤儿进程。
 
-    mcp_profile：**服务端显式指定的工具面**（`_build_fsm` / `_writer_fsm` 按阶段定）。
+    mcp_profile：**服务端显式指定的工具面**（`_build_fsm` / `_legacy_writer_fsm` 按阶段定）。
     给了就用它，不给才按任务文本猜；两者都不确定时收敛到只读 inspect——见
     `_resolve_run_profile` 的 fail-open 说明，任何情况下都别让空 profile 流下去。
     """
@@ -1111,6 +1114,14 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
                 # 编排路径：Writer 写/改完的段必须被主 Agent 接受，才能写下一段或收章。
                 # legacy FSM 不注入这个变量——它没有 accept 环节，注入会当场锁死老路径。
                 env["NOVEL_REVIEW_GATE"] = "1"
+                # 编排循环的硬预算（不变量 I8）。服务端 FSM 原来天然有状态循环边界，
+                # 调度权交给 root 后必须由服务端继续钉住；计数落在 books/<id>/ 上，
+                # 跨进程重启累计，重启不是绕过预算的后门。
+                from libraries.orchestration_budget import limits as _budget_limits
+                _caps = _budget_limits()
+                env.setdefault("MAX_ORCHESTRATOR_ACTIONS_PER_RUN", str(_caps["actions_max"]))
+                env.setdefault("MAX_REVISE_ATTEMPTS_PER_PLOT", str(_caps["revise_max"]))
+                env.setdefault("MAX_REPLAN_ATTEMPTS_PER_RUN", str(_caps["replan_max"]))
             if book_id:
                 # 让 save_plot_draft 免去「全库扫令牌账本」：子进程只带回 commit_token，
                 # 归属书由服务端注入 → 只查一本书（O(1)），且提示不符时 fail-closed。
@@ -1420,9 +1431,17 @@ def _fail_flow(book_id: str, flow_id: str, error: str, message: str):
     yield {"type": "done"}
 
 
-def _writer_fsm(task: str, history: list | None, debug: bool, policy: str | None,
+def _legacy_writer_fsm(task: str, history: list | None, debug: bool, policy: str | None,
                 explicit_book_id: str | None = None):
-    """一个父 Flow 调度多个独立 Writer 子进程；模型从不决定下一状态。
+    """**[冻结的兼容回退]** 一个父 Flow 调度多个独立 Writer 子进程；模型从不决定下一状态。
+
+    这是主 Agent 编排启用**之前**的调度实现：调度权在服务端 Python，每轮先算 `next_action`
+    再决定收章 / 写下一段 / 续规划。2026-09 起正常路径改由 orchestrator root Agent 持有，
+    Writer/Planner/Critic 经具名 delegate 委派；**本函数只在编排关闭时兜底**
+    （`NOVEL_DSH_ORCHESTRATOR=0`，或 auto 模式下用户态 profile 未就绪）。
+
+    冻结语义：**不要再往这里加新功能**。新行为一律做在编排路径（工具面 + 授权真源），
+    否则两套调度会重新分叉、且新功能在回退路径上不存在，排查时极难分辨。
 
     每轮先从磁盘草稿状态判定动作（含首轮，避免满章草稿 / 规划边界先空跑一个注定无法提交的
     Writer 子 run 而被误报「未完成有效 Plot 提交」）：满章草稿→服务端收章、无剩余可写 Plot
@@ -1700,14 +1719,14 @@ def _parse_build_session(task: str) -> str:
 def _build_stage_note(target: str) -> str:
     """服务端阶段提示——**追加**在调用方原文之后，绝不替换它。
 
-    ⚠️ 这里是踩过的坑：曾照抄 `_writer_fsm` 的「归一化薄任务」把整段任务文本**换掉**，
+    ⚠️ 这里是踩过的坑：曾照抄 `_legacy_writer_fsm` 的「归一化薄任务」把整段任务文本**换掉**，
     结果向导原文里携带的 idea/题材标签/「已选定候选「书名」」全丢，agent 只能凭空生成
     （实测产出 6 张与用户标签毫无关系的候选）。差别在数据源：Writer 的输入由服务端
     `prepare_plot_run` 提供，而**建书的表单数据只存在于任务文本里**（服务端无副本，
     `drive_ui` 也没有读回表单的命令）——所以只能转发原文，最多追加这段。
 
     这段文字本身**不出现任何工具名**：任务里出现工具面外的工具名会让 run 因
-    unknown-tool 停摆（同 `_writer_fsm._plot_task` 的注释）。向导原文里自带的工具名
+    unknown-tool 停摆（同 `_legacy_writer_fsm._plot_task` 的注释）。向导原文里自带的工具名
     （如步 1 的 `query_profiles` / `drive_ui`）都已确认落在对应 profile 内。
     """
     if target == "BUILDING":
@@ -1850,10 +1869,10 @@ def _stage_progressed(stage: dict, session_id: str = "") -> bool:
 def _build_fsm(task: str, history: list | None, debug: bool):
     """建书父 Flow：读向导快照定阶段 → 起一个对应 profile 的子 run → 停下等用户。
 
-    **一轮只派发一个子 run**（不像 _writer_fsm 要循环出多段 Plot）：建书每步之后要么等用户
+    **一轮只派发一个子 run**（不像 _legacy_writer_fsm 要循环出多段 Plot）：建书每步之后要么等用户
     挑选/确认、要么等用户自己点提交，没有「同一轮内持续推进」的动作。
 
-    **子 run 收「调用方原文 + history + 追加的阶段提示」，不做薄任务**——这是与 `_writer_fsm`
+    **子 run 收「调用方原文 + history + 追加的阶段提示」，不做薄任务**——这是与 `_legacy_writer_fsm`
     有意的分歧：Writer 的输入由服务端 `prepare_plot_run` 给，任务文本里没有数据；建书的
     idea/题材标签/「已选定候选「书名」」**只在向导拼的任务文本里**（服务端无副本，`drive_ui`
     也没有读回表单的命令）。曾把这里做成薄任务，直接把用户的标签丢掉、候选生成跑偏。
@@ -2051,20 +2070,72 @@ def _persist_flow_events(gen):
         yield evt
 
 
-def _orchestrator_profile_ready() -> bool:
-    profile = os.path.expanduser("~/.dsh/profiles/headless/cordis.patch.yml")
+_ORCH_TEMPLATE = "agent-sidecar/cordis.patch.yml"
+_ORCH_USER_PROFILE = "~/.dsh/profiles/headless/cordis.patch.yml"
+# 编排真正依赖的 server / delegate（缺一个就跑不起来；比「两个字符串探测」严）。
+_ORCH_REQUIRED_SERVERS = ("mcp-novelengine-orch", "mcp-novelengine-write",
+                          "mcp-novelengine-plan", "mcp-novelengine-critic")
+_ORCH_REQUIRED_DELEGATES = ("tool-subagent-writer", "tool-subagent-planner",
+                            "tool-subagent-critic")
+
+
+def _orchestrator_profile_status() -> dict:
+    """编排配置的就绪检查 —— 返回**具体问题**而不只是布尔值。
+
+    旧实现只探测用户态 profile 里有没有 `mcp-novelengine-orch` 与 `tool-subagent-writer`
+    两个字符串，于是「检测到 ready」并不等于整套编排真的能跑（planner/critic server 缺失、
+    delegate 没开 spawn、模板改了但没同步，都会漏过去）。
+
+    这里改为与 `tools/sync_dsh_headless_profile.py --apply` **同一套 digest 语义**：
+    仓库模板与用户态配置必须 SHA-256 一致，且必需条目齐备。
+    """
+    import hashlib
+    problems: list[str] = []
+    template = os.path.join(_ROOT, _ORCH_TEMPLATE)
+    user = os.path.expanduser(_ORCH_USER_PROFILE)
+
+    def _digest(path: str) -> str:
+        try:
+            with open(path, "rb") as fh:
+                return hashlib.sha256(fh.read()).hexdigest()
+        except OSError:
+            return ""
+
+    src, dst = _digest(template), _digest(user)
+    text = ""
     try:
-        text = open(profile, encoding="utf-8").read()
-        return "mcp-novelengine-orch" in text and "tool-subagent-writer" in text
+        text = open(user, encoding="utf-8").read()
     except OSError:
-        return False
+        problems.append(f"用户态 profile 不存在：{user}")
+    if src and dst and src != dst:
+        problems.append("用户态 profile 与仓库模板不一致（改过模板但未同步）")
+    for entry in _ORCH_REQUIRED_SERVERS + _ORCH_REQUIRED_DELEGATES:
+        if text and f"id: {entry}" not in text:
+            problems.append(f"缺少必需条目：{entry}")
+    if text and "provider: spawn" not in text:
+        problems.append("具名子代理未启用 spawn provider")
+    return {"ready": not problems and bool(src),
+            "template": template, "user_profile": user,
+            "source_digest": src[:16], "target_digest": dst[:16],
+            "problems": problems,
+            "action": "python tools/sync_dsh_headless_profile.py --apply"}
+
+
+def _orchestrator_profile_ready() -> bool:
+    return bool(_orchestrator_profile_status()["ready"])
+
+
+def _orchestrator_explicit() -> str:
+    """显式开关的原始值（'' = 未设置 → auto 模式）。"""
+    raw = os.environ.get("NOVEL_DSH_ORCHESTRATOR")
+    return "" if raw is None else str(raw).strip()
 
 
 def _orchestrator_enabled() -> bool:
     """按显式开关或已部署的新 headless profile 启用主 Agent 编排。"""
-    raw = os.environ.get("NOVEL_DSH_ORCHESTRATOR")
-    if raw is not None:
-        return raw.strip().lower() not in {"", "0", "false", "off", "no"}
+    raw = _orchestrator_explicit()
+    if raw:
+        return raw.lower() not in {"0", "false", "off", "no"}
     return _orchestrator_profile_ready()
 
 
@@ -2095,12 +2166,20 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
     子 run 的 done 一律吞掉，全程只发一个尾部 done。
     """
     # 新路径：一个 root dsh Agent 持有编排权，Writer/Planner/Critic 由其委派。
-    # 默认仍关闭（NOVEL_DSH_ORCHESTRATOR=1 显式启用），便于在真实书上完成组合探针后切换。
+    #
+    # 就绪检查失败的语义**分两种**（不变量 I3）——「显式要求新编排却偷偷跑了旧 FSM」
+    # 会造成最难排查的行为差异（同样的任务、两套调度、不同的落盘时点）：
+    #   · 未设置 / auto：就绪即启用，不就绪即走 legacy（`_orchestrator_enabled()` 已经
+    #     把这条编码进去了：没有显式开关时它的返回值就是 readiness）；
+    #   · 显式 NOVEL_DSH_ORCHESTRATOR=1：配置不对就**硬失败**，把具体问题与修复命令告诉用户，
+    #     绝不静默回落 legacy。
     if _orchestrator_enabled() and _profiles_enabled():
-        if not _orchestrator_profile_ready():
+        status = _orchestrator_profile_status()
+        if not status["ready"]:
             yield {"type": "error", "message":
-                   "主 Agent 编排已启用，但用户态 dsh profile 未同步；请先运行 "
-                   "python tools/sync_dsh_headless_profile.py --apply"}
+                   "主 Agent 编排已按显式开关启用，但编排配置不就绪："
+                   + "；".join(status["problems"])
+                   + f"。请先运行 `{status['action']}`（或设 NOVEL_DSH_ORCHESTRATOR=0 显式走 legacy）"}
             yield {"type": "done"}
             return
         prof = _task_tool_profile(task)
@@ -2111,16 +2190,24 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
                     mcp_profile="orchestrate"):
                 yield evt
             return
+    elif _orchestrator_explicit() and not _profiles_enabled():
+        # 显式要编排 + AGENT_TOOL_PROFILES=0：两者互斥（编排依赖按角色裁工具面），
+        # 同样明确报错而不是静默走 legacy。
+        yield {"type": "error", "message":
+               "NOVEL_DSH_ORCHESTRATOR 与 AGENT_TOOL_PROFILES=0 冲突：主 Agent 编排依赖按角色"
+               "裁剪的 profile 工具面。请去掉 AGENT_TOOL_PROFILES=0，或显式设 NOVEL_DSH_ORCHESTRATOR=0。"}
+        yield {"type": "done"}
+        return
 
     # 结构化写作入口优先于任务文本：即使 history/task 带有 novel-replan 标记，也必须进入章级 FSM。
     if flow_mode == "chapter_to_completion":
-        yield from _persist_flow_events(_writer_fsm(
+        yield from _persist_flow_events(_legacy_writer_fsm(
             task, history, debug, "auto", explicit_book_id=explicit_book_id))
         return
     if _profiles_enabled():
         prof = _task_tool_profile(task)
         if prof == "write":
-            yield from _persist_flow_events(_writer_fsm(task, history, debug, policy))
+            yield from _persist_flow_events(_legacy_writer_fsm(task, history, debug, policy))
             return
         # build 与 build-candidates **一并**交给 _build_fsm：两段交接文本不可分
         # （都含「候选」），阶段由它读向导快照定，别在这里按文本二选一。

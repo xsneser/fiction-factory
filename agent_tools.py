@@ -51,6 +51,11 @@ from libraries.book_lock import BookLock, BookBusyError  # noqa: E402
 # 避免两处各写一份正则、日后只改一处。
 from libraries.book_manager import normalize_chapter_title  # noqa: E402
 from libraries.tool_policy import _wrap_phase_gate  # noqa: E402
+# 编排授权真源（不变量 I2）：排序/字数助手与「此刻哪些动作合法」的唯一实现。
+# 工具面只做别名转发，不在本文件里重复任何判断。
+from libraries import orchestration_policy  # noqa: E402
+from libraries import orchestration_budget  # noqa: E402
+from libraries import plot_review_receipts  # noqa: E402
 from libraries import style_md  # noqa: E402  # 样本驱动:styles/<pen>.md 与 STYLE REFERENCE 样本
 from libraries import style_samples  # noqa: E402  # 样文池 samples.json + 预算选样注入
 from libraries.planning_state import (  # noqa: E402
@@ -165,14 +170,12 @@ def _build_continuity_tail(book_id: str, draft: dict | None, chapter_num: int) -
 
 
 def _planned_words_of(plot) -> int | None:
-    """情节段目标字数（`storyline_writer.planned_words` 的宽容包装；None=无情节段）。"""
-    if plot is None:
-        return None
-    from libraries.storyline_writer import planned_words
-    try:
-        return int(planned_words(plot) or 0)
-    except Exception:  # noqa: BLE001 — 取不到就当 0，不阻断门禁
-        return 0
+    """情节段目标字数。实现已迁至 `libraries/orchestration_policy`（与排序同处）。
+
+    这里只留别名：写作顺序/字数助手必须**只有一份**实现——授权策略与工具面共享它，
+    两处各写一份迟早漂移成「界面按 A 排序、写入按 B 排序」。
+    """
+    return orchestration_policy.planned_words_of(plot)
 
 
 def _live_sample_digest(profile, saved_style: dict | None) -> str | None:
@@ -569,13 +572,8 @@ def get_book_state(book_id: str) -> dict:
 
 # ─── PlotRunContext：把「写这一个情节段」所需输入收敛成一个块 ───
 def _draft_plot_ids(draft):
-    """当前草稿里已写入的情节段 id 集合（draft 段落键兼容 bridges/plots）。"""
-    segs = []
-    if draft:
-        segs = draft.get("plots")
-        if segs is None:
-            segs = draft.get("bridges")
-    return {str(s.get("plot_id")) for s in (segs or []) if (s or {}).get("plot_id")}
+    """当前草稿里已写入的情节段 id 集合。实现见 `orchestration_policy.draft_plot_ids`。"""
+    return orchestration_policy.draft_plot_ids(draft)
 
 
 def _outline_name_chain(tl, oid):
@@ -1063,36 +1061,13 @@ def _thread_projection(thread: dict | None) -> dict:
 
 
 def _ordered_plots(tl) -> list:
-    """按「弧顺序 → 阶段 → 次序 → 原列表序」排情节段。
-
-    与 outline_agent/storyline_writer 的既有排序口径一致（它们都用
-    `大纲位置→stage_index→order`），只多一个「原列表序」兜底，保证遗留数据
-    （order 全为 0）仍按写入顺序稳定可复现。写作顺序、horizon、cast 预测共用它。
-    """
-    outline_pos = {getattr(o, "id", ""): i for i, o in enumerate(getattr(tl, "outlines", None) or [])}
-    plots = list(getattr(tl, "plots", None) or [])
-    index = {id(p): i for i, p in enumerate(plots)}
-    return sorted(plots, key=lambda p: (
-        outline_pos.get(getattr(p, "outline_id", ""), 9999),
-        int(getattr(p, "stage_index", 0) or 0),
-        int(getattr(p, "order", 0) or 0),
-        index.get(id(p), 0)))
+    """按「弧顺序 → 阶段 → 次序 → 原列表序」排情节段。实现见 `orchestration_policy`。"""
+    return orchestration_policy.ordered_plots(tl)
 
 
 def _next_plot(tl, draft):
-    """下一个待写情节段（written_chapter==0 且不在当前草稿内）——draft-aware，防章中途重复返回同一首。
-
-    顺序取 `_ordered_plots`（弧→阶段→次序），不再直接用 JSON 里的 `tl.plots` 列表序——
-    续规划 append 后列表序未必等于叙事序。
-    """
-    indraft = _draft_plot_ids(draft)
-    for p in _ordered_plots(tl):
-        if getattr(p, "written_chapter", 0) or 0:
-            continue
-        if p.id in indraft:
-            continue
-        return p
-    return None
+    """下一个待写情节段（draft-aware）。实现见 `orchestration_policy`。"""
+    return orchestration_policy.next_plot(tl, draft)
 
 
 def _run_id_for(plot_id: str, based_revision: int) -> str:
@@ -1254,10 +1229,17 @@ def prepare_plot_run(book_id: str) -> dict:
     tl = _require_tl(book_id)
     book = book_mgr.get(book_id)
     draft = _draft_read(book_id) or {}
-    pending = _pending_review_plot(draft)
-    if pending:
-        # 上一段还没被接受就先别写下一段：否则改动后的正文与后续内容建立在未复核的事实上。
-        raise RuntimeError(f"情节段 {pending} 尚未评审接受；请先 accept_plot_draft 再继续写作")
+    if _review_gate_on():
+        # 编排路径：写下一段的授权由唯一真源判定（评审未接受 / 无可写段 / 预算耗尽 /
+        # 章计划不符都在这里被同一套 reason 码拒掉），并记账一次 action。
+        facts = _orchestration_facts(book_id, tl=tl, draft=draft, book=book)
+        orchestration_policy.require_permission("write_next_plot", facts)
+        orchestration_budget.bump(book_id, int(facts.get("chapter_num") or 0), "actions")
+    else:
+        pending = _pending_review_plot(draft)
+        if pending:
+            # 上一段还没被接受就先别写下一段：否则改动后的正文与后续内容建立在未复核的事实上。
+            raise RuntimeError(f"情节段 {pending} 尚未评审接受；请先 accept_plot_draft 再继续写作")
     runtime = _runtime_projection(book_id, tl, book, draft)
     p = runtime["next_plot"]
     profile = _profile_for(tl)
@@ -2606,17 +2588,26 @@ def _chapter_summary(bridges: list, *, min_chars: int = CHAPTER_SUMMARY_MIN_CHAR
     return out
 
 
-def finalize_draft_chapter(book_id: str, flow_id: str = "") -> dict:
-    """服务端从已签收的 draft 提交章节 + 执行质量门禁（不暴露给 Writer）。
+def finalize_draft_chapter(book_id: str, flow_id: str = "",
+                           expected_revision: int | None = None,
+                           expected_draft_digest: str = "",
+                           expected_chapter_plan_digest: str = "") -> dict:
+    """服务端从已签收的 draft 提交章节 + 执行质量门禁。
+
+    本工具现在是**主 Agent 的收章动作**（此前只是 FSM 内部函数、不在 MCP 工具面上）：
+    收章时机由模型决定，但「此刻能不能收」由服务端判定。
+
+    编排路径（评审门禁开启）下的 freshness 是**三元组**（不变量 I6）：
+    `storyline_revision` + `draft digest` [+ 章计划 digest（阶段二）]。只校验前两项时，
+    root 可能读了旧状态后又有一个动作改了草稿/故事线，收章仍会按旧判断成功落盘。
 
     顺序与失败语义（W8）：
       1. `save_chapter_text` 是**不可回退**的落盘点：它失败（章未确认落盘）→ 抛异常，
-         由 FSM 的失败出口统一转 FAILED + 释放租约；
+         由调用方统一转 FAILED + 释放租约；
       2. 一旦章落地，后续**全部是提交后诊断/收尾**——质量门禁异常只标 `quality_gate.error`，
          flow 一定走到 DONE 并释放租约，绝不出现「章已提交却报『章节提交失败』且租约不释放」；
       3. 若权威状态（故事线进度/revision）在章落地后更新失败，`save_chapter_text` 抛
-         `ChapterCommittedStateError`，这里转成 `state_error` 诊断返回（章确实已提交），
-         由 FSM 提示用户修复后继续。
+         `ChapterCommittedStateError`，这里转成 `state_error` 诊断返回（章确实已提交）。
     """
     draft = _draft_read(book_id) or {}
     bridges = list(draft.get("bridges") or [])
@@ -2630,6 +2621,24 @@ def finalize_draft_chapter(book_id: str, flow_id: str = "") -> dict:
     chapter_num = int(draft.get("chapter_num") or 0)
     if chapter_num < 1:
         raise RuntimeError("草稿缺少章节号")
+    if _review_gate_on():
+        tl_now = _require_tl(book_id)
+        rev_now = int(getattr(tl_now, "storyline_revision", 0) or 0)
+        if expected_revision is None or not str(expected_draft_digest or "").strip():
+            raise RuntimeError("编排路径收章必须带 expected_revision 与 expected_draft_digest"
+                               "（先读 get_orchestration_state，再用它的 storyline_revision / draft_digest）")
+        if int(expected_revision) != rev_now:
+            raise RuntimeError(f"storyline_revision 已变化（读到 {expected_revision}，当前 {rev_now}）；"
+                               "请重新读取 get_orchestration_state")
+        digest_now = _draft_digest(draft)
+        if str(expected_draft_digest) != digest_now:
+            raise RuntimeError("草稿已变化（draft_digest 不匹配）；请重新读取 get_orchestration_state")
+        if _chapter_plan_required():
+            plan_view = _chapter_plan_view(book_id, draft) or {}
+            if str(expected_chapter_plan_digest or "") != str(plan_view.get("plan_digest") or ""):
+                raise RuntimeError("章计划已变化（chapter_plan_digest 不匹配）；请重新读取状态并重拟计划")
+        # 授权守卫（与 advisory 同源）：未接受 / 段落缺失 / 低于落盘下限都在这里被拒。
+        _require_orchestration_permission("finalize_chapter", book_id)
     text = "\n\n".join(str(x.get("text") or "") for x in bridges)
     # 章节摘要 = 全部情节段参与、按 Plot 数**均匀分配**预算（300~500 字）。
     # 旧实现只取前 3 段：情节段细到 4~6 个后，后半章真正的转折会从章节记忆里消失
@@ -2639,7 +2648,8 @@ def finalize_draft_chapter(book_id: str, flow_id: str = "") -> dict:
     chapter_title = _chapter_title_for(draft)
     try:
         result = save_chapter_text(book_id, chapter_num, text, title=chapter_title,
-                                   summary=summary, plot_segments=[{"plot_id": x.get("plot_id"),
+                                   summary=summary, expected_revision=expected_revision,
+                                   plot_segments=[{"plot_id": x.get("plot_id"),
                                    "plot_name": x.get("plot_name"), "text": x.get("text") or ""} for x in bridges])
     except ChapterCommittedStateError as exc:
         _log.error("章已落盘但权威状态未更新 book=%s chapter=%s: %s", book_id, chapter_num, exc)
@@ -4850,6 +4860,9 @@ _LOCKED_TOOLS = {
     # 首次读取会 lazy bootstrap planning_state，故也需同书锁（不做快照）。
     "get_story_state", "prepare_plot_run",
     "plot_quality_gate", "accept_plot_draft",
+    # 编排收章：读草稿 → CAS 校验 → save_chapter_text → 质量诊断 → flow DONE → 释放租约，
+    # 全程必须与其它写操作互斥（收章是本章最后一个不可回退的落盘点）。
+    "finalize_draft_chapter", "record_plot_review",
 }
 
 # 自持锁工具：签名里没有 book_id（只有 commit_token），wrapper 取不到锁目标，
@@ -5332,49 +5345,242 @@ def _orchestration_plot(book_id: str, plot_id: str = ""):
     return tl, draft, bridge, plot
 
 
-def get_orchestration_state(book_id: str, flow_id: str = "") -> dict:
-    """读取主 Agent 编排所需的权威状态；纯读，不替代服务端硬校验。"""
-    from libraries.write_flow import (active_flow_id, chapter_status, next_action)
-    from libraries.planning_state import load_planning_state
-    tl = load_tl(book_id)
+def _draft_digest(draft: dict | None) -> str:
+    """进行中草稿的语义摘要（收章 CAS 用）。
+
+    覆盖「章号 + bridge 顺序 + 每个 bridge 的 plot_id / 正文摘要 / 评审状态 / 体检摘要 /
+    凭据 id」——任何一项变了都说明 root 读到的事实已过期，收章必须被拒而不是按旧判断落盘。
+    只哈希正文**摘要**，不把整章正文塞进摘要载荷。
+    """
+    d = draft or {}
+    bridges = list(d.get("bridges") or [])
+    return _semantic_digest({
+        "chapter_num": int(d.get("chapter_num") or 0),
+        "bridges": [{
+            "plot_id": str(b.get("plot_id") or ""),
+            "text_digest": hashlib.sha256(str(b.get("text") or "").encode("utf-8")).hexdigest()[:32],
+            "review_state": str((b.get("review") or {}).get("state") or ""),
+            "gate_digest": str((b.get("quality_gate") or {}).get("gate_digest") or ""),
+            "review_receipt": str((b.get("review") or {}).get("review_receipt") or ""),
+        } for b in bridges],
+    })
+
+
+def _chapter_plan_required() -> bool:
+    """章计划是否为本链路的硬要求（阶段二起由编排 root 注入）。"""
+    return str(os.environ.get("NOVEL_CHAPTER_PLAN_REQUIRED") or "").strip() not in (
+        "", "0", "false", "off", "no")
+
+
+def _orchestration_facts(book_id: str, *, tl=None, draft=None, book=None) -> dict:
+    """采集编排授权/建议所需的**只读**事实快照。
+
+    纯读：只调 `load_planning_state(persist=False)` 这类无副作用读取，绝不写盘（状态读取
+    在 SSE 边上跑，写盘会污染「读一次状态」的语义）。事实 → 授权见 `orchestration_policy`。
+    """
+    from libraries.write_flow import active_flow_id, chapter_status
+    tl = tl if tl is not None else load_tl(book_id)
     if tl is None:
         raise RuntimeError(f"书 {book_id} 无故事线")
-    draft = _draft_read(book_id) or {}
-    ps = load_planning_state(book_id, tl, None, persist=False)
-    drafted = {str(x.get("plot_id")) for x in (draft.get("bridges") or []) if x.get("plot_id")}
-    remaining = [p for p in (getattr(tl, "plots", None) or [])
-                 if not getattr(p, "written_chapter", 0) and str(getattr(p, "id", "")) not in drafted]
-    from agent_tools import _next_plot, _planned_words_of, _runtime_written_words
+    draft = _draft_read(book_id) or {} if draft is None else draft
+    book = book if book is not None else book_mgr.get(book_id)
+    bridges = list(draft.get("bridges") or [])
+    pending = _pending_review_plot(draft)
     nxt = _next_plot(tl, draft)
+    ps = load_planning_state(book_id, tl, None, persist=False)
+    dummy_book = book or _FactsBook(book_id, int(draft.get("chapter_num") or 0))
+    runtime = _runtime_projection(book_id, tl, dummy_book, draft)
+    drafted = _draft_plot_ids(draft)
+    remaining = sum(1 for p in _ordered_plots(tl)
+                    if not getattr(p, "written_chapter", 0) and p.id not in drafted)
     boundary = detect_story_boundary(
-        written_until_word=_runtime_written_words(book_id, tl, None, draft),
+        written_until_word=int(runtime["display_written_words"]),
         committed_until_word=int(ps.get("committed_until_word") or 0),
-        remaining_plots=len(remaining),
-        replan_min_remaining_words=REPLAN_MIN_REMAINING_WORDS,
+        remaining_plots=remaining,
         storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
-        last_replan=ps.get("last_replan") or {},
-    )
+        last_replan=ps.get("last_replan") or {})
     status = chapter_status(
         book_id, tl, draft, needs_replan=bool(boundary.get("needs_replan")),
         next_plot_planned_words=_planned_words_of(nxt),
-        next_plot_break_after=str(getattr(nxt, "chapter_break_after", "allowed") or "allowed"),
-    )
-    action = next_action(status)
+        next_plot_break_after=str(getattr(nxt, "chapter_break_after", "allowed") or "allowed"))
+    chapter_num = int(draft.get("chapter_num") or 0) or int(
+        getattr(dummy_book, "current_chapter", 0) or 0) + 1
+    last = bridges[-1] if bridges else None
+    last_plot_id = str((last or {}).get("plot_id") or "")
+    gate = ((last or {}).get("quality_gate")
+            or (draft.get("plot_gates") or {}).get(last_plot_id) or {})
+    receipt = plot_review_receipts.latest_for_plot(book_id, last_plot_id) if last_plot_id else None
+    receipt_view = None
+    if isinstance(receipt, dict):
+        receipt_view = {"receipt_id": str(receipt.get("receipt_id") or ""),
+                        "verdict": str(receipt.get("verdict") or ""),
+                        "valid": True, "rewrite_brief": receipt.get("rewrite_brief") or {},
+                        "confidence": str(receipt.get("confidence") or "")}
+    valid_ids = {str(getattr(p, "id", "")) for p in (getattr(tl, "plots", None) or [])}
     return {
         "book_id": book_id,
-        "flow_id": flow_id or active_flow_id(book_id) or "",
-        "next_action": action,
-        "chapter_status": status,
-        "current_plot": ({"id": nxt.id, "name": nxt.name,
-                          "words": _planned_words_of(nxt)} if nxt else None),
-        "draft": {"chapter_num": draft.get("chapter_num", 0),
-                  "words": draft.get("words", 0),
-                  "bridges": len(draft.get("bridges") or [])},
-        "remaining_plots": len(remaining),
-        "boundary": boundary,
+        "phase": str(getattr(tl, "phase", "") or ""),
         "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
-        "limits": {"max_plots_per_run": 1, "max_revisions_per_plot": 2},
+        "review_gate": _review_gate_on(),
+        "flow_id": active_flow_id(book_id),
+        "chapter_num": chapter_num,
+        "draft_has_bridges": bool(bridges),
+        "draft_digest": _draft_digest(draft),
+        "draft_words": int(status.get("written_words") or 0),
+        "bridge_plot_ids": [str(b.get("plot_id") or "") for b in bridges],
+        "all_draft_plots_exist": all(str(b.get("plot_id") or "") in valid_ids for b in bridges),
+        "pending_review_plot": pending,
+        "last_bridge": ({
+            "plot_id": last_plot_id,
+            "is_last": True,
+            "review_state": str((last.get("review") or {}).get("state") or ""),
+            "text_digest": hashlib.sha256(str(last.get("text") or "").encode("utf-8")).hexdigest(),
+            "gate_digest": str(gate.get("gate_digest") or ""),
+            "gate_passed": bool(gate.get("passed")),
+            "blocking_hard_issue_count": len(gate.get("blocking_hard_issues") or []),
+        } if last else None),
+        "next_plot": ({"id": str(nxt.id), "planned_words": _planned_words_of(nxt),
+                       "chapter_break_after": str(getattr(nxt, "chapter_break_after", "allowed") or "allowed")}
+                      if nxt else None),
+        "chapter_status": status,
+        "boundary": boundary,
+        "receipt": receipt_view,
+        "budget": orchestration_budget.snapshot(book_id, chapter_num, last_plot_id),
+        "plan": _chapter_plan_view(book_id, draft) if _chapter_plan_required() else None,
+        "plan_enabled": _chapter_plan_required(),
+        "plan_required": _chapter_plan_required(),
+        "remaining_plots": remaining,
     }
+
+
+class _FactsBook:
+    """无 book 记录时的最小占位（只提供 current_chapter / id 两个读取点）。"""
+
+    def __init__(self, book_id: str, chapter_num: int):
+        self.id = book_id
+        self.current_chapter = int(chapter_num or 0)
+
+
+def _chapter_plan_view(book_id: str, draft: dict | None) -> dict | None:
+    """章计划视图；阶段二实现（`libraries.chapter_plan`），此处返回 None 表示无计划。"""
+    try:
+        from libraries.chapter_plan import load_chapter_plan, chapter_plan_view
+    except Exception:  # noqa: BLE001 — 阶段一尚未引入 chapter_plan 模块
+        return None
+    try:
+        return chapter_plan_view(load_chapter_plan(book_id), draft)
+    except Exception:  # noqa: BLE001 — 计划读取失败不该让状态读取整体失败
+        return None
+
+
+def _require_orchestration_permission(action: str, book_id: str) -> dict:
+    """mutation 工具的统一授权守卫：采集事实 → 按唯一真源判定 → 不合法就抛（I2）。"""
+    facts = _orchestration_facts(book_id)
+    orchestration_policy.require_permission(action, facts)
+    return facts
+
+
+def get_orchestration_state(book_id: str, flow_id: str = "") -> dict:
+    """读取主 Agent 编排所需的权威状态；**纯读**，不替代服务端硬校验。
+
+    schema 2 起，本工具的定位是「把服务端已经算好的事实与**授权**交给模型」，而不是
+    「告诉模型该做什么」：
+
+    - `advisory.decision_options` = `compute_orchestration_permissions` 的**原样输出**
+      （与所有 mutation 工具的守卫同源，见 `libraries/orchestration_policy`）；
+    - `advisory.recommended_action` 只是建议，模型可以不采纳，但**不能**绕过 authorization；
+    - `advisory.legacy_fsm` 保留旧 `chapter_status` / `next_action` / `boundary`，语义是
+      **建议而非指令**——旧 FSM 的阈值判断不再是调度真源；
+    - 顶层旧字段全部保留（`test_orchestrator_protocol.py` 等既有调用方不破）。
+
+    正文与长上下文**不进**本返回：root 的上下文预算是有限资源，Writer/Critic 的产物只以
+    receipt/summary 级事实回灌（不变量 I8）。
+    """
+    from libraries.write_flow import next_action
+    facts = _orchestration_facts(book_id)
+    tl = load_tl(book_id)
+    draft = _draft_read(book_id) or {}
+    permissions = orchestration_policy.compute_orchestration_permissions(facts)
+    recommendation = orchestration_policy.recommend_action(facts, permissions)
+    nxt = facts.get("next_plot")
+    status = facts["chapter_status"]
+    last = facts.get("last_bridge")
+    receipt = facts.get("receipt") or {}
+    # 章边界：给模型看的是「能收章吗」，不是「必须收章」。
+    latest_draft_plot = None
+    if last:
+        latest_draft_plot = {**last, "review_receipt": receipt.get("receipt_id") or "",
+                             "review_verdict": receipt.get("verdict") or "",
+                             "rewrite_brief": receipt.get("rewrite_brief") or {}}
+    return {
+        # ── 兼容字段（旧调用方按这些取值）──
+        "book_id": book_id,
+        "flow_id": flow_id or facts.get("flow_id") or "",
+        "next_action": next_action(status),
+        "chapter_status": status,
+        "current_plot": nxt,
+        "draft": {"chapter_num": facts.get("chapter_num", 0),
+                  "words": facts.get("draft_words", 0),
+                  "bridges": len(facts.get("bridge_plot_ids") or [])},
+        "remaining_plots": facts.get("remaining_plots", 0),
+        "boundary": facts.get("boundary") or {},
+        "storyline_revision": facts.get("storyline_revision", 0),
+        "limits": {"max_plots_per_run": 1,
+                   "max_revisions_per_plot": facts["budget"]["revise_max"],
+                   "actions_remaining": facts["budget"]["actions_remaining"],
+                   "replan_remaining": facts["budget"]["replan_remaining"]},
+        # ── schema 2 新增 ──
+        "schema_version": 2,
+        "draft_digest": facts.get("draft_digest", ""),
+        "chapter": {
+            "chapter_num": facts.get("chapter_num", 0),
+            "written_words": status.get("written_words", 0),
+            "target_words": status.get("target_words", 0),
+            "soft_min_words": status.get("soft_min_words", 0),
+            "soft_max_words": status.get("soft_max_words", 0),
+            "hard_max_words": status.get("hard_max_words", 0),
+            "commit_floor": status.get("commit_floor", 0),
+            "has_legal_closure": status.get("has_legal_closure", False),
+            "fsm_recommends_finalize": bool(status.get("chapter_ready")),
+            "hard_can_finalize": permissions["finalize_chapter"]["allowed"],
+        },
+        "latest_draft_plot": latest_draft_plot,
+        "chapter_plan": facts.get("plan"),
+        "planning": {
+            "boundary": facts.get("boundary") or {},
+            "policy": _replan_policy_name(),
+            "preview": _replan_preview_view(book_id),
+        },
+        "advisory": {
+            "recommended_action": recommendation["action"],
+            "reason_codes": recommendation["reason_codes"],
+            "decision_options": permissions,
+            "legacy_fsm": {"chapter_status": status, "next_action": next_action(status),
+                           "boundary": facts.get("boundary") or {},
+                           "note": "建议，不是指令；调度真源是 decision_options"},
+        },
+        "budget": facts.get("budget") or {},
+    }
+
+
+def _replan_policy_name() -> str:
+    """当前续规划策略（auto|confirm）——只读展示，提交策略仍由 dsh_bridge 决定。"""
+    raw = str(os.environ.get("REPLAN_POLICY") or "").strip().lower()
+    return raw if raw in ("auto", "confirm") else "auto"
+
+
+def _replan_preview_view(book_id: str) -> dict:
+    """replan 预览的**只读**视图：root 据此判断 preview 是否新鲜、能否提交。"""
+    from libraries.planning_state import load_replan_preview
+    try:
+        preview = load_replan_preview(book_id) or {}
+    except Exception:  # noqa: BLE001 — 读不到预览不该让状态读取失败
+        preview = {}
+    return {"exists": bool(preview),
+            "preview_id": str(preview.get("preview_id") or ""),
+            "expected_revision": preview.get("expected_revision"),
+            "validation_passed": bool((preview.get("validation") or {}).get("passed")),
+            "problems": list((preview.get("validation") or {}).get("problems") or [])[:5]}
 
 
 def _plot_gate_digest(report: dict) -> str:
@@ -5431,6 +5637,71 @@ def plot_quality_gate(book_id: str, plot_id: str = "", flow_id: str = "") -> dic
     return report
 
 
+def record_plot_review(book_id: str, plot_id: str, gate_digest: str, verdict: str,
+                       issues: list | None = None, rewrite_brief: dict | None = None,
+                       confidence: str = "medium", rationale: str = "") -> dict:
+    """Critic 把自己对当前 Plot 的判决**写进服务端**，换取一枚 review receipt。
+
+    **本工具只出现在 critic profile 的工具面里**——这是评审门禁的能力边界（不变量 I1）：
+    主 Agent 没有任何路径能调它，因此无法自己伪造一个 accept；它只能拿本工具签发的
+    `receipt_id` 去 `accept_plot_draft`，由服务端复核 receipt 绑定的是不是当前
+    plot_id + gate_digest。
+
+    `gate_digest` 必须来自 `get_plot_review_context` 返回的**当前**报告；对不上即拒
+    （迫使 Critic 重读上下文，而不是拿旧判决盖新正文）。正文一改 → 体检重算 → 旧
+    receipt 自动失效，不需要额外失效逻辑。
+
+    verdict 契约：
+      - `accept`：不得携带 error 级 issue（有硬伤就不能接受）；
+      - `revise_text`：必须给 `rewrite_brief{goals[],preserve[],avoid[]}`；
+      - `patch_character` / `replan` / `stop`：必须给 `rationale`（说明理由；`replan` 的
+        理由会被主 Agent 用来判断是文本问题还是结构问题——注意有未接受草稿时服务端
+        **一律禁止**提交 replan，此时主 Agent 只能停下报告，见不变量 I4）。
+    """
+    verdict = str(verdict or "").strip()
+    if verdict not in plot_review_receipts.VERDICTS:
+        raise RuntimeError(f"未知 verdict：{verdict}（合法值：{'、'.join(plot_review_receipts.VERDICTS)}）")
+    confidence = str(confidence or "medium").strip()
+    if confidence not in plot_review_receipts.CONFIDENCE:
+        confidence = "medium"
+    tl, draft, bridge, _plot = _orchestration_plot(book_id, plot_id)
+    pid = str(bridge.get("plot_id") or "")
+    report = (bridge.get("quality_gate")
+              or (draft.get("plot_gates") or {}).get(pid))
+    if not report:
+        report = plot_quality_gate(book_id, pid)
+    if str(gate_digest or "") != str(report.get("gate_digest") or ""):
+        raise RuntimeError("gate_digest 与当前正文体检报告不一致（正文可能已变化）；"
+                           "请重新调用 get_plot_review_context 后再记录判决")
+    clean_issues = []
+    for item in (issues or []):
+        if not isinstance(item, dict):
+            continue
+        clean_issues.append({"code": str(item.get("code") or ""),
+                             "severity": str(item.get("severity") or "warning"),
+                             "summary": str(item.get("summary") or item.get("message") or "")[:400],
+                             "evidence": str(item.get("evidence") or "")[:400],
+                             "suggestion": str(item.get("suggestion") or "")[:400]})
+    if verdict == "accept" and any(x["severity"] == "error" for x in clean_issues):
+        raise RuntimeError("verdict=accept 与 error 级 issue 冲突：请改判 revise_text 或去掉 error 项")
+    brief = rewrite_brief if isinstance(rewrite_brief, dict) else {}
+    if verdict == "revise_text" and not (brief.get("goals") or brief.get("avoid") or brief.get("preserve")):
+        raise RuntimeError("verdict=revise_text 必须给出 rewrite_brief（goals/preserve/avoid 至少一项）")
+    if verdict in ("patch_character", "replan", "stop") and not str(rationale or "").strip():
+        raise RuntimeError(f"verdict={verdict} 必须给出 rationale 说明理由")
+    receipt_id = plot_review_receipts.issue(
+        book_id, pid, report.get("gate_digest"), {
+            "verdict": verdict, "confidence": confidence, "issues": clean_issues,
+            "rewrite_brief": brief, "rationale": str(rationale or "")[:2000],
+            "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+        }, critic_run_id=str(os.environ.get("NOVEL_WRITE_CHILD_RUN_ID") or ""))
+    return {"ok": True, "receipt_id": receipt_id, "plot_id": pid, "verdict": verdict,
+            "gate_digest": report.get("gate_digest"),
+            "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+            # 提醒调用方：receipt 是一次性的，接受时把它交回 accept_plot_draft。
+            "next": "把 receipt_id 交给 accept_plot_draft（verdict=accept 时）"}
+
+
 def get_plot_review_context(book_id: str, plot_id: str = "", gate_digest: str = "") -> dict:
     """给 Critic 的最小评审快照；正文和规则报告来自服务端草稿。"""
     tl, draft, bridge, plot = _orchestration_plot(book_id, plot_id)
@@ -5449,8 +5720,14 @@ def get_plot_review_context(book_id: str, plot_id: str = "", gate_digest: str = 
 
 
 def accept_plot_draft(book_id: str, plot_id: str = "", flow_id: str = "",
-                      gate_digest: str = "", critic_verdict: dict | None = None) -> dict:
-    """记录主 Agent 对 Plot 评审的接受决定；硬规则问题不可被覆盖。"""
+                      gate_digest: str = "", critic_verdict: dict | None = None,
+                      review_receipt: str = "") -> dict:
+    """记录主 Agent 对 Plot 评审的接受决定；硬规则问题不可被覆盖。
+
+    评审门禁开启时（编排路径），接受**必须**凭 `record_plot_review` 签发的
+    `review_receipt`——主 Agent 不能自带 verdict 字符串蒙混过关（不变量 I1）。
+    legacy 路径（未注入门禁）保留旧的 `critic_verdict` 直传语义。
+    """
     tl, draft, bridge, _plot = _orchestration_plot(book_id, plot_id)
     report = bridge.get("quality_gate") or (draft.get("plot_gates") or {}).get(str(bridge.get("plot_id") or ""))
     if not report:
@@ -5459,32 +5736,72 @@ def accept_plot_draft(book_id: str, plot_id: str = "", flow_id: str = "",
         raise RuntimeError("gate_digest 已过期，请重新评审")
     if report.get("blocking_hard_issues"):
         raise RuntimeError("Plot 存在硬性门禁问题，不能接受")
-    verdict = critic_verdict if isinstance(critic_verdict, dict) else {}
-    if str(verdict.get("verdict") or "accept") not in ("accept", "approved", ""):
-        raise RuntimeError("Critic 尚未给出 accept verdict")
+    pid = str(bridge.get("plot_id") or "")
+    receipt_id = ""
+    if _review_gate_on():
+        if not str(review_receipt or "").strip():
+            raise RuntimeError("编排路径必须凭 review_receipt 接受 Plot：先让 Critic 调用 "
+                               "record_plot_review，再从 get_orchestration_state 的 "
+                               "latest_draft_plot.review_receipt 取回凭据")
+        record = plot_review_receipts.verify(book_id, review_receipt, pid,
+                                             str(report.get("gate_digest") or ""))
+        if str(record.get("verdict") or "") != "accept":
+            raise RuntimeError(f"Critic 判决为 {record.get('verdict')}，不是 accept："
+                               "请按 receipt 的 rewrite_brief 委派改稿，或停下报告")
+        if any(str(x.get("severity")) == "error" for x in (record.get("issues") or [])):
+            raise RuntimeError("Critic 判决带 error 级 issue，不能接受")
+        verdict = {"verdict": "accept", "confidence": record.get("confidence", ""),
+                   "issues": record.get("issues") or [], "rationale": record.get("rationale", ""),
+                   "review_receipt": str(review_receipt)}
+        receipt_id = str(review_receipt)
+    else:
+        verdict = critic_verdict if isinstance(critic_verdict, dict) else {}
+        if str(verdict.get("verdict") or "accept") not in ("accept", "approved", ""):
+            raise RuntimeError("Critic 尚未给出 accept verdict")
     accepted = dict(bridge.get("review") or {})
     accepted.update({"state": "accepted", "gate_digest": report.get("gate_digest"),
-                     "critic_verdict": verdict, "flow_id": flow_id or ""})
+                     "critic_verdict": verdict, "flow_id": flow_id or "",
+                     "review_receipt": receipt_id})
     bridge["review"] = accepted
     for item in draft.get("bridges") or []:
-        if str(item.get("plot_id") or "") == str(bridge.get("plot_id") or ""):
+        if str(item.get("plot_id") or "") == pid:
             item["review"] = accepted
     _draft_write(book_id, draft)
-    return {"ok": True, "plot_id": bridge.get("plot_id"), "review": accepted,
+    if receipt_id:
+        plot_review_receipts.consume(book_id, receipt_id, {"accepted": True, "plot_id": pid})
+    return {"ok": True, "plot_id": pid, "review": accepted,
             "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0)}
 
 
 def prepare_plot_revision(book_id: str, plot_id: str = "", expected_text_digest: str = "",
                           rewrite_brief: dict | None = None) -> dict:
-    """为当前章最后一个 Plot 签发一次性改稿令牌。"""
+    """为当前章最后一个 Plot 签发一次性改稿令牌。
+
+    编排路径下受改稿预算硬约束（不变量 I8）：`MAX_REVISE_ATTEMPTS_PER_PLOT` 之前只写在
+    skill 里、服务端不强制，等于一个可以无限重开的循环口子；这里把它变成真拒绝。
+    """
     tl, draft, bridge, plot = _orchestration_plot(book_id, plot_id)
     bridges = list(draft.get("bridges") or [])
     if not bridges or bridges[-1] is not bridge:
         raise RuntimeError("只允许改写当前章最后一个 Plot")
+    # 校验顺序有意如此：**先免费检查，再花预算**。digest 不匹配说明主 Agent 看的是旧
+    # 正文，此时不该扣掉一次改稿机会——否则它重读状态后可能已经没额度了。
     text = str(bridge.get("text") or "")
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     if expected_text_digest and expected_text_digest != digest:
         raise RuntimeError("正文已变化，请重新读取评审上下文")
+    if _review_gate_on():
+        facts = _orchestration_facts(book_id, tl=tl, draft=draft)
+        orchestration_policy.require_permission("revise_plot", facts)
+        if not (rewrite_brief if isinstance(rewrite_brief, dict) else {}):
+            # 改稿必须带着「改什么」：没有 brief 的改稿等于让 Writer 盲改一轮。
+            brief_from_receipt = (facts.get("receipt") or {}).get("rewrite_brief") or {}
+            if brief_from_receipt:
+                rewrite_brief = brief_from_receipt
+            else:
+                raise RuntimeError("改稿必须带 rewrite_brief（可用 Critic receipt 里的 rewrite_brief）")
+        orchestration_budget.bump(book_id, int(draft.get("chapter_num") or 0), "revise",
+                                  str(bridge.get("plot_id") or ""))
     from libraries.plot_revision_tokens import issue
     token = issue(book_id, {
         "plot_id": str(bridge.get("plot_id") or ""),
@@ -5597,8 +5914,10 @@ def _build_registry():
         add_style_rule, delete_style_rule,
         add_style_sample, delete_style_sample, list_style_samples, get_style_sample,
         # 主 Agent 编排 / Plot 评审（规则层薄工具）
+        # finalize_draft_chapter = 主 Agent 的收章动作（编排路径必带 CAS 三元组）；
+        # record_plot_review = Critic 判决的服务端写入点（只在 critic profile 的工具面里）。
         get_orchestration_state, get_plot_review_context, plot_quality_gate,
-        accept_plot_draft,
+        accept_plot_draft, finalize_draft_chapter, record_plot_review,
         # 上架 / 质量门禁 / 校验
         publish_check, mark_finished, publish_book, export_book,
         chapter_quality_gate, validate_storyline, validate_world,

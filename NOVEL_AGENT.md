@@ -1,6 +1,6 @@
 你是 NovelEngine 平台的外部驱动 agent。
 按本指南 + MCP 工具（`mcp__novelengine__*`）直接驱动。
-各创作流程已拆分为 skill（`novel-scout` / `novel-build-candidates` / `novel-build` / `novel-story` / `novel-replan` / `novel-publish`）。**阶段与 profile 由服务端决定**：写作走 `_writer_fsm`、建书走 `_build_fsm`（读向导快照判步 1-2 / 步 3），任务文本只在未分类时兜底；写作上下文返回 `planning.boundary.needs_replan=true` 时由服务端自动交接 `novel-replan`。Skill 只使用逻辑工具名，不依赖 MCP namespace。通用外部 MCP 客户端与 `.mcp.json` 为 Deprecated 兼容入口。本文件只保留定义与契约（1.1 / 1.2）。
+各创作流程已拆分为 skill（`novel-scout` / `novel-build-candidates` / `novel-build` / `novel-story` / `novel-replan` / `novel-publish` / `novel-orchestrator`）。**阶段与 profile 由服务端决定**：写作编排开启时由 orchestrator root Agent 持有调度（`novel-orchestrator`），未开启/未就绪时回退服务端 `_legacy_writer_fsm`（已冻结）；建书走 `_build_fsm`（读向导快照判步 1-2 / 步 3），任务文本只在未分类时兜底。写作上下文返回 `planning.boundary.needs_replan=true` 时由调度方交接 `novel-replan`。Skill 只使用逻辑工具名，不依赖 MCP namespace。通用外部 MCP 客户端与 `.mcp.json` 为 Deprecated 兼容入口。本文件只保留定义与契约（1.1 / 1.2）。
 
 # 第一部分：定义与契约（先读，全书唯一来源）
 
@@ -156,9 +156,10 @@
   - `plot_summary` 50~120 字，仅供展示/检索/章节摘要，非事实源。
 - `prepare_plot_revision` → `save_plot_revision`：主 Agent 评审要求改稿时使用独立一次性 revision token；只允许当前章最后一个未收章 Plot，不能重放旧 `commit_token`，改稿后必须重新跑 Plot gate/评审。
 - `save_chapter_text` / `chapter_quality_gate` / `finalize_draft_chapter`：**整章提交与门禁不在 write profile
-  暴露**——由服务端 FSM（`_writer_fsm` → `finalize_draft_chapter`）在草稿字数达标时原子拼章落盘
+  暴露**——`finalize_draft_chapter` 属于 **orchestrate profile（主 Agent 亲自收章）**，由它原子拼章落盘
   （规则去 AI 味/审查/角色状态含 character_events 落账/承诺台账/清草稿）并跑质量门禁，返回 reconcile 与
-  decision_points；仅 legacy 全量工具面（AGENT_TOOL_PROFILES=0）与内部调用可见。
+  decision_points；`save_chapter_text` 仍在服务端内部，仅 legacy 全量工具面（AGENT_TOOL_PROFILES=0）与内部调用可见。
+  编排路径收章必须带 `expected_revision` + `expected_draft_digest`（阶段二起加 `expected_chapter_plan_digest`）。
 - `save_basic_info`：保存基础设定（config/plots 期，phase 门控）；可选 `expected_revision`（省略=不校验，给则与磁盘 storyline_revision 不一致返 stale_storyline）。
 - `save_book_meta`：保存书名+简介。
 
@@ -204,7 +205,7 @@
   **批准规划也仍是 planned**——只有写进正文才是故事事实。身份主键是 `promise.id`，
   `setup_plot_id` 只是索引（一段可埋多条）；兑现端用 `resolves_promise_ids` /
   `foreshadow[{kind:"payoff", promise_id}]` **精确兑现**，`resolves_plot_id` 是 plot 级 legacy。
-- **规划边界自动交接（服务端 FSM 负责）**：Writer 每段 `prepare_plot_run` 的 `horizon.boundary` 仅告知；是否收章/续规划由服务端 `_writer_fsm` 判定——章满→`finalize_draft_chapter` 收章，无剩余可写 Plot 且到边界→按 `REPLAN_POLICY`（auto=原子提交后续写 / confirm=停在预览交给兼容调用方确认）自动 spawn replan。**write 轮内不要调 replan 工具 / save_outlines 扩弧，也不要自行收章**；一次性 Writer 只写当前 Plot、保存后即停。replan 轮内不写正文。写作台“继续写正文”入口使用章级 `chapter_to_completion` 模式并固定 auto，父 Flow 直到 `chapter_changed` 才算一章完成；Writer 子 run 的停止不等于用户写作任务结束。
+- **规划边界与收章的判定方**：Writer 每段 `prepare_plot_run` 的 `horizon.boundary` 仅告知，**是否收章/续规划不是 Writer 的决定**。编排路径下由主 Agent（`novel-orchestrator`）依 `get_orchestration_state.advisory` 决策并亲自 `finalize_draft_chapter`，续规划经 Planner 生成 preview 后按 `REPLAN_POLICY`（auto=原子提交后续写 / confirm=停在预览交给兼容调用方确认）提交；legacy 回退路径下仍由服务端 `_legacy_writer_fsm` 判定。**write 轮内不要调 replan 工具 / save_outlines 扩弧，也不要自行收章**；一次性 Writer 只写当前 Plot、保存后即停。replan 轮内不写正文。写作台“继续写正文”入口使用章级 `chapter_to_completion` 模式并固定 auto，父 Flow 直到 `chapter_changed` 才算一章完成；Writer 子 run 的停止不等于用户写作任务结束。
 - **章末规划增量**：一章产生的新读者问题 / 人物意图变化，由写 run 的 structured `outcome`（如 new_story_questions）经服务端 Plot/章提交时语义合并进 planning_state——`story_questions` 用稳定 id 且状态 ∈ open/progressed/answered/superseded（同题 update 去重、终态不复开），`character_intents` 按人物 upsert；不靠 Writer 回传 planning_patch。
 - **「删书」无 skill**——`navigate('/books')` 让用户手动点删除（直删工具不在工具面）。
 - 拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」，不跨阶段硬做。

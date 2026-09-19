@@ -198,7 +198,7 @@ def main():
                 raise AssertionError(f"confirm 策略不应启动 Writer 子 run：{task}")
 
             bridge.run_dsh_task = fake_run_confirm
-            events = list(bridge._writer_fsm(f"继续写 {confirm_bid}", None, False, "confirm"))
+            events = list(bridge._legacy_writer_fsm(f"继续写 {confirm_bid}", None, False, "confirm"))
             assert "error" not in [e.get("type") for e in events], events
             assert "chapter_changed" not in [e.get("name") for e in events if e.get("type") == "domain"]
             assert len(planner_calls) == 1, planner_calls
@@ -208,7 +208,7 @@ def main():
             assert cpreview and flow["replan_state"].get("preview_id") == cpreview["preview_id"], flow
             assert int(bm.load_storyline(confirm_bid).storyline_revision) == crevision, "confirm 不应提交"
             # 再次触发：复用在途预览，不重复起计划器
-            events2 = list(bridge._writer_fsm(f"继续写 {confirm_bid}", None, False, "confirm"))
+            events2 = list(bridge._legacy_writer_fsm(f"继续写 {confirm_bid}", None, False, "confirm"))
             assert len(planner_calls) == 1, planner_calls
             assert load_flow(confirm_bid, cflow["flow_id"])["phase"] == "WAIT_CONFIRM"
             assert not [e for e in events2 if e.get("type") == "error"], events2
@@ -229,7 +229,7 @@ def main():
                 yield {"type": "done"}
 
             bridge.run_dsh_task = fake_run_no_preview
-            events = list(bridge._writer_fsm(f"继续写 {cap_bid}", None, False, "auto"))
+            events = list(bridge._legacy_writer_fsm(f"继续写 {cap_bid}", None, False, "auto"))
             errors = [e for e in events if e.get("type") == "error"]
             assert errors and "续规划" in errors[0]["message"], errors
             assert len(cap_calls) == bridge.MAX_REPLAN_ATTEMPTS, (len(cap_calls), bridge.MAX_REPLAN_ATTEMPTS)
@@ -288,7 +288,7 @@ def main():
                 yield {"type": "done"}
 
             bridge.run_dsh_task = fake_run
-            events = list(bridge._writer_fsm(f"继续写 {e2e_bid}", None, False, "auto"))
+            events = list(bridge._legacy_writer_fsm(f"继续写 {e2e_bid}", None, False, "auto"))
             kinds = [e.get("type") for e in events]
             assert "error" not in kinds, events
             assert "chapter_changed" in [e.get("name") for e in events if e.get("type") == "domain"], events

@@ -3,7 +3,7 @@ name: novel-write
 description: >-
   [已废弃] 不要按本 skill 写作——它引用已被移除的工具(get_writing_context / 旧 save_plot_draft 位置参数)。
   交互式写作请走侧栏 dsh 的 novel-story（一次性 Plot Writer + 服务端 FSM：prepare_plot_run →
-  save_plot_draft → 即停；完整章节=服务端 _writer_fsm 逐 Plot 编排，章满收章/门禁/续规划交接全在服务端）。
+  save_plot_draft → 即停；完整章节=调度方逐 Plot 编排（编排开启时=主 Agent novel-orchestrator，关闭时=服务端 _legacy_writer_fsm），章满收章/门禁/续规划交接都不在 Writer 侧）。
   仅当用户明确要求查看历史写作流程存档时才加载本 skill。
 ---
 # 写作阶段（novel-write）— 已废弃，写作走 dsh novel-story
@@ -12,7 +12,7 @@ description: >-
 > `novel-story`（一次性 Plot Writer，write profile=2 工具）执行：`prepare_plot_run`（服务端已解析
 > style.card/.sample + commit_token）→ 写当前 Plot → `save_plot_draft(commit_token, text, plot_summary,
 > outcome, character_events)` → 即停。逐 Plot 推进、章满收章 + 质量门禁 + 到规划边界的续规划交接
-> 全由服务端 `_writer_fsm` → `finalize_draft_chapter` 完成，**不要再自行 save_chapter_text 或输出
+> 全由调度方（编排开启时=主 Agent；关闭时=服务端 `_legacy_writer_fsm`）→ `finalize_draft_chapter` 完成，**不要再自行 save_chapter_text 或输出
 > [NEED_REPLAN]**。
 >
 > 下方为历史实现留档：引用已从注册表移除的 `get_writing_context`、已被 token 绑定签名取代的

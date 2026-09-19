@@ -27,7 +27,7 @@ description: >-
 |---|---|---|
 | 开新书 / 建书 / 写设定 / 构思世界观 / 借鉴已有书 / 生成书名 / 开头几章 | `novel-build` | `.claude/skills/novel-build/SKILL.md`（注：dsh 侧/按钮流程已拆为 `novel-build-candidates`（步 1 候选呈现）→ `novel-build`（步 2 建书），与 Claude 侧交互式 `novel-build` 独立、不做镜像） |
 | 生成弧 / 排故事线 / 深化弧 / 一键完整弧 | 交给 dsh 侧（建书步3 深化式生成 → 用户提交即 ready）；config 兜底补弧 → `save_outlines` → 用户在书详情「✅ 确认弧+情节段」；Claude 不代跑排弧 | `.claude/skills/novel-build/SKILL.md` |
-| 写正文 / 写下一章 / 继续写 / 写情节段 / 续写 / 扩写（正文续写） | **dsh 侧栏 novel-story**（Claude 侧不直接写作；`novel-write` skill 已废弃仅存档） | `navigate("/books/<id>/continue")` 打开写作台，请用户点「继续写正文」/在侧栏对话里继续 → 服务端 `_writer_fsm` 逐 Plot 编排（一次性 Plot Writer + 章满收章/门禁/续规划） |
+| 写正文 / 写下一章 / 继续写 / 写情节段 / 续写 / 扩写（正文续写） | **dsh 侧栏 novel-story**（Claude 侧不直接写作；`novel-write` skill 已废弃仅存档） | `navigate("/books/<id>/continue")` 打开写作台，请用户点「继续写正文」/在侧栏对话里继续 → 由调度方逐 Plot 编排（一次性 Plot Writer + 章满收章/门禁/续规划；编排开启时=主编排 Agent，关闭时=服务端 `_legacy_writer_fsm`） |
 | 上架 / 发布 / 完本 / 导出 / 生成书名简介 / 检查能否发书 | `novel-publish` | `.claude/skills/novel-publish/SKILL.md` |
 | 删书 / 删除一本书 | 无 skill——`navigate("/books")` 让用户**手动点删除按钮**（护栏：直删工具不在工具面，外部 agent 不能删） | — |
 

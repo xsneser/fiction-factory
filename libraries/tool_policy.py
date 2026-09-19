@@ -28,6 +28,9 @@ PHASE_GATES = {
     "get_plot_review_context": {"ready"},
     "plot_quality_gate": {"ready"},
     "accept_plot_draft": {"ready"},
+    # 编排收章 / Critic 判决写入（主 Agent 编排链路）
+    "finalize_draft_chapter": {"ready"},
+    "record_plot_review": {"ready"},
     # 写作风格取样 —— Plot Run 每段抽单篇样文
     "pick_plot_sample": {"ready"},
     # 建书规划 —— config 落基本盘；plots 草案期放行。

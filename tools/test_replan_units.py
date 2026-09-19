@@ -32,7 +32,7 @@ def check(name, cond, detail=""):
 def test_flow_orchestration() -> str:
     """run_dsh_flow 分支验收（R7 FSM 模型）：
 
-    - write 意图 → _writer_fsm：带书号时首个子 run 收「归一化薄续写任务」（无聊天历史、无任何工具名，
+    - write 意图 → _legacy_writer_fsm：带书号时首个子 run 收「归一化薄续写任务」（无聊天历史、无任何工具名，
       杜绝任务里出现 write profile 之外的工具名）；子 run 若未提交任何 Plot → 恰 1 error + 1 done。
     - 非 write 但已分类（只读问句）→ 单 spawn、1 done、原样转发回复。
     - **未分类（闲聊）→ 不 spawn、恰 1 error + 1 done**（显式阶段指引；此前静默回落
