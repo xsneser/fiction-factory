@@ -117,10 +117,13 @@ try:
 
     # 对照区口径：desk 的 cast_pack 必须与 writer 同源（含本章 staged 投影 + state_source 标记），
     # 否则 UI 显示的人物状态会比 Agent 实际拿到的旧 —— 这是「UI 说什么、Agent 就写什么」的前提。
-    from agent_tools import save_basic_info
+    from agent_tools import get_orchestration_state, save_basic_info
     from libraries.plot_run_state import make_plot_delta, stage_delta
+    # 写作期（phase=ready）改人物是**受限修正**：必须带最新 storyline_revision。
+    # 这是产品侧的既定硬边界（见 `_guard_ready_character_patch`），夹具照它走。
     save_basic_info(bid, {"characters": [{"name": "陆凌舟", "role": "主角", "importance": 1,
-                                          "identity": "工程师", "speech_profile": {}}]})
+                                          "identity": "工程师", "speech_profile": {}}]},
+                    expected_revision=get_orchestration_state(bid)["storyline_revision"])
     stage_delta(bid, make_plot_delta(
         plot_id="p1", plot_name="段1", chapter_num=1,
         facts={"character_events": [{"name": "陆凌舟",

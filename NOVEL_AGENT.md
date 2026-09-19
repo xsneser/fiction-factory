@@ -206,6 +206,7 @@
   `setup_plot_id` 只是索引（一段可埋多条）；兑现端用 `resolves_promise_ids` /
   `foreshadow[{kind:"payoff", promise_id}]` **精确兑现**，`resolves_plot_id` 是 plot 级 legacy。
 - **规划边界与收章的判定方**：Writer 每段 `prepare_plot_run` 的 `horizon.boundary` 仅告知，**是否收章/续规划不是 Writer 的决定**。编排路径下由主 Agent（`novel-orchestrator`）依 `get_orchestration_state.advisory` 决策并亲自 `finalize_draft_chapter`，续规划经 Planner 生成 preview 后按 `REPLAN_POLICY`（auto=原子提交后续写 / confirm=停在预览交给兼容调用方确认）提交；legacy 回退路径下仍由服务端 `_legacy_writer_fsm` 判定。**write 轮内不要调 replan 工具 / save_outlines 扩弧，也不要自行收章**；一次性 Writer 只写当前 Plot、保存后即停。replan 轮内不写正文。写作台“继续写正文”入口使用章级 `chapter_to_completion` 模式并固定 auto，父 Flow 直到 `chapter_changed` 才算一章完成；Writer 子 run 的停止不等于用户写作任务结束。
+- **运行时章计划（分章）**：编排路径下主 Agent 会先提交本章计划（`set_chapter_plan`）：选哪些**连续**情节段、每段目标字数、为什么在此断章。它是**运行时章级状态，不是故事线的一部分**——不改 storyline、不 bump `storyline_revision`、收章即作废，下一章重新拟。服务端只校验硬边界（连续前缀 / 字数带 / 覆写受类型带∩≤1200∩相对原计划 0.7~1.5 倍三重约束 / `avoid` 断点需强制理由）；**计划未完成不能收章**，想提前收就先把计划显式改小。计划摘要进 prepared 版本向量，改计划会让旧 `commit_token` 失效。
 - **章末规划增量**：一章产生的新读者问题 / 人物意图变化，由写 run 的 structured `outcome`（如 new_story_questions）经服务端 Plot/章提交时语义合并进 planning_state——`story_questions` 用稳定 id 且状态 ∈ open/progressed/answered/superseded（同题 update 去重、终态不复开），`character_intents` 按人物 upsert；不靠 Writer 回传 planning_patch。
 - **「删书」无 skill**——`navigate('/books')` 让用户手动点删除（直删工具不在工具面）。
 - 拿不准阶段 → 先 `list_books` + `get_book_detail` 看目标书 `phase` 再定 skill；书多先问「对哪本书操作」，不跨阶段硬做。

@@ -17,12 +17,18 @@ from core.text_utils import count_prose_units
 
 ROOT = Path(__file__).resolve().parents[1]
 PHASES = {"IDLE", "PREPARING_PLOT", "WRITING_PLOT", "COMMITTING_PLOT", "EVALUATING",
-          "COMMITTING_CHAPTER", "QUALITY_GATE", "REPLANNING", "WAIT_CONFIRM", "FAILED", "DONE"}
+          "COMMITTING_CHAPTER", "QUALITY_GATE", "REPLANNING", "WAIT_CONFIRM", "FAILED", "DONE",
+          # 章计划专用：PLANNED = 只有计划、**不持写租约**（见下 PLANNED_TTL_SECONDS 注释）；
+          # SUPERSEDED = 被更新的计划取代，永久失效，不再被 resolve_flow 选中。
+          "PLANNED", "SUPERSEDED"}
 # FSM 实际会写入的阶段：PREPARING_PLOT / EVALUATING / COMMITTING_CHAPTER / QUALITY_GATE /
 # REPLANNING / WAIT_CONFIRM / FAILED / DONE。
 # IDLE / WRITING_PLOT / COMMITTING_PLOT 目前只是**标签位**（合法但无人写入）——保留以便
 # UI/审计按语义命名，不要据此以为 FSM 会停在这些状态上。
 DEFAULT_LEASE_SECONDS = 15 * 60
+# 只做计划、没开始写的 PLANNED flow 的存活期。它**不持租约**，所以过期只是让旧计划自然失效
+# （agent 重读状态时会重新拟一份），不会阻塞任何恢复路径——这正是「计划不占租约」的收益。
+PLANNED_TTL_SECONDS = 12 * 60 * 60
 
 
 def _dir(book_id: str) -> Path:
@@ -89,13 +95,82 @@ def active_flow_id(book_id: str) -> str:
     return ""
 
 
+def _new_flow(book_id: str, chapter_num: int, phase: str) -> dict:
+    return {"schema_version": 1, "flow_id": uuid.uuid4().hex, "book_id": book_id,
+            "chapter_num": int(chapter_num), "phase": phase, "current_plot_id": "",
+            "completed_plot_ids": [], "child_runs": [], "replan_state": {}, "error": None,
+            "resume_point": phase, "created_at": time.time()}
+
+
 def start_flow(book_id: str, chapter_num: int, *, takeover: bool = False) -> dict:
-    flow_id = uuid.uuid4().hex
+    flow = _new_flow(book_id, chapter_num, "PREPARING_PLOT")
+    acquire_lease(book_id, flow["flow_id"], takeover=takeover)
+    return save_flow(book_id, flow)
+
+
+def start_planned_flow(book_id: str, chapter_num: int) -> dict:
+    """建一个**只带计划、不持租约**的 flow（章计划的容器，不变量 I7）。
+
+    与 `start_flow` 的唯一区别就是**不 acquire_lease**：计划是运行态意图，取租约留给首次
+    `prepare_plot_run` / 首次 Plot 提交。这样「规划完就崩了」留下的是一条无害的记录，
+    而不是一个长期锁住这本书的租约。
+    """
+    return save_flow(book_id, _new_flow(book_id, chapter_num, "PLANNED"))
+
+
+def list_flows(book_id: str) -> list[dict]:
+    """本书全部 flow 记录（按 updated_at 倒序）。读盘容错：坏文件跳过。"""
+    d = _dir(book_id) / "write_flows"
+    if not d.is_dir():
+        return []
+    flows = []
+    for path in d.glob("*.json"):
+        raw = read_json(path) if path.exists() else None
+        if isinstance(raw, dict) and raw.get("flow_id"):
+            flows.append(raw)
+    return sorted(flows, key=lambda f: float(f.get("updated_at") or 0), reverse=True)
+
+
+def resolve_flow(book_id: str) -> str:
+    """当前「属于本章」的 flow id：**优先租约持有者**，否则最新的、未过期的 PLANNED flow。
+
+    为什么需要它：plan-only 阶段没有租约，`active_flow_id` 会返回空串，于是
+    `get_orchestration_state.flow_id` 为空、状态里读不到计划。这里把两种来源合成一个入口，
+    调用方不必自己判断「现在是规划阶段还是写作阶段」。
+    """
+    owner = active_flow_id(book_id)
+    if owner:
+        return owner
+    now = time.time()
+    for flow in list_flows(book_id):
+        if flow.get("phase") != "PLANNED":
+            continue
+        if float(flow.get("updated_at") or 0) + PLANNED_TTL_SECONDS < now:
+            continue                     # 过期计划：让它自然失效，不阻塞新计划
+        return str(flow["flow_id"])
+    return ""
+
+
+def adopt_flow(book_id: str, flow_id: str, *, takeover: bool = False) -> dict:
+    """接管一个已存在的 PLANNED flow 并**在此刻取租约**（首次真正开写时调用）。"""
+    flow = load_flow(book_id, flow_id)
+    if not flow:
+        raise RuntimeError("写作流程不存在")
     acquire_lease(book_id, flow_id, takeover=takeover)
-    return save_flow(book_id, {"schema_version": 1, "flow_id": flow_id, "book_id": book_id,
-        "chapter_num": int(chapter_num), "phase": "PREPARING_PLOT", "current_plot_id": "",
-        "completed_plot_ids": [], "child_runs": [], "replan_state": {}, "error": None,
-        "resume_point": "PREPARING_PLOT", "created_at": time.time()})
+    return transition(book_id, flow_id, "PREPARING_PLOT")
+
+
+def supersede_planned_flows(book_id: str, keep: str = "") -> int:
+    """把其余「只带计划」的 flow 标成 SUPERSEDED（计划分叉时只留最新一份）。"""
+    n = 0
+    for flow in list_flows(book_id):
+        if flow.get("phase") != "PLANNED" or flow.get("flow_id") == keep:
+            continue
+        flow["phase"] = "SUPERSEDED"
+        flow["error"] = "superseded_by_new_plan"
+        save_flow(book_id, flow)
+        n += 1
+    return n
 
 
 def transition(book_id: str, flow_id: str, phase: str, **updates) -> dict:

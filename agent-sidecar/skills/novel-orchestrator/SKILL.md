@@ -20,24 +20,47 @@
 6. 改稿只允许改当前章最后一个未收章 Plot；改稿必须带 `rewrite_brief`（可直接用 receipt 里的那个），完成后重新体检 + 重新评审，**不沿用旧 verdict**。
 7. 需要修人物时用受限人物修正能力，必须带最新 revision，成功后刷新全部上下文。
 8. **收章是你的动作**：条件满足时你亲自调 `finalize_draft_chapter`，并带上从状态里读到的
-   `storyline_revision` 与 `draft_digest`（阶段二起还要带 `chapter_plan_digest`）。服务端仍会拒绝
-   未接受、段落缺失、低于落盘下限的收章。`fsm_recommends_finalize` 只是建议。
+   `storyline_revision`、`draft_digest` **与 `chapter_plan_digest`**（三者的意思都是「我读到的就是
+   现在的」）。服务端仍会拒绝未接受、段落缺失、低于落盘下限、以及**计划未完成**的收章。
+   `fsm_recommends_finalize` 只是建议。
 9. 规划只通过 Planner 生成 preview，再由你按 `REPLAN_POLICY` 提交；不要在 Writer 子代理里扩弧。
 10. 建书提交和发布是用户确认边界：可以准备、校验、呈现，但不得调 user-only 的 submit。
+
+## 分章：先立计划，再写
+
+**开写之前先提交本章计划**（`set_chapter_plan`）。这一步就是把「打几个段落凑一章」从按字数
+阈值机械断章，变成你的显式决定——它决定本章**选哪些连续段落**、每段**目标多少字**、**为什么在这里断章**：
+
+- `plot_ids` = 本章完整的段落顺序，**包括已经写进草稿的**；
+- `target_words` = 本章目标字数（落在落盘下限与硬上限之间）；
+- `plot_word_targets` = 对某几段的篇幅微调（可选）。这是解决「3 段不够、4 段又超」的正规手段：
+  把某段调长/调短，或用选段数量控制整章体量。**但调整有界**：受段落类型区间、硬上限、以及
+  相对原计划 0.7~1.5 倍三重约束——「拉长一段来凑章」不是它的用法。
+- `break_reason` = 为什么在这里断章。末段若是 `chapter_break_after=avoid`，必须给强制理由
+  （`budget_boundary` / `plot_exhaustion` / `forced_legacy_atomic`）。
+
+服务端会拒绝：跳过更早的已承诺段落（想改顺序请走完整 replan——章计划不是改故事线的后门）、
+乱序、重复、目标越界、覆写越界、有未接受草稿时改计划、以及陈旧的 revision/draft_digest。
+
+**计划里还有没写的段落时收不了章**。写到一半觉得该提前收，就把计划**显式改小**（去掉后面几段）
+再收——让「在这断章」成为一个被记录的决定，而不是用收章悄悄绕开自己刚立下的计划。
 
 ## 写作循环
 
 ```text
 get_orchestration_state
+→ 本章还没有有效 chapter_plan？
+     → 从有序的 committed 段落里挑一段**连续前缀** → 定 target_words 与断章理由 → set_chapter_plan
 → 末段待评审？
      → 委派 Critic（判决由它自己写进服务端）
      → 重读状态，从 latest_draft_plot.review_receipt 取 receipt_id 与 verdict
      → verdict=accept：accept_plot_draft(review_receipt=...)
        verdict=revise_text：按 receipt 的 rewrite_brief 委派 Writer 改稿 → 重新体检 + 重新评审
        verdict=patch_character / replan / stop：按协议处理或停下报告
-→ 有可写 Plot：delegate_writer（一个 Plot）
+→ 计划还有下一段：delegate_writer（一个 Plot）
 → 重复评审
-→ 服务端允许且你认为这里是自然断章点时：finalize_draft_chapter（带 CAS 三元组）
+→ 计划已完成、服务端允许、且你认为这里是自然断章点：
+     finalize_draft_chapter（带 storyline_revision + draft_digest + chapter_plan_digest 三元组）
 → 重读状态并结束本次任务
 ```
 

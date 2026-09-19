@@ -81,8 +81,15 @@ def _deny(reasons: list[str]) -> dict:
     return {"allowed": not reasons, "reasons": reasons}
 
 
-def _plan_problems(facts: dict) -> list[str]:
-    """章计划（阶段二）缺失/陈旧问题；未启用计划时恒为空。"""
+def _plot_id_of(value) -> str:
+    """取情节段 id：facts 里是**视图 dict**，而纯函数调用方可能直接传 PlotSlot。两种都吃。"""
+    if isinstance(value, dict):
+        return str(value.get("id") or "")
+    return str(getattr(value, "id", "") or "")
+
+
+def _plan_missing(facts: dict) -> list[str]:
+    """章计划（阶段二）**存在性**问题；未启用计划时恒为空。"""
     if not facts.get("plan_required"):
         return []
     plan = facts.get("plan")
@@ -90,8 +97,6 @@ def _plan_problems(facts: dict) -> list[str]:
         return ["CHAPTER_PLAN_REQUIRED_MISSING"]
     if not plan.get("valid", True):
         return ["CHAPTER_PLAN_INVALID"]
-    if str(plan.get("state") or "active") != "active":
-        return ["CHAPTER_PLAN_NOT_ACTIVE"]
     return []
 
 
@@ -105,7 +110,8 @@ def compute_orchestration_permissions(facts: dict) -> dict:
     receipt = facts.get("receipt") or None
     budget = facts.get("budget") or {}
     gate_on = bool(facts.get("review_gate"))
-    plan_problems = _plan_problems(facts)
+    plan = facts.get("plan") if isinstance(facts.get("plan"), dict) else None
+    plan_problems = _plan_missing(facts)
 
     # ── 写下一段 ──
     write_reasons = []
@@ -117,10 +123,10 @@ def compute_orchestration_permissions(facts: dict) -> dict:
         write_reasons.append("ORCHESTRATION_BUDGET_EXHAUSTED")
     if plan_problems:
         write_reasons.extend(plan_problems)
-    elif facts.get("plan") and nxt is not None:
-        # 计划存在时，下一个可写段必须是计划里的下一段——不许自动越过计划。
-        planned_next = str((facts.get("plan") or {}).get("next_planned_plot_id") or "")
-        if planned_next and str(getattr(nxt, "id", "")) != planned_next:
+    elif plan and nxt is not None:
+        # 计划存在时，下一个可写段必须是计划里的下一段——不许自动越过计划去写别的。
+        planned_next = str(plan.get("next_planned_plot_id") or "")
+        if planned_next and _plot_id_of(nxt) != planned_next:
             write_reasons.append("CHAPTER_PLAN_NOT_NEXT")
 
     # ── 评审 / 记录判决 ──
@@ -170,6 +176,11 @@ def compute_orchestration_permissions(facts: dict) -> dict:
     if floor and int(status.get("written_words") or 0) < floor:
         finalize_reasons.append("CHAPTER_BELOW_COMMIT_FLOOR")
     finalize_reasons.extend(plan_problems)
+    if plan and str(plan.get("state") or "active") != "complete":
+        # 计划里还有没写的段落却要收章：要求主 Agent 先把计划**显式改小**
+        # （set_chapter_plan 少选一段），把「在这断章」变成一个被记录的决定，
+        # 而不是让它用收章悄悄绕过自己刚立下的计划。
+        finalize_reasons.append("CHAPTER_PLAN_INCOMPLETE")
 
     # ── 分章计划（阶段二；未启用时永远 false，工具面也不暴露） ──
     plan_chapter_reasons = [] if facts.get("plan_enabled") else ["CHAPTER_PLAN_DISABLED"]

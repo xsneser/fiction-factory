@@ -340,6 +340,19 @@ def _draft_metrics(draft: dict | None) -> dict:
     return metrics
 
 
+def _chapter_plan_digest_for(book_id: str, draft: dict | None) -> str:
+    """当前章的章计划摘要（无计划 = 空串）。供版本向量与收章 CAS 共用同一口径。"""
+    try:
+        from libraries.chapter_plan import load_plan, plan_digest
+    except Exception:  # noqa: BLE001
+        return ""
+    chapter_num = int((draft or {}).get("chapter_num") or 0)
+    try:
+        return plan_digest(load_plan(book_id, chapter_num))
+    except Exception:  # noqa: BLE001 — 计划读不到就当没有（陈旧计划该让旧 token 失效）
+        return ""
+
+
 def _context_fingerprint(book_id: str, tl, plot_run: dict | None, profile=None,
                          style_snapshot: dict | None = None,
                          version_vector: dict | None = None) -> str:
@@ -389,6 +402,10 @@ def _context_version_vector(book_id: str, tl, draft: dict | None,
     book_dir = os.path.join(_ROOT, "books", book_id)
     return {
         "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+        # 运行时章计划（章计划只影响本段的**写作目标**，不改 storyline、不 bump revision）：
+        # 必须进版本向量，否则「先按 700 字 prepare、主 Agent 改成 1100、旧 token 仍能提交」
+        # 这个漏洞会一直在。改计划 → 摘要变 → 旧 token 在提交比对处失效。
+        "chapter_plan_revision": _chapter_plan_digest_for(book_id, draft),
         # style_anchor **必须**进 draft_revision：章级样文锚是章内所有 Plot 的共享输入，
         # 不进哈希就会出现「换了锚但指纹没变」→ token 校验放行按旧锚写的快照。
         "draft_revision": _semantic_digest({
@@ -1229,12 +1246,14 @@ def prepare_plot_run(book_id: str) -> dict:
     tl = _require_tl(book_id)
     book = book_mgr.get(book_id)
     draft = _draft_read(book_id) or {}
+    plan_view = None
     if _review_gate_on():
         # 编排路径：写下一段的授权由唯一真源判定（评审未接受 / 无可写段 / 预算耗尽 /
         # 章计划不符都在这里被同一套 reason 码拒掉），并记账一次 action。
         facts = _orchestration_facts(book_id, tl=tl, draft=draft, book=book)
         orchestration_policy.require_permission("write_next_plot", facts)
         orchestration_budget.bump(book_id, int(facts.get("chapter_num") or 0), "actions")
+        plan_view = facts.get("plan")
     else:
         pending = _pending_review_plot(draft)
         if pending:
@@ -1384,10 +1403,21 @@ def prepare_plot_run(book_id: str) -> dict:
     must = list(brief.get("must_happen") or [])
     should = list(brief.get("should_happen") or [])
     may = list(brief.get("may_happen") or [])
+    # 本段的写作目标：章计划可对本段做**有界覆写**（解决「3 段不够、4 段又超」的篇幅微调）。
+    # `planned` 永远是 storyline 的原始规划（供审计），`assigned` 才是 Writer 该写的字数。
+    planned_for_p = int(_planned_words_of(p) or 0)
+    assigned_row = {"planned": planned_for_p, "assigned": planned_for_p, "source": "storyline"}
+    if plan_view:
+        from libraries.chapter_plan import resolve_effective_budgets
+        row = resolve_effective_budgets(plan_view, tl, [p]).get(str(p.id))
+        if row:
+            assigned_row = row
     execution.update({"entry_state": brief.get("entry_state") or {}, "success_criteria": brief.get("success_criteria") or must,
                       "must": must, "should": should, "may": may,
                       "primary_turn": str(getattr(p, "primary_turn", "") or ""),
-                      "word_budget": {"planned": int(getattr(p, "words", 0) or 0),
+                      "word_budget": {"planned": assigned_row["planned"],
+                                      "assigned": assigned_row["assigned"],
+                                      "source": assigned_row["source"],
                                       "preferred_max": PLOT_PREFERRED_MAX,
                                       "hard_max": PLOT_HARD_MAX},
                       # 开章标记：本章还没有正文 → Writer 需一并给出章节标题候选
@@ -1444,6 +1474,9 @@ def prepare_plot_run(book_id: str) -> dict:
         "continuity_tail": continuity_tail,
         "cast": {**prepared_cast, "resolution": resolution},
         "memory": {"budget_tokens": memory_budget, "recent": recent, "retrieved": retrieved},
+        # 运行时章计划（本章用哪几段、各段目标字数、断章理由）。**不是** storyline 的一部分：
+        # 它只解释「这次写多少、何时断」，改它不会动长期承诺，也不会 bump storyline_revision。
+        "chapter_plan": plan_view,
         "horizon": {"preserve": list(getattr(horizon_plots[0], "expected_facts", None) or []) if horizon_plots else [],
                     "do_not_resolve_yet": [], "next_function": (horizon_plots[0].category or horizon_plots[0].name) if horizon_plots else None,
                     "arc_destination": (raw_run.get("arc_goal") or {}).get("notes", ""), "boundary": boundary,
@@ -2634,9 +2667,11 @@ def finalize_draft_chapter(book_id: str, flow_id: str = "",
         if str(expected_draft_digest) != digest_now:
             raise RuntimeError("草稿已变化（draft_digest 不匹配）；请重新读取 get_orchestration_state")
         if _chapter_plan_required():
-            plan_view = _chapter_plan_view(book_id, draft) or {}
-            if str(expected_chapter_plan_digest or "") != str(plan_view.get("plan_digest") or ""):
-                raise RuntimeError("章计划已变化（chapter_plan_digest 不匹配）；请重新读取状态并重拟计划")
+            # 三元组的第三项（I6）：只校验 revision + draft 时，可能「root 读到 plan A、
+            # 另一个动作把它改成 B、而草稿恰好仍满足 B」，于是收章基于 root 没读过的计划成功。
+            if _chapter_plan_digest_for(book_id, draft) != str(expected_chapter_plan_digest or ""):
+                raise RuntimeError("章计划已变化（chapter_plan_digest 不匹配）；"
+                                   "请重新读取状态并重拟计划")
         # 授权守卫（与 advisory 同源）：未接受 / 段落缺失 / 低于落盘下限都在这里被拒。
         _require_orchestration_permission("finalize_chapter", book_id)
     text = "\n\n".join(str(x.get("text") or "") for x in bridges)
@@ -2656,6 +2691,13 @@ def finalize_draft_chapter(book_id: str, flow_id: str = "",
         state_error = str(exc)
         result = {"ok": True, "chapter": chapter_num, "state_error": state_error,
                   **_text_metrics(text)}
+    # 章计划是**章级**运行态：章一落盘即作废，下一章必须重新拟（不许跨章复用）。
+    if _chapter_plan_required():
+        try:
+            from libraries.chapter_plan import consume_plan
+            consume_plan(book_id, flow_id or "")
+        except Exception as exc:  # noqa: BLE001 — 计划清理失败不该影响「章已提交」这一事实
+            _log.warning("章计划清理失败 book=%s flow=%s: %s", book_id, flow_id, exc)
     # 提交后诊断：门禁读的是已落盘章节，异常只作诊断，不改「章已提交」这一事实。
     try:
         gate = chapter_quality_gate(book_id, chapter_num)
@@ -2951,8 +2993,18 @@ def _finish_plot_commit(book_id: str, commit_token: str, record: dict, plot,
     flow_id = record.get("flow_id") or "adhoc"
     if flow_id == "adhoc":
         # 旧入口没有提前创建 Flow；首次成功提交时补建可恢复 Flow，后续子 Run 都继承它。
-        from libraries.write_flow import active_flow_id, start_flow
+        # 顺序有意如此：先认已持租约的 flow → 再**接管**章计划建好的 PLANNED flow（此刻才取
+        # 租约，正是不变量 I7 想要的时机）→ 都没有才新建。
+        from libraries.write_flow import active_flow_id, adopt_flow, resolve_flow, start_flow
         flow_id = active_flow_id(book_id)
+        if not flow_id:
+            planned = resolve_flow(book_id)
+            if planned:
+                try:
+                    flow_id = adopt_flow(book_id, planned)["flow_id"]
+                except Exception as exc:  # noqa: BLE001 — 接管失败不该吞掉 Plot 提交
+                    _log.warning("接管章计划 flow 失败 book=%s flow=%s: %s", book_id, planned, exc)
+                    flow_id = ""
         if not flow_id:
             flow_id = start_flow(book_id, chapter_num)["flow_id"]
     result.update(book_id=book_id, plot_id=plot.id, writer_run_complete=True,
@@ -4863,6 +4915,8 @@ _LOCKED_TOOLS = {
     # 编排收章：读草稿 → CAS 校验 → save_chapter_text → 质量诊断 → flow DONE → 释放租约，
     # 全程必须与其它写操作互斥（收章是本章最后一个不可回退的落盘点）。
     "finalize_draft_chapter", "record_plot_review",
+    # 章计划：读流程 + 落计划 + 可能接管/取代 PLANNED flow，必须与写作互斥
+    "set_chapter_plan",
 }
 
 # 自持锁工具：签名里没有 book_id（只有 commit_token），wrapper 取不到锁目标，
@@ -5378,7 +5432,7 @@ def _orchestration_facts(book_id: str, *, tl=None, draft=None, book=None) -> dic
     纯读：只调 `load_planning_state(persist=False)` 这类无副作用读取，绝不写盘（状态读取
     在 SSE 边上跑，写盘会污染「读一次状态」的语义）。事实 → 授权见 `orchestration_policy`。
     """
-    from libraries.write_flow import active_flow_id, chapter_status
+    from libraries.write_flow import chapter_status, resolve_flow
     tl = tl if tl is not None else load_tl(book_id)
     if tl is None:
         raise RuntimeError(f"书 {book_id} 无故事线")
@@ -5393,6 +5447,10 @@ def _orchestration_facts(book_id: str, *, tl=None, draft=None, book=None) -> dic
     drafted = _draft_plot_ids(draft)
     remaining = sum(1 for p in _ordered_plots(tl)
                     if not getattr(p, "written_chapter", 0) and p.id not in drafted)
+    chapter_num_early = int(draft.get("chapter_num") or 0) or int(
+        getattr(dummy_book, "current_chapter", 0) or 0) + 1
+    plan_enabled = _chapter_plan_required()
+    plan_view = _chapter_plan_view(book_id, draft, chapter_num_early) if plan_enabled else None
     boundary = detect_story_boundary(
         written_until_word=int(runtime["display_written_words"]),
         committed_until_word=int(ps.get("committed_until_word") or 0),
@@ -5403,8 +5461,7 @@ def _orchestration_facts(book_id: str, *, tl=None, draft=None, book=None) -> dic
         book_id, tl, draft, needs_replan=bool(boundary.get("needs_replan")),
         next_plot_planned_words=_planned_words_of(nxt),
         next_plot_break_after=str(getattr(nxt, "chapter_break_after", "allowed") or "allowed"))
-    chapter_num = int(draft.get("chapter_num") or 0) or int(
-        getattr(dummy_book, "current_chapter", 0) or 0) + 1
+    chapter_num = chapter_num_early
     last = bridges[-1] if bridges else None
     last_plot_id = str((last or {}).get("plot_id") or "")
     gate = ((last or {}).get("quality_gate")
@@ -5422,7 +5479,8 @@ def _orchestration_facts(book_id: str, *, tl=None, draft=None, book=None) -> dic
         "phase": str(getattr(tl, "phase", "") or ""),
         "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
         "review_gate": _review_gate_on(),
-        "flow_id": active_flow_id(book_id),
+        # 租约持有者优先，其次 plan-only 的 PLANNED flow（否则规划阶段读不到 flow_id）
+        "flow_id": resolve_flow(book_id),
         "chapter_num": chapter_num,
         "draft_has_bridges": bool(bridges),
         "draft_digest": _draft_digest(draft),
@@ -5446,9 +5504,10 @@ def _orchestration_facts(book_id: str, *, tl=None, draft=None, book=None) -> dic
         "boundary": boundary,
         "receipt": receipt_view,
         "budget": orchestration_budget.snapshot(book_id, chapter_num, last_plot_id),
-        "plan": _chapter_plan_view(book_id, draft) if _chapter_plan_required() else None,
-        "plan_enabled": _chapter_plan_required(),
-        "plan_required": _chapter_plan_required(),
+        "plan": plan_view,
+        "plan_enabled": plan_enabled,
+        "plan_required": plan_enabled,
+        "plan_digest": str((plan_view or {}).get("plan_digest") or ""),
         "remaining_plots": remaining,
     }
 
@@ -5461,14 +5520,14 @@ class _FactsBook:
         self.current_chapter = int(chapter_num or 0)
 
 
-def _chapter_plan_view(book_id: str, draft: dict | None) -> dict | None:
-    """章计划视图；阶段二实现（`libraries.chapter_plan`），此处返回 None 表示无计划。"""
+def _chapter_plan_view(book_id: str, draft: dict | None, chapter_num: int = 0) -> dict | None:
+    """章计划只读视图（含 plan_digest）。计划章号不匹配即视为没有计划。"""
     try:
-        from libraries.chapter_plan import load_chapter_plan, chapter_plan_view
-    except Exception:  # noqa: BLE001 — 阶段一尚未引入 chapter_plan 模块
+        from libraries.chapter_plan import chapter_plan_view, load_plan
+    except Exception:  # noqa: BLE001 — 缺模块不该让状态读取整体失败
         return None
     try:
-        return chapter_plan_view(load_chapter_plan(book_id), draft)
+        return chapter_plan_view(load_plan(book_id, chapter_num), draft)
     except Exception:  # noqa: BLE001 — 计划读取失败不该让状态读取整体失败
         return None
 
@@ -5635,6 +5694,64 @@ def plot_quality_gate(book_id: str, plot_id: str = "", flow_id: str = "") -> dic
     draft["plot_gates"] = gates
     _draft_write(book_id, draft)
     return report
+
+
+def set_chapter_plan(book_id: str, expected_revision: int, expected_draft_digest: str,
+                     chapter_plan: dict) -> dict:
+    """提交/更新**运行时章计划**：本章写哪几段、各段目标字数、为什么在这里断章。
+
+    这是「分章由主 Agent 决定」的落点——把「打几个段落凑一章」从按字数阈值机械断章，
+    变成一次被服务端校验、被记录、可复盘的显式决定。服务端只守硬边界：
+
+      · 选段必须是叙事顺序上的**连续前缀**（不许跳过已承诺的段——真想改顺序请走完整 replan，
+        章计划不是改故事线的后门）；
+      · 已写入草稿的段必须是计划的严格前缀（不能改换已写段的身份）；
+      · `target_words` 落在 [落盘下限, 硬上限]；
+      · 覆写某段目标字数受**类型带 + 硬上限 + 相对原计划 0.7~1.5 倍**三重约束
+        （否则 `300→1200` 的「拉长一段凑章」会重新变成可能——那正是最初要修的问题）；
+      · 末段是 `chapter_break_after=avoid` 时必须给强制理由。
+
+    计划是**章级运行态**：不改 storyline、不 bump `storyline_revision`，收章后即作废。
+    存储上它住在一个 `PLANNED` flow 记录里且**不占写租约**——只做了规划而 agent 崩掉，
+    不会留下一个长期锁住这本书的租约。
+
+    提交前必须带最新 `storyline_revision` 与 `draft_digest`（用 `get_orchestration_state` 里的值）；
+    任一陈旧即拒，防止拿旧状态下的判断去约束新事实。
+    """
+    tl = _require_tl(book_id)
+    draft = _draft_read(book_id) or {}
+    if not isinstance(chapter_plan, dict) or not chapter_plan:
+        raise RuntimeError("chapter_plan 必填")
+    facts = _orchestration_facts(book_id, tl=tl, draft=draft)
+    orchestration_policy.require_permission("plan_chapter", facts)
+    if int(expected_revision or 0) != int(facts.get("storyline_revision") or 0):
+        raise RuntimeError(f"storyline_revision 已变化（读到 {expected_revision}，"
+                           f"当前 {facts.get('storyline_revision')}）；请重新读取 get_orchestration_state")
+    if str(expected_draft_digest or "") != str(facts.get("draft_digest") or ""):
+        raise RuntimeError("草稿已变化（draft_digest 不匹配）；请重新读取 get_orchestration_state")
+    from libraries.chapter_plan import save_plan, validate_chapter_plan
+    plan = {
+        "chapter_num": int(chapter_plan.get("chapter_num") or facts.get("chapter_num") or 0),
+        "plot_ids": [str(x) for x in (chapter_plan.get("plot_ids") or [])],
+        "target_words": int(chapter_plan.get("target_words") or 0),
+        "break_reason": chapter_plan.get("break_reason") if isinstance(chapter_plan.get("break_reason"), dict) else {},
+        "plot_word_targets": [{"plot_id": str(t.get("plot_id") or ""),
+                               "target_words": int(t.get("target_words") or 0)}
+                              for t in (chapter_plan.get("plot_word_targets") or [])
+                              if isinstance(t, dict) and t.get("plot_id")],
+    }
+    checked = validate_chapter_plan(plan, tl, draft, int(facts.get("chapter_num") or 0),
+                                    pending_review_plot=str(facts.get("pending_review_plot") or ""))
+    if not checked["ok"]:
+        raise RuntimeError("章计划未通过校验：" + "；".join(checked["messages"]))
+    saved = save_plan(book_id, plan["chapter_num"], plan)
+    view = _chapter_plan_view(book_id, draft, plan["chapter_num"]) or {}
+    return {"ok": True, "book_id": book_id, "flow_id": saved["flow_id"],
+            "chapter_plan": view, "plan_digest": view.get("plan_digest", ""),
+            "effective_plot_budgets": checked["effective"],
+            "total_assigned_words": checked["total_assigned"],
+            "storyline_revision": int(facts.get("storyline_revision") or 0),
+            "draft_digest": facts.get("draft_digest") or ""}
 
 
 def record_plot_review(book_id: str, plot_id: str, gate_digest: str, verdict: str,
@@ -5917,7 +6034,7 @@ def _build_registry():
         # finalize_draft_chapter = 主 Agent 的收章动作（编排路径必带 CAS 三元组）；
         # record_plot_review = Critic 判决的服务端写入点（只在 critic profile 的工具面里）。
         get_orchestration_state, get_plot_review_context, plot_quality_gate,
-        accept_plot_draft, finalize_draft_chapter, record_plot_review,
+        accept_plot_draft, finalize_draft_chapter, record_plot_review, set_chapter_plan,
         # 上架 / 质量门禁 / 校验
         publish_check, mark_finished, publish_book, export_book,
         chapter_quality_gate, validate_storyline, validate_world,

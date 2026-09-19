@@ -19,11 +19,11 @@ EXPECTED = {
     # build-candidates 会按 build_status 的 pen_selected 摘掉 query_profiles，
     # 故只断言「⊆ 该 profile 且 ⊇ 去掉 query_profiles 的那一份」（见 check_optional）
     "build-candidates": {"navigate", "drive_ui", "get_build_status", "query_profiles"},
-    # 编排面：**收章**在主 Agent 手上；判决写入点不在（那是 Critic 独有的，I1 能力边界）
+    # 编排面：**收章**与**运行时章计划**在主 Agent 手上；判决写入点不在（Critic 独有，I1）
     "orchestrate": {"list_books", "get_book_detail", "get_book_state", "get_storyline",
                     "get_story_state", "get_build_status", "get_build_context",
                     "get_orchestration_state", "get_plot_review_context", "plot_quality_gate",
-                    "accept_plot_draft", "finalize_draft_chapter",
+                    "accept_plot_draft", "finalize_draft_chapter", "set_chapter_plan",
                     "save_basic_info", "validate_world", "navigate", "drive_ui"},
     # Critic：读评审上下文 + 把判决写回服务端换取 receipt
     "critic": {"get_plot_review_context", "record_plot_review"},

@@ -31,6 +31,8 @@ PHASE_GATES = {
     # 编排收章 / Critic 判决写入（主 Agent 编排链路）
     "finalize_draft_chapter": {"ready"},
     "record_plot_review": {"ready"},
+    # 章计划（运行时，不改故事线）
+    "set_chapter_plan": {"ready"},
     # 写作风格取样 —— Plot Run 每段抽单篇样文
     "pick_plot_sample": {"ready"},
     # 建书规划 —— config 落基本盘；plots 草案期放行。

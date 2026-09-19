@@ -15,7 +15,7 @@ PROFILE_TOOLS = {
     #   · query_characters 先不给：人物按势力与剧情自主设计（要复用角色原型库再一行加回）。
     "build": {"get_build_context", "query_arc_library", "query_plots",
               "validate_build", "save_build_draft"},
-    # Writer 是一次性 Plot 生成器：其余流程由服务端 FSM 负责。
+    # Writer 是一次性 Plot 生成器：其余流程由**调度方**负责（编排开启时=主 Agent，关闭时=legacy FSM）。
     "write": {"prepare_plot_run", "save_plot_draft", "prepare_plot_revision", "save_plot_revision"},
     # Planner 只生成并暂存 preview；正式故事线由服务端 replan_service 原子提交。
     "replan": {"get_story_state", "validate_storyline", "validate_world",
@@ -26,7 +26,7 @@ PROFILE_TOOLS = {
     "orchestrate": {"list_books", "get_book_detail", "get_book_state", "get_storyline",
                     "get_story_state", "get_build_status", "get_build_context",
                     "get_orchestration_state", "get_plot_review_context", "plot_quality_gate",
-                    "accept_plot_draft", "finalize_draft_chapter",
+                    "accept_plot_draft", "finalize_draft_chapter", "set_chapter_plan",
                     "save_basic_info", "validate_world", "navigate", "drive_ui"},
     # Critic 读评审上下文 + **把判决写回服务端换取 receipt**。
     # record_plot_review 是 Critic 独有的写入点：只在 critic profile 里，orchestrate 没有它，
@@ -201,7 +201,8 @@ def tool_metadata(name: str, *, allowed_phases=None, locked: bool = False) -> di
     profiles = sorted(profile for profile, names in PROFILE_TOOLS.items() if name in names)
     write_prefixes = ("save_", "add_", "delete_", "publish", "mark_", "ingest_", "fetch_", "drive_ui",
                       "plot_quality_gate", "accept_plot_draft", "prepare_plot_revision",
-                      "save_plot_revision", "finalize_draft_chapter", "record_plot_review")
+                      "save_plot_revision", "finalize_draft_chapter", "record_plot_review",
+                      "set_chapter_plan")
     read_write = "write" if name.startswith(write_prefixes) else "read"
     requires_book = name in {
         "get_book_state", "prepare_plot_run", "prepare_plot_revision", "save_plot_revision",
@@ -211,7 +212,7 @@ def tool_metadata(name: str, *, allowed_phases=None, locked: bool = False) -> di
         "export_book", "chapter_quality_gate", "pick_plot_sample",
         "get_orchestration_state", "get_plot_review_context", "plot_quality_gate",
         "accept_plot_draft", "finalize_draft_chapter", "record_plot_review",
-        "commit_replan_preview",
+        "set_chapter_plan", "commit_replan_preview",
     }
     return {
         "profiles": profiles,
