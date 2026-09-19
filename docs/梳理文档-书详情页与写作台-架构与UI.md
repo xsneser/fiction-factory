@@ -121,7 +121,7 @@
 | 资源变化 | `facts.resource_changes` | 同上 |
 | 承诺更新 | `facts.promise_updates` | 同上 |
 | 新问题 | `facts.new_story_questions` | 同上 |
-| ▸ 规划上下文（默认折叠） | `planning.horizon.h1` / `planning.story_questions` / `recent_plot_outcome.arc_goal` + `thread` | 全空则不渲染整组 |
+| ▸ 待解问题（默认折叠） | `planning.story_questions`（**只留这一组**：H1 方向条是 planner 视图、弧/线程 Gantt 上已有，都已删；人物意图在右栏） | 空则不渲染 |
 
 值归一化沿用旧实现口径：列表用「；」拼接，字典取 `text/description/title`（`_factText()`）。
 **刻意不放进左栏**：章号与字数进度（页头已有）、情节段摘要 `plot_summary`（正文就在下方）。

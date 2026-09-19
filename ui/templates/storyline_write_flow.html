@@ -4,7 +4,7 @@
 <div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <a href="/books/{{ state.book_id }}">{{ state.title or '(待定)' }}</a> <span class="sep">›</span> <span class="cur">写作台</span></div>
 {% endblock %}
 {% block content %}
-<link rel="stylesheet" href="/static/css/story_line.css?v=21">
+<link rel="stylesheet" href="/static/css/story_line.css?v=22">
 <link rel="stylesheet" href="/static/css/workspace.css?v=7">
 <link rel="stylesheet" href="/static/css/reader.css">
 {% from "_flow_stepper.html" import status_badge %}
@@ -40,7 +40,8 @@
      左栏答「刚写完那段实际发生了什么 + 接下来往哪走」，右栏答「人现在在哪、什么状态、在干什么」。
      **分工不重叠**：角色的 位置/目标/实力/关系/弧阶段 由右栏的「位置/状态/动作」三行覆盖，
      左栏只放**非角色**内容——上一段的结构化事实（agent 上报，不从正文推断）+ 一个默认折叠的
-     规划/结构上下文组（H1 近期方向 / 待解问题 / 弧与线程）。
+     规划状态组（只留「待解问题」——它只在这里可见；H1 方向条与弧/线程结构已删，
+     前者是 planner 视图，后者 Gantt 上已有）。
      「人物意图」按人归属，放**右栏角色状态底部**（只列本段未出场的人，见 `_renderOtherIntents`）。
      也**刻意不**放章号与字数进度：页头已经有章号与总字数，重复即噪音。 #}
 <section class="wf-latest-context" id="wf-latest-context" role="region" aria-label="上一情节段与角色状态">
@@ -490,7 +491,7 @@ function _renderCharacterCard(card, events) {
 var _LAST_RECON_ZH = {clean: '✅ 与预期一致', prediction_drift: '🟡 实际发展与预期不同',
                       missed_prediction: '🟡 预计变化尚未发生', unpredicted_fact: '🔵 出现新的变化'};
 
-/* 左栏：**上一段（已完成）的事实 + 规划上下文**。全部字段来自 desk 响应，不做任何推断。
+/* 左栏：**上一段（已完成）的事实（+ 待解问题折叠组）**。全部字段来自 desk 响应，不做任何推断。
    分工：**角色字段（位置/目标/实力/关系/弧阶段）由右栏「角色状态」覆盖，这里不重复**——
    左栏只放非角色内容：上一段的结构化事实 + 一个默认折叠的规划/结构上下文组。
    刻意**不**显示章号与字数进度：页头已经有章号与总字数，重复即噪音；
@@ -541,41 +542,24 @@ function _factText(value) {
     return one(value);
 }
 
-/* 「规划上下文」折叠组：H1 近期方向 / 待解问题 / 弧与线程。
-   这些是规划与结构态，不是"已发生的事实"，所以默认收起；全空则不渲染整组。
-   **人物意图不在这里**：它按人归属，放右栏角色状态底部（本段未出场的人，见 _renderOtherIntents）。 */
+/* 「待解问题」折叠组（默认收起；空则不渲染整组）。
+   刻意**只留这一组**：
+   - H1 方向条 —— 规划期的近期计划，planner 视图，人不需要在这里看（已删）；
+   - 弧 / 线程结构 —— Gantt 上本来就有条带与进度，重复（已删）；
+   - 人物意图 —— 按人归属，放右栏角色状态底部（本段未出场的人，见 _renderOtherIntents）。
+   留下 `story_questions` 是因为它**只在这里可见**：跨章累积的未解问题台账，
+   与上一段事实里的「新问题」（只含这一段新开的）不是一回事。 */
 function _renderPlanContext(data, last) {
     data = data || {};
     var planning = data.planning || {};
-    var groups = [];
-    var h1 = (planning.horizon && planning.horizon.h1) || [];
-    var h1s = h1.map(function (x) { return String((x && (x.intent || x.description || x.title)) || ''); })
-                .filter(function (x) { return x.trim(); });
-    if (h1s.length) groups.push(['H1 近期方向', h1s]);
     var questions = (planning.story_questions || []).map(function (x) {
         return typeof x === 'string' ? x : String((x && (x.question || x.text || x.title)) || '');
     }).filter(function (x) { return x.trim(); });
-    if (questions.length) groups.push(['待解问题', questions]);
-    // 弧与线程：结构归属（这一段在哪条弧的哪个阶段、线程写到哪了）
-    var arc = last.arc_goal || {}, thread = last.thread || {};
-    var arcText = [arc.name, arc.stage_name || arc.stage_desc].filter(function (x) { return x; }).join(' · ');
-    var threadText = [thread.name || thread.id, thread.chain_note].filter(function (x) { return x; }).join(' · ');
-    if (!threadText && (thread.written_count != null || thread.unwritten_count != null)) {
-        threadText = '已写 ' + (thread.written_count || 0) + ' 条 / 未写 ' + (thread.unwritten_count || 0) + ' 条';
-    }
-    var structLines = [];
-    if (arcText) structLines.push('弧阶段 ' + arcText);
-    if (threadText) structLines.push('叙事线程 ' + threadText);
-    if (structLines.length) groups.push(['弧与线程', structLines]);
-
-    if (!groups.length) return '';
-    var summary = groups.map(function (g) { return g[0] + ' ' + g[1].length; }).join(' · ');
-    return '<details class="wf-last-plan"><summary>规划上下文 · ' + _ms_esc(summary) + '</summary>'
-        + groups.map(function (g) {
-            return '<div class="wf-last-fact"><span class="wf-last-fact-label">' + _ms_esc(g[0])
-                + '</span><span class="wf-last-fact-value">'
-                + g[1].map(function (line) { return _ms_esc(line); }).join('；') + '</span></div>';
-        }).join('')
+    if (!questions.length) return '';
+    return '<details class="wf-last-plan"><summary>待解问题 ' + questions.length + '</summary>'
+        + '<div class="wf-last-fact"><span class="wf-last-fact-label">待解问题</span>'
+        + '<span class="wf-last-fact-value">'
+        + questions.map(function (line) { return _ms_esc(line); }).join('；') + '</span></div>'
         + '</details>';
 }
 

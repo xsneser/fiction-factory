@@ -281,8 +281,10 @@ finally:
     assert "recent_plot_outcome" in write_tpl and "还没有已完成的段落" in write_tpl
     assert all(x in write_tpl for x in ('已作选择', '已知信息', '关系变化', '资源变化',
                                         '承诺更新', '新问题'))
-    assert "wf-last-plan" in write_tpl and "规划上下文" in write_tpl
-    assert all(x in write_tpl for x in ('horizon.h1', 'story_questions', 'arc_goal', 'thread'))
+    # 折叠组只留「待解问题」：H1 方向条（planner 视图）与弧/线程（Gantt 已有）已删
+    assert "wf-last-plan" in write_tpl and "待解问题" in write_tpl
+    assert "story_questions" in write_tpl and "规划上下文" not in write_tpl
+    assert all(x not in write_tpl for x in ('H1 近期方向', '弧与线程', 'horizon.h1', 'arc_goal'))
     # 「人物意图」按人归属 → 放右栏角色状态底部（只列本段未出场的人），**不进左栏规划上下文组**：
     # 它的 observations 与本段出场角色卡上的「位置/状态/动作」同源，列左栏是重复。
     plan_fn = write_tpl[write_tpl.index("function _renderPlanContext"):]
