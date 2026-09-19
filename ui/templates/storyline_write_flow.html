@@ -4,7 +4,7 @@
 <div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <a href="/books/{{ state.book_id }}">{{ state.title or '(待定)' }}</a> <span class="sep">›</span> <span class="cur">写作台</span></div>
 {% endblock %}
 {% block content %}
-<link rel="stylesheet" href="/static/css/story_line.css?v=20">
+<link rel="stylesheet" href="/static/css/story_line.css?v=21">
 <link rel="stylesheet" href="/static/css/workspace.css?v=7">
 <link rel="stylesheet" href="/static/css/reader.css">
 {% from "_flow_stepper.html" import status_badge %}
@@ -40,7 +40,8 @@
      左栏答「刚写完那段实际发生了什么 + 接下来往哪走」，右栏答「人现在在哪、什么状态、在干什么」。
      **分工不重叠**：角色的 位置/目标/实力/关系/弧阶段 由右栏的「位置/状态/动作」三行覆盖，
      左栏只放**非角色**内容——上一段的结构化事实（agent 上报，不从正文推断）+ 一个默认折叠的
-     规划/结构上下文组（人物当前意图 / H1 近期方向 / 待解问题 / 弧与线程）。
+     规划/结构上下文组（H1 近期方向 / 待解问题 / 弧与线程）。
+     「人物意图」按人归属，放**右栏角色状态底部**（只列本段未出场的人，见 `_renderOtherIntents`）。
      也**刻意不**放章号与字数进度：页头已经有章号与总字数，重复即噪音。 #}
 <section class="wf-latest-context" id="wf-latest-context" role="region" aria-label="上一情节段与角色状态">
     <article class="wf-context-card">
@@ -540,18 +541,13 @@ function _factText(value) {
     return one(value);
 }
 
-/* 「规划上下文」折叠组：人物当前意图 / H1 近期方向 / 待解问题 / 弧与线程。
-   这些是规划与结构态，不是"已发生的事实"，所以默认收起；全空则不渲染整组。 */
+/* 「规划上下文」折叠组：H1 近期方向 / 待解问题 / 弧与线程。
+   这些是规划与结构态，不是"已发生的事实"，所以默认收起；全空则不渲染整组。
+   **人物意图不在这里**：它按人归属，放右栏角色状态底部（本段未出场的人，见 _renderOtherIntents）。 */
 function _renderPlanContext(data, last) {
     data = data || {};
     var planning = data.planning || {};
     var groups = [];
-    var intents = (planning.character_intents || []).map(function (x) {
-        var obs = [];
-        Object.keys(x.observations || {}).forEach(function (k) { obs.push(String((x.observations || {})[k])); });
-        return String((x && x.name) || '人物') + (obs.length ? ' — ' + obs.join('；') : '');
-    }).filter(function (x) { return x.trim(); });
-    if (intents.length) groups.push(['人物当前意图', intents]);
     var h1 = (planning.horizon && planning.horizon.h1) || [];
     var h1s = h1.map(function (x) { return String((x && (x.intent || x.description || x.title)) || ''); })
                 .filter(function (x) { return x.trim(); });
@@ -600,7 +596,7 @@ function renderCurrentCast(data) {
         seen[c.name] = 1; other.push(c);
     });
     if (!main.length && !other.length) {
-        el.innerHTML = _ctxGap('本段未指定出场角色');
+        el.innerHTML = _ctxGap('本段未指定出场角色') + _renderOtherIntents(data, {});
         return;
     }
     // 重绘前记住折叠组开合（否则每轮轮询都会把用户展开的「其他角色」收回去）
@@ -612,10 +608,41 @@ function renderCurrentCast(data) {
             + other.length + ' 人</summary>'
             + other.map(function (c) { return _renderCharacterCard(c, events); }).join('') + '</details>';
     }
+    html += _renderOtherIntents(data, seen);
     el.innerHTML = html;
     el.querySelectorAll('details[data-detail-key]').forEach(function (d) {
         if (Object.prototype.hasOwnProperty.call(open, d.dataset.detailKey)) d.open = !!open[d.dataset.detailKey];
     });
+}
+
+/* 事件类型 → 人话（与 character_state._EVENT_FIELD 的键对齐；与书详情角色面板同一套词） */
+var _INTENT_EVENT_ZH = {goal_shift: '目标', power_shift: '实力', location_shift: '位置',
+                        arc_stage: '弧线', relationship: '关系', trust_change: '信任', note: '备注'};
+
+/* 「其他人物意图」：`planning.character_intents` 里**本段没出现在卡片上**的人。
+   为什么只列这些：这份数据的 observations 就是各人最近上报的变化，与本段出场角色卡上的
+   「位置/状态/动作」**同源**（陆凌舟那两个 chip 就是他的 observations），列在卡上纯属重复；
+   真正的增量是那些**不本段出场**的人（比如别处的巴鲁姆/老葛林）——他们在页面上本来无处可见。
+   数据里没有 `intent` 字段，所以按「事件类型 中文 → 新值」渲染；`intent` 若某天有了则优先用它。 */
+function _renderOtherIntents(data, onCard) {
+    var items = ((data || {}).planning || {}).character_intents || [];
+    var rows = items.filter(function (x) {
+        return x && x.name && !onCard[x.name];
+    }).map(function (x) {
+        var bits = [];
+        if (!_ctxMissing(x.intent)) bits.push(String(x.intent));
+        Object.keys(x.observations || {}).forEach(function (k) {
+            var v = (x.observations || {})[k];
+            if (_ctxMissing(v)) return;
+            bits.push((_INTENT_EVENT_ZH[k] || k) + ' → ' + String(v));
+        });
+        if (!bits.length) return '';
+        return '<div class="wf-last-fact"><span class="wf-last-fact-label">' + _ms_esc(x.name)
+            + '</span><span class="wf-last-fact-value">' + _ms_esc(bits.join(' · ')) + '</span></div>';
+    }).filter(function (h) { return h; }).join('');
+    if (!rows) return '';
+    return '<div class="character-intent-block">'
+        + '<div class="character-intent-head">其他人物意图</div>' + rows + '</div>';
 }
 
 /* 统一入口：既有 3s desk 轮询直接调它（不新增轮询）。fingerprint 不变则不重建 DOM。

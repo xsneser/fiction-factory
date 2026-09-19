@@ -196,9 +196,9 @@
   flex-direction: column;
   min-width: 0;
   /* 角色多时卡内滚动，而不是把下方 Gantt/阅读器挤没。
-     260 是实测出来的分界：扁平化后单条目约 75~85px，2~3 个出场角色（典型情况）不滚动，
-     4 个以上才滚动——顶部区每 10px 都直接给下面的故事线与阅读器。 */
-  max-height: min(28vh, 260px);
+     300 是实测分界：2~3 个出场角色（约 85px/人）+ 底部「其他人物意图」约 90px 仍能完整显示；
+     再多才滚动——顶部区每 10px 都直接给下面的故事线与阅读器。 */
+  max-height: min(32vh, 300px);
   overflow: auto;
   overscroll-behavior: contain;
   padding: 6px 10px;
@@ -225,6 +225,9 @@
 .wf-last-plan > summary::before { content: '▸ '; color: var(--fg-dim); }
 .wf-last-plan[open] > summary::before { content: '▾ '; }
 .wf-last-plan > summary:hover { color: var(--fg-dim); }
+/* 右栏底部「其他人物意图」：本段没出现在卡片上的人（他们本来无处可见）。与卡片用虚线分隔。 */
+.character-intent-block { margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--border-soft); }
+.character-intent-head { color: var(--fg-muted); font-size: 10.5px; margin-bottom: 1px; }
 
 /* ─── 角色状态（写作台右栏与书详情共用）───
    刻意**不给每个角色加卡片框**：外层已经有一个容器框，再套一层就是框套框，人物一多就变成

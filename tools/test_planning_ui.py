@@ -282,8 +282,15 @@ finally:
     assert all(x in write_tpl for x in ('已作选择', '已知信息', '关系变化', '资源变化',
                                         '承诺更新', '新问题'))
     assert "wf-last-plan" in write_tpl and "规划上下文" in write_tpl
-    assert all(x in write_tpl for x in ('character_intents', 'horizon.h1', 'story_questions',
-                                        'arc_goal', 'thread'))
+    assert all(x in write_tpl for x in ('horizon.h1', 'story_questions', 'arc_goal', 'thread'))
+    # 「人物意图」按人归属 → 放右栏角色状态底部（只列本段未出场的人），**不进左栏规划上下文组**：
+    # 它的 observations 与本段出场角色卡上的「位置/状态/动作」同源，列左栏是重复。
+    plan_fn = write_tpl[write_tpl.index("function _renderPlanContext"):]
+    plan_fn = plan_fn[:plan_fn.index("\n}\n")]
+    assert "character_intents" not in plan_fn
+    assert all(x in write_tpl for x in ('_renderOtherIntents', '其他人物意图', '_INTENT_EVENT_ZH'))
+    cast_fn = write_tpl[write_tpl.index("function renderCurrentCast"):]
+    assert "_renderOtherIntents(data, seen)" in cast_fn
     # 分工红线：角色的 位置/目标/实力/关系 由右栏覆盖，左栏不重复；页头已占用的章号/字数也不重复
     assert "function renderCurrentCast(" in write_tpl
     assert all(x not in write_tpl for x in ('id="wf-current-plot"', '写作重点', '待写 · 第',

@@ -121,12 +121,18 @@
 | 资源变化 | `facts.resource_changes` | 同上 |
 | 承诺更新 | `facts.promise_updates` | 同上 |
 | 新问题 | `facts.new_story_questions` | 同上 |
-| ▸ 规划上下文（默认折叠） | `planning.character_intents` / `planning.horizon.h1` / `planning.story_questions` / `recent_plot_outcome.arc_goal` + `thread` | 全空则不渲染整组 |
+| ▸ 规划上下文（默认折叠） | `planning.horizon.h1` / `planning.story_questions` / `recent_plot_outcome.arc_goal` + `thread` | 全空则不渲染整组 |
 
 值归一化沿用旧实现口径：列表用「；」拼接，字典取 `text/description/title`（`_factText()`）。
 **刻意不放进左栏**：章号与字数进度（页头已有）、情节段摘要 `plot_summary`（正文就在下方）。
 
-**右栏字段（位置 / 状态 / 动作 三行）**
+**右栏 = 角色状态 + 「其他人物意图」**
+
+底部另列 `planning.character_intents` 里**本段没出现在卡片上**的人（如巴鲁姆/老葛林）——他们在页面上本来无处可见；
+本段出场的人不重复（该数据的 `observations` 与卡上的「位置/状态/动作」同源，同一批 `character_events`）。
+条目按「事件类型 中文 → 新值」渲染（`_INTENT_EVENT_ZH`）；该数据**没有** `intent` 字段，若某天有了则优先用它。
+
+**每卡的字段（位置 / 状态 / 动作 三行）**
 
 | 行 | 数据 | 说明 |
 |---|---|---|
