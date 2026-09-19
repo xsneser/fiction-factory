@@ -510,3 +510,274 @@ def get_token_usage() -> dict:
 
 def clear_token_usage() -> None:
     USAGE.clear()
+
+
+# ─── LLM 出口预检（probe）───
+#
+# 解决什么问题：上游/中转对**带工具的流式请求**返回「正常结束但零内容」时，dsh 会把它判成
+# EMPTY_RESPONSE，重试 5 次（约 20 秒）后整轮失败，用户看到的却是一句「Writer 未完成有效
+# Plot 提交」——第 16 章那次就是这样。预检把这件事**提前到起 flow / 拿租约之前**，并且
+# 由探针自己说清坏在哪一层。
+#
+# 探针语义（钉死，别再放宽）：
+#   · ping（生产预检）：stream + 强制调用 ping 工具；`tool_call_ok` **只在真的出现了合法
+#     ping tool_call** 时为真。只有 text/reasoning 不算通过——中转完全可能收下 tools 却
+#     忽略它，而 Writer/orchestrator 少了工具调用一步都走不动。
+#   · ping 的 max_tokens 用 16~64：这是 ping 不是正文生成，把 dsh 的 256000 原样带进来
+#     本身就可能触发中转的参数范围/输出上限异常，等于让预检制造新的假故障。
+#   · diagnose（**手动**排障，绝不自动跑）：A=stream+强制工具、B=stream+无工具、
+#     C=non-stream+无工具（仅 A、B 都失败才跑 C）。结论按三层给，**不许**用「两个
+#     streaming 探针都失败」去说「上游整体异常」（/settings 的测试连接是非流式的，
+#     它可能一直好好的）。
+_PROBE_PING_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "ping",
+        "description": "Health probe. Always call this tool.",
+        "parameters": {
+            "type": "object",
+            "properties": {"text": {"type": "string", "description": "fixed string ok"}},
+            "required": ["text"],
+        },
+    },
+}
+_PROBE_PING_MAX_TOKENS = 64
+# 仅 diagnose(exact_shape=True)：复现 dsh 真实请求形状（core.llm_client.DSH_MAX_TOKENS 同值）
+_PROBE_EXACT_MAX_TOKENS = 256_000
+_PROBE_OK_TTL = 600.0     # 成功的预检 10 分钟内复用：正常写作基本零额外成本
+_PROBE_FAIL_TTL = 20.0    # 失败只短缓存：不放大请求（RATE_LIMIT / QUOTA 时尤其重要）
+
+_PROBE_CACHE: dict = {}
+
+
+def _probe_post(url: str, payload: dict, timeout: float) -> tuple:
+    """默认传输：直接打**本地代理**（与 dsh 同一条出口，key/model 都由代理落定）。
+
+    返回 (status_code, body_text)。测试用 post_fn 注入替换，故判定逻辑与网络解耦。
+    """
+    resp = requests.post(url, json=payload, timeout=timeout, stream=True,
+                         headers={"Content-Type": "application/json",
+                                  "Accept": "text/event-stream" if payload.get("stream")
+                                            else "application/json"})
+    try:
+        body = b"".join(resp.iter_content(chunk_size=4096)).decode("utf-8", "replace")
+    finally:
+        resp.close()
+    return resp.status_code, body
+
+
+def _summarize_completion(body: str, stream: bool) -> dict:
+    """把一次响应体归纳成 {text, reasoning, tool_calls, tool_names, finish, done, empty}。
+
+    stream=True 按 SSE 逐行 `data:` 解析；False 按单个 JSON 对象解析。两处都只看
+    delta/message 的 content / reasoning_content / tool_calls —— 与 dsh 适配器
+    （dsh-llm-deepseek translate()）的「有没有 block」判据同源。
+    """
+    out = {"text": 0, "reasoning": 0, "tool_calls": 0, "tool_names": [],
+           "finish": "", "done": False, "raw_len": len(body or "")}
+
+    def _absorb(node) -> None:
+        """吸收一个 message/delta 节点里的 block（与 dsh 适配器同判据）。"""
+        if not isinstance(node, dict):
+            return
+        content = node.get("content")
+        if isinstance(content, str) and content:
+            out["text"] += len(content)
+        reasoning = node.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            out["reasoning"] += len(reasoning)
+        for call in node.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            out["tool_calls"] += 1
+            name = (call.get("function") or {}).get("name")
+            if name:
+                out["tool_names"].append(str(name))
+
+    if not stream:
+        try:
+            obj = json.loads(body or "{}")
+        except Exception:
+            return out
+        for choice in obj.get("choices") or []:
+            _absorb(choice.get("message"))
+            if isinstance(choice.get("finish_reason"), str):
+                out["finish"] = choice["finish_reason"]
+        out["done"] = True
+        return out
+
+    for line in (body or "").splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload == "[DONE]":
+            out["done"] = True
+            continue
+        try:
+            chunk = json.loads(payload)
+        except Exception:
+            continue
+        for choice in chunk.get("choices") or []:
+            _absorb(choice.get("delta"))
+            if isinstance(choice.get("finish_reason"), str):
+                out["finish"] = choice["finish_reason"]
+    return out
+
+
+def _probe_payload(*, stream: bool, with_tools: bool, force_tool: bool,
+                   max_tokens: int) -> dict:
+    payload = {
+        "model": "probe",     # 具体模型由代理按 api.json 改写，这里只占位
+        "messages": [
+            {"role": "system",
+             "content": "You are a health probe. Follow the instruction exactly."},
+            {"role": "user",
+             "content": "调用 ping 工具，参数 text 用 ok。" if with_tools else "只回复 ok。"},
+        ],
+        "stream": bool(stream),
+        "max_tokens": int(max_tokens),
+        "temperature": 0,
+    }
+    if stream:
+        payload["stream_options"] = {"include_usage": True}
+    if with_tools:
+        payload["tools"] = [_PROBE_PING_TOOL]
+        if force_tool:
+            payload["tool_choice"] = {"type": "function", "function": {"name": "ping"}}
+    return payload
+
+
+def _probe_once(*, stream: bool, with_tools: bool, force_tool: bool, max_tokens: int,
+                timeout: float, post_fn) -> dict:
+    """发一次探测请求并归类。返回 {ok, transport_ok, tool_call_ok, code, shape, counts}。"""
+    payload = _probe_payload(stream=stream, with_tools=with_tools, force_tool=force_tool,
+                             max_tokens=max_tokens)
+    shape = "tools+stream" if (with_tools and stream) else (
+        "stream" if stream else "non_stream")
+    if with_tools and force_tool:
+        shape = "tools+forced"
+    result = {"transport_ok": False, "tool_call_ok": False, "code": "", "shape": shape,
+              "counts": {}, "status": 0, "empty": True}
+    try:
+        status, body = (post_fn or _probe_post)(token_proxy_base_url() + "/chat/completions",
+                                                payload, timeout)
+    except Exception as exc:  # noqa: BLE001
+        result.update(code="TRANSPORT", error=str(exc)[:200])
+        return result
+    result["status"] = int(status or 0)
+    if status and status >= 400:
+        # 4xx/5xx：把上游报文片段带上（含 tool_choice 参数不被支持这类可回落的情形）
+        result.update(code=f"HTTP_{status}", sample=(body or "")[:300])
+        return result
+    counts = _summarize_completion(body or "", payload["stream"])
+    result["counts"] = counts
+    result["empty"] = (counts["text"] + counts["reasoning"] + counts["tool_calls"]) == 0
+    result["transport_ok"] = not result["empty"]
+    result["tool_call_ok"] = "ping" in counts["tool_names"]
+    if result["empty"]:
+        # 与 dsh 适配器同判据：finish_reason=stop 且零 block
+        result["code"] = "EMPTY_RESPONSE" if counts.get("finish", "") in ("", "stop") else (
+            counts.get("finish", "").upper())
+    if not result["tool_call_ok"] and with_tools:
+        result["code"] = result["code"] or "NO_TOOL_CALL"
+    return result
+
+
+def _tool_choice_unsupported(res: dict) -> bool:
+    """中转明确拒绝 tool_choice 参数？只在这种情形才回落到 prompt-only 形状。"""
+    text = str(res.get("sample") or "")
+    return res.get("status", 0) in (400, 422) and "tool_choice" in text
+
+
+def _describe_probe(res: dict, layer: str = "") -> str:
+    """把预检结果渲染成给用户看的中文提示（只讲 LLM 出口，不提编排回退开关）。"""
+    info = llm_exit_info()
+    where = f"（model={info.get('model') or '未知'}，upstream={info.get('upstream') or '未知'}）"
+    if not res.get("transport_ok"):
+        detail = ("连非流式基础请求也失败" if res.get("shape") == "non_stream"
+                  else "请求没有得到任何内容（空回复/传输失败）")
+        return (f"写作出口不可用：{detail}{where}，错误码 {res.get('code') or '未知'}。"
+                f"请在 /settings 检查 API Key、模型名与额度；"
+                f"分层复现：probe_llm_exit(mode=\"diagnose\")。")
+    if not res.get("tool_call_ok"):
+        return (f"写作出口不可用：上游{where}对带工具的流式请求**没有执行工具调用**"
+                f"（tool_choice 已强制，错误码 {res.get('code')}）→ 该中转的工具调用能力不可用，"
+                f"Writer/编排都跑不动。请在 /settings 换模型或换中转后重试；"
+                f"分层复现：probe_llm_exit(mode=\"diagnose\")。")
+    if layer:
+        return f"LLM 出口分层结论：{layer}{where}。"
+    return f"LLM 出口正常{where}。"
+
+
+def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: float = 60.0,
+                   post_fn=None, use_cache: bool = True, retries: int = 2,
+                   exact_shape: bool = False) -> dict:
+    """LLM 出口预检：现在能不能靠这个模型/中转写出东西来。
+
+    mode="ping"（生产）：最多 2 次请求（含 tool_choice 不被支持时的回落），成功缓存 10 分钟、
+    失败只缓存 20 秒；返回 {ok, tool_call_ok, transport_ok, code, shape, model, upstream, message}。
+    只有 `tool_call_ok=True` 才算通过——「有输出」不等于「工具调用可用」。
+
+    mode="diagnose"（手动排障）：A/B/C 三层，C 仅在 A、B 都失败时才跑；`exact_shape=True`
+    用 dsh 真实形状（max_tokens=256000）复现，用来确认是否超大 max_tokens 触发的。
+    """
+    info = llm_exit_info()
+    cache_key = (mode, bool(with_tools), bool(exact_shape),
+                 info.get("model"), info.get("upstream"))
+    now = time.time()
+    if use_cache:
+        hit = _PROBE_CACHE.get(cache_key)
+        if hit and hit[0] > now:
+            return dict(hit[1])
+    max_tokens = _PROBE_EXACT_MAX_TOKENS if exact_shape else _PROBE_PING_MAX_TOKENS
+
+    if mode == "diagnose":
+        a = _probe_once(stream=True, with_tools=True, force_tool=True, max_tokens=max_tokens,
+                        timeout=timeout, post_fn=post_fn)
+        b = {}
+        c = {}
+        layer = ""
+        if not a["tool_call_ok"]:
+            b = _probe_once(stream=True, with_tools=False, force_tool=False,
+                            max_tokens=max_tokens, timeout=timeout, post_fn=post_fn)
+            if not b["transport_ok"]:
+                c = _probe_once(stream=False, with_tools=False, force_tool=False,
+                                max_tokens=max_tokens, timeout=timeout, post_fn=post_fn)
+                layer = "流式路径异常（streaming 空、非流式正常）" if c["transport_ok"] else (
+                    "基础连接/模型/上游异常（含非流式在内全部失败）")
+            else:
+                layer = "工具调用路径异常（无工具流式正常、带工具不执行调用）"
+        out = {"ok": a["tool_call_ok"], "layer": layer, "a": a, "b": b, "c": c,
+               "model": info.get("model"), "upstream": info.get("upstream"),
+               "tool_call_ok": a["tool_call_ok"], "transport_ok": a["transport_ok"],
+               "code": a["code"], "shape": a["shape"]}
+        out["message"] = _describe_probe(a, layer)
+        return out
+
+    res = _probe_once(stream=True, with_tools=with_tools, force_tool=with_tools,
+                      max_tokens=max_tokens, timeout=timeout, post_fn=post_fn)
+    if with_tools and _tool_choice_unsupported(res):
+        # 中转不支持 tool_choice：退一步用 prompt 指令（形状记为 prompt_only 便于区分）
+        res = _probe_once(stream=True, with_tools=True, force_tool=False,
+                          max_tokens=max_tokens, timeout=timeout, post_fn=post_fn)
+        res["shape"] = "prompt_only"
+    # 传输层失败（HTTP 错误 / 零 block）重试有限次；语义失败（有输出但没调工具）不重试
+    attempt = 0
+    while (not res["transport_ok"]) and attempt < max(0, int(retries)):
+        attempt += 1
+        time.sleep(0.6 * attempt)
+        res = _probe_once(stream=True, with_tools=with_tools, force_tool=with_tools,
+                          max_tokens=max_tokens, timeout=timeout, post_fn=post_fn)
+    res.update({"ok": bool(res["tool_call_ok"]), "model": info.get("model"),
+                "upstream": info.get("upstream"), "requests": attempt + 1})
+    res["message"] = _describe_probe(res) if not res["ok"] else ""
+    ttl = _PROBE_OK_TTL if res["ok"] else _PROBE_FAIL_TTL
+    if use_cache:
+        _PROBE_CACHE[cache_key] = (now + ttl, dict(res))
+    return res
+
+
+def clear_probe_cache() -> None:
+    """清预检缓存（设置页保存后调用；key 本身含 model/upstream，正常无需清）。"""
+    _PROBE_CACHE.clear()

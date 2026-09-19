@@ -36,7 +36,7 @@ import re
 _log = logging.getLogger("novel-engine")
 
 from libraries.token_proxy import (   # 拉起本地 token 检测代理（dsh 走它计 token）
-    PROXY_PORT, ensure_proxy, llm_exit_info, probe_proxy, token_proxy_base_url,
+    PROXY_PORT, ensure_proxy, llm_exit_info, probe_llm_exit, probe_proxy, token_proxy_base_url,
 )
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2255,6 +2255,17 @@ def _orchestrator_fallback_notice(status: dict) -> str:
     return head + "。若暂不想切新路径：设 NOVEL_DSH_ORCHESTRATOR=0 后重启。"
 
 
+def _llm_preflight_enabled() -> bool:
+    """出口预检开关（默认开）。NOVEL_LLM_PREFLIGHT=0 关掉（例如离线调试/上游已知不稳）。"""
+    raw = str(os.environ.get("NOVEL_LLM_PREFLIGHT", "1") or "1").strip().lower()
+    return raw not in {"0", "false", "off", "no"}
+
+
+def _is_writing_task(task: str, flow_mode: str | None = None) -> bool:
+    """会真的产出正文的任务（章级父任务 / write profile）——只有它们需要出口预检。"""
+    return flow_mode == "chapter_to_completion" or _task_tool_profile(task) == "write"
+
+
 def _needs_review_gate(profile: str) -> bool:
     """该 run 是否启用「未评审不得续写/收章」门禁。
 
@@ -2323,6 +2334,21 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
         if not status["ready"]:
             _log.warning("主 Agent 编排未启用（auto 模式回落 legacy）：%s", status["problems"])
             yield {"type": "notice", "message": _orchestrator_fallback_notice(status)}
+
+    # LLM 出口预检：在**创建 flow / 拿租约 / spawn 任何 run 之前**确认出口能干活。
+    # 上游对带工具的流式请求返回空回复时，dsh 会重试 5 次（~20 秒）再整轮失败，用户最终
+    # 看到的却是一句「Writer 未完成有效 Plot 提交」——第 16 章那次正是如此。预检把这件事
+    # 提前成一句分层结论，且不留下半开的 flow/租约。
+    # 注意：预检成功**从不**保证下一次真实请求成功（上游抖动照样会发生），所以
+    # `_llm_failure_note` / `_writer_failure_message` 的运行时兜底必须同时存在。
+    if _llm_preflight_enabled() and _is_writing_task(task, flow_mode) and ensure_proxy():
+        probe = probe_llm_exit()
+        if not probe.get("ok"):
+            _log.warning("LLM 出口预检未通过：%s", probe)
+            yield {"type": "error",
+                   "message": probe.get("message") or "LLM 出口预检未通过：上游无法完成带工具的请求。"}
+            yield {"type": "done"}
+            return
 
     # 结构化写作入口优先于任务文本：即使 history/task 带有 novel-replan 标记，也必须进入章级 FSM。
     if flow_mode == "chapter_to_completion":
