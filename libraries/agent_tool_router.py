@@ -27,6 +27,7 @@ PROFILE_TOOLS = {
                     "get_story_state", "get_build_status", "get_build_context",
                     "get_orchestration_state", "get_plot_review_context", "plot_quality_gate",
                     "accept_plot_draft", "finalize_draft_chapter", "set_chapter_plan",
+                    "commit_replan_preview",
                     "save_basic_info", "validate_world", "navigate", "drive_ui"},
     # Critic 读评审上下文 + **把判决写回服务端换取 receipt**。
     # record_plot_review 是 Critic 独有的写入点：只在 critic profile 里，orchestrate 没有它，

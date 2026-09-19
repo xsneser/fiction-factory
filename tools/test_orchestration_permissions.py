@@ -50,11 +50,26 @@ def _receipt(verdict="accept", valid=True):
     return {"receipt_id": "rr_1", "verdict": verdict, "valid": valid, "rewrite_brief": {}}
 
 
+def _preview(exists=True, passed=True, expected_revision=3):
+    return {"exists": exists, "preview_id": "pv_1" if exists else "",
+            "expected_revision": expected_revision, "validation_passed": passed}
+
+
 SCENARIOS = {
-    "空草稿": (_facts(next_plot={"id": "p1", "planned_words": 700, "chapter_break_after": "allowed"}),
-               {"write_next_plot": True, "review_plot": False, "record_review": False,
-                "accept_plot": False, "revise_plot": False, "finalize_chapter": False,
-                "replan": True}),
+    # 空草稿但没有 replan 预览 → 续规划当然还不能提交（缺 preview 是独立原因）
+    "空草稿（无预览）": (_facts(next_plot={"id": "p1", "planned_words": 700,
+                                      "chapter_break_after": "allowed"}),
+                   {"write_next_plot": True, "review_plot": False, "record_review": False,
+                    "accept_plot": False, "revise_plot": False, "finalize_chapter": False,
+                    "replan": False}),
+    # 空草稿 + 有效预览 → 续规划可以提交
+    "空草稿（有有效预览）": (_facts(
+        next_plot={"id": "p1", "planned_words": 700, "chapter_break_after": "allowed"},
+        preview=_preview()),
+        {"replan": True, "write_next_plot": True}),
+    # 预览校验未过 / 预览陈旧 → 都不许提交（advisory 提前说清差什么）
+    "预览校验未过": (_facts(preview=_preview(passed=False)), {"replan": False}),
+    "预览陈旧": (_facts(preview=_preview(expected_revision=2)), {"replan": False}),
     "末段待评审（无凭据）": (_facts(
         draft_has_bridges=True, draft_words=900, bridge_plot_ids=["p1"],
         pending_review_plot="p1", last_bridge=_bridge(),
@@ -91,11 +106,11 @@ SCENARIOS = {
         {"finalize_chapter": False}),
     "预算耗尽": (_facts(
         next_plot={"id": "p1", "planned_words": 700, "chapter_break_after": "allowed"},
-        last_bridge=_bridge(),
+        last_bridge=_bridge(), preview=_preview(),
         budget={"actions_used": 24, "actions_max": 24, "revise_used": 2, "revise_max": 2,
                 "replan_used": 2, "replan_max": 2}),
         {"write_next_plot": False, "revise_plot": False, "replan": False}),
-    "章计划未启用": (_facts(), {"plan_chapter": False}),
+    "章计划未启用": (_facts(preview=_preview()), {"plan_chapter": False, "replan": True}),
 }
 
 

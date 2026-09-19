@@ -4917,6 +4917,8 @@ _LOCKED_TOOLS = {
     "finalize_draft_chapter", "record_plot_review",
     # 章计划：读流程 + 落计划 + 可能接管/取代 PLANNED flow，必须与写作互斥
     "set_chapter_plan",
+    # 续规划提交：改 storyline + planning_state，必须与写作/收章互斥
+    "commit_replan_preview",
 }
 
 # 自持锁工具：签名里没有 book_id（只有 commit_token），wrapper 取不到锁目标，
@@ -5509,6 +5511,7 @@ def _orchestration_facts(book_id: str, *, tl=None, draft=None, book=None) -> dic
         "plan_required": plan_enabled,
         "plan_digest": str((plan_view or {}).get("plan_digest") or ""),
         "remaining_plots": remaining,
+        "preview": _replan_preview_view(book_id),
     }
 
 
@@ -5694,6 +5697,46 @@ def plot_quality_gate(book_id: str, plot_id: str = "", flow_id: str = "") -> dic
     draft["plot_gates"] = gates
     _draft_write(book_id, draft)
     return report
+
+
+def commit_replan_preview(book_id: str, preview_id: str, expected_revision: int) -> dict:
+    """把 Planner 暂存的续规划预览**原子提交**为正式故事线（编排路径的提交口）。
+
+    薄包装，**零业务逻辑复制**：preview id 校验 / revision CAS / 动态结构复核 / BookLock /
+    `save_outlines(append)` / 回滚补偿 / 被放弃伏笔的结算（cancelled·superseded）全部复用
+    `libraries/replan_service.commit_replan_preview`——它与书详情页的 commit-plan 端点是
+    **同一个**提交点，编排面不该长出第二条路径。
+
+    编排面**额外**加两道本链路特有的守卫：
+
+      · **I4 与未收章草稿互斥**：草稿里还有没结算的段落时禁止提交 replan——完整 replan 可能
+        删改当前情节段，已写的正文会变成孤儿。此时 Critic 若判定「结构问题」，主 Agent 只能
+        **停下并如实报告**，不能自动提交（将来若要支持「放弃草稿后重规划」，另设
+        `abandon_plot_draft` 事务，不做隐式覆盖）。legacy FSM 不受此限（它在「段落耗尽但章未满」
+        时正是带草稿提交的），所以这条守卫只挂在这里，不写进共享 service。
+      · **I8 续规划预算**：尝试次数按章计数（`MAX_REPLAN_ATTEMPTS_PER_RUN`），超限直接拒绝。
+        计数在**调用前**自增：如果只统计成功，一个反复失败的循环就永远撞不到上限。
+
+    提交成功后调用方应重读状态：revision 变了，旧 `chapter_plan` 与旧 commit_token 都已失效。
+    """
+    facts = _orchestration_facts(book_id)
+    orchestration_policy.require_permission("replan", facts)
+    orchestration_budget.bump(book_id, int(facts.get("chapter_num") or 0), "replan")
+    from libraries.replan_service import commit_replan_preview as _commit
+    result = _commit(book_id, preview_id, expected_revision) or {}
+    if not result.get("commit_ok"):
+        raise RuntimeError(
+            f"续规划提交失败：{result.get('error') or 'unknown'}"
+            + (f"（{result.get('problems') or result.get('message')}）"
+               if (result.get("problems") or result.get("message")) else "")
+            + "。请重读 get_orchestration_state 的 planning.preview，必要时让 Planner 重新出预览")
+    tl = load_tl(book_id)
+    return {"ok": True, "commit_ok": True, "book_id": book_id, "preview_id": str(preview_id or ""),
+            "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+            "outlines": len(result.get("outlines") or []) if isinstance(result.get("outlines"), list)
+            else result.get("outlines"),
+            # 提示：revision 已变 → 章计划与旧 token 都作废
+            "next": "重读 get_orchestration_state 并重新拟定本章 chapter_plan"}
 
 
 def set_chapter_plan(book_id: str, expected_revision: int, expected_draft_digest: str,
@@ -6035,6 +6078,7 @@ def _build_registry():
         # record_plot_review = Critic 判决的服务端写入点（只在 critic profile 的工具面里）。
         get_orchestration_state, get_plot_review_context, plot_quality_gate,
         accept_plot_draft, finalize_draft_chapter, record_plot_review, set_chapter_plan,
+        commit_replan_preview,
         # 上架 / 质量门禁 / 校验
         publish_check, mark_finished, publish_book, export_book,
         chapter_quality_gate, validate_storyline, validate_world,

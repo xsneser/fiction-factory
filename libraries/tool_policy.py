@@ -33,6 +33,8 @@ PHASE_GATES = {
     "record_plot_review": {"ready"},
     # 章计划（运行时，不改故事线）
     "set_chapter_plan": {"ready"},
+    # 续规划原子提交（编排路径的提交口；UI 端点共用同一 service）
+    "commit_replan_preview": {"ready"},
     # 写作风格取样 —— Plot Run 每段抽单篇样文
     "pick_plot_sample": {"ready"},
     # 建书规划 —— config 落基本盘；plots 草案期放行。

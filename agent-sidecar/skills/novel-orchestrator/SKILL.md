@@ -56,7 +56,9 @@ get_orchestration_state
      → 重读状态，从 latest_draft_plot.review_receipt 取 receipt_id 与 verdict
      → verdict=accept：accept_plot_draft(review_receipt=...)
        verdict=revise_text：按 receipt 的 rewrite_brief 委派 Writer 改稿 → 重新体检 + 重新评审
-       verdict=patch_character / replan / stop：按协议处理或停下报告
+       verdict=patch_character：走受限人物修正（带最新 revision）后刷新上下文
+       verdict=replan：**停下报告结构问题**（有未结算草稿时服务端也禁止提交 replan，见下节）
+       verdict=stop：停止并如实汇报
 → 计划还有下一段：delegate_writer（一个 Plot）
 → 重复评审
 → 计划已完成、服务端允许、且你认为这里是自然断章点：
@@ -66,6 +68,31 @@ get_orchestration_state
 
 服务端的字数、章边界、token、revision、phase、BookLock 与事实台账是权威。
 不要为了凑字数截断一个 Plot，也不要自行决定跳过已承诺情节段。
+
+## 续规划（只在边界处，且草稿必须已结算）
+
+`get_orchestration_state` 显示**已无可写的 committed 情节段**、且 `planning.boundary.needs_replan=true`
+时，进入续规划协议：
+
+```text
+delegate_planner（Planner 走完整流程：读状态 → 诊断 → 出新弧+情节段 → H1/H2 → 校验 → 暂存 preview）
+→ 重读 get_orchestration_state，检查 planning.preview 是否存在 / validation_passed / expected_revision 是否仍新鲜
+→ REPLAN_POLICY=auto：commit_replan_preview 提交，然后重读状态并重新拟本章 chapter_plan
+  REPLAN_POLICY=confirm：停下，等用户在书详情页确认
+```
+
+**不变量 I4（最容易踩的一条）**：只要草稿里还有**没结算**的段落，`commit_replan_preview` 一律被服务端拒绝。
+原因是完整 replan 可能删改当前情节段，已写的正文会变成孤儿。所以：
+
+> **Critic 给出 `replan` 判决时，你只能停下并如实报告「当前草稿暴露了结构问题」。**
+> 不要自动提交 replan、不要丢弃草稿。若确实需要「放弃草稿后重规划」，那是另一个事务，
+> 当前版本没有它——报告给用户，让人来决定。
+
+**不变量 I8**：续规划尝试次数**跨章累计**（它是书级动作），超出 `MAX_REPLAN_ATTEMPTS_PER_RUN`
+即被硬拒；剩余额度见 `limits.replan_remaining`。被拒后**不要**换个 preview 重试。
+
+提交成功后 `storyline_revision` 会变：旧的 `chapter_plan` 与旧 `commit_token` 都已失效，
+必须重读状态、重拟章计划。也不要在这一轮里改人物或收章。
 
 ## 有界执行（服务端硬预算）
 

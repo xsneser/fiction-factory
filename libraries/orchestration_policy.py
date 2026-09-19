@@ -194,6 +194,15 @@ def compute_orchestration_permissions(facts: dict) -> dict:
         replan_reasons.append("UNACCEPTED_DRAFT_PRESENT")
     if int(budget.get("replan_used") or 0) >= int(budget.get("replan_max") or 0):
         replan_reasons.append("REPLAN_BUDGET_EXHAUSTED")
+    # 预览侧就绪度：让 advisory 提前说出「还差什么」，而不是等调用被服务端拒。
+    preview = facts.get("preview") or {}
+    if not replan_reasons:
+        if not preview.get("exists"):
+            replan_reasons.append("REPLAN_PREVIEW_MISSING")
+        elif not preview.get("validation_passed"):
+            replan_reasons.append("REPLAN_PREVIEW_INVALID")
+        elif int(preview.get("expected_revision") or -1) != int(facts.get("storyline_revision") or 0):
+            replan_reasons.append("REPLAN_PREVIEW_STALE")
 
     return {
         "write_next_plot": _deny(write_reasons),

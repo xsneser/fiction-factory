@@ -41,18 +41,26 @@ def _path(book_id: str) -> Path:
 
 
 def read(book_id: str, chapter_num: int) -> dict:
-    """读当前章的计数；章号变化（换章）即视为全新预算，**纯读不写盘**。"""
+    """读计数，**纯读不写盘**。
+
+    换章时 `actions` / `revise` 归零（它们天然是**章内**动作），但 `replan` **跨章累计**：
+    续规划本质是**书级**动作（每次都在章边界发生），按章重置等于没有上限。这条差异是有意的。
+    """
     raw = read_json(_path(book_id)) if _path(book_id).exists() else None
     state = raw if isinstance(raw, dict) else {}
+    replan = int(state.get("replan") or 0)
     if int(state.get("chapter_num") or 0) != int(chapter_num or 0):
         state = {}
     return {"actions": int(state.get("actions") or 0),
             "revise": {str(k): int(v or 0) for k, v in (state.get("revise") or {}).items()},
-            "replan": int(state.get("replan") or 0)}
+            "replan": replan}
 
 
 def bump(book_id: str, chapter_num: int, key: str, plot_id: str = "") -> dict:
-    """记一次动作（key ∈ actions|revise|replan）；换章自动清零。返回记完的计数。"""
+    """记一次动作（key ∈ actions|revise|replan）。返回记完的计数。
+
+    换章清零规则见 `read`：`replan` 不清零（跨章累计）。
+    """
     if key not in ("actions", "revise", "replan"):
         raise ValueError(f"未知预算键: {key}")
     state = read(book_id, chapter_num)
