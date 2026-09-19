@@ -277,11 +277,17 @@ finally:
                                         'id="wf-current-cast"', '上一段（已完成）', '角色状态'))
     assert "renderLatestContext(d)" in write_tpl and "function renderLatestContext(" in write_tpl
     assert "function renderLastPlot(" in write_tpl
-    # 左栏读「已完成那一段」的结局（recent_plot_outcome），不再展示待写段
-    assert "recent_plot_outcome" in write_tpl and "plot_summary" in write_tpl
-    assert "reconcile" in write_tpl and "还没有已完成的段落" in write_tpl
-    assert all(x not in write_tpl for x in ('id="wf-current-plot"', '写作重点', '待写 · 第'))
-    assert "function renderLastPlot(" in write_tpl and "function renderCurrentCast(" in write_tpl
+    # 左栏 = 上一段的结构化事实（recent_plot_outcome.facts）+ 规划上下文折叠组；不再展示待写段
+    assert "recent_plot_outcome" in write_tpl and "还没有已完成的段落" in write_tpl
+    assert all(x in write_tpl for x in ('已作选择', '已知信息', '关系变化', '资源变化',
+                                        '承诺更新', '新问题'))
+    assert "wf-last-plan" in write_tpl and "规划上下文" in write_tpl
+    assert all(x in write_tpl for x in ('character_intents', 'horizon.h1', 'story_questions',
+                                        'arc_goal', 'thread'))
+    # 分工红线：角色的 位置/目标/实力/关系 由右栏覆盖，左栏不重复；页头已占用的章号/字数也不重复
+    assert "function renderCurrentCast(" in write_tpl
+    assert all(x not in write_tpl for x in ('id="wf-current-plot"', '写作重点', '待写 · 第',
+                                            'wf-last-progress', '全书 '))
     # 旧三列对照区（含它那个五组折叠的审计区）整块删除，且不得回流
     assert all(x not in write_tpl for x in ('id="wf-compare"', 'wf-cmp-prev', 'wf-cmp-axis',
                                             'wf-cmp-next', 'wf-cmp-grid', 'renderCompareTable',

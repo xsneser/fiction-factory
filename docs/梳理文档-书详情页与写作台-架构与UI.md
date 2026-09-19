@@ -93,7 +93,7 @@
 | 1 | 面包屑 + h1 ✍️ 写作台 | 书库 › 书名 › 写作台 |
 | 2 | info_bar | 书名 · 笔名 · 进度（第 N 章 · 共 M 字）· 状态 badge · 每章 N 字 |
 | 3 | 🧭 规划提示条 | 只读边界告警 + 规划门禁 + 少量方向/问题/人物意图提示（`_planning_ui.html`，写作台唯一形态）；规划由章级写作 Flow 自动完成，无手工抽屉 |
-| 3.5 | 顶部两栏（全宽） | `#wf-latest-context`，置于**两栏布局之上**：左 `#wf-last-plot` = **上一段（已完成）**（情节段名 / 已提交·第 N 章 / 对账状态 / 摘要 / 本章字数·待写第 N 章）；右 `#wf-current-cast` = 角色状态（每卡 位置/状态/动作 三行，主角与本段出场展开、`referenced` 收进「其他角色 N 人」）。数据来自 `/api/desk/chapters/<bid>`（§3.3） |
+| 3.5 | 顶部两栏（全宽） | `#wf-latest-context`，置于**两栏布局之上**：左 `#wf-last-plot` = **上一段的结构化事实**（归因行 + 已作选择/已知信息/关系变化/资源变化/承诺更新/新问题 + 折叠的「规划上下文」）；右 `#wf-current-cast` = 角色状态（每卡 位置/状态/动作 三行，主角与本段出场展开、`referenced` 收进「其他角色 N 人」）。两栏不重叠：角色字段全在右栏。数据来自 `/api/desk/chapters/<bid>`（§3.3） |
 | 4 | 左栏 editor-left | 可拖拽分栏（20%–70%，localStorage `ne_storyline_w` 持久化，`storyline_write_flow.html:266-297`）；本栏只剩故事线 Gantt |
 | 6 | 📋 故事线 Gantt | `#editor-storyline`（story_line.js 挂载，scrollable 模式，含缩放控件） |
 | 7 | 右栏 editor-mid | 顶部 ✍️ 继续写正文卡（`runWritingTask` → 侧栏 Agent；运行态 ⏳ 续写运行中… / ⏹ 停止）；下方分页阅读器 |
@@ -101,21 +101,30 @@
 | 9 | 双向高亮 | 点 Gantt 情节段/弧 → 右栏跳页高亮对应正文（`sl:plot-click`/`sl:outline-click` → `highlightBridgeContent`/`highlightOutlineContent`）；agent 高亮 `StoryLine.highlight` 反向 |
 | 10 | 轮询 | 进页立即 + 3s 轮询 `/api/desk/chapters/<bid>`：刷新顶部两栏（`renderLatestContext`，fingerprint 未变不重建 DOM）与章节（`Reader.setChapters` 保留当前页/高亮、`_activePid` 恢复） |
 
-### 3.3 顶部两栏：上一段（已完成） + 角色状态
+### 3.3 顶部两栏：上一段（已完成）的事实 + 角色状态
 
 渲染入口 `renderLatestContext(d)`（单一入口，轮询每轮只调一次；fingerprint 变化才重绘）。左栏 `renderLastPlot(d)`
-读 `recent_plot_outcome` + `planning`/`writing_chapter`，右栏 `renderCurrentCast(d)` 读 `plot_run.cast_pack` + `cast_events`。
+读 `recent_plot_outcome` + `planning`，右栏 `renderCurrentCast(d)` 读 `plot_run.cast_pack` + `cast_events`。
 
-**左栏 = 已经完成的那一段（不是待写段）**：正文区已经在展示正文，重复「接下来写什么」价值低；
-人更想知道刚写完那段的实际结果与当前进度。**待写段的信息只在左栏 Gantt（点情节段）与规划提示条里看**。
+**两栏分工不重叠**：角色的 位置/目标/实力/关系/弧阶段 **由右栏覆盖**（右栏每卡的「位置」= `dyn.location`、
+「状态」三个 chip = `power_level`/`arc_stage`/`relationship_to_mc`、「动作」= `dyn.goal`，正是那一组的全部字段），
+所以左栏只放**非角色**内容。**待写段**的信息也只在左栏 Gantt（点情节段）与规划提示条里看。
 
-| 显示 | 数据路径 | 缺失时 |
+**左栏 = 上一段的结构化事实 + 规划上下文折叠组**
+
+| 区块 | 数据路径 | 缺失时 |
 |---|---|---|
-| 情节段名 | `recent_plot_outcome.plot_name` | 整卡空态「还没有已完成的段落」 |
-| 状态戳 | `已提交 · 第 {recent_plot_outcome.chapter_num} 章`；该段仍在草稿里（`chapters[]` 中 `draft:true` 那一章的 bridges 含此 `plot_id`）→ `已写 · 第 N 章（待收章）` | 无章号则省略 |
-| 对账 | `reconcile.kind` → ✅与预期一致 / 🟡实际发展与预期不同 / 🟡预计变化尚未发生 / 🔵出现新的变化，再拼 `reconcile.summary`（如「存在未覆盖事实」） | kind 缺失则整行不渲染 |
-| 摘要 | `recent_plot_outcome.plot_summary`（agent 写的 50~120 字；旧书可能没有） | 不渲染该行 |
-| 进度 | 有草稿 → `本章已写 {planning.draft_words} 字`，否则 `全书 {planning.written_until_word} 字`；再拼 `待写第 {writing_chapter} 章` | 都不在则不渲染 |
+| 归因行 | `recent_plot_outcome.plot_name`（这些事实属于哪一段）+ `reconcile.kind` 徽标（✅与预期一致 / 🟡实际发展与预期不同 / 🟡预计变化尚未发生 / 🔵出现新的变化）与 `reconcile.summary`（如「存在未覆盖事实」） | 无 plot_name → 整卡空态「还没有已完成的段落」 |
+| 已作选择 | `recent_plot_outcome.facts.choices_made` | 该行不渲染（六类事实都是**有值才渲染**） |
+| 已知信息 | `facts.information_revealed` | 同上 |
+| 关系变化 | `facts.relationship_changes` | 同上 |
+| 资源变化 | `facts.resource_changes` | 同上 |
+| 承诺更新 | `facts.promise_updates` | 同上 |
+| 新问题 | `facts.new_story_questions` | 同上 |
+| ▸ 规划上下文（默认折叠） | `planning.character_intents` / `planning.horizon.h1` / `planning.story_questions` / `recent_plot_outcome.arc_goal` + `thread` | 全空则不渲染整组 |
+
+值归一化沿用旧实现口径：列表用「；」拼接，字典取 `text/description/title`（`_factText()`）。
+**刻意不放进左栏**：章号与字数进度（页头已有）、情节段摘要 `plot_summary`（正文就在下方）。
 
 **右栏字段（位置 / 状态 / 动作 三行）**
 
