@@ -277,14 +277,16 @@ def run_tests():
                 check(f"Write flow title in page",
                       "✍️ 写作台" in r.text or bid in r.text,
                       f"write flow marker not found for {bid}")
-                check(f"Write flow planning is compact ({bid})",
-                      'id="planning-state-panel"' in r.text
-                      and 'data-compact="1"' in r.text
-                      and "/static/js/planning_ui.js" in r.text,
-                      "write flow should use the reduced planning prompt bar")
+                check(f"Write flow planning banner removed ({bid})",
+                      'id="planning-state-panel"' not in r.text
+                      and "/static/js/planning_ui.js" not in r.text
+                      and "NEPlanning" not in r.text
+                      # 但规划叠层的接线必须在（否则 Gantt 丢掉已写红线/承诺黄线/H1-H2）
+                      and "window.__PLANNING_STATE__" in r.text
+                      and "window.__PLANNING_BOUNDARY__" in r.text,
+                      "write flow should have no planning banner but keep the Gantt overlay wiring")
                 check(f"Write flow autonomous chapter UI ({bid})",
-                      'id="planning-state-panel"' in r.text
-                      and 'id="wf-continue-card"' in r.text
+                      'id="wf-continue-card"' in r.text
                       and 'id="wf-stop-btn"' in r.text
                       and 'flowMode' in r.text
                       and 'id="replan-drawer"' not in r.text
@@ -339,7 +341,7 @@ def run_tests():
         for marker, label in [("window.StoryLine.init('editor-storyline'", "gantt init wired"),
                               ("window.__BOOK_STORYLINE__", "storyline data injected"),
                               ("/static/js/story_line.js", "story_line.js loaded"),
-                              ("/static/js/planning_ui.js", "planning_ui.js loaded")]:
+                              ("/static/js/story_line.js", "story_line.js loaded")]:
             check(f"Write flow {label}", marker in tl_editor.text, f"'{marker}' missing")
         # 顶部两栏（本段最新 + 角色状态）：断言真实 DOM 挂载点存在（只匹配 JS 字面量会假阳性）
         check("Write flow two-column context mounted",

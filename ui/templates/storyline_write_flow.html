@@ -33,8 +33,15 @@
     </div>
 </div>
 
-{% set planning_write_mode = true %}
-{% include "_planning_ui.html" %}
+{# ─── 规划提示条（横幅）已删除 ───
+     用户明确「整个横幅三行都删」：下一段 H0 提示 / 🟡 边界告警 / ⛔ 规划门禁都不进写作台。
+     横幅背后是 `_planning_ui.html` + `planning_ui.js`（连同清单徽标与故事线版本号），两者已一并删除。
+     它们的**唯一不可替代职责**是给故事线 Gantt 喂规划叠层（已写红线 / 承诺黄线 / H1-H2 方向条），
+     这里用两行内联赋值替代——页面本来就拿到了 planning_state / planning_boundary；
+     之后 desk 的 3s 轮询会持续把最新的 `planning` 合并进这两个全局并调 StoryLine.updateProgress。
+     `syncStoryline`（revision 前进时拉取新故事线）也在下面那段轮询里内联实现。 ─── #}
+<script>window.__PLANNING_STATE__ = {{ planning_state|tojson }};
+window.__PLANNING_BOUNDARY__ = {{ planning_boundary|tojson }};</script>
 
 {# ─── 全宽两栏（置于两栏编辑器之上）：左=上一段（已完成）的事实 | 右=角色状态 ───
      左栏答「刚写完那段实际发生了什么 + 接下来往哪走」，右栏答「人现在在哪、什么状态、在干什么」。
@@ -245,18 +252,39 @@ function refreshStoryline(sl) {
 (function initStoryline() {
     refreshStoryline(window.__BOOK_STORYLINE__);
 })();
-window.addEventListener('ne:planning-updated', function (e) {
-    var d = (e && e.detail) || {};
-    if (window.StoryLine && window.StoryLine.updateProgress) window.StoryLine.updateProgress({
-        currentWord: (d.planning_state || window.__PLANNING_STATE__ || {}).written_until_word || 0,
-        planning: d.planning_state || window.__PLANNING_STATE__ || {},
-        boundary: d.boundary || window.__PLANNING_BOUNDARY__ || {}
-    });
-});
+/* 规划叠层的刷新不走事件：desk 的 3s 轮询直接合并 planning 并调 updateProgress（见 pollReader）。
+   （横幅删除后 `ne:planning-updated` 在写作台没有派发方，故不再监听它。）
+   故事线本身前进时换一份新数据重画——原由 planning_ui.syncStoryline 做，现内联于此。 */
 window.addEventListener('ne:storyline-updated', function (e) {
     var d = (e && e.detail) || {};
     if (d.storyline) refreshStoryline(d.storyline);
 });
+/* 保留旧故事线里服务端不返回的运行态字段（actual_words 等），避免重画后 Gantt 丢掉已写进度 */
+function _mergeStorylineRuntimeFields(next) {
+    var old = window.__BOOK_STORYLINE__ || {};
+    var oldPlots = {};
+    (old.plots || []).forEach(function (p) { if (p && p.id) oldPlots[String(p.id)] = p; });
+    (next.plots || []).forEach(function (p) {
+        var o = (p && p.id) ? oldPlots[String(p.id)] : null;
+        if (o && o.actual_words != null && p.actual_words == null) p.actual_words = o.actual_words;
+    });
+    return next;
+}
+function syncStoryline(targetRevision) {
+    var cur = Number((window.__BOOK_STORYLINE__ || {}).storyline_revision || 0);
+    if (Number(targetRevision || 0) <= cur) return;
+    fetch('/api/storyline/' + encodeURIComponent(window.__STORYLINE_ID__ || ''))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d || !d.ok || !d.storyline) return;
+            var incoming = _mergeStorylineRuntimeFields(d.storyline);
+            if (Number(incoming.storyline_revision || 0) < cur) return;   // 迟到的旧响应不覆盖
+            window.__BOOK_STORYLINE__ = incoming;
+            window.dispatchEvent(new CustomEvent('ne:storyline-updated',
+                {detail: {storyline: incoming, revision: Number(incoming.storyline_revision || 0)}}));
+        })
+        .catch(function () { /* 取不到就等下一轮轮询再试 */ });
+}
 
 /* ─── 可拖拽分栏：故事线宽度 20%–70%，持久化 localStorage；阅读器由 ResizeObserver 自动重排 ─── */
 (function initResize() {
@@ -630,8 +658,7 @@ function _renderOtherIntents(data, onCard) {
 }
 
 /* 统一入口：既有 3s desk 轮询直接调它（不新增轮询）。fingerprint 不变则不重建 DOM。
-   这里不再向 planning_ui 发「本区是否已展示当前待写段」的信号——顶部已不展示待写段，
-   横幅的「下一段：…」提示改为恒按 H0 显示（见 planning_ui.js）。 */
+   顶部已不展示待写段，也不再向任何规划 UI 发信号——横幅连同 planning_ui.js 已整体删除。 */
 function renderLatestContext(data) {
     data = data || {};
     var fp = JSON.stringify([data.writing_chapter, data.recent_plot_outcome, data.planning,
@@ -673,13 +700,6 @@ document.addEventListener('click', function (e) {
                 renderLatestContext(d);
                 if (d.planning) {
                     var oldPlanning = window.__PLANNING_STATE__ || {};
-                    var oldHorizon = oldPlanning.horizon || {};
-                    var newHorizon = d.planning.horizon || {};
-                    var planningChanged = d.planning.storyline_revision !== oldPlanning.storyline_revision
-                        || d.planning.written_until_word !== oldPlanning.written_until_word
-                        || d.planning.committed_until_word !== oldPlanning.committed_until_word
-                        || JSON.stringify(newHorizon.h1 || []) !== JSON.stringify(oldHorizon.h1 || [])
-                        || JSON.stringify(d.planning.future_intents || []) !== JSON.stringify(oldPlanning.future_intents || []);
                     /* desk 轮询只返回运行态规划字段：合并而非整体覆盖，保留 display_horizon/checklist 等详情页字段。 */
                     window.__PLANNING_STATE__ = Object.assign({}, oldPlanning, d.planning);
                     window.__PLANNING_BOUNDARY__ = d.planning.boundary || window.__PLANNING_BOUNDARY__ || {};
@@ -688,11 +708,10 @@ document.addEventListener('click', function (e) {
                         planning: window.__PLANNING_STATE__,
                         boundary: window.__PLANNING_BOUNDARY__
                     });
+                    // 故事线版本前进了就换一份新故事线（原由已删的规划提示条 JS 负责，现内联）
                     var renderedRevision = Number((window.__BOOK_STORYLINE__ || {}).storyline_revision || 0);
-                    if (d.planning.storyline_revision > renderedRevision && window.NEPlanning && window.NEPlanning.syncStoryline) {
-                        window.NEPlanning.syncStoryline(d.planning.storyline_revision);
-                    } else if (planningChanged && window.NEPlanning) {
-                        window.NEPlanning.refresh();
+                    if (d.planning.storyline_revision > renderedRevision) {
+                        syncStoryline(d.planning.storyline_revision);
                     }
                 }
                 // 顺带刷新注入的当前章号，让「继续写正文」按钮用上跨进程写盘后的最新值

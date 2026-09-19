@@ -172,12 +172,18 @@ finally:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sl_js = open(os.path.join(root, "ui", "static", "js", "story_line.js"), encoding="utf-8").read()
     sl_css = open(os.path.join(root, "ui", "static", "css", "story_line.css"), encoding="utf-8").read()
-    pu_js = open(os.path.join(root, "ui", "static", "js", "planning_ui.js"), encoding="utf-8").read()
+    # 规划提示条（横幅）连同它的模板与 JS 已整体删除——写作台的规划叠层改由页内两行内联赋值
+    # + desk 轮询喂给 Gantt。这里断言文件确实不在了，并用空串让下面的「不得回流」断言继续表达。
+    pu_js_path = os.path.join(root, "ui", "static", "js", "planning_ui.js")
+    planning_tpl_path = os.path.join(root, "ui", "templates", "_planning_ui.html")
+    assert not os.path.exists(pu_js_path) and not os.path.exists(planning_tpl_path), (
+        "规划 UI 已删除：planning_ui.js / _planning_ui.html 不得回流")
+    pu_js = ""
     panels = open(os.path.join(root, "ui", "templates", "_book_runtime_panels.html"), encoding="utf-8").read()
     start_tpl = open(os.path.join(root, "ui", "templates", "start_book.html"), encoding="utf-8").read()
     write_tpl = open(os.path.join(root, "ui", "templates", "storyline_write_flow.html"), encoding="utf-8").read()
     book_tpl = open(os.path.join(root, "ui", "templates", "book_detail.html"), encoding="utf-8").read()
-    planning_tpl = open(os.path.join(root, "ui", "templates", "_planning_ui.html"), encoding="utf-8").read()
+    planning_tpl = ""
     agent_js = open(os.path.join(root, "ui", "static", "js", "agent_panel.js"), encoding="utf-8").read()
     agent_py = open(os.path.join(root, "ui", "web_blueprints", "agent.py"), encoding="utf-8").read()
     desk_py = open(os.path.join(root, "ui", "web_blueprints", "desk.py"), encoding="utf-8").read()
@@ -227,22 +233,22 @@ finally:
     assert "renderForecast" in progress_block and "captureScrollState" in progress_block and "restoreScrollState" in progress_block
     assert "scrollToDirections" in sl_js
 
-    # 规划 UI 只剩写作台的紧凑提示条：书详情那份完整四卡矩阵已删（同样是 agent 决策视图）。
-    assert "<h4>下一段方向</h4>" not in pu_js and "<h4>远期方向</h4>" not in pu_js
-    assert "pm-h1" not in pu_js and "pm-h2" not in pu_js
-    assert all(x not in pu_js for x in ("<h4>现在执行</h4>", "planning-grid", "planning-metrics",
-                                        "最近续规划", "planning-character-intents",
-                                        "lastReplanLabel", "characterIntents", "data-compact"))
-    assert "renderChecklist" in pu_js and "planning-checklist" in pu_js
-    # 提示条仍读开放问题与人/问题计数；「下一段：」提示恒按 H0 显示（不再依赖跨模块标志）
-    assert "openStoryQuestions" in pu_js and "pm-h0" in pu_js
-    assert "reasonLabel(b.reason_codes)" in pu_js
-    assert "展开规划" not in pu_js and "收起 ▴" not in pu_js
-    assert "detailOpen" not in pu_js and "planning-cards" not in pu_js
-    assert "当前没有额外规划提示" not in pu_js
-    assert "pm-alert-danger" in pu_js and "pm-boundary" in pu_js
-    # 规划提示条只挂写作台；书详情改用**不渲染**的极简 loader 保住 Gantt 的规划叠层
-    assert "planning_write_mode" not in planning_tpl and 'data-compact="1"' in planning_tpl
+    # 规划横幅（下一段 H0 / 🟡 边界告警 / ⛔ 规划门禁）已从写作台整体删除，
+    # 连同 _planning_ui.html 与 planning_ui.js 两个文件（上一段开头已断言它们不存在）。
+    # 用**精确引入标记**断言（而非文件名本身）：注释里提到名字不算回流，真回流一定需要 include/script 标签
+    assert '{% include "_planning_ui.html" %}' not in write_tpl
+    assert "/static/js/planning_ui.js" not in write_tpl
+    assert 'id="planning-state-panel"' not in write_tpl
+    assert all(x not in write_tpl for x in ("NEPlanning", "pm-boundary", "pm-alert",
+                                            "planning-minibar", "nextHint" + "："))
+    # 但**规划叠层的接线必须还在**（否则 Gantt 丢掉已写红线/承诺黄线/H1-H2 方向条）：
+    # 页面用 render 上下文里的 planning_state / planning_boundary 内联赋值，
+    # 之后由 desk 轮询持续合并刷新；故事线 revision 前进时内联的 syncStoryline 拉新故事线。
+    assert "window.__PLANNING_STATE__ = {{ planning_state|tojson }}" in write_tpl
+    assert "window.__PLANNING_BOUNDARY__ = {{ planning_boundary|tojson }}" in write_tpl
+    assert "StoryLine.updateProgress" in write_tpl and "function syncStoryline(" in write_tpl
+    assert "function _mergeStorylineRuntimeFields(" in write_tpl
+    # 书详情同样不加载规划 UI，改用只取数不渲染的极简 loader
     assert "_planning_ui.html" not in book_tpl
     assert "__PLANNING_STATE__" in book_tpl and "ne:planning-updated" in book_tpl
     # 书详情四个 agent 面板已删；角色状态留下并默认展开
@@ -252,23 +258,23 @@ finally:
     assert "🎭 角色状态" in panels and 'class="accordion-body show"' in panels
 
     # replan 提交后的正式合同可重新拉取；三页都接收统一故事线刷新事件。
-    assert "GET /api/storyline" not in pu_js  # 使用 fetch，避免把 HTTP 文本硬编码进实现
-    assert "/api/storyline/' + encodeURIComponent(bookId)" in pu_js
+    # 故事线同步改为写作台内联（原 planning_ui.syncStoryline），仍用 fetch 不硬编码 HTTP 文本
+    assert "/api/storyline/' + encodeURIComponent(window.__STORYLINE_ID__" in write_tpl
     assert "ne:storyline-updated" in write_tpl and "ne:storyline-updated" in book_tpl
-    assert "syncStoryline" in pu_js and "mergeStorylineRuntimeFields" in pu_js
 
-    # 步 3 的 Gantt 读写 planning 都接通，且写作台轮询比较 H1/H2 并合并状态。
+    # 步 3 的 Gantt 读写 planning 都接通；写作台轮询把最新 planning 合并进全局并刷新 Gantt。
+    # （原来还有一条「比较 H1/H2 变化 → 刷新横幅」的断言，随横幅删除而失效：那次比较只为横幅服务。）
     assert "planning: (d.planning" in start_tpl
     assert "planning: (args.planning" in start_tpl
     assert "WZ.renderStoryline()" in start_tpl
-    assert "JSON.stringify(newHorizon.h1" in write_tpl
-    assert "JSON.stringify(d.planning.future_intents" in write_tpl
     assert "Object.assign({}, oldPlanning, d.planning)" in write_tpl
+    assert "StoryLine.updateProgress" in write_tpl
 
     # 规划已改由章级 FSM 在续写父任务中自主完成，页面不再有手工抽屉。
-    assert all(x not in planning_tpl for x in ("replan-drawer", "replan-backdrop", "revision-modal", "boundary-banner"))
-    assert all(x not in pu_js for x in ("requestReplan", "openDrawer", "commitPreview"))
-    assert "set_replan_preview" in pu_js and "refresh();" in pu_js
+    # 手工 replan 抽屉早已移除：相关控件名一律不得回流
+    assert all(x not in write_tpl for x in ("replan-drawer", "replan-backdrop", "revision-modal",
+                                            "boundary-banner", "requestReplan", "openDrawer",
+                                            "commitPreview", "set_replan_preview"))
     assert "flowMode" in write_tpl and "busyPolicy" in write_tpl and "taskKind" in write_tpl
     assert "needs_replan" not in write_tpl[write_tpl.index("function _resolveNextChapterAndSend"):write_tpl.index("function stopWritingTask")]
     assert "flow_mode" in agent_js and "busy_policy" in agent_js and "task_kind" in agent_js
@@ -317,9 +323,8 @@ finally:
     assert "还没有已完成的段落" in write_tpl and "本段未指定出场角色" in write_tpl
     # 跨模块信号已拆：顶部不再展示待写段 → 横幅的「下一段：…」恒按 H0 显示，不再需要同步标志
     assert "__NE_LATEST_HAS_CURRENT__" not in write_tpl and "ne:current-context-updated" not in write_tpl
-    assert "hasCurrentPlotContext" not in pu_js and "ne:current-context-updated" not in pu_js
-    assert "下一段：" in pu_js
-    assert "__NE_COMPARE_HAS_CURRENT__" not in write_tpl and "ne:compare-updated" not in pu_js
+    assert all(x not in write_tpl for x in ("__NE_LATEST_HAS_CURRENT__", "ne:current-context-updated",
+                                            "__NE_COMPARE_HAS_CURRENT__", "ne:compare-updated"))
     # 左栏新样式类（跟着 id 一起改名，避免读起来像"当前段"）
     assert ".wf-last-title" in sl_css and ".wf-last-stamp" in sl_css and "wf-current-title" not in sl_css
     # 孤儿不得回流（曾查询一个从未存在的 #wpr-state-label）
@@ -343,8 +348,7 @@ finally:
     assert "wf-inspector" not in write_tpl and "toggleInspector" not in write_tpl
     assert "wf-audit-mode" not in write_tpl and "toggleAuditMode" not in write_tpl
     # 用户侧不再展示 preview 校验明细；错误只走 MCP tool result / 后台日志。
-    assert "planning-preview-status" not in planning_tpl
-    assert "renderPreviewStatus" not in pu_js
+    assert "planning-preview-status" not in write_tpl and "renderPreviewStatus" not in write_tpl
     assert "planning-preview-status" not in sl_css
     assert "evt.internal" in agent_js
     assert "busyPolicy === 'reject'" in agent_js

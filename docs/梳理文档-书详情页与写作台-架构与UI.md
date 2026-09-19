@@ -14,8 +14,9 @@
   （2026-09-19：承诺台账 / 诊断 / 快照留痕 / 决策中心 四个面板已从页面删除——它们是 agent 决策与排障视图，人不看；
   底层 `scan_promises` / `diagnose_*` / `chapter_quality_gate` / `book_snapshot` 全部保留，仍被 agent 工具与收章链路使用。）
 - **写作台** = 书的「生产 + 驾驶舱」：顶部两栏（**上一段（已完成）** + 角色状态）回答「刚写完那段实际发生了什么、现在走到哪、人什么状态」，下方左=故事线 Gantt、右=分页阅读器实时展示「Agent 写了什么」，通过侧栏 Agent（dsh）逐情节段续写。
-- 两者共享：📋 故事线 Gantt（story_line.js，两页都从 `/api/storyline/<id>/planning-state` 取规划叠层）、侧栏 Agent（agent_panel.js）。
-  🧭 规划提示条（`_planning_ui.html` + planning_ui.js）**只挂写作台**；书详情改为一段不渲染的极简 loader 取同样的数据喂 Gantt。
+- 两者共享：📋 故事线 Gantt（story_line.js）、侧栏 Agent（agent_panel.js）。
+  **规划 UI 已整体删除**（2026-09-20）：书详情先删四卡矩阵、写作台再删提示条横幅，`_planning_ui.html` 与 `planning_ui.js` 一并删除。
+  Gantt 的规划叠层改由两页各自接线（写作台零请求内联 + 轮询刷新；书详情极简 loader）——见 §4.2。
 
 ### 1.1 路由表
 
@@ -92,7 +93,7 @@
 |---|---|---|
 | 1 | 面包屑 + h1 ✍️ 写作台 | 书库 › 书名 › 写作台 |
 | 2 | info_bar | 书名 · 笔名 · 进度（第 N 章 · 共 M 字）· 状态 badge · 每章 N 字 |
-| 3 | 🧭 规划提示条 | 只读边界告警 + 规划门禁 + 少量方向/问题/人物意图提示（`_planning_ui.html`，写作台唯一形态）；规划由章级写作 Flow 自动完成，无手工抽屉 |
+| 3 | ~~🧭 规划提示条~~ | **已删**（用户：整个横幅三行都删）。Gantt 规划叠层的替代接线见 §4.2 |
 | 3.5 | 顶部两栏（全宽） | `#wf-latest-context`，置于**两栏布局之上**：左 `#wf-last-plot` = **上一段的结构化事实**（归因行 + 已作选择/已知信息/关系变化/资源变化/承诺更新/新问题 + 折叠的「规划上下文」）；右 `#wf-current-cast` = 角色状态（每卡 位置/状态/动作 三行，主角与本段出场展开、`referenced` 收进「其他角色 N 人」）。两栏不重叠：角色字段全在右栏。数据来自 `/api/desk/chapters/<bid>`（§3.3） |
 | 4 | 左栏 editor-left | 可拖拽分栏（20%–70%，localStorage `ne_storyline_w` 持久化，`storyline_write_flow.html:266-297`）；本栏只剩故事线 Gantt |
 | 6 | 📋 故事线 Gantt | `#editor-storyline`（story_line.js 挂载，scrollable 模式，含缩放控件） |
@@ -108,7 +109,7 @@
 
 **两栏分工不重叠**：角色的 位置/目标/实力/关系/弧阶段 **由右栏覆盖**（右栏每卡的「位置」= `dyn.location`、
 「状态」三个 chip = `power_level`/`arc_stage`/`relationship_to_mc`、「动作」= `dyn.goal`，正是那一组的全部字段），
-所以左栏只放**非角色**内容。**待写段**的信息也只在左栏 Gantt（点情节段）与规划提示条里看。
+所以左栏只放**非角色**内容。**待写段**的信息只在左栏 Gantt 里看（点那个情节段）。
 
 **左栏 = 上一段的结构化事实 + 规划上下文折叠组**
 
@@ -168,7 +169,7 @@
 
 ---
 
-## 四、共享组件：故事线 Gantt 与规划提示条
+## 四、共享组件：故事线 Gantt（+ 已删的规划 UI）
 
 ### 4.1 故事线 Gantt（story_line.js，三泳道 + 字数轴）
 
@@ -178,15 +179,20 @@
 - **视觉要素**：弧树嵌套（parent 连线 + 层级缩进）、倒叙（琥珀）/插叙（绿）着色 + `narrative_target` ◉、情节段条颜色 = 所属线程色、父子情节段贝塞尔线、**设局→收局金色虚线**（长距离自动衰减透明度）、进度光标、承诺边界黄线（「已承诺至 N」）、H1/H2 意图卡片。
 - **点击行为**：弧/情节段条 click → `sl:outline-click` / `sl:plot-click`（bubbles，写作台消费做正文高亮）；tooltip 展示 字数/章号/线程/收局/出场/承诺。
 
-### 4.2 🧭 规划提示条（planning_ui.js，**只剩写作台在用**）
+### 4.2 🧭 规划 UI —— **已整体删除**（2026-09-20）
 
-- **数据**：`GET /api/storyline/<bid>/planning-state` → `_planning_ui_payload`（`storyline.py:12-63`）：`planning_state`（written/committed 字数、horizon、story_questions、character_intents、last_replan）+ `storyline_snapshot`（revision/各计数/线程/promise_count）+ `boundary`（`detect_story_boundary`）。
-- **UI**：边界告警（🟡/🔴 `pm-boundary`，来自 `boundary.reason_codes` + 剩余段数/字余量）+ 规划门禁（⛔ `pm-alert-danger`，来自 `planning_state.checklist.gates.blocking`）+ 清单徽标 + 少量方向/问题/人物意图提示。
-  `window.NEPlanning` 只暴露 `refresh` / `syncStoryline`。
-- **2026-09-19 收缩**：书详情页那份 `data-compact="0"` 的完整四卡矩阵（指标行 + 现在执行/待解决问题/人物当前意图/最近续规划）与其渲染函数、CSS 已删——agent 决策视图，人不看。
-  书详情改为一段**不渲染**的 loader（`book_detail.html`）取同一端点，只为喂 Gantt 的规划叠层。手工 replan 抽屉早已移除（规划由章级 Flow 自主完成）。
+`_planning_ui.html` 与 `planning_ui.js` 已从仓库删除。删除顺序：先书详情（四卡矩阵 = agent 决策视图），
+再写作台（提示条横幅 = 「下一段 H0 / 🟡 边界告警 / ⛔ 规划门禁」三行，用户明确全删）。
 
----
+它**唯一不可替代的职责**是给故事线 Gantt 喂规划叠层（已写红线 / 承诺黄线 / H1-H2 方向条）并做故事线同步，
+现在由两页各自接线：
+
+| 页面 | 初始规划态 | 持续刷新 | 故事线前进时 |
+|---|---|---|---|
+| 写作台 | 直接把 render 上下文的 `planning_state` / `planning_boundary` 内联成 `window.__PLANNING_STATE__` / `__PLANNING_BOUNDARY__`（**零请求**） | desk 的 3s 轮询把 `d.planning` 合并进这两个全局并调 `StoryLine.updateProgress` | 页内 `syncStoryline()` fetch `/api/storyline/<id>`（带 `_mergeStorylineRuntimeFields` 保留 `actual_words`） |
+| 书详情 | 一段**不渲染**的 loader fetch `/api/storyline/<id>/planning-state` | 只在 `ne:desk-refresh` 的 `plan_committed` 时重取 | 同 loader 内比对 revision 后重取故事线 |
+
+`/api/storyline/<id>/planning-state` 端点与 `planning_state` 库层**完全没动**（agent 工具仍在用）。
 
 ## 五、数据链路：Plot Run 的组装（agent_tools.py）
 
@@ -261,7 +267,7 @@
 | `ui/templates/book_detail.html` | 书详情页：操作行/基本信息/规划面板/设定表单/运行时面板/目录/故事线 Gantt 挂载；书名就地编辑(145-206)、Gantt 懒初始化(125-143)、plots 确认脚本(207-226) |
 | `ui/templates/storyline_write_flow.html` | 写作台：Plot Run 面板(345-393)、双向高亮(147-220)、拖拽分栏(234-266)、续写任务(268-339)、3s 轮询(396-448) |
 | `ui/templates/_book_runtime_panels.html` | **只剩角色状态**面板（默认展开、主角+本章出场展开）：`/character-states` → 位置/状态/动作三行 + 矛盾与压力折叠 + 事件台账折叠 |
-| `ui/templates/_planning_ui.html` + `ui/static/js/planning_ui.js` | 规划提示条（**只挂写作台**）：边界告警 + 规划门禁 + 清单徽标；`window.NEPlanning` 暴露 refresh/syncStoryline |
+| ~~`ui/templates/_planning_ui.html` + `ui/static/js/planning_ui.js`~~ | **已删除**（2026-09-20）：规划 UI 全部退出人看的页面；Gantt 叠层接线见 §4.2 |
 | `ui/static/js/story_line.js` | 故事线 Gantt：adapt 数据适配(100-237)、三泳道渲染(253-676)、光标/边界/可变未来(678-717)、init(737)、highlight/scrollTo/setZoom(840-891) |
 | `ui/web_blueprints/books.py` | 书库/详情/删除 + 运行时 API：detail(139)、character-states(264)、promises(281)、diagnose(300)、snapshots(320)、chapter review/deai/punch-points(342-389) |
 | `ui/web_blueprints/desk.py` | 写作台：desk_chapters_api(76，plot_run 组装)、storyline_write_flow(157)、continue_book_page(403)、蓝图引擎流式端点 |
