@@ -242,9 +242,24 @@ def run_tests():
                           "window.StoryLine.init('detail-storyline'" in r.text
                           and "/static/js/story_line.js" in r.text,
                           "storyline Gantt not wired in detail")
-                    check(f"Detail planning panel ({bid})", 'id="planning-state-panel"' in r.text
-                          and 'data-compact="0"' in r.text,
-                          "full planning panel missing from detail")
+                    # 书详情不再有规划面板：它改用不渲染的极简 loader 取数（保 Gantt 的规划叠层）
+                    check(f"Detail planning panel removed ({bid})",
+                          'id="planning-state-panel"' not in r.text
+                          and "_planning_ui.html" not in r.text
+                          and "/api/storyline/" in r.text and "'/planning-state'" in r.text
+                          and "window.__PLANNING_STATE__" in r.text,
+                          "detail should fetch planning state without rendering the panel")
+                    # 四个 agent 向面板已删；角色状态留下并默认展开
+                    check(f"Detail agent panels removed ({bid})",
+                          all(x not in r.text for x in ("运行时决策中心", "读者承诺台账",
+                                                        "质量诊断", "历史快照",
+                                                        "loadDecisionCenter", "runDiagnose")),
+                          "detail still renders agent-facing panels")
+                    check(f"Detail character state default expanded ({bid})",
+                          "🎭 角色状态" in r.text
+                          and 'class="accordion-body show"' in r.text
+                          and "/character-states" in r.text,
+                          "character state panel missing or not expanded by default")
                     ps = get(f"/api/storyline/{bid}/planning-state")
                     check(f"Planning state API ({bid})", ps.status_code == 200
                           and isinstance(ps.json().get("boundary"), dict), f"got {ps.status_code}")
@@ -265,7 +280,7 @@ def run_tests():
                 check(f"Write flow planning is compact ({bid})",
                       'id="planning-state-panel"' in r.text
                       and 'data-compact="1"' in r.text
-                      and '/static/js/planning_ui.js?v=10' in r.text,
+                      and "/static/js/planning_ui.js" in r.text,
                       "write flow should use the reduced planning prompt bar")
                 check(f"Write flow autonomous chapter UI ({bid})",
                       'id="planning-state-panel"' in r.text
@@ -326,23 +341,21 @@ def run_tests():
                               ("/static/js/story_line.js", "story_line.js loaded"),
                               ("/static/js/planning_ui.js", "planning_ui.js loaded")]:
             check(f"Write flow {label}", marker in tl_editor.text, f"'{marker}' missing")
-        # 全宽三列对照区：断言真实 DOM 挂载点存在（只匹配 JS 字面量会假阳性）
-        check("Write flow compare panel mounted",
-              all(x in tl_editor.text for x in ('id="wf-compare"', 'id="wf-cmp-prev"',
-                                                'id="wf-cmp-axis"', 'id="wf-cmp-next"',
-                                                'id="wf-cmp-grid"'))
-              and "上一情节段" in tl_editor.text and "对照字段" in tl_editor.text
-              and "当前情节段" in tl_editor.text
-              and "上一段" in tl_editor.text and "本段" in tl_editor.text
-              and "写作重点" in tl_editor.text and "完整状态审计" in tl_editor.text,
-              "compare mount or semantic headers missing")
-        check("Write flow compare is full-width above the two columns",
-              tl_editor.text.index('id="wf-compare"') < tl_editor.text.index('class="editor-split"'),
-              "compare must sit above .editor-split (full-width, not nested in a column)")
-        check("Write flow comparison rows are collapsible",
-              'class="wfc-group"' in tl_editor.text and 'data-detail-key' in tl_editor.text
-              and 'class="wfc-label-cell"' in tl_editor.text,
-              "collapsible comparison row/table markers missing")
+        # 顶部两栏（本段最新 + 角色状态）：断言真实 DOM 挂载点存在（只匹配 JS 字面量会假阳性）
+        check("Write flow two-column context mounted",
+              all(x in tl_editor.text for x in ('id="wf-latest-context"', 'id="wf-current-plot"',
+                                                'id="wf-current-cast"'))
+              and "本段（仅最新）" in tl_editor.text and "角色状态" in tl_editor.text
+              and "renderLatestContext(" in tl_editor.text,
+              "two-column context mount or headers missing")
+        check("Write flow old compare/audit area removed",
+              all(x not in tl_editor.text for x in ('id="wf-compare"', 'wf-cmp-prev', 'wf-cmp-axis',
+                                                    'wf-cmp-next', 'wf-cmp-grid', '完整状态审计',
+                                                    'wf-cmp-grid')),
+              "old three-column compare area must not come back")
+        check("Write flow two-column context is full-width above the two columns",
+              tl_editor.text.index('id="wf-latest-context"') < tl_editor.text.index('class="editor-split"'),
+              "context must sit above .editor-split (full-width, not nested in a column)")
         check("Write flow old stacked panels removed",
               all(x not in tl_editor.text for x in ('id="wf-plot-run"', 'id="wf-plot-outcome"',
                                                     'id="wpr-body"', 'id="wf-left-panels"')),

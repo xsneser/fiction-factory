@@ -134,48 +134,19 @@ try:
                                     + desk["plot_run"]["cast_pack"]["active"])}
     assert cards["陆凌舟"]["dyn"]["location"] == "重力井底", cards.get("陆凌舟")
     assert cards["陆凌舟"]["state_source"] == "staged_fact", cards.get("陆凌舟")
-    assert "current_chapter" in desk and "comparison" in desk
-    assert isinstance(desk["comparison"].get("sections"), list)
-    from ui.web_blueprints.desk import _build_compare_projection
-    projection = _build_compare_projection(
-        {"plot_id": "p0", "plot_name": "上一段", "chapter_num": 1, "roles": ["甲", "丁"],
-         "facts": {"character_events": [{"name": "甲", "events": [
-             {"type": "location_shift", "to": "旧港"}]}]}},
-        {"plot": {"id": "p2", "name": "当前段", "roles": ["乙", "戊"], "expected_facts": [
-             {"subject": "乙", "type": "goal_shift", "expected_to": "夺回钥匙"}]},
-         "cast_pack": {"protagonists": [{"name": "乙", "dyn": {"goal": "寻找线索"}}],
-                       "active": [{"name": "丙", "dyn": {"location": "新城"}}]},
-         "execution_brief": {"dramatic_goal": "迫使双方摊牌"},
-         "arc_goal": {"arc_id": "a2", "name": "第二弧", "stage_name": "逼近真相"},
-         "thread": {"id": "t1", "name": "钥匙线", "chain_note": "已写 1 条 / 未写 2 条"}}, 2)
-    chars = next(s for s in projection["sections"] if s["id"] == "characters")
-    assert [r["entity"] for r in chars["rows"] if r["label"] == "人物"] == ["乙", "丙", "戊", "甲", "丁"]
-    assert next(r for r in chars["rows"] if r["entity"] == "丁" and r["label"] == "人物")["current"] == {}
-    # 每角色合并为一行：不再按 目标/实力/关系/弧阶段 拆多行，字段内联进 fields 数组
-    assert all(r["label"] == "人物" for r in chars["rows"])
-    yifld = next(r for r in chars["rows"] if r["entity"] == "乙")["current"].get("fields") or []
-    assert any(f["label"] == "目标" and f["value"] == "寻找线索" and f["expected_to"] == "夺回钥匙"
-               for f in yifld)
-    locs = next(s for s in projection["sections"] if s["id"] == "locations")
-    assert any(r["label"] == "地点" and r["current"].get("value") == "新城" for r in locs["rows"])
-    # 地点不绑定人物：行标签统一为「地点」，不再按「位置 · 人名」分行
-    assert all(r["label"] == "地点" for r in locs["rows"])
-    arcs = next(s for s in projection["sections"] if s["id"] == "arc_thread")
-    assert {r["label"] for r in arcs["rows"]} == {"弧阶段", "叙事线程"}
-    # 对照 projection：弧线程独立、stable key 配对、计数不依赖 entity 是否存在。
-    stable = _build_compare_projection(
-        {"facts": {"promise_updates": [{"id": "pr-a", "desc": "钥匙必须兑现"}],
-                    "new_story_questions": [{"id": "q-a", "question": "谁持有钥匙？"}]}},
-        {"plot": {"id": "p3", "name": "稳定配对测试"},
-         "promise_state": [{"id": "pr-b", "desc": "警报会响起"},
-                            {"id": "pr-a", "desc": "钥匙必须兑现"}],
-         "planning": {"story_questions": [{"id": "q-a", "question": "谁持有钥匙？"},
-                                             {"id": "q-b", "question": "谁在监视？"}]}}, 2)
-    stable_promises = next(s for s in stable["sections"] if s["id"] == "promises")
-    stable_questions = next(s for s in stable["sections"] if s["id"] == "questions")
-    assert [r["key"] for r in stable_promises["rows"]] == ["promise:id:pr-a", "promise:id:pr-b"]
-    assert [r["key"] for r in stable_questions["rows"]] == ["question:id:q-a", "question:id:q-b"]
-    print("[OK] compare 口径：desk cast_pack 与 writer 同源（staged 投影 + state_source）")
+    # 顶部两栏的契约：只吃这几个字段（旧的三列 projection 已删，不得回流）
+    assert all(k in desk for k in ("current_chapter", "writing_chapter", "plot_run",
+                                   "recent_plot_outcome", "cast_events", "planning"))
+    assert all(k not in desk for k in ("comparison", "past", "current", "future",
+                                       "selection", "audit", "state_revision"))
+    # «本段»卡要的写作重点 = primary_turn（desk 侧注入，未改 _build_plot_run 的指纹）
+    assert desk["plot_run"]["plot"].get("primary_turn"), desk["plot_run"]["plot"]
+    # «动作»行的补充来源：章内上报的 character_changes（每人最近一条）
+    assert desk["cast_events"]["陆凌舟"]["to"] == "重力井底", desk["cast_events"]
+    ev = desk["cast_events"]["陆凌舟"]
+    assert ev.get("to") == "重力井底" and ev.get("type") == "location_shift", ev
+    assert ev.get("chapter") == 1, ev          # 事件带着它来自哪一章
+    print("[OK] desk 顶部两栏契约：writing_chapter / primary_turn / staged cast_events，旧 projection 已删")
 
     # 旧书降级：无 planning_state.json 的书 → 聚合接口返回默认空态，不落盘、不报错
     legacy = book_mgr.create(title="规划 UI 旧书", pen_name="test", genre="都市")
@@ -210,8 +181,17 @@ finally:
     agent_js = open(os.path.join(root, "ui", "static", "js", "agent_panel.js"), encoding="utf-8").read()
     agent_py = open(os.path.join(root, "ui", "web_blueprints", "agent.py"), encoding="utf-8").read()
     desk_py = open(os.path.join(root, "ui", "web_blueprints", "desk.py"), encoding="utf-8").read()
-    assert "arc_thread_rows" in desk_py and "pair_records" in desk_py
-    assert '"missing_from": event.get("from") in' in desk_py
+    # 三列对照投影（上一段 | 对照字段 | 本段）连同它的整套行构造器已删除：
+    # 写作台顶部改两栏（本段最新 + 角色状态），agent 对账视图不再进人看的页面。
+    assert all(x not in desk_py for x in ("_build_compare_projection", "_COMPARE_FACT_FIELD",
+                                          "arc_thread_rows", "pair_records", "promise_rows",
+                                          "question_rows", "location_rows", "character_rows"))
+    # 顶部两栏要的新字段必须在响应里（否则前端拿不到待写章号与章内人物动作）
+    assert '"writing_chapter": writing_chapter' in desk_py and '"cast_events": cast_events' in desk_py
+    # 「动作」的来源 = 章内已上报的 character_changes（每人最近一条）；不是从人设推断
+    assert "character_changes" in desk_py and "load_staged" in desk_py
+    # primary_turn 在 desk 侧补进 plot 投影（改 _build_plot_run 会动 commit_token 指纹）
+    assert 'plot_run["plot"]["primary_turn"]' in desk_py
 
     # 预测与正式三泳道共享同一个纵向画布；它不是右侧第四泳道，也不是 sibling。
     assert "sl-lane-forecast" not in sl_js and "sl-lane-forecast" not in sl_css
@@ -247,19 +227,28 @@ finally:
     assert "renderForecast" in progress_block and "captureScrollState" in progress_block and "restoreScrollState" in progress_block
     assert "scrollToDirections" in sl_js
 
-    # 写作台只保留必要提示；完整规划矩阵仍由书详情的非 compact 分支提供。
+    # 规划 UI 只剩写作台的紧凑提示条：书详情那份完整四卡矩阵已删（同样是 agent 决策视图）。
     assert "<h4>下一段方向</h4>" not in pu_js and "<h4>远期方向</h4>" not in pu_js
     assert "pm-h1" not in pu_js and "pm-h2" not in pu_js
-    assert "<h4>现在执行</h4>" in pu_js
+    assert all(x not in pu_js for x in ("<h4>现在执行</h4>", "planning-grid", "planning-metrics",
+                                        "最近续规划", "planning-character-intents",
+                                        "lastReplanLabel", "characterIntents", "data-compact"))
     assert "renderChecklist" in pu_js and "planning-checklist" in pu_js
-    assert "openStoryQuestions" in pu_js and "compareHasCurrentPlot" in pu_js
-    assert "lastReplanLabel" in pu_js and "reasonLabel(value.reason_codes)" in pu_js
+    assert "openStoryQuestions" in pu_js and "hasCurrentPlotContext" in pu_js
+    assert "reasonLabel(b.reason_codes)" in pu_js
     assert "展开规划" not in pu_js and "收起 ▴" not in pu_js
     assert "detailOpen" not in pu_js and "planning-cards" not in pu_js
     assert "当前没有额外规划提示" not in pu_js
     assert "pm-alert-danger" in pu_js and "pm-boundary" in pu_js
-    assert "planning-grid" in pu_js and "最近续规划" in pu_js
-    assert "🧭 规划中（未落笔）" in panels and "d.planned" in panels
+    # 规划提示条只挂写作台；书详情改用**不渲染**的极简 loader 保住 Gantt 的规划叠层
+    assert "planning_write_mode" not in planning_tpl and 'data-compact="1"' in planning_tpl
+    assert "_planning_ui.html" not in book_tpl
+    assert "__PLANNING_STATE__" in book_tpl and "ne:planning-updated" in book_tpl
+    # 书详情四个 agent 面板已删；角色状态留下并默认展开
+    assert all(x not in panels for x in ("运行时决策中心", "读者承诺台账", "质量诊断", "历史快照",
+                                        "loadDecisionCenter", "runDiagnose", "loadSnapshots",
+                                        "runChapterReview", "runChapterDeai", "runPunchPoints"))
+    assert "🎭 角色状态" in panels and 'class="accordion-body show"' in panels
 
     # replan 提交后的正式合同可重新拉取；三页都接收统一故事线刷新事件。
     assert "GET /api/storyline" not in pu_js  # 使用 fetch，避免把 HTTP 文本硬编码进实现
@@ -282,43 +271,45 @@ finally:
     assert "flowMode" in write_tpl and "busyPolicy" in write_tpl and "taskKind" in write_tpl
     assert "needs_replan" not in write_tpl[write_tpl.index("function _resolveNextChapterAndSend"):write_tpl.index("function stopWritingTask")]
     assert "flow_mode" in agent_js and "busy_policy" in agent_js and "task_kind" in agent_js
-    # 全宽三列对照区：HTML 挂载点与 JS 查询点双向命中，且只有一个共享表格渲染入口
-    assert all(x in write_tpl for x in ('id="wf-compare"', 'id="wf-cmp-prev"',
-                                        'id="wf-cmp-axis"', 'id="wf-cmp-next"',
-                                        'id="wf-cmp-grid"'))
-    assert "getElementById('wf-cmp-grid')" in write_tpl
-    assert "renderCompare(d.recent_plot_outcome, d.plot_run, d.current_chapter, d.comparison)" in write_tpl
-    assert "ne:compare-updated" in write_tpl and "__NE_COMPARE_HAS_CURRENT__" in pu_js
-    assert "renderCompareTable(" in write_tpl
+    # 顶部两栏：本段（仅最新）+ 角色状态。HTML 挂载点与 JS 渲染入口双向命中。
+    assert all(x in write_tpl for x in ('id="wf-latest-context"', 'id="wf-current-plot"',
+                                        'id="wf-current-cast"', '本段（仅最新）', '角色状态'))
+    assert "renderLatestContext(d)" in write_tpl and "function renderLatestContext(" in write_tpl
+    assert "function renderCurrentPlot(" in write_tpl and "function renderCurrentCast(" in write_tpl
+    # 旧三列对照区（含它那个五组折叠的审计区）整块删除，且不得回流
+    assert all(x not in write_tpl for x in ('id="wf-compare"', 'wf-cmp-prev', 'wf-cmp-axis',
+                                            'wf-cmp-next', 'wf-cmp-grid', 'renderCompareTable',
+                                            'renderCompare(', '_legacyComparison', '_renderSide',
+                                            '_renderCompareGroup', '完整状态审计', '上一段',
+                                            '对照字段', 'wfc-single', 'wfc-audit'))
+    # 对账视图（reconcile / expected_facts）不再进人看的页面
+    assert all(x not in write_tpl for x in ('_RECONCILE_ZH', '_reconcileLabel', '_FACT_FIELD',
+                                            'expected_to', '变动前值未记录', '实际变化'))
     assert "renderPlotRun(" not in write_tpl and "renderRecentOutcome(" not in write_tpl
-    assert "上一情节段" in write_tpl and "对照字段" in write_tpl and "当前情节段" in write_tpl
-    assert "上一段" in write_tpl and "本段" in write_tpl and "写作重点" in write_tpl
-    assert "上一情节段（已发生）" in write_tpl and "当前情节段（本段待写）" in write_tpl
-    assert "完整状态审计" in write_tpl and "wfc-single" in write_tpl
-    assert "上一情节造成的变化" not in write_tpl and "身后变化" not in write_tpl
-    assert "实际变化" not in write_tpl
     # 旧堆叠面板不得回流
     assert all(x not in write_tpl for x in ('id="wf-plot-run"', 'id="wf-plot-outcome"',
                                             'id="wpr-body"', 'id="wf-left-panels"'))
-    # 口径红线：不许假地点、不把「未记录」画成「空值」、from 缺失要有说明
+    # 口径红线：不许假地点、不把「未记录」画成「空值」、没数据就如实说没有
     assert "目标地点" not in write_tpl
-    assert "状态未记录" in write_tpl and "变动前值未记录" in write_tpl
+    assert "'未记录'" in write_tpl and "'暂无明确行动'" in write_tpl and "_ctxMissing" in write_tpl
     assert "state_source" in write_tpl and "本章已上报" in write_tpl
-    assert "_FACT_FIELD" in write_tpl and "expected_to" in write_tpl
+    assert "暂无待写情节段" in write_tpl and "本段未指定出场角色" in write_tpl
+    # 横幅信号（planning_ui 靠它决定 H0 与本段是否同时显示）改名并保留
+    assert "__NE_LATEST_HAS_CURRENT__" in write_tpl and "ne:current-context-updated" in write_tpl
+    assert "__NE_COMPARE_HAS_CURRENT__" not in write_tpl and "ne:compare-updated" not in pu_js
     # 孤儿不得回流（曾查询一个从未存在的 #wpr-state-label）
     assert "wpr-state-label" not in write_tpl and "_runningPid" not in write_tpl
-    # CSS：三列矩阵/折叠区/响应式规则在，旧面板规则已清，.wpr-dim 必须留
-    assert all(x in sl_css for x in (".wf-compare", ".wfc-table-head", ".wfc-grid",
-                                     ".wfc-label-cell", ".wfc-group", ".wfc-collapsed-preview"))
-    assert "grid-template-columns: minmax(0, 1fr) minmax(82px, 112px) minmax(0, 1fr)" in sl_css
-    assert "overflow-x: auto" in sl_css and "min-width: 560px" in sl_css
+    # CSS：两栏 + 角色卡；旧三列矩阵规则已清；.wpr-dim 仍被页头用，必须留
+    assert all(x in sl_css for x in (".wf-latest-context", ".wf-context-card", ".wf-context-head",
+                                     ".character-state-card", ".character-state-lines",
+                                     ".character-state-chip", ".character-other-group",
+                                     ".character-staged-mark"))
+    assert "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)" in sl_css
+    assert all(x not in sl_css for x in (".wf-compare", ".wfc-table-head", ".wfc-grid",
+                                         ".wfc-audit", ".wfc-reconcile", "min-width: 560px"))
     assert "#wf-left-panels" not in sl_css and ".wf-plot-run" not in sl_css
     assert ".wpr-dim" in sl_css
-    assert ".wfc-reconcile" in sl_css and ".wfc-audit" in sl_css
-    assert ".wfc-col[hidden] { display: block; visibility: hidden; min-width: 0" in sl_css
-    assert ".wfc-cell.wfc-empty-side { min-height: 0" in sl_css
-    assert ".wfc-no-previous" in sl_css and ".wfc-no-current" in sl_css
-    # 三卡与方向入口已删（运行上下文由全宽对照区承担）
+    # 三卡与方向入口已删
     assert 'id="wf-past-meta"' not in write_tpl and 'id="wf-current-meta"' not in write_tpl
     assert "wf-context-strip" not in write_tpl and "wf-dir-btn" not in write_tpl
     assert "wfScrollToDirections" not in write_tpl
@@ -326,8 +317,6 @@ finally:
     assert "wf-follow-writing" not in write_tpl and "跟随写作" not in write_tpl
     assert "wf-inspector" not in write_tpl and "toggleInspector" not in write_tpl
     assert "wf-audit-mode" not in write_tpl and "toggleAuditMode" not in write_tpl
-    # 预测 → 实际 → 结果：predictions 入面板，对账中文标签共用同一映射
-    assert "outcome.predictions" in write_tpl and "_reconcileLabel(" in write_tpl and "_RECONCILE_ZH" in write_tpl
     # 用户侧不再展示 preview 校验明细；错误只走 MCP tool result / 后台日志。
     assert "planning-preview-status" not in planning_tpl
     assert "renderPreviewStatus" not in pu_js

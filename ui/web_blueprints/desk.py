@@ -149,6 +149,9 @@ def _plot_outcome(bridge, tl, chapter_num=0):
         "expected_facts": (bridge.get("expected_facts")
                            or (list(getattr(plot, "expected_facts", None) or []) if plot else [])),
         "facts": facts,
+        # 顶部「本段」卡的「承接」一行用 agent 自己写的 plot_summary（展示/检索用途，50~120 字），
+        # 比 reconcile.summary（对账口径的机器文案）更适合人读。
+        "plot_summary": str(bridge.get("plot_summary") or ""),
         "reconcile": run,
         # 历史弧/线程只来自该 plot 在正式故事线中的归属；不从当前规划反推。
         "arc_goal": arc_goal,
@@ -156,484 +159,20 @@ def _plot_outcome(bridge, tl, chapter_num=0):
     }
 
 
-_COMPARE_FACT_FIELD = {
-    "goal_shift": "goal",
-    "power_shift": "power_level",
-    "location_shift": "location",
-    "arc_stage": "arc_stage",
-    "relationship": "relationship_to_mc",
-    "trust_change": "relationship_to_mc",
-}
-_COMPARE_FIELD_LABELS = {
-    "goal": "目标",
-    "power_level": "实力",
-    "relationship_to_mc": "关系",
-    "arc_stage": "弧阶段",
-    "location": "位置",
-}
-def _build_compare_projection(previous, current, chapter_num=0):
-    """把相邻情节段投影成一个可对齐的左右矩阵（纯展示数据，不写盘）。
-
-    previous/current 都来自同一次 desk 聚合响应；这里不重新读取故事状态，也不从正文
-    推断事实。两侧缺席、dyn 缺失和 from 缺失都保留为显式标记，交给 UI 做空态展示。
-    """
-    previous = previous if isinstance(previous, dict) else {}
-    current = current if isinstance(current, dict) else {}
-    facts = previous.get("facts") or {}
-    events = list(facts if isinstance(facts, list) else facts.get("character_events") or [])
-    prev_chars = {}
-    prev_predictions = {}
-
-    def prev_char(name):
-        return prev_chars.setdefault(name, {"name": name, "fields": {}, "events": []})
-
-    for group in events:
-        if not isinstance(group, dict):
-            continue
-        name = str(group.get("name") or group.get("character") or "角色").strip()
-        item = prev_char(name)
-        for event in group.get("events") or []:
-            if not isinstance(event, dict):
-                continue
-            event_type = str(event.get("type") or "note")
-            field = _COMPARE_FACT_FIELD.get(event_type)
-            value = event.get("to")
-            if value in (None, ""):
-                value = event.get("reason")
-            entry = {
-                "type": event_type,
-                "value": str(value) if value not in (None, "") else "",
-                "from": str(event.get("from")) if event.get("from") not in (None, "") else "",
-                "missing_from": event.get("from") in (None, ""),
-            }
-            item["events"].append(entry)
-            if field and entry["value"]:
-                item["fields"][field] = entry
-
-    cp = current.get("cast_pack") or {}
-    current_cards = []
-    for group_name, cards in (("protagonists", cp.get("protagonists") or []),
-                              ("active", cp.get("active") or []),
-                              ("referenced", cp.get("referenced") or [])):
-        for card in cards:
-            if not isinstance(card, dict) or not str(card.get("name") or "").strip():
-                continue
-            current_cards.append((group_name, card))
-    current_chars = {}
-    for group_name, card in current_cards:
-        name = str(card.get("name")).strip()
-        if name in current_chars:
-            continue
-        dyn = card.get("dyn") if isinstance(card.get("dyn"), dict) else None
-        current_chars[name] = {
-            "name": name,
-            "role": card.get("identity") or card.get("role") or "",
-            "group": group_name,
-            "fields": dict(dyn or {}),
-            "state_missing": dyn is None and group_name != "referenced",
-            "state_source": card.get("state_source") or "",
-        }
-
-    expected_by_char = {}
-    for expected in ((current.get("plot") or {}).get("expected_facts") or []):
-        if not isinstance(expected, dict):
-            continue
-        name = str(expected.get("subject") or expected.get("name") or expected.get("character") or "角色").strip()
-        target = expected.get("expected_to")
-        if target in (None, ""):
-            target = expected.get("to")
-        if target in (None, ""):
-            continue
-        field = _COMPARE_FACT_FIELD.get(str(expected.get("type") or ""))
-        if not field:
-            continue
-        expected_by_char.setdefault(name, {})[field] = {
-            "type": str(expected.get("type") or "note"),
-            "value": str(target),
-            "strength": expected.get("strength") or "",
-        }
-    # 预测中出现、但 cast_pack 尚未列出的人物也属于本段对照对象；保留为无动态状态的占位。
-    for name in expected_by_char:
-        current_chars.setdefault(name, {
-            "name": name, "role": "", "group": "active", "fields": {},
-            "state_missing": True, "state_source": "",
-        })
-    for role in ((current.get("plot") or {}).get("roles") or []):
-        name = str(role).strip()
-        if name:
-            current_chars.setdefault(name, {
-                "name": name, "role": "", "group": "active", "fields": {},
-                "state_missing": True, "state_source": "",
-            })
-    # 上一段只有自然语言预测/结构化预测而没有事实时，仍保留人物名，避免左右行消失。
-    for prediction in previous.get("predictions") or []:
-        if isinstance(prediction, dict):
-            name = str(prediction.get("name") or prediction.get("character") or prediction.get("subject") or "角色").strip()
-            if name:
-                prev_char(name)
-                text = (prediction.get("prediction") or prediction.get("expected_change")
-                        or prediction.get("intent") or prediction.get("change") or prediction.get("description") or "")
-                if text:
-                    prev_predictions[name] = str(text)
-    for expected in previous.get("expected_facts") or []:
-        if isinstance(expected, dict):
-            name = str(expected.get("subject") or expected.get("name") or expected.get("character") or "角色").strip()
-            if name:
-                prev_char(name)
-    for role in previous.get("roles") or []:
-        name = str(role).strip()
-        if name:
-            prev_char(name)
-
-    names = []
-    for name in list(current_chars) + list(prev_chars):
-        if name not in names:
-            names.append(name)
-
-    def side(value=None, **extra):
-        result = dict(extra)
-        if value not in (None, ""):
-            result["value"] = str(value)
-        return result
-
-    def character_rows():
-        """每角色一行：目标/实力/关系 全部内联进同一行的两侧单元格。
-
-        不按字段拆行（一个人物只占一行），不显示身份角色标签（如「主角」）；
-        字段以 fields 数组随行下发，由前端在同一行内紧凑渲染。
-        """
-        rows = []
-        fields = ("goal", "power_level", "relationship_to_mc")
-        for name in names:
-            old = prev_chars.get(name)
-            new = current_chars.get(name)
-            # 仅被提及、没有动态或预期变化的 referenced 角色不进入默认对照，
-            # 避免把出场名单渲染成一排“状态未记录”的空行；完整人物上下文仍在 plot_run。
-            if (new and new.get("group") == "referenced" and not old
-                    and not (expected_by_char.get(name) or new.get("fields"))):
-                continue
-            old_exists = old is not None
-            new_exists = new is not None
-            previous_side, current_side = {}, {}
-            if old_exists:
-                previous_side = {"detail": prev_predictions.get(name, "")}
-                prev_fields = []
-                for field in fields:
-                    old_field = (old or {}).get("fields", {}).get(field) or {}
-                    if not old_field:
-                        continue
-                    prev_fields.append({
-                        "label": _COMPARE_FIELD_LABELS[field],
-                        "value": str(old_field.get("value") or ""),
-                        "missing_from": bool(old_field.get("missing_from")),
-                        "event_type": old_field.get("type", ""),
-                    })
-                if prev_fields:
-                    previous_side["fields"] = prev_fields
-                if not previous_side.get("fields") and not previous_side.get("detail"):
-                    previous_side["role"] = "上一段出现"
-            if new_exists:
-                current_side = {
-                    "state_source": (new or {}).get("state_source", ""),
-                    "state_missing": (new or {}).get("state_missing", False),
-                }
-                curr_fields = []
-                for field in fields:
-                    new_value = (new or {}).get("fields", {}).get(field)
-                    expected = (expected_by_char.get(name) or {}).get(field) or {}
-                    if new_value in (None, "") and not expected:
-                        continue
-                    entry = {"label": _COMPARE_FIELD_LABELS[field],
-                             "value": str(new_value) if new_value not in (None, "") else ""}
-                    if expected:
-                        entry["expected_to"] = expected.get("value", "")
-                        entry["expected_type"] = expected.get("type", "")
-                        entry["expected_strength"] = expected.get("strength", "")
-                    curr_fields.append(entry)
-                if curr_fields:
-                    current_side["fields"] = curr_fields
-            expected_fields = expected_by_char.get(name) or {}
-            changed_fields = any(
-                str(((old or {}).get("fields", {}).get(field) or {}).get("value", "")) !=
-                str(((new or {}).get("fields", {}).get(field) or ""))
-                for field in fields
-            )
-            rows.append({
-                "key": "character:" + name,
-                "entity": name,
-                "label": "人物",
-                "previous": previous_side,
-                "current": current_side,
-                "status": "both" if old_exists and new_exists else ("previous" if old_exists else "current"),
-                "actionable": bool(expected_fields or changed_fields or not old_exists or not new_exists),
-            })
-        return rows
-
-    def location_rows():
-        """按人物保留位置变化：只显示有真实位置或明确预计去向的角色。
-
-        地点没有独立 registry；把人物名保留在 entity 上，避免“旧港 → 新城”丢失归属。
-        """
-        def value_of(value):
-            if isinstance(value, dict):
-                return value.get("value") or value.get("to") or ""
-            return value if value not in (None, "") else ""
-
-        rows = []
-        for name in names:
-            old = prev_chars.get(name) or {}
-            new = current_chars.get(name) or {}
-            old_value = value_of((old.get("fields") or {}).get("location"))
-            new_value = value_of((new.get("fields") or {}).get("location"))
-            expected = (expected_by_char.get(name) or {}).get("location") or {}
-            expected_value = value_of(expected)
-            if old_value in (None, "") and new_value in (None, "") and expected_value in (None, ""):
-                continue
-            previous_side = side(old_value) if old_value not in (None, "") else {}
-            current_side = side(new_value,
-                                state_source=new.get("state_source", ""),
-                                state_missing=new.get("state_missing", False)) if new_value not in (None, "") else {}
-            if expected_value not in (None, ""):
-                current_side["expected_to"] = str(expected_value)
-                current_side["expected_type"] = expected.get("type", "")
-            rows.append({
-                "key": "location:" + name,
-                "entity": name,
-                "label": "地点",
-                "previous": previous_side,
-                "current": current_side,
-                "status": "both" if previous_side and current_side else ("previous" if previous_side else "current"),
-                "actionable": bool(expected_value not in (None, "") or
-                                    (old_value not in (None, "") and new_value not in (None, "")
-                                     and str(old_value) != str(new_value))),
-            })
-        return rows
-
-    def plot_rows():
-        plot = current.get("plot") or {}
-        brief = current.get("execution_brief") or {}
-        # Plot 名称已经在上方“已发生/待写”表头显示，这里只保留真正指导写作的字段。
-        rows = []
-        for key, label in (("dramatic_goal", "戏剧目标"), ("conflict_source", "冲突来源"),
-                           ("character_choice", "人物选择"), ("irreversible_change", "不可逆变化"),
-                           ("reader_question", "读者问题"), ("ending_hook", "结尾钩子")):
-            if brief.get(key):
-                rows.append({"key": "plot:" + key, "entity": "", "label": label,
-                             "previous": {}, "current": side(brief.get(key))})
-        impact = current.get("character_impact") or plot.get("character_impact") or []
-        for index, item in enumerate(impact):
-            if isinstance(item, dict):
-                value = item.get("prediction") or item.get("expected_change") or item.get("change") or item.get("description") or ""
-                entity = item.get("name") or item.get("character") or item.get("subject") or ""
-            else:
-                value, entity = str(item), ""
-            if value:
-                rows.append({"key": "plot:impact:" + str(index), "entity": entity,
-                             "label": "人物变化预期", "previous": {}, "current": side(value)})
-        for key, label in (("choices_made", "已作选择"), ("information_revealed", "已知信息"),
-                           ("relationship_changes", "关系变化"), ("resource_changes", "资源变化")):
-            old_value = facts.get(key) if isinstance(facts, dict) else None
-            if isinstance(old_value, list):
-                old_value = "；".join(str(x.get("text") or x.get("description") or x.get("title") or x)
-                                      if isinstance(x, dict) else str(x) for x in old_value)
-            elif isinstance(old_value, dict):
-                old_value = old_value.get("text") or old_value.get("description") or old_value.get("title") or old_value.get("status") or ""
-            if old_value:
-                rows.append({"key": "plot:previous:" + key, "entity": "", "label": label,
-                             "previous": side(old_value), "current": {}})
-        return [row for row in rows if row["previous"] or row["current"]]
-
-    def pair_records(old_values, new_values, prefix, text_fn):
-        """按稳定 id 配对两侧记录；旧 payload 没有 id 时退回规范化文本。"""
-        def make_record(value, index, seen):
-            stable_id = str(value.get("id") or "").strip() if isinstance(value, dict) else ""
-            text = re.sub(r"\s+", " ", str(text_fn(value) or "").strip()).lower()
-            base = prefix + ":id:" + stable_id if stable_id else prefix + ":text:" + (text or str(index))
-            count = seen.get(base, 0)
-            seen[base] = count + 1
-            key = base if count == 0 else base + ":" + str(count + 1)
-            return {"key": key, "id": stable_id, "text": text, "value": value}
-
-        old_seen = {}
-        old_records = [make_record(value, i, old_seen) for i, value in enumerate(old_values or [])]
-        new_seen = {}
-        new_records = [make_record(value, i, new_seen) for i, value in enumerate(new_values or [])]
-        by_id = {item["id"]: item for item in new_records if item["id"]}
-        by_text = {}
-        for item in new_records:
-            if item["text"] and item["text"] not in by_text:
-                by_text[item["text"]] = item
-        used = set()
-        pairs = []
-        for old in old_records:
-            match = by_id.get(old["id"]) if old["id"] else None
-            if match is None and old["text"]:
-                candidate = by_text.get(old["text"])
-                if candidate is not None and old["id"] and candidate["id"] and old["id"] != candidate["id"]:
-                    candidate = None
-                match = candidate
-            if match is not None and match["key"] not in used:
-                used.add(match["key"])
-                pairs.append((match["key"], old["value"], match["value"]))
-            else:
-                pairs.append((old["key"], old["value"], None))
-        pairs.extend((item["key"], None, item["value"]) for item in new_records if item["key"] not in used)
-        return pairs
-
-    def promise_rows():
-        old_values = facts.get("promise_updates") if isinstance(facts, dict) else []
-        new_values = current.get("promise_state") or []
-        old_values = old_values if isinstance(old_values, list) else [old_values] if old_values else []
-        new_values = new_values if isinstance(new_values, list) else []
-
-        def text(value):
-            if isinstance(value, dict):
-                return (value.get("desc") or value.get("description") or value.get("title")
-                        or value.get("status") or "")
-            return str(value) if value not in (None, "") else ""
-
-        rows = []
-        for key, old_value, new_value in pair_records(old_values, new_values, "promise", text):
-            old_text, new_text = text(old_value), text(new_value)
-            if not old_text and not new_text:
-                continue
-            label = (new_value or old_value or {}).get("title") if isinstance(new_value or old_value, dict) else ""
-            label = str(label or "承诺")
-            old_status = old_value.get("status", "") if isinstance(old_value, dict) else ""
-            new_status = new_value.get("status", "") if isinstance(new_value, dict) else ""
-            rows.append({"key": key, "entity": "", "label": label,
-                         "previous": side(old_text, status=old_status) if old_text else {},
-                         "current": side(new_text, status=new_status) if new_text else {},
-                         "status": "both" if old_text and new_text else ("previous" if old_text else "current"),
-                         "actionable": old_status != new_status or not old_text or not new_text})
-        return rows
-
-    def question_rows():
-        old_values = facts.get("new_story_questions") if isinstance(facts, dict) else []
-        current_planning = current.get("planning") or {}
-        new_values = current_planning.get("story_questions") or []
-        old_values = old_values if isinstance(old_values, list) else [old_values] if old_values else []
-        new_values = new_values if isinstance(new_values, list) else [new_values] if new_values else []
-
-        terminal = {"answered", "superseded", "resolved", "closed"}
-        def text(value):
-            if isinstance(value, dict):
-                return value.get("question") or value.get("title") or value.get("text") or ""
-            return str(value) if value not in (None, "") else ""
-        def active(value):
-            return not (isinstance(value, dict) and str(value.get("status") or "").lower() in terminal)
-
-        rows = []
-        for key, old_value, new_value in pair_records(old_values, new_values, "question", text):
-            old_text = text(old_value) if active(old_value) else ""
-            new_text = text(new_value) if active(new_value) else ""
-            if not old_text and not new_text:
-                continue
-            old_status = old_value.get("status", "") if isinstance(old_value, dict) else ""
-            new_status = new_value.get("status", "") if isinstance(new_value, dict) else ""
-            rows.append({"key": key, "entity": "", "label": "问题",
-                         "previous": side(old_text, status=old_status) if old_text else {},
-                         "current": side(new_text, status=new_status) if new_text else {},
-                         "status": "both" if old_text and new_text else ("previous" if old_text else "current"),
-                         "actionable": old_status != new_status or not old_text or not new_text})
-        return rows
-
-    def arc_thread_rows():
-        old_arc = previous.get("arc_goal") or {}
-        new_arc = current.get("arc_goal") or {}
-        old_thread = previous.get("thread") or {}
-        new_thread = current.get("thread") or {}
-        rows = []
-
-        def arc_value(value):
-            if not isinstance(value, dict):
-                return ""
-            name = str(value.get("name") or "").strip()
-            stage = str(value.get("stage_name") or "").strip()
-            desc = str(value.get("stage_desc") or "").strip()
-            return " · ".join(x for x in (name, stage or desc) if x)
-
-        def thread_value(value):
-            if not isinstance(value, dict):
-                return ""
-            name = str(value.get("name") or value.get("id") or "").strip()
-            note = str(value.get("chain_note") or "").strip()
-            if not note and (value.get("written_count") is not None or value.get("unwritten_count") is not None):
-                note = "已写 %s 条 / 未写 %s 条" % (value.get("written_count", 0), value.get("unwritten_count", 0))
-            return " · ".join(x for x in (name, note) if x)
-
-        old_arc_text, new_arc_text = arc_value(old_arc), arc_value(new_arc)
-        if old_arc_text or new_arc_text:
-            rows.append({"key": "arc:context", "entity": "", "label": "弧阶段",
-                         "previous": side(old_arc_text, status="已发生归属") if old_arc_text else {},
-                         "current": side(new_arc_text, status="本段计划") if new_arc_text else {},
-                         "status": "both" if old_arc_text and new_arc_text else ("previous" if old_arc_text else "current"),
-                         "actionable": old_arc_text != new_arc_text})
-        old_thread_text, new_thread_text = thread_value(old_thread), thread_value(new_thread)
-        if old_thread_text or new_thread_text:
-            rows.append({"key": "thread:context", "entity": "", "label": "叙事线程",
-                         "previous": side(old_thread_text, status="已发生归属") if old_thread_text else {},
-                         "current": side(new_thread_text, status="本段承接") if new_thread_text else {},
-                         "status": "both" if old_thread_text and new_thread_text else ("previous" if old_thread_text else "current"),
-                         "actionable": old_thread_text != new_thread_text})
-        return rows
-
-    sections = []
-    for key, title, rows in (("plot", "情节段", plot_rows()),
-                             ("characters", "人物", character_rows()),
-                             ("locations", "场景位置", location_rows()),
-                             ("arc_thread", "弧与线程", arc_thread_rows()),
-                             ("promises", "承诺", promise_rows()),
-                             ("questions", "待解问题", question_rows())):
-        if rows:
-            protagonist = next((row for row in rows if row.get("entity") in current_chars
-                                and current_chars[row["entity"]].get("group") == "protagonists"), None)
-            reconcile = previous.get("reconcile") or {}
-            previous_count = sum(1 for row in rows if row.get("previous"))
-            current_count = sum(1 for row in rows if row.get("current"))
-            change_count = sum(1 for row in rows if row.get("actionable") or row.get("change_kind")
-                               or any(isinstance(field, dict) and field.get("expected_to")
-                                      for side_name in ("previous", "current")
-                                      for field in ((row.get(side_name) or {}).get("fields") or [])))
-            # 首屏只打开当前写作简报；人物/位置/承诺/问题/弧线程统一在完整审计中按需查看。
-            default_visible = key == "plot"
-            sections.append({
-                "id": key,
-                "title": title,
-                "summary": (str(change_count) + " 项变化") if change_count else "",
-                "previous_count": previous_count,
-                "current_count": current_count,
-                "change_count": change_count,
-                "default_visible": default_visible,
-                "collapsed_preview": protagonist if key == "characters" else rows[0],
-                "rows": rows,
-                # reconcile 描述的是上一 Plot 的整体对账，只在主情节段组显示一次，
-                # 其它组保留行级变化而不重复刷同一枚徽章。
-                "status": {"kind": reconcile.get("kind", ""), "stale": bool(reconcile.get("stale"))}
-                           if reconcile and key == "plot" else {},
-                "detail": reconcile.get("summary", "") if reconcile and key == "plot" else "",
-            })
-    return {
-        "previous": {"plot_id": previous.get("plot_id") or "",
-                     "plot_name": previous.get("plot_name") or previous.get("plot_id") or "",
-                     "chapter_num": int(previous.get("chapter_num") or 0),
-                     "reconcile": previous.get("reconcile") or {}},
-        "current": {"plot_id": (current.get("plot") or {}).get("id") or "",
-                    "plot_name": (current.get("plot") or {}).get("name") or "",
-                    "chapter_num": int(chapter_num or 0)},
-        "sections": sections,
-        "has_previous": bool(previous.get("plot_id") or previous.get("plot_name") or previous.get("facts")),
-        "has_current": bool(current.get("plot")),
-    }
-
-
 @bp.route("/api/desk/chapters/<book_id>")
 def desk_chapters_api(book_id):
-    """写作台正文 JSON：从磁盘现读已写章节+草稿（供前端轮询刷新右侧，修「agent 写完不显示」）。
+    """写作台正文 JSON：从磁盘现读已写章节+草稿（供前端轮询刷新，修「agent 写完不显示」）。
 
     附带 plot_run：当前 Plot Run 上下文（下一个未写情节段 + 弧目标 + 线程状态 + 承诺 +
-    字数余量），以及 comparison：上一段/本段共享行模型的三列展示投影。组装逻辑与 Agent
-    侧共用 agent_tools._build_plot_run/_next_plot，保证 UI 显示的就是 agent 实际会写的那一段。
+    字数余量 + **章内 staged 覆盖后的 cast_pack**）。组装逻辑与 Agent 侧共用
+    agent_tools._build_plot_run/_next_plot，保证 UI 显示的就是 agent 实际会写的那一段。
+
+    顶部两栏只吃这几个字段：`plot_run`（本段：情节段名/状态/primary_turn/roles/words）、
+    `recent_plot_outcome.plot_summary`（承接）、`writing_chapter`（待写章号）、
+    `cast_events` + `plot_run.cast_pack`（角色状态）。
+    旧的 comparison / past / current / future / selection / audit / state_revision 已删：
+    它们只服务那张已移除的三列对照矩阵，其中 audit 每 3 秒要读令牌账本与任务事件，
+    在单线程 Flask 上是纯浪费。
     """
     cur = 0
     try:
@@ -644,6 +183,32 @@ def desk_chapters_api(book_id):
     plot_run = None
     recent_plot_outcome = None
     planning = {}
+    # 待写章节号：`current_chapter` 是**已完成**章号，正在进行/即将写的章是它 +1
+    # （草稿带着章号时以草稿为准）。顶部「本段」卡要显示的是待写章，不是已完成章。
+    draft_chapter_num = 0
+    try:
+        _dp = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")
+        if os.path.exists(_dp):
+            with open(_dp, encoding="utf-8") as _fh:
+                draft_chapter_num = int((json.load(_fh) or {}).get("chapter_num") or 0)
+    except Exception:
+        pass
+    writing_chapter = draft_chapter_num if draft_chapter_num > cur else cur + 1
+    # 章内已上报的人物变化（每人最近一条）：写作台右栏「动作」一行的数据来源。
+    # 刻意在 desk 侧单独组装而不去改 agent_tools._staged_cast_projection——那个函数同时喂
+    # Writer 上下文，它的 _dyn_of 只给 5 个动态字段「防噪音」，塞事件会污染写入提示词。
+    cast_events = {}
+    try:
+        from libraries.plot_run_state import load_staged
+        for _delta in (load_staged(book_id).get("plot_deltas") or []):
+            _ch = int((_delta or {}).get("chapter_num") or 0)
+            for _row in ((_delta or {}).get("character_changes") or []):
+                _name = str((_row or {}).get("name") or "").strip()
+                _evs = [e for e in ((_row or {}).get("events") or []) if isinstance(e, dict)]
+                if _name and _evs:
+                    cast_events[_name] = {**_evs[-1], "chapter": _ch}
+    except Exception as _exc:  # noqa: BLE001 — 事件只是「动作」行的补充，读不到不影响其它
+        log.warning("组装 cast_events 失败 book=%s: %s", book_id, _exc)
     try:
         from agent_tools import _build_plot_run, _draft_plot_ids, _next_plot, _runtime_projection
         from libraries.storyline import load_storyline
@@ -665,9 +230,15 @@ def desk_chapters_api(book_id):
                 from libraries.plot_run_state import load_staged
                 plot_run["cast_pack"] = _staged_cast_projection(
                     plot_run.get("cast_pack") or {}, load_staged(book_id))
+                # 顶部「本段」卡要显示「写作重点」= 这一段唯一的主要戏剧变化（primary_turn，
+                # 新情节段的硬要求，也是人一眼能读懂的那句）。_build_plot_run 的 plot 投影里
+                # 没有它（prepare_plot_run 是在 execution 上另加的），这里**在 desk 侧补**而不是
+                # 改 _build_plot_run——那个 dict 会进 commit_token 的 context_fingerprint，
+                # 加字段会让在途已签发的令牌全部失效，代价远大于收益。
+                plot_run["plot"]["primary_turn"] = str(getattr(p, "primary_turn", "") or "")
+                plot_run["plot"]["hook_points"] = list(getattr(p, "hook_points", None) or [])
             event_bridge = next((b for b in reversed((draft or {}).get("bridges") or [])
-                                 if isinstance(b, dict) and b.get("plot_id")
-                                 and (b.get("facts") or b.get("character_events"))), None)
+                                 if isinstance(b, dict) and b.get("plot_id")), None)
             if event_bridge:
                 recent_plot_outcome = _plot_outcome(event_bridge, tl,
                                                     int((draft or {}).get("chapter_num") or 0))
@@ -706,10 +277,12 @@ def desk_chapters_api(book_id):
         logging.getLogger(__name__).warning("组装 plot_run 失败: %s", e)
     chapters = _chapters_from_disk(book_id, cur)
     if recent_plot_outcome is None:
+        # 承接来源放宽为「最近一个带 plot_id 的 bridge」：旧条件要求它有 facts/character_events，
+        # 于是「有正文有摘要、但本段没有人物事件」的 Plot 当不了承接来源，顶部承接会空掉。
         last_ch, last_bridge = None, None
         for ch in reversed(chapters):
             for b in reversed(ch.get("bridges") or []):
-                if isinstance(b, dict) and b.get("plot_id") and (b.get("facts") or b.get("character_events")):
+                if isinstance(b, dict) and b.get("plot_id"):
                     last_ch, last_bridge = ch, b
                     break
             if last_bridge:
@@ -717,66 +290,13 @@ def desk_chapters_api(book_id):
         if last_bridge:
             _tlc = tl if 'tl' in locals() else None
             recent_plot_outcome = _plot_outcome(last_bridge, _tlc, (last_ch or {}).get("num") or 0)
-    # 单快照 UI 投影：Past / Current / Future 与审计信息来自同一 revision。
-    rev = int((planning or {}).get("storyline_revision") or 0)
-    current_plot = (plot_run or {}).get("plot") or {}
-    future_horizon = (planning or {}).get("horizon") or {}
-    past = {
-        "plot_id": (recent_plot_outcome or {}).get("plot_id", ""),
-        "plot_name": (recent_plot_outcome or {}).get("plot_name", ""),
-        "reconcile": (recent_plot_outcome or {}).get("reconcile") or {},
-    }
-    future = {"plots": list(future_horizon.get("h1") or [])[:2],
-              "horizon": future_horizon, "questions": (planning or {}).get("story_questions") or []}
-    # 审计面取 **令牌账本**（prepare 时签发的权威取证记录）而非 raw `_build_plot_run`——
-    # 后者不产出 context_fingerprint/sample_receipt，会让取证面板恒空。
-    audit_record, tool_events = {}, []
-    try:
-        from libraries.plot_commit_tokens import latest_audit_record
-        audit_record = latest_audit_record(book_id, plot_id=str(current_plot.get("id") or ""),
-                                           storyline_revision=rev) or {}
-        if not audit_record:      # 当前 Plot 尚无令牌（未 prepare）：放宽到最近一条
-            audit_record = latest_audit_record(book_id) or {}
-        if audit_record.get("flow_id"):
-            from libraries.dsh_bridge import get_task_events
-            want = {"prepare_plot_run", "save_plot_draft"}
-            tool_events = [
-                {"name": e.get("name") or e.get("tool") or "", "ts": e.get("ts"),
-                 "ok": e.get("ok", True), "child_run_id": e.get("child_run_id") or ""}
-                for e in get_task_events(limit=300)
-                if (e.get("name") or e.get("tool")) in want
-                and (not e.get("flow_id") or e.get("flow_id") == audit_record.get("flow_id"))
-            ][-12:]
-    except Exception as _exc:  # noqa: BLE001
-        log.warning("写作台审计面取令牌记录失败 book=%s: %s", book_id, _exc)
-    audit = {
-        "context_fingerprint": audit_record.get("context_fingerprint", ""),
-        "storyline_revision": rev,
-        "execution_brief": (plot_run or {}).get("execution_brief") or {},
-        "cast_pack": (plot_run or {}).get("cast_pack") or {},
-        "sample_receipt": audit_record.get("sample_receipt") or {},
-        "token": {"plot_id": audit_record.get("plot_id", ""), "accepted": audit_record.get("accepted"),
-                  "issued_at": audit_record.get("issued_at"), "accepted_at": audit_record.get("accepted_at")},
-        "flow_id": audit_record.get("flow_id", ""), "child_run_id": audit_record.get("child_run_id", ""),
-        "tool_events": tool_events, "reconcile": past.get("reconcile") or {},
-    }
-    comparison = _build_compare_projection(
-        recent_plot_outcome,
-        {**(plot_run or {}), "planning": planning},
-        cur,
-    )
     return jsonify({"book_id": book_id, "current_chapter": cur,
+                    "writing_chapter": writing_chapter,
                     "chapters": chapters,
                     "plot_run": plot_run, "recent_plot_outcome": recent_plot_outcome,
-                    "comparison": comparison,
-                    "planning": planning,
-                    "state_revision": rev,
-                    "past": past,
-                    "current": {"plot": current_plot, "active_run": (plot_run or {}).get("run") or None,
-                                 "next_plot": current_plot if current_plot else None},
-                    "future": future,
-                    "selection": {"plan_plot_id": "", "bridge_plot_id": ""},
-                    "audit": audit})
+                    # 章内已上报的人物变化（每人最近一条）：顶部右栏「动作」一行的补充来源
+                    "cast_events": cast_events,
+                    "planning": planning})
 
 
 @bp.route("/books/storyline/write/<engine_id>")

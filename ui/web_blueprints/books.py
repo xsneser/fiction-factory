@@ -346,21 +346,67 @@ def delete_book(book_id):
 # 竞品规则层组件 UI 化：书详情运行时面板（只读/按需算）
 # ═══════════════════════════════════════════
 
+def _current_chapter_of(book_id: str) -> int:
+    """书的已完成章节号（book.json）。读不到按 0。"""
+    try:
+        with open(os.path.join("books", book_id, "book.json"), encoding="utf-8") as fh:
+            return int((json.load(fh) or {}).get("current_chapter") or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _protagonist_roles(book_id: str) -> dict:
+    """静态人物设定里 {name: (role, importance)}——用来判谁该默认展开。"""
+    try:
+        from agent_tools import load_tl
+        from libraries.storyline import get_characters
+        tl = load_tl(book_id)
+        if tl is None:
+            return {}
+        return {str(c.get("name") or ""): (str(c.get("role") or ""), c.get("importance"))
+                for c in (get_characters(tl.basic_info) or []) if c.get("name")}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("读取人物设定失败 book=%s: %s", book_id, e)
+        return {}
+
+
 @bp.route("/api/book/<book_id>/character-states")
 def api_character_states(book_id):
-    """书详情：角色状态面板（books/<id>/character_states.json，写作时落盘）。"""
+    """书详情：角色状态面板（books/<id>/character_states.json，写作时落盘）。
+
+    除状态机原样字段外，补三个**展示标记**（纯磁盘读 + 内存拼装，不调模型）：
+      · `role` / `is_protagonist`：来自静态人物设定——接口原本不返回 role，前端无从判断谁是主角，
+        只能按状态机顺序平铺，于是「主角 + 本章出场展开、其余折叠」在浏览器侧做不到；
+      · `appears_in_current_chapter`：`last_appeared_chapter == current_chapter`。
+        这里的「本章」= **最近已完成、已收章**的章节：正式状态机只在收章时落账
+        （`update_from_chapter` 按章正文更新出场/离线），把进行中的草稿扫进来会把
+        staged 事实与正式落账混为一谈——章内实时口径属于写作台，不属于这里。
+    """
     from libraries.character_state import CharacterStateMachine
     path = os.path.join("books", book_id, "character_states.json")
+    current_chapter = _current_chapter_of(book_id)
     if not os.path.exists(path):
-        return jsonify({"characters": [], "warnings": []})
+        return jsonify({"characters": [], "warnings": [], "current_chapter": current_chapter})
     try:
         csm = CharacterStateMachine()
         csm.load(path)
-        return jsonify({"characters": csm.to_dict().get("characters", []),
-                        "warnings": csm.warnings()})
+        bible = _protagonist_roles(book_id)
+        chars = []
+        for card in (csm.to_dict().get("characters") or []):
+            name = str(card.get("name") or "")
+            role, importance = bible.get(name, ("", None))
+            card = dict(card)
+            card["role"] = role
+            card["is_protagonist"] = bool(role == "主角" or importance == 1)
+            card["appears_in_current_chapter"] = bool(
+                current_chapter > 0 and int(card.get("last_appeared_chapter") or 0) == current_chapter)
+            chars.append(card)
+        return jsonify({"characters": chars, "warnings": csm.warnings(),
+                        "current_chapter": current_chapter})
     except Exception as e:
         logger.warning("读取角色状态失败: %s", e)
-        return jsonify({"characters": [], "warnings": [], "error": str(e)})
+        return jsonify({"characters": [], "warnings": [], "error": str(e),
+                        "current_chapter": current_chapter})
 
 
 @bp.route("/api/book/<book_id>/promises")

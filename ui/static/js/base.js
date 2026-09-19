@@ -92,14 +92,19 @@
         })();
 
 // Accordion toggle（事件委托：SPA 换入新内容后依然生效，也避免重复绑定）。
-// accordionSet 挂全局供页面编程展开；header 内带 [data-acc-hint] 时同步翻转「展开 ▸ / 收起 ▾」标签。
+// accordionSet 挂全局供页面编程展开。同步三件事：
+//   ① body 的 .show；② [data-acc-hint] 的「展开/收起」文案；③ **箭头本身**。
+// ③ 是此前漏的：`.sl-chev` 是静态文本 ▸，折叠区展开后箭头不变，所有手风琴都受影响。
         function accordionSet(header, open) {
             var body = header && header.nextElementSibling;
             if (!body) return;
             var show = (open === undefined) ? !body.classList.contains('show') : !!open;
             body.classList.toggle('show', show);
+            header.setAttribute('aria-expanded', show ? 'true' : 'false');
             var hint = header.querySelector('[data-acc-hint]');
             if (hint) hint.textContent = show ? '收起 ▾' : '展开 ▸';
+            var chev = header.querySelector('.sl-chev');
+            if (chev) chev.textContent = show ? '▾' : '▸';
         }
         document.addEventListener('click', function(e) {
             var h = e.target.closest('.accordion-header');

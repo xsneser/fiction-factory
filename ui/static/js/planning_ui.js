@@ -7,10 +7,6 @@
     if (!v || typeof v !== 'object') return String(v || '');
     return v.intent || v.question || v.title || v.name || v.goal || v.summary || JSON.stringify(v);
   }
-  function list(items, empty) {
-    items = Array.isArray(items) ? items : (items ? [items] : []);
-    return items.length ? '<ul>' + items.map(function (x) { return '<li>' + esc(textOf(x)) + '</li>'; }).join('') + '</ul>' : '<div class="planning-empty">' + esc(empty) + '</div>';
-  }
   function validCharacterIntents(items) {
     return (Array.isArray(items) ? items : []).filter(function (x) {
       return x && typeof x === 'object' && String(x.intent || '').trim();
@@ -25,22 +21,18 @@
       return !terminal[status] && String(text).trim();
     });
   }
-  function compareHasCurrentPlot() {
-    var compare = document.getElementById('wf-compare');
-    return !!(compare && !compare.hidden && window.__NE_COMPARE_HAS_CURRENT__);
-  }
-  function characterIntents(items) {
-    items = validCharacterIntents(items);
-    if (!items.length) return '<div class="planning-empty">暂无人物意图</div>';
-    return '<div class="planning-character-intents">' + items.map(function (x) {
-      return '<article><b>' + esc(x.name || x.character || '人物') + '</b><span>当前目标：' + esc(x.intent) + '</span></article>';
-    }).join('') + '</div>';
+  /* 顶部两栏里有没有「本段待写」——决定规划横幅怎么说话（H0 与本段标题不同时显示）。
+     信号由写作台模板的 renderLatestContext() 维护（旧的 __NE_COMPARE_HAS_CURRENT__ 已随三列
+     对照区一起删除，别再用那个名字）。 */
+  function hasCurrentPlotContext() {
+    var box = document.getElementById('wf-latest-context');
+    return !!(box && !box.hidden && window.__NE_LATEST_HAS_CURRENT__);
   }
   var panel = document.getElementById('planning-state-panel');
   if (!panel) return;
   var bookId = panel.getAttribute('data-book-id') || '';
-  /* 写作台 = compact 提示条；书详情 = 完整 4 卡矩阵。这里只观察规划，不发起规划任务。 */
-  var compact = panel.getAttribute('data-compact') === '1';
+  /* 规划 UI 只剩写作台的提示条这一种形态：书详情那份完整四卡矩阵已删（agent 决策视图，
+     人不看）。这里只观察规划，不发起规划任务。 */
   var latestData = null;
   function reasonLabel(codes) {
     var labels = {
@@ -56,16 +48,6 @@
   }
   function storylineRevision(sl) {
     return Number(sl && (sl.storyline_revision != null ? sl.storyline_revision : sl.revision) || 0);
-  }
-  function lastReplanLabel(value) {
-    if (!value || typeof value !== 'object') return String(value || '');
-    var bits = [];
-    if (value.at) bits.push(String(value.at));
-    if (Array.isArray(value.reason_codes) && value.reason_codes.length) {
-      bits.push(reasonLabel(value.reason_codes));
-    }
-    if (value.from_revision != null) bits.push('从版本 ' + value.from_revision);
-    return bits.join(' · ');
   }
   var storylineSyncInFlight = null;
   var storylineSyncTarget = 0;
@@ -117,14 +99,9 @@
     try {
       document.getElementById('planning-revision').textContent = '故事线版本 ' + (snap.revision || 0);
       renderChecklist(ps.checklist);
-      if (compact) {
-        renderCompact(data, ps, hz, snap);
-      } else {
-        var replanLabel = lastReplanLabel(ps.last_replan);
-        document.getElementById('planning-panel-body').innerHTML =
-          '<div class="planning-metrics"><div><b>' + fmt(ps.written_until_word) + '</b><span>已写</span></div><div><b>' + fmt(ps.committed_until_word) + '</b><span>已承诺</span></div><div><b>' + (snap.remaining_plot_count || 0) + '</b><span>可执行情节段</span></div></div>' +
-          '<div class="planning-grid"><section><h4>现在执行</h4>' + list(hz.h0, '暂无可执行情节段') + '</section><section><h4>待解决问题</h4>' + list(openStoryQuestions(ps.story_questions), '暂无待解决问题') + '</section><section><h4>人物当前意图</h4>' + characterIntents(ps.character_intents) + '</section><section><h4>最近续规划</h4>' + list(replanLabel ? [replanLabel] : [], '尚未续规划') + '</section></div>';
-      }
+      /* 只有写作台的紧凑提示条这一种形态：完整四卡规划矩阵已从书详情移除
+         （agent 决策视图，人不看）。 */
+      renderCompact(data, ps, hz, snap);
     } catch (err) {
       var body = document.getElementById('planning-panel-body');
       if (body) body.innerHTML = '<div class="planning-error">规划面板渲染失败，状态仍已同步；请刷新页面重试。</div>';
@@ -158,7 +135,7 @@
   }
 
   function trunc(v, n) { var s = String(v == null ? '' : v); return s.length > n ? s.slice(0, n) + '…' : s; }
-  /* 写作台 compact：只保留会影响当前写作决策的提示，详情页才展示完整规划矩阵。 */
+  /* 只保留会影响当前写作决策的提示（边界告警 + 规划门禁 + 少量方向/问题/人物意图）。 */
   function renderCompact(data, ps, hz, snap) {
     panel.classList.add('compact');
     panel.hidden = false;
@@ -192,7 +169,7 @@
     }
 
     /* 对照区已有本段时会直接显示当前 Plot；只在它没有可用当前段时保留 H0 兜底。 */
-    var currentHint = !compareHasCurrentPlot() && h0Name
+    var currentHint = !hasCurrentPlotContext() && h0Name
       ? '<span class="pm-h0">下一段：' + esc(h0Name) + '</span>' : '';
     if (!currentHint && !alerts) {
       panel.hidden = true;
@@ -217,9 +194,9 @@
     }
     if (typeof previousReceiver === 'function') previousReceiver(e);
   };
-  /* 对照区异步出现/消失时重绘提示条，避免首屏竞态让 H0 与本段标题同时显示。 */
-  window.addEventListener('ne:compare-updated', function () {
-    if (!compact || !latestData) return;
+  /* 顶部两栏异步就绪时重绘提示条，避免首屏竞态让 H0 与本段标题同时显示。 */
+  window.addEventListener('ne:current-context-updated', function () {
+    if (!latestData) return;
     var ps = latestData.planning_state || {};
     renderCompact(latestData, ps, ps.display_horizon || {}, latestData.storyline_snapshot || {});
   });

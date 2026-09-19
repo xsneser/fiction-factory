@@ -4,7 +4,7 @@
 {% endblock %}
 {% block content %}
 {% from "_flow_stepper.html" import status_badge %}
-<link rel="stylesheet" href="/static/css/story_line.css?v=13">
+<link rel="stylesheet" href="/static/css/story_line.css?v=17">
 <h1 id="book-title" style="cursor:pointer" title="点击编辑书名">📖 {{ book.title or '(待定)' }}</h1>
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
@@ -41,10 +41,42 @@
     <div class="detail-item"><div class="label">状态</div><div class="value">{{ status_badge(book.status) }}</div></div>
 </div>
 
+{# ─── 增量规划面板已移除：它是 agent 决策视图（H0/H1/H2、待解问题、人物意图、续规划记录），
+       人不看。但**故事线 Gantt 需要规划数据**（已写字数红线、承诺边界黄线、H1/H2 方向条带），
+       所以这里不加载 planning_ui.js，只用一个极简只读 loader 把规划状态喂给下面那段脚本。 ─── #}
 {% if storyline %}
-  {% set book_id = book.book_id %}
-  {% set planning_write_mode = false %}
-  {% include "_planning_ui.html" %}
+<script>
+(function () {
+    var BOOK = "{{ book.book_id }}";
+    function pull() {
+        return fetch('/api/storyline/' + encodeURIComponent(BOOK) + '/planning-state')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d || !d.ok) return;
+                window.__PLANNING_STATE__ = d.planning_state || {};
+                window.__PLANNING_BOUNDARY__ = d.boundary || {};
+                /* 与 planning_ui.js 同一对全局变量 + 同一个事件：Gantt 无论先初始化还是后初始化都能拿到数据 */
+                window.dispatchEvent(new CustomEvent('ne:planning-updated', {detail: d}));
+                var rev = Number((d.storyline_snapshot || {}).revision || 0);
+                var cur = Number((window.__BOOK_STORYLINE__ || {}).storyline_revision || 0);
+                if (rev > cur) {
+                    return fetch('/api/storyline/' + encodeURIComponent(BOOK))
+                        .then(function (r) { return r.json(); })
+                        .then(function (s) {
+                            if (s && s.ok && s.storyline) window.__BOOK_STORYLINE__ = s.storyline;
+                            window.dispatchEvent(new CustomEvent('ne:storyline-updated', {detail: {storyline: window.__BOOK_STORYLINE__, revision: rev}}));
+                        });
+                }
+            })
+            .catch(function () { /* 取不到只影响 Gantt 的规划叠层，不影响页面 */ });
+    }
+    pull();
+    /* 只有「续规划提交」才改规划事实，其它 desk 刷新不必重取 */
+    window.addEventListener('ne:desk-refresh', function (e) {
+        if (((e && e.detail) || {}).name === 'plan_committed') pull();
+    });
+})();
+</script>
 {% endif %}
 
 {# ─── 设定：直铺可编辑表单（原 world_card.html 迁移；故事线已内嵌于两字段集之间） ─── #}

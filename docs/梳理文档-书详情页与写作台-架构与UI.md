@@ -10,9 +10,12 @@
 
 ## 一、两个页面的定位（一句话）
 
-- **书详情页** = 书的「档案 + 只读诊断台」：设定/故事线/章节的**查看**入口，叠加规则层运行时面板（角色状态、承诺台账、质量诊断、历史快照），**不写正文**。
-- **写作台** = 书的「生产 + 驾驶舱」：左侧 Plot Run + 故事线 Gantt 决定「这一轮写什么、写到哪」，右侧分页阅读器实时展示「Agent 写了什么」，通过侧栏 Agent（dsh）逐情节段续写。
-- 两者共享三块：🧭 增量规划面板（_planning_ui.html）、📋 故事线 Gantt（story_line.js）、侧栏 Agent（agent_panel.js）。
+- **书详情页** = 书的「档案 + 角色状态台」：设定/故事线/章节的**查看**入口 + 🎭 角色状态（默认展开），**不写正文**。
+  （2026-09-19：承诺台账 / 诊断 / 快照留痕 / 决策中心 四个面板已从页面删除——它们是 agent 决策与排障视图，人不看；
+  底层 `scan_promises` / `diagnose_*` / `chapter_quality_gate` / `book_snapshot` 全部保留，仍被 agent 工具与收章链路使用。）
+- **写作台** = 书的「生产 + 驾驶舱」：顶部两栏（本段最新 + 角色状态）回答「这一段写什么、人现在什么状态」，下方左=故事线 Gantt、右=分页阅读器实时展示「Agent 写了什么」，通过侧栏 Agent（dsh）逐情节段续写。
+- 两者共享：📋 故事线 Gantt（story_line.js，两页都从 `/api/storyline/<id>/planning-state` 取规划叠层）、侧栏 Agent（agent_panel.js）。
+  🧭 规划提示条（`_planning_ui.html` + planning_ui.js）**只挂写作台**；书详情改为一段不渲染的极简 loader 取同样的数据喂 Gantt。
 
 ### 1.1 路由表
 
@@ -43,29 +46,37 @@
 | 3 | 顶部操作行 | ✍️ 进入写作台（有 storyline 时，绿）/ 🚀 上架·导出（蓝）/ 删除（confirm 表单） |
 | 4 | plots 兜底横幅 | 仅 `phase=='plots'` 出现：「📐 故事线待确认」+ 🔍 预览故事线 + ✅ 确认弧+情节段（→ `POST /api/book/<id>/confirm-storyline`，翻 ready）。注释明示：正常新书提交即 ready，此横幅只剩 config/补弧失败兜底用（`book_detail.html:20-32`） |
 | 5 | detail-grid 基本信息 | 笔名 / 题材标签（`world_building.tags` 优先，无则 genre+sub_genre）/ 男频女频（target_audience）/ 基调·视角（tone·pov）/ 进度（total_words 字 · current_chapter 章）/ 状态 badge |
-| 6 | 🧭 增量规划面板 | `_planning_ui.html`（planning_write_mode=false）：指标（已写/已承诺/可执行 plots）+ H0/H1/H2 + 开放问题 + 人物意图 + 最近续规划；replan 抽屉「🔭 规划下一段」+ 版本冲突 modal（详见 §四） |
+| ~~6~~ | ~~🧭 增量规划面板~~ | **已删**（agent 决策视图）。书详情改为 `book_detail.html:44-76` 的一段**不渲染** loader：取 `/api/storyline/<id>/planning-state` → 设 `window.__PLANNING_STATE__`/`__PLANNING_BOUNDARY__` → 派发 `ne:planning-updated`，只为保住第 12 项 Gantt 的规划叠层 |
 | 7 | 设定编辑表单 | `_world_edit_form.html` 直铺可编辑（人物/世界观/基调等） |
-| 8 | 运行时面板 ×4（手风琴） | `_book_runtime_panels.html`：🎭 角色状态 / ⏳ 读者承诺台账 / 🔍 质量诊断 / 🗂 历史快照（详见 §2.3） |
+| 8 | 🎭 角色状态（手风琴，**默认展开**） | `_book_runtime_panels.html`：仅此一个面板。每卡三行 位置/状态/动作；主角与本章出场展开、其余收进「其他角色 N 人」（详见 §2.3） |
 | 9 | 📝 简介 | `basic_info.synopsis` 卡片 |
 | 10 | ✍️ 进行中草稿 | 手风琴展示 `draft_chapter.json` 未固化文本（写作台中断保留，只读） |
 | 11 | 📑 目录 toc-split | 左=章列表（第 N 章: 标题 + 📊 字数·时间，独立滚动）；右=章节展开（标题/📝 摘要/🔍 审查 tag 分·通过·问题摘要/正文 pre）。审查 tag 来自 `ch.review` 服务端数据 |
 | 12 | 📋 故事线 Gantt | `#detail-storyline`（`story_line.js` 挂载），**默认折叠**：容器高度 0，首次点开 `#sl-toggle` 时才 `StoryLine.init`（`book_detail.html:125-143`）；`ne:planning-updated` 后重初始化 |
 | 13 | 空态 | 无章节时「✍️ 还没有生成章节 → 进入写作台」 |
 
-### 2.3 运行时面板与 API（竞品规则层组件 UI 化，全部只读/按需算）
+### 2.3 角色状态面板与 API（2026-09-19 收缩：只剩这一个）
 
 | 面板 | 触发 | 端点 | 规则层 |
 |---|---|---|---|
-| 🎭 角色状态 | 进页自动 | `GET /api/book/<id>/character-states` | `libraries/character_state.py`（`character_states.json` 动态态 + 事件台账；推断字段 conflict/secret/emotional_pressure 黄色高亮区分，禁 agent 直写） |
-| ⏳ 读者承诺台账 | 进页自动 | `GET /api/book/<id>/promises` | `libraries/promise_ledger.py:80 scan_promises` → 分组 🔴逾期/🔵推进/⚪停滞/✅近期兑现 + 建议（详见 §六.1） |
-| 🔍 质量诊断 | 点「▶ 运行诊断」 | `POST /api/book/<id>/diagnose` | `agent_tools.diagnose_continuity/retention/promises`（**MCP 同源**，注释明示）→ 🧩连续性扫描/📈追读诊断/⏳承诺台账 + 💡建议（详见 §六.2） |
-| 🗂 历史快照 | 点「🔄 加载快照」 | `GET /api/book/<id>/snapshots` → `…/diff` → `…/rollback` | `libraries/book_snapshot.py`（写工具落库前自动留底，最多 10 份；回滚前再留底一次保证可逆） |
+| 🎭 角色状态 | 进页自动 | `GET /api/book/<id>/character-states` | `libraries/character_state.py`（`character_states.json`：章末落账的动态态 + 事件台账） |
 
-另有两个章节级规则端点（函数就绪于 `_book_runtime_panels.html`，按 `rp-review-<n>/rp-deai-<n>/rp-tags-<n>` id 挂接，当前 book_detail 无显式按钮——审查结果以服务端 tag 呈现于目录右栏）：
+**已删除的四个面板与其端点**（底层能力全部保留，只是没有浏览器入口——它们仍被 agent 工具与收章链路使用）：
 
-- `POST /api/book/<id>/chapter/<n>/review` → `libraries/reviewer.py ContentReviewer`（单章审查：passed/score/summary/issues[]）
-- `POST /api/book/<id>/chapter/<n>/deai` → `libraries/de_ai.py DeAIEngine`（去 AI 味，替换/断句计数）
-- `POST /api/book/<id>/chapter/<n>/punch-points` → `libraries/tag_generator.py tag_chapter`（爽点标注，落盘 tags.json）
+| 原面板 | 原端点 | 底层仍在用它的地方 |
+|---|---|---|
+| 承诺台账 | `GET /api/book/<id>/promises` | `diagnose_promises` / 章质量门禁 / 写作上下文 / 收章台账更新 |
+| 诊断 | `POST /api/book/<id>/diagnose` | `chapter_quality_gate`（收章后自动跑）/ 决策点聚合 |
+| 快照留痕 | `GET/POST /api/book/<id>/snapshots…` | `agent_tools._wrap_book_lock()` 在每个写工具前自动留底 |
+| 决策中心 | `GET /api/book/<id>/decision-center` | `diagnose_story_window` / `chapter_quality_gate.decision_points` |
+
+同时删除的三个孤儿函数（书详情页从未有按钮调用它们）：`runChapterReview` / `runChapterDeai` / `runPunchPoints`；
+它们对应的三个章节级端点 `…/review` `…/deai` `…/punch-points` 仍在后端保留。
+
+**角色状态接口补的三个展示标记**（`books.py api_character_states`，纯磁盘读 + 内存拼装）：
+`role`、`is_protagonist`（静态设定的 `role==主角` 或 `importance==1`）、`appears_in_current_chapter`
+（`last_appeared_chapter == current_chapter`；「本章」= **最近已完成、已收章**的章节，不扫进行中草稿——
+章内实时口径属于写作台）。没有它们，前端无从判断谁该默认展开。
 
 ---
 
@@ -81,46 +92,47 @@
 |---|---|---|
 | 1 | 面包屑 + h1 ✍️ 写作台 | 书库 › 书名 › 写作台 |
 | 2 | info_bar | 书名 · 笔名 · 进度（第 N 章 · 共 M 字）· 状态 badge · 每章 N 字 |
-| 3 | 🧭 增量规划面板 | 只读规划状态（H0 / 已写·已承诺 / 边界）；规划由章级写作 Flow 自动完成，无手工抽屉 |
-| 3.5 | ⬅➡ 情节段对照区（全宽） | `#wf-compare`，置于**两栏布局之上**（继续写正文之上）：左栏 `#wf-cmp-prev-body` = 上一情节段已提交的事实；右栏 `#wf-cmp-next-body` = 本情节段的写前上下文。数据来自 `/api/desk/chapters/<bid>`（§3.3）。原 Past/Current/Future 三卡与 🔭 方向入口、Agent 检查器、跟随写作开关均已删除 |
+| 3 | 🧭 规划提示条 | 只读边界告警 + 规划门禁 + 少量方向/问题/人物意图提示（`_planning_ui.html`，写作台唯一形态）；规划由章级写作 Flow 自动完成，无手工抽屉 |
+| 3.5 | 顶部两栏（全宽） | `#wf-latest-context`，置于**两栏布局之上**：左 `#wf-current-plot` = 本段（仅最新：情节段名 / 待写·第 N 章 / 写作重点=primary_turn / 承接=上一段 plot_summary / 出场角色·目标字数）；右 `#wf-current-cast` = 角色状态（每卡 位置/状态/动作 三行，主角与本段出场展开、`referenced` 收进「其他角色 N 人」）。数据来自 `/api/desk/chapters/<bid>`（§3.3） |
 | 4 | 左栏 editor-left | 可拖拽分栏（20%–70%，localStorage `ne_storyline_w` 持久化，`storyline_write_flow.html:266-297`）；本栏只剩故事线 Gantt |
 | 6 | 📋 故事线 Gantt | `#editor-storyline`（story_line.js 挂载，scrollable 模式，含缩放控件） |
 | 7 | 右栏 editor-mid | 顶部 ✍️ 继续写正文卡（`runWritingTask` → 侧栏 Agent；运行态 ⏳ 续写运行中… / ⏹ 停止）；下方分页阅读器 |
 | 8 | 分页阅读器 | `ReaderCore` 双容器推入动画；章节渲染把正文按情节段包成 `span.m-bridge[data-bridge=plot_id]`（草稿加徽标）；工具栏 📑目录/⬅上一页/「第 N 章 · 第 N 页」/下一页➡；目录抽屉右侧滑出 |
 | 9 | 双向高亮 | 点 Gantt 情节段/弧 → 右栏跳页高亮对应正文（`sl:plot-click`/`sl:outline-click` → `highlightBridgeContent`/`highlightOutlineContent`）；agent 高亮 `StoryLine.highlight` 反向 |
-| 10 | 轮询 | 进页立即 + 3s 轮询 `/api/desk/chapters/<bid>`：刷新对照区两栏（`renderCompare`）与章节（`Reader.setChapters` 保留当前页/高亮、`_activePid` 恢复） |
+| 10 | 轮询 | 进页立即 + 3s 轮询 `/api/desk/chapters/<bid>`：刷新顶部两栏（`renderLatestContext`，fingerprint 未变不重建 DOM）与章节（`Reader.setChapters` 保留当前页/高亮、`_activePid` 恢复） |
 
-### 3.3 ⬅➡ 情节段对照区（当前执行简报 | 上段承接 | 完整审计）
+### 3.3 顶部两栏：本段（仅最新） + 角色状态
 
-渲染入口仍是 `renderCompare(prev, next, chapterNum, comparison)`，页面不再把所有状态平铺成对称审计表，而是由 desk API 在同一次响应中生成 `comparison` 投影，再由 `renderCompareTable` 生成共享结构。对照区仍位于 `.editor-split` 之上，轮询仍只调用一次 `renderCompare`，所以不会因两套渲染器的高度差而错位。
+渲染入口 `renderLatestContext(d)`（单一入口，轮询每轮只调一次；fingerprint 变化才重绘）。左栏读 `plot_run`，
+右栏读 `plot_run.cast_pack` + `cast_events`。
 
-默认信息层级是：
+**左栏字段（全部来自 desk 响应，不做任何推断）**
 
-1. **本段 · 待写**：名称只在页眉出现一次；`execution_brief` 展示戏剧目标、冲突来源、人物选择、不可逆变化、读者问题和结尾钩子，所有 expected 内容明确是「预计 / 写前计划」。
-2. **上一段 · 已发生**：只显示 agent 上报的结构化事实和承接约束，并在情节段组显示 `clean / prediction_drift / missed_prediction / unpredicted_fact` 对账结果。
-3. **完整状态审计**：人物、场景位置、弧与线程、承诺、待解问题按需展开；没有变化的组不在首屏占位。
+| 显示 | 数据路径 |
+|---|---|
+| 情节段名 | `plot_run.plot.name`（缺失 → 「暂无待写情节段」） |
+| 状态 · 章号 | `plot_run.run.status`（`Created→待写`/`Drafting→写作中`）+ `data.writing_chapter`（**待写**章号 = `draft.chapter_num` 或 `current_chapter+1`） |
+| 写作重点 | `plot_run.plot.primary_turn`（这一段**唯一**的主要戏剧变化；新情节段的硬要求） |
+| 承接 | `recent_plot_outcome.plot_summary`（agent 自己写的 50~120 字摘要；缺失则不显示该行） |
+| 本段 | `plot_run.plot.roles` + `plot_run.plot.words` |
 
-> ⚠️ 现行写 profile 只有 `prepare_plot_run` / `save_plot_draft` 两个工具；
-> `comparison` 只做确定性展示归一化，不写盘、不调用 LLM，不改变 Writer 看到的故事事实。详见 `docs/架构总览.md` §六。
+**右栏字段（位置 / 状态 / 动作 三行）**
 
-| 区域 | 默认用途 | 已发生侧 | 待写侧 |
-|---|---|---|---|
-| 情节段 | 当前执行简报 | 上一段已上报的选择、信息、关系、资源 | 当前 `execution_brief` 与 `expected_facts` |
-| 人物 | 当前相关人物与预期变化 | 上一段 `character_events` 的事实 | `cast_pack` 累计状态 + 当前段预计变化 |
-| 场景位置 | 位置变化 | 带人物归属的已发生位置 | 当前人物位置或明确预计去向 |
-| 弧与线程 | 结构承接 | 历史 Plot 可查到的弧/线程归属 | `arc_goal` / `thread` |
-| 承诺 | 本段相关承诺 | 上一段 `promise_updates` | 当前 `promise_state` |
-| 待解问题 | 本段相关开放问题 | 上一段新增问题 | 当前 planning 的开放问题 |
+| 行 | 数据 | 说明 |
+|---|---|---|
+| 位置 | `dyn.location`（回退 `location`） | 章内上报的 `location_shift` 会覆盖正式状态并标「本章已上报」 |
+| 状态 | `dyn.power_level` / `dyn.arc_stage` / `dyn.relationship_to_mc` + 离线 >50 章警告 | 三个 chip；全空 → 「未记录」 |
+| 动作 | `dyn.goal`（回退 `goal`）+ `cast_events[名].to (+ reason)` | 数据模型里**没有** `action` 字段：`goal`= 当前目标，`cast_events` = 章内最近一条上报变化 |
 
-人物默认按“本段主角 → 本段主动出场 → 有预期变化 → 上段只出现”排序；只有名字而无动态、也不影响本段的 referenced 角色进入审计层。位置保留人物归属，避免把「甲从旧港移动到新城」压成无主体地点集合。承诺和问题按稳定 id 配对，缺 id 时才按规范化文本回退；新增、删除、重排不强行对齐。
+**口径与红线**
 
-> ⚠️ **数据口径**：
-> ① 左侧只来自 `recent_plot_outcome` / agent 上报事实，绝不从正文推断；
-> ② 右侧人物状态来自 `character_states.json` 的已收章累计值，章内未收章变化由 `_staged_cast_projection` 覆盖并标「本章已上报」；
-> ③ `dyn` 整体缺失标「状态未记录」，字段值为空串则不渲染该字段；`referenced` 人物没有动态状态时不误标缺失；
-> ④ expected 永远标为预计，`clean/drift/missed/unpredicted` 只作对账状态，不把预计变化伪装成事实；
-> ⑤ 没有数据的组不渲染 `0 项` 空卡，单侧数据不保留不可见列和固定高度空单元格；
-> ⑥ 地点只能由 `dyn.location` 与 `location_shift` 证明，不能生成“情节段目标地点”。
+> ⚠️ ① 角色状态来自**正式状态机 + 章内 staged 覆盖**（`_staged_cast_projection`），这是写作台比书详情「新一章」的原因；
+> ② `cast_events` 由 **desk 侧单独组装**（读 `staged_story_state.json` 的 `character_changes`），**刻意不改 `_staged_cast_projection`**——
+>    那个函数同时喂 Writer 上下文，它的 `_dyn_of` 只给 5 个动态字段「防噪音」，塞事件会污染写入提示词；
+> ③ 没有数据就如实说「未记录 / 暂无明确行动」，**绝不从 identity/personality 推断**，也不编「情节段目标地点」；
+> ④ 对账视图（`reconcile` / `expected_facts` / `state_missing`）已随三列对照区一起移出写作台；
+> ⑤ `primary_turn` 由 desk 侧注入 `plot_run["plot"]`（改 `_build_plot_run` 会动 `commit_token` 的 `context_fingerprint`，让在途令牌全部失效）；
+> ⑥ 顶部两栏的显隐信号是 `window.__NE_LATEST_HAS_CURRENT__` + `ne:current-context-updated`（planning_ui.js 靠它决定 H0 与本段是否同时显示）。
 
 ### 3.4 API 面（desk.py）
 
@@ -134,7 +146,7 @@
 
 ---
 
-## 四、共享组件：故事线 Gantt 与增量规划面板
+## 四、共享组件：故事线 Gantt 与规划提示条
 
 ### 4.1 故事线 Gantt（story_line.js，三泳道 + 字数轴）
 
@@ -144,11 +156,13 @@
 - **视觉要素**：弧树嵌套（parent 连线 + 层级缩进）、倒叙（琥珀）/插叙（绿）着色 + `narrative_target` ◉、情节段条颜色 = 所属线程色、父子情节段贝塞尔线、**设局→收局金色虚线**（长距离自动衰减透明度）、进度光标、承诺边界黄线（「已承诺至 N」）、H1/H2 意图卡片。
 - **点击行为**：弧/情节段条 click → `sl:outline-click` / `sl:plot-click`（bubbles，写作台消费做正文高亮）；tooltip 展示 字数/章号/线程/收局/出场/承诺。
 
-### 4.2 🧭 增量规划面板（planning_ui.js）
+### 4.2 🧭 规划提示条（planning_ui.js，**只剩写作台在用**）
 
-- **数据**：`GET /api/storyline/<bid>/planning-state` → `_planning_ui_payload`（`storyline.py:12-63`）：`planning_state`（written/committed 字数、horizon、story_questions、character_intents、last_replan）+ `storyline_snapshot`（revision/各计数/线程/promise_count）+ `boundary`（`detect_story_boundary`）+ `replan_preview`。
-- **UI**（`planning_ui.js:26-60`）：指标行（已写/已承诺/可执行 plots）+ 六格（H0 现在执行 / H1 下一段方向 / H2 远期意图 / 开放问题 / 人物意图 / 最近续规划）+ `boundary-banner`（⚠️ 临近规划边界：PLOTS_LOW 剩余情节段不足 / WORDS_LOW 承诺字数耗尽 / PLAN_INVALIDATED / MAJOR_CHARACTER_CHANGE / NEW_HIGH_PRIORITY_QUESTION）。
-- **Replan 抽屉**（🔭 规划下一段）：当前诊断 → 候选方向（2-3 个，可点选重生成）→ 待提交情节段 → 预览校验（validation.problems）→ 重拟/丢弃/确认并提交。提交走 `POST /api/storyline/<bid>/commit-plan`（`expected_revision` 乐观并发；stale → 版本冲突 modal 强制刷新重规划）。**预览不提交正式故事线**——planning 与写作是「先预览后确认」的分离管道。
+- **数据**：`GET /api/storyline/<bid>/planning-state` → `_planning_ui_payload`（`storyline.py:12-63`）：`planning_state`（written/committed 字数、horizon、story_questions、character_intents、last_replan）+ `storyline_snapshot`（revision/各计数/线程/promise_count）+ `boundary`（`detect_story_boundary`）。
+- **UI**：边界告警（🟡/🔴 `pm-boundary`，来自 `boundary.reason_codes` + 剩余段数/字余量）+ 规划门禁（⛔ `pm-alert-danger`，来自 `planning_state.checklist.gates.blocking`）+ 清单徽标 + 少量方向/问题/人物意图提示。
+  `window.NEPlanning` 只暴露 `refresh` / `syncStoryline`。
+- **2026-09-19 收缩**：书详情页那份 `data-compact="0"` 的完整四卡矩阵（指标行 + 现在执行/待解决问题/人物当前意图/最近续规划）与其渲染函数、CSS 已删——agent 决策视图，人不看。
+  书详情改为一段**不渲染**的 loader（`book_detail.html`）取同一端点，只为喂 Gantt 的规划叠层。手工 replan 抽屉早已移除（规划由章级 Flow 自主完成）。
 
 ---
 
@@ -177,6 +191,9 @@
 ---
 
 ## 六、供 LLM 研判的相似性观察（现行状态，非结论）
+
+> ⚠️ 2026-09-19：本章对比的两组**页面入口都已从书详情删除**（承诺台账 / 诊断面板 / 增量规划矩阵）。
+> 下面比的是**库层**能力（`scan_promises` / `diagnose_*` / `planning_state`），这些能力仍在，只是不再有人看的 UI。
 
 ### 6.1 ⏳ 读者承诺台账 vs 🧭 增量规划
 
@@ -221,8 +238,8 @@
 |---|---|
 | `ui/templates/book_detail.html` | 书详情页：操作行/基本信息/规划面板/设定表单/运行时面板/目录/故事线 Gantt 挂载；书名就地编辑(145-206)、Gantt 懒初始化(125-143)、plots 确认脚本(207-226) |
 | `ui/templates/storyline_write_flow.html` | 写作台：Plot Run 面板(345-393)、双向高亮(147-220)、拖拽分栏(234-266)、续写任务(268-339)、3s 轮询(396-448) |
-| `ui/templates/_book_runtime_panels.html` | 运行时面板 JS：角色状态/承诺台账/诊断/快照/审查/去AI/爽点（全部按 id 注入） |
-| `ui/templates/_planning_ui.html` + `ui/static/js/planning_ui.js` | 增量规划面板：指标/H0-H2/边界 banner/replan 抽屉/版本冲突 modal；`window.NEPlanning` 暴露 refresh/open/requestReplan |
+| `ui/templates/_book_runtime_panels.html` | **只剩角色状态**面板（默认展开、主角+本章出场展开）：`/character-states` → 位置/状态/动作三行 + 矛盾与压力折叠 + 事件台账折叠 |
+| `ui/templates/_planning_ui.html` + `ui/static/js/planning_ui.js` | 规划提示条（**只挂写作台**）：边界告警 + 规划门禁 + 清单徽标；`window.NEPlanning` 暴露 refresh/syncStoryline |
 | `ui/static/js/story_line.js` | 故事线 Gantt：adapt 数据适配(100-237)、三泳道渲染(253-676)、光标/边界/可变未来(678-717)、init(737)、highlight/scrollTo/setZoom(840-891) |
 | `ui/web_blueprints/books.py` | 书库/详情/删除 + 运行时 API：detail(139)、character-states(264)、promises(281)、diagnose(300)、snapshots(320)、chapter review/deai/punch-points(342-389) |
 | `ui/web_blueprints/desk.py` | 写作台：desk_chapters_api(76，plot_run 组装)、storyline_write_flow(157)、continue_book_page(403)、蓝图引擎流式端点 |
