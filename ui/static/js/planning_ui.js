@@ -21,19 +21,11 @@
       return !terminal[status] && String(text).trim();
     });
   }
-  /* 顶部两栏里有没有「本段待写」——决定规划横幅怎么说话（H0 与本段标题不同时显示）。
-     信号由写作台模板的 renderLatestContext() 维护（旧的 __NE_COMPARE_HAS_CURRENT__ 已随三列
-     对照区一起删除，别再用那个名字）。 */
-  function hasCurrentPlotContext() {
-    var box = document.getElementById('wf-latest-context');
-    return !!(box && !box.hidden && window.__NE_LATEST_HAS_CURRENT__);
-  }
   var panel = document.getElementById('planning-state-panel');
   if (!panel) return;
   var bookId = panel.getAttribute('data-book-id') || '';
   /* 规划 UI 只剩写作台的提示条这一种形态：书详情那份完整四卡矩阵已删（agent 决策视图，
      人不看）。这里只观察规划，不发起规划任务。 */
-  var latestData = null;
   function reasonLabel(codes) {
     var labels = {
       PLOTS_LOW: '剩余可写情节段不足',
@@ -90,7 +82,6 @@
   }
   function render(data) {
     data = data || {};
-    latestData = data;
     var ps = data.planning_state || {}, hz = ps.display_horizon || {}, snap = data.storyline_snapshot || {};
     /* 先发布权威状态，再渲染 DOM；面板小故障不能阻断故事线/写作台刷新。 */
     window.__PLANNING_STATE__ = ps;
@@ -168,8 +159,9 @@
       alerts += '<span class="pm-alert">📝 待填 ' + checklist.pending.length + ' 项</span>';
     }
 
-    /* 对照区已有本段时会直接显示当前 Plot；只在它没有可用当前段时保留 H0 兜底。 */
-    var currentHint = !hasCurrentPlotContext() && h0Name
+    /* 顶部两栏现在只展示**已完成**的那一段，不再展示待写段——所以这句「下一段」提示
+       是顶部唯一的"接下来写什么"，有 H0 就显示（不再依赖任何跨模块标志）。 */
+    var currentHint = h0Name
       ? '<span class="pm-h0">下一段：' + esc(h0Name) + '</span>' : '';
     if (!currentHint && !alerts) {
       panel.hidden = true;
@@ -194,12 +186,6 @@
     }
     if (typeof previousReceiver === 'function') previousReceiver(e);
   };
-  /* 顶部两栏异步就绪时重绘提示条，避免首屏竞态让 H0 与本段标题同时显示。 */
-  window.addEventListener('ne:current-context-updated', function () {
-    if (!latestData) return;
-    var ps = latestData.planning_state || {};
-    renderCompact(latestData, ps, ps.display_horizon || {}, latestData.storyline_snapshot || {});
-  });
   window.NEPlanning = {refresh:refresh, syncStoryline:syncStoryline};
   refresh();
 })();

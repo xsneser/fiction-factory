@@ -4,7 +4,7 @@
 <div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <a href="/books/{{ state.book_id }}">{{ state.title or '(待定)' }}</a> <span class="sep">›</span> <span class="cur">写作台</span></div>
 {% endblock %}
 {% block content %}
-<link rel="stylesheet" href="/static/css/story_line.css?v=18">
+<link rel="stylesheet" href="/static/css/story_line.css?v=19">
 <link rel="stylesheet" href="/static/css/workspace.css?v=7">
 <link rel="stylesheet" href="/static/css/reader.css">
 {% from "_flow_stepper.html" import status_badge %}
@@ -36,14 +36,16 @@
 {% set planning_write_mode = true %}
 {% include "_planning_ui.html" %}
 
-{# ─── 全宽两栏（置于两栏编辑器之上）：左=本段（仅最新） | 右=角色状态 ───
-     只答人关心的两个问题：「这一段写什么」「人现在在哪、什么状态、在干什么」。
+{# ─── 全宽两栏（置于两栏编辑器之上）：左=上一段（已完成） | 右=角色状态 ───
+     只答人关心的两个问题：「刚写完那段实际发生了什么、现在走到哪」「人现在在哪、什么状态、在干什么」。
+     **已经完成的那一段**（不是待写段）：写作台正文区已经在展示正文，重复"接下来写什么"价值低；
+     人更想知道刚写完那段的实际结果。待写段的信息只在左栏 Gantt（点情节段）与规划提示条里看。
      旧的三列对照矩阵（上一情节段 | 字段轴 | 本情节段）与它那个把人物/位置/弧线程/承诺/
-     待解问题五组折叠起来的审计区都是 agent 对账视图，已删——写作台只留人看得懂的两栏。 #}
-<section class="wf-latest-context" id="wf-latest-context" role="region" aria-label="当前情节段与角色状态">
+     待解问题五组折叠起来的审计区都是 agent 对账视图，已删——只搬回了「摘要 + 对账状态」。 #}
+<section class="wf-latest-context" id="wf-latest-context" role="region" aria-label="上一情节段与角色状态">
     <article class="wf-context-card">
-        <header class="wf-context-head"><h2>本段（仅最新）</h2></header>
-        <div id="wf-current-plot"><div class="wf-context-empty">正在读取当前情节段…</div></div>
+        <header class="wf-context-head"><h2>上一段（已完成）</h2></header>
+        <div id="wf-last-plot"><div class="wf-context-empty">正在读取上一情节段…</div></div>
     </article>
     <section class="wf-context-card">
         <header class="wf-context-head"><h2>角色状态</h2>
@@ -450,12 +452,6 @@ window.addEventListener('ne:agent-task-event', function(e) {
    reconcile / expected_facts / state_missing 这些不再出现在写作台。 */
 var _ctxFingerprint = '';
 
-function _ctxStatusZh(run) {
-    var st = String((run || {}).status || '');
-    if (st === 'Drafting') return '写作中';
-    if (st === 'Created') return '待写';
-    return String((run || {}).label || '待写');
-}
 function _ctxMissing(v) { return v === null || v === undefined || String(v).trim() === ''; }
 function _ctxGap(text) { return '<span class="wf-context-empty">' + text + '</span>'; }
 
@@ -489,38 +485,56 @@ function _renderCharacterCard(card, events) {
         + '</dl></article>';
 }
 
-/* 左栏：本段（仅最新）。全部字段来自 desk 响应，不做任何推断。 */
-function renderCurrentPlot(data) {
-    var el = document.getElementById('wf-current-plot');
+/* 上一情节段的对账结果 → 人话。只保留这一张短映射（不搬旧对照表那套行模型）。 */
+var _LAST_RECON_ZH = {clean: '✅ 与预期一致', prediction_drift: '🟡 实际发展与预期不同',
+                      missed_prediction: '🟡 预计变化尚未发生', unpredicted_fact: '🔵 出现新的变化'};
+
+/* 左栏：**上一段（已完成）**。全部字段来自 desk 响应，不做任何推断。
+   为什么是"上一段"而不是"待写段"：正文区已经在展示正文，重复"接下来写什么"价值低；
+   人更想知道刚写完那段的实际结果与当前进度。待写段信息只在 Gantt 与规划提示条里看。 */
+function renderLastPlot(data) {
+    var el = document.getElementById('wf-last-plot');
     if (!el) return;
     data = data || {};
-    var pr = data.plot_run || {};
-    var plot = pr.plot || {};
-    if (_ctxMissing(plot.name)) {
-        el.innerHTML = _ctxGap('暂无待写情节段');
+    var last = data.recent_plot_outcome || {};
+    if (_ctxMissing(last.plot_name)) {
+        el.innerHTML = _ctxGap('还没有已完成的段落');
         return;
     }
-    var chapter = data.writing_chapter || (data.current_chapter ? data.current_chapter + 1 : 0);
+    // 状态戳：这一段是否已经收章？草稿章里还有它的 bridge → 只是写完、尚未收章。
+    var drafted = ((data.chapters || []).filter(function (c) { return c && c.draft; })[0] || {});
+    var inDraft = (drafted.bridges || []).some(function (b) {
+        return String((b || {}).plot_id || '') === String(last.plot_id || '');
+    });
+    var chapter = Number(last.chapter_num || 0);
+    var stamp = '';
+    if (chapter) stamp = (inDraft ? '已写 · 第 ' : '已提交 · 第 ') + chapter + ' 章' + (inDraft ? '（待收章）' : '');
+
     var rows = [];
-    // 写作重点 = primary_turn（这一段唯一的主要戏剧变化；新情节段的硬要求，也是人最该读的那句）
-    var focus = plot.primary_turn || plot.template_structure || '';
-    rows.push('<div class="wf-current-row"><span class="wf-current-label">写作重点</span><span class="wf-current-value">'
-        + (_ctxMissing(focus) ? _ctxGap('未记录') : _ms_esc(focus)) + '</span></div>');
-    var summary = (data.recent_plot_outcome || {}).plot_summary || '';
-    if (!_ctxMissing(summary)) {
-        rows.push('<div class="wf-current-row"><span class="wf-current-label">承接</span><span class="wf-current-value">'
-            + _ms_esc(summary) + '</span></div>');
+    var rec = last.reconcile || {};
+    var kindZh = _LAST_RECON_ZH[rec.kind] || '';
+    var recText = [kindZh, _ctxMissing(rec.summary) ? '' : rec.summary]
+        .filter(function (x) { return x; }).join(' · ');
+    if (recText) {
+        rows.push('<div class="wf-last-row"><span class="wf-last-value">' + _ms_esc(recText) + '</span></div>');
     }
-    var meta = [];
-    if ((plot.roles || []).length) meta.push('出场：' + plot.roles.join('、'));
-    if (plot.words) meta.push('目标 ' + plot.words + ' 字');
-    if (meta.length) {
-        rows.push('<div class="wf-current-row"><span class="wf-current-label">本段</span><span class="wf-current-value">'
-            + _ms_esc(meta.join(' · ')) + '</span></div>');
+    if (!_ctxMissing(last.plot_summary)) {
+        rows.push('<div class="wf-last-row"><span class="wf-last-value">' + _ms_esc(last.plot_summary) + '</span></div>');
     }
-    el.innerHTML = '<div class="wf-current-title">' + _ms_esc(plot.name) + '</div>'
-        + '<div class="wf-current-stamp">' + _ms_esc(_ctxStatusZh(pr.run)) + ' · 第 '
-        + _ms_esc(chapter) + ' 章</div>' + rows.join('');
+    // 进度：本章草稿字数（有草稿时）+ 待写章号。都没有就不渲染这一行。
+    var planning = data.planning || {};
+    var bits = [];
+    var draftWords = Number(planning.draft_words || 0);
+    if (draftWords) bits.push('本章已写 ' + draftWords + ' 字');
+    else if (Number(planning.written_until_word || 0)) bits.push('全书 ' + planning.written_until_word + ' 字');
+    if (Number(data.writing_chapter || 0)) bits.push('待写第 ' + data.writing_chapter + ' 章');
+    if (bits.length) {
+        rows.push('<div class="wf-last-row wf-last-progress"><span class="wf-last-value">'
+            + _ms_esc(bits.join(' · ')) + '</span></div>');
+    }
+    el.innerHTML = '<div class="wf-last-title">' + _ms_esc(last.plot_name)
+        + (stamp ? '<span class="wf-last-stamp">' + _ms_esc(stamp) + '</span>' : '') + '</div>'
+        + rows.join('');
 }
 
 /* 右栏：角色状态。主角/本段出场展开，仅被提及的角色收进折叠组。 */
@@ -558,19 +572,18 @@ function renderCurrentCast(data) {
     });
 }
 
-/* 统一入口：既有 3s desk 轮询直接调它（不新增轮询）。fingerprint 不变则不重建 DOM。 */
+/* 统一入口：既有 3s desk 轮询直接调它（不新增轮询）。fingerprint 不变则不重建 DOM。
+   这里不再向 planning_ui 发「本区是否已展示当前待写段」的信号——顶部已不展示待写段，
+   横幅的「下一段：…」提示改为恒按 H0 显示（见 planning_ui.js）。 */
 function renderLatestContext(data) {
     data = data || {};
-    var hasCurrent = !_ctxMissing(((data.plot_run || {}).plot || {}).name);
-    var fp = JSON.stringify([hasCurrent, data.writing_chapter, data.plot_run, data.cast_events,
-                             (data.recent_plot_outcome || {}).plot_summary]);
+    var fp = JSON.stringify([data.writing_chapter, data.recent_plot_outcome, data.planning,
+                             data.cast_events, data.plot_run && data.plot_run.cast_pack,
+                             (data.chapters || []).length]);
     if (fp !== _ctxFingerprint) {
         _ctxFingerprint = fp;
-        renderCurrentPlot(data);
+        renderLastPlot(data);
         renderCurrentCast(data);
-        // 顶部规划横幅靠这两个信号决定显隐（planning_ui.js 直接读全局变量 + 监听事件）
-        window.__NE_LATEST_HAS_CURRENT__ = hasCurrent;
-        window.dispatchEvent(new CustomEvent('ne:current-context-updated', {detail: {has_current: hasCurrent}}));
     }
 }
 

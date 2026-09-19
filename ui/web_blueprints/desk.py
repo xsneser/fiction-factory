@@ -184,7 +184,7 @@ def desk_chapters_api(book_id):
     recent_plot_outcome = None
     planning = {}
     # 待写章节号：`current_chapter` 是**已完成**章号，正在进行/即将写的章是它 +1
-    # （草稿带着章号时以草稿为准）。顶部「本段」卡要显示的是待写章，不是已完成章。
+    # （草稿带着章号时以草稿为准）。顶部左栏的进度行用它（「… · 待写第 N 章」）。
     draft_chapter_num = 0
     try:
         _dp = os.path.join(str(book_mgr.dir), book_id, "draft_chapter.json")

@@ -343,9 +343,9 @@ def run_tests():
             check(f"Write flow {label}", marker in tl_editor.text, f"'{marker}' missing")
         # 顶部两栏（本段最新 + 角色状态）：断言真实 DOM 挂载点存在（只匹配 JS 字面量会假阳性）
         check("Write flow two-column context mounted",
-              all(x in tl_editor.text for x in ('id="wf-latest-context"', 'id="wf-current-plot"',
+              all(x in tl_editor.text for x in ('id="wf-latest-context"', 'id="wf-last-plot"',
                                                 'id="wf-current-cast"'))
-              and "本段（仅最新）" in tl_editor.text and "角色状态" in tl_editor.text
+              and "上一段（已完成）" in tl_editor.text and "角色状态" in tl_editor.text
               and "renderLatestContext(" in tl_editor.text,
               "two-column context mount or headers missing")
         check("Write flow old compare/audit area removed",

@@ -13,7 +13,7 @@
 - **书详情页** = 书的「档案 + 角色状态台」：设定/故事线/章节的**查看**入口 + 🎭 角色状态（默认展开），**不写正文**。
   （2026-09-19：承诺台账 / 诊断 / 快照留痕 / 决策中心 四个面板已从页面删除——它们是 agent 决策与排障视图，人不看；
   底层 `scan_promises` / `diagnose_*` / `chapter_quality_gate` / `book_snapshot` 全部保留，仍被 agent 工具与收章链路使用。）
-- **写作台** = 书的「生产 + 驾驶舱」：顶部两栏（本段最新 + 角色状态）回答「这一段写什么、人现在什么状态」，下方左=故事线 Gantt、右=分页阅读器实时展示「Agent 写了什么」，通过侧栏 Agent（dsh）逐情节段续写。
+- **写作台** = 书的「生产 + 驾驶舱」：顶部两栏（**上一段（已完成）** + 角色状态）回答「刚写完那段实际发生了什么、现在走到哪、人什么状态」，下方左=故事线 Gantt、右=分页阅读器实时展示「Agent 写了什么」，通过侧栏 Agent（dsh）逐情节段续写。
 - 两者共享：📋 故事线 Gantt（story_line.js，两页都从 `/api/storyline/<id>/planning-state` 取规划叠层）、侧栏 Agent（agent_panel.js）。
   🧭 规划提示条（`_planning_ui.html` + planning_ui.js）**只挂写作台**；书详情改为一段不渲染的极简 loader 取同样的数据喂 Gantt。
 
@@ -93,7 +93,7 @@
 | 1 | 面包屑 + h1 ✍️ 写作台 | 书库 › 书名 › 写作台 |
 | 2 | info_bar | 书名 · 笔名 · 进度（第 N 章 · 共 M 字）· 状态 badge · 每章 N 字 |
 | 3 | 🧭 规划提示条 | 只读边界告警 + 规划门禁 + 少量方向/问题/人物意图提示（`_planning_ui.html`，写作台唯一形态）；规划由章级写作 Flow 自动完成，无手工抽屉 |
-| 3.5 | 顶部两栏（全宽） | `#wf-latest-context`，置于**两栏布局之上**：左 `#wf-current-plot` = 本段（仅最新：情节段名 / 待写·第 N 章 / 写作重点=primary_turn / 承接=上一段 plot_summary / 出场角色·目标字数）；右 `#wf-current-cast` = 角色状态（每卡 位置/状态/动作 三行，主角与本段出场展开、`referenced` 收进「其他角色 N 人」）。数据来自 `/api/desk/chapters/<bid>`（§3.3） |
+| 3.5 | 顶部两栏（全宽） | `#wf-latest-context`，置于**两栏布局之上**：左 `#wf-last-plot` = **上一段（已完成）**（情节段名 / 已提交·第 N 章 / 对账状态 / 摘要 / 本章字数·待写第 N 章）；右 `#wf-current-cast` = 角色状态（每卡 位置/状态/动作 三行，主角与本段出场展开、`referenced` 收进「其他角色 N 人」）。数据来自 `/api/desk/chapters/<bid>`（§3.3） |
 | 4 | 左栏 editor-left | 可拖拽分栏（20%–70%，localStorage `ne_storyline_w` 持久化，`storyline_write_flow.html:266-297`）；本栏只剩故事线 Gantt |
 | 6 | 📋 故事线 Gantt | `#editor-storyline`（story_line.js 挂载，scrollable 模式，含缩放控件） |
 | 7 | 右栏 editor-mid | 顶部 ✍️ 继续写正文卡（`runWritingTask` → 侧栏 Agent；运行态 ⏳ 续写运行中… / ⏹ 停止）；下方分页阅读器 |
@@ -101,20 +101,21 @@
 | 9 | 双向高亮 | 点 Gantt 情节段/弧 → 右栏跳页高亮对应正文（`sl:plot-click`/`sl:outline-click` → `highlightBridgeContent`/`highlightOutlineContent`）；agent 高亮 `StoryLine.highlight` 反向 |
 | 10 | 轮询 | 进页立即 + 3s 轮询 `/api/desk/chapters/<bid>`：刷新顶部两栏（`renderLatestContext`，fingerprint 未变不重建 DOM）与章节（`Reader.setChapters` 保留当前页/高亮、`_activePid` 恢复） |
 
-### 3.3 顶部两栏：本段（仅最新） + 角色状态
+### 3.3 顶部两栏：上一段（已完成） + 角色状态
 
-渲染入口 `renderLatestContext(d)`（单一入口，轮询每轮只调一次；fingerprint 变化才重绘）。左栏读 `plot_run`，
-右栏读 `plot_run.cast_pack` + `cast_events`。
+渲染入口 `renderLatestContext(d)`（单一入口，轮询每轮只调一次；fingerprint 变化才重绘）。左栏 `renderLastPlot(d)`
+读 `recent_plot_outcome` + `planning`/`writing_chapter`，右栏 `renderCurrentCast(d)` 读 `plot_run.cast_pack` + `cast_events`。
 
-**左栏字段（全部来自 desk 响应，不做任何推断）**
+**左栏 = 已经完成的那一段（不是待写段）**：正文区已经在展示正文，重复「接下来写什么」价值低；
+人更想知道刚写完那段的实际结果与当前进度。**待写段的信息只在左栏 Gantt（点情节段）与规划提示条里看**。
 
-| 显示 | 数据路径 |
-|---|---|
-| 情节段名 | `plot_run.plot.name`（缺失 → 「暂无待写情节段」） |
-| 状态 · 章号 | `plot_run.run.status`（`Created→待写`/`Drafting→写作中`）+ `data.writing_chapter`（**待写**章号 = `draft.chapter_num` 或 `current_chapter+1`） |
-| 写作重点 | `plot_run.plot.primary_turn`（这一段**唯一**的主要戏剧变化；新情节段的硬要求） |
-| 承接 | `recent_plot_outcome.plot_summary`（agent 自己写的 50~120 字摘要；缺失则不显示该行） |
-| 本段 | `plot_run.plot.roles` + `plot_run.plot.words` |
+| 显示 | 数据路径 | 缺失时 |
+|---|---|---|
+| 情节段名 | `recent_plot_outcome.plot_name` | 整卡空态「还没有已完成的段落」 |
+| 状态戳 | `已提交 · 第 {recent_plot_outcome.chapter_num} 章`；该段仍在草稿里（`chapters[]` 中 `draft:true` 那一章的 bridges 含此 `plot_id`）→ `已写 · 第 N 章（待收章）` | 无章号则省略 |
+| 对账 | `reconcile.kind` → ✅与预期一致 / 🟡实际发展与预期不同 / 🟡预计变化尚未发生 / 🔵出现新的变化，再拼 `reconcile.summary`（如「存在未覆盖事实」） | kind 缺失则整行不渲染 |
+| 摘要 | `recent_plot_outcome.plot_summary`（agent 写的 50~120 字；旧书可能没有） | 不渲染该行 |
+| 进度 | 有草稿 → `本章已写 {planning.draft_words} 字`，否则 `全书 {planning.written_until_word} 字`；再拼 `待写第 {writing_chapter} 章` | 都不在则不渲染 |
 
 **右栏字段（位置 / 状态 / 动作 三行）**
 
@@ -124,6 +125,10 @@
 | 状态 | `dyn.power_level` / `dyn.arc_stage` / `dyn.relationship_to_mc` + 离线 >50 章警告 | 三个 chip；全空 → 「未记录」 |
 | 动作 | `dyn.goal`（回退 `goal`）+ `cast_events[名].to (+ reason)` | 数据模型里**没有** `action` 字段：`goal`= 当前目标，`cast_events` = 章内最近一条上报变化 |
 
+**左栏只搬回了旧三列对照表的「摘要 + 对账状态」两项**。旧表的 `已作选择 / 已知信息 / 关系变化 / 资源变化`
+四类事实行、以及 `人物 / 场景位置 / 承诺 / 待解问题 / 弧与线程` 那几组（旧实现里本就默认折叠）都**没有**搬回来
+——它们的行构造/配对/统计逻辑没有作为 `comparison` 字段返回，搬它们等于在前端重写那套投影。
+
 **口径与红线**
 
 > ⚠️ ① 角色状态来自**正式状态机 + 章内 staged 覆盖**（`_staged_cast_projection`），这是写作台比书详情「新一章」的原因；
@@ -132,7 +137,9 @@
 > ③ 没有数据就如实说「未记录 / 暂无明确行动」，**绝不从 identity/personality 推断**，也不编「情节段目标地点」；
 > ④ 对账视图（`reconcile` / `expected_facts` / `state_missing`）已随三列对照区一起移出写作台；
 > ⑤ `primary_turn` 由 desk 侧注入 `plot_run["plot"]`（改 `_build_plot_run` 会动 `commit_token` 的 `context_fingerprint`，让在途令牌全部失效）；
-> ⑥ 顶部两栏的显隐信号是 `window.__NE_LATEST_HAS_CURRENT__` + `ne:current-context-updated`（planning_ui.js 靠它决定 H0 与本段是否同时显示）。
+> ⑥ 顶部**不再**向 planning_ui 发「本区是否已展示当前待写段」的信号（`__NE_LATEST_HAS_CURRENT__` /
+>    `ne:current-context-updated` 已随这次改动删除）：左栏只展示已完成段，所以横幅的「下一段：<H0>」
+>    恒按 H0 显示——它是顶部唯一的「接下来写什么」。
 
 ### 3.4 API 面（desk.py）
 

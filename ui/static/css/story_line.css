@@ -211,11 +211,12 @@
 .wf-context-hint { display: inline-grid; place-items: center; width: 14px; height: 14px;
   border: 1px solid var(--border); border-radius: 50%; color: var(--fg-muted); font-size: 9.5px; cursor: help; }
 .wf-context-empty { color: var(--fg-muted); font-size: 11px; line-height: 1.5; }
-.wf-current-title { color: var(--fg-strong); font-size: 13.5px; font-weight: 600; line-height: 1.35; }
-.wf-current-stamp { margin-top: 1px; color: var(--fg-muted); font-size: 10.5px; }
-.wf-current-row { display: flex; gap: 7px; margin-top: 4px; font-size: 11.5px; line-height: 1.5; }
-.wf-current-label { flex: 0 0 52px; color: var(--fg-muted); white-space: nowrap; }
-.wf-current-value { flex: 1; min-width: 0; color: var(--fg); overflow-wrap: anywhere; }
+.wf-last-title { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  color: var(--fg-strong); font-size: 13.5px; font-weight: 600; line-height: 1.35; }
+.wf-last-stamp { color: var(--fg-muted); font-size: 10.5px; font-weight: 400; white-space: nowrap; }
+.wf-last-row { margin-top: 4px; font-size: 11.5px; line-height: 1.5; }
+.wf-last-value { display: block; color: var(--fg); overflow-wrap: anywhere; }
+.wf-last-progress .wf-last-value { color: var(--fg-muted); font-size: 11px; }
 
 /* ─── 角色状态（写作台右栏与书详情共用）───
    刻意**不给每个角色加卡片框**：外层已经有一个容器框，再套一层就是框套框，人物一多就变成

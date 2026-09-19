@@ -234,7 +234,8 @@ finally:
                                         "最近续规划", "planning-character-intents",
                                         "lastReplanLabel", "characterIntents", "data-compact"))
     assert "renderChecklist" in pu_js and "planning-checklist" in pu_js
-    assert "openStoryQuestions" in pu_js and "hasCurrentPlotContext" in pu_js
+    # 提示条仍读开放问题与人/问题计数；「下一段：」提示恒按 H0 显示（不再依赖跨模块标志）
+    assert "openStoryQuestions" in pu_js and "pm-h0" in pu_js
     assert "reasonLabel(b.reason_codes)" in pu_js
     assert "展开规划" not in pu_js and "收起 ▴" not in pu_js
     assert "detailOpen" not in pu_js and "planning-cards" not in pu_js
@@ -271,17 +272,22 @@ finally:
     assert "flowMode" in write_tpl and "busyPolicy" in write_tpl and "taskKind" in write_tpl
     assert "needs_replan" not in write_tpl[write_tpl.index("function _resolveNextChapterAndSend"):write_tpl.index("function stopWritingTask")]
     assert "flow_mode" in agent_js and "busy_policy" in agent_js and "task_kind" in agent_js
-    # 顶部两栏：本段（仅最新）+ 角色状态。HTML 挂载点与 JS 渲染入口双向命中。
-    assert all(x in write_tpl for x in ('id="wf-latest-context"', 'id="wf-current-plot"',
-                                        'id="wf-current-cast"', '本段（仅最新）', '角色状态'))
+    # 顶部两栏：上一段（已完成）+ 角色状态。HTML 挂载点与 JS 渲染入口双向命中。
+    assert all(x in write_tpl for x in ('id="wf-latest-context"', 'id="wf-last-plot"',
+                                        'id="wf-current-cast"', '上一段（已完成）', '角色状态'))
     assert "renderLatestContext(d)" in write_tpl and "function renderLatestContext(" in write_tpl
-    assert "function renderCurrentPlot(" in write_tpl and "function renderCurrentCast(" in write_tpl
+    assert "function renderLastPlot(" in write_tpl
+    # 左栏读「已完成那一段」的结局（recent_plot_outcome），不再展示待写段
+    assert "recent_plot_outcome" in write_tpl and "plot_summary" in write_tpl
+    assert "reconcile" in write_tpl and "还没有已完成的段落" in write_tpl
+    assert all(x not in write_tpl for x in ('id="wf-current-plot"', '写作重点', '待写 · 第'))
+    assert "function renderLastPlot(" in write_tpl and "function renderCurrentCast(" in write_tpl
     # 旧三列对照区（含它那个五组折叠的审计区）整块删除，且不得回流
     assert all(x not in write_tpl for x in ('id="wf-compare"', 'wf-cmp-prev', 'wf-cmp-axis',
                                             'wf-cmp-next', 'wf-cmp-grid', 'renderCompareTable',
                                             'renderCompare(', '_legacyComparison', '_renderSide',
-                                            '_renderCompareGroup', '完整状态审计', '上一段',
-                                            '对照字段', 'wfc-single', 'wfc-audit'))
+                                            '_renderCompareGroup', '完整状态审计',
+                                            '⬅ 上一段', '对照字段', 'wfc-single', 'wfc-audit'))
     # 对账视图（reconcile / expected_facts）不再进人看的页面
     assert all(x not in write_tpl for x in ('_RECONCILE_ZH', '_reconcileLabel', '_FACT_FIELD',
                                             'expected_to', '变动前值未记录', '实际变化'))
@@ -293,10 +299,14 @@ finally:
     assert "目标地点" not in write_tpl
     assert "'未记录'" in write_tpl and "'暂无明确行动'" in write_tpl and "_ctxMissing" in write_tpl
     assert "state_source" in write_tpl and "本章已上报" in write_tpl
-    assert "暂无待写情节段" in write_tpl and "本段未指定出场角色" in write_tpl
-    # 横幅信号（planning_ui 靠它决定 H0 与本段是否同时显示）改名并保留
-    assert "__NE_LATEST_HAS_CURRENT__" in write_tpl and "ne:current-context-updated" in write_tpl
+    assert "还没有已完成的段落" in write_tpl and "本段未指定出场角色" in write_tpl
+    # 跨模块信号已拆：顶部不再展示待写段 → 横幅的「下一段：…」恒按 H0 显示，不再需要同步标志
+    assert "__NE_LATEST_HAS_CURRENT__" not in write_tpl and "ne:current-context-updated" not in write_tpl
+    assert "hasCurrentPlotContext" not in pu_js and "ne:current-context-updated" not in pu_js
+    assert "下一段：" in pu_js
     assert "__NE_COMPARE_HAS_CURRENT__" not in write_tpl and "ne:compare-updated" not in pu_js
+    # 左栏新样式类（跟着 id 一起改名，避免读起来像"当前段"）
+    assert ".wf-last-title" in sl_css and ".wf-last-stamp" in sl_css and "wf-current-title" not in sl_css
     # 孤儿不得回流（曾查询一个从未存在的 #wpr-state-label）
     assert "wpr-state-label" not in write_tpl and "_runningPid" not in write_tpl
     # CSS：两栏 + 角色卡；旧三列矩阵规则已清；.wpr-dim 仍被页头用，必须留
