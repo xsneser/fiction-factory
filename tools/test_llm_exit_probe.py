@@ -91,9 +91,10 @@ fn, calls = transport('{"error":"boom"}', 500)
 r = TP.probe_llm_exit(use_cache=False, retries=0, post_fn=fn)
 check("HTTP 500 → 不通过且带状态码", r["ok"] is False and r["code"] == "HTTP_500", str(r))
 
-# ── max_tokens：常规 ping 必须是小值（不带 dsh 的 256000）──
-check("常规 ping 的 max_tokens 是小值（≤64）",
-      calls[-1]["max_tokens"] <= 64, str(calls[-1].get("max_tokens")))
+# ── max_tokens：常规 ping 要小（不带 dsh 的 256000），但**不能小到烧完预算**──
+check("常规 ping 的 max_tokens 小幅够用（512：64 会让推理模型烧完预算 → finish=length 假故障）",
+      calls[-1]["max_tokens"] == TP._PROBE_PING_MAX_TOKENS and 512 <= calls[-1]["max_tokens"] <= 4096,
+      str(calls[-1].get("max_tokens")))
 check("常规 ping 请求是流式且带 stream_options",
       calls[-1].get("stream") is True and "stream_options" in calls[-1], str(calls[-1]))
 
@@ -175,7 +176,78 @@ check("A/B/C 全败 → 才说「基础连接/模型/上游异常」",
 r = TP.probe_llm_exit(mode="diagnose", post_fn=layered(SSE_TOOL, SSE_TEXT, JSON_TEXT))
 check("A 通过 → 不再跑 B/C（layer 为空）", r["ok"] is True and not r["layer"], str(r))
 
-print("\n═══ 6. llm_exit_info 不含敏感字段 ═══")
+print("\n═══ 6. 自由生成段（mode='free'）与预算判定 ═══")
+TP.clear_probe_cache()
+fn, calls = transport(SSE_EMPTY)
+r = TP.probe_llm_exit(mode="free", use_cache=False, retries=0, post_fn=fn)
+check("自由生成零 block → 不通过，且文案说清是模型/中转侧问题",
+      r["ok"] is False and "自由生成" in (r.get("message") or ""), str(r.get("message")))
+check("自由生成段不带 tool_choice", "tool_choice" not in calls[-1], str(calls[-1].keys()))
+
+fn, calls = transport(SSE_TEXT)
+r = TP.probe_llm_exit(mode="free", use_cache=False, retries=0, post_fn=fn)
+check("自由生成有正文 → 通过（正文就是写作要的东西）", r["ok"] is True, str(r))
+
+# 真实工具集透传 + 小预算（代表形状）
+fn, calls = transport(SSE_TEXT)
+tools = [{"type": "function", "function": {"name": "t1", "description": "d",
+                                           "parameters": {"type": "object", "properties": {}}}}]
+r = TP.probe_llm_exit(mode="free", tools=tools, user="写一句", use_cache=False,
+                      retries=0, post_fn=fn, max_tokens=2048)
+check("代表形状把真实工具集带上、不强制 tool_choice",
+      len(calls[-1]["tools"]) == 1 and "tool_choice" not in calls[-1], str(calls[-1].keys()))
+check("max_tokens 可显式指定（2048）", calls[-1]["max_tokens"] == 2048, str(calls[-1]["max_tokens"]))
+
+# finish=length + 零 block = 预算被烧完（探针自身问题）→ 加大预算重试，不当成出口故障
+SSE_LENGTH = ('data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\ndata: {"usage":{"prompt_tokens":10,"completion_tokens":512}}\n\ndata: [DONE]\n\n')
+fn, calls = transport(SSE_LENGTH)
+r = TP.probe_llm_exit(use_cache=False, retries=0, post_fn=fn)
+check("length+零 block 判 BUDGET_EXHAUSTED（不是 EMPTY_RESPONSE）",
+      r.get("code") == "BUDGET_EXHAUSTED", str(r.get("code")))
+check("预算不足 → 自动用更大预算重试一次", len(calls) == 2 and calls[-1]["max_tokens"] > calls[0]["max_tokens"],
+      f"{[c['max_tokens'] for c in calls]}")
+check("预算仍不足时**不拦**写作（按通过处理 + warning）",
+      r["ok"] is True and r.get("inconclusive") and r.get("warning"), str(r))
+
+print("\n═══ 7. mode='contrast' 对照归类 ═══")
+TP.clear_probe_cache()
+fn, calls = transport(SSE_TOOL)
+r = TP.probe_llm_exit(mode="contrast", use_cache=False, post_fn=fn)
+check("三组都有输出 → 判「出口本身正常，更像间歇」",
+      "间歇" in (r.get("verdict") or ""), str(r.get("verdict")))
+check("对照用够用的预算（不再是 64）", all(c["max_tokens"] >= 512 for c in calls),
+      str([c["max_tokens"] for c in calls]))
+
+TP.clear_probe_cache()
+seen = {"n": 0}
+
+
+def fn_forced_ok_free_empty(url, payload, timeout):
+    seen["n"] += 1
+    return (200, SSE_TOOL) if payload.get("tool_choice") else (200, SSE_EMPTY)
+
+
+r = TP.probe_llm_exit(mode="contrast", use_cache=False, post_fn=fn_forced_ok_free_empty)
+check("强制工具通、自由生成空 → 判「上游只对强制工具调用出内容」",
+      "只对强制工具调用出内容" in (r.get("verdict") or ""), str(r.get("verdict")))
+
+print("\n═══ 8. 请求形状留痕（只计数，不含正文）═══")
+TP.clear_request_shapes()
+rec = TP.record_request_shape(
+    payload={"model": "m", "messages": [{"role": "user", "content": "秘" * 50}],
+             "tools": [{"type": "function"}], "stream": True, "max_tokens": 512},
+    upstream="https://relay.example.com/v1/chat/completions", status=200,
+    body=SSE_EMPTY, prompt_tokens=1542, completion_tokens=0)
+check("形状记录含 tools/msgs_chars/max_tokens/blocks/finish/empty",
+      rec["tools"] == 1 and rec["msgs_chars"] == 50 and rec["max_tokens"] == 512
+      and rec["blocks"]["text"] == 0 and rec["finish"] == "stop" and rec["empty"] is True, str(rec))
+check("upstream 只留 origin（不带路径）", rec["upstream"] == "https://relay.example.com", rec["upstream"])
+check("**不含正文**：记录里没有任何消息内容",
+      "秘" not in json.dumps(rec, ensure_ascii=False), json.dumps(rec, ensure_ascii=False))
+check("有界环：只留最近 N 条", len(TP.recent_request_shapes(20)) == 1)
+TP.clear_request_shapes()
+
+print("\n═══ 9. llm_exit_info 不含敏感字段 ═══")
 restore()
 cfg = APIConfig(api_key="sk-secret", base_url="https://relay.example.com", model="m1",
                 url_strict=False, max_tokens=0, http_timeout_seconds=60,

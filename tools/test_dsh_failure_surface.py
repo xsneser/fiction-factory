@@ -114,6 +114,77 @@ check("只读问句不算编排类", not DB._is_orchestrated_task("查看状态"
 check("章级任务算写作类（要预检出口）", DB._is_writing_task("继续写", "chapter_to_completion"))
 check("只读问句不预检", not DB._is_writing_task("查看状态"))
 
+print("\n═══ 6. 预检在编排开启时**仍然可达**（上一版被编排分支挡在后面）═══")
+CHAPTER_TASK = "请继续写这本（book book_003）：完成第 16 章正文，目标约 3000 字。"
+_saved = {n: getattr(DB, n) for n in ("_orchestrator_enabled", "_profiles_enabled",
+                                      "_orchestrator_profile_status", "probe_llm_exit",
+                                      "run_dsh_task", "ensure_proxy", "_append_task_event")}
+try:
+    DB._orchestrator_enabled = lambda: True
+    DB._profiles_enabled = lambda: True
+    DB._orchestrator_profile_status = lambda: {"ready": True, "problems": [], "action": "--apply"}
+    DB.ensure_proxy = lambda: True
+    DB._append_task_event = lambda evt: None
+    seen = {"probes": 0, "runs": 0}
+    DB.probe_llm_exit = lambda *a, **k: (seen.__setitem__("probes", seen["probes"] + 1)
+                                         or {"ok": False, "message": "EXIT-BROKEN"})
+
+    def _no_run(*a, **k):
+        seen["runs"] += 1
+        return iter(())
+    DB.run_dsh_task = _no_run
+    evts = list(DB.run_dsh_flow(CHAPTER_TASK, flow_mode="chapter_to_completion"))
+    check("编排开启 + 出口坏 → 预检被调用且挡在 run 之前",
+          seen["probes"] >= 1 and seen["runs"] == 0, str(seen))
+    check("挡下时给出出口故障消息并收尾",
+          any(e.get("type") == "error" and "EXIT-BROKEN" in (e.get("message") or "") for e in evts)
+          and evts[-1].get("type") == "done",
+          str([e.get("type") for e in evts]))
+finally:
+    for k, v in _saved.items():
+        setattr(DB, k, v)
+
+print("\n═══ 7. 编排 run 失败：收掉活跃租约（不留 15 分钟脏锁）═══")
+import shutil, tempfile                                        # noqa: E402
+from libraries.book_manager import BookManager                 # noqa: E402
+from libraries.write_flow import active_flow_id, load_flow, start_flow  # noqa: E402
+bm = BookManager(os.path.join(_ROOT, "books"))
+cfg = bm.create(title="编排失败收尾验收", pen_name="测试", chapter_count=2)
+bid = cfg.book_id
+try:
+    flow = start_flow(bid, 1)
+    fid = flow["flow_id"]
+    assert active_flow_id(bid) == fid, "前置：租约应属于该 flow"
+    _saved2 = DB.run_dsh_task
+    DB.run_dsh_task = lambda *a, **k: iter([{"type": "error",
+                                             "message": "EMPTY_RESPONSE: model returned a completed response with no content"}])
+    try:
+        list(DB._orchestrate_run(CHAPTER_TASK, None, False, bid))
+    finally:
+        DB.run_dsh_task = _saved2
+    check("run 级失败后 flow=FAILED", (load_flow(bid, fid) or {}).get("phase") == "FAILED",
+          str((load_flow(bid, fid) or {}).get("phase")))
+    check("run 级失败后租约已释放", active_flow_id(bid) == "", active_flow_id(bid))
+    check("失败原因记为 orchestrate_run_failed:<code>",
+          "orchestrate_run_failed:EMPTY_RESPONSE" in str((load_flow(bid, fid) or {}).get("error")),
+          str((load_flow(bid, fid) or {}).get("error")))
+finally:
+    shutil.rmtree(os.path.join(_ROOT, "books", bid), ignore_errors=True)
+
+print("\n═══ 8. 写作类编排任务的历史回放上限 ═══")
+check("写作类编排任务的历史上限收紧到 4000 字符",
+      DB._task_history_cap(CHAPTER_TASK, "orchestrate") == DB._WRITE_TASK_HISTORY_CHARS,
+      str(DB._task_history_cap(CHAPTER_TASK, "orchestrate")))
+check("建书任务不裁历史（向导原文只存在于任务文本里）",
+      DB._task_history_cap("继续建书 / 生成候选", "build") is None)
+long_hist = [{"role": "assistant", "content": "失败信息" * 500} for _ in range(6)]
+capped = DB._build_task_text(CHAPTER_TASK, long_hist,
+                             history_cap=DB._WRITE_TASK_HISTORY_CHARS)
+check("带 cap 时确实截断，且当前任务文本完整保留",
+      len(capped) < 4200 and CHAPTER_TASK in capped, str(len(capped)))
+check("不带 cap 时保持原行为（不回归）",
+      len(DB._build_task_text(CHAPTER_TASK, long_hist)) > len(capped))
+
 print()
 if FAILURES:
     print(f"  ❌ {len(FAILURES)} 项失败：")

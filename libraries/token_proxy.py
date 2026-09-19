@@ -20,6 +20,7 @@ import os
 import socket
 import threading
 import time
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, urlunsplit
 
@@ -317,6 +318,9 @@ class _Handler(BaseHTTPRequestHandler):
                 "model": (cfg.model if cfg else ""),
                 "verify_ssl": (cfg.verify_ssl if cfg else None),
                 "last_request": dict(_LAST_REQUEST),
+                # 最近若干次请求的**形状**（工具数/字符数/max_tokens/输出 block 数，不含正文）：
+                # 「上游整段时间零输出」这类故障靠它定性
+                "recent": recent_request_shapes(20),
             })
         else:
             self._send_json({"ok": False, "error": "not found"}, 404)
@@ -389,6 +393,8 @@ class _Handler(BaseHTTPRequestHandler):
         chars = 0
         inflight_key = None
         stream_ok = False
+        buf = b""          # 流式透传时累积的响应体（供形状留痕解析）
+        content = b""      # 非流式响应体
         try:
             if payload.get("stream"):
                 # 流式：注册 in-flight，逐 chunk 按已收字符实时估算 pending（token 实时滚动数据源）
@@ -443,6 +449,16 @@ class _Handler(BaseHTTPRequestHandler):
                 USAGE.abort_inflight(inflight_key)
         else:
             USAGE.accumulate(prompt, completion)
+        # 请求**形状**留痕（只计数、绝不含正文）：上游整段时间零输出这类故障，
+        # 有这张表第一次出现就能定性，不必靠反推 token 数（2026-09-19 就是这么查了一晚上）。
+        try:
+            _body = (buf if payload.get("stream") else content)
+            record_request_shape(
+                payload=payload, upstream=target, status=resp.status_code,
+                body=_body.decode("utf-8", errors="replace") if isinstance(_body, bytes) else str(_body or ""),
+                prompt_tokens=prompt, completion_tokens=completion)
+        except Exception:
+            pass
 
 
 _started = threading.Event()
@@ -541,7 +557,11 @@ _PROBE_PING_TOOL = {
         },
     },
 }
-_PROBE_PING_MAX_TOKENS = 64
+_PROBE_PING_MAX_TOKENS = 512
+# 为什么不是 64：推理型模型会把预算先烧在思考上，64 太小 → 返回 finish="length" 且**零 block**，
+# 看起来和「上游空回复」一模一样（实测：64 连续三次 length+空，512/2048/8192/256000 全部正常）。
+# 预检自己造成的假故障比漏报更糟——那会把用户推向换模型/换中转的错误结论。
+_PROBE_BUDGET_MIN = 512          # 低于它的失败一律先当作「预算不足」重试一次更大的预算
 # 仅 diagnose(exact_shape=True)：复现 dsh 真实请求形状（core.llm_client.DSH_MAX_TOKENS 同值）
 _PROBE_EXACT_MAX_TOKENS = 256_000
 _PROBE_OK_TTL = 600.0     # 成功的预检 10 分钟内复用：正常写作基本零额外成本
@@ -626,14 +646,22 @@ def _summarize_completion(body: str, stream: bool) -> dict:
 
 
 def _probe_payload(*, stream: bool, with_tools: bool, force_tool: bool,
-                   max_tokens: int) -> dict:
+                   max_tokens: int, system: str = "", user: str = "",
+                   tools: list | None = None) -> dict:
+    """构造一次探测请求。
+
+    `tools` 给定时用调用方给的真实工具集（代表形状探针），否则用内置 ping。
+    `force_tool` 只在有工具时才生效——**强制 tool_choice 与自由生成是两种出口能力**：
+    上游可能对强制工具调用正常、却对自由生成返回空（那正是本预检要抓的）。
+    """
+    tool_list = list(tools or ([] if not with_tools else [_PROBE_PING_TOOL]))
     payload = {
         "model": "probe",     # 具体模型由代理按 api.json 改写，这里只占位
         "messages": [
             {"role": "system",
-             "content": "You are a health probe. Follow the instruction exactly."},
+             "content": system or "You are a health probe. Follow the instruction exactly."},
             {"role": "user",
-             "content": "调用 ping 工具，参数 text 用 ok。" if with_tools else "只回复 ok。"},
+             "content": user or ("调用 ping 工具，参数 text 用 ok。" if tool_list else "只回复 ok。")},
         ],
         "stream": bool(stream),
         "max_tokens": int(max_tokens),
@@ -641,18 +669,20 @@ def _probe_payload(*, stream: bool, with_tools: bool, force_tool: bool,
     }
     if stream:
         payload["stream_options"] = {"include_usage": True}
-    if with_tools:
-        payload["tools"] = [_PROBE_PING_TOOL]
+    if tool_list:
+        payload["tools"] = tool_list
         if force_tool:
-            payload["tool_choice"] = {"type": "function", "function": {"name": "ping"}}
+            name = (tool_list[0].get("function") or {}).get("name") or "ping"
+            payload["tool_choice"] = {"type": "function", "function": {"name": name}}
     return payload
 
 
 def _probe_once(*, stream: bool, with_tools: bool, force_tool: bool, max_tokens: int,
-                timeout: float, post_fn) -> dict:
+                timeout: float, post_fn, system: str = "", user: str = "",
+                tools: list | None = None) -> dict:
     """发一次探测请求并归类。返回 {ok, transport_ok, tool_call_ok, code, shape, counts}。"""
     payload = _probe_payload(stream=stream, with_tools=with_tools, force_tool=force_tool,
-                             max_tokens=max_tokens)
+                             max_tokens=max_tokens, system=system, user=user, tools=tools)
     shape = "tools+stream" if (with_tools and stream) else (
         "stream" if stream else "non_stream")
     if with_tools and force_tool:
@@ -676,9 +706,15 @@ def _probe_once(*, stream: bool, with_tools: bool, force_tool: bool, max_tokens:
     result["transport_ok"] = not result["empty"]
     result["tool_call_ok"] = "ping" in counts["tool_names"]
     if result["empty"]:
-        # 与 dsh 适配器同判据：finish_reason=stop 且零 block
-        result["code"] = "EMPTY_RESPONSE" if counts.get("finish", "") in ("", "stop") else (
-            counts.get("finish", "").upper())
+        finish = str(counts.get("finish") or "")
+        if finish == "length":
+            # 零 block + length = **预算被烧完**（推理型模型先思考），不是上游空回复。
+            # 必须与「正常结束但无内容」（dsh 的 EMPTY_RESPONSE 判据）分开：
+            # 前者是我们的探针参数问题，后者才是出口故障。
+            result["code"] = "BUDGET_EXHAUSTED"
+            result["inconclusive"] = True
+        else:
+            result["code"] = "EMPTY_RESPONSE" if finish in ("", "stop") else finish.upper()
     if not result["tool_call_ok"] and with_tools:
         result["code"] = result["code"] or "NO_TOOL_CALL"
     return result
@@ -690,10 +726,28 @@ def _tool_choice_unsupported(res: dict) -> bool:
     return res.get("status", 0) in (400, 422) and "tool_choice" in text
 
 
+def _retry_with_bigger_budget(res: dict, *, stream: bool, with_tools: bool, force_tool: bool,
+                              max_tokens: int, timeout: float, post_fn, tools=None,
+                              system: str = "", user: str = "") -> dict:
+    """`finish=length` + 零 block = **预算不足**（探针自身的问题）→ 加大预算重试一次。
+
+    这一步是为了不把「我们的探针给少了预算」误报成「上游出口坏了」。
+    """
+    if not res.get("inconclusive"):
+        return res
+    bigger = max(_PROBE_BUDGET_MIN * 8, int(max_tokens) * 8)
+    return _probe_once(stream=stream, with_tools=with_tools, force_tool=force_tool,
+                       max_tokens=bigger, timeout=timeout, post_fn=post_fn,
+                       tools=tools, system=system, user=user)
+
+
 def _describe_probe(res: dict, layer: str = "") -> str:
     """把预检结果渲染成给用户看的中文提示（只讲 LLM 出口，不提编排回退开关）。"""
     info = llm_exit_info()
     where = f"（model={info.get('model') or '未知'}，upstream={info.get('upstream') or '未知'}）"
+    if res.get("inconclusive"):
+        return (f"LLM 出口预检未得出结论：{where}返回的是「预算被烧完」（finish=length）而不是空回复，"
+                f"这是探针自身预算不足，不代表出口故障。")
     if not res.get("transport_ok"):
         detail = ("连非流式基础请求也失败" if res.get("shape") == "non_stream"
                   else "请求没有得到任何内容（空回复/传输失败）")
@@ -710,27 +764,77 @@ def _describe_probe(res: dict, layer: str = "") -> str:
     return f"LLM 出口正常{where}。"
 
 
+def _probe_free_message(res: dict) -> str:
+    """自由生成段失败时的文案（只讲出口，不提编排开关）。"""
+    info = llm_exit_info()
+    where = f"（model={info.get('model') or '未知'}，upstream={info.get('upstream') or '未知'}）"
+    return (f"写作出口不可用：上游{where}对**自由生成**请求返回空（同一出口的强制工具调用正常，"
+            f"错误码 {res.get('code') or '未知'}，形状 {res.get('shape')}）→ 这是模型/中转侧问题："
+            f"写作要把整段正文生成出来，本出口做不到。请在 /settings 换模型或换中转后重试；"
+            f"复现：probe_llm_exit(mode=\"contrast\")。")
+
+
 def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: float = 60.0,
                    post_fn=None, use_cache: bool = True, retries: int = 2,
-                   exact_shape: bool = False) -> dict:
+                   exact_shape: bool = False, tools: list | None = None,
+                   system: str = "", user: str = "", max_tokens: int | None = None,
+                   shape_tag: str = "") -> dict:
     """LLM 出口预检：现在能不能靠这个模型/中转写出东西来。
 
-    mode="ping"（生产）：最多 2 次请求（含 tool_choice 不被支持时的回落），成功缓存 10 分钟、
-    失败只缓存 20 秒；返回 {ok, tool_call_ok, transport_ok, code, shape, model, upstream, message}。
+    mode="ping"（生产第一段）：强制调用极小 ping 工具 → 工具调用**路径**可用性。
     只有 `tool_call_ok=True` 才算通过——「有输出」不等于「工具调用可用」。
 
-    mode="diagnose"（手动排障）：A/B/C 三层，C 仅在 A、B 都失败时才跑；`exact_shape=True`
-    用 dsh 真实形状（max_tokens=256000）复现，用来确认是否超大 max_tokens 触发的。
+    mode="free"（生产第二段）：**自由生成**的代表形状探针。可传 `tools` / `system` / `user`
+    复现真实请求形状（工具集由调用方从 profile 取，别手写），但**不强制 tool_choice**、用小
+    max_tokens。判定看 `transport_ok`（有任一 block）——上游可能对强制工具调用正常、却对
+    自由生成整段返回空，而写作恰恰是自由生成。
+
+    mode="diagnose"（手动）：A/B/C 三层，C 仅在 A、B 都失败时才跑；`exact_shape=True`
+    用 dsh 真实形状（max_tokens=256000）复现。
+
+    mode="contrast"（手动）：同一句提示下「强制 tool_choice」vs「自由生成」vs「自由文本」的
+    最小对照，用来一次说清「出口坏在哪一侧」。只手动跑，不进生产路径。
+
+    成功缓存 10 分钟、失败 20 秒；缓存 key 含 mode/形状标签，两段互不覆盖。
     """
     info = llm_exit_info()
-    cache_key = (mode, bool(with_tools), bool(exact_shape),
+    cache_key = (mode, bool(with_tools), bool(exact_shape), int(max_tokens or 0), shape_tag or "",
                  info.get("model"), info.get("upstream"))
     now = time.time()
     if use_cache:
         hit = _PROBE_CACHE.get(cache_key)
         if hit and hit[0] > now:
             return dict(hit[1])
-    max_tokens = _PROBE_EXACT_MAX_TOKENS if exact_shape else _PROBE_PING_MAX_TOKENS
+    if not max_tokens:
+        max_tokens = _PROBE_EXACT_MAX_TOKENS if exact_shape else _PROBE_PING_MAX_TOKENS
+
+    if mode == "contrast":
+        # 三组都用够用的预算（64 会让推理型模型烧完预算，把对照变成噪声）
+        budget = max(_PROBE_BUDGET_MIN, 1024)
+        forced = _probe_once(stream=True, with_tools=True, force_tool=True,
+                             max_tokens=budget, timeout=timeout, post_fn=post_fn)
+        free = _probe_once(stream=True, with_tools=False, force_tool=False,
+                           max_tokens=budget, timeout=timeout, post_fn=post_fn)
+        prose = _probe_once(stream=True, with_tools=False, force_tool=False,
+                            max_tokens=budget, timeout=timeout, post_fn=post_fn,
+                            user="用一句中文说明：你接下来会先做什么？")
+        empty = [d for d in (forced, free, prose) if d.get("empty")]
+        if any(d.get("inconclusive") for d in (forced, free, prose)):
+            verdict = ("对照未得出结论：出现 finish=length（预算被烧完），请加大 max_tokens 再试——"
+                       "这属于探针参数问题，不代表出口故障")
+        elif forced["tool_call_ok"] and not free["transport_ok"] and not prose["transport_ok"]:
+            verdict = "上游只对强制工具调用出内容，**自由生成整段为空** → 写作在本出口不可行"
+        elif not empty:
+            verdict = "三组都有输出：出口本身正常，失败更可能是间歇的（或由具体请求内容触发）"
+        elif not free["transport_ok"] or not prose["transport_ok"]:
+            verdict = "自由生成（无工具）为空：出口对自由生成不可用"
+        else:
+            verdict = "强制工具调用为空：出口的工具调用路径异常"
+        out = {"ok": prose["transport_ok"], "verdict": verdict,
+               "forced": forced, "free": free, "prose": prose,
+               "model": info.get("model"), "upstream": info.get("upstream")}
+        out["message"] = verdict
+        return out
 
     if mode == "diagnose":
         a = _probe_once(stream=True, with_tools=True, force_tool=True, max_tokens=max_tokens,
@@ -755,8 +859,39 @@ def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: floa
         out["message"] = _describe_probe(a, layer)
         return out
 
+    if mode == "free":
+        # 自由生成的代表形状：**不强制 tool_choice**（写作就是自由生成），判定看有没有 block
+        res = _probe_once(stream=True, with_tools=bool(tools), force_tool=False,
+                          max_tokens=max_tokens, timeout=timeout, post_fn=post_fn,
+                          tools=tools, system=system, user=user)
+        res = _retry_with_bigger_budget(res, stream=True, with_tools=bool(tools), force_tool=False,
+                                        max_tokens=max_tokens, timeout=timeout, post_fn=post_fn,
+                                        tools=tools, system=system, user=user)
+        attempt = 0
+        while (not res["transport_ok"]) and not res.get("inconclusive") \
+                and attempt < max(0, int(retries)):
+            attempt += 1
+            time.sleep(0.6 * attempt)
+            res = _probe_once(stream=True, with_tools=bool(tools), force_tool=False,
+                              max_tokens=max_tokens, timeout=timeout, post_fn=post_fn,
+                              tools=tools, system=system, user=user)
+        inconclusive = bool(res.get("inconclusive"))
+        res.update({"ok": bool(res["transport_ok"]) or inconclusive,
+                    "model": info.get("model"), "upstream": info.get("upstream"),
+                    "requests": attempt + 1, "free_generation": True,
+                    "warning": ("预检未得出结论（预算被烧完，finish=length）——按通过处理，"
+                                "不改写写作流程" if inconclusive else "")})
+        res["message"] = "" if res["ok"] else _probe_free_message(res)
+        ttl = _PROBE_OK_TTL if res["ok"] else _PROBE_FAIL_TTL
+        if use_cache:
+            _PROBE_CACHE[cache_key] = (now + ttl, dict(res))
+        return res
+
     res = _probe_once(stream=True, with_tools=with_tools, force_tool=with_tools,
                       max_tokens=max_tokens, timeout=timeout, post_fn=post_fn)
+    res = _retry_with_bigger_budget(res, stream=True, with_tools=with_tools,
+                                    force_tool=with_tools, max_tokens=max_tokens,
+                                    timeout=timeout, post_fn=post_fn)
     if with_tools and _tool_choice_unsupported(res):
         # 中转不支持 tool_choice：退一步用 prompt 指令（形状记为 prompt_only 便于区分）
         res = _probe_once(stream=True, with_tools=True, force_tool=False,
@@ -764,13 +899,17 @@ def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: floa
         res["shape"] = "prompt_only"
     # 传输层失败（HTTP 错误 / 零 block）重试有限次；语义失败（有输出但没调工具）不重试
     attempt = 0
-    while (not res["transport_ok"]) and attempt < max(0, int(retries)):
+    while (not res["transport_ok"]) and not res.get("inconclusive") \
+            and attempt < max(0, int(retries)):
         attempt += 1
         time.sleep(0.6 * attempt)
         res = _probe_once(stream=True, with_tools=with_tools, force_tool=with_tools,
                           max_tokens=max_tokens, timeout=timeout, post_fn=post_fn)
-    res.update({"ok": bool(res["tool_call_ok"]), "model": info.get("model"),
-                "upstream": info.get("upstream"), "requests": attempt + 1})
+    inconclusive = bool(res.get("inconclusive"))
+    res.update({"ok": bool(res["tool_call_ok"]) or inconclusive, "model": info.get("model"),
+                "upstream": info.get("upstream"), "requests": attempt + 1,
+                "warning": ("预检未得出结论（预算被烧完，finish=length）——按通过处理"
+                            if inconclusive else "")})
     res["message"] = _describe_probe(res) if not res["ok"] else ""
     ttl = _PROBE_OK_TTL if res["ok"] else _PROBE_FAIL_TTL
     if use_cache:
@@ -781,3 +920,50 @@ def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: floa
 def clear_probe_cache() -> None:
     """清预检缓存（设置页保存后调用；key 本身含 model/upstream，正常无需清）。"""
     _PROBE_CACHE.clear()
+
+
+# ─── 请求形状留痕（只计数，绝不记正文）───
+#
+# 为什么需要：2026-09-19 那次「root run 连续 6 次空回复」，只能靠 token 反推（6 次调用、
+# 合计 110730 prompt、completion 0），还要翻 git 判断哪条路径、请求多大、带几个工具。
+# 有这张表，`/health` 一眼就能看出「连续 N 次零输出、每次多大、带几个工具」。
+_REQ_SHAPES: "deque" = deque(maxlen=30)
+
+
+def record_request_shape(*, payload: dict, upstream: str, status: int, body: str,
+                         prompt_tokens: int = 0, completion_tokens: int = 0) -> dict:
+    """记一条请求形状（**只计数**，不保存 prompt/响应正文的任何片段）。"""
+    messages = payload.get("messages") or []
+    tools = payload.get("tools") or []
+    blocks = _summarize_completion(body or "", bool(payload.get("stream")))
+    rec = {
+        "at": time.time(),
+        "model": str(payload.get("model") or ""),
+        "upstream": _origin_of(upstream),
+        "stream": bool(payload.get("stream")),
+        "tools": len(tools),
+        "tool_choice": bool(payload.get("tool_choice")),
+        "messages": len(messages),
+        "msgs_chars": sum(len(str(m.get("content") or "")) for m in messages
+                          if isinstance(m, dict)),
+        "max_tokens": int(payload.get("max_tokens") or 0),
+        "status": int(status or 0),
+        "prompt_tokens": int(prompt_tokens or 0),
+        "completion_tokens": int(completion_tokens or 0),
+        "blocks": {"text": blocks["text"], "reasoning": blocks["reasoning"],
+                   "tool_calls": blocks["tool_calls"]},
+        "finish": blocks["finish"],
+        "empty": (blocks["text"] + blocks["reasoning"] + blocks["tool_calls"]) == 0,
+    }
+    _REQ_SHAPES.append(rec)
+    return rec
+
+
+def recent_request_shapes(limit: int = 20) -> list:
+    """最近 N 条请求形状（最新在最后）——`/health` 用，不含任何正文。"""
+    items = list(_REQ_SHAPES)
+    return items[-max(1, int(limit)):]
+
+
+def clear_request_shapes() -> None:
+    _REQ_SHAPES.clear()

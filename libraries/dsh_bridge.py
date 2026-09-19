@@ -281,6 +281,36 @@ def _python_with_mcp():
     return _PY_WITH_MCP
 
 
+# 运行期 persona —— 唯一真源：运行期 overlay 与 LLM 出口预检（代表形状探针）都从这里取，
+# 两处各写一份的话，预检就会拿一个跟真实 run 不一样的 system 去探测（探测的就不是同一件事了）。
+_WRITER_PERSONA = """You are a Plot Writer. Use only the provided NovelEngine writer MCP tools.
+Prepare exactly one Plot, write it, save it once, or complete one explicitly requested revision, and stop.
+The server owns all routing and planning."""
+_ORCHESTRATOR_PERSONA = """You are the NovelEngine Main Orchestrator. You coordinate narrow Writer,
+Planner, Critic, Build and Publish subagents through the delegate tools. You do not write prose
+or invent facts directly: read authoritative MCP state, delegate one bounded action, inspect the
+returned rule report, and refresh state after every mutation. Hard integrity errors, user-only
+submit actions, revision conflicts and locks cannot be overridden. Stop at user confirmation
+boundaries and enforce the run budget.
+"""
+_BUILD_PERSONA = """You are the NovelEngine Build Agent. Complete exactly one build step using the
+authoritative build context and the tools exposed in this profile.
+Design world, factions, characters and the opening committed storyline as one coherent system.
+Use library material as inspiration, not as a template. Commit only the opening horizon; leave
+long-range directions as future intents. Validate the draft and revise until it passes or only
+user decisions remain. Never submit the book yourself, never change phases, never browse the web."""
+
+
+def _persona_for_profile(mcp_profile: str) -> str:
+    if mcp_profile == "write":
+        return _WRITER_PERSONA
+    if mcp_profile == "orchestrate":
+        return _ORCHESTRATOR_PERSONA
+    if mcp_profile in ("build", "build-candidates"):
+        return _BUILD_PERSONA
+    return _PERSONA
+
+
 # 编排气（orchestrate）与用户态 profile 同步后的角色 MCP server 清单：
 # 唯一真源，运行期 overlay 与 readiness 检查都从这里取，避免两处各写一份。
 _ROLE_MCP_SERVERS = (
@@ -312,30 +342,7 @@ def _write_runtime_overlay(timeout_ms: int = 600000, mcp_profile: str = "") -> s
     # 它需要的全部能力），所以不再注入 NOVEL_AGENT.md：那份 workspace 指令 25.3KB 而预算
     # 只给 20KB，尾部「第二部分：护栏」一直被静默截断——既浪费 token 又恰好丢掉护栏。
     is_build = mcp_profile in ("build", "build-candidates")
-    writer_persona = """You are a Plot Writer. Use only the provided NovelEngine writer MCP tools.
-Prepare exactly one Plot, write it, save it once, or complete one explicitly requested revision, and stop.
-The server owns all routing and planning."""
-    orchestrator_persona = """You are the NovelEngine Main Orchestrator. You coordinate narrow Writer,
-Planner, Critic, Build and Publish subagents through the delegate tools. You do not write prose
-or invent facts directly: read authoritative MCP state, delegate one bounded action, inspect the
-returned rule report, and refresh state after every mutation. Hard integrity errors, user-only
-submit actions, revision conflicts and locks cannot be overridden. Stop at user confirmation
-boundaries and enforce the run budget.
-"""
-    build_persona = """You are the NovelEngine Build Agent. Complete exactly one build step using the
-authoritative build context and the tools exposed in this profile.
-Design world, factions, characters and the opening committed storyline as one coherent system.
-Use library material as inspiration, not as a template. Commit only the opening horizon; leave
-long-range directions as future intents. Validate the draft and revise until it passes or only
-user decisions remain. Never submit the book yourself, never change phases, never browse the web."""
-    if is_writer:
-        persona = writer_persona
-    elif is_build:
-        persona = build_persona
-    elif is_orchestrate:
-        persona = orchestrator_persona
-    else:
-        persona = _PERSONA
+    persona = _persona_for_profile(mcp_profile)
     persona_block = "\n".join("      " + ln for ln in persona.strip().splitlines())
     instruction_candidates = "[]" if (is_writer or is_build or is_orchestrate) else "['NOVEL_AGENT.md']"
     # 编排器使用独立 skill，避免把完整全局契约重复注入主 Agent；legacy profile 保持原行为。
@@ -453,12 +460,14 @@ user decisions remain. Never submit the book yourself, never change phases, neve
 _MAX_TASK_CHARS = 20000   # 任务文本上限：Windows 命令行 ~32K，留余量
 
 
-def _build_task_text(task: str, history: list | None) -> str:
+def _build_task_text(task: str, history: list | None, history_cap: int | None = None) -> str:
     """浏览器持有的 user/assistant 历史 + 当前任务拼成一个 headless 任务文本。
 
     与内置 agent 的「messages 浏览器持有」模型同构：多轮语义靠前文回放维持。
     规则（四阶段/路由/护栏）由 agent-instructions 注入 NOVEL_AGENT.md，任务文本不再拼前缀。
     超长时截断中间旧历史（保头部 + 尾部最新消息），防 Windows 命令行超限。
+
+    `history_cap` 给写作类编排任务用更小的上限，见 `_task_history_cap`。
     """
     parts = []
     for m in history or []:
@@ -469,11 +478,28 @@ def _build_task_text(task: str, history: list | None) -> str:
     final = f"[用户] {task.strip()}"
     body = parts + [final]
     text = "\n\n".join(body)
-    if len(text) <= _MAX_TASK_CHARS:
+    cap = int(history_cap or _MAX_TASK_CHARS)
+    if len(text) <= cap:
         return text
-    budget = _MAX_TASK_CHARS - len(final) - 60
+    budget = max(200, cap - len(final) - 60)
     kept_body = "\n\n".join(parts)[-budget:]
     return "...(历史过长已截断，仅保留最近内容)...\n\n" + kept_body + "\n\n" + final
+
+
+# 写作类**编排**任务回放历史的字符上限。
+#
+# 章级编排任务的权威输入在服务端（`get_orchestration_state` + 各工具），回放的侧栏历史只是
+# 噪声：2026-09-19 实测 root 首轮请求 ≈18.4k token 里约 10k 是历史（含历次失败信息本身），
+# 而每多一分长度就多一分触发上游过滤/预算问题的机会。建书**不能裁**——向导原文只存在于任务
+# 文本里（服务端无副本），裁掉就等于把用户的 idea/标签丢了（踩过）。
+_WRITE_TASK_HISTORY_CHARS = 4000
+
+
+def _task_history_cap(task: str, profile: str) -> int | None:
+    """`_build_task_text` 的历史上限：写作类编排任务收紧，其余保持原状。"""
+    if profile == "orchestrate" and _is_writing_task(task):
+        return _WRITE_TASK_HISTORY_CHARS
+    return None
 
 
 # 未分类哨兵：任务既不是明确的阶段动作、也不是只读问句。
@@ -1092,7 +1118,8 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
         except Exception:  # noqa: BLE001 —— 预检失败不应在已打通过的链路上制造崩溃，交给后续 unknown-tool 兜底
             _log.warning("skill/profile 预检异常（跳过，按现有行为继续）", exc_info=True)
     overlay = _write_runtime_overlay(mcp_profile=profile)
-    task_text = _build_task_text(task, history)
+    task_text = _build_task_text(task, history,
+                                 history_cap=_task_history_cap(task, profile))
     if skill_text:
         skill_block = "\n\n[当前 Skill，必须遵守]\n" + skill_text
         if len(task_text) + len(skill_block) > _MAX_TASK_CHARS:
@@ -1502,11 +1529,13 @@ def _writer_failure_message(child_error: str, child_tail: str, book_id: str) -> 
     return msg
 
 
-def _fail_flow(book_id: str, flow_id: str, error: str, message: str):
+def _fail_flow(book_id: str, flow_id: str, error: str, message: str, *, emit: bool = True):
     """统一的失败出口：转 FAILED + **释放租约** + 一个 error 与 done。
 
     此前各失败分支各写各的，其中两处漏释放租约 → 失败后租约白占 15 分钟，
     下一次写作还会被 active_flow_id 吸到这个已 FAILED 的 Flow 上。
+    `emit=False`：调用方**已经**报过错了（编排路径的 run 级错误由 dsh 事件流过），
+    只需要收掉 flow 与租约，别再吐一个空错误气泡。
     """
     from libraries.write_flow import release_lease, transition
     if flow_id:
@@ -1518,8 +1547,37 @@ def _fail_flow(book_id: str, flow_id: str, error: str, message: str):
             release_lease(book_id, flow_id)
         except Exception as exc:  # noqa: BLE001
             _log.warning("租约释放失败 book=%s flow=%s: %s", book_id, flow_id, exc)
-    yield {"type": "error", "message": message}
-    yield {"type": "done"}
+    if emit:
+        yield {"type": "error", "message": message}
+        yield {"type": "done"}
+
+
+def _orchestrate_run(task: str, history: list | None, debug: bool, book_id: str):
+    """root 编排 run 的桥层收尾：run 级失败时收掉 flow 与租约（错误本身由 dsh 事件流过）。
+
+    flow 生命周期归 root（它自己 prepare/accept/finalize），桥层只在**run 级失败**时兜底：
+    释放仍然活跃的租约并标 FAILED。否则失败后租约白占 15 分钟，下一次写作被它吸住。
+    草稿与已 accepted 的段落一律保留——`tools/test_writer_failure_recovery.py` 证明
+    这条路是可恢复的（下次从下一个未完成段落继续）。
+    """
+    error_msg = ""
+    for evt in run_dsh_task(task, history, debug=debug, book_id=book_id,
+                            mcp_profile="orchestrate"):
+        if evt.get("type") == "error" and not error_msg:
+            error_msg = evt.get("message") or ""
+        yield evt
+    if not error_msg or not book_id:
+        return
+    from libraries.write_flow import active_flow_id
+    try:
+        flow_id = active_flow_id(book_id)
+    except Exception:  # noqa: BLE001
+        flow_id = ""
+    if not flow_id:
+        return
+    code = _llm_failure_code(error_msg) or "run_error"
+    _log.warning("编排 run 失败：收掉 flow=%s（%s）", flow_id, code)
+    yield from _fail_flow(book_id, flow_id, f"orchestrate_run_failed:{code}", "", emit=False)
 
 
 def _legacy_writer_fsm(task: str, history: list | None, debug: bool, policy: str | None,
@@ -2272,6 +2330,66 @@ def _is_writing_task(task: str, flow_mode: str | None = None) -> bool:
     return flow_mode == "chapter_to_completion" or _task_tool_profile(task) == "write"
 
 
+def _preflight_profile(task: str, flow_mode: str | None) -> str:
+    """这次任务实际会用哪个 profile —— 代表形状探针要照**它**的样子发。"""
+    if _orchestrator_enabled() and _profiles_enabled() and _is_orchestrated_task(task, flow_mode):
+        return "orchestrate"
+    return _task_tool_profile(task) or "write"
+
+
+def _profile_probe_tools(profile: str) -> list:
+    """该 profile 的**真实**工具集（OpenAI function 形状）——复用注册表的 schema 生成器。
+
+    手写一份「像真的」的工具集就会漂移；直接取 profile 的工具面，探针才等于真实请求。
+    """
+    try:
+        from libraries.agent_tool_router import PROFILE_TOOLS
+        import agent_tools
+        reg = {t.get("name"): t for t in agent_tools._build_registry()}
+        out = []
+        for name in sorted(PROFILE_TOOLS.get(profile) or ()):
+            spec = reg.get(name) or {}
+            out.append({"type": "function", "function": {
+                "name": name,
+                "description": str(spec.get("description") or "")[:1200],
+                "parameters": spec.get("inputSchema") or {"type": "object", "properties": {}}}})
+        return out
+    except Exception:  # noqa: BLE001 —— 探测降级为无工具，不该让预检自己炸
+        _log.warning("构造代表形状工具集失败，探针降级为无工具", exc_info=True)
+        return []
+
+
+def _run_llm_preflight(task: str, flow_mode: str | None) -> str:
+    """写作任务的 LLM 出口预检。返回**非空字符串 = 应当停下**（直接给用户看的原因）。
+
+    两段，都必须在创建 flow / 拿租约 / spawn 任何 run **之前**跑完：
+      · 段 1：极小、强制 `tool_choice` 的 ping → 工具调用**路径**是否可用；
+      · 段 2：**自由生成**的代表形状（该 profile 的真实工具集 + 同一个 persona + skill 头部 +
+        任务头部，**不强制** tool_choice）→ 写作本身能不能出字。
+    段 2 是补课来的：23:28 那次 root run 连续 6 次空回复（`calls=6, completion=0`），
+    而段 1 的 ping 一直通过——它强制 tool_choice，跟真实写作请求不是同一件事。
+    探针会把任务/skill 头部发给**用户自己配置的**出口（与真实 run 完全相同的去向）。
+    """
+    try:
+        ping = probe_llm_exit()
+        if not ping.get("ok"):
+            return ping.get("message") or "LLM 出口预检未通过。"
+        profile = _preflight_profile(task, flow_mode)
+        head = probe_llm_exit(mode="free", shape_tag=profile, max_tokens=2048,
+                              tools=_profile_probe_tools(profile),
+                              system=_persona_for_profile(profile),
+                              user=((task or "")[:400] + "\n\n[当前 Skill，必须遵守]\n"
+                                    + _skill_text_for_profile(profile)[:800]))
+        if not head.get("ok"):
+            return head.get("message") or "LLM 出口预检未通过。"
+        if head.get("warning"):
+            _log.warning("LLM 出口预检：%s", head["warning"])
+        return ""
+    except Exception:  # noqa: BLE001 —— 预检自己出错不该拦住写作
+        _log.warning("LLM 出口预检异常（跳过）", exc_info=True)
+        return ""
+
+
 def _needs_review_gate(profile: str) -> bool:
     """该 run 是否启用「未评审不得续写/收章」门禁。
 
@@ -2298,6 +2416,19 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
     交接则链式跑 replan（auto：提交后续写；confirm：停在预览交给兼容调用方确认）。
     子 run 的 done 一律吞掉，全程只发一个尾部 done。
     """
+    # LLM 出口预检 —— **必须在最前面**。
+    # 上一版把它写在编排分支之后，而编排分支对章级任务会 `return`，于是「编排一启用，
+    # 预检就永远不跑」（2026-09-19 实测：root run 6 次空回复，预检毫无反应）。
+    # 预检成功**从不**保证下一次真实请求成功（上游抖动照样会发生），所以
+    # `_llm_failure_note` / `_writer_failure_message` 的运行时兜底必须同时存在。
+    if _llm_preflight_enabled() and _is_writing_task(task, flow_mode) and ensure_proxy():
+        why = _run_llm_preflight(task, flow_mode)
+        if why:
+            _log.warning("LLM 出口预检未通过：%s", why)
+            yield {"type": "error", "message": why}
+            yield {"type": "done"}
+            return
+
     # 新路径：一个 root dsh Agent 持有编排权，Writer/Planner/Critic 由其委派。
     #
     # 就绪检查失败的语义**分两种**（不变量 I3）——「显式要求新编排却偷偷跑了旧 FSM」
@@ -2316,10 +2447,11 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
             yield {"type": "done"}
             return
         if _is_orchestrated_task(task, flow_mode):
-            for evt in run_dsh_task(
-                    task, history, debug=debug, book_id=explicit_book_id or _book_id_from_task(task),
-                    mcp_profile="orchestrate"):
-                yield evt
+            # 走 `_persist_flow_events`：编排分支此前直接 yield，error 不落 task_events
+            # （2026-09-19 实测刷新后失败信息只剩前端 history）。run 级失败还会经
+            # `_orchestrate_run` 收掉活跃租约。
+            yield from _persist_flow_events(_orchestrate_run(
+                task, history, debug, explicit_book_id or _book_id_from_task(task)))
             return
     elif _orchestrator_explicit() and not _profiles_enabled():
         # 显式要编排 + AGENT_TOOL_PROFILES=0：两者互斥（编排依赖按角色裁工具面），
@@ -2340,21 +2472,6 @@ def run_dsh_flow(task: str, history: list | None = None, debug: bool = False,
         if not status["ready"]:
             _log.warning("主 Agent 编排未启用（auto 模式回落 legacy）：%s", status["problems"])
             yield {"type": "notice", "message": _orchestrator_fallback_notice(status)}
-
-    # LLM 出口预检：在**创建 flow / 拿租约 / spawn 任何 run 之前**确认出口能干活。
-    # 上游对带工具的流式请求返回空回复时，dsh 会重试 5 次（~20 秒）再整轮失败，用户最终
-    # 看到的却是一句「Writer 未完成有效 Plot 提交」——第 16 章那次正是如此。预检把这件事
-    # 提前成一句分层结论，且不留下半开的 flow/租约。
-    # 注意：预检成功**从不**保证下一次真实请求成功（上游抖动照样会发生），所以
-    # `_llm_failure_note` / `_writer_failure_message` 的运行时兜底必须同时存在。
-    if _llm_preflight_enabled() and _is_writing_task(task, flow_mode) and ensure_proxy():
-        probe = probe_llm_exit()
-        if not probe.get("ok"):
-            _log.warning("LLM 出口预检未通过：%s", probe)
-            yield {"type": "error",
-                   "message": probe.get("message") or "LLM 出口预检未通过：上游无法完成带工具的请求。"}
-            yield {"type": "done"}
-            return
 
     # 结构化写作入口优先于任务文本：即使 history/task 带有 novel-replan 标记，也必须进入章级 FSM。
     if flow_mode == "chapter_to_completion":
