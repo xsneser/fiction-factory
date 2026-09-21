@@ -44,24 +44,7 @@
             transition: width .2s ease, padding .2s ease, border-color .2s ease;
         }
         nav.collapsed, html.nav-collapsed nav { width:0 !important; padding:0 !important; border-right:none !important; overflow:hidden !important; }
-        nav .logo {
-            padding:0 16px 20px 20px; font-size:20px; font-weight:bold; color:#58a6ff;
-            border-bottom:1px solid #30363d; margin-bottom:10px;
-            display:flex; align-items:center; justify-content:space-between;
-        }
-        nav .nav-toggle {
-            background:none; border:none; color:var(--fg-dim); cursor:pointer; font-size:11px;
-            padding:2px 6px; line-height:1; border-radius:4px; transition:color .2s, background .2s;
-        }
-        nav .nav-toggle:hover { color:#f0f6fc; background:#21262d; }
-        button.nav-reopen {
-            position:fixed; left:0; top:50%; transform:translateY(-50%);
-            background:#161b22; border:1px solid #30363d; border-left:none; color:#8b949e;
-            border-radius:0 8px 8px 0; padding:12px 5px; font-size:11px; cursor:pointer; z-index:100;
-            display:none;
-        }
-        button.nav-reopen:hover { color:#58a6ff; }
-        html.nav-collapsed button.nav-reopen { display:block; }
+        nav .logo { padding:0 20px 20px; font-size:20px; font-weight:bold; color:#58a6ff; border-bottom:1px solid #30363d; margin-bottom:10px; }
         nav a { display:block; padding:10px 20px; color:#8b949e; text-decoration:none; font-size:14px; transition:all .2s; }
         nav a:hover, nav a.active { color:#f0f6fc; background:#1f2937; }
         nav .section { padding:12px 20px 4px; color:var(--fg-dim); font-size:11px; text-transform:uppercase; letter-spacing:1px; }
@@ -89,19 +72,38 @@
         }
         aside#status-bar.collapsed, html.status-collapsed aside#status-bar { width:0 !important; padding:0 !important; border-left:none !important; overflow:hidden !important; }
         aside#status-bar .status-head { display:flex; align-items:center; justify-content:space-between; }
-        aside#status-bar .status-toggle {
-            background:none; border:none; color:var(--fg-dim); cursor:pointer; font-size:11px; padding:0 2px 8px; line-height:1;
+        /* ─── 侧边栏垂直居中把手按钮（左/右两侧折叠与展开） ─── */
+        .sidebar-handle {
+            position: fixed; top: 50%; transform: translateY(-50%);
+            background: #161b22; border: 1px solid #30363d; color: #8b949e;
+            padding: 14px 4px; font-size: 10px; line-height: 1; cursor: pointer; z-index: 100;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+            transition: color .2s, background .2s, opacity .2s, left .2s ease, right .2s ease;
+            opacity: 0.85; user-select: none;
         }
-        aside#status-bar .status-toggle:hover { color:#f0f6fc; }
-        /* 页签行内的折叠按钮（Agent 标题已去掉，折叠控制并入页签行末） */
-        aside#status-bar .agent-tabs .status-toggle { margin-left:auto; align-self:flex-end; padding:0 4px 6px; }
-        button.status-reopen {
-            position:fixed; right:0; top:50%; transform:translateY(-50%);
-            background:#161b22; border:1px solid #30363d; border-right:none; color:#8b949e;
-            border-radius:8px 0 0 8px; padding:12px 5px; font-size:11px; cursor:pointer; z-index:100;
+        .sidebar-handle:hover { color: #58a6ff; background: #21262d; opacity: 1; }
+
+        /* 左侧把手（向右突出圆角） */
+        .nav-handle-toggle, .nav-handle-reopen {
+            border-left: none; border-radius: 0 6px 6px 0;
         }
-        button.status-reopen:hover { color:#58a6ff; }
-        html.status-collapsed button.status-reopen { display:block; }
+        /* 展开时：折叠按钮定位在导航栏右边缘；展开按钮隐藏 */
+        .nav-handle-toggle { left: var(--nav-width, 180px); display: block; }
+        .nav-handle-reopen { left: 0; display: none; }
+        /* 折叠时：折叠按钮隐藏；展开按钮定位在屏幕左边缘 */
+        html.nav-collapsed .nav-handle-toggle { display: none !important; }
+        html.nav-collapsed .nav-handle-reopen { display: block !important; }
+
+        /* 右侧把手（向左突出圆角） */
+        .status-handle-toggle, .status-handle-reopen {
+            border-right: none; border-radius: 6px 0 0 6px;
+        }
+        /* 展开时：折叠按钮定位在 Agent 面板左边缘；展开按钮隐藏 */
+        .status-handle-toggle { right: var(--agent-width, 440px); display: block; }
+        .status-handle-reopen { right: 0; display: none; }
+        /* 折叠时：折叠按钮隐藏；展开按钮定位在屏幕右边缘 */
+        html.status-collapsed .status-handle-toggle { display: none !important; }
+        html.status-collapsed .status-handle-reopen { display: block !important; }
         aside#status-bar .status-empty { font-size:12px; color:var(--fg-dim); text-align:center; padding:10px 0; }
         aside#status-bar .status-card {
             background:#0d1117; border:1px solid #21262d; border-radius:6px;

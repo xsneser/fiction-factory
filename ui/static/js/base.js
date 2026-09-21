@@ -32,11 +32,9 @@ function escapeHtml(str) {
 // 左侧导航栏折叠：localStorage 持久化 (ne_nav_collapsed)，折叠时在左边缘显示 ▶ 展开按钮。
 function toggleNav() {
     var nav = document.getElementById('app-nav') || document.querySelector('nav');
-    var reopen = document.getElementById('nav-reopen');
     if (!nav) return;
-    var isCollapsed = nav.classList.toggle('collapsed');
-    document.documentElement.classList.toggle('nav-collapsed', isCollapsed);
-    if (reopen) reopen.style.display = isCollapsed ? 'block' : 'none';
+    var isCollapsed = !nav.classList.contains('collapsed');
+    setNavCollapsed(isCollapsed);
     try {
         localStorage.setItem('ne_nav_collapsed', isCollapsed ? '1' : '0');
     } catch(e) {}
@@ -47,10 +45,12 @@ function toggleNav() {
 function setNavCollapsed(collapsed) {
     var nav = document.getElementById('app-nav') || document.querySelector('nav');
     var reopen = document.getElementById('nav-reopen');
+    var toggle = document.getElementById('nav-toggle');
     if (!nav) return;
     nav.classList.toggle('collapsed', collapsed);
     document.documentElement.classList.toggle('nav-collapsed', collapsed);
     if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
+    if (toggle) toggle.style.display = collapsed ? 'none' : 'block';
 }
 function restoreNav() {
     try {
@@ -64,17 +64,15 @@ function restoreNav() {
     } catch(e) {}
 }
 
-// 右侧状态栏折叠：localStorage 持久化，折叠时露出右侧 ▶ 展开按钮。
+// 右侧状态栏折叠：localStorage 持久化，折叠时露出右侧 ◀ 展开按钮。
 // 手动折叠/展开一次即锁定偏好（ne_status_locked），此后不再自动折叠。
 function toggleStatusBar() {
     var bar = document.getElementById('status-bar');
-    var reopen = document.getElementById('status-reopen');
     if (!bar) return;
-    var collapsed = bar.classList.toggle('collapsed');
-    document.documentElement.classList.toggle('status-collapsed', collapsed);
-    if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
+    var isCollapsed = !bar.classList.contains('collapsed');
+    setStatusCollapsed(isCollapsed);
     try {
-        localStorage.setItem('ne_status_collapsed', collapsed ? '1' : '0');
+        localStorage.setItem('ne_status_collapsed', isCollapsed ? '1' : '0');
         localStorage.setItem('ne_status_locked', '1');
     } catch(e) {}
     setTimeout(function() {
@@ -84,10 +82,12 @@ function toggleStatusBar() {
 function setStatusCollapsed(collapsed) {
     var bar = document.getElementById('status-bar');
     var reopen = document.getElementById('status-reopen');
+    var toggle = document.getElementById('status-toggle');
     if (!bar) return;
     bar.classList.toggle('collapsed', collapsed);
     document.documentElement.classList.toggle('status-collapsed', collapsed);
     if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
+    if (toggle) toggle.style.display = collapsed ? 'none' : 'block';
 }
 function restoreStatusBar() {
     try {
