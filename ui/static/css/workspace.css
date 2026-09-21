@@ -58,38 +58,41 @@ main { overflow: hidden; }
 .gf-item.action-gag { border-left-color:var(--success-fg); color:var(--fg-strong); }
 
 /* ─── 写作台阅读器（按章 CSS-columns 书式分页 + 目录抽屉；类名 reader-* 隔离） ─── */
-/* 顶部：继续写正文大卡（原样式，右栏顶部） */
-.wf-skill-cards { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
-.wf-skill-card { background:#0d1117; border:1px solid #21262d; border-radius:8px;
-    padding:10px 12px; cursor:pointer; transition:all .2s; font:inherit; text-align:left; color:var(--fg); width:100%; }
+/* 顶部：继续写正文大卡（内嵌运行态停止按钮，右栏顶部） */
+.wf-skill-cards { margin-bottom:12px; }
+.wf-skill-card {
+    background:#0d1117; border:1px solid #21262d; border-radius:8px;
+    padding:8px 12px; transition:all .2s; color:var(--fg); width:100%;
+    display:flex; align-items:center; justify-content:space-between; gap:12px; box-sizing:border-box;
+}
 .wf-skill-card:hover { border-color:#58a6ff; }
-.wf-skill-card:disabled { opacity:.7; cursor:not-allowed; }
-.wf-skill-card .wsc-title { color:#58a6ff; font-weight:600; font-size:13px; margin-bottom:4px; }
-.wf-skill-card .wsc-sub { color:#8b949e; font-size:11px; line-height:1.6; }
-.wf-skill-card.running { opacity:.7; cursor:not-allowed; border-color:#f85149; }
-.wf-skill-card.running .wsc-title { color:#f85149; }
+.wf-skill-card.running { border-color:#f85149; }
+.wf-skill-card-action {
+    flex:1; min-width:0; display:flex; flex-direction:column; text-align:left;
+    background:transparent; border:none; padding:0; margin:0; cursor:pointer; font:inherit; color:var(--fg);
+}
+.wf-skill-card-action:disabled { cursor:not-allowed; }
+.wf-skill-card-action:focus-visible { outline:2px solid #58a6ff; outline-offset:3px; border-radius:4px; }
+.wf-skill-card-action .wsc-title { color:#58a6ff; font-weight:600; font-size:13px; margin-bottom:2px; }
+.wf-skill-card-action .wsc-sub { color:#8b949e; font-size:11px; line-height:1.5; }
+.wf-skill-card.running .wf-skill-card-action .wsc-title { color:#f85149; }
+.wf-skill-card.running .wf-skill-card-action .wsc-title::before { content:''; display:inline-block; width:11px; height:11px;
+    border:2px solid #f85149; border-top-color:transparent; border-radius:50%;
+    animation:wf-spin .8s linear infinite; margin-right:6px; vertical-align:-1px; }
 .wf-write-status { min-height:18px; margin:-4px 0 10px; color:var(--fg-muted); font-size:11px; line-height:1.5; }
 .wf-write-status.running { color:#58a6ff; }
 .wf-write-status.success { color:var(--success-fg); }
 .wf-write-status.warning { color:var(--warn); }
 .wf-write-status.error,.wf-write-status.stopped { color:var(--danger-fg); }
 .wf-write-status.stopping { color:var(--warn); }
-.wf-skill-card.running .wsc-title::before { content:''; display:inline-block; width:11px; height:11px;
-    border:2px solid #f85149; border-top-color:transparent; border-radius:50%;
-    animation:wf-spin .8s linear infinite; margin-right:6px; vertical-align:-1px; }
 @keyframes wf-spin { to { transform: rotate(360deg); } }
-.wf-stop-btn { margin-top:0; background:#21262d; border:1px solid #f85149; color:#f85149;
-    border-radius:6px; padding:4px 12px; font-size:12px; cursor:pointer; transition:all .15s; flex-shrink:0; }
+.wf-stop-btn { background:#21262d; border:1px solid #f85149; color:#f85149;
+    border-radius:6px; padding:4px 12px; font-size:12px; cursor:pointer; transition:all .15s; flex-shrink:0; white-space:nowrap; }
 .wf-stop-btn:hover { background:#f85149; color:#0d1117; }
 .wf-stop-btn:disabled { opacity:.5; cursor:default; }
 /* 阅读器共享组件样式已统一到 reader.css（本页 head 已加载 reader.css）。
    此处只补写作台布局差异：工具栏在视口下方 → margin-top（外部阅读器在视口上方用 reader.css 的 margin-bottom） */
 .editor-mid .reader-toolbar { margin-top:8px; margin-bottom:0; }
-
-/* 状态卡（Past/Current/Future）、方向入口、跟随写作、Agent 检查器均已删除：
-   运行上下文由左栏两块面板承担，工具调用链看右侧栏 Agent 面板。 */
-.wf-skill-cards { position:relative; flex-direction:row; align-items:center; }
-.wf-skill-card { flex:1; margin-bottom:0; }
 
 @media (max-width:900px) {
   .editor-split { flex-direction:row; overflow:hidden; }

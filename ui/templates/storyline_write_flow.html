@@ -5,7 +5,7 @@
 {% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css?v=22">
-<link rel="stylesheet" href="/static/css/workspace.css?v=7">
+<link rel="stylesheet" href="/static/css/workspace.css?v=8">
 <link rel="stylesheet" href="/static/css/reader.css">
 {% from "_flow_stepper.html" import status_badge %}
 {% from "_info_bar.html" import info_bar %}
@@ -73,13 +73,15 @@ window.__PLANNING_BOUNDARY__ = {{ planning_boundary|tojson }};</script>
     <div class="editor-divider" id="editor-divider" title="拖动调整故事线宽度"></div>
 
     <div class="editor-mid">
-        {# ─── 顶部：继续写正文（压缩为工具栏按钮） ───#}
+        {# ─── 顶部：继续写正文（压缩为工具栏卡片，内嵌运行态停止按钮） ───#}
         <div class="wf-skill-cards">
-            <button type="button" class="wf-skill-card" id="wf-continue-card" onclick="runWritingTask()" aria-describedby="wf-write-status">
-                <span class="wsc-title">✍️ 继续写正文</span>
-                <span class="wsc-sub">Agent 将自动判断写作或续规划，直到当前章完成</span>
-            </button>
-            <button type="button" class="wf-stop-btn" id="wf-stop-btn" style="display:none" onclick="stopWritingTask(event)">⏹ 停止</button>
+            <div class="wf-skill-card" id="wf-continue-card" aria-busy="false">
+                <button type="button" class="wf-skill-card-action" id="wf-continue-start" onclick="runWritingTask()" aria-describedby="wf-write-status">
+                    <span class="wsc-title">✍️ 继续写正文</span>
+                    <span class="wsc-sub">Agent 将自动判断写作或续规划，直到当前章完成</span>
+                </button>
+                <button type="button" class="wf-stop-btn" id="wf-stop-btn" style="display:none" onclick="stopWritingTask(event)">⏹ 停止</button>
+            </div>
         </div>
         <div class="wf-write-status" id="wf-write-status" role="status" aria-live="polite"></div>
         {# ─── 正文：当前章单章渲染，CSS columns 分页，情节段包 span.m-bridge 供点击高亮 ───#}
@@ -338,13 +340,16 @@ function _wfAgentRunning() {
 }
 function _wfSetRunning(running) {
     var card = document.getElementById('wf-continue-card');
+    var startBtn = document.getElementById('wf-continue-start');
     var stop = document.getElementById('wf-stop-btn');
     if (card) {
         card.classList.toggle('running', !!running);
-        card.disabled = !!running;
         card.setAttribute('aria-busy', running ? 'true' : 'false');
-        card.setAttribute('aria-disabled', running ? 'true' : 'false');
-        var t = card.querySelector('.wsc-title');
+    }
+    if (startBtn) {
+        startBtn.disabled = !!running;
+        startBtn.setAttribute('aria-disabled', running ? 'true' : 'false');
+        var t = startBtn.querySelector('.wsc-title');
         if (t) t.textContent = running ? '⏳ 正在完成本章…' : '✍️ 继续写正文';
     }
     if (stop) {
