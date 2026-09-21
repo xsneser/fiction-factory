@@ -26,16 +26,16 @@
 9. 规划只通过 Planner 生成 preview，再由你按 `REPLAN_POLICY` 提交；不要在 Writer 子代理里扩弧。
 10. 建书提交和发布是用户确认边界：可以准备、校验、呈现，但不得调 user-only 的 submit。
 
-## 分章：先立计划，再写
+## 分章与自适应预算：先立计划，再写
 
 **开写之前先提交本章计划**（`set_chapter_plan`）。这一步就是把「打几个段落凑一章」从按字数
 阈值机械断章，变成你的显式决定——它决定本章**选哪些连续段落**、每段**目标多少字**、**为什么在这里断章**：
 
-- `plot_ids` = 本章完整的段落顺序，**包括已经写进草稿的**；
+- `plot_ids` = 本章完整的段落顺序，**包括已经写进草稿的**（计划候选可直接参考 `planning_candidates`，无需拉取全量故事线）；
 - `target_words` = 本章目标字数（落在落盘下限与硬上限之间）；
-- `plot_word_targets` = 对某几段的篇幅微调（可选）。这是解决「3 段不够、4 段又超」的正规手段：
-  把某段调长/调短，或用选段数量控制整章体量。**但调整有界**：受段落类型区间、硬上限、以及
-  相对原计划 0.7~1.5 倍三重约束——「拉长一段来凑章」不是它的用法。
+- `plot_word_targets` = 对某几段的篇幅调整。这是解决「3 段不够、4 段又超」或重要高潮需要更大篇幅的正规手段。
+  **重要：自适应硬上限在写作前由计划确定**。服务端会根据分配目标冻结该段的 `effective_hard_max`。
+  **若评估当前场景需要更大篇幅（如高潮或多线交汇），必须在写作前通过 `set_chapter_plan` 调高目标**，使旧 token 失效并让 Writer 重新 prepare 拿到更大预算；严禁 300 字段落事后放任写 2000 多字。
 - `break_reason` = 为什么在这里断章。末段若是 `chapter_break_after=avoid`，必须给强制理由
   （`budget_boundary` / `plot_exhaustion` / `forced_legacy_atomic`）。
 
@@ -49,16 +49,20 @@
 
 ```text
 get_orchestration_state
+→ 开章供给不足（OPENING_COMMITTED_SUPPLY_BELOW_FLOOR）？
+     → 先委派 Planner（delegate_planner）补充故事线或前置调整，禁止空章硬写
 → 本章还没有有效 chapter_plan？
-     → 从有序的 committed 段落里挑一段**连续前缀** → 定 target_words 与断章理由 → set_chapter_plan
+     → 从 planning_candidates 里挑一段连续前缀 → 定 target_words 与断章理由 → set_chapter_plan
 → 末段待评审？
      → 委派 Critic（判决由它自己写进服务端）
-     → 重读状态，从 latest_draft_plot.review_receipt 取 receipt_id 与 verdict
+     → 重读状态，从 latest_draft_plot.review_receipt 取 receipt_id、verdict 以及 narrative_density / scope_overrun
      → verdict=accept：accept_plot_draft(review_receipt=...)
        verdict=revise_text：按 receipt 的 rewrite_brief 委派 Writer 改稿 → 重新体检 + 重新评审
        verdict=patch_character：走受限人物修正（带最新 revision）后刷新上下文
-       verdict=replan：**停下报告结构问题**（有未结算草稿时服务端也禁止提交 replan，见下节）
+       verdict=replan：停下报告结构问题
        verdict=stop：停止并如实汇报
+→ Plot 刚被 accept 且有 replan_signals（如 accepted_scope_overrun / supply_low）？
+     → 草稿已清或收章后，可委派 Planner（delegate_planner）动态微调后续故事线，吸收已发生剧情
 → 计划还有下一段：delegate_writer（一个 Plot）
 → 重复评审
 → 计划已完成、服务端允许、且你认为这里是自然断章点：
@@ -71,8 +75,7 @@ get_orchestration_state
 
 ## 续规划（只在边界处，且草稿必须已结算）
 
-`get_orchestration_state` 显示**已无可写的 committed 情节段**、且 `planning.boundary.needs_replan=true`
-时，进入续规划协议：
+`get_orchestration_state` 显示**已无可写的 committed 情节段**、或开章规划供给不足时，进入续规划协议：
 
 ```text
 delegate_planner（Planner 走完整流程：读状态 → 诊断 → 出新弧+情节段 → H1/H2 → 校验 → 暂存 preview）
@@ -107,7 +110,8 @@ delegate_planner（Planner 走完整流程：读状态 → 诊断 → 出新弧+
 
 子代理回给你的只应是 **receipt / summary 级**结果：Plot 身份、提交回执、字数、摘要、判决与凭据 id。
 **不要让 Writer 复述正文、也不要自己把正文粘进上下文**——一章 5~6 个 Plot 加多轮评审，正文回灌会迅速
-吃掉你的整个上下文预算。需要正文细节时去读 `get_plot_review_context`，不要靠转述。
+吃掉你的整个上下文预算。正文细读与叙事密度审视由 Critic 负责，Critic 会结构化输出 `narrative_density`、
+`scope_overrun` 与 `recommendation`，你依据 Critic 凭证做决策，不要自己兼任 Critic。
 
 ## 结果语义
 

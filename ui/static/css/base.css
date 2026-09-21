@@ -228,6 +228,36 @@
         aside#status-bar .agent-llm-section pre { margin:0; padding:4px 8px; max-height:60vh; overflow:auto;
             white-space:pre-wrap; word-break:break-all; font-size:10px;
             font-family:Consolas, Menlo, monospace; color:#c9d1d9; border-top:1px solid #21262d; }
+        /* 委派主卡片（Delegation Card）与子工具容器 */
+        aside#status-bar .agent-delegation-card {
+            font-size:11px; background:#0d1117; border:1px solid #30363d;
+            border-left:3px solid #a371f7; border-radius:6px; padding:6px 10px; margin-bottom:4px;
+        }
+        aside#status-bar .agent-delegation-card.ok { border-left-color:#3fb950; }
+        aside#status-bar .agent-delegation-card.err { border-left-color:#f85149; }
+        aside#status-bar .agent-delegation-head {
+            color:#d2a8ff; cursor:pointer; font-weight:600;
+            display:flex; justify-content:space-between; align-items:center; gap:8px;
+        }
+        aside#status-bar .agent-delegation-head::before {
+            content:'▸'; flex-shrink:0; font-size:10px; color:#8b949e; transition:transform .15s;
+        }
+        aside#status-bar .agent-delegation-card.open .agent-delegation-head::before { transform:rotate(90deg); }
+        aside#status-bar .agent-delegation-children {
+            display:none; margin-top:6px; padding-left:8px; border-left:2px solid #21262d;
+            flex-direction:column; gap:4px;
+        }
+        aside#status-bar .agent-delegation-card.open .agent-delegation-children { display:flex; }
+        aside#status-bar .agent-subtool-card {
+            font-size:10px; background:#161b22; border:1px solid #21262d;
+            border-left:2px solid #58a6ff; border-radius:4px; padding:4px 8px; margin-top:3px;
+        }
+        aside#status-bar .agent-subtool-card.ok { border-left-color:#3fb950; }
+        aside#status-bar .agent-subtool-card.err { border-left-color:#f85149; }
+        aside#status-bar .agent-progress-line {
+            font-size:11px; color:#8b949e; margin:3px 0; padding:2px 4px;
+            display:flex; align-items:center; gap:6px;
+        }
         aside#status-bar .agent-input-actions .debug-toggle { background:none; border:1px solid #30363d;
             color:#8b949e; border-radius:6px; padding:6px 10px; font-size:12px; cursor:pointer;
             transition:color .2s, border-color .2s; }

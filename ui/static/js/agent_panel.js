@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v28 events-stream');
+console.log('[agent-panel] v29 delegation-tree');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -24,6 +24,7 @@ console.log('[agent-panel] v28 events-stream');
     var currentToolRun = null;                  // 当前工具卡引用
     var toolPollTimer = null;                   // 工具日志轮询定时器
     var toolCards = {};                         // sessionId:callId → 工具卡（父子 Agent 事件流配对）
+    var delegationCards = {};                   // delegation_id → 委派父卡对象（树状折叠组）
     var _buildCards = [];                       // 任务卡（建书/写作）列表：done 时移除其停止按钮
     var toolCardOrder = [];                     // 工具卡创建顺序（上限裁剪用）
     var taskStartedAt = 0;                      // 当前任务起始时间（unix 秒）：SSE 断线后补渲染 task_events 的 since
@@ -301,12 +302,119 @@ console.log('[agent-panel] v28 events-stream');
         return String(evt.sessionId || evt.session_id || 'root') + ':' + String(evt.callId);
     }
 
-    // 事件流工具卡：按 sessionId:callId 建档，超上限裁剪最旧（防 DOM 无限膨胀）
-    function addToolCardFor(name, args, callId, usage, sessionId) {
-        var run = addToolCard(name, args);
-        run.usage = usage || null;   // dsh agent 该工具调用的真实 token 用量
+    // 委派主卡（Writer / Critic / Planner 父卡容器）
+    function addDelegationCard(tool, args, delegationId, role) {
+        var roleZh = {
+            writer: '🤖 Writer · 创作子代理',
+            critic: '🔎 Critic · 规则评审子代理',
+            planner: '🧭 Planner · 故事线规划子代理'
+        }[role] || ('🤖 ' + (role || '子代理') + ' · 委派运行');
+
+        var card = el('div', 'agent-delegation-card');
+        var head = el('div', 'agent-delegation-head');
+        head.title = '点击展开/折叠内部步骤';
+        var label = el('span', 'agent-tool-head-label', escapeHtml(roleZh));
+        var meta = el('span', 'agent-tool-head-meta', '⏱ 0s');
+        head.appendChild(label);
+        head.appendChild(meta);
+
+        var status = el('div', 'agent-tool-status', '正在执行子任务…');
+        var childrenContainer = el('div', 'agent-delegation-children');
+
+        head.onclick = function() {
+            card.classList.toggle('open');
+        };
+
+        card.appendChild(head);
+        card.appendChild(status);
+        card.appendChild(childrenContainer);
+        chat.appendChild(card);
+        scrollBottom();
+
+        var run = {
+            card: card,
+            status: status,
+            meta: meta,
+            children: childrenContainer,
+            isDelegation: true,
+            t0: performance.now(),
+            ts0: null,
+            subCount: 0,
+            tool: tool,
+            args: args,
+            timer: null
+        };
+        run.timer = setInterval(function() {
+            if (!run.meta) return;
+            var ms = run.ts0 ? (Date.now() / 1000 - run.ts0) * 1000 : (performance.now() - run.t0);
+            run.meta.textContent = '⏱ ' + formatDur(ms);
+        }, 1000);
+
+        if (delegationId) delegationCards[delegationId] = run;
+        return run;
+    }
+
+    // 子代理内嵌卡片（挂在委派父卡内部）
+    function addSubToolCard(tool, args, parentContainer) {
+        var card = el('div', 'agent-subtool-card');
+        var head = el('div', 'agent-tool-head');
+        head.title = '点击展开/收起详情';
+        var label = el('span', 'agent-tool-head-label', '├─ ⚙️ ' + escapeHtml(toolLabel(tool, args)));
+        var meta = el('span', 'agent-tool-head-meta', '');
+        var detail = el('div', 'agent-tool-detail', '');
+        head.onclick = function(e) {
+            e && e.stopPropagation();
+            var open = card.classList.toggle('open');
+            if (open && args && typeof args === 'object' && Object.keys(args).length && !detail.dataset.filled) {
+                detail.dataset.filled = '1';
+                detail.textContent = JSON.stringify(zhKeys(args), null, 2);
+            }
+        };
+        head.appendChild(label);
+        head.appendChild(meta);
+        var status = el('div', 'agent-tool-status', '运行中…');
+        card.appendChild(head);
+        card.appendChild(detail);
+        card.appendChild(status);
+        parentContainer.appendChild(card);
+        scrollBottom();
+
+        var run = { card: card, status: status, meta: meta, t0: performance.now(), ts0: null, tool: tool, args: args, timer: null };
+        run.timer = setInterval(function() {
+            if (!run.meta) return;
+            var ms = run.ts0 ? (Date.now() / 1000 - run.ts0) * 1000 : (performance.now() - run.t0);
+            run.meta.textContent = '⏱ ' + formatDur(ms);
+        }, 1000);
+        return run;
+    }
+
+    // 事件流工具卡：按 sessionId:callId 建档，支持委派树挂载与超上限裁剪
+    function addToolCardFor(name, args, callId, usage, sessionId, delegationId, role) {
+        // 若为主 Agent 的委派调用：创建委派父卡
+        if (name && name.indexOf('delegate_') === 0) {
+            var delId = delegationId || ('dg_' + callId);
+            var targetRole = name.replace('delegate_', '');
+            var run = addDelegationCard(name, args, delId, targetRole);
+            run.usage = usage || null;
+            var key = callId ? String(sessionId || 'root') + ':' + String(callId) : '';
+            if (key) { toolCards[key] = run; renderedCallIds[key] = true; }
+            return run;
+        }
+
+        // 若为已知委派的子工具，挂在父卡折叠容器内
+        var parentDel = (delegationId && delegationCards[delegationId]) ? delegationCards[delegationId] : null;
+        var run = null;
+        if (parentDel) {
+            run = addSubToolCard(name, args, parentDel.children);
+            parentDel.subCount = (parentDel.subCount || 0) + 1;
+            parentDel.status.textContent = '执行中 · 已包含 ' + parentDel.subCount + ' 个内部动作';
+        } else {
+            run = addToolCard(name, args);
+        }
+        run.usage = usage || null;
+        run.delegationId = delegationId || '';
         var key = callId ? String(sessionId || 'root') + ':' + String(callId) : '';
-        if (key) { toolCards[key] = run; renderedCallIds[key] = true; }   // 断线补渲染防重
+        if (key) { toolCards[key] = run; renderedCallIds[key] = true; }
         toolCardOrder.push(key || ('#' + toolCardOrder.length));
         if (toolCardOrder.length > TOOL_CARD_LIMIT) {
             var old = toolCardOrder.shift();
@@ -318,11 +426,10 @@ console.log('[agent-panel] v28 events-stream');
         return run;
     }
 
-    // 工具卡收尾：清计时器；第一行右侧 meta 显示 ⏱ 时长（durMs 供重建卡用事件 ts 差，活跃卡用 performance 差）+ token 用量；状态行只留摘要
+    // 工具卡收尾：清计时器；第一行右侧 meta 显示 ⏱ 时长 + token 用量；状态行只留摘要
     function finishToolCard(run, text, durMs) {
         if (!run || !run.status) return;
         if (run.timer) { clearInterval(run.timer); run.timer = null; }
-        // 工具完成/会话结束：移除卡片内停止按钮
         if (run.stopBtn) { try { if (run.stopBtn.parentNode) run.stopBtn.parentNode.removeChild(run.stopBtn); } catch (e) {} run.stopBtn = null; }
         var durStr = '';
         if (durMs !== undefined && durMs !== null) {
@@ -332,13 +439,30 @@ console.log('[agent-panel] v28 events-stream');
         }
         var tok = run.usage ? ' · ' + formatTokens(run.usage) : '';
         if (run.meta) run.meta.textContent = durStr + tok;
+
+        if (run.isDelegation) {
+            var isOk = (text && text.indexOf('✅') === 0);
+            run.status.textContent = isOk
+                ? '✅ 委派完成 (共 ' + (run.subCount || 0) + ' 个步骤)'
+                : '❌ 委派未通过或异常';
+            run.status.className = isOk ? 'agent-tool-status ok' : 'agent-tool-status err';
+            if (run.card) {
+                run.card.classList.remove('ok', 'err');
+                run.card.classList.add(isOk ? 'ok' : 'err');
+            }
+            return;
+        }
+
         run.status.textContent = (text || '');
-        run.status.className = (text && text.indexOf('✅') === 0)
-            ? 'agent-tool-status ok' : 'agent-tool-status err';
-        // 卡片本体也标 ok/err（左边框变色），折叠态也能一眼看出成败；用 classList 保留可能已加的 open
+        var isSubOk = (text && text.indexOf('✅') === 0);
+        run.status.className = isSubOk ? 'agent-tool-status ok' : 'agent-tool-status err';
         if (run.card) {
             run.card.classList.remove('ok', 'err');
-            run.card.classList.add((text && text.indexOf('✅') === 0) ? 'ok' : 'err');
+            run.card.classList.add(isSubOk ? 'ok' : 'err');
+        }
+        // 若子工具失败，自动展开其所属父卡，让失败处直观可见
+        if (!isSubOk && run.delegationId && delegationCards[run.delegationId]) {
+            try { delegationCards[run.delegationId].card.classList.add('open'); } catch (e) {}
         }
     }
     // ─── LLM 调用调试卡（调试模式：每次 LLM 调用的提示词 / MCP 工具 / 返回 JSON 原文）───
@@ -592,7 +716,8 @@ console.log('[agent-panel] v28 events-stream');
                     if (e.internal) return;
                     if (e.type === 'tool_call') {
                         if (e.callId && renderedCallIds[e.callId]) return;
-                        var run = addToolCardFor(e.name, e.args, e.callId, e.usage);
+                        var run = addToolCardFor(e.name, e.args, e.callId, e.usage,
+                            e.sessionId || e.session_id, e.delegation_id, e.agent_role);
                         if (run) run.ts0 = e.ts;
                     } else if (e.type === 'tool_result') {
                         var run = toolCards[eventCallKey(e)] ? toolCards[eventCallKey(e)] : null;
@@ -669,6 +794,16 @@ console.log('[agent-panel] v28 events-stream');
             window.dispatchEvent(new CustomEvent('ne:subagent-event', { detail: evt }));
             return;
         }
+        if (t === 'progress') {
+            var pLine = el('div', 'agent-progress-line');
+            pLine.textContent = '⏳ ' + (evt.message || '');
+            chat.appendChild(pLine);
+            scrollBottom();
+            setTimeout(function() {
+                try { if (pLine.parentNode) pLine.parentNode.removeChild(pLine); } catch (e) {}
+            }, 8000);
+            return;
+        }
         if (t === 'domain') {
             // WS6：写作相关工具成功 → 领域事件（chapter_changed/plot_run_changed/plan_committed）。
             // 只作为 UI 刷新信号转发（写作台/规划面板监听 ne:desk-refresh），非持久业务状态。
@@ -679,7 +814,7 @@ console.log('[agent-panel] v28 events-stream');
             // dsh 核心实时推送：工具开始 → 建卡（usage = 该调用的真实 token 用量）
             if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }   // LLM 已结束，实时行让位给工具卡
             currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage,
-                evt.sessionId || evt.session_id);
+                evt.sessionId || evt.session_id, evt.delegation_id, evt.agent_role);
             addSessionTokens(evt.usage);   // 事件驱动累计（dsh 真实 usage）
         } else if (t === 'tool_result') {
             // 按 callId 配对卡；配不到就忽略（绝不 fallback 到别的卡，避免污染）。

@@ -23,9 +23,11 @@ PROFILE_TOOLS = {
     # Main Orchestrator：读取权威运行状态、评审 Plot、接受草稿、**收章**，
     # 但不直接获得 Writer/Planner 的原始写工具（save_chapter_text / save_outlines 都不给）。
     # **刻意不含 record_plot_review**：判决只能由 Critic 写入，root 没有伪造通路（不变量 I1）。
-    "orchestrate": {"list_books", "get_book_detail", "get_book_state", "get_storyline",
-                    "get_story_state", "get_build_status", "get_build_context",
-                    "get_orchestration_state", "get_plot_review_context", "plot_quality_gate",
+    # **已精简剔除 get_storyline / get_book_state / get_plot_review_context**：
+    # 状态感知由 get_orchestration_state 紧凑返回，计划候选由 planning_candidates 提供，
+    # 避免全量大纲与上下文反复刷屏浪费 Token。
+    "orchestrate": {"list_books", "get_book_detail", "get_build_status", "get_build_context",
+                    "get_orchestration_state", "plot_quality_gate",
                     "accept_plot_draft", "finalize_draft_chapter", "set_chapter_plan",
                     "commit_replan_preview",
                     "save_basic_info", "validate_world", "navigate", "drive_ui"},

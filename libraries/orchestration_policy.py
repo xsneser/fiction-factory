@@ -21,6 +21,7 @@ from __future__ import annotations
 ORCHESTRATION_ACTIONS = (
     "write_next_plot", "review_plot", "record_review", "accept_plot",
     "revise_plot", "finalize_chapter", "plan_chapter", "replan",
+    "generate_replan", "commit_replan", "delegate_planner",
 )
 
 
@@ -121,6 +122,11 @@ def compute_orchestration_permissions(facts: dict) -> dict:
         write_reasons.append("NO_COMMITTED_PLOT")
     if int(budget.get("actions_used") or 0) >= int(budget.get("actions_max") or 0):
         write_reasons.append("ORCHESTRATION_BUDGET_EXHAUSTED")
+    floor = int(status.get("commit_floor") or 0)
+    supply_words = int(facts.get("available_committed_planned_words", 0) or 0)
+    is_terminal = bool(facts.get("is_terminal_chapter", False))
+    if not facts.get("draft_has_bridges") and boundary.get("needs_replan") and floor > 0 and supply_words < floor and not is_terminal:
+        write_reasons.append("OPENING_COMMITTED_SUPPLY_BELOW_FLOOR")
     if plan_problems:
         write_reasons.extend(plan_problems)
     elif plan and nxt is not None:
@@ -185,24 +191,32 @@ def compute_orchestration_permissions(facts: dict) -> dict:
     # ── 分章计划（阶段二；未启用时永远 false，工具面也不暴露） ──
     plan_chapter_reasons = [] if facts.get("plan_enabled") else ["CHAPTER_PLAN_DISABLED"]
 
+    # ── 续规划草案生成（委派 Planner） ──
+    generate_replan_reasons = []
+    if pending:
+        generate_replan_reasons.append("PLOT_REVIEW_PENDING")
+    if facts.get("draft_has_bridges"):
+        generate_replan_reasons.append("UNACCEPTED_DRAFT_PRESENT")
+    if int(budget.get("replan_used") or 0) >= int(budget.get("replan_max") or 0):
+        generate_replan_reasons.append("REPLAN_BUDGET_EXHAUSTED")
+
     # ── 续规划提交 ──
     # 不变量 I4：存在未收章的草稿时一律禁止提交 replan（会把当前草稿变成孤儿）。
     # **只在编排面生效**：legacy FSM 在「情节段耗尽但章未满」时正是带草稿提交的，
     # 所以这条守卫挂在 agent_tools 的编排包装上，不写进共享的 replan_service。
-    replan_reasons = []
-    if facts.get("draft_has_bridges"):
-        replan_reasons.append("UNACCEPTED_DRAFT_PRESENT")
-    if int(budget.get("replan_used") or 0) >= int(budget.get("replan_max") or 0):
-        replan_reasons.append("REPLAN_BUDGET_EXHAUSTED")
+    commit_replan_reasons = list(generate_replan_reasons)
     # 预览侧就绪度：让 advisory 提前说出「还差什么」，而不是等调用被服务端拒。
     preview = facts.get("preview") or {}
-    if not replan_reasons:
+    if not commit_replan_reasons:
         if not preview.get("exists"):
-            replan_reasons.append("REPLAN_PREVIEW_MISSING")
+            commit_replan_reasons.append("REPLAN_PREVIEW_MISSING")
         elif not preview.get("validation_passed"):
-            replan_reasons.append("REPLAN_PREVIEW_INVALID")
+            commit_replan_reasons.append("REPLAN_PREVIEW_INVALID")
         elif int(preview.get("expected_revision") or -1) != int(facts.get("storyline_revision") or 0):
-            replan_reasons.append("REPLAN_PREVIEW_STALE")
+            commit_replan_reasons.append("REPLAN_PREVIEW_STALE")
+
+    replan_reasons = commit_replan_reasons
+    delegate_planner_reasons = generate_replan_reasons
 
     return {
         "write_next_plot": _deny(write_reasons),
@@ -213,6 +227,9 @@ def compute_orchestration_permissions(facts: dict) -> dict:
         "finalize_chapter": _deny(finalize_reasons),
         "plan_chapter": _deny(plan_chapter_reasons),
         "replan": _deny(replan_reasons),
+        "commit_replan": _deny(commit_replan_reasons),
+        "generate_replan": _deny(generate_replan_reasons),
+        "delegate_planner": _deny(delegate_planner_reasons),
     }
 
 
@@ -232,6 +249,11 @@ def recommend_action(facts: dict, permissions: dict) -> dict:
         return {"action": "ACCEPT_PLOT", "reason_codes": ["PLOT_REVIEW_PENDING"]}
     can_write = permissions["write_next_plot"]["allowed"]
     can_finalize = permissions["finalize_chapter"]["allowed"]
+    if "OPENING_COMMITTED_SUPPLY_BELOW_FLOOR" in permissions["write_next_plot"]["reasons"]:
+        if permissions.get("commit_replan", {}).get("allowed"):
+            return {"action": "COMMIT_REPLAN", "reason_codes": ["OPENING_COMMITTED_SUPPLY_BELOW_FLOOR"]}
+        if permissions.get("delegate_planner", {}).get("allowed"):
+            return {"action": "DELEGATE_PLANNER", "reason_codes": ["OPENING_COMMITTED_SUPPLY_BELOW_FLOOR"]}
     if status.get("chapter_ready") and can_finalize:
         return {"action": "FINALIZE_CHAPTER",
                 "reason_codes": [str(status.get("reason") or "chapter_ready")]}
@@ -240,8 +262,10 @@ def recommend_action(facts: dict, permissions: dict) -> dict:
     if can_finalize:
         return {"action": "FINALIZE_CHAPTER",
                 "reason_codes": [str(status.get("reason") or "no_next_plot")]}
-    if permissions["replan"]["allowed"] and boundary.get("needs_replan"):
-        return {"action": "REPLAN", "reason_codes": list(boundary.get("reason_codes") or [])}
+    if permissions.get("commit_replan", {}).get("allowed") and boundary.get("needs_replan"):
+        return {"action": "COMMIT_REPLAN", "reason_codes": list(boundary.get("reason_codes") or [])}
+    if permissions.get("delegate_planner", {}).get("allowed") and boundary.get("needs_replan"):
+        return {"action": "DELEGATE_PLANNER", "reason_codes": list(boundary.get("reason_codes") or [])}
     return {"action": "STOP",
             "reason_codes": sorted(set(permissions["write_next_plot"]["reasons"]
                                        + permissions["finalize_chapter"]["reasons"]

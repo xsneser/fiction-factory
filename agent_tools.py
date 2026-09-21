@@ -1412,14 +1412,19 @@ def prepare_plot_run(book_id: str) -> dict:
         row = resolve_effective_budgets(plan_view, tl, [p]).get(str(p.id))
         if row:
             assigned_row = row
+    from libraries.plot_submission import compute_effective_plot_budget
+    budget_spec = compute_effective_plot_budget(assigned_row["assigned"])
     execution.update({"entry_state": brief.get("entry_state") or {}, "success_criteria": brief.get("success_criteria") or must,
                       "must": must, "should": should, "may": may,
                       "primary_turn": str(getattr(p, "primary_turn", "") or ""),
                       "word_budget": {"planned": assigned_row["planned"],
                                       "assigned": assigned_row["assigned"],
                                       "source": assigned_row["source"],
-                                      "preferred_max": PLOT_PREFERRED_MAX,
-                                      "hard_max": PLOT_HARD_MAX},
+                                      "preferred_min": budget_spec["preferred_min"],
+                                      "preferred_max": budget_spec["preferred_max"],
+                                      "effective_hard_max": budget_spec["effective_hard_max"],
+                                      "hard_max": budget_spec["effective_hard_max"],
+                                      "absolute_ceiling": budget_spec["absolute_ceiling"]},
                       # 开章标记：本章还没有正文 → Writer 需一并给出章节标题候选
                       # （章界由运行时字数门禁动态决定，规划期无法预知谁开章）。
                       "is_chapter_opening": not bridges,
@@ -2699,12 +2704,27 @@ def finalize_draft_chapter(book_id: str, flow_id: str = "",
         except Exception as exc:  # noqa: BLE001 — 计划清理失败不该影响「章已提交」这一事实
             _log.warning("章计划清理失败 book=%s flow=%s: %s", book_id, flow_id, exc)
     # 提交后诊断：门禁读的是已落盘章节，异常只作诊断，不改「章已提交」这一事实。
+    result["chapter_committed"] = True
+    result["hard_gate_passed"] = True
     try:
         gate = chapter_quality_gate(book_id, chapter_num)
-        result["quality_gate"] = gate if isinstance(gate, dict) else {"ok": True, "report": gate}
+        gate_dict = gate if isinstance(gate, dict) else {"ok": True, "report": gate}
+        result["quality_gate"] = gate_dict
+        result["quality_advisory"] = {
+            "status": str(gate_dict.get("status") or ("pass" if gate_dict.get("passed") else "warn")),
+            "complete": bool(gate_dict.get("complete", True)),
+            "warning_count": int(gate_dict.get("warning_count") or len(gate_dict.get("decision_points") or [])),
+            "failed_checks": list(gate_dict.get("failed_checks") or []),
+        }
     except Exception as exc:  # noqa: BLE001
         _log.warning("章质量门禁异常（章已提交）book=%s chapter=%s: %s", book_id, chapter_num, exc)
         result["quality_gate"] = {"ok": False, "error": str(exc), "skipped": True}
+        result["quality_advisory"] = {
+            "status": "incomplete",
+            "complete": False,
+            "warning_count": 0,
+            "failed_checks": ["exception"],
+        }
     if flow_id:
         from libraries.write_flow import release_lease, transition
         try:
@@ -2924,10 +2944,8 @@ def save_plot_draft(commit_token: str, text: str, plot_summary: str = "",
         _log.warning("plot_summary 长度 %d 不在 50-120，按展示字段容错保存", len(summary))
         if len(summary) > 120:
             summary = summary[:120]
-    if isinstance(outcome, dict) and outcome.get("relationship_changes"):
-        for row in character_events or []:
-            if any((event or {}).get("type") == "relationship" for event in (row or {}).get("events") or []):
-                raise RuntimeError("关系变化只能由 outcome.relationship_changes 提交，禁止双源写入")
+    from libraries.plot_submission import normalize_plot_submission_facts
+    outcome, character_events = normalize_plot_submission_facts(outcome, character_events)
     # token 表按书分片，当前 Plot 无需由 Writer 提交；子进程只带回 commit_token，
     # 归属书由服务端经 NOVEL_WRITE_BOOK_ID 注入 → 只查一本书的账本（O(1)）。
     # 无提示（手工/测试调用）才回退全库扫描；有提示但账本里没有该令牌 = 子进程上下文错，
@@ -3152,6 +3170,16 @@ def _commit_plot_draft_locked(book_id: str, commit_token: str, text: str, summar
                                                  saved_style or {}, tail_now)
         if current_vector != recorded_vector:
             raise RuntimeError("commit_token 权威上下文已变化；请重新 prepare_plot_run")
+    is_v2 = int(getattr(current, "protocol_version", 1) or 1) >= 2
+    budget = (prepared_snapshot.get("execution") or {}).get("word_budget") or {}
+    effective_hard_max = budget.get("effective_hard_max")
+    assigned = budget.get("assigned") or int(getattr(current, "words", 300) or 300)
+    if not effective_hard_max:
+        from libraries.plot_submission import compute_effective_plot_budget
+        effective_hard_max = compute_effective_plot_budget(assigned)["effective_hard_max"]
+    from libraries.plot_submission import validate_plot_prose_units
+    validate_plot_prose_units(text, effective_hard_max=effective_hard_max, assigned=assigned,
+                             plot_id=current.id, is_v2=is_v2)
     result = _save_plot_draft_legacy(
         book_id, chapter_num, current.id, current.name, text,
         character_events=character_events, outcome=outcome,
@@ -3791,21 +3819,34 @@ def chapter_quality_gate(book_id: str, chapter_num: int = 0, recent_n: int = 5) 
            if (checks.get(k) or {}).get("skipped") is not True]
     all_passed = bool(ran) and all((checks[k] or {}).get("passed") is True for k in ran)
     passed = complete and all_passed
+    failed_checks = [k for k in ran if (checks.get(k) or {}).get("passed") is False]
+    warning_count = len(decision_points)
+    if not complete:
+        quality_status = "incomplete"
+    elif failed_checks:
+        quality_status = "fail"
+    elif warning_count > 0:
+        quality_status = "warn"
+    else:
+        quality_status = "pass"
     issue_count = sum(int((checks[k] or {}).get("issues_count") or (checks[k] or {}).get("issue_count") or 0)
                       for k in ("review", "continuity", "retention", "promises", "punch_points", "future_consumption"))
     review_score = (rv.get("score") if isinstance(rv.get("score"), (int, float)) else 0)
 
     if skipped:
         summary = (f"第{n}章质量门禁：{len(skipped)} 项异常({','.join(skipped)})，"
-                   f"其余{'通过' if all_passed else '有未过项'}，{len(decision_points)} 个决策点")
-    elif passed:
-        summary = f"第{n}章质量门禁：通过，review {review_score} 分，共 {issue_count} 项提示，{len(decision_points)} 个决策点"
+                   f"状态={quality_status}，{len(decision_points)} 个决策点")
+    elif passed and quality_status == "pass":
+        summary = f"第{n}章质量门禁：全检通过，review {review_score} 分，共 {issue_count} 项提示，{len(decision_points)} 个决策点"
+    elif quality_status == "warn":
+        summary = f"第{n}章质量门禁：提示（warn），review {review_score} 分，未过项={failed_checks}，{len(decision_points)} 个决策点"
     else:
-        summary = f"第{n}章质量门禁：未通过，review {review_score} 分，{issue_count} 项问题，{len(decision_points)} 个决策点"
+        summary = f"第{n}章质量门禁：未通过（fail），review {review_score} 分，未过项={failed_checks}，{issue_count} 项问题，{len(decision_points)} 个决策点"
 
     return {
         "book_id": book_id, "chapter": n, "word_count": count_prose_units(content),
         "target_words": target_words, "passed": passed, "complete": complete,
+        "status": quality_status, "failed_checks": failed_checks, "warning_count": warning_count,
         "summary": summary, "issue_count": issue_count, "review_score": review_score,
         "overdue_count": (checks.get("promises") or {}).get("counts", {}).get("overdue", 0),
         "stalled_count": (checks.get("promises") or {}).get("counts", {}).get("stalled", 0),
@@ -5447,12 +5488,21 @@ def _orchestration_facts(book_id: str, *, tl=None, draft=None, book=None) -> dic
     dummy_book = book or _FactsBook(book_id, int(draft.get("chapter_num") or 0))
     runtime = _runtime_projection(book_id, tl, dummy_book, draft)
     drafted = _draft_plot_ids(draft)
-    remaining = sum(1 for p in _ordered_plots(tl)
-                    if not getattr(p, "written_chapter", 0) and p.id not in drafted)
+    unwritten_plots = [p for p in _ordered_plots(tl)
+                       if not getattr(p, "written_chapter", 0) and p.id not in drafted]
+    remaining = len(unwritten_plots)
     chapter_num_early = int(draft.get("chapter_num") or 0) or int(
         getattr(dummy_book, "current_chapter", 0) or 0) + 1
     plan_enabled = _chapter_plan_required()
     plan_view = _chapter_plan_view(book_id, draft, chapter_num_early) if plan_enabled else None
+    if plan_view and plan_view.get("plots"):
+        from libraries.chapter_plan import resolve_effective_budgets
+        budget_map = resolve_effective_budgets(plan_view, tl, unwritten_plots)
+        available_committed_planned_words = sum(
+            int(budget_map.get(str(p.id), {}).get("assigned") or _planned_words_of(p) or 0)
+            for p in unwritten_plots)
+    else:
+        available_committed_planned_words = sum(int(_planned_words_of(p) or 0) for p in unwritten_plots)
     boundary = detect_story_boundary(
         written_until_word=int(runtime["display_written_words"]),
         committed_until_word=int(ps.get("committed_until_word") or 0),
@@ -5474,7 +5524,19 @@ def _orchestration_facts(book_id: str, *, tl=None, draft=None, book=None) -> dic
         receipt_view = {"receipt_id": str(receipt.get("receipt_id") or ""),
                         "verdict": str(receipt.get("verdict") or ""),
                         "valid": True, "rewrite_brief": receipt.get("rewrite_brief") or {},
-                        "confidence": str(receipt.get("confidence") or "")}
+                        "confidence": str(receipt.get("confidence") or ""),
+                        "scope_overrun": bool(receipt.get("scope_overrun")),
+                        "narrative_density": str(receipt.get("narrative_density") or "normal")}
+    is_terminal = bool(getattr(tl, "is_finished", False) or getattr(dummy_book, "is_finished", False)
+                       or (str(getattr(tl, "status", "") or "") == "finished"))
+    commit_floor = int(status.get("commit_floor") or 0)
+    supply_low = bool((not bridges) and boundary.get("needs_replan") and (available_committed_planned_words < commit_floor) and not is_terminal)
+    replan_signals = {
+        "supply_low": supply_low,
+        "accepted_scope_overrun": bool(isinstance(receipt, dict) and receipt.get("scope_overrun")),
+        "arc_boundary": bool(boundary.get("needs_replan")),
+        "fact_drift_high": False,
+    }
     valid_ids = {str(getattr(p, "id", "")) for p in (getattr(tl, "plots", None) or [])}
     return {
         "book_id": book_id,
@@ -5511,6 +5573,9 @@ def _orchestration_facts(book_id: str, *, tl=None, draft=None, book=None) -> dic
         "plan_required": plan_enabled,
         "plan_digest": str((plan_view or {}).get("plan_digest") or ""),
         "remaining_plots": remaining,
+        "available_committed_planned_words": available_committed_planned_words,
+        "is_terminal_chapter": is_terminal,
+        "replan_signals": replan_signals,
         "preview": _replan_preview_view(book_id),
     }
 
@@ -5574,6 +5639,16 @@ def get_orchestration_state(book_id: str, flow_id: str = "") -> dict:
         latest_draft_plot = {**last, "review_receipt": receipt.get("receipt_id") or "",
                              "review_verdict": receipt.get("verdict") or "",
                              "rewrite_brief": receipt.get("rewrite_brief") or {}}
+    drafted = _draft_plot_ids(draft)
+    unwritten = [p for p in _ordered_plots(tl)
+                 if not getattr(p, "written_chapter", 0) and p.id not in drafted]
+    planning_candidates = [{
+        "plot_id": str(p.id),
+        "name": getattr(p, "name", "") or "",
+        "primary_turn": getattr(p, "primary_turn", "") or "",
+        "planned_words": _planned_words_of(p),
+        "chapter_break_after": str(getattr(p, "chapter_break_after", "allowed") or "allowed"),
+    } for p in unwritten[:8]]
     return {
         # ── 兼容字段（旧调用方按这些取值）──
         "book_id": book_id,
@@ -5591,9 +5666,11 @@ def get_orchestration_state(book_id: str, flow_id: str = "") -> dict:
                    "max_revisions_per_plot": facts["budget"]["revise_max"],
                    "actions_remaining": facts["budget"]["actions_remaining"],
                    "replan_remaining": facts["budget"]["replan_remaining"]},
-        # ── schema 2 新增 ──
-        "schema_version": 2,
+        # ── schema 3 新增 ──
+        "schema_version": 3,
         "draft_digest": facts.get("draft_digest", ""),
+        "planning_candidates": planning_candidates,
+        "replan_signals": facts.get("replan_signals") or {},
         "chapter": {
             "chapter_num": facts.get("chapter_num", 0),
             "written_words": status.get("written_words", 0),
@@ -5799,7 +5876,10 @@ def set_chapter_plan(book_id: str, expected_revision: int, expected_draft_digest
 
 def record_plot_review(book_id: str, plot_id: str, gate_digest: str, verdict: str,
                        issues: list | None = None, rewrite_brief: dict | None = None,
-                       confidence: str = "medium", rationale: str = "") -> dict:
+                       confidence: str = "medium", rationale: str = "",
+                       narrative_density: str = "normal", scope_overrun: bool = False,
+                       multiple_primary_turns: bool = False,
+                       recommendation: str = "accept") -> dict:
     """Critic 把自己对当前 Plot 的判决**写进服务端**，换取一枚 review receipt。
 
     **本工具只出现在 critic profile 的工具面里**——这是评审门禁的能力边界（不变量 I1）：
@@ -5854,9 +5934,16 @@ def record_plot_review(book_id: str, plot_id: str, gate_digest: str, verdict: st
             "verdict": verdict, "confidence": confidence, "issues": clean_issues,
             "rewrite_brief": brief, "rationale": str(rationale or "")[:2000],
             "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
+            "narrative_density": str(narrative_density or "normal").strip(),
+            "scope_overrun": bool(scope_overrun),
+            "multiple_primary_turns": bool(multiple_primary_turns),
+            "recommendation": str(recommendation or verdict).strip(),
         }, critic_run_id=str(os.environ.get("NOVEL_WRITE_CHILD_RUN_ID") or ""))
     return {"ok": True, "receipt_id": receipt_id, "plot_id": pid, "verdict": verdict,
             "gate_digest": report.get("gate_digest"),
+            "narrative_density": str(narrative_density or "normal").strip(),
+            "scope_overrun": bool(scope_overrun),
+            "recommendation": str(recommendation or verdict).strip(),
             "storyline_revision": int(getattr(tl, "storyline_revision", 0) or 0),
             # 提醒调用方：receipt 是一次性的，接受时把它交回 accept_plot_draft。
             "next": "把 receipt_id 交给 accept_plot_draft（verdict=accept 时）"}
@@ -6007,6 +6094,17 @@ def save_plot_revision(revision_token: str, text: str, plot_summary: str = "",
             revised = DeAIEngine().process_rule_based(revised).processed
         except Exception:
             pass
+        from libraries.plot_submission import (
+            compute_effective_plot_budget,
+            normalize_plot_submission_facts,
+            validate_plot_prose_units,
+        )
+        outcome, character_events = normalize_plot_submission_facts(outcome, character_events)
+        assigned = int(getattr(plot, "words", 300) or 300)
+        effective_hard_max = compute_effective_plot_budget(assigned)["effective_hard_max"]
+        is_v2 = int(getattr(plot, "protocol_version", 1) or 1) >= 2
+        validate_plot_prose_units(revised, effective_hard_max=effective_hard_max, assigned=assigned,
+                                 plot_id=plot.id, is_v2=is_v2)
         entry = dict(old_bridge)
         entry["text"] = revised
         entry.update(_text_metrics(revised))
@@ -6016,15 +6114,13 @@ def save_plot_revision(revision_token: str, text: str, plot_summary: str = "",
         entry["quality_gate"] = {}
         if plot_summary:
             entry["plot_summary"] = str(plot_summary).strip()[:120]
-        if isinstance(outcome, dict):
-            entry["facts"] = {k: list(outcome.get(k) or []) for k in (
-                "choices_made", "information_revealed", "relationship_changes",
-                "resource_changes", "promise_updates", "new_story_questions")}
-        if isinstance(character_events, list):
-            entry["character_events"] = character_events
-            facts = dict(entry.get("facts") or {})
-            facts["character_events"] = character_events
-            entry["facts"] = facts
+        entry["facts"] = {k: list((outcome or {}).get(k) or []) for k in (
+            "choices_made", "information_revealed", "relationship_changes",
+            "resource_changes", "promise_updates", "new_story_questions")}
+        entry["character_events"] = character_events or []
+        facts = dict(entry.get("facts") or {})
+        facts["character_events"] = character_events or []
+        entry["facts"] = facts
         bridges[-1] = entry
         draft["bridges"] = bridges
         draft["buffer"] = [b.get("text", "") for b in bridges]

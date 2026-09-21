@@ -32,6 +32,7 @@ import sys
 import threading
 import time
 import re
+import uuid
 
 _log = logging.getLogger("novel-engine")
 
@@ -948,15 +949,52 @@ def _map_dsh_event(evt: dict, pending: dict):
     """
     t = evt.get("type")
     data = evt.get("data") or {}
+    seq = pending.setdefault("__seq__", 0) + 1
+    pending["__seq__"] = seq
+    evt_id = f"evt_{uuid.uuid4().hex[:10]}"
+    now_ts = time.time()
+
     if t == "tool/call":
         full_name = str(data.get("name", "") or "")
         server_name, name, _ = _mcp_tool_parts(full_name)
         call_id = data.get("callId", "")
         session_id = str(data.get("sessionId") or data.get("session_id") or "root")
+        parent_session_id = str(data.get("parentSessionId") or "")
+        delegation_depth = int(data.get("delegationDepth") or (0 if session_id == "root" else 1))
         args = _parse_args(data.get("arguments"))
-        pending[(session_id, call_id)] = {"name": name, "full_name": full_name,
-                                          "server_name": server_name, "session_id": session_id,
-                                          "callId": call_id, "args": args}
+
+        # 识别委派调用与所属角色
+        is_delegation = name.startswith("delegate_")
+        delegation_id = ""
+        agent_role = "root"
+        if is_delegation:
+            agent_role = "root"
+            delegation_id = f"dg_{call_id}"
+            target_role = name.replace("delegate_", "")
+            pending.setdefault("__delegations__", {})[delegation_id] = {
+                "call_id": call_id, "role": target_role, "parent_session_id": session_id,
+            }
+            pending.setdefault("__last_delegation_by_parent__", {})[session_id] = delegation_id
+        else:
+            child_mapping = pending.get("__child_to_delegation__", {})
+            if session_id in child_mapping:
+                delegation_id = child_mapping[session_id]
+                del_info = pending.get("__delegations__", {}).get(delegation_id, {})
+                agent_role = del_info.get("role") or "subagent"
+            elif parent_session_id:
+                delegation_id = pending.get("__last_delegation_by_parent__", {}).get(parent_session_id, "")
+                del_info = pending.get("__delegations__", {}).get(delegation_id, {})
+                agent_role = del_info.get("role") or "subagent"
+
+        pending[(session_id, call_id)] = {
+            "name": name, "full_name": full_name,
+            "server_name": server_name, "session_id": session_id,
+            "parent_session_id": parent_session_id,
+            "delegation_id": delegation_id, "agent_role": agent_role,
+            "delegation_depth": delegation_depth,
+            "callId": call_id, "args": args,
+        }
+
         if name in ("read_crawled_novel", "ingest_library_assets"):
             try:
                 from libraries.extract_progress import read_extract_progress, update_extract_progress
@@ -978,18 +1016,66 @@ def _map_dsh_event(evt: dict, pending: dict):
                     )
             except Exception:
                 pass
-        yield {"type": "tool_call", "name": name, "full_name": full_name,
-               "server_name": server_name, "session_id": session_id,
-               "args": args, "callId": call_id,
-               "usage": data.get("usage")}   # dsh agent 该工具调用的真实 token 用量（events-runner 转发）
+        yield {
+            "type": "tool_call", "event_id": evt_id, "sequence": seq, "timestamp": now_ts,
+            "name": name, "full_name": full_name,
+            "server_name": server_name, "session_id": session_id,
+            "parent_session_id": parent_session_id,
+            "delegation_id": delegation_id, "agent_role": agent_role,
+            "delegation_depth": delegation_depth,
+            "args": args, "callId": call_id,
+            "usage": data.get("usage"),
+        }
+        # 结构化进度反馈（确定性业务事件，不转发 raw thought，排在 tool_call 之后保兼容）
+        if is_delegation:
+            target_role = name.replace("delegate_", "")
+            role_zh = {"writer": "Writer (正文创作)", "critic": "Critic (规则评审)", "planner": "Planner (故事线规划)"}.get(target_role, target_role)
+            yield {
+                "type": "progress", "event_id": f"evt_{uuid.uuid4().hex[:10]}",
+                "sequence": seq, "session_id": session_id, "delegation_id": delegation_id,
+                "agent_role": "root", "kind": "delegating",
+                "message": f"准备委派 {role_zh} 子代理执行任务...", "timestamp": now_ts,
+            }
+        elif name == "prepare_plot_run":
+            yield {
+                "type": "progress", "event_id": f"evt_{uuid.uuid4().hex[:10]}",
+                "sequence": seq, "session_id": session_id, "delegation_id": delegation_id,
+                "agent_role": agent_role, "kind": "preparing",
+                "message": f"[{agent_role.capitalize()}] 正在准备情节段运行上下文与样文...", "timestamp": now_ts,
+            }
+        elif name in ("save_plot_draft", "save_plot_revision"):
+            yield {
+                "type": "progress", "event_id": f"evt_{uuid.uuid4().hex[:10]}",
+                "sequence": seq, "session_id": session_id, "delegation_id": delegation_id,
+                "agent_role": agent_role, "kind": "saving_draft",
+                "message": f"[{agent_role.capitalize()}] 正在提交情节段草稿与结构化事实...", "timestamp": now_ts,
+            }
+        elif name == "record_plot_review":
+            yield {
+                "type": "progress", "event_id": f"evt_{uuid.uuid4().hex[:10]}",
+                "sequence": seq, "session_id": session_id, "delegation_id": delegation_id,
+                "agent_role": agent_role, "kind": "reviewing",
+                "message": f"[{agent_role.capitalize()}] 评审完成，正在签发 Review Receipt...", "timestamp": now_ts,
+            }
+        elif name == "accept_plot_draft":
+            yield {
+                "type": "progress", "event_id": f"evt_{uuid.uuid4().hex[:10]}",
+                "sequence": seq, "session_id": session_id, "delegation_id": "",
+                "agent_role": "root", "kind": "accepting",
+                "message": "主 Agent 正在凭 Review Receipt 签收情节段草稿...", "timestamp": now_ts,
+            }
+        elif name == "finalize_draft_chapter":
+            yield {
+                "type": "progress", "event_id": f"evt_{uuid.uuid4().hex[:10]}",
+                "sequence": seq, "session_id": session_id, "delegation_id": "",
+                "agent_role": "root", "kind": "finalizing",
+                "message": "条件满足，主 Agent 正在执行本章原子收章与质量门禁...", "timestamp": now_ts,
+            }
         if name == "navigate":
             url = args.get("url") if isinstance(args, dict) else ""
             if url:
-                yield {"type": "navigate", "url": url}
+                yield {"type": "navigate", "url": url, "event_id": f"evt_{uuid.uuid4().hex[:10]}", "sequence": seq}
         elif name == "drive_ui":
-            # 工具参数是 {cmd, args:{...}} 两层：cmd 取顶层，实际载荷取内层 args，
-            # 与 nav-intent 通道（push_ui_command 存内层 args）保持一致；否则浏览器
-            # 拿到整参（含 cmd 键），set_candidates/set_world 等带参命令 args 全部落空。
             inner = args.get("args") if isinstance(args, dict) and isinstance(args.get("args"), dict) else {}
             if args.get("cmd") == "set_review":
                 try:
@@ -1005,7 +1091,7 @@ def _map_dsh_event(evt: dict, pending: dict):
                     )
                 except (ImportError, OSError, TypeError, ValueError):
                     pass
-            yield {"type": "ui_command",
+            yield {"type": "ui_command", "event_id": f"evt_{uuid.uuid4().hex[:10]}", "sequence": seq,
                    "cmd": args.get("cmd") if isinstance(args, dict) else "",
                    "args": inner}
     elif t == "tool/result":
@@ -1015,16 +1101,23 @@ def _map_dsh_event(evt: dict, pending: dict):
         session_id = str(data.get("sessionId") or data.get("session_id") or "root")
         p = pending.pop((session_id, call_id), None) or pending.pop(call_id, {}) or {}
         name = p.get("name") or ""
+        delegation_id = p.get("delegation_id", "")
+        agent_role = p.get("agent_role", "root")
+        parent_session_id = p.get("parent_session_id", "")
         ok = not data.get("error") and not _result_error(msg)
         try:
             _update_extract_progress(name, p.get("args"), msg, ok)
         except (ImportError, OSError, TypeError, ValueError):
             pass
         yield {"type": "tool_result",
+               "event_id": evt_id, "sequence": seq, "timestamp": now_ts,
                "name": name,
                "full_name": p.get("full_name") or name,
                "server_name": p.get("server_name") or "",
                "session_id": p.get("session_id") or session_id,
+               "parent_session_id": parent_session_id,
+               "delegation_id": delegation_id,
+               "agent_role": agent_role,
                "callId": call_id or p.get("callId") or "",
                "ok": ok,
                "summary": _zh_tool_summary(name, p.get("args"), msg, ok)}
@@ -1032,23 +1125,30 @@ def _map_dsh_event(evt: dict, pending: dict):
         if ok:
             _dom = _domain_event_from_tool(name, p.get("args"), msg)
             if _dom:
-                yield {"type": "domain", **_dom}
-        # 建书草稿状态：save_build_draft / validate_build 的**压缩**结果单独成事件，
-        # 让步 3 页面能（a）按 revision 去 canonical 拉取草稿、（b）显示校验问题，
-        # 并让"agent 声称完成但没落盘"可被前端与服务端同时看见。
+                yield {"type": "domain", "event_id": f"evt_{uuid.uuid4().hex[:10]}", "sequence": seq, **_dom}
         _bd = _build_draft_status_event(name, p.get("args"), msg)
         if _bd:
-            yield _bd
+            yield {"event_id": f"evt_{uuid.uuid4().hex[:10]}", "sequence": seq, **_bd}
     elif t in ("subagent/start", "subagent/end"):
-        # 子 Agent 生命周期（cordis 事件，非 session/event）：payload 形状
-        # {runId, provider, sessionId, local, [stopReason/lastAssistantText]}。
-        # 只作 UI 遥测——子代理的最终文本仍只经 delegate tool result 回主 Agent。
-        yield {"type": t.replace("/", "_"),
-               "runId": data.get("runId") or "",
-               "provider": data.get("provider") or "",
-               "session_id": str(data.get("sessionId") or ""),
-               "stop_reason": data.get("stopReason") or "",
-               "last_text": data.get("lastAssistantText") or ""}
+        child_sid = str(data.get("sessionId") or "")
+        parent_sid = str(data.get("parentSessionId") or "root")
+        del_id = pending.get("__last_delegation_by_parent__", {}).get(parent_sid, "")
+        if child_sid and del_id:
+            pending.setdefault("__child_to_delegation__", {})[child_sid] = del_id
+        del_info = pending.get("__delegations__", {}).get(del_id, {})
+        role = del_info.get("role") or "subagent"
+        yield {
+            "type": t.replace("/", "_"),
+            "event_id": evt_id, "sequence": seq, "timestamp": now_ts,
+            "runId": data.get("runId") or "",
+            "provider": data.get("provider") or "",
+            "session_id": child_sid,
+            "parent_session_id": parent_sid,
+            "delegation_id": del_id,
+            "agent_role": role,
+            "stop_reason": data.get("stopReason") or "",
+            "last_text": data.get("lastAssistantText") or "",
+        }
     elif t == "llm/call":
         # 调试模式（NOVEL_AGENT_DEBUG=1 时 events-runner 才 emit）：一次 LLM 调用的
         # 提示词/MCP工具/返回JSON，前端渲染「LLM 调用」调试卡。不持久化 task_events。
@@ -1248,10 +1348,10 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
                         # 后台 task_events 仍保留供诊断。
                         if str(child_run_id).startswith("planner:"):
                             sse.setdefault("internal", True)
-                    # 持久化所有可渲染卡片（工具卡 + 调试模式 LLM 调用卡），供刷新后重建卡片流。
+                    # 持久化所有可渲染卡片（工具卡 + 委派子代理 + 进度 + 调试模式 LLM 调用卡），供刷新后重建树状卡片流。
                     # error / build_draft_status 由 run_dsh_flow 统一补（那里能同时覆盖 FSM
                     # 自己产出的错误），此处不再重复写，避免刷新后重复渲染。
-                    if sse.get("type") in ("tool_call", "tool_result", "llm_call"):
+                    if sse.get("type") in ("tool_call", "tool_result", "llm_call", "subagent_start", "subagent_end", "progress"):
                         _append_task_event(sse)
                     _note_mirror_evidence(sse, mirror_sid, mirror_seen, child_run_id)
                     if sse.get("type") == "done":
