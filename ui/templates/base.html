@@ -4,13 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}NovelEngine — 小说工厂{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v32">
-    <script src="{{ url_for('static', filename='js/base.js') }}?v2"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v33">
+    <script src="{{ url_for('static', filename='js/base.js') }}?v3"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
-    <nav>
-        <div class="logo">📖 NovelEngine</div>
+    <nav id="app-nav">
+        <div class="logo">
+            <span>📖 NovelEngine</span>
+            <button class="nav-toggle" onclick="toggleNav()" title="折叠导航" aria-label="折叠导航">◀</button>
+        </div>
         <a href="/" class="{{ 'active' if request.path == '/' else '' }}">🏠 仪表盘</a>
         <div class="section">创作</div>
         <a href="/books/start" class="{{ 'active' if request.path == '/books/start' else '' }}">🔰 启动新书</a>
@@ -61,6 +64,7 @@
             </div>
         </aside>
     </div>
+    <button id="nav-reopen" class="nav-reopen" onclick="toggleNav()" title="展开导航" aria-label="展开导航">▶</button>
     <button id="status-reopen" class="status-reopen" onclick="toggleStatusBar()" title="展开" aria-label="展开">▶</button>
 
     <div id="toast-root"></div>

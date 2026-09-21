@@ -27,13 +27,41 @@
             --space-2: 8px;
             --space-3: 12px;
             --space-4: 16px;
+            --nav-width: 180px;
+            --nav-offset: 180px;
+            --agent-width: 440px;
+        }
+        html.nav-collapsed {
+            --nav-offset: 0px;
         }
         * { margin:0; padding:0; box-sizing:border-box; }
         html, body { height:100%; }
         body { font-family: -apple-system, 'Microsoft YaHei', sans-serif; background:#0f1117; color:#e1e4e8; display:flex; height:100vh; overflow:hidden; }
         /* Sidebar */
-        nav { width:180px; background:#161b22; padding:20px 0; border-right:1px solid #30363d; flex-shrink:0; min-height:0; overflow-y:auto; }
-        nav .logo { padding:0 20px 20px; font-size:20px; font-weight:bold; color:#58a6ff; border-bottom:1px solid #30363d; margin-bottom:10px; }
+        nav {
+            width:var(--nav-width, 180px); background:#161b22; padding:20px 0; border-right:1px solid #30363d;
+            flex-shrink:0; min-height:0; overflow-y:auto;
+            transition: width .2s ease, padding .2s ease, border-color .2s ease;
+        }
+        nav.collapsed, html.nav-collapsed nav { width:0 !important; padding:0 !important; border-right:none !important; overflow:hidden !important; }
+        nav .logo {
+            padding:0 16px 20px 20px; font-size:20px; font-weight:bold; color:#58a6ff;
+            border-bottom:1px solid #30363d; margin-bottom:10px;
+            display:flex; align-items:center; justify-content:space-between;
+        }
+        nav .nav-toggle {
+            background:none; border:none; color:var(--fg-dim); cursor:pointer; font-size:11px;
+            padding:2px 6px; line-height:1; border-radius:4px; transition:color .2s, background .2s;
+        }
+        nav .nav-toggle:hover { color:#f0f6fc; background:#21262d; }
+        button.nav-reopen {
+            position:fixed; left:0; top:50%; transform:translateY(-50%);
+            background:#161b22; border:1px solid #30363d; border-left:none; color:#8b949e;
+            border-radius:0 8px 8px 0; padding:12px 5px; font-size:11px; cursor:pointer; z-index:100;
+            display:none;
+        }
+        button.nav-reopen:hover { color:#58a6ff; }
+        html.nav-collapsed button.nav-reopen { display:block; }
         nav a { display:block; padding:10px 20px; color:#8b949e; text-decoration:none; font-size:14px; transition:all .2s; }
         nav a:hover, nav a.active { color:#f0f6fc; background:#1f2937; }
         nav .section { padding:12px 20px 4px; color:var(--fg-dim); font-size:11px; text-transform:uppercase; letter-spacing:1px; }
@@ -55,11 +83,11 @@
         main { flex:1; min-width:0; padding:clamp(16px, 2.5vw, 30px); overflow-y:auto; min-height:0; }
         /* Right sidebar - Agent 聊天面板 */
         aside#status-bar {
-            width: 360px; background:#161b22; border-left:1px solid #30363d;
+            width: var(--agent-width, 440px); background:#161b22; border-left:1px solid #30363d;
             padding: 16px; overflow:hidden; flex-shrink:0; display:flex; flex-direction:column; gap:10px;
             min-height:0; transition: width .2s ease, padding .2s ease, border-color .2s ease;
         }
-        aside#status-bar.collapsed { width:0; padding:0; border-left:none; overflow:hidden; }
+        aside#status-bar.collapsed, html.status-collapsed aside#status-bar { width:0 !important; padding:0 !important; border-left:none !important; overflow:hidden !important; }
         aside#status-bar .status-head { display:flex; align-items:center; justify-content:space-between; }
         aside#status-bar .status-toggle {
             background:none; border:none; color:var(--fg-dim); cursor:pointer; font-size:11px; padding:0 2px 8px; line-height:1;
@@ -73,6 +101,7 @@
             border-radius:8px 0 0 8px; padding:12px 5px; font-size:11px; cursor:pointer; z-index:100;
         }
         button.status-reopen:hover { color:#58a6ff; }
+        html.status-collapsed button.status-reopen { display:block; }
         aside#status-bar .status-empty { font-size:12px; color:var(--fg-dim); text-align:center; padding:10px 0; }
         aside#status-bar .status-card {
             background:#0d1117; border:1px solid #21262d; border-radius:6px;
@@ -355,15 +384,15 @@
         .prof-plat-body { padding:0 14px 14px; border-top:1px solid var(--border-soft); }
         .prof-plat-body .plat-reg { display:flex; align-items:center; gap:6px; margin:12px 0 10px; }
 
-        /* 笔名抽屉：紧贴全局左侧导航(180px)右缘、向右展开（宽度动画，不遮住导航） */
-        .prof-backdrop { position:fixed; top:0; bottom:0; left:180px; right:0; background:rgba(0,0,0,.4); z-index:1040; }
-        .prof-drawer { position:fixed; top:0; bottom:0; left:180px; width:0; max-width:min(320px, calc(100vw - 180px));
+        /* 笔名抽屉：紧贴全局左侧导航右缘、向右展开（宽度与左偏移自适应导航折叠） */
+        .prof-backdrop { position:fixed; top:0; bottom:0; left:var(--nav-offset, 180px); right:0; background:rgba(0,0,0,.4); z-index:1040; transition:left .2s ease; }
+        .prof-drawer { position:fixed; top:0; bottom:0; left:var(--nav-offset, 180px); width:0; max-width:min(320px, calc(100vw - var(--nav-offset, 180px)));
                        background:var(--bg-elev); border-right:1px solid var(--border-soft);
                        z-index:1041; overflow:hidden; box-shadow:8px 0 24px rgba(0,0,0,.3);
-                       visibility:hidden; transition:width .25s ease, visibility 0s linear .25s; }
-        .prof-drawer.open { width:min(320px, calc(100vw - 180px)); visibility:visible;
-                            transition:width .25s ease, visibility 0s linear 0s; }
-        .prof-drawer-inner { width:min(320px, calc(100vw - 180px)); height:100%; display:flex; flex-direction:column; }
+                       visibility:hidden; transition:width .25s ease, visibility 0s linear .25s, left .2s ease; }
+        .prof-drawer.open { width:min(320px, calc(100vw - var(--nav-offset, 180px))); visibility:visible;
+                            transition:width .25s ease, visibility 0s linear 0s, left .2s ease; }
+        .prof-drawer-inner { width:min(320px, calc(100vw - var(--nav-offset, 180px))); height:100%; display:flex; flex-direction:column; }
         .prof-del { margin:0; padding:0; border:0; background:none; flex-shrink:0; }
         .prof-del button { width:auto; padding:4px 8px; font-size:12px; }
         .prof-drawer-head { display:flex; justify-content:space-between; align-items:center;
@@ -610,7 +639,8 @@
         }
         /* 极窄窗口：侧栏信息密度降级（导航收窄为图标列需模板层 data-icon 支持，此处保守处理：仅压缩留白，避免 emoji 被 font-size:0 一并隐藏） */
         @media (max-width:760px){
-            nav { width:150px; }
+            :root { --nav-width: 150px; --nav-offset: 150px; }
+            nav { width:var(--nav-width, 150px); }
             nav .logo { padding:14px 16px; font-size:18px; }
             nav a { padding:8px 16px; font-size:13px; }
             main { padding:12px; }

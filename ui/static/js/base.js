@@ -1,67 +1,135 @@
-// 通用 HTML 转义工具：所有动态插入 innerHTML 的数据必须过一遍。
-        // 放在 <head> 保证各子模板脚本执行前已可用。
-        function escapeHtml(str) {
-            if (str === null || str === undefined) return '';
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
+// 首屏防闪烁（FOUC）：在 <head> 加载期间立即设置根节点状态，避免渲染时侧栏跳动
+(function() {
+    try {
+        var navCol = localStorage.getItem('ne_nav_collapsed');
+        if (navCol === '1') {
+            document.documentElement.classList.add('nav-collapsed');
+        } else if (navCol === null && window.innerWidth < 760) {
+            document.documentElement.classList.add('nav-collapsed');
         }
+        var statusLocked = localStorage.getItem('ne_status_locked');
+        var statusCol = localStorage.getItem('ne_status_collapsed');
+        if (statusLocked === '1' && statusCol === '1') {
+            document.documentElement.classList.add('status-collapsed');
+        } else if (statusLocked !== '1' && window.innerWidth < 1280) {
+            document.documentElement.classList.add('status-collapsed');
+        }
+    } catch(e) {}
+})();
 
-        // 右侧状态栏折叠：localStorage 持久化，折叠时露出右侧 ▶ 展开按钮。
-        // 手动折叠/展开一次即锁定偏好（ne_status_locked），此后不再自动折叠。
-        function toggleStatusBar() {
-            var bar = document.getElementById('status-bar');
-            var reopen = document.getElementById('status-reopen');
-            if (!bar) return;
-            var collapsed = bar.classList.toggle('collapsed');
-            if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
-            try {
-                localStorage.setItem('ne_status_collapsed', collapsed ? '1' : '0');
-                localStorage.setItem('ne_status_locked', '1');
-            } catch(e) {}
-        }
-        function setStatusCollapsed(collapsed) {
-            var bar = document.getElementById('status-bar');
-            var reopen = document.getElementById('status-reopen');
-            if (!bar) return;
-            bar.classList.toggle('collapsed', collapsed);
-            if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
-        }
-        function restoreStatusBar() {
-            try {
-                var locked = localStorage.getItem('ne_status_locked');
-                var collapsed = localStorage.getItem('ne_status_collapsed');
-                if (locked === '1') {
-                    setStatusCollapsed(collapsed === '1');
-                } else {
-                    // 未锁定：窄窗口（<1200px）默认折叠，把空间让给内容区；宽窗口默认展开
-                    setStatusCollapsed(window.innerWidth < 1200);
-                }
-            } catch(e) {}
-        }
-        // 未锁定时随窗口宽度实时折叠/展开（用户手动锁过则尊重其偏好）
-        var _neResizeInit = false;
-        function _neInitStatusResize() {
-            if (_neResizeInit) return;
-            _neResizeInit = true;
-            window.addEventListener('resize', function() {
-                try {
-                    if (localStorage.getItem('ne_status_locked') === '1') return;
-                    var bar = document.getElementById('status-bar');
-                    if (!bar) return;
-                    setStatusCollapsed(window.innerWidth < 1200);
-                } catch(e) {}
-            });
-        }
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function(){ restoreStatusBar(); _neInitStatusResize(); });
+// 通用 HTML 转义工具：所有动态插入 innerHTML 的数据必须过一遍。
+// 放在 <head> 保证各子模板脚本执行前已可用。
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// 左侧导航栏折叠：localStorage 持久化 (ne_nav_collapsed)，折叠时在左边缘显示 ▶ 展开按钮。
+function toggleNav() {
+    var nav = document.getElementById('app-nav') || document.querySelector('nav');
+    var reopen = document.getElementById('nav-reopen');
+    if (!nav) return;
+    var isCollapsed = nav.classList.toggle('collapsed');
+    document.documentElement.classList.toggle('nav-collapsed', isCollapsed);
+    if (reopen) reopen.style.display = isCollapsed ? 'block' : 'none';
+    try {
+        localStorage.setItem('ne_nav_collapsed', isCollapsed ? '1' : '0');
+    } catch(e) {}
+    setTimeout(function() {
+        window.dispatchEvent(new Event('resize'));
+    }, 220);
+}
+function setNavCollapsed(collapsed) {
+    var nav = document.getElementById('app-nav') || document.querySelector('nav');
+    var reopen = document.getElementById('nav-reopen');
+    if (!nav) return;
+    nav.classList.toggle('collapsed', collapsed);
+    document.documentElement.classList.toggle('nav-collapsed', collapsed);
+    if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
+}
+function restoreNav() {
+    try {
+        var collapsed = localStorage.getItem('ne_nav_collapsed');
+        if (collapsed !== null) {
+            setNavCollapsed(collapsed === '1');
         } else {
-            restoreStatusBar();
-            _neInitStatusResize();
+            // 未设置偏好：窄屏（<760px）默认折叠，宽屏默认展开
+            setNavCollapsed(window.innerWidth < 760);
         }
+    } catch(e) {}
+}
+
+// 右侧状态栏折叠：localStorage 持久化，折叠时露出右侧 ▶ 展开按钮。
+// 手动折叠/展开一次即锁定偏好（ne_status_locked），此后不再自动折叠。
+function toggleStatusBar() {
+    var bar = document.getElementById('status-bar');
+    var reopen = document.getElementById('status-reopen');
+    if (!bar) return;
+    var collapsed = bar.classList.toggle('collapsed');
+    document.documentElement.classList.toggle('status-collapsed', collapsed);
+    if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
+    try {
+        localStorage.setItem('ne_status_collapsed', collapsed ? '1' : '0');
+        localStorage.setItem('ne_status_locked', '1');
+    } catch(e) {}
+    setTimeout(function() {
+        window.dispatchEvent(new Event('resize'));
+    }, 220);
+}
+function setStatusCollapsed(collapsed) {
+    var bar = document.getElementById('status-bar');
+    var reopen = document.getElementById('status-reopen');
+    if (!bar) return;
+    bar.classList.toggle('collapsed', collapsed);
+    document.documentElement.classList.toggle('status-collapsed', collapsed);
+    if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
+}
+function restoreStatusBar() {
+    try {
+        var locked = localStorage.getItem('ne_status_locked');
+        var collapsed = localStorage.getItem('ne_status_collapsed');
+        if (locked === '1') {
+            setStatusCollapsed(collapsed === '1');
+        } else {
+            // 未锁定：窄窗口（<1280px）默认折叠，把空间让给内容区；宽窗口默认展开
+            setStatusCollapsed(window.innerWidth < 1280);
+        }
+    } catch(e) {}
+}
+// 未锁定时随窗口宽度实时折叠/展开（用户手动锁过则尊重其偏好）
+var _neResizeInit = false;
+function _neInitSidebarResize() {
+    if (_neResizeInit) return;
+    _neResizeInit = true;
+    window.addEventListener('resize', function() {
+        try {
+            // 左侧若未显式保存偏好，窄屏自动折叠
+            if (localStorage.getItem('ne_nav_collapsed') === null) {
+                setNavCollapsed(window.innerWidth < 760);
+            }
+            if (localStorage.getItem('ne_status_locked') === '1') return;
+            var bar = document.getElementById('status-bar');
+            if (!bar) return;
+            setStatusCollapsed(window.innerWidth < 1280);
+        } catch(e) {}
+    });
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function(){
+        restoreNav();
+        restoreStatusBar();
+        _neInitSidebarResize();
+    });
+} else {
+    restoreNav();
+    restoreStatusBar();
+    _neInitSidebarResize();
+}
 
 // 全局 toast：showToast 即时弹出；flashToast 存 sessionStorage，配合 location.reload() 在下次加载后弹出。
 // 各子模板 script 直接在 <body> 尾部执行，此时 #toast-root 已渲染，无需等 DOMContentLoaded。
