@@ -44,13 +44,14 @@ function toggleNav() {
 }
 function setNavCollapsed(collapsed) {
     var nav = document.getElementById('app-nav') || document.querySelector('nav');
-    var reopen = document.getElementById('nav-reopen');
     var toggle = document.getElementById('nav-toggle');
     if (!nav) return;
     nav.classList.toggle('collapsed', collapsed);
     document.documentElement.classList.toggle('nav-collapsed', collapsed);
-    if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
-    if (toggle) toggle.style.display = collapsed ? 'none' : 'block';
+    if (toggle) {
+        toggle.setAttribute('title', collapsed ? '展开导航' : '折叠导航');
+        toggle.setAttribute('aria-label', collapsed ? '展开导航' : '折叠导航');
+    }
 }
 function restoreNav() {
     try {
@@ -81,13 +82,14 @@ function toggleStatusBar() {
 }
 function setStatusCollapsed(collapsed) {
     var bar = document.getElementById('status-bar');
-    var reopen = document.getElementById('status-reopen');
     var toggle = document.getElementById('status-toggle');
     if (!bar) return;
     bar.classList.toggle('collapsed', collapsed);
     document.documentElement.classList.toggle('status-collapsed', collapsed);
-    if (reopen) reopen.style.display = collapsed ? 'block' : 'none';
-    if (toggle) toggle.style.display = collapsed ? 'none' : 'block';
+    if (toggle) {
+        toggle.setAttribute('title', collapsed ? '展开面板' : '折叠面板');
+        toggle.setAttribute('aria-label', collapsed ? '展开面板' : '折叠面板');
+    }
 }
 function restoreStatusBar() {
     try {

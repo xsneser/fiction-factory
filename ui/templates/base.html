@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}NovelEngine — 小说工厂{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v34">
-    <script src="{{ url_for('static', filename='js/base.js') }}?v4"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v35">
+    <script src="{{ url_for('static', filename='js/base.js') }}?v5"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -60,14 +60,9 @@
             </div>
         </aside>
     </div>
-    <!-- 侧边栏边缘垂直居中把手按钮组 -->
-    <!-- 左侧：展开时显示 nav-toggle（◀），折叠时显示 nav-reopen（▶） -->
-    <button id="nav-toggle" class="sidebar-handle nav-handle-toggle" onclick="toggleNav()" title="折叠导航" aria-label="折叠导航">◀</button>
-    <button id="nav-reopen" class="sidebar-handle nav-handle-reopen" onclick="toggleNav()" title="展开导航" aria-label="展开导航">▶</button>
-
-    <!-- 右侧：展开时显示 status-toggle（▶），折叠时显示 status-reopen（◀） -->
-    <button id="status-toggle" class="sidebar-handle status-handle-toggle" onclick="toggleStatusBar()" title="折叠面板" aria-label="折叠面板">▶</button>
-    <button id="status-reopen" class="sidebar-handle status-handle-reopen" onclick="toggleStatusBar()" title="展开面板" aria-label="展开面板">◀</button>
+    <!-- 侧边栏边缘垂直居中把手按钮（跟随侧栏伸缩平滑滑动） -->
+    <button id="nav-toggle" class="sidebar-handle nav-handle" onclick="toggleNav()" title="折叠导航" aria-label="折叠导航"><span class="handle-icon">◀</span></button>
+    <button id="status-toggle" class="sidebar-handle status-handle" onclick="toggleStatusBar()" title="折叠面板" aria-label="折叠面板"><span class="handle-icon">▶</span></button>
 
     <div id="toast-root"></div>
     <script src="{{ url_for('static', filename='js/markdown.js') }}?v1"></script>
