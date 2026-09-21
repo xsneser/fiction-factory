@@ -188,6 +188,46 @@ class TestEventStreamDelegationMapping(unittest.TestCase):
         self.assertEqual(child_tool_evt["delegation_id"], "dg_call_w1")
         self.assertEqual(child_tool_evt["agent_role"], "writer")
 
+        # 4. Writer 子 Agent 的 LLM 调用（调试模式）
+        child_llm_evt = {
+            "type": "llm/call",
+            "data": {
+                "seq": 101,
+                "turn": 1,
+                "step": 1,
+                "sessionId": "child-session-writer",
+                "parentSessionId": "root-session",
+                "delegationDepth": 1,
+                "request": {"model": "deepseek-v4-flash", "messages": []},
+                "response": {"content": "ok"},
+            },
+        }
+        mapped_child_llm = list(DB._map_dsh_event(child_llm_evt, pending))
+        child_llm = next(e for e in mapped_child_llm if e["type"] == "llm_call")
+        self.assertEqual(child_llm["delegation_id"], "dg_call_w1")
+        self.assertEqual(child_llm["agent_role"], "writer")
+        self.assertEqual(child_llm["session_id"], "child-session-writer")
+
+        # 5. Root Orchestrator 的 LLM 调用
+        root_llm_evt = {
+            "type": "llm/call",
+            "data": {
+                "seq": 102,
+                "turn": 0,
+                "step": 0,
+                "sessionId": "root-session",
+                "parentSessionId": "",
+                "delegationDepth": 0,
+                "request": {"model": "deepseek-v4-flash", "messages": []},
+                "response": {"content": "root thinking"},
+            },
+        }
+        mapped_root_llm = list(DB._map_dsh_event(root_llm_evt, pending))
+        root_llm = next(e for e in mapped_root_llm if e["type"] == "llm_call")
+        self.assertEqual(root_llm["delegation_id"], "")
+        self.assertEqual(root_llm["agent_role"], "root")
+        self.assertEqual(root_llm["session_id"], "root-session")
+
 
 if __name__ == "__main__":
     unittest.main()

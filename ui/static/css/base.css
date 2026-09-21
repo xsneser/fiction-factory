@@ -292,6 +292,11 @@
         }
         aside#status-bar .agent-subtool-card.ok { border-left-color:#3fb950; }
         aside#status-bar .agent-subtool-card.err { border-left-color:#f85149; }
+        aside#status-bar .agent-delegation-children .agent-llm-card,
+        aside#status-bar .agent-subllm-card {
+            font-size:10px; background:#161b22; border:1px solid #21262d;
+            border-left:2px solid #d29922; border-radius:4px; padding:4px 8px; margin-top:3px;
+        }
         aside#status-bar .agent-progress-line {
             font-size:11px; color:#8b949e; margin:3px 0; padding:2px 4px;
             display:flex; align-items:center; gap:6px;

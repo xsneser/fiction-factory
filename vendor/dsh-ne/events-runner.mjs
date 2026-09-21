@@ -225,7 +225,8 @@ async function run(ctx, task, io) {
 				},
 				response: capDeep(event.data.message, 1500),
 				usage: lastUsageBySession.get(sid) || null,
-				input_budget: inputBudget(pendingLlm)
+				input_budget: inputBudget(pendingLlm),
+				...meta
 			}});
 			pendingLlmBySession.delete(sid);
 		}

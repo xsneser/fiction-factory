@@ -960,7 +960,10 @@ def _map_dsh_event(evt: dict, pending: dict):
         call_id = data.get("callId", "")
         session_id = str(data.get("sessionId") or data.get("session_id") or "root")
         parent_session_id = str(data.get("parentSessionId") or "")
-        delegation_depth = int(data.get("delegationDepth") or (0 if session_id == "root" else 1))
+        raw_depth = data.get("delegationDepth")
+        if raw_depth is None:
+            raw_depth = data.get("delegation_depth")
+        delegation_depth = int(raw_depth) if raw_depth is not None else (0 if session_id == "root" else 1)
         args = _parse_args(data.get("arguments"))
 
         # 识别委派调用与所属角色
@@ -975,6 +978,7 @@ def _map_dsh_event(evt: dict, pending: dict):
                 "call_id": call_id, "role": target_role, "parent_session_id": session_id,
             }
             pending.setdefault("__last_delegation_by_parent__", {})[session_id] = delegation_id
+            pending["__last_delegation__"] = delegation_id
         else:
             child_mapping = pending.get("__child_to_delegation__", {})
             if session_id in child_mapping:
@@ -1154,8 +1158,38 @@ def _map_dsh_event(evt: dict, pending: dict):
         # 提示词/MCP工具/返回JSON，前端渲染「LLM 调用」调试卡。不持久化 task_events。
         request = data.get("request") or {}
         host_tools = request.get("tools") if isinstance(request, dict) else None
+        session_id = str(data.get("sessionId") or data.get("session_id") or "root")
+        parent_session_id = str(data.get("parentSessionId") or data.get("parent_session_id") or "")
+        origin = str(data.get("origin") or "")
+        raw_depth = data.get("delegationDepth")
+        if raw_depth is None:
+            raw_depth = data.get("delegation_depth")
+        delegation_depth = int(raw_depth) if raw_depth is not None else (0 if session_id == "root" or origin == "root" else 1)
+
+        delegation_id = ""
+        agent_role = "root"
+        child_mapping = pending.get("__child_to_delegation__", {})
+        if session_id in child_mapping:
+            delegation_id = child_mapping[session_id]
+            del_info = pending.get("__delegations__", {}).get(delegation_id, {})
+            agent_role = del_info.get("role") or "subagent"
+        elif parent_session_id and parent_session_id in pending.get("__last_delegation_by_parent__", {}):
+            delegation_id = pending.get("__last_delegation_by_parent__", {}).get(parent_session_id, "")
+            del_info = pending.get("__delegations__", {}).get(delegation_id, {})
+            agent_role = del_info.get("role") or "subagent"
+        elif (delegation_depth > 0 or origin == "subagent") and (session_id != "root"):
+            delegation_id = pending.get("__last_delegation__", "")
+            del_info = pending.get("__delegations__", {}).get(delegation_id, {})
+            agent_role = del_info.get("role") or "subagent"
+
         yield {"type": "llm_call",
+               "event_id": evt_id, "sequence": seq, "timestamp": now_ts,
                "seq": data.get("seq"), "turn": data.get("turn"), "step": data.get("step"),
+               "session_id": session_id,
+               "parent_session_id": parent_session_id,
+               "delegation_id": delegation_id,
+               "agent_role": agent_role,
+               "delegation_depth": delegation_depth,
                "request": request, "response": data.get("response"),
                "usage": data.get("usage"), "input_budget": data.get("input_budget"),
                "host_tool_count": len(host_tools) if isinstance(host_tools, list) else None}

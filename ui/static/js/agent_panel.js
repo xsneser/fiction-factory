@@ -25,7 +25,7 @@ console.log('[agent-panel] v29 delegation-tree');
     var toolPollTimer = null;                   // 工具日志轮询定时器
     var toolCards = {};                         // sessionId:callId → 工具卡（父子 Agent 事件流配对）
     var delegationCards = {};                   // delegation_id → 委派父卡对象（树状折叠组）
-    var _buildCards = [];                       // 任务卡（建书/写作）列表：done 时移除其停止按钮
+    var activeDelegationId = null;              // 当前处于运行中的委派子代理 ID
     var toolCardOrder = [];                     // 工具卡创建顺序（上限裁剪用）
     var taskStartedAt = 0;                      // 当前任务起始时间（unix 秒）：SSE 断线后补渲染 task_events 的 since
     var renderedCallIds = {};                   // 已渲染过的工具卡 callId：断线补渲染防重
@@ -167,15 +167,6 @@ console.log('[agent-panel] v29 delegation-tree');
         head.title = '点击展开/收起详情';
         var label = el('span', 'agent-tool-head-label', '🔧 ' + escapeHtml(toolLabel(tool, args)));
         var meta = el('span', 'agent-tool-head-meta', '');   // 第一行右侧：⏱ 运行时长 · token 用量
-        // 卡片内停止按钮：打断当前 Agent 任务（复用全局 cancel 通道），工具完成/会话结束自动移除
-        var stop = el('button', 'agent-tool-stop', '⏹ 停止');
-        stop.type = 'button';
-        stop.title = '打断当前 Agent 任务';
-        stop.addEventListener('click', function (e) {
-            e && e.stopPropagation();   // 不触发头部展开/折叠
-            stop.disabled = true; stop.textContent = '停止中…';
-            fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function () {});
-        });
         var detail = el('div', 'agent-tool-detail', '');
         // 默认折叠成两行（头部 + 单行结果摘要，参数默认隐藏）；点击头部展开/收起全部，参数首次展开时懒加载
         head.onclick = function () {
@@ -187,7 +178,6 @@ console.log('[agent-panel] v29 delegation-tree');
             }
         };
         head.appendChild(label);
-        head.appendChild(stop);
         head.appendChild(meta);
         var status = el('div', 'agent-tool-status', '运行中…');
         card.appendChild(head);
@@ -195,7 +185,7 @@ console.log('[agent-panel] v29 delegation-tree');
         card.appendChild(status);
         chat.appendChild(card);
         scrollBottom();
-        var run = { card: card, status: status, meta: meta, stopBtn: stop, t0: performance.now(), ts0: null, tool: tool, args: args, timer: null };
+        var run = { card: card, status: status, meta: meta, t0: performance.now(), ts0: null, tool: tool, args: args, timer: null };
         // 运行中实时计时：活跃卡用 performance 基；刷新重建卡 run.ts0=事件 ts，用 Date.now 基算真实已用时长。
         // 运行中只显示 ⏱（token 是决策那轮已消耗的固定值，工具完成时才与最终时长一起显示，避免「token 已出现却仍运行中」误解）。
         run.timer = setInterval(function() {
@@ -289,6 +279,7 @@ console.log('[agent-panel] v29 delegation-tree');
         pollTokenUsage();
     }
     function resetTokenFlow() {
+        activeDelegationId = null;
         sessionTokens = 0;
         _tokenFlowShown = 0;
         if (_tokenFlowRaf) { cancelAnimationFrame(_tokenFlowRaf); _tokenFlowRaf = null; }
@@ -337,6 +328,7 @@ console.log('[agent-panel] v29 delegation-tree');
             meta: meta,
             children: childrenContainer,
             isDelegation: true,
+            delegationId: delegationId || '',
             t0: performance.now(),
             ts0: null,
             subCount: 0,
@@ -395,6 +387,7 @@ console.log('[agent-panel] v29 delegation-tree');
             var delId = delegationId || ('dg_' + callId);
             var targetRole = name.replace('delegate_', '');
             var run = addDelegationCard(name, args, delId, targetRole);
+            activeDelegationId = delId;
             run.usage = usage || null;
             var key = callId ? String(sessionId || 'root') + ':' + String(callId) : '';
             if (key) { toolCards[key] = run; renderedCallIds[key] = true; }
@@ -430,7 +423,6 @@ console.log('[agent-panel] v29 delegation-tree');
     function finishToolCard(run, text, durMs) {
         if (!run || !run.status) return;
         if (run.timer) { clearInterval(run.timer); run.timer = null; }
-        if (run.stopBtn) { try { if (run.stopBtn.parentNode) run.stopBtn.parentNode.removeChild(run.stopBtn); } catch (e) {} run.stopBtn = null; }
         var durStr = '';
         if (durMs !== undefined && durMs !== null) {
             durStr = '⏱ ' + formatDur(durMs);
@@ -441,6 +433,9 @@ console.log('[agent-panel] v29 delegation-tree');
         if (run.meta) run.meta.textContent = durStr + tok;
 
         if (run.isDelegation) {
+            if (activeDelegationId && (delegationCards[activeDelegationId] === run || run.delegationId === activeDelegationId)) {
+                activeDelegationId = null;
+            }
             var isOk = (text && text.indexOf('✅') === 0);
             run.status.textContent = isOk
                 ? '✅ 委派完成 (共 ' + (run.subCount || 0) + ' 个步骤)'
@@ -552,7 +547,19 @@ console.log('[agent-panel] v29 delegation-tree');
             }
             card.appendChild(det);
         }
-        chat.appendChild(card);
+
+        var targetDelId = evt.delegation_id || (evt.agent_role && evt.agent_role !== 'root' ? activeDelegationId : null);
+        if (!targetDelId && activeDelegationId && evt.session_id && evt.session_id !== 'root') {
+            targetDelId = activeDelegationId;
+        }
+        var parentDel = (targetDelId && delegationCards[targetDelId]) ? delegationCards[targetDelId] : null;
+        if (parentDel) {
+            card.classList.add('agent-subllm-card');
+            parentDel.children.appendChild(card);
+            parentDel.card.classList.add('open');
+        } else {
+            chat.appendChild(card);
+        }
         scrollBottom();
         llmCards.push(card);
         if (llmCards.length > LLM_CARD_LIMIT) {
@@ -854,11 +861,6 @@ console.log('[agent-panel] v29 delegation-tree');
             window.dispatchEvent(new CustomEvent('ne:build-draft-status', { detail: evt }));
         } else if (t === 'done') {
             if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }   // 会话结束清实时行
-            // 任务结束：移除任务卡（建书/写作）上的停止按钮
-            for (var bi = 0; bi < _buildCards.length; bi++) {
-                try { if (_buildCards[bi].stop && _buildCards[bi].stop.parentNode) _buildCards[bi].stop.parentNode.removeChild(_buildCards[bi].stop); } catch (e) {}
-            }
-            _buildCards = [];
             // C3：收尾所有未 resolve 的工具卡（result 缺失/滞后时兜底），清空映射
             Object.keys(toolCards).forEach(function(id) {
                 finishToolCard(toolCards[id], '⚠️ 会话结束未收尾');
@@ -1010,21 +1012,12 @@ console.log('[agent-panel] v29 delegation-tree');
         var card = el('div', 'agent-tool-card agent-task-card');   // 任务卡：body 常显，无折叠（头部箭头需 CSS 隐藏）
         var head = el('div', 'agent-tool-head');
         head.appendChild(el('span', 'agent-tool-head-label', label || '🚀 建书任务'));
-        var stop = el('button', 'agent-tool-stop', '⏹ 停止');
-        stop.type = 'button';
-        stop.title = '打断当前 Agent 任务';
-        stop.addEventListener('click', function () {
-            stop.disabled = true; stop.textContent = '停止中…';
-            fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function () {});
-        });
-        head.appendChild(stop);
         card.appendChild(head);
         var body = el('div', 'agent-tool-detail', text || '');
         body.style.display = 'block';
         card.appendChild(body);
         chat.appendChild(card);
         scrollBottom();
-        _buildCards.push({ card: card, stop: stop });
         return card;
     }
     // 渲染任务卡/气泡（由 agentSendTask 或 done 接力调用；busy 排队时等上一个任务被打断才渲染）
@@ -1150,7 +1143,8 @@ console.log('[agent-panel] v29 delegation-tree');
                     if (e.type === 'tool_call') {
                         if (seen[e.callId]) return;
                         seen[e.callId] = true;
-                        var run = addToolCardFor(e.name, e.args, e.callId, e.usage);   // 重建卡：计时器用事件 ts 基
+                        var run = addToolCardFor(e.name, e.args, e.callId, e.usage,
+                            e.sessionId || e.session_id, e.delegation_id, e.agent_role);   // 重建卡：计时器用事件 ts 基
                         if (run) run.ts0 = e.ts;
                     } else if (e.type === 'tool_result') {
                         var run = toolCards[eventCallKey(e)] ? toolCards[eventCallKey(e)] : null;
