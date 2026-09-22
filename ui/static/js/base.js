@@ -1,17 +1,36 @@
+// 侧栏响应式断点体系（带滞回防抖）
+// 缩窄视口时：先自动折叠左侧导航栏（<=1200px），再自动折叠右侧 Agent 面板（<=880px）
+// 放大视口时：在滞回阈值处（右侧 >=920px，左侧 >=1240px）分别恢复展开
+var SIDEBAR_BREAKPOINTS = {
+    nav: {
+        collapseAt: 1200,
+        expandAt: 1240
+    },
+    status: {
+        collapseAt: 880,
+        expandAt: 920
+    }
+};
+
 // 首屏防闪烁（FOUC）：在 <head> 加载期间立即设置根节点状态，避免渲染时侧栏跳动
 (function() {
     try {
+        var w = window.innerWidth;
+        // 左栏：手动锁定优先，否则按自动断点（<= 1200px 自动折叠）
+        var navLocked = localStorage.getItem('ne_nav_locked') === '1' || localStorage.getItem('ne_nav_collapsed') !== null;
         var navCol = localStorage.getItem('ne_nav_collapsed');
-        if (navCol === '1') {
-            document.documentElement.classList.add('nav-collapsed');
-        } else if (navCol === null && window.innerWidth < 760) {
+        if (navLocked) {
+            if (navCol === '1') document.documentElement.classList.add('nav-collapsed');
+        } else if (w <= 1200) {
             document.documentElement.classList.add('nav-collapsed');
         }
-        var statusLocked = localStorage.getItem('ne_status_locked');
+
+        // 右栏：手动锁定优先，否则按自动断点（<= 880px 自动折叠）
+        var statusLocked = localStorage.getItem('ne_status_locked') === '1';
         var statusCol = localStorage.getItem('ne_status_collapsed');
-        if (statusLocked === '1' && statusCol === '1') {
-            document.documentElement.classList.add('status-collapsed');
-        } else if (statusLocked !== '1' && window.innerWidth < 1280) {
+        if (statusLocked) {
+            if (statusCol === '1') document.documentElement.classList.add('status-collapsed');
+        } else if (w <= 880) {
             document.documentElement.classList.add('status-collapsed');
         }
     } catch(e) {}
@@ -29,7 +48,20 @@ function escapeHtml(str) {
         .replace(/'/g, '&#39;');
 }
 
+// 判断侧栏是否已被用户手动锁定偏好
+function isNavLocked() {
+    try {
+        return localStorage.getItem('ne_nav_locked') === '1' || localStorage.getItem('ne_nav_collapsed') !== null;
+    } catch(e) { return false; }
+}
+function isStatusLocked() {
+    try {
+        return localStorage.getItem('ne_status_locked') === '1';
+    } catch(e) { return false; }
+}
+
 // 左侧导航栏折叠：localStorage 持久化 (ne_nav_collapsed)，折叠时在左边缘显示 ▶ 展开按钮。
+// 手动点击把手即锁定用户偏好 (ne_nav_locked)，后续窗口 resize 不会强行覆盖用户意图。
 function toggleNav() {
     var nav = document.getElementById('app-nav') || document.querySelector('nav');
     if (!nav) return;
@@ -37,30 +69,34 @@ function toggleNav() {
     setNavCollapsed(isCollapsed);
     try {
         localStorage.setItem('ne_nav_collapsed', isCollapsed ? '1' : '0');
+        localStorage.setItem('ne_nav_locked', '1');
     } catch(e) {}
     setTimeout(function() {
-        window.dispatchEvent(new Event('resize'));
+        var evt = new Event('resize');
+        evt._neSynthetic = true;
+        window.dispatchEvent(evt);
     }, 220);
 }
 function setNavCollapsed(collapsed) {
     var nav = document.getElementById('app-nav') || document.querySelector('nav');
     var toggle = document.getElementById('nav-toggle');
-    if (!nav) return;
+    if (!nav) return false;
+    var changed = nav.classList.contains('collapsed') !== collapsed;
     nav.classList.toggle('collapsed', collapsed);
     document.documentElement.classList.toggle('nav-collapsed', collapsed);
     if (toggle) {
         toggle.setAttribute('title', collapsed ? '展开导航' : '折叠导航');
         toggle.setAttribute('aria-label', collapsed ? '展开导航' : '折叠导航');
     }
+    return changed;
 }
 function restoreNav() {
     try {
-        var collapsed = localStorage.getItem('ne_nav_collapsed');
-        if (collapsed !== null) {
-            setNavCollapsed(collapsed === '1');
+        if (isNavLocked()) {
+            setNavCollapsed(localStorage.getItem('ne_nav_collapsed') === '1');
         } else {
-            // 未设置偏好：窄屏（<760px）默认折叠，宽屏默认展开
-            setNavCollapsed(window.innerWidth < 760);
+            // 未设置手动偏好：窄屏（<= 1200px）自动折叠先让出空间，宽屏展开
+            setNavCollapsed(window.innerWidth <= SIDEBAR_BREAKPOINTS.nav.collapseAt);
         }
     } catch(e) {}
 }
@@ -77,48 +113,104 @@ function toggleStatusBar() {
         localStorage.setItem('ne_status_locked', '1');
     } catch(e) {}
     setTimeout(function() {
-        window.dispatchEvent(new Event('resize'));
+        var evt = new Event('resize');
+        evt._neSynthetic = true;
+        window.dispatchEvent(evt);
     }, 220);
 }
 function setStatusCollapsed(collapsed) {
     var bar = document.getElementById('status-bar');
     var toggle = document.getElementById('status-toggle');
-    if (!bar) return;
+    if (!bar) return false;
+    var changed = bar.classList.contains('collapsed') !== collapsed;
     bar.classList.toggle('collapsed', collapsed);
     document.documentElement.classList.toggle('status-collapsed', collapsed);
     if (toggle) {
         toggle.setAttribute('title', collapsed ? '展开面板' : '折叠面板');
         toggle.setAttribute('aria-label', collapsed ? '展开面板' : '折叠面板');
     }
+    return changed;
 }
 function restoreStatusBar() {
     try {
-        var locked = localStorage.getItem('ne_status_locked');
-        var collapsed = localStorage.getItem('ne_status_collapsed');
-        if (locked === '1') {
-            setStatusCollapsed(collapsed === '1');
+        if (isStatusLocked()) {
+            setStatusCollapsed(localStorage.getItem('ne_status_collapsed') === '1');
         } else {
-            // 未锁定：窄窗口（<1280px）默认折叠，把空间让给内容区；宽窗口默认展开
-            setStatusCollapsed(window.innerWidth < 1280);
+            // 未锁定：窄窗口（<= 880px）默认折叠，把空间让给内容区；宽窗口默认展开
+            setStatusCollapsed(window.innerWidth <= SIDEBAR_BREAKPOINTS.status.collapseAt);
         }
     } catch(e) {}
 }
-// 未锁定时随窗口宽度实时折叠/展开（用户手动锁过则尊重其偏好）
+
+// 供需要时清除侧栏锁定偏好并恢复自动匹配
+function resetSidebarPreferences() {
+    try {
+        localStorage.removeItem('ne_nav_collapsed');
+        localStorage.removeItem('ne_nav_locked');
+        localStorage.removeItem('ne_status_collapsed');
+        localStorage.removeItem('ne_status_locked');
+    } catch(e) {}
+    restoreNav();
+    restoreStatusBar();
+}
+window.resetSidebarPreferences = resetSidebarPreferences;
+
+// 响应式宽度自适应控制器：未锁定时随窗口宽度实时折叠/展开（用户手动锁过则尊重其偏好）
 var _neResizeInit = false;
+var _neResizeTimer = null;
+var _neRafId = null;
+
 function _neInitSidebarResize() {
     if (_neResizeInit) return;
     _neResizeInit = true;
-    window.addEventListener('resize', function() {
-        try {
-            // 左侧若未显式保存偏好，窄屏自动折叠
-            if (localStorage.getItem('ne_nav_collapsed') === null) {
-                setNavCollapsed(window.innerWidth < 760);
-            }
-            if (localStorage.getItem('ne_status_locked') === '1') return;
+
+    window.addEventListener('resize', function(e) {
+        // 忽略内部合成的 resize 事件
+        if (e && e._neSynthetic) return;
+
+        // 窗口连续拖拽调整尺寸期间临时禁用过渡动画，避免延迟追赶与抖动
+        document.documentElement.classList.add('layout-resizing');
+        clearTimeout(_neResizeTimer);
+        _neResizeTimer = setTimeout(function() {
+            document.documentElement.classList.remove('layout-resizing');
+        }, 150);
+
+        if (_neRafId) cancelAnimationFrame(_neRafId);
+        _neRafId = requestAnimationFrame(function() {
+            var w = window.innerWidth;
+            var nav = document.getElementById('app-nav') || document.querySelector('nav');
             var bar = document.getElementById('status-bar');
-            if (!bar) return;
-            setStatusCollapsed(window.innerWidth < 1280);
-        } catch(e) {}
+            var layoutChanged = false;
+
+            // 1. 左栏：未锁定时按宽度响应（<= 1200 折叠，>= 1240 展开）
+            if (nav && !isNavLocked()) {
+                var isNavCol = nav.classList.contains('collapsed');
+                if (!isNavCol && w <= SIDEBAR_BREAKPOINTS.nav.collapseAt) {
+                    if (setNavCollapsed(true)) layoutChanged = true;
+                } else if (isNavCol && w >= SIDEBAR_BREAKPOINTS.nav.expandAt) {
+                    if (setNavCollapsed(false)) layoutChanged = true;
+                }
+            }
+
+            // 2. 右栏：未锁定时按宽度响应（<= 880 折叠，>= 920 展开）
+            if (bar && !isStatusLocked()) {
+                var isStatusCol = bar.classList.contains('collapsed');
+                if (!isStatusCol && w <= SIDEBAR_BREAKPOINTS.status.collapseAt) {
+                    if (setStatusCollapsed(true)) layoutChanged = true;
+                } else if (isStatusCol && w >= SIDEBAR_BREAKPOINTS.status.expandAt) {
+                    if (setStatusCollapsed(false)) layoutChanged = true;
+                }
+            }
+
+            // 若自动折叠状态发生改变，延迟派发合成 resize 事件通知图表/阅读器重绘
+            if (layoutChanged) {
+                setTimeout(function() {
+                    var evt = new Event('resize');
+                    evt._neSynthetic = true;
+                    window.dispatchEvent(evt);
+                }, 220);
+            }
+        });
     });
 }
 if (document.readyState === 'loading') {

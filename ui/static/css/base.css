@@ -29,7 +29,7 @@
             --space-4: 16px;
             --nav-width: 180px;
             --nav-offset: 180px;
-            --agent-width: 440px;
+            --agent-width: clamp(320px, 28vw, 440px);
         }
         html.nav-collapsed {
             --nav-offset: 0px;
@@ -102,7 +102,7 @@
         /* 右侧把手（向左突出圆角，从 Agent 栏左缘到屏幕右边缘平滑滑动） */
         .status-handle {
             border-right: none; border-radius: 6px 0 0 6px;
-            right: var(--agent-width, 440px);
+            right: var(--agent-width);
             transition: right .2s ease, background .2s, color .2s, opacity .2s;
         }
         html.status-collapsed .status-handle {
@@ -110,6 +110,20 @@
         }
         html.status-collapsed .status-handle .handle-icon {
             transform: rotate(180deg);
+        }
+
+        /* 窗口连续拖拽调整尺寸期间临时禁用过渡动画，避免延迟追赶与抖动 */
+        html.layout-resizing nav,
+        html.layout-resizing aside#status-bar,
+        html.layout-resizing .sidebar-handle,
+        html.layout-resizing .prof-drawer,
+        html.layout-resizing .prof-backdrop {
+            transition: none !important;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            nav, aside#status-bar, .sidebar-handle, .prof-drawer, .prof-backdrop {
+                transition: none !important;
+            }
         }
         aside#status-bar .status-empty { font-size:12px; color:var(--fg-dim); text-align:center; padding:10px 0; }
         aside#status-bar .status-card {
@@ -645,12 +659,8 @@
             /* 表格在 <900 时强制外层滚动，防列挤压 */
             .table-scroll table { min-width:680px; }
         }
-        /* 极窄窗口：侧栏信息密度降级（导航收窄为图标列需模板层 data-icon 支持，此处保守处理：仅压缩留白，避免 emoji 被 font-size:0 一并隐藏） */
+        /* 极窄窗口：主区内边距降级，卡片自适应单列 */
         @media (max-width:760px){
-            :root { --nav-width: 150px; --nav-offset: 150px; }
-            nav { width:var(--nav-width, 150px); }
-            nav .logo { padding:14px 16px; font-size:18px; }
-            nav a { padding:8px 16px; font-size:13px; }
             main { padding:12px; }
         }
         @media (max-width:560px){
