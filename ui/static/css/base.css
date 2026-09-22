@@ -29,7 +29,7 @@
             --space-4: 16px;
             --nav-width: 180px;
             --nav-offset: 180px;
-            --agent-width: clamp(330px, 33vw, 500px);
+            --agent-width: clamp(370px, 33vw, 500px);
         }
         html.nav-collapsed {
             --nav-offset: 0px;
