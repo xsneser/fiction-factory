@@ -4,35 +4,44 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}NovelEngine — 小说工厂{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v39">
-    <script src="{{ url_for('static', filename='js/base.js') }}?v6"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v41">
+    <script src="{{ url_for('static', filename='js/base.js') }}?v9"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
     <nav id="app-nav">
-        <div class="logo">📖 NovelEngine</div>
-        <a href="/" class="{{ 'active' if request.path == '/' else '' }}">🏠 仪表盘</a>
-        <div class="section">创作</div>
-        <a href="/books/start" class="{{ 'active' if request.path == '/books/start' else '' }}">🔰 启动新书</a>
-        <a href="/books" class="{{ 'active' if (request.path == '/books' or request.path.startswith('/books/') and request.path != '/books/start' or request.path.startswith('/storyline/')) else '' }}">📚 书库</a>
-        <a href="/publish" class="{{ 'active' if request.path == '/publish' or request.path.startswith('/publish/') or request.path.startswith('/books/') and '/publish' in request.path else '' }}">🚀 上架管理</a>
-        <div class="section">资产库</div>
-        <a href="/plots" class="{{ 'active' if request.path == '/plots' or request.path.startswith('/plots/') else '' }}">🧩 情节段库</a>
-        <a href="/structures" class="{{ 'active' if request.path == '/structures' or request.path.startswith('/structures/') else '' }}">📋 情节弧库</a>
-        <a href="/gags" class="{{ 'active' if request.path == '/gags' or request.path.startswith('/gags/') else '' }}">😂 笑点库</a>
-        <a href="/characters" class="{{ 'active' if request.path == '/characters' or request.path.startswith('/characters/') else '' }}">🎭 角色原型库</a>
-        <a href="/samples" class="{{ 'active' if request.path == '/samples' or request.path.startswith('/samples/') else '' }}">🎨 样文池</a>
-        <div class="section">管理</div>
-        <a href="/profiles" class="{{ 'active' if request.path == '/profiles' or request.path.startswith('/profiles/') else '' }}">✍️ 笔名与风格</a>
-        <a href="/settings" class="{{ 'active' if request.path == '/settings' else '' }}">⚙️ 设置</a>
-        <div class="section">工具</div>
-        <a href="/scout" class="{{ 'active' if request.path == '/scout' or request.path == '/novels' else '' }}">📚 外部书库</a>
-        <a href="/extract" class="{{ 'active' if request.path == '/extract' else '' }}">🧪 提取入库</a>
-        <details class="nav-debug">
-            <summary>🧪 调试工具</summary>
-            <a href="/deai">🔄 去AI测试</a>
-            <a href="/review-test">🔍 审查测试</a>
-        </details>
+        <div class="nav-content">
+            <div class="logo">📖 NovelEngine</div>
+            <a href="/" class="{{ 'active' if request.path == '/' else '' }}">🏠 仪表盘</a>
+            <div class="section">创作</div>
+            <a href="/books/start" class="{{ 'active' if request.path == '/books/start' else '' }}">🔰 启动新书</a>
+            <a href="/books" class="{{ 'active' if (request.path == '/books' or request.path.startswith('/books/') and request.path != '/books/start' or request.path.startswith('/storyline/')) else '' }}">📚 书库</a>
+            <a href="/publish" class="{{ 'active' if request.path == '/publish' or request.path.startswith('/publish/') or request.path.startswith('/books/') and '/publish' in request.path else '' }}">🚀 上架管理</a>
+            <div class="section">资产库</div>
+            <a href="/plots" class="{{ 'active' if request.path == '/plots' or request.path.startswith('/plots/') else '' }}">🧩 情节段库</a>
+            <a href="/structures" class="{{ 'active' if request.path == '/structures' or request.path.startswith('/structures/') else '' }}">📋 情节弧库</a>
+            <a href="/gags" class="{{ 'active' if request.path == '/gags' or request.path.startswith('/gags/') else '' }}">😂 笑点库</a>
+            <a href="/characters" class="{{ 'active' if request.path == '/characters' or request.path.startswith('/characters/') else '' }}">🎭 角色原型库</a>
+            <a href="/samples" class="{{ 'active' if request.path == '/samples' or request.path.startswith('/samples/') else '' }}">🎨 样文池</a>
+            <div class="section">管理</div>
+            <a href="/profiles" class="{{ 'active' if request.path == '/profiles' or request.path.startswith('/profiles/') else '' }}">✍️ 笔名与风格</a>
+            <a href="/settings" class="{{ 'active' if request.path == '/settings' else '' }}">⚙️ 设置</a>
+            <div class="section">工具</div>
+            <a href="/scout" class="{{ 'active' if request.path == '/scout' or request.path == '/novels' else '' }}">📚 外部书库</a>
+            <a href="/extract" class="{{ 'active' if request.path == '/extract' else '' }}">🧪 提取入库</a>
+            <details class="nav-debug">
+                <summary>🧪 调试工具</summary>
+                <a href="/deai">🔄 去AI测试</a>
+                <a href="/review-test">🔍 审查测试</a>
+            </details>
+        </div>
+        <div class="nav-footer">
+            <button id="platform-restart" type="button" onclick="restartPlatform()"
+                    title="重启后端与 Agent，并刷新页面" aria-label="重启后端与 Agent，并刷新页面">
+                ↻ 重启服务
+            </button>
+            <div id="platform-restart-status" class="nav-restart-status" aria-live="polite"></div>
+        </div>
     </nav>
     <div class="main-wrapper">
         <main>
@@ -61,8 +70,20 @@
         </aside>
     </div>
     <!-- 侧边栏边缘垂直居中把手按钮（跟随侧栏伸缩平滑滑动） -->
-    <button id="nav-toggle" class="sidebar-handle nav-handle" onclick="toggleNav()" title="折叠导航" aria-label="折叠导航"><span class="handle-icon">◀</span></button>
-    <button id="status-toggle" class="sidebar-handle status-handle" onclick="toggleStatusBar()" title="折叠面板" aria-label="折叠面板"><span class="handle-icon">▶</span></button>
+    <button id="nav-toggle" type="button" class="sidebar-handle nav-handle" onclick="toggleNav()" title="折叠导航" aria-label="折叠导航" aria-controls="app-nav" aria-expanded="true">
+        <span class="handle-icon">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="10 3 5 8 10 13"></polyline>
+            </svg>
+        </span>
+    </button>
+    <button id="status-toggle" type="button" class="sidebar-handle status-handle" onclick="toggleStatusBar()" title="折叠面板" aria-label="折叠面板" aria-controls="status-bar" aria-expanded="true">
+        <span class="handle-icon">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 3 11 8 6 13"></polyline>
+            </svg>
+        </span>
+    </button>
 
     <div id="toast-root"></div>
     <script src="{{ url_for('static', filename='js/markdown.js') }}?v1"></script>

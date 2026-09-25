@@ -40,10 +40,12 @@
         /* Sidebar */
         nav {
             width:var(--nav-width, 180px); background:#161b22; padding:20px 0; border-right:1px solid #30363d;
-            flex-shrink:0; min-height:0; overflow-y:auto;
+            flex-shrink:0; min-height:0; overflow:hidden; display:flex; flex-direction:column;
             transition: width .2s ease, padding .2s ease, border-color .2s ease;
         }
         nav.collapsed, html.nav-collapsed nav { width:0 !important; padding:0 !important; border-right:none !important; overflow:hidden !important; }
+        nav .nav-content { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; }
+        nav .nav-footer { flex:0 0 auto; padding:12px 12px 0; border-top:1px solid #30363d; margin-top:12px; }
         nav .logo { padding:0 20px 20px; font-size:20px; font-weight:bold; color:#58a6ff; border-bottom:1px solid #30363d; margin-bottom:10px; }
         nav a { display:block; padding:10px 20px; color:#8b949e; text-decoration:none; font-size:14px; transition:all .2s; }
         nav a:hover, nav a.active { color:#f0f6fc; background:#1f2937; }
@@ -55,6 +57,15 @@
         nav details.nav-debug summary::before { content:'▸'; color:var(--fg-dim); font-size:11px; }
         nav details.nav-debug[open] summary::before { content:'▾'; }
         nav details.nav-debug a { padding:8px 20px 8px 32px; font-size:13px; }
+        nav .nav-footer button {
+            width:100%; border:1px solid #30363d; border-radius:6px; padding:8px 10px;
+            background:#0d1117; color:#8b949e; cursor:pointer; font-size:12px;
+            transition:color .2s, border-color .2s, background .2s, opacity .2s;
+        }
+        nav .nav-footer button:hover { color:#f0f6fc; border-color:#58a6ff; background:#1f2937; }
+        nav .nav-footer button:disabled { opacity:.55; cursor:wait; }
+        nav .nav-footer button.restart-error { color:#f85149; border-color:#f85149; }
+        nav .nav-restart-status { min-height:14px; margin-top:5px; color:var(--fg-dim); font-size:10px; text-align:center; }
         /* 面包屑：页面从属关系 */
         .crumbs { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:12px; color:var(--fg-muted); margin-bottom:16px; }
         .crumbs a { color:var(--accent); text-decoration:none; }
@@ -75,25 +86,66 @@
         /* ─── 侧边栏垂直居中把手按钮（跟随侧栏伸缩平滑滑动） ─── */
         .sidebar-handle {
             position: fixed; top: 50%; transform: translateY(-50%);
-            background: #161b22; border: 1px solid #30363d; color: #8b949e;
-            padding: 14px 4px; font-size: 10px; line-height: 1; cursor: pointer; z-index: 100;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
-            opacity: 0.85; user-select: none;
+            width: 24px; height: 52px;
+            background: #21262d; border: 1px solid #38424d; color: #c9d1d9;
+            padding: 0; font-size: 11px; line-height: 1; cursor: pointer; z-index: 100;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, .45), 0 0 0 1px rgba(255, 255, 255, .05);
+            user-select: none;
             display: flex; align-items: center; justify-content: center;
+            box-sizing: border-box;
+            transition: left .2s ease, right .2s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, transform .15s ease;
         }
-        .sidebar-handle:hover { color: #58a6ff; background: #21262d; opacity: 1; }
+        /* 扩展热区：透明伪元素使点击更容易命中 */
+        .sidebar-handle::before {
+            content: "";
+            position: absolute;
+            top: -8px; bottom: -8px;
+            left: -8px; right: -8px;
+            pointer-events: auto;
+        }
+        .sidebar-handle:hover {
+            color: #58a6ff; background: #2b323c; border-color: #58a6ff;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, .55), 0 0 10px rgba(88, 166, 255, .3);
+        }
+        /* 彻底解决全局 button:active 的 translateY(1px) 覆盖 translateY(-50%) 导致垂直跳动 20px 并丢失点击的问题 */
+        button.sidebar-handle:active,
+        .sidebar-handle:active {
+            transform: translateY(-50%) !important;
+            background: #30363d !important;
+            color: #79c0ff !important;
+            border-color: #79c0ff !important;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, .4) !important;
+            filter: none !important;
+        }
+        .sidebar-handle:focus-visible {
+            outline: 2px solid #58a6ff; outline-offset: 1px;
+        }
         .sidebar-handle .handle-icon {
-            display: inline-block; transition: transform .2s ease;
+            display: flex; align-items: center; justify-content: center;
+            width: 12px; height: 12px;
+            pointer-events: none;
+            transition: transform .2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .sidebar-handle svg {
+            display: block; width: 12px; height: 12px; pointer-events: none;
         }
 
         /* 左侧把手（向右突出圆角，从导航栏右缘到屏幕左边缘平滑滑动） */
         .nav-handle {
-            border-left: none; border-radius: 0 6px 6px 0;
+            border-left: none; border-radius: 0 8px 8px 0;
             left: var(--nav-width, 180px);
-            transition: left .2s ease, background .2s, color .2s, opacity .2s;
+        }
+        .nav-handle:hover {
+            transform: translateY(-50%) translateX(2px);
+        }
+        .nav-handle:active {
+            transform: translateY(-50%) !important;
         }
         html.nav-collapsed .nav-handle {
             left: 0;
+            border-color: #388bfd;
+            background: #1c222b;
+            box-shadow: 2px 4px 14px rgba(0, 0, 0, .5), 0 0 8px rgba(56, 139, 253, .25);
         }
         html.nav-collapsed .nav-handle .handle-icon {
             transform: rotate(180deg);
@@ -101,12 +153,20 @@
 
         /* 右侧把手（向左突出圆角，从 Agent 栏左缘到屏幕右边缘平滑滑动） */
         .status-handle {
-            border-right: none; border-radius: 6px 0 0 6px;
+            border-right: none; border-radius: 8px 0 0 8px;
             right: var(--agent-width);
-            transition: right .2s ease, background .2s, color .2s, opacity .2s;
+        }
+        .status-handle:hover {
+            transform: translateY(-50%) translateX(-2px);
+        }
+        .status-handle:active {
+            transform: translateY(-50%) !important;
         }
         html.status-collapsed .status-handle {
             right: 0;
+            border-color: #388bfd;
+            background: #1c222b;
+            box-shadow: -2px 4px 14px rgba(0, 0, 0, .5), 0 0 8px rgba(56, 139, 253, .25);
         }
         html.status-collapsed .status-handle .handle-icon {
             transform: rotate(180deg);
