@@ -83,17 +83,18 @@
         }
         aside#status-bar.collapsed, html.status-collapsed aside#status-bar { width:0 !important; padding:0 !important; border-left:none !important; overflow:hidden !important; }
         aside#status-bar .status-head { display:flex; align-items:center; justify-content:space-between; }
-        /* ─── 侧边栏垂直居中把手按钮（跟随侧栏伸缩平滑滑动） ─── */
+        /* ─── 侧边栏垂直居中把手按钮（跟随侧栏伸缩平滑滑动，中线半嵌设计） ─── */
         .sidebar-handle {
             position: fixed; top: 50%; transform: translateY(-50%);
-            width: 24px; height: 52px;
+            width: 20px; height: 44px;
             background: #21262d; border: 1px solid #38424d; color: #c9d1d9;
             padding: 0; font-size: 11px; line-height: 1; cursor: pointer; z-index: 100;
             box-shadow: 0 4px 12px rgba(0, 0, 0, .45), 0 0 0 1px rgba(255, 255, 255, .05);
             user-select: none;
             display: flex; align-items: center; justify-content: center;
             box-sizing: border-box;
-            transition: left .2s ease, right .2s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, transform .15s ease;
+            border-radius: 10px;
+            transition: left .2s ease, right .2s ease, background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, border-radius .2s ease;
         }
         /* 扩展热区：透明伪元素使点击更容易命中 */
         .sidebar-handle::before {
@@ -122,27 +123,25 @@
         }
         .sidebar-handle .handle-icon {
             display: flex; align-items: center; justify-content: center;
-            width: 12px; height: 12px;
+            width: 11px; height: 11px;
             pointer-events: none;
             transition: transform .2s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .sidebar-handle svg {
-            display: block; width: 12px; height: 12px; pointer-events: none;
+            display: block; width: 11px; height: 11px; pointer-events: none;
         }
 
-        /* 左侧把手（向右突出圆角，从导航栏右缘到屏幕左边缘平滑滑动） */
+        /* 左侧把手（展开时向左偏移一半跨在中线上，减少对主内容的遮挡；折叠时平滑贴合屏幕左边缘） */
         .nav-handle {
-            border-left: none; border-radius: 0 8px 8px 0;
-            left: var(--nav-width, 180px);
-        }
-        .nav-handle:hover {
-            transform: translateY(-50%) translateX(2px);
+            left: calc(var(--nav-width, 180px) - 10px);
         }
         .nav-handle:active {
             transform: translateY(-50%) !important;
         }
         html.nav-collapsed .nav-handle {
             left: 0;
+            border-left: none;
+            border-radius: 0 8px 8px 0;
             border-color: #388bfd;
             background: #1c222b;
             box-shadow: 2px 4px 14px rgba(0, 0, 0, .5), 0 0 8px rgba(56, 139, 253, .25);
@@ -151,19 +150,17 @@
             transform: rotate(180deg);
         }
 
-        /* 右侧把手（向左突出圆角，从 Agent 栏左缘到屏幕右边缘平滑滑动） */
+        /* 右侧把手（展开时向右偏移一半跨在中线上，减少对主内容的遮挡；折叠时平滑贴合屏幕右边缘） */
         .status-handle {
-            border-right: none; border-radius: 8px 0 0 8px;
-            right: var(--agent-width);
-        }
-        .status-handle:hover {
-            transform: translateY(-50%) translateX(-2px);
+            right: calc(var(--agent-width) - 10px);
         }
         .status-handle:active {
             transform: translateY(-50%) !important;
         }
         html.status-collapsed .status-handle {
             right: 0;
+            border-right: none;
+            border-radius: 8px 0 0 8px;
             border-color: #388bfd;
             background: #1c222b;
             box-shadow: -2px 4px 14px rgba(0, 0, 0, .5), 0 0 8px rgba(56, 139, 253, .25);
