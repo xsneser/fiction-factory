@@ -1,143 +1,84 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>⚙️ 设置</h1>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}?v=20260925">
 
-<div class="card">
-    <h2>LLM 配置</h2>
-    <form onsubmit="return false">
-        <div class="form-group">
-            <label for="api_key">API Key</label>
-            <input type="password" id="api_key" value="{{ config.api_key_masked }}" placeholder="sk-..." autocomplete="off">
-            {% if config.api_key_masked %}
-            <small class="hint">已配置（{{ config.api_key_masked }}），如需修改请整体替换为完整 key；留空提交将保留原 key</small>
-            {% endif %}
+<div class="st-page">
+  <div class="st-header-row">
+    <h1>⚙️ 系统设置 <span style="font-size:14px;color:#8b949e;font-weight:normal">（模型与服务配置）</span></h1>
+    <div class="st-actions">
+      <button id="st-save" class="btn btn-primary" type="button" disabled>✓ 保存设置</button>
+    </div>
+  </div>
+
+  <div id="st-banner"></div>
+
+  <!-- ── 供应商 ───────────────────── -->
+  <section class="st-section st-providers-section">
+    <div class="st-section-head">
+      <div class="st-head-left">
+        <h2>API 供应商</h2>
+        <span class="st-count" id="st-provider-count"></span>
+      </div>
+      <div class="st-actions">
+        <button id="st-refresh-models" class="btn btn-ghost" type="button" title="从当前供应商重新拉取完整模型目录并保存">🔄 刷新模型目录</button>
+        <button class="btn btn-primary" id="st-add-provider" type="button">➕ 添加供应商</button>
+      </div>
+    </div>
+    <div class="st-grid" id="st-providers"></div>
+  </section>
+
+  <!-- ── 角色模型分配 ─────────────────────────────────── -->
+  <section class="st-section">
+    <div class="st-section-head">
+      <div class="st-head-left">
+        <h2>角色模型分配</h2>
+        <span class="st-hint-inline">为各个创作角色独立分配供应商、模型与思考强度</span>
+      </div>
+    </div>
+    <div class="st-matrix-grid" id="st-routes"></div>
+  </section>
+
+  <!-- ── 高级设置 ─────────────────────────────────────────────── -->
+  <section class="st-section">
+    <details class="st-details">
+      <summary>高级设置（后端基础服务 · 上下文预算）</summary>
+      <div class="st-details-body">
+        <div class="st-card st-route-card st-advanced-route" id="st-backend-route"></div>
+        <div class="st-card st-field-row">
+          <label class="st-field">
+            <span>上下文预算（tokens）</span>
+            <input type="number" id="st-context-budget" min="8000" max="2000000" step="10000"
+                   value="{{ context_budget_tokens }}">
+          </label>
+          <p class="st-hint">
+            dsh 编排运行时的上下文预算上限（默认 300000），调小会让长任务更早触发上下文压缩。
+          </p>
         </div>
-        <div class="form-group">
-            <label for="base_url">API 地址</label>
-            <input type="url" id="base_url" value="{{ config.base_url }}" placeholder="https://api.deepseek.com">
-        </div>
-        <div class="form-group">
-            <label for="model">模型</label>
-            <input type="text" id="model" value="{{ config.model }}" placeholder="deepseek-v4-flash">
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="http_timeout">API 超时（秒）</label>
-                <input type="number" id="http_timeout" value="{{ config.http_timeout_seconds }}" min="10" max="600">
-            </div>
-            <div class="form-group">
-                <label for="context_budget">上下文预算（tokens）</label>
-                <input type="number" id="context_budget" value="{{ config.context_budget_tokens }}" min="10000" max="1000000" step="10000">
-            </div>
-        </div>
-    </form>
+      </div>
+    </details>
+  </section>
 </div>
 
-<div id="status-card"></div>
-
-<div style="display:flex;gap:12px;margin-top:20px">
-    <button class="btn btn-primary" onclick="saveSettings()">💾 保存设置</button>
-    <button id="btn-test" class="btn" style="background:#30363d;color:#f0f6fc" onclick="testConnection()">🔌 测试连接</button>
+<!-- ── 供应商编辑抽屉 ─────────────────────────────────────── -->
+<div class="st-modal-backdrop" id="st-modal" hidden>
+  <div class="st-modal" role="dialog" aria-modal="true" aria-labelledby="st-modal-title">
+    <div class="st-modal-head">
+      <h3 id="st-modal-title">编辑供应商</h3>
+      <button class="st-icon-btn" id="st-modal-close" type="button" aria-label="关闭">✕</button>
+    </div>
+    <div class="st-modal-body" id="st-modal-body"></div>
+    <div class="st-modal-foot">
+      <button class="btn btn-ghost" id="st-modal-cancel" type="button">取消</button>
+      <button class="btn btn-ghost" id="st-modal-test" type="button">🔌 测试连接</button>
+      <button class="btn btn-primary" id="st-modal-ok" type="button">确定</button>
+    </div>
+    <div class="st-test-result" id="st-modal-test-result" aria-live="polite"></div>
+  </div>
 </div>
 
-<style>
-@keyframes spin { to { transform: rotate(360deg); } }
-.spinner {
-    display: inline-block;
-    width: 14px; height: 14px;
-    border: 2px solid #8b949e;
-    border-top-color: #58a6ff;
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-    vertical-align: middle;
-    margin-right: 6px;
-}
-.hint {
-    display: block;
-    margin-top: 6px;
-    font-size: 12px;
-    color: #8b949e;
-    line-height: 1.5;
-}
-</style>
+<div id="st-toast-host" class="st-toast-host" aria-live="polite"></div>
 
-<script>
-(function() {
-    var ok = {{ 'true' if llm_ok else 'false' }};
-    renderStatus(ok ? 'info' : 'warning', ok ? '📋 已配置 · {{ config.base_url }}' : '⚠️ 未配置 · 请填写 API Key');
-})();
-
-function renderStatus(type, msg) {
-    var el = document.getElementById('status-card');
-    var icons = { info: '📋', success: '✅', warning: '⚠️', error: '❌' };
-    el.innerHTML = '<div class="card"><h2>连接状态</h2><div class="alert ' + type + '">' + (icons[type]||'') + ' ' + escapeHtml(msg) + '</div></div>';
-}
-
-function getVal(id) {
-    return document.getElementById(id).value;
-}
-
-async function saveSettings() {
-    var payload = {
-        base_url: getVal('base_url'),
-        model: getVal('model'),
-        http_timeout_seconds: parseInt(getVal('http_timeout')) || 300,
-        context_budget_tokens: parseInt(getVal('context_budget')) || 300000,
-    };
-    // 掩码值（含 ****）表示未修改，不提交 api_key，后端保留原 key
-    var key = getVal('api_key');
-    if (key && key.indexOf('****') === -1) {
-        payload.api_key = key;
-    }
-    try {
-        var r = await fetch('/api/settings/save', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload),
-        });
-        var d = await r.json();
-        showToast(d.ok ? '✅ 设置已保存' : '❌ ' + (d.error || '保存失败'), d.ok ? 'success' : 'error');
-    } catch(e) {
-        showToast('❌ 请求失败: ' + e.message, 'error');
-    }
-}
-
-async function testConnection() {
-    var btn = document.getElementById('btn-test');
-    var origText = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> 测试中...';
-    renderStatus('warning', '⏳ 正在测试连接...');
-
-    var payload = {
-        base_url: getVal('base_url'),
-        model: getVal('model'),
-    };
-    // 掩码值不回传，由后端读取已保存的 key 进行测试
-    var key = getVal('api_key');
-    if (key && key.indexOf('****') === -1) {
-        payload.api_key = key;
-    }
-    try {
-        var r = await fetch('/api/settings/test', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload),
-        });
-        var d = await r.json();
-        if (d.ok) {
-            showToast('✅ 连接成功！' + (d.model || ''), 'success');
-            renderStatus('success', '连接成功 · ' + (d.model || ''));
-        } else {
-            showToast('❌ 连接失败: ' + (d.error || '未知错误'), 'error');
-            renderStatus('error', '连接失败: ' + (d.error || '未知错误'));
-        }
-    } catch(e) {
-        showToast('❌ 请求失败: ' + e.message, 'error');
-        renderStatus('error', '请求失败: ' + e.message);
-    }
-    btn.disabled = false;
-    btn.innerHTML = origText;
-}
-</script>
+<script id="st-bootstrap" type="application/json">{{ settings_view | tojson }}</script>
+<script id="st-role-meta" type="application/json">{{ {'order': role_order, 'titles': role_titles, 'descs': role_descs} | tojson }}</script>
+<script src="{{ url_for('static', filename='js/settings.js') }}?v=20260925"></script>
 {% endblock %}
