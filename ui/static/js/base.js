@@ -71,11 +71,6 @@ function toggleNav() {
         localStorage.setItem('ne_nav_collapsed', isCollapsed ? '1' : '0');
         localStorage.setItem('ne_nav_locked', '1');
     } catch(e) {}
-    setTimeout(function() {
-        var evt = new Event('resize');
-        evt._neSynthetic = true;
-        window.dispatchEvent(evt);
-    }, 220);
 }
 function setNavCollapsed(collapsed) {
     var nav = document.getElementById('app-nav') || document.querySelector('nav');
@@ -87,6 +82,7 @@ function setNavCollapsed(collapsed) {
     if (toggle) {
         toggle.setAttribute('title', collapsed ? '展开导航' : '折叠导航');
         toggle.setAttribute('aria-label', collapsed ? '展开导航' : '折叠导航');
+        toggle.setAttribute('aria-expanded', String(!collapsed));
     }
     return changed;
 }
@@ -112,11 +108,6 @@ function toggleStatusBar() {
         localStorage.setItem('ne_status_collapsed', isCollapsed ? '1' : '0');
         localStorage.setItem('ne_status_locked', '1');
     } catch(e) {}
-    setTimeout(function() {
-        var evt = new Event('resize');
-        evt._neSynthetic = true;
-        window.dispatchEvent(evt);
-    }, 220);
 }
 function setStatusCollapsed(collapsed) {
     var bar = document.getElementById('status-bar');
@@ -128,6 +119,7 @@ function setStatusCollapsed(collapsed) {
     if (toggle) {
         toggle.setAttribute('title', collapsed ? '展开面板' : '折叠面板');
         toggle.setAttribute('aria-label', collapsed ? '展开面板' : '折叠面板');
+        toggle.setAttribute('aria-expanded', String(!collapsed));
     }
     return changed;
 }
@@ -242,6 +234,89 @@ if (document.readyState === 'loading') {
         function flashToast(msg, type) {
             try { sessionStorage.setItem('ne_toast', JSON.stringify({m: msg, t: type || 'success'})); } catch(e) {}
         }
+
+        // 一键重启本地服务：先让后端返回当前 boot_id，再等待新进程的 boot_id，
+        // 避免旧服务仍能响应时过早刷新页面。
+        var _neRestartTimer = null;
+        function restartPlatform() {
+            var button = document.getElementById('platform-restart');
+            var status = document.getElementById('platform-restart-status');
+            if (!button || button.disabled) return;
+            button.disabled = true;
+            button.classList.remove('restart-error');
+            button.textContent = '↻ 重启中…';
+            if (status) status.textContent = '正在停止 Agent 与服务…';
+            var startedAt = Date.now();
+            var oldBootId = '';
+            var timeoutMs = 90000;
+
+            function finishError(message) {
+                if (_neRestartTimer) { clearTimeout(_neRestartTimer); _neRestartTimer = null; }
+                button.disabled = false;
+                button.classList.add('restart-error');
+                button.textContent = '↻ 重试重启';
+                if (status) status.textContent = '自动重启未响应，可查看 storage/restart_service.log';
+                showToast(message, 'error');
+            }
+            function pollHealth() {
+                if (Date.now() - startedAt > timeoutMs) {
+                    finishError('服务重启超时，请检查控制台或手动运行 launch.bat。');
+                    return;
+                }
+                var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                var timeoutId = controller ? setTimeout(function() { controller.abort(); }, 3000) : null;
+                fetch('/api/system/health', {
+                    cache: 'no-store',
+                    signal: controller ? controller.signal : undefined
+                })
+                    .then(function(r) { if (!r.ok) throw new Error('health ' + r.status); return r.json(); })
+                    .then(function(data) {
+                        if (timeoutId) clearTimeout(timeoutId);
+                        if (data && data.boot_id && oldBootId && data.boot_id !== oldBootId) {
+                            window.location.reload();
+                            return;
+                        }
+                        _neRestartTimer = setTimeout(pollHealth, 700);
+                    })
+                    .catch(function() {
+                        if (timeoutId) clearTimeout(timeoutId);
+                        // 服务切换期间连接失败是预期现象，继续等待新实例。
+                        _neRestartTimer = setTimeout(pollHealth, 700);
+                    });
+            }
+
+            fetch('/api/system/restart', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-NovelEngine-Action': 'restart'
+                },
+                body: '{}',
+                cache: 'no-store'
+            })
+                .then(function(r) {
+                    return r.json().catch(function() { return {}; }).then(function(data) {
+                        if (!r.ok || !data.ok) {
+                            var error = new Error(data.message || data.error || 'restart failed');
+                            error.code = data.error || '';
+                            throw error;
+                        }
+                        return data;
+                    });
+                })
+                .then(function(data) {
+                    oldBootId = data.boot_id || '';
+                    if (!oldBootId) throw new Error('restart identity missing');
+                    if (status) status.textContent = '等待新服务上线…';
+                    pollHealth();
+                })
+                .catch(function(err) {
+                    finishError(err && err.code === 'debug_mode_restart_unsupported'
+                        ? '调试模式下不能自动重启，请先关闭 NOVEL_DEBUG。'
+                        : '无法启动服务重启，请检查后端状态。');
+                });
+        }
+        window.restartPlatform = restartPlatform;
         (function() {
             try {
                 var f = sessionStorage.getItem('ne_toast');
