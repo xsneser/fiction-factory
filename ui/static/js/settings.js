@@ -390,7 +390,7 @@
     var backBtn = el('button', {
       class: 'vm-back-btn',
       type: 'button',
-      text: '← 返回调节强度',
+      text: '返回',
       onclick: function (e) {
         e.stopPropagation();
         panel.classList.remove('model');

@@ -32,6 +32,21 @@
   align-items: center;
   gap: 8px;
 }
+.st-actions .btn,
+.st-actions button,
+.st-section-head .btn,
+.st-section-head button {
+  height: 34px;
+  padding: 0 16px;
+  font-size: 13px;
+  border-radius: 6px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-weight: 500;
+}
 
 /* ── 分区与标题 ── */
 .st-section {
@@ -458,12 +473,15 @@
   background: transparent;
   border: none;
   color: #58a6ff;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 4px 8px;
+  white-space: nowrap;
 }
 .vm-back-btn:hover {
   text-decoration: underline;
+  color: #79c0ff;
 }
 .vm-prov-select {
   background: #050608;
