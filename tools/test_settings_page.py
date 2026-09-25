@@ -64,10 +64,13 @@ def main():
         assert meta["titles"]["writer"] == "段落写手"
         assert "orchestrator" in meta["order"]
 
-        # UI contract: clean, refactored selectors without clutter
+        # UI contract: Image #2 style two-stage popup (effort slider view first, then model selection)
         js_src = (ROOT / "ui" / "static" / "js" / "settings.js").read_text(encoding="utf-8")
         css_src = (ROOT / "ui" / "static" / "css" / "settings.css").read_text(encoding="utf-8")
-        assert "st-route-controls" in js_src
+        assert "view-effort" in js_src
+        assert "view-model" in js_src
+        assert "ve-head" in js_src
+        assert "eff-rng" in js_src
         assert "st-key-badge" in js_src
         assert "st-route-preview" not in js_src, "底部的重复路由预览行未彻底删除"
         assert "st-route-preview" not in css_src, "底部的重复路由预览样式未清理"

@@ -250,7 +250,32 @@
     });
   }
 
-  // ─── 渲染：路由卡片 ────────────────────────────────────────
+  // ─── 渲染：路由卡片 (Image #2 风格) ──────────────────────────
+
+  var openRoutePicker = null;
+
+  function closeRoutePickers(except) {
+    document.querySelectorAll('.st-custom-select.open').forEach(function (sel) {
+      if (sel !== except) {
+        sel.classList.remove('open');
+        var card = sel.closest('.st-tier-card, .st-route-card');
+        if (card) card.classList.remove('open');
+        var panel = sel.querySelector('.sel-panel');
+        if (panel) {
+          panel.classList.remove('open');
+          panel.classList.remove('model');
+        }
+      }
+    });
+    if (!except) openRoutePicker = null;
+  }
+
+  function positionRoutePicker(sel, panel) {
+    panel.classList.remove('flip-left');
+    var rect = sel.getBoundingClientRect();
+    var width = Math.min(440, Math.max(320, rect.width));
+    if (rect.left + width > window.innerWidth - 14) panel.classList.add('flip-left');
+  }
 
   function modelEfforts(model) {
     var declared = model && Array.isArray(model.reasoning_efforts) ? model.reasoning_efforts : [];
@@ -266,36 +291,123 @@
     var route = state.subagents[role];
     if (!route) return null;
     var card = el('div', {
-      class: 'st-card st-route-card' + (role === 'backend' ? ' st-advanced-route' : ''),
+      class: 'st-card st-tier-card st-route-card' + (role === 'backend' ? ' st-advanced-route' : ''),
       'data-route-role': role
     });
 
-    // 头部：角色中文名
-    card.appendChild(el('div', { class: 'st-route-head' }, [
-      el('span', { class: 'st-route-title', text: roleMeta.titles[role] || role })
-    ]));
-    if (roleMeta.descs[role]) {
-      card.appendChild(el('div', { class: 'st-route-desc', text: roleMeta.descs[role] }));
+    var prov = providerOf(route.provider_id);
+
+    // 头部：左侧角色标题 + 副标1 + 副标2；右侧供应商药丸 (Image #2 格式)
+    var provPill = el('button', {
+      class: 'st-tier-pill active',
+      type: 'button',
+      text: prov ? prov.name : '未绑定供应商',
+      title: '点击切换供应商与模型'
+    });
+
+    var headWrap = el('div', { class: 'st-tier-head' }, [
+      el('div', { class: 'st-tier-title-wrap' }, [
+        el('div', { class: 'st-tier-title', text: roleMeta.titles[role] || role }),
+        el('div', { class: 'st-tier-sub1', text: role === 'backend' ? 'PYTHON_SDK · 直连服务' : 'AGENT_SDK · 子代理' }),
+        el('div', { class: 'st-tier-sub2', text: roleMeta.descs[role] || '架构规划 · 专属独立分流' })
+      ]),
+      el('div', { class: 'st-tier-pills' }, [provPill])
+    ]);
+    card.appendChild(headWrap);
+
+    var currentModel = modelsOf(route.provider_id).find(function (m) { return m.id === route.model; });
+    var efforts = modelEfforts(currentModel);
+    if (efforts.indexOf(route.reasoning_effort) === -1) {
+      route.reasoning_effort = efforts[0] || 'default';
     }
 
-    var provModels = modelsOf(route.provider_id);
-    var currentModel = provModels.find(function (m) { return m.id === route.model; });
-    var efforts = modelEfforts(currentModel);
+    // 主选择器条 (仿输入框圆角胶囊按钮)
+    var sel = el('div', { class: 'st-custom-select', 'data-route-control': 'model-effort' });
+    var selBtn = el('button', {
+      class: 'sel-btn',
+      type: 'button',
+      'data-route-action': 'open-picker'
+    });
 
-    // 供应商选择
+    var selEffPill = el('span', { class: 'sel-eff-pill', text: effortLabel(route.reasoning_effort) });
+    var selModelName = el('span', { class: 'sel-model-name', text: route.model || '选择模型' });
+    var selContent = el('div', { class: 'sel-btn-content' }, [selEffPill, selModelName]);
+    var chevron = el('span', { class: 'sel-chevron', text: '⌄' });
+
+    selBtn.appendChild(selContent);
+    selBtn.appendChild(chevron);
+    sel.appendChild(selBtn);
+
+    // 弹出面板
+    var panel = el('div', { class: 'sel-panel' });
+
+    // ── 1. 强度视图 (view-effort，点击按钮后首先展示) ──
+    var effortView = el('div', { class: 'view-effort' });
+
+    // 顶部点击条：[强度] 模型名称 🔄
+    var veEff = el('span', { class: 've-eff', text: effortLabel(route.reasoning_effort) });
+    var veModel = el('span', { class: 've-model', text: route.model || '选择模型' });
+    var veSwitch = el('span', { class: 've-switch', text: '🔄' });
+    var veHead = el('div', {
+      class: 've-head',
+      'data-route-action': 'open-models',
+      title: '点击切换模型'
+    }, [
+      el('div', { class: 've-left' }, [veEff, veModel]),
+      veSwitch
+    ]);
+    effortView.appendChild(veHead);
+
+    // 提示文案（像素级对齐 Image #2）
+    effortView.appendChild(el('div', {
+      class: 've-hint',
+      text: '点击模型名可切换模型 · 拖动调节推理强度'
+    }));
+
+    // 滑块
+    var range = el('input', {
+      class: 'eff-rng',
+      type: 'range',
+      min: '0',
+      max: String(Math.max(0, efforts.length - 1)),
+      value: String(Math.max(0, efforts.indexOf(route.reasoning_effort))),
+      'data-route-action': 'effort-preview'
+    });
+    effortView.appendChild(range);
+
+    var ticks = el('div', { class: 'eff-ticks' });
+    ticks.innerHTML = efforts.map(function () { return '<i></i>'; }).join('');
+    effortView.appendChild(ticks);
+
+    var labels = el('div', { class: 'eff-labels' });
+    labels.innerHTML = efforts.map(function (v) { return '<span>' + effortLabel(v) + '</span>'; }).join('');
+    effortView.appendChild(labels);
+
+    // ── 2. 模型列表视图 (view-model，再次点击 ve-head 后切换展示) ──
+    var modelView = el('div', { class: 'view-model' });
+
+    var vmHead = el('div', { class: 'vm-head' });
+    var backBtn = el('button', {
+      class: 'vm-back-btn',
+      type: 'button',
+      text: '← 返回调节强度',
+      onclick: function (e) {
+        e.stopPropagation();
+        panel.classList.remove('model');
+      }
+    });
+    vmHead.appendChild(backBtn);
+
     var provSel = el('select', {
-      class: 'st-select',
+      class: 'vm-prov-select',
+      title: '切换供应商',
       onchange: function (e) {
+        e.stopPropagation();
         var pid = e.target.value;
-        var nextModels = modelsOf(pid);
         route.provider_id = pid;
         var p = providerOf(pid);
+        var nextModels = modelsOf(pid);
         route.model = (p && p.default_model) || (nextModels[0] && nextModels[0].id) || '';
-        var nextCurrM = nextModels.find(function (m) { return m.id === route.model; });
-        var nextEfforts = modelEfforts(nextCurrM);
-        if (nextEfforts.indexOf(route.reasoning_effort) === -1) {
-          route.reasoning_effort = nextEfforts[0] || 'default';
-        }
         render();
       }
     });
@@ -305,63 +417,105 @@
       if (pid === route.provider_id) opt.selected = true;
       provSel.appendChild(opt);
     });
+    vmHead.appendChild(provSel);
+    modelView.appendChild(vmHead);
 
-    // 模型选择
-    var modelSel = el('select', {
-      class: 'st-select',
-      onchange: function (e) {
-        route.model = e.target.value;
-        var nextCurrM = modelsOf(route.provider_id).find(function (m) { return m.id === route.model; });
-        var nextEfforts = modelEfforts(nextCurrM);
-        if (nextEfforts.indexOf(route.reasoning_effort) === -1) {
-          route.reasoning_effort = nextEfforts[0] || 'default';
-        }
-        render();
+    var optList = el('div', { class: 'opt-list' });
+    modelView.appendChild(optList);
+
+    function updateModelList() {
+      optList.innerHTML = '';
+      var listModels = modelsOf(route.provider_id);
+      if (!listModels.length) {
+        optList.appendChild(el('div', { class: 'opt-item', text: '该供应商未配置模型' }));
+        return;
       }
-    });
-    if (provModels.length) {
-      provModels.forEach(function (m) {
-        var label = m.name && m.name !== m.id ? (m.name + ' (' + m.id + ')') : m.id;
-        var opt = el('option', { value: m.id, text: label });
-        if (m.id === route.model) opt.selected = true;
-        modelSel.appendChild(opt);
+      listModels.forEach(function (m) {
+        var isSel = m.id === route.model;
+        var item = el('div', {
+          class: 'opt-item' + (isSel ? ' selected' : ''),
+          onclick: function (e) {
+            e.stopPropagation();
+            route.model = m.id;
+            var curM = modelsOf(route.provider_id).find(function (x) { return x.id === route.model; });
+            efforts = modelEfforts(curM);
+            if (efforts.indexOf(route.reasoning_effort) === -1) {
+              route.reasoning_effort = efforts[0] || 'default';
+            }
+            range.max = String(Math.max(0, efforts.length - 1));
+            range.value = String(Math.max(0, efforts.indexOf(route.reasoning_effort)));
+            ticks.innerHTML = efforts.map(function () { return '<i></i>'; }).join('');
+            labels.innerHTML = efforts.map(function (v) { return '<span>' + effortLabel(v) + '</span>'; }).join('');
+            veEff.textContent = effortLabel(route.reasoning_effort);
+            veModel.textContent = route.model;
+            selEffPill.textContent = effortLabel(route.reasoning_effort);
+            selModelName.textContent = route.model;
+            updateModelList();
+            // 选择模型后自动返回强度视图
+            panel.classList.remove('model');
+            renderBadges();
+          }
+        }, [
+          el('span', { class: 'opt-id', text: m.name && m.name !== m.id ? (m.name + ' · ' + m.id) : m.id }),
+          el('span', { class: 'opt-check', text: isSel ? '✓' : '' })
+        ]);
+        optList.appendChild(item);
       });
-    } else {
-      modelSel.appendChild(el('option', { value: '', text: '（未找到可用模型）' }));
     }
+    updateModelList();
 
-    // 思考强度选择
-    var effSel = el('select', {
-      class: 'st-select',
-      onchange: function (e) {
-        route.reasoning_effort = e.target.value;
-        renderBadges();
+    panel.appendChild(effortView);
+    panel.appendChild(modelView);
+    sel.appendChild(panel);
+
+    // 交互事件绑定：
+    // 点击主按钮：展开/收起浮层，默认始终首先展示强度视图！
+    selBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var wasOpen = sel.classList.contains('open');
+      closeRoutePickers(null);
+      if (!wasOpen) {
+        sel.classList.add('open');
+        card.classList.add('open');
+        panel.classList.add('open');
+        panel.classList.remove('model'); // 保证先弹出选择修改强度
+        positionRoutePicker(sel, panel);
+        openRoutePicker = sel;
       }
     });
-    efforts.forEach(function (eff) {
-      var opt = el('option', { value: eff, text: effortLabel(eff) });
-      if (eff === route.reasoning_effort) opt.selected = true;
-      effSel.appendChild(opt);
+
+    // 点击顶部药丸也可以快速打开选择模型视图
+    provPill.addEventListener('click', function (e) {
+      e.stopPropagation();
+      closeRoutePickers(null);
+      sel.classList.add('open');
+      card.classList.add('open');
+      panel.classList.add('open');
+      panel.classList.add('model');
+      positionRoutePicker(sel, panel);
+      openRoutePicker = sel;
     });
 
-    // 控制行
-    var controls = el('div', { class: 'st-route-controls' }, [
-      el('div', { class: 'st-ctrl-item' }, [
-        el('label', { class: 'st-ctrl-label', text: '供应商' }),
-        provSel
-      ]),
-      el('div', { class: 'st-ctrl-item' }, [
-        el('label', { class: 'st-ctrl-label', text: '模型' }),
-        modelSel
-      ]),
-      el('div', { class: 'st-ctrl-item' }, [
-        el('label', { class: 'st-ctrl-label', text: '思考强度' }),
-        effSel
-      ])
-    ]);
-    card.appendChild(controls);
+    // 再次点击 ve-head 切换为修改模型视图 (再次点击才修改模型等)
+    veHead.addEventListener('click', function (e) {
+      e.stopPropagation();
+      panel.classList.add('model');
+    });
 
-    // 最大输出 tokens（折叠高级微调）
+    // 拖动滑块即时调节推理强度
+    range.addEventListener('input', function (e) {
+      var v = efforts[Number(e.target.value)] || efforts[0];
+      route.reasoning_effort = v;
+      veEff.textContent = effortLabel(v);
+      selEffPill.textContent = effortLabel(v);
+    });
+    range.addEventListener('change', function () {
+      renderBadges();
+    });
+
+    card.appendChild(sel);
+
+    // 输出上限配置（按需折叠）
     var maxVal = route.max_tokens || 0;
     var adv = el('details', { class: 'st-route-advanced' }, [
       el('summary', { text: '输出上限: ' + (maxVal ? (maxVal + ' tokens') : '默认') }),
@@ -1054,12 +1208,18 @@
       renderBadges();
     });
 
-    // 遮罩点击 / Esc 关闭抽屉
+    // 遮罩点击 / Esc 关闭抽屉与浮层
     $('st-modal').addEventListener('mousedown', function (e) {
       if (e.target === $('st-modal')) closeProviderModal();
     });
+    document.addEventListener('click', function (e) {
+      if (!e.target.closest('.st-custom-select') && !e.target.closest('.st-tier-pill')) {
+        closeRoutePickers(null);
+      }
+    });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
+        closeRoutePickers(null);
         if (!$('st-modal').hidden) closeProviderModal();
       }
     });
