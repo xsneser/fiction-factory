@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}写作台 — {{ state.title or state.pen_name }}{% endblock %}
 {% block crumbs %}
-<div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <a href="/books/{{ state.book_id }}">{{ state.title or '(待定)' }}</a> <span class="sep">›</span> <span class="cur">写作台</span></div>
+<div class="crumbs desk-crumbs"><a href="/books">📚 书库</a> <span class="sep" aria-hidden="true">›</span> <a href="/books/{{ state.book_id }}">{{ state.title or '(待定)' }}</a> <span class="sep" aria-hidden="true">›</span> <span class="cur">写作台</span></div>
 {% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/css/story_line.css?v=22">
-<link rel="stylesheet" href="/static/css/workspace.css?v=8">
+<link rel="stylesheet" href="/static/css/workspace.css?v=11">
 <link rel="stylesheet" href="/static/css/reader.css">
 {% from "_flow_stepper.html" import status_badge %}
 {% from "_info_bar.html" import info_bar %}
@@ -20,16 +20,12 @@
 <div class="tle-layout">
 <div class="desk-head">
     <h1 class="desk-title">✍️ 写作台</h1>
-    <div class="desk-meta">
-        <span class="dm-name"><strong>{{ state.title or '(待定)' }}</strong></span>
-        <span class="dm-sep">·</span>
-        <span class="dm-item">{{ state.pen_name }}</span>
-        <span class="dm-sep">·</span>
-        <span class="dm-item">第 {{ (book.current_chapter if book else 0) or 0 }} 章 · 全书实际 <b id="wf-total-written">{{ initial_written_words or 0 }}</b> 字 <span class="wpr-dim">· 原始 <span id="wf-total-raw">{{ initial_raw_codepoints or 0 }}</span> 字符</span></span>
-        <span class="dm-sep">·</span>
-        <span class="dm-item">{{ status_badge(book.status) if book else status_badge('writing') }}</span>
-        <span class="dm-sep">·</span>
-        <span class="dm-item">每章 {{ storyline.words_per_chapter }} 字</span>
+    <div class="desk-meta" aria-label="写作信息">
+        <span class="dm-item dm-author">作者 {{ state.pen_name }}</span>
+        <span class="dm-item dm-chapter">第 {{ (book.current_chapter if book else 0) or 0 }} 章</span>
+        <span class="dm-item dm-words"><b id="wf-total-written">{{ initial_written_words or 0 }}</b> 字</span>
+        {{ status_badge(book.status) if book else status_badge('writing') }}
+        <span class="dm-item dm-target">每章 {{ storyline.words_per_chapter }} 字</span>
     </div>
 </div>
 
@@ -43,15 +39,11 @@
 <script>window.__PLANNING_STATE__ = {{ planning_state|tojson }};
 window.__PLANNING_BOUNDARY__ = {{ planning_boundary|tojson }};</script>
 
-{# ─── 全宽两栏（置于两栏编辑器之上）：左=上一段（已完成）的事实 | 右=角色状态 ───
-     左栏答「刚写完那段实际发生了什么 + 接下来往哪走」，右栏答「人现在在哪、什么状态、在干什么」。
-     **分工不重叠**：角色的 位置/目标/实力/关系/弧阶段 由右栏的「位置/状态/动作」三行覆盖，
-     左栏只放**非角色**内容——上一段的结构化事实（agent 上报，不从正文推断）+ 一个默认折叠的
-     规划状态组（只留「待解问题」——它只在这里可见；H1 方向条与弧/线程结构已删，
-     前者是 planner 视图，后者 Gantt 上已有）。
-     「人物意图」按人归属，放**右栏角色状态底部**（只列本段未出场的人，见 `_renderOtherIntents`）。
+{# ─── 全宽两栏（置于两栏编辑器之上）：左=上一段（已完成）的六类事实 | 右=全员角色状态 ───
+     左栏服务下一段写作：只读最近已完成 Plot 的结构化事实六项，不从正文推断；右栏展示 Bible 中全部人物。
+     角色不再按是否出场分组，所有人物统一显示位置/状态/动作三行，并按最近出场排序。
      也**刻意不**放章号与字数进度：页头已经有章号与总字数，重复即噪音。 #}
-<section class="wf-latest-context" id="wf-latest-context" role="region" aria-label="上一情节段与角色状态">
+<section class="wf-latest-context" id="wf-latest-context" role="region" aria-label="上一情节段与全员角色状态">
     <article class="wf-context-card">
         <header class="wf-context-head"><h2>上一段（已完成）</h2></header>
         <div id="wf-last-plot"><div class="wf-context-empty">正在读取上一情节段…</div></div>
@@ -481,10 +473,9 @@ window.addEventListener('ne:agent-task-event', function(e) {
 
 
 
-/* ═══ 顶部两栏：（左）本段（仅最新） |（右）角色状态 ═══
-   只答人关心的两件事：「这一段写什么」「人现在在哪、什么状态、在干什么」。
-   旧的三列对照矩阵（上一情节段 | 字段轴 | 本情节段）与它那个五组折叠的审计区是 agent 对账视图，已删；
-   reconcile / expected_facts / state_missing 这些不再出现在写作台。 */
+/* ═══ 顶部两栏：（左）故事事实 + 最近 Plot 增量 |（右）角色状态 ═══
+   左侧是有界的累计事实读模型，最近 Plot 只作为独立承接提示；右侧仍回答「人现在在哪、什么状态、在干什么」。
+   旧的三列对照矩阵（上一情节段 | 字段轴 | 本情节段）与它那个五组折叠的审计区是 agent 对账视图，已删。 */
 var _ctxFingerprint = '';
 
 function _ctxMissing(v) { return v === null || v === undefined || String(v).trim() === ''; }
@@ -501,9 +492,9 @@ function _renderCharacterCard(card, events) {
         var v = _ctxMissing(dyn[k]) ? card[k] : dyn[k];
         if (!_ctxMissing(v)) chips.push('<span class="character-state-chip">' + _ms_esc(v) + '</span>');
     });
-    var ev = (events || {})[card.name] || null;
+    var ev = card.latest_event || (events || {})[card.name] || null;
     var action = _ctxMissing(goal) ? '' : _ms_esc(goal);
-    if (ev && !_ctxMissing(ev.to)) {
+    if (ev && !_ctxMissing(ev.to) && String(ev.to) !== String(goal || '')) {
         action += (action ? ' · ' : '') + _ms_esc(ev.to);
         if (!_ctxMissing(ev.reason)) action += ' <span class="character-action-reason">' + _ms_esc(ev.reason) + '</span>';
     }
@@ -511,7 +502,7 @@ function _renderCharacterCard(card, events) {
     return '<article class="character-state-card">'
         + '<header class="character-state-head"><div><strong>' + _ms_esc(card.name || '未具名') + '</strong>'
         + (identity ? '<span class="character-identity">' + _ms_esc(identity) + '</span>' : '') + '</div>'
-        + (card.state_source === 'staged_fact' ? '<span class="character-staged-mark">本章已上报</span>' : '')
+        + (card.state_source === 'accepted_staged' ? '<span class="character-staged-mark">本章已接受</span>' : '')
         + '</header>'
         + '<dl class="character-state-lines">'
         + '<div><dt>位置</dt><dd>' + (_ctxMissing(loc) ? _ctxGap('未记录') : _ms_esc(loc)) + '</dd></div>'
@@ -524,11 +515,7 @@ function _renderCharacterCard(card, events) {
 var _LAST_RECON_ZH = {clean: '✅ 与预期一致', prediction_drift: '🟡 实际发展与预期不同',
                       missed_prediction: '🟡 预计变化尚未发生', unpredicted_fact: '🔵 出现新的变化'};
 
-/* 左栏：**上一段（已完成）的事实（+ 待解问题折叠组）**。全部字段来自 desk 响应，不做任何推断。
-   分工：**角色字段（位置/目标/实力/关系/弧阶段）由右栏「角色状态」覆盖，这里不重复**——
-   左栏只放非角色内容：上一段的结构化事实 + 一个默认折叠的规划/结构上下文组。
-   刻意**不**显示章号与字数进度：页头已经有章号与总字数，重复即噪音；
-   也不显示情节段摘要（正文就在下方）。 */
+/* 左栏：上一段的六类结构化事实，服务下一段写作。全部字段来自 desk 响应，不从正文推断。 */
 function renderLastPlot(data) {
     var el = document.getElementById('wf-last-plot');
     if (!el) return;
@@ -538,14 +525,14 @@ function renderLastPlot(data) {
         el.innerHTML = _ctxGap('还没有已完成的段落');
         return;
     }
-    // 归因行：这些事实属于哪一段 + 结果如何（对账徽标）。章号/字数在页头已有，不再重复。
     var rec = last.reconcile || {};
     var recText = [_LAST_RECON_ZH[rec.kind] || '', _ctxMissing(rec.summary) ? '' : rec.summary]
         .filter(function (x) { return x; }).join(' · ');
     var head = '<div class="wf-last-title">' + _ms_esc(last.plot_name)
         + (recText ? '<span class="wf-last-stamp">' + _ms_esc(recText) + '</span>' : '') + '</div>';
-
-    // 上一段的结构化事实（agent 上报，不从正文推断）。有值才渲染那一行。
+    var summary = _ctxMissing(last.plot_summary) ? ''
+        : '<div class="wf-last-fact"><span class="wf-last-fact-label">承接</span><span class="wf-last-fact-value">'
+          + _ms_esc(last.plot_summary) + '</span></div>';
     var facts = last.facts || {};
     var FACT_ROWS = [['choices_made', '已作选择'], ['information_revealed', '已知信息'],
                      ['relationship_changes', '关系变化'], ['resource_changes', '资源变化'],
@@ -556,110 +543,40 @@ function renderLastPlot(data) {
         return '<div class="wf-last-fact"><span class="wf-last-fact-label">' + _ms_esc(pair[1])
             + '</span><span class="wf-last-fact-value">' + _ms_esc(text) + '</span></div>';
     }).join('');
-
-    el.innerHTML = head + rows + _renderPlanContext(data, last);
+    el.innerHTML = head + summary + rows + _renderPlanContext(data);
 }
-
-/* 事实值归一化：列表用「；」拼接，字典取 text/description/title（与旧实现同一口径，便于人读） */
 function _factText(value) {
     function one(v) {
         if (v === null || v === undefined) return '';
-        if (typeof v === 'object') {
-            return String(v.text || v.description || v.title || v.question || v.desc || v.intent || '');
-        }
+        if (typeof v === 'object') return String(v.text || v.description || v.title || v.question || v.desc || v.intent || '');
         return String(v);
     }
-    if (Array.isArray(value)) {
-        return value.map(one).filter(function (x) { return x.trim(); }).join('；');
-    }
+    if (Array.isArray(value)) return value.map(one).filter(function (x) { return x.trim(); }).join('；');
     return one(value);
 }
-
-/* 「待解问题」折叠组（默认收起；空则不渲染整组）。
-   刻意**只留这一组**：
-   - H1 方向条 —— 规划期的近期计划，planner 视图，人不需要在这里看（已删）；
-   - 弧 / 线程结构 —— Gantt 上本来就有条带与进度，重复（已删）；
-   - 人物意图 —— 按人归属，放右栏角色状态底部（本段未出场的人，见 _renderOtherIntents）。
-   留下 `story_questions` 是因为它**只在这里可见**：跨章累积的未解问题台账，
-   与上一段事实里的「新问题」（只含这一段新开的）不是一回事。 */
-function _renderPlanContext(data, last) {
-    data = data || {};
-    var planning = data.planning || {};
+/* planning.story_questions 是跨段问题集合；不根据文字自行判断是否已经解决。 */
+function _renderPlanContext(data) {
+    var planning = (data || {}).planning || {};
     var questions = (planning.story_questions || []).map(function (x) {
         return typeof x === 'string' ? x : String((x && (x.question || x.text || x.title)) || '');
     }).filter(function (x) { return x.trim(); });
     if (!questions.length) return '';
     return '<details class="wf-last-plan"><summary>待解问题 ' + questions.length + '</summary>'
-        + '<div class="wf-last-fact"><span class="wf-last-fact-label">待解问题</span>'
-        + '<span class="wf-last-fact-value">'
-        + questions.map(function (line) { return _ms_esc(line); }).join('；') + '</span></div>'
-        + '</details>';
+        + '<div class="wf-last-fact"><span class="wf-last-fact-label">待解问题</span><span class="wf-last-fact-value">'
+        + questions.map(function (line) { return _ms_esc(line); }).join('；') + '</span></div></details>';
 }
 
-/* 右栏：角色状态。主角/本段出场展开，仅被提及的角色收进折叠组。 */
+/* 右栏：全员角色状态。服务端已按最近出场排序，前端不再按是否出场分组。 */
 function renderCurrentCast(data) {
     var el = document.getElementById('wf-current-cast');
     if (!el) return;
     data = data || {};
-    var cast = (data.plot_run || {}).cast_pack || {};
-    var events = data.cast_events || {};
-    var seen = {}, main = [], other = [];
-    [].concat(cast.protagonists || [], cast.active || []).forEach(function (c) {
-        if (!c || !c.name || seen[c.name]) return;
-        seen[c.name] = 1; main.push(c);
-    });
-    (cast.referenced || []).forEach(function (c) {
-        if (!c || !c.name || seen[c.name]) return;
-        seen[c.name] = 1; other.push(c);
-    });
-    if (!main.length && !other.length) {
-        el.innerHTML = _ctxGap('本段未指定出场角色') + _renderOtherIntents(data, {});
+    var roster = data.character_roster || data.character_states || [];
+    if (!roster.length) {
+        el.innerHTML = _ctxGap('尚未配置角色');
         return;
     }
-    // 重绘前记住折叠组开合（否则每轮轮询都会把用户展开的「其他角色」收回去）
-    var open = {};
-    el.querySelectorAll('details[data-detail-key]').forEach(function (d) { open[d.dataset.detailKey] = d.open; });
-    var html = main.map(function (c) { return _renderCharacterCard(c, events); }).join('');
-    if (other.length) {
-        html += '<details class="character-other-group" data-detail-key="cast-others"><summary>其他角色 '
-            + other.length + ' 人</summary>'
-            + other.map(function (c) { return _renderCharacterCard(c, events); }).join('') + '</details>';
-    }
-    html += _renderOtherIntents(data, seen);
-    el.innerHTML = html;
-    el.querySelectorAll('details[data-detail-key]').forEach(function (d) {
-        if (Object.prototype.hasOwnProperty.call(open, d.dataset.detailKey)) d.open = !!open[d.dataset.detailKey];
-    });
-}
-
-/* 事件类型 → 人话（与 character_state._EVENT_FIELD 的键对齐；与书详情角色面板同一套词） */
-var _INTENT_EVENT_ZH = {goal_shift: '目标', power_shift: '实力', location_shift: '位置',
-                        arc_stage: '弧线', relationship: '关系', trust_change: '信任', note: '备注'};
-
-/* 「其他人物意图」：`planning.character_intents` 里**本段没出现在卡片上**的人。
-   为什么只列这些：这份数据的 observations 就是各人最近上报的变化，与本段出场角色卡上的
-   「位置/状态/动作」**同源**（陆凌舟那两个 chip 就是他的 observations），列在卡上纯属重复；
-   真正的增量是那些**不本段出场**的人（比如别处的巴鲁姆/老葛林）——他们在页面上本来无处可见。
-   数据里没有 `intent` 字段，所以按「事件类型 中文 → 新值」渲染；`intent` 若某天有了则优先用它。 */
-function _renderOtherIntents(data, onCard) {
-    var items = ((data || {}).planning || {}).character_intents || [];
-    var rows = items.filter(function (x) {
-        return x && x.name && !onCard[x.name];
-    }).map(function (x) {
-        var bits = [];
-        if (!_ctxMissing(x.intent)) bits.push(String(x.intent));
-        Object.keys(x.observations || {}).forEach(function (k) {
-            var v = (x.observations || {})[k];
-            if (_ctxMissing(v)) return;
-            bits.push((_INTENT_EVENT_ZH[k] || k) + ' → ' + String(v));
-        });
-        if (!bits.length) return '';
-        return '<div class="wf-last-fact"><span class="wf-last-fact-label">' + _ms_esc(x.name)
-            + '</span><span class="wf-last-fact-value">' + _ms_esc(bits.join(' · ')) + '</span></div>';
-    }).filter(function (h) { return h; }).join('');
-    if (!rows) return '';
-    return '<div class="character-intent-block">'
-        + '<div class="character-intent-head">其他人物意图</div>' + rows + '</div>';
+    el.innerHTML = roster.map(function (card) { return _renderCharacterCard(card, {}); }).join('');
 }
 
 /* 统一入口：既有 3s desk 轮询直接调它（不新增轮询）。fingerprint 不变则不重建 DOM。
@@ -667,8 +584,7 @@ function _renderOtherIntents(data, onCard) {
 function renderLatestContext(data) {
     data = data || {};
     var fp = JSON.stringify([data.writing_chapter, data.recent_plot_outcome, data.planning,
-                             data.cast_events, data.plot_run && data.plot_run.cast_pack,
-                             (data.chapters || []).length]);
+                             data.character_roster, (data.chapters || []).length]);
     if (fp !== _ctxFingerprint) {
         _ctxFingerprint = fp;
         renderLastPlot(data);

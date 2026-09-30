@@ -93,6 +93,46 @@ def normalize_base_url(url: str, strict: bool = False) -> str:
     return url + "/v1/chat/completions"
 
 
+def apply_reasoning_fields(payload: dict, reasoning_wire: str, reasoning_effort: str) -> dict:
+    """按供应商的 reasoning 协议把思考参数写进请求 payload（原地修改并返回）。
+
+    两种调用方（本地 token 代理 / Python LLMClient）共用同一套语义，避免"测试连接
+    通过、实际生成被拒"这类只在一条路径上出现的行为差异。
+
+    reasoning_wire（供应商级，谁能收什么格式）：
+      - none    ：剥离一切思考参数（上游不认识它们，传了会被 400）
+      - openai  ：只发 reasoning_effort
+      - deepseek：发 thinking{enabled/disabled}，需要档位时再补 reasoning_effort
+      - 其它    ：按需发 reasoning_effort，off 时若有 thinking 则显式关掉
+
+    reasoning_effort（角色级）：default 表示不干预，交给上游默认。
+    """
+    wire = (reasoning_wire or "default").strip().lower()
+    effort = (reasoning_effort or "default").strip().lower()
+    if wire == "none":
+        payload.pop("reasoning_effort", None)
+        payload.pop("thinking", None)
+    elif wire == "openai":
+        payload.pop("thinking", None)
+        if effort != "default":
+            payload["reasoning_effort"] = effort
+    elif wire == "deepseek":
+        if effort == "off":
+            payload["thinking"] = {"type": "disabled"}
+            payload.pop("reasoning_effort", None)
+        elif effort != "default":
+            payload["thinking"] = {"type": "enabled"}
+            payload["reasoning_effort"] = effort
+    else:
+        if effort == "off":
+            payload.pop("reasoning_effort", None)
+            if "thinking" in payload:
+                payload["thinking"] = {"type": "disabled"}
+        elif effort != "default":
+            payload["reasoning_effort"] = effort
+    return payload
+
+
 def extract_json(text: str) -> str:
     """从 LLM 输出中提取 JSON（处理 markdown 包裹、多余文本）"""
     text = text.strip()
@@ -114,6 +154,13 @@ class LLMClient:
 
     @property
     def api_url(self):
+        explicit = getattr(self.cfg, "chat_completions_endpoint", "") or ""
+        if explicit.strip():
+            from urllib.parse import urljoin
+            endpoint = explicit.strip()
+            if endpoint.startswith("/"):
+                endpoint = urljoin(self.cfg.base_url.rstrip("/") + "/", endpoint.lstrip("/"))
+            return endpoint
         return normalize_base_url(self.cfg.base_url, self.cfg.url_strict)
 
     def _max_tokens(self) -> int:
@@ -144,6 +191,9 @@ class LLMClient:
         headers = {"Authorization": f"Bearer {self.cfg.api_key}"}
         body = {"model": self.cfg.model, "messages": messages,
                 "temperature": temperature, "max_tokens": self._max_tokens()}
+        apply_reasoning_fields(body,
+                               getattr(self.cfg, "reasoning_wire", "default"),
+                               getattr(self.cfg, "reasoning_effort", "default"))
 
         last_err = None
         for attempt in range(3):
@@ -190,6 +240,9 @@ class LLMClient:
         body = {"model": self.cfg.model, "messages": messages,
                 "temperature": temperature, "max_tokens": self._max_tokens(),
                 "stream": True}
+        apply_reasoning_fields(body,
+                               getattr(self.cfg, "reasoning_wire", "default"),
+                               getattr(self.cfg, "reasoning_effort", "default"))
 
         resp = _http_post(self.api_url, headers, body, self.cfg.http_timeout_seconds,
                           stream=True, verify=self.cfg.verify_ssl)

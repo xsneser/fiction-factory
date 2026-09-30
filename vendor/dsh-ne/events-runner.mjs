@@ -136,16 +136,19 @@ async function run(ctx, task, io) {
 	const sessions = ctx.get("sessions");
 	if (agents === void 0 || defaultModel === void 0 || sessions === void 0) return;
 	const selection = defaultModel.currentSelection();
+	const rootProvider = process.env.NOVELENGINE_DSH_PROVIDER || selection.provider || "deepseek-official";
+	const rootModel = process.env.NOVELENGINE_DSH_MODEL || selection.model;
+	const effectiveSelection = { provider: rootProvider, model: rootModel };
 	const { agent } = await agents.create({
 		sessionId: SessionId(`session-${randomUUID()}`),
 		meta: { cwd: process.cwd() },
 		agentOptions: {
-			provider: selection.provider,
-			model: selection.model
+			provider: rootProvider,
+			model: rootModel
 		},
 		setup: (agentCtx) => {
 			installModelSelection(agentCtx, {
-				current: selection,
+				current: effectiveSelection,
 				assembled: void 0
 			});
 		}
@@ -193,9 +196,9 @@ async function run(ctx, task, io) {
 				cache_read: u.cacheReadTokens,
 				cache_write: u.cacheWriteTokens
 			});
-		} else if (event.type === "assistant/message") {
-			lastUsageBySession.delete(sid);   // 本回合无 usage：清掉，避免跨回合串账
 		}
+		// Streaming providers may report usage in a separate chunk; keep it
+		// when the trailing assistant/message has no usage field.
 		// 调试模式：assistant/message 是 LLM 回合终点，配对 llm/stream 快照 emit llm/call
 		//（response = 组装后的完整 assistant 消息，含 tool-call 块与 arguments，即「返回 JSON 原文」）。
 		// 载荷做有界裁剪（capDeep/capTools）：保留结构、裁长内容，防大上下文下事件体积失控。

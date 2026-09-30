@@ -56,11 +56,19 @@ def transport(body, status=200):
 
 
 def patch_exit_info(**over):
-    """临时替换 llm_exit_info（模拟改模型/换中转）→ 返回恢复函数。"""
+    """临时替换 llm_exit_info（模拟改模型/换中转）→ 返回恢复函数。
+
+    `role` 形参必须收下：生产代码按角色探测出口（`llm_exit_info(role)`），
+    假函数签名不带它就会 TypeError。
+    """
     orig = TP.llm_exit_info
 
-    def fake():
-        return {"model": over.get("model", "m-test"), "upstream": over.get("upstream", "https://u.test")}
+    def fake(role="orchestrator"):
+        return {"role": role,
+                "provider_id": over.get("provider_id", "p-test"),
+                "provider_name": over.get("provider_name", "Test Provider"),
+                "model": over.get("model", "m-test"),
+                "upstream": over.get("upstream", "https://u.test")}
     TP.llm_exit_info = fake
     return lambda: setattr(TP, "llm_exit_info", orig)
 
@@ -253,8 +261,15 @@ cfg = APIConfig(api_key="sk-secret", base_url="https://relay.example.com", model
                 url_strict=False, max_tokens=0, http_timeout_seconds=60,
                 context_budget_tokens=1000, verify_ssl=False)
 info = TP.llm_exit_info()
-check("只回 model/upstream 两个键", set(info) == {"model", "upstream"}, str(info))
+# 分流之后诊断信息需要说明「哪个角色、打到哪个供应商的哪个模型」——但多出来的
+# 也只是角色与供应商标识，仍然不许出现 key。
+check("只回角色/供应商/模型/上游四类标识",
+      set(info) <= {"role", "provider_id", "provider_name", "model", "upstream"}, str(info))
+check("必含 model/upstream",
+      {"model", "upstream"} <= set(info), str(info))
 check("不含 key", "sk-secret" not in json.dumps(info), str(info))
+check("role 可指定", TP.llm_exit_info("writer").get("role") == "writer",
+      str(TP.llm_exit_info("writer")))
 _ = cfg
 
 print()

@@ -146,6 +146,9 @@
         enableRunInBackground: false
         backgroundMode: one-shot
         maxDepth: 1
+        agentOptions:
+          provider: deepseek-official
+          model: novelengine-route:writer
         persona: >-
           You are the NovelEngine Plot Writer. Use only the writer MCP tools. Complete exactly one
           Plot draft or requested revision, save it once, report the receipt, and stop. Never plan,
@@ -165,6 +168,9 @@
         enableRunInBackground: false
         backgroundMode: one-shot
         maxDepth: 1
+        agentOptions:
+          provider: deepseek-official
+          model: novelengine-route:planner
         persona: >-
           You are the NovelEngine Planner. Read current state, generate one bounded replan preview,
           validate it, save the preview, and stop. Never write prose or commit the preview.
@@ -185,6 +191,9 @@
         enableRunInBackground: false
         backgroundMode: one-shot
         maxDepth: 1
+        agentOptions:
+          provider: deepseek-official
+          model: novelengine-route:critic
         persona: >-
           You are the NovelEngine Critic. Read the supplied review context, identify concrete problems,
           record exactly one verdict through the critic MCP tool, and report the returned receipt id.
@@ -202,6 +211,9 @@
         enableRunInBackground: false
         backgroundMode: one-shot
         maxDepth: 1
+        agentOptions:
+          provider: deepseek-official
+          model: novelengine-route:candidates
         toolFilter:
           allow:
             - mcp__novelengine-candidates__navigate
@@ -216,6 +228,9 @@
         enableRunInBackground: false
         backgroundMode: one-shot
         maxDepth: 1
+        agentOptions:
+          provider: deepseek-official
+          model: novelengine-route:builder
         toolFilter:
           allow:
             - mcp__novelengine-build__get_build_context
@@ -231,6 +246,9 @@
         enableRunInBackground: false
         backgroundMode: one-shot
         maxDepth: 1
+        agentOptions:
+          provider: deepseek-official
+          model: novelengine-route:publisher
         toolFilter:
           allow:
             - mcp__novelengine-publish__get_book_detail
@@ -247,6 +265,9 @@
         enableRunInBackground: false
         backgroundMode: one-shot
         maxDepth: 1
+        agentOptions:
+          provider: deepseek-official
+          model: novelengine-route:scout
         toolFilter:
           allow:
             - mcp__novelengine-scout__drive_ui
@@ -272,6 +293,9 @@
         enableRunInBackground: false
         backgroundMode: one-shot
         maxDepth: 1
+        agentOptions:
+          provider: deepseek-official
+          model: novelengine-route:style
         toolFilter:
           allow:
             - mcp__novelengine-style__query_profiles

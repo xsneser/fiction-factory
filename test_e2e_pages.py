@@ -179,10 +179,11 @@ def run_tests():
               "启动新书" in r.text,
               "keyword not found in redirect target")
 
-    # ═══ API endpoints（web_ui.py 是 Flask 面板，无 /api/health） ═══
+    # ═══ API endpoints ═══
     print("\n--- API Endpoints ---")
     apis = [
         ("Tasks", "/api/status/tasks"),
+        ("Service health", "/api/system/health"),
     ]
 
     for name, path in apis:
@@ -213,6 +214,10 @@ def run_tests():
     r = get("/")
     sidebar_links = re.findall(r'<a\s+href="([^"]+)"[^>]*>([^<]+)</a>', r.text)
     found_links = {href: text.strip() for href, text in sidebar_links}
+    check("Sidebar restart footer", 'id="platform-restart"' in r.text
+          and 'class="nav-content"' in r.text
+          and 'class="nav-footer"' in r.text,
+          "restart footer or scroll wrapper missing")
 
     for href, expected_text in expected_links:
         check(f"Sidebar link: {expected_text}",

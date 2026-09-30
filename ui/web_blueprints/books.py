@@ -382,24 +382,29 @@ def api_character_states(book_id):
         （`update_from_chapter` 按章正文更新出场/离线），把进行中的草稿扫进来会把
         staged 事实与正式落账混为一谈——章内实时口径属于写作台，不属于这里。
     """
-    from libraries.character_state import CharacterStateMachine
-    path = os.path.join("books", book_id, "character_states.json")
+    from libraries.character_state import CharacterStateMachine, project_character_roster
     current_chapter = _current_chapter_of(book_id)
-    if not os.path.exists(path):
-        return jsonify({"characters": [], "warnings": [], "current_chapter": current_chapter})
+    path = os.path.join("books", book_id, "character_states.json")
     try:
+        from agent_tools import load_tl
+        from libraries.storyline import get_characters
+        tl = load_tl(book_id)
+        raw_bible = get_characters(tl.basic_info) if tl else []
         csm = CharacterStateMachine()
-        csm.load(path)
-        bible = _protagonist_roles(book_id)
+        if os.path.exists(path):
+            csm.load(path)
+        roster = project_character_roster(raw_bible, csm)
         chars = []
-        for card in (csm.to_dict().get("characters") or []):
-            name = str(card.get("name") or "")
-            role, importance = bible.get(name, ("", None))
-            card = dict(card)
-            card["role"] = role
-            card["is_protagonist"] = bool(role == "主角" or importance == 1)
+        for item in roster:
+            dyn = item.get("dyn") or {}
+            card = dict(item)
+            # 书详情旧模板读取扁平字段；保留原始事件与展示标记兼容旧调用方。
+            card.update(dyn)
+            state = csm.get(item["name"])
+            card["events"] = list((state.events if state else []) or [])
+            card["is_protagonist"] = bool(item.get("role") == "主角" or item.get("importance") == 1)
             card["appears_in_current_chapter"] = bool(
-                current_chapter > 0 and int(card.get("last_appeared_chapter") or 0) == current_chapter)
+                current_chapter > 0 and int(item.get("last_appeared_chapter") or 0) == current_chapter)
             chars.append(card)
         return jsonify({"characters": chars, "warnings": csm.warnings(),
                         "current_chapter": current_chapter})

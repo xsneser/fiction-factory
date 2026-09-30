@@ -1,5 +1,5 @@
 """
-NovelEngine — 完整 Web UI v2.0 (Flask + Jinja2)
+NovelEngine — 完整 Web UI v2.4.7 (Flask + Jinja2)
 引擎集成版：新书启动 / 续写 / 管理面板
 路由已按域拆分到 ui/web_blueprints/（dashboard/storyline/desk/books/libraries/tools/settings），
 本文件只负责 app 创建、日志配置与蓝图注册。
@@ -52,5 +52,5 @@ if __name__ == "__main__":
     # debug 由环境变量控制：开发用 NOVEL_DEBUG=1，默认关闭（避免 reloader 干扰自动化）
     debug = os.environ.get("NOVEL_DEBUG") == "1"
     host = os.environ.get("NOVEL_HOST", "127.0.0.1")
-    print(f"NovelEngine Web UI v2.0: http://localhost:58080")
+    print(f"NovelEngine Web UI v2.4.7: http://localhost:58080")
     app.run(host=host, port=58080, debug=debug, use_reloader=debug)

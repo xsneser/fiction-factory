@@ -94,7 +94,7 @@
 | 1 | 面包屑 + h1 ✍️ 写作台 | 书库 › 书名 › 写作台 |
 | 2 | info_bar | 书名 · 笔名 · 进度（第 N 章 · 共 M 字）· 状态 badge · 每章 N 字 |
 | 3 | ~~🧭 规划提示条~~ | **已删**（用户：整个横幅三行都删）。Gantt 规划叠层的替代接线见 §4.2 |
-| 3.5 | 顶部两栏（全宽） | `#wf-latest-context`，置于**两栏布局之上**：左 `#wf-last-plot` = **上一段的结构化事实**（归因行 + 已作选择/已知信息/关系变化/资源变化/承诺更新/新问题 + 折叠的「规划上下文」）；右 `#wf-current-cast` = 角色状态（每卡 位置/状态/动作 三行，主角与本段出场展开、`referenced` 收进「其他角色 N 人」）。两栏不重叠：角色字段全在右栏。数据来自 `/api/desk/chapters/<bid>`（§3.3） |
+| 3.5 | 顶部两栏（全宽） | `#wf-latest-context`，置于**两栏布局之上**：左 `#wf-last-plot` = **上一段（已完成）的六类结构化事实**（服务下一段写作：已作选择/已知信息/关系变化/资源变化/承诺更新/新问题 + 最近段承接与折叠的待解问题）；右 `#wf-current-cast` = 全员角色状态（每卡统一位置/状态/动作三行，按最近出场排序，不再按是否出场分组）。两栏不重叠：角色字段全在右栏。数据来自 `/api/desk/chapters/<bid>`（§3.3） |
 | 4 | 左栏 editor-left | 可拖拽分栏（20%–70%，localStorage `ne_storyline_w` 持久化，`storyline_write_flow.html:266-297`）；本栏只剩故事线 Gantt |
 | 6 | 📋 故事线 Gantt | `#editor-storyline`（story_line.js 挂载，scrollable 模式，含缩放控件） |
 | 7 | 右栏 editor-mid | 顶部 ✍️ 继续写正文卡（`runWritingTask` → 侧栏 Agent；运行态 ⏳ 续写运行中… / ⏹ 停止）；下方分页阅读器 |
@@ -102,38 +102,19 @@
 | 9 | 双向高亮 | 点 Gantt 情节段/弧 → 右栏跳页高亮对应正文（`sl:plot-click`/`sl:outline-click` → `highlightBridgeContent`/`highlightOutlineContent`）；agent 高亮 `StoryLine.highlight` 反向 |
 | 10 | 轮询 | 进页立即 + 3s 轮询 `/api/desk/chapters/<bid>`：刷新顶部两栏（`renderLatestContext`，fingerprint 未变不重建 DOM）与章节（`Reader.setChapters` 保留当前页/高亮、`_activePid` 恢复） |
 
-### 3.3 顶部两栏：上一段（已完成）的事实 + 角色状态
+### 3.3 顶部两栏：上一段六类事实 + 全员角色状态
 
 渲染入口 `renderLatestContext(d)`（单一入口，轮询每轮只调一次；fingerprint 变化才重绘）。左栏 `renderLastPlot(d)`
-读 `recent_plot_outcome` + `planning`，右栏 `renderCurrentCast(d)` 读 `plot_run.cast_pack` + `cast_events`。
+只读 `recent_plot_outcome`，将最近已完成 Plot 的事实拆成六个固定字段：已作选择、已知信息、关系变化、资源变化、承诺更新、新问题；另显示 Plot 名称、对账戳、承接摘要和规划侧折叠的“待解问题”。这部分是给下一段写作使用的短期事实投影，不是跨章累计账本。
+右栏 `renderCurrentCast(d)` 读 desk API 的 `character_roster`，不再消费 `plot_run.cast_pack`，也不再按主角/出场/被提及分组。
 
-**两栏分工不重叠**：角色的 位置/目标/实力/关系/弧阶段 **由右栏覆盖**（右栏每卡的「位置」= `dyn.location`、
-「状态」三个 chip = `power_level`/`arc_stage`/`relationship_to_mc`、「动作」= `dyn.goal`，正是那一组的全部字段），
-所以左栏只放**非角色**内容。**待写段**的信息只在左栏 Gantt 里看（点那个情节段）。
+**全员角色状态投影**：
+- 人物全集来自 `storyline.basic_info.characters`，即使尚未写入 `character_states.json` 也保留卡片；正式动态字段由 `CharacterStateMachine` 覆盖；
+- 每个人统一显示位置/状态/动作三行；没有数据只显示“未记录/暂无明确行动”，不从身份、性格或规划意图推断；
+- 服务端按 `last_appeared_chapter` 降序排列，从未出场者在末尾，同章按人物设定原始顺序稳定排序；写作台的 accepted staged 变化可临时覆盖并标“本章已接受”；
+- Writer 的 `plot_run.cast_pack` 仍保持“当前 Plot 谁在写”的紧凑契约，不因 UI 全员列表扩大。
 
-**左栏 = 上一段的结构化事实 + 规划上下文折叠组**
-
-| 区块 | 数据路径 | 缺失时 |
-|---|---|---|
-| 归因行 | `recent_plot_outcome.plot_name`（这些事实属于哪一段）+ `reconcile.kind` 徽标（✅与预期一致 / 🟡实际发展与预期不同 / 🟡预计变化尚未发生 / 🔵出现新的变化）与 `reconcile.summary`（如「存在未覆盖事实」） | 无 plot_name → 整卡空态「还没有已完成的段落」 |
-| 已作选择 | `recent_plot_outcome.facts.choices_made` | 该行不渲染（六类事实都是**有值才渲染**） |
-| 已知信息 | `facts.information_revealed` | 同上 |
-| 关系变化 | `facts.relationship_changes` | 同上 |
-| 资源变化 | `facts.resource_changes` | 同上 |
-| 承诺更新 | `facts.promise_updates` | 同上 |
-| 新问题 | `facts.new_story_questions` | 同上 |
-| ▸ 待解问题（默认折叠） | `planning.story_questions`（**只留这一组**：H1 方向条是 planner 视图、弧/线程 Gantt 上已有，都已删；人物意图在右栏） | 空则不渲染 |
-
-值归一化沿用旧实现口径：列表用「；」拼接，字典取 `text/description/title`（`_factText()`）。
-**刻意不放进左栏**：章号与字数进度（页头已有）、情节段摘要 `plot_summary`（正文就在下方）。
-
-**右栏 = 角色状态 + 「其他人物意图」**
-
-底部另列 `planning.character_intents` 里**本段没出现在卡片上**的人（如巴鲁姆/老葛林）——他们在页面上本来无处可见；
-本段出场的人不重复（该数据的 `observations` 与卡上的「位置/状态/动作」同源，同一批 `character_events`）。
-条目按「事件类型 中文 → 新值」渲染（`_INTENT_EVENT_ZH`）；该数据**没有** `intent` 字段，若某天有了则优先用它。
-
-**每卡的字段（位置 / 状态 / 动作 三行）**
+**右栏每卡的字段（位置 / 状态 / 动作三行）**
 
 | 行 | 数据 | 说明 |
 |---|---|---|
@@ -161,7 +142,7 @@
 
 | 端点 | 用途 |
 |---|---|
-| `GET /api/desk/chapters/<bid>` | 写作台正文 JSON：chapters（+草稿）+ plot_run + recent_plot_outcome + planning（boundary）；全部磁盘现读 |
+| `GET /api/desk/chapters/<bid>` | 写作台正文 JSON：chapters（+草稿）+ plot_run + recent_plot_outcome（左栏六类事实）+ character_roster（全员角色状态，按最近出场排序）+ planning（boundary）；全部磁盘现读 |
 | `POST /api/storyline-engine/<eid>/step` | 蓝图引擎：整章一步写（旧路径，按章） |
 | `POST /api/storyline-engine/<eid>/write-chapter`（SSE） | 蓝图引擎流式整章（plot_start/plot_done/chapter_done） |
 | `POST /api/storyline-engine/<eid>/write-bridge`（SSE） | 蓝图引擎流式**单情节段**（bridge_start/group_chunk/bridge_done/chapter_done/complete） |

@@ -45,6 +45,87 @@ _EVENT_FIELD = {
 _ALLOWED_EVENT_TYPES = set(_EVENT_FIELD) | {"note"}
 
 
+def project_character_roster(bible, csm=None, staged_events=None, writing_chapter=0):
+    """合并静态人物与动态状态，生成供 UI 使用的全员角色投影。
+
+    这是只读投影：不注册人物、不写盘，也不改变 Writer 使用的 cast_pack。
+    ``staged_events`` 必须已经由调用方按评审状态过滤；这里只按白名单应用到
+    内存副本，并以最近出场章节和稳定的 bible 顺序排序。
+    """
+    bible = list(bible or [])
+    states = {c.name: c for c in ((csm.characters if csm else []) or []) if c.name}
+    staged_events = list(staged_events or [])
+    staged_by_name = {}
+    for order, item in enumerate(staged_events):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        row = staged_by_name.setdefault(name, {"events": [], "order": order})
+        row["order"] = order
+        for event in item.get("events") or []:
+            if not isinstance(event, dict):
+                continue
+            etype = str(event.get("type") or "").strip()
+            if etype not in _ALLOWED_EVENT_TYPES:
+                continue
+            row["events"].append(dict(event))
+
+    roster = []
+    seen = set()
+    for static_order, raw in enumerate(bible):
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        state = states.get(name)
+        dyn = {}
+        latest_event = None
+        if state is not None:
+            for field_name in ("location", "goal", "power_level", "relationship_to_mc", "arc_stage", "mood"):
+                value = getattr(state, field_name, "")
+                if value is not None and str(value).strip():
+                    dyn[field_name] = str(value).strip()
+            events = [e for e in (getattr(state, "events", []) or []) if isinstance(e, dict)]
+            if events:
+                latest_event = dict(events[-1])
+
+        staged = staged_by_name.get(name)
+        if staged:
+            for event in staged["events"]:
+                etype = str(event.get("type") or "")
+                target = _EVENT_FIELD.get(etype)
+                if target and event.get("to") is not None:
+                    dyn[target] = str(event.get("to") or "").strip()
+                latest_event = dict(event)
+            if latest_event:
+                latest_event["staged"] = True
+
+        last_chapter = int(getattr(state, "last_appeared_chapter", 0) or 0) if state else 0
+        appearance_order = 0
+        if staged and writing_chapter:
+            last_chapter = max(last_chapter, int(writing_chapter))
+            appearance_order = int(staged.get("order") or 0) + 1
+        roster.append({
+            "name": name,
+            "role": str(raw.get("role") or ""),
+            "importance": int(raw.get("importance") or 2),
+            "identity": str(raw.get("identity") or raw.get("title") or ""),
+            "title": str(raw.get("title") or ""),
+            "dyn": dyn,
+            "latest_event": latest_event or {},
+            "last_appeared_chapter": last_chapter,
+            "appearance_order": appearance_order,
+            "static_order": static_order,
+            "state_source": "accepted_staged" if staged else "canonical",
+        })
+    roster.sort(key=lambda c: (-c["last_appeared_chapter"], -c["appearance_order"], c["static_order"]))
+    return roster
+
+
 class CharacterStateMachine:
     """角色状态自动机"""
 

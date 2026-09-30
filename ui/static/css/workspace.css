@@ -4,7 +4,7 @@
 
 main { overflow: hidden; }
 /* 工作台高度 100%；下方折叠面板（基础设定）展开超出时整体可滚动，避免被裁切 */
-.tle-layout { display:flex; flex-direction:column; height:100%; min-height:0; overflow-y:auto; }
+.tle-layout { display:flex; flex-direction:column; height:100%; min-height:0; overflow-y:auto; overflow-anchor:none; }
 .editor-split { flex:1; min-height:0; display:flex; gap:16px; align-items:stretch; }
 .editor-left { width:50%; min-width:320px; max-width:70%; flex-shrink:0; display:flex; flex-direction:column; min-height:0; }
 .editor-scroll { flex:1; min-height:0; overflow:hidden; }
@@ -36,13 +36,33 @@ main { overflow: hidden; }
 
 .gen-split-title { font-size:12px; color:var(--fg-muted); margin-bottom:8px; }
 
-/* ─── 写作台头部压缩：标题 + 书信息合并为单行（省 info_bar 整行，书名不再与面包屑重复） ─── */
-.desk-head { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 0 10px; }
-.desk-head .desk-title { margin:0; font-size:20px; line-height:1.3; }
-.desk-meta { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; color:var(--fg-muted); }
-.desk-meta .dm-name { color:var(--fg-strong); }
-.desk-meta .dm-item { color:var(--fg-muted); }
-.desk-meta .dm-sep { color:var(--border-soft); }
+/* ─── 写作台头部压缩：标题左侧，状态信息右侧（书名只保留在面包屑） ─── */
+.desk-crumbs { margin-bottom:6px; }
+.desk-head { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:3px 0 7px; }
+.desk-head .desk-title { margin:0; font-size:20px; line-height:1.2; flex:0 0 auto; }
+.desk-meta {
+    display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap;
+    min-width:0; margin-left:auto; font-size:12px; line-height:1.4; color:var(--fg-muted);
+}
+.desk-meta .dm-item {
+    display:inline-flex; align-items:center; min-height:26px; padding:4px 9px;
+    background:var(--bg-inset); border:1px solid var(--border-soft);
+    border-radius:var(--radius-sm); color:var(--fg-muted); white-space:nowrap;
+}
+.desk-meta .dm-item:hover { border-color:var(--border-subtle); }
+.desk-meta .tag { margin:0; vertical-align:middle; }
+
+@media (max-width:840px) {
+    .desk-crumbs { margin-bottom:4px; }
+    .desk-head { align-items:flex-start; gap:5px 10px; padding:2px 0 6px; }
+    .desk-meta { flex-basis:100%; justify-content:flex-start; margin-left:0; gap:4px; }
+}
+
+@media (max-width:600px) {
+    .desk-head .desk-title { font-size:19px; }
+    .desk-meta { font-size:11px; line-height:1.35; gap:4px; }
+    .desk-meta .dm-item { min-height:24px; padding:3px 7px; }
+}
 
 /* 生成/写作动态（动作流）：每条动作一张卡片，右侧栏滚动 */
 .gen-feed { display:flex; flex-direction:column; gap:6px; font-size:12px; line-height:1.5; }

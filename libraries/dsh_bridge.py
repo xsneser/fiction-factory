@@ -1282,6 +1282,21 @@ def run_dsh_task(task: str, history: list | None = None, debug: bool = False,
                 yield {"type": "done"}
                 return
             env = {**os.environ, "DEEPSEEK_BASE_URL": token_proxy_base_url()}
+            # 注入角色模型别名供 events-runner.mjs 使用（精确路由到该角色绑定的供应商与模型）
+            _role_map = {
+                "orchestrate": "orchestrator",
+                "write": "writer",
+                "replan": "planner",
+                "critic": "critic",
+                "build": "builder",
+                "build-candidates": "candidates",
+                "scout": "scout",
+                "publish": "publisher",
+                "style": "style",
+            }
+            logical_role = _role_map.get(profile, "orchestrator")
+            env["NOVELENGINE_DSH_MODEL"] = f"novelengine-route:{logical_role}"
+            env["NOVELENGINE_DSH_PROVIDER"] = "deepseek-official"
             if flow_id:
                 env["NOVEL_WRITE_FLOW_ID"] = flow_id
             if child_run_id:
@@ -1637,7 +1652,12 @@ def _llm_failure_note(raw: str) -> str:
     info = llm_exit_info()
     where = ""
     if info.get("model") or info.get("upstream"):
-        where = (f"（model={info.get('model') or '未知'}，"
+        # 分流之后光说 model 不够：多供应商下同一个模型名可能挂在多个中转上，
+        # 带上角色与供应商 ID 才能让用户知道"该改哪条路由"。
+        prov = info.get("provider_id") or ""
+        where = (f"（role={info.get('role') or 'orchestrator'}"
+                 + (f"，provider={prov}" if prov else "")
+                 + f"，model={info.get('model') or '未知'}，"
                  f"upstream={info.get('upstream') or '未知'}）")
     return (f"{text}\n诊断提示：{detail}{where}。这属于**上游/中转**问题，不是写作流程或 "
             f"Writer 的问题：请在 /settings 点「测试连接」，必要时换模型或换中转后重试；"
@@ -2364,6 +2384,13 @@ _ORCH_REQUIRED_SERVERS = ("mcp-novelengine-orch", "mcp-novelengine-write",
                           "mcp-novelengine-plan", "mcp-novelengine-critic")
 _ORCH_REQUIRED_DELEGATES = ("tool-subagent-writer", "tool-subagent-planner",
                             "tool-subagent-critic")
+# 角色路由别名前缀：与 core.api_config.ROUTE_PREFIX / token_proxy 是同一个约定。
+# 这里只列 **profile 里写死了 alias 的具名子代理角色** —— orchestrator 不在此列：
+# 它是 root run，模型由 dsh_bridge 注入的 NOVELENGINE_DSH_MODEL 决定，
+# profile 里没有它的 agentOptions 条目，写进来会让就绪检查永远失败。
+ROUTE_ALIAS_PREFIX = "novelengine-route:"
+_ORCH_ROUTE_ROLES = ("writer", "planner", "critic",
+                     "builder", "candidates", "scout", "publisher", "style")
 
 
 def _orchestrator_profile_status() -> dict:
@@ -2401,6 +2428,15 @@ def _orchestrator_profile_status() -> dict:
             problems.append(f"缺少必需条目：{entry}")
     if text and "provider: spawn" not in text:
         problems.append("具名子代理未启用 spawn provider")
+    # 角色路由别名：具名子代理靠 `agentOptions.model = novelengine-route:<role>` 让 token
+    # 代理把请求改写到该角色绑定的供应商。缺了它子代理会静默继承 root 的模型——
+    # 「设置页配了分流但子代理全用同一个模型」正是这么来的，所以这里显式点出来。
+    if text:
+        missing_alias = [r for r in _ORCH_ROUTE_ROLES
+                         if f"model: {ROUTE_ALIAS_PREFIX}{r}" not in text]
+        if missing_alias:
+            problems.append("具名子代理缺少角色路由别名："
+                            + "、".join(ROUTE_ALIAS_PREFIX + r for r in missing_alias))
     return {"ready": not problems and bool(src),
             "template": template, "user_profile": user,
             "source_digest": src[:16], "target_digest": dst[:16],
@@ -2505,11 +2541,14 @@ def _run_llm_preflight(task: str, flow_mode: str | None) -> str:
     探针会把任务/skill 头部发给**用户自己配置的**出口（与真实 run 完全相同的去向）。
     """
     try:
-        ping = probe_llm_exit()
+        profile = _preflight_profile(task, flow_mode)
+        # Probe the same role that the real root run will use.  Testing only
+        # orchestrator used to hide broken writer/planner/critic routes.
+        ping = probe_llm_exit(role=profile)
         if not ping.get("ok"):
             return ping.get("message") or "LLM 出口预检未通过。"
-        profile = _preflight_profile(task, flow_mode)
         head = probe_llm_exit(mode="free", shape_tag=profile, max_tokens=2048,
+                              role=profile,
                               tools=_profile_probe_tools(profile),
                               system=_persona_for_profile(profile),
                               user=((task or "")[:400] + "\n\n[当前 Skill，必须遵守]\n"

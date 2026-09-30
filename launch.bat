@@ -3,7 +3,7 @@ cd /d "%~dp0"
 title NovelEngine
 
 echo.
-echo   [NovelEngine v2.0] Novel Factory
+echo   [NovelEngine v2.4.7] Novel Factory
 echo   Starting...
 echo.
 
@@ -63,7 +63,9 @@ echo     Close this window to stop.
 echo   ========================================
 echo.
 
-start "" http://localhost:58080
+set SKIP_BROWSER=%NE_SKIP_BROWSER%
+if /i "%~1"=="--no-browser" set SKIP_BROWSER=1
+if /i not "%SKIP_BROWSER%"=="1" start "" http://localhost:58080
 
 %PYTHON% ui/web_ui.py
 set ERR=%errorlevel%

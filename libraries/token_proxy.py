@@ -26,9 +26,18 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests  # noqa: E402
 
-from core.api_config import load_api_config
-from core.llm_client import normalize_base_url
-from core.models import APIConfig
+from core.api_config import (
+    load_api_config,
+    load_api_settings,
+    resolve_agent_route,
+    ROUTE_PREFIX,
+    SUPPORTED_ROLES,
+    DEFAULT_MODEL,
+    PLACEHOLDER_API_KEYS,
+)
+from core.llm_client import normalize_base_url, apply_reasoning_fields
+from core.models import APIConfig, APIProviderConfig, AgentRouteConfig
+from core.provider_discovery import resolve_provider_endpoint
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -54,6 +63,7 @@ class _UsageAccumulator:
     镜像 show-me-the-story 的 TaskTokenUsage（tokens.go）：流式 LLM 调用期间
     pending 随已收字符实时估算，供前端「实时滚动」；流结束用真实 usage 提交进
     committed。ThreadingHTTPServer 每连接一线程，用 dict 支持并发 in-flight。
+    增加 by_route 字典支持按角色/供应商维度追踪。
     """
 
     def __init__(self):
@@ -62,13 +72,28 @@ class _UsageAccumulator:
         self.completion = 0
         self.calls = 0
         self._inflight = {}   # key -> {"prompt": est, "completion": est}
+        self._by_route = {}   # role -> {"prompt": int, "completion": int, "calls": int, "provider": str, "model": str}
         self._seq = 0
 
-    def accumulate(self, prompt, completion):
+    def accumulate(self, prompt, completion, role: str = "", provider_id: str = "", model: str = ""):
         with self.lock:
-            self.prompt += int(prompt or 0)
-            self.completion += int(completion or 0)
+            p = int(prompt or 0)
+            c = int(completion or 0)
+            self.prompt += p
+            self.completion += c
             self.calls += 1
+            if role:
+                r = self._by_route.setdefault(role, {
+                    "prompt": 0, "completion": 0, "calls": 0,
+                    "provider": provider_id, "model": model
+                })
+                r["prompt"] += p
+                r["completion"] += c
+                r["calls"] += 1
+                if provider_id:
+                    r["provider"] = provider_id
+                if model:
+                    r["model"] = model
 
     def begin_inflight(self, est_prompt):
         """流式调用开始：按请求 messages 估算 prompt 注册 in-flight，返回 key。"""
@@ -85,13 +110,27 @@ class _UsageAccumulator:
             if rec is not None:
                 rec["completion"] = int(est_completion or 0)
 
-    def finish_inflight(self, key, prompt, completion):
+    def finish_inflight(self, key, prompt, completion, role: str = "", provider_id: str = "", model: str = ""):
         """流式正常结束：真实 usage 提交进 committed，移除 in-flight。"""
         with self.lock:
             self._inflight.pop(key, None)
-            self.prompt += int(prompt or 0)
-            self.completion += int(completion or 0)
+            p = int(prompt or 0)
+            c = int(completion or 0)
+            self.prompt += p
+            self.completion += c
             self.calls += 1
+            if role:
+                r = self._by_route.setdefault(role, {
+                    "prompt": 0, "completion": 0, "calls": 0,
+                    "provider": provider_id, "model": model
+                })
+                r["prompt"] += p
+                r["completion"] += c
+                r["calls"] += 1
+                if provider_id:
+                    r["provider"] = provider_id
+                if model:
+                    r["model"] = model
 
     def abort_inflight(self, key):
         """流异常中断：丢弃该 in-flight（不提交，避免误计）。"""
@@ -106,9 +145,12 @@ class _UsageAccumulator:
             # pending_prompt：dsh 上下文巨大，char×1.5 对 prompt 高估严重，计入会造成
             # 「先涨后跌」伪影。prompt 真实成本在调用提交时精确计入（total 向上跳）。
             total = self.prompt + self.completion + pend_c
-            return {"prompt": self.prompt, "completion": self.completion,
-                    "calls": self.calls, "pending_prompt": pend_p,
-                    "pending_completion": pend_c, "total": total}
+            return {
+                "prompt": self.prompt, "completion": self.completion,
+                "calls": self.calls, "pending_prompt": pend_p,
+                "pending_completion": pend_c, "total": total,
+                "by_route": {k: dict(v) for k, v in self._by_route.items()},
+            }
 
     def clear(self):
         with self.lock:
@@ -116,6 +158,7 @@ class _UsageAccumulator:
             self.completion = 0
             self.calls = 0
             self._inflight.clear()
+            self._by_route.clear()
 
 
 USAGE = _UsageAccumulator()
@@ -160,12 +203,34 @@ def _proxy_config() -> tuple[APIConfig | None, str, str]:
     cfg = load_api_config()
     if cfg is None:
         return None, "", "api.json 不存在"
-    if not cfg.api_key:
-        return cfg, "", "未配置 API Key"
+    if not cfg.api_key or cfg.api_key in PLACEHOLDER_API_KEYS:
+        return cfg, "", "未配置有效 API Key"
     upstream = resolve_upstream(cfg)
     if not upstream:
         return cfg, "", "API 地址为空或指向本地代理自身"
     return cfg, upstream, ""
+
+
+def _proxy_resolve(req_model: str = "") -> tuple[APIProviderConfig | None, AgentRouteConfig | None, str, str]:
+    """按请求模型/角色解析目标供应商与实际模型路由。
+
+    返回 (provider, route, upstream, err)。
+    """
+    settings = load_api_settings()
+    if not settings.providers:
+        return None, None, "", "api.json 未配置任何供应商"
+
+    provider, route = resolve_agent_route(req_model, settings)
+    if not provider or not provider.enabled:
+        return None, None, "", f"目标供应商 [{route.provider_id}] 不存在或已禁用"
+    if not provider.api_key or provider.api_key in PLACEHOLDER_API_KEYS:
+        return provider, route, "", f"供应商 [{provider.name}] 未配置有效 API Key"
+
+    upstream = (provider.base_url or "").strip()
+    if not upstream or is_token_proxy_url(upstream):
+        return provider, route, "", f"供应商 [{provider.name}] API 地址为空或指向本地代理自身"
+
+    return provider, route, upstream, ""
 
 
 # 最近一次转发摘要（供 /health 诊断；只放 origin/model，绝不放 key）
@@ -177,19 +242,40 @@ def _origin_of(url: str) -> str:
     parsed = urlsplit((url or "").strip())
     if not parsed.scheme or not parsed.netloc:
         return ""
-    return f"{parsed.scheme}://{parsed.netloc}"
+    # Never expose URL userinfo through health/token diagnostics.
+    host = parsed.hostname or ""
+    if not host:
+        return ""
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    suffix = f":{port}" if port else ""
+    return f"{parsed.scheme}://{host}{suffix}"
 
 
-def llm_exit_info() -> dict:
-    """当前 LLM 出口的可公开摘要：{"model", "upstream"}（**绝不回 key**）。
+def llm_exit_info(role: str = "orchestrator") -> dict:
+    """当前 LLM 出口的可公开摘要：{"role", "provider_id", "provider_name", "model", "upstream"}（**绝不回 key**）。
 
     供错误提示与出口预检复用：说清「是哪个模型、打到哪个上游」是排查上游故障的
     最小信息量，而这些都不敏感。
     """
-    cfg, upstream, _err = _proxy_config()
+    provider, route, upstream, _err = _proxy_resolve(role)
+    if not provider:
+        cfg, up, _ = _proxy_config()
+        return {
+            "role": role,
+            "provider_id": "",
+            "provider_name": "",
+            "model": (cfg.model if cfg else "") or "",
+            "upstream": _origin_of(up) if up else "",
+        }
     return {
-        "model": (cfg.model if cfg else "") or "",
-        "upstream": _origin_of(upstream) if upstream else "",
+        "role": role,
+        "provider_id": provider.id,
+        "provider_name": provider.name,
+        "model": (route.model or provider.default_model) if route else provider.default_model,
+        "upstream": _origin_of(upstream),
     }
 
 
@@ -308,15 +394,21 @@ class _Handler(BaseHTTPRequestHandler):
         elif self.path.rstrip("/") == "/health":
             # 供 dsh_bridge / 人工排查：这个端口上跑的到底是不是当前代码的代理，
             # 以及它把流量发去了哪里（只回 origin + 模型名，绝不回 key）。
-            cfg, upstream, err = _proxy_config()
+            settings = load_api_settings()
+            def_p = settings.providers.get(settings.default_provider)
+            if not def_p and settings.providers:
+                def_p = list(settings.providers.values())[0]
+
             self._send_json({
-                "ok": not err,
+                "ok": bool(def_p and def_p.api_key),
                 "service": "novelengine-token-proxy",
                 "port": PROXY_PORT,
-                "error": err,
-                "upstream": _origin_of(upstream),
-                "model": (cfg.model if cfg else ""),
-                "verify_ssl": (cfg.verify_ssl if cfg else None),
+                "default_provider": settings.default_provider,
+                "providers_count": len(settings.providers),
+                "active_providers": [p.id for p in settings.providers.values() if p.enabled],
+                "upstream": _origin_of(def_p.base_url) if def_p else "",
+                "model": def_p.default_model if def_p else "",
+                "verify_ssl": def_p.verify_ssl if def_p else True,
                 "last_request": dict(_LAST_REQUEST),
                 # 最近若干次请求的**形状**（工具数/字符数/max_tokens/输出 block 数，不含正文）：
                 # 「上游整段时间零输出」这类故障靠它定性
@@ -343,7 +435,8 @@ class _Handler(BaseHTTPRequestHandler):
             stream_options["include_usage"] = True
             payload["stream_options"] = stream_options
 
-        cfg, upstream, err = _proxy_config()
+        req_model = str(payload.get("model") or "").strip()
+        provider, route, upstream, err = _proxy_resolve(req_model)
         if err:
             # fail closed：宁可明确报"去设置页配置"，也不要静默打到别的上游
             self._send_json({"ok": False, "error":
@@ -352,40 +445,79 @@ class _Handler(BaseHTTPRequestHandler):
 
         # 路径归一：dsh 请求的是 `<代理>/chat/completions`，上游 base 可能已带 /v1
         # 或完整 endpoint —— 直接用 normalize_base_url 生成，与 Python 侧完全一致。
-        target = normalize_base_url(upstream, cfg.url_strict)
+        try:
+            target = resolve_provider_endpoint(provider, "chat")
+        except Exception:
+            target = normalize_base_url(upstream, provider.url_strict)
 
-        # 模型与 key 都以设置页为准：dsh 发的是它自己的 deepseek-v4-flash 和
-        # ~/.dsh/.env 里的旧 key，直接透传会打不动用户新配的中转。
-        if cfg.model:
-            payload["model"] = cfg.model
+        # 确定实际请求模型名（替换保留角色别名或跟随 route）
+        actual_model = route.model or provider.default_model or DEFAULT_MODEL
+        payload["model"] = actual_model
+
+        # max_tokens 覆盖
+        if route.max_tokens and route.max_tokens > 0:
+            payload["max_tokens"] = route.max_tokens
+
+        # 处理 reasoning / thinking 协议（与 core.llm_client 共用同一套语义）
+        apply_reasoning_fields(payload, provider.reasoning_wire, route.reasoning_effort)
+
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream" if payload.get("stream") else "application/json",
+            "Accept-Encoding": "identity",
         }
         incoming_auth = self.headers.get("Authorization")
-        if cfg.api_key:
-            headers["Authorization"] = "Bearer " + cfg.api_key
+        if provider.api_key:
+            headers["Authorization"] = "Bearer " + provider.api_key
         elif incoming_auth:
             # 设置页没填 key 时才退回 dsh 自带的（仅为了不把请求发成匿名）
             headers["Authorization"] = incoming_auth
 
+        role_name = (
+            req_model[len(ROUTE_PREFIX):] if req_model.startswith(ROUTE_PREFIX)
+            else req_model
+        )
+        # 未知别名会安全回退到 orchestrator 路由；归账也必须记录实际采用的角色，
+        # 不要让一个拼写错误制造出无法在设置页配置的虚假 route 名。
+        if role_name not in SUPPORTED_ROLES:
+            role_name = "orchestrator"
+
         _LAST_REQUEST.update({
+            "role": role_name,
+            "provider_id": provider.id,
+            "provider_name": provider.name,
             "upstream": _origin_of(target),
-            "model": payload.get("model", ""),
-            "verify_ssl": cfg.verify_ssl,
+            "model": actual_model,
+            "verify_ssl": provider.verify_ssl,
             "at": time.time(),
         })
         try:
             resp = _forward(target, payload, headers,
-                            verify_ssl=cfg.verify_ssl,
-                            timeout_seconds=max(60, int(cfg.http_timeout_seconds or 600)))
+                            verify_ssl=provider.verify_ssl,
+                            timeout_seconds=max(60, int(provider.http_timeout_seconds or 600)))
         except Exception as e:
             self._send_json({"ok": False, "error": f"proxy forward failed: {e}"}, 502)
             return
-        # 透传状态码 + 头（剔除 length/encoding，避免与透传体冲突）
+        # Reject upstream errors before emitting a streaming response. Otherwise
+        # an SSE-formatted 401/429 body is mistaken for a successful completion
+        # and can be counted as generated tokens.
+        if resp.status_code < 200 or resp.status_code >= 300:
+            try:
+                detail = resp.content.decode("utf-8", errors="replace")[:500]
+            except Exception:
+                detail = ""
+            try:
+                resp.close()
+            except Exception:
+                pass
+            self._send_json({"ok": False, "error":
+                             f"upstream returned HTTP {resp.status_code}: {detail}"}, 502)
+            return
+
+        # 透传状态码 + 头（剔除 length/encoding，避免与透传体冲突；已由 requests 解压缩的正文不得带 content-encoding）
         self.send_response(resp.status_code)
         for k, v in resp.headers.items():
-            if k.lower() in ("content-length", "transfer-encoding", "connection"):
+            if k.lower() in ("content-length", "transfer-encoding", "connection", "content-encoding"):
                 continue
             self.send_header(k, v)
         self.end_headers()
@@ -444,11 +576,13 @@ class _Handler(BaseHTTPRequestHandler):
             prompt, completion = est // 3, est - est // 3
         if inflight_key is not None:
             if stream_ok:
-                USAGE.finish_inflight(inflight_key, prompt, completion)
+                USAGE.finish_inflight(inflight_key, prompt, completion,
+                                      role=role_name, provider_id=provider.id, model=actual_model)
             else:
                 USAGE.abort_inflight(inflight_key)
         else:
-            USAGE.accumulate(prompt, completion)
+            USAGE.accumulate(prompt, completion,
+                             role=role_name, provider_id=provider.id, model=actual_model)
         # 请求**形状**留痕（只计数、绝不含正文）：上游整段时间零输出这类故障，
         # 有这张表第一次出现就能定性，不必靠反推 token 数（2026-09-19 就是这么查了一晚上）。
         try:
@@ -578,7 +712,8 @@ def _probe_post(url: str, payload: dict, timeout: float) -> tuple:
     resp = requests.post(url, json=payload, timeout=timeout, stream=True,
                          headers={"Content-Type": "application/json",
                                   "Accept": "text/event-stream" if payload.get("stream")
-                                            else "application/json"})
+                                            else "application/json",
+                                  "Accept-Encoding": "identity"})
     try:
         body = b"".join(resp.iter_content(chunk_size=4096)).decode("utf-8", "replace")
     finally:
@@ -647,16 +782,17 @@ def _summarize_completion(body: str, stream: bool) -> dict:
 
 def _probe_payload(*, stream: bool, with_tools: bool, force_tool: bool,
                    max_tokens: int, system: str = "", user: str = "",
-                   tools: list | None = None) -> dict:
+                   tools: list | None = None, role: str = "orchestrator") -> dict:
     """构造一次探测请求。
 
     `tools` 给定时用调用方给的真实工具集（代表形状探针），否则用内置 ping。
     `force_tool` 只在有工具时才生效——**强制 tool_choice 与自由生成是两种出口能力**：
     上游可能对强制工具调用正常、却对自由生成返回空（那正是本预检要抓的）。
+    `role` 指定针对哪一个子代理角色进行出口探测（默认 orchestrator）。
     """
     tool_list = list(tools or ([] if not with_tools else [_PROBE_PING_TOOL]))
     payload = {
-        "model": "probe",     # 具体模型由代理按 api.json 改写，这里只占位
+        "model": f"novelengine-route:{role}",     # 具体模型由代理按 api.json subagents 路由改写
         "messages": [
             {"role": "system",
              "content": system or "You are a health probe. Follow the instruction exactly."},
@@ -679,16 +815,16 @@ def _probe_payload(*, stream: bool, with_tools: bool, force_tool: bool,
 
 def _probe_once(*, stream: bool, with_tools: bool, force_tool: bool, max_tokens: int,
                 timeout: float, post_fn, system: str = "", user: str = "",
-                tools: list | None = None) -> dict:
+                tools: list | None = None, role: str = "orchestrator") -> dict:
     """发一次探测请求并归类。返回 {ok, transport_ok, tool_call_ok, code, shape, counts}。"""
     payload = _probe_payload(stream=stream, with_tools=with_tools, force_tool=force_tool,
-                             max_tokens=max_tokens, system=system, user=user, tools=tools)
+                             max_tokens=max_tokens, system=system, user=user, tools=tools, role=role)
     shape = "tools+stream" if (with_tools and stream) else (
         "stream" if stream else "non_stream")
     if with_tools and force_tool:
         shape = "tools+forced"
     result = {"transport_ok": False, "tool_call_ok": False, "code": "", "shape": shape,
-              "counts": {}, "status": 0, "empty": True}
+              "counts": {}, "status": 0, "empty": True, "role": role}
     try:
         status, body = (post_fn or _probe_post)(token_proxy_base_url() + "/chat/completions",
                                                 payload, timeout)
@@ -741,10 +877,10 @@ def _retry_with_bigger_budget(res: dict, *, stream: bool, with_tools: bool, forc
                        tools=tools, system=system, user=user)
 
 
-def _describe_probe(res: dict, layer: str = "") -> str:
+def _describe_probe(res: dict, layer: str = "", role: str = "orchestrator") -> str:
     """把预检结果渲染成给用户看的中文提示（只讲 LLM 出口，不提编排回退开关）。"""
-    info = llm_exit_info()
-    where = f"（model={info.get('model') or '未知'}，upstream={info.get('upstream') or '未知'}）"
+    info = llm_exit_info(role)
+    where = f"（role={role}，model={info.get('model') or '未知'}，upstream={info.get('upstream') or '未知'}）"
     if res.get("inconclusive"):
         return (f"LLM 出口预检未得出结论：{where}返回的是「预算被烧完」（finish=length）而不是空回复，"
                 f"这是探针自身预算不足，不代表出口故障。")
@@ -764,10 +900,10 @@ def _describe_probe(res: dict, layer: str = "") -> str:
     return f"LLM 出口正常{where}。"
 
 
-def _probe_free_message(res: dict) -> str:
+def _probe_free_message(res: dict, role: str = "orchestrator") -> str:
     """自由生成段失败时的文案（只讲出口，不提编排开关）。"""
-    info = llm_exit_info()
-    where = f"（model={info.get('model') or '未知'}，upstream={info.get('upstream') or '未知'}）"
+    info = llm_exit_info(role)
+    where = f"（role={role}，model={info.get('model') or '未知'}，upstream={info.get('upstream') or '未知'}）"
     return (f"写作出口不可用：上游{where}对**自由生成**请求返回空（同一出口的强制工具调用正常，"
             f"错误码 {res.get('code') or '未知'}，形状 {res.get('shape')}）→ 这是模型/中转侧问题："
             f"写作要把整段正文生成出来，本出口做不到。请在 /settings 换模型或换中转后重试；"
@@ -778,7 +914,7 @@ def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: floa
                    post_fn=None, use_cache: bool = True, retries: int = 2,
                    exact_shape: bool = False, tools: list | None = None,
                    system: str = "", user: str = "", max_tokens: int | None = None,
-                   shape_tag: str = "") -> dict:
+                   shape_tag: str = "", role: str = "orchestrator") -> dict:
     """LLM 出口预检：现在能不能靠这个模型/中转写出东西来。
 
     mode="ping"（生产第一段）：强制调用极小 ping 工具 → 工具调用**路径**可用性。
@@ -795,11 +931,11 @@ def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: floa
     mode="contrast"（手动）：同一句提示下「强制 tool_choice」vs「自由生成」vs「自由文本」的
     最小对照，用来一次说清「出口坏在哪一侧」。只手动跑，不进生产路径。
 
-    成功缓存 10 分钟、失败 20 秒；缓存 key 含 mode/形状标签，两段互不覆盖。
+    成功缓存 10 分钟、失败 20 秒；缓存 key 含 mode/形状标签/角色，两段互不覆盖。
     """
-    info = llm_exit_info()
+    info = llm_exit_info(role)
     cache_key = (mode, bool(with_tools), bool(exact_shape), int(max_tokens or 0), shape_tag or "",
-                 info.get("model"), info.get("upstream"))
+                 role, info.get("model"), info.get("upstream"))
     now = time.time()
     if use_cache:
         hit = _PROBE_CACHE.get(cache_key)
@@ -812,12 +948,12 @@ def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: floa
         # 三组都用够用的预算（64 会让推理型模型烧完预算，把对照变成噪声）
         budget = max(_PROBE_BUDGET_MIN, 1024)
         forced = _probe_once(stream=True, with_tools=True, force_tool=True,
-                             max_tokens=budget, timeout=timeout, post_fn=post_fn)
+                             max_tokens=budget, timeout=timeout, post_fn=post_fn, role=role)
         free = _probe_once(stream=True, with_tools=False, force_tool=False,
-                           max_tokens=budget, timeout=timeout, post_fn=post_fn)
+                           max_tokens=budget, timeout=timeout, post_fn=post_fn, role=role)
         prose = _probe_once(stream=True, with_tools=False, force_tool=False,
                             max_tokens=budget, timeout=timeout, post_fn=post_fn,
-                            user="用一句中文说明：你接下来会先做什么？")
+                            user="用一句中文说明：你接下来会先做什么？", role=role)
         empty = [d for d in (forced, free, prose) if d.get("empty")]
         if any(d.get("inconclusive") for d in (forced, free, prose)):
             verdict = ("对照未得出结论：出现 finish=length（预算被烧完），请加大 max_tokens 再试——"
@@ -832,7 +968,7 @@ def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: floa
             verdict = "强制工具调用为空：出口的工具调用路径异常"
         out = {"ok": prose["transport_ok"], "verdict": verdict,
                "forced": forced, "free": free, "prose": prose,
-               "model": info.get("model"), "upstream": info.get("upstream")}
+               "model": info.get("model"), "upstream": info.get("upstream"), "role": role}
         out["message"] = verdict
         return out
 
@@ -863,7 +999,7 @@ def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: floa
         # 自由生成的代表形状：**不强制 tool_choice**（写作就是自由生成），判定看有没有 block
         res = _probe_once(stream=True, with_tools=bool(tools), force_tool=False,
                           max_tokens=max_tokens, timeout=timeout, post_fn=post_fn,
-                          tools=tools, system=system, user=user)
+                          tools=tools, system=system, user=user, role=role)
         res = _retry_with_bigger_budget(res, stream=True, with_tools=bool(tools), force_tool=False,
                                         max_tokens=max_tokens, timeout=timeout, post_fn=post_fn,
                                         tools=tools, system=system, user=user)
@@ -874,28 +1010,28 @@ def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: floa
             time.sleep(0.6 * attempt)
             res = _probe_once(stream=True, with_tools=bool(tools), force_tool=False,
                               max_tokens=max_tokens, timeout=timeout, post_fn=post_fn,
-                              tools=tools, system=system, user=user)
+                              tools=tools, system=system, user=user, role=role)
         inconclusive = bool(res.get("inconclusive"))
         res.update({"ok": bool(res["transport_ok"]) or inconclusive,
                     "model": info.get("model"), "upstream": info.get("upstream"),
-                    "requests": attempt + 1, "free_generation": True,
+                    "requests": attempt + 1, "free_generation": True, "role": role,
                     "warning": ("预检未得出结论（预算被烧完，finish=length）——按通过处理，"
                                 "不改写写作流程" if inconclusive else "")})
-        res["message"] = "" if res["ok"] else _probe_free_message(res)
+        res["message"] = "" if res["ok"] else _probe_free_message(res, role=role)
         ttl = _PROBE_OK_TTL if res["ok"] else _PROBE_FAIL_TTL
         if use_cache:
             _PROBE_CACHE[cache_key] = (now + ttl, dict(res))
         return res
 
     res = _probe_once(stream=True, with_tools=with_tools, force_tool=with_tools,
-                      max_tokens=max_tokens, timeout=timeout, post_fn=post_fn)
+                      max_tokens=max_tokens, timeout=timeout, post_fn=post_fn, role=role)
     res = _retry_with_bigger_budget(res, stream=True, with_tools=with_tools,
                                     force_tool=with_tools, max_tokens=max_tokens,
                                     timeout=timeout, post_fn=post_fn)
     if with_tools and _tool_choice_unsupported(res):
         # 中转不支持 tool_choice：退一步用 prompt 指令（形状记为 prompt_only 便于区分）
         res = _probe_once(stream=True, with_tools=True, force_tool=False,
-                          max_tokens=max_tokens, timeout=timeout, post_fn=post_fn)
+                          max_tokens=max_tokens, timeout=timeout, post_fn=post_fn, role=role)
         res["shape"] = "prompt_only"
     # 传输层失败（HTTP 错误 / 零 block）重试有限次；语义失败（有输出但没调工具）不重试
     attempt = 0
@@ -904,13 +1040,13 @@ def probe_llm_exit(mode: str = "ping", *, with_tools: bool = True, timeout: floa
         attempt += 1
         time.sleep(0.6 * attempt)
         res = _probe_once(stream=True, with_tools=with_tools, force_tool=with_tools,
-                          max_tokens=max_tokens, timeout=timeout, post_fn=post_fn)
+                          max_tokens=max_tokens, timeout=timeout, post_fn=post_fn, role=role)
     inconclusive = bool(res.get("inconclusive"))
     res.update({"ok": bool(res["tool_call_ok"]) or inconclusive, "model": info.get("model"),
-                "upstream": info.get("upstream"), "requests": attempt + 1,
+                "upstream": info.get("upstream"), "requests": attempt + 1, "role": role,
                 "warning": ("预检未得出结论（预算被烧完，finish=length）——按通过处理"
                             if inconclusive else "")})
-    res["message"] = _describe_probe(res) if not res["ok"] else ""
+    res["message"] = _describe_probe(res, role=role) if not res["ok"] else ""
     ttl = _PROBE_OK_TTL if res["ok"] else _PROBE_FAIL_TTL
     if use_cache:
         _PROBE_CACHE[cache_key] = (now + ttl, dict(res))

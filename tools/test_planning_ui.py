@@ -134,9 +134,11 @@ try:
                                     + desk["plot_run"]["cast_pack"]["active"])}
     assert cards["陆凌舟"]["dyn"]["location"] == "重力井底", cards.get("陆凌舟")
     assert cards["陆凌舟"]["state_source"] == "staged_fact", cards.get("陆凌舟")
-    # 顶部两栏的契约：只吃这几个字段（旧的三列 projection 已删，不得回流）
+    # 顶部两栏契约：左侧最近段事实，右侧服务端全员角色 roster；累计账本仍可由后端另行提供。
     assert all(k in desk for k in ("current_chapter", "writing_chapter", "plot_run",
-                                   "recent_plot_outcome", "cast_events", "planning"))
+                                   "recent_plot_outcome", "fact_ledger", "character_roster",
+                                   "cast_events", "planning"))
+    assert isinstance(desk["character_roster"], list)
     assert all(k not in desk for k in ("comparison", "past", "current", "future",
                                        "selection", "audit", "state_revision"))
     # «本段»卡要的写作重点 = primary_turn（desk 侧注入，未改 _build_plot_run 的指纹）
@@ -278,27 +280,22 @@ finally:
     assert "flowMode" in write_tpl and "busyPolicy" in write_tpl and "taskKind" in write_tpl
     assert "needs_replan" not in write_tpl[write_tpl.index("function _resolveNextChapterAndSend"):write_tpl.index("function stopWritingTask")]
     assert "flow_mode" in agent_js and "busy_policy" in agent_js and "task_kind" in agent_js
-    # 顶部两栏：上一段（已完成）+ 角色状态。HTML 挂载点与 JS 渲染入口双向命中。
+    # 顶部两栏：上一段六类事实 + 全员角色状态。HTML 挂载点与 JS 渲染入口双向命中。
     assert all(x in write_tpl for x in ('id="wf-latest-context"', 'id="wf-last-plot"',
                                         'id="wf-current-cast"', '上一段（已完成）', '角色状态'))
     assert "renderLatestContext(d)" in write_tpl and "function renderLatestContext(" in write_tpl
     assert "function renderLastPlot(" in write_tpl
-    # 左栏 = 上一段的结构化事实（recent_plot_outcome.facts）+ 规划上下文折叠组；不再展示待写段
-    assert "recent_plot_outcome" in write_tpl and "还没有已完成的段落" in write_tpl
-    assert all(x in write_tpl for x in ('已作选择', '已知信息', '关系变化', '资源变化',
-                                        '承诺更新', '新问题'))
-    # 折叠组只留「待解问题」：H1 方向条（planner 视图）与弧/线程（Gantt 已有）已删
+    assert "recent_plot_outcome" in write_tpl
+    assert all(x in write_tpl for x in ('已作选择', '已知信息', '关系变化', '资源变化', '承诺更新', '新问题'))
+    # 规划问题仍单独折叠；累计 fact_ledger 后端能力不等于写作台左栏展示。
     assert "wf-last-plan" in write_tpl and "待解问题" in write_tpl
     assert "story_questions" in write_tpl and "规划上下文" not in write_tpl
-    assert all(x not in write_tpl for x in ('H1 近期方向', '弧与线程', 'horizon.h1', 'arc_goal'))
-    # 「人物意图」按人归属 → 放右栏角色状态底部（只列本段未出场的人），**不进左栏规划上下文组**：
-    # 它的 observations 与本段出场角色卡上的「位置/状态/动作」同源，列左栏是重复。
-    plan_fn = write_tpl[write_tpl.index("function _renderPlanContext"):]
-    plan_fn = plan_fn[:plan_fn.index("\n}\n")]
-    assert "character_intents" not in plan_fn
-    assert all(x in write_tpl for x in ('_renderOtherIntents', '其他人物意图', '_INTENT_EVENT_ZH'))
+    assert all(x not in write_tpl for x in ('H1 近期方向', '弧与线程', 'horizon.h1', 'arc_goal',
+                                            'renderFactLedger', 'renderRecentPlotOutcome', 'wf-fact-ledger'))
+    # 右栏直接消费服务端已排序的全员 roster，不再区分出场/其他人物。
     cast_fn = write_tpl[write_tpl.index("function renderCurrentCast"):]
-    assert "_renderOtherIntents(data, seen)" in cast_fn
+    assert "character_roster" in cast_fn and "character-other-group" not in cast_fn
+    assert "_renderOtherIntents" not in cast_fn
     # 分工红线：角色的 位置/目标/实力/关系 由右栏覆盖，左栏不重复；页头已占用的章号/字数也不重复
     assert "function renderCurrentCast(" in write_tpl
     assert all(x not in write_tpl for x in ('id="wf-current-plot"', '写作重点', '待写 · 第',
@@ -319,8 +316,8 @@ finally:
     # 口径红线：不许假地点、不把「未记录」画成「空值」、没数据就如实说没有
     assert "目标地点" not in write_tpl
     assert "'未记录'" in write_tpl and "'暂无明确行动'" in write_tpl and "_ctxMissing" in write_tpl
-    assert "state_source" in write_tpl and "本章已上报" in write_tpl
-    assert "还没有已完成的段落" in write_tpl and "本段未指定出场角色" in write_tpl
+    assert "state_source" in write_tpl and "本章已接受" in write_tpl
+    assert "尚未配置角色" in write_tpl and "本段未指定出场角色" not in write_tpl
     # 跨模块信号已拆：顶部不再展示待写段 → 横幅的「下一段：…」恒按 H0 显示，不再需要同步标志
     assert "__NE_LATEST_HAS_CURRENT__" not in write_tpl and "ne:current-context-updated" not in write_tpl
     assert all(x not in write_tpl for x in ("__NE_LATEST_HAS_CURRENT__", "ne:current-context-updated",

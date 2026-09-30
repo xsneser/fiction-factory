@@ -118,6 +118,61 @@ def _plot_context_projection(tl, plot):
     return arc_goal, thread
 
 
+def _accepted_staged_deltas(staged, draft):
+    """只返回明确通过 Plot 评审的暂存 delta，缺证据时 fail closed。"""
+    staged = staged if isinstance(staged, dict) else {}
+    draft = draft if isinstance(draft, dict) else {}
+    bridges = {}
+    for bridge in list(staged.get("bridges") or []) + list(draft.get("bridges") or []):
+        if not isinstance(bridge, dict) or not bridge.get("plot_id"):
+            continue
+        bridges.setdefault(str(bridge.get("plot_id")), []).append(bridge)
+
+    accepted = []
+    for delta in staged.get("plot_deltas") or []:
+        if not isinstance(delta, dict):
+            continue
+        pid = str(delta.get("plot_id") or "")
+        review = delta.get("review") if isinstance(delta.get("review"), dict) else {}
+        state = str(delta.get("review_state") or delta.get("state") or review.get("state") or "").strip().lower()
+        candidates = bridges.get(pid, [])
+        if state != "accepted":
+            candidates = [b for b in candidates
+                          if str((b.get("review") or {}).get("state") or
+                                 b.get("review_state") or b.get("state") or "").strip().lower() == "accepted"]
+        if not candidates:
+            continue
+        run_id = str(delta.get("run_id") or "")
+        if run_id:
+            candidates = [b for b in candidates if not str(b.get("run_id") or "")
+                          or str(b.get("run_id") or "") == run_id]
+        if not candidates:
+            continue
+        accepted.append(delta)
+    return accepted
+
+
+def _character_roster_for_desk(book_id, tl, draft, writing_chapter):
+    """构造写作台全员角色卡；不触碰 plot_run.cast_pack。"""
+    if tl is None:
+        return []
+    try:
+        from agent_tools import _load_char_states
+        from libraries.character_state import project_character_roster
+        from libraries.storyline import get_characters
+        from libraries.plot_run_state import load_staged
+        staged = load_staged(book_id)
+        deltas = _accepted_staged_deltas(staged, draft)
+        events = []
+        for delta in deltas:
+            events.extend([x for x in (delta.get("character_changes") or []) if isinstance(x, dict)])
+        return project_character_roster(get_characters(tl.basic_info), _load_char_states(book_id),
+                                        events, writing_chapter=writing_chapter)
+    except Exception as exc:  # noqa: BLE001 — 状态面板失败不应阻断正文刷新
+        log.warning("组装 character_roster 失败 book=%s: %s", book_id, exc)
+        return []
+
+
 def _plot_outcome(bridge, tl, chapter_num=0):
     """把一条已完成 plot 的 bridge 转成 Prediction→Fact 对照视图（WS2）。
 
@@ -290,13 +345,50 @@ def desk_chapters_api(book_id):
         if last_bridge:
             _tlc = tl if 'tl' in locals() else None
             recent_plot_outcome = _plot_outcome(last_bridge, _tlc, (last_ch or {}).get("num") or 0)
+    fact_ledger = {}
+    try:
+        from libraries.fact_ledger import project as project_fact_ledger
+        fact_ledger = project_fact_ledger(book_id)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("组装 fact_ledger 失败 book=%s: %s", book_id, exc)
+    character_roster = _character_roster_for_desk(book_id, tl if 'tl' in locals() else None,
+                                                   draft if 'draft' in locals() else None,
+                                                   writing_chapter)
     return jsonify({"book_id": book_id, "current_chapter": cur,
                     "writing_chapter": writing_chapter,
                     "chapters": chapters,
                     "plot_run": plot_run, "recent_plot_outcome": recent_plot_outcome,
-                    # 章内已上报的人物变化（每人最近一条）：顶部右栏「动作」一行的补充来源
+                    "fact_ledger": fact_ledger,
+                    "character_roster": character_roster,
+                    # 兼容旧的 Agent 面板投影；写作台角色区使用 character_roster。
                     "cast_events": cast_events,
                     "planning": planning})
+
+
+@bp.route("/api/desk/facts/<book_id>")
+def desk_facts_history_api(book_id):
+    """写作台历史事实分页接口：展开“更早历史”时按需读取，保持主轮询有界。"""
+    cursor = request.args.get("cursor") or None
+    raw_limit = request.args.get("limit")
+    try:
+        limit = int(raw_limit) if raw_limit is not None else 30
+    except (TypeError, ValueError):
+        limit = 30
+    try:
+        from libraries.fact_ledger import page as page_fact_ledger
+        data = page_fact_ledger(book_id, cursor=cursor, limit=limit)
+        return jsonify({"ok": True, "book_id": book_id,
+                        "revision": data.get("revision", ""),
+                        "items": data.get("recent") or [],
+                        "next_cursor": data.get("history_cursor"),
+                        "archived_count": int(data.get("archived_count") or 0),
+                        "truncated": bool(data.get("truncated")),
+                        "provenance": data.get("provenance") or {}})
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 409
+    except Exception as exc:
+        logging.getLogger(__name__).warning("读取事实历史失败 book=%s: %s", book_id, exc)
+        return jsonify({"ok": False, "error": "读取事实历史失败"}), 500
 
 
 @bp.route("/books/storyline/write/<engine_id>")
