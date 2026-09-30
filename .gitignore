@@ -45,6 +45,7 @@ ui_server.log
 # 备份数据不入库
 books.bak*/
 *.bak
+backups/
 
 # dsh 侧车技能联接(不入库)
 .dsh/
@@ -69,3 +70,7 @@ _srv_err.log
 
 # Claude Code 文档区本地设置（不入库）
 docs/.claude/
+
+# 根目录临时 UI 走查设计图/截图
+writing_desk_ui.png
+

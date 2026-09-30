@@ -14,13 +14,16 @@ bp = Blueprint("dashboard", __name__)
 def dashboard():
     rows = _book_rows()
     pen_names = profiles.list_all()
+    from libraries import style_samples
+    _ss = style_samples.load_samples()
     return render_template("dashboard.html",
         books=rows, pen_names=pen_names,
         plot_count=len(plot_lib.templates),
-        struct_count=len(struct_lib.templates),
+        struct_count=len(struct_lib.roots()),
         gag_count=len(gag_lib.patterns),
         char_count=len(char_lib.archetypes),
         style_rule_count=len(style_rules.rules),
+        sample_count=len(_ss) if _ss is not None else 0,
         engine_count=len(_engines),
     )
 
@@ -52,18 +55,111 @@ def start_new_book():
       - form（兼容旧入口/smoke 测试）：保留 302 重定向
     """
     if request.method == "POST":
+        is_json = request.is_json
+        data = request.get_json(silent=True) or {} if is_json else {}
+        src = data if is_json else request.form
+        build_session_id = str(data.get("build_session_id") or "").strip() if is_json else ""
+        # canonical 草稿优先：命中 revision 时用**服务端记录**（agent 经 save_build_draft 写、
+        # validate_build 校验过的那一份）建书，浏览器表单只是它的 UI 投影。未命中
+        # （手填模式「跳过，手动设定」没有 draft / revision 不匹配）→ 回退下面的表单 payload，
+        # 保证唯一已验证可用的建书链路不因本次收口而破。
+        if build_session_id and is_json:
+            from libraries import build_draft as _bd
+            _rec = _bd.load(build_session_id)
+            # build_draft.load 已把 old 记录的裸 world 归一为 {world_building: {...}}
+            _draft = _rec.get("draft") or {}
+            _rev = data.get("build_revision")
+            _source = str(data.get("build_source") or "").strip()
+            try:
+                _rev_ok = _rev is not None and int(_rec.get("revision") or 0) == int(_rev)
+            except (TypeError, ValueError):
+                _rev_ok = False
+            if _source == "canonical":
+                # 页面明确声明"表单就是服务端草稿的投影"：那么草稿在、版本却说不上来，
+                # 就是真冲突（陈旧页面），**不能再静默回退空表单**——那会建出一本没有
+                # 世界观/人物/故事线的书（2026-09-13 事故的最后一环）。
+                if not _draft:
+                    return jsonify({"ok": False, "error": "服务端没有该会话的草稿，请让 agent 重新生成后再提交"}), 409
+                if not _rev_ok:
+                    return jsonify({"ok": False, "error": "草稿已在服务端更新（版本不一致），请刷新页面或点「从服务端恢复 Agent 草稿」后再提交",
+                                    "current_revision": int(_rec.get("revision") or 0)}), 409
+                # 规划完整性门禁（四个条件，全部来自 canonical，不信浏览器）：校验回执必须
+                # 对应**当前**内容版本，且没有失效阶段。用 `content_revision` + 语义摘要而不是
+                # `revision`——用户点「确认本阶段」这类纯流程写会让 revision 涨，但不该让
+                # 已经通过的校验失效。
+                _meta = _rec.get("plan_meta") or {}
+                _v = _meta.get("validated") or {}
+                _cr = int(_rec.get("content_revision") or 0)
+                _stale = list(_meta.get("stale_phases") or [])
+                if not (_v.get("passed")
+                        and int(_v.get("content_revision") or -1) == _cr
+                        and str(_v.get("content_digest") or "") == str(_rec.get("content_digest") or "")
+                        and not _stale):
+                    _why = ("还有阶段需要重新检查：" + "、".join(_stale)) if _stale else \
+                           "规划尚未通过一次完整校验（或校验之后内容又改过）"
+                    return jsonify({"ok": False, "error": _why + "；请让 Agent 补完/重做后再提交",
+                                    "stale_phases": _stale,
+                                    "current_revision": int(_rec.get("revision") or 0)}), 409
+            if _draft and _rev_ok:
+                # 草稿各段的形状 = 对应 drive_ui 命令的参数（见 agent_tools.save_build_draft）
+                _w = _draft.get("world")
+                if isinstance(_w, dict) and isinstance(_w.get("world_building"), dict):
+                    data["world_building"] = _w["world_building"]
+                    for _k in ("tone", "target_audience", "pov", "era_language"):
+                        if _w.get(_k):
+                            data[_k] = _w[_k]
+                if isinstance(_draft.get("characters"), list) and _draft["characters"]:
+                    data["characters"] = _draft["characters"]
+                _sl = _draft.get("storyline")
+                if isinstance(_sl, dict) and _sl.get("outlines"):
+                    data["_outline_data"] = {
+                        "outlines": _sl.get("outlines") or [],
+                        "plots": _sl.get("plots") or [],
+                        "threads": _sl.get("threads") or [],
+                        "themes": _sl.get("themes") or [],
+                        "basic_info": {},
+                    }
+                    # 建书期的 H1/H2 staging 在 canonical BuildDraft 的 storyline.planning 里
+                    # （那时 Book 还没创建、planning_state.json 还不存在）。这里做**一次确定性
+                    # 投影**——不是双真源：建书前 BuildDraft 是权威，建书后 planning_state 是权威。
+                    _planning = _sl.get("planning") or {}
+                    data["future_intents"] = (_planning.get("future_intents")
+                                              or _sl.get("future_intents") or [])
+                    _h1 = (_planning.get("horizon") or {}).get("h1")
+                    if isinstance(_h1, list) and _h1:
+                        data["horizon"] = {"h1": _h1}
+        if build_session_id:
+            from libraries.planning_state import save_build_session
+            outline_preview = data.get("_outline_data") or {}
+            committed = max((int(o.get("end_word") or 0)
+                             for o in (outline_preview.get("outlines") or []) if isinstance(o, dict)), default=0)
+            save_build_session(build_session_id, {
+                "mode": "open",
+                "target_word_budget": max(int(data.get("target_word_budget") or 0), committed),
+                "committed_until_word": committed,
+                "future_intents": data.get("future_intents") or [],
+                **({"horizon": data["horizon"]} if data.get("horizon") else {}),
+                "story_questions": data.get("story_questions") or [],
+                "decision_points": data.get("decision_points") or [],
+            })
         llm = get_llm()
         if not llm:
             return jsonify({"error": "LLM 未配置"}), 500
 
-        is_json = request.is_json
-        data = request.get_json(silent=True) or {} if is_json else {}
-        src = data if is_json else request.form
-
-        # 新流程：步 3 ②生成的大纲+桥段（generate_outline_preview 产出，set_outline 存入）
+        # 新流程：步 3 ②生成的大纲+情节段（generate_outline_preview 产出，set_outline 存入）
         outline_data = data.get("_outline_data") if is_json else None
         if not isinstance(outline_data, dict):
             outline_data = None
+        if outline_data:
+            from libraries.planning_state import enabled
+            if enabled("INCREMENTAL_STORY_PLANNING", False):
+                committed = max((int(o.get("end_word") or 0)
+                                 for o in (outline_data.get("outlines") or []) if isinstance(o, dict)), default=0)
+                if committed > 30000:
+                    return jsonify({"ok": False, "error": "incremental_horizon_exceeded",
+                                    "committed_until_word": committed,
+                                    "max_initial_committed_words": 30000,
+                                    "action": "只保留开篇承诺区，远期方向写入 future_intents"}), 400
 
         pen_name = src.get("pen_name", "")
         platform = src.get("platform", "") or "fanqie"
@@ -137,7 +233,7 @@ def start_new_book():
             from libraries.outline_generator import basic_info_is_rich
             if basic_info_is_rich(basic_info):
                 basic_info["_world_generated"] = True
-            # 分阶段构建②选定的开篇大纲/桥段（generate_full_outline picks=None 时自动消费）
+            # 分阶段构建②选定的开篇大纲/情节段（generate_full_outline picks=None 时自动消费）
             picks = data.get("_outline_picks")
             if isinstance(picks, dict) and (picks.get("templates") or picks.get("plots")):
                 basic_info["_outline_picks"] = picks
@@ -177,8 +273,10 @@ def start_new_book():
             phase="config",
         )
 
-        # 新流程：步 3 ②生成的大纲+桥段随书落库 → 书创建即 phase=ready
-        # （不再 submit 后手动 generate_full_outline；roles 用最终人物重标，幂等）
+        # 深化并入步3（2026-09-05）：步 3 深化式生成的大纲+情节段随书落库，
+        # 用户浏览器点提交即 phase=ready（解锁写作，无书详情二次确认/深化段）。
+        # ready 前在此补齐原 confirm-storyline 职责（挂内涵+角色标注）；仅 outlines 无 plots
+        # 则留 plots（config/补弧兜底恢复，需用户在书详情确认，见 /api/book/<id>/confirm-storyline）。
         if outline_data and isinstance(outline_data.get("outlines"), list) and outline_data["outlines"]:
             from libraries.storyline import BookStoryline as _BS, annotate_plot_roles
             _tmp = _BS.from_dict({
@@ -191,8 +289,13 @@ def start_new_book():
             storyline.plots = _tmp.plots
             storyline.threads = _tmp.threads
             storyline.themes = _tmp.themes
-            storyline.phase = "ready"
             storyline.generated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+            if _tmp.plots:
+                StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
+                                 gag_lib=gag_lib).fill_themes_and_hooks(storyline.plots, storyline)
+                storyline.phase = "ready"
+            else:
+                storyline.phase = "plots"  # 兜底：无情节段不 ready（config/补弧 → 用户书详情确认恢复）
             annotate_plot_roles(storyline)
 
         # 直接建正式书（规划书=书目录内的书；草稿目录已废弃）
@@ -207,8 +310,21 @@ def start_new_book():
             style_profile_id="",
         )
         book_mgr.save_storyline(book.book_id, storyline)
+        if build_session_id:
+            from libraries.planning_state import attach_build_session
+            attach_build_session(build_session_id, book.book_id, storyline, book)
+            # 提交结果回写 canonical 记录：阶段权威在服务端，_build_fsm 不再靠浏览器快照
+            # 猜「建成没有」。attach_build_session 会 unlink planning 草稿，所以放在它之后。
+            try:
+                from libraries import build_draft as _bd3
+                _bd3.mark_submitted(build_session_id, book_id=book.book_id)
+            except Exception as e:  # noqa: BLE001 —— 回写失败不该让建成的书回滚
+                import logging
+                logging.getLogger(__name__).warning(
+                    "canonical 记录回写 book_id 失败 session=%s: %s", build_session_id, e)
 
         # 向导（JSON）返回 book_id 供前端接续生成；旧 form 入口保留 302
+        # 深化已并入步3、提交即 ready → 跳书详情不再带 ?newdraft=1（无自动深化派发）
         if is_json:
             return jsonify({"ok": True, "book_id": book.book_id,
                             "redirect": url_for("books.book_detail", book_id=book.book_id)})
@@ -217,9 +333,9 @@ def start_new_book():
     from libraries.world_tags import WORLD_TAG_GROUPS
     return render_template("start_book.html",
         pen_names=profiles.list_all(),
-        structures=struct_lib.templates,
-        openings=plot_lib.search(category="开篇"),
-        golden_fingers=plot_lib.search(category="成长") + plot_lib.search(category="爽文"),
+        structures=struct_lib.display_trees(),
+        openings=plot_lib.search(category="开篇引入"),
+        golden_fingers=plot_lib.search(category="战斗历练") + plot_lib.search(category="谋划布局"),
         borrow_books=_borrow_books(),
         world_tags=WORLD_TAG_GROUPS,
     )
@@ -233,5 +349,3 @@ def start_new_book():
 def outline_generator_page():
     """大纲生成器已内嵌到「启动新书」流程（故事线编辑器：一键生成完整大纲）"""
     return redirect(url_for("dashboard.start_new_book"))
-
-

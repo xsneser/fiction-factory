@@ -1,50 +1,82 @@
 {% extends "base.html" %}
 {% block title %}写作台 — {{ state.title or state.pen_name }}{% endblock %}
 {% block crumbs %}
-<div class="crumbs"><a href="/books">📚 书库</a> <span class="sep">›</span> <a href="/books/{{ state.book_id }}">{{ state.title or '(待定)' }}</a> <span class="sep">›</span> <span class="cur">写作台</span></div>
+<div class="crumbs desk-crumbs"><a href="/books">📚 书库</a> <span class="sep" aria-hidden="true">›</span> <a href="/books/{{ state.book_id }}">{{ state.title or '(待定)' }}</a> <span class="sep" aria-hidden="true">›</span> <span class="cur">写作台</span></div>
 {% endblock %}
 {% block content %}
-<link rel="stylesheet" href="/static/css/story_line.css?v=4">
-<link rel="stylesheet" href="/static/css/workspace.css?v=2">
+<link rel="stylesheet" href="/static/css/story_line.css?v=22">
+<link rel="stylesheet" href="/static/css/workspace.css?v=11">
 <link rel="stylesheet" href="/static/css/reader.css">
 {% from "_flow_stepper.html" import status_badge %}
 {% from "_info_bar.html" import info_bar %}
-<script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
+<script>window.__BOOK_STORYLINE__ = {{ storyline_data | tojson if storyline_data else 'null' }};</script>
 <script>window.__STORYLINE_ID__ = "{{ state.book_id }}";</script>
 <script>window.__ENGINE_ID__ = "{{ engine_id }}";</script>
 <script>window.__BOOK_CURRENT_CHAPTER__ = {{ (book.current_chapter if book else 0) or 0 }};</script>
 <script>window.__BOOK_PEN_NAME__ = "{{ (book.pen_name if book else '') }}";</script>
 <script>window.__BOOK_CHAPTERS__ = {{ chapters|tojson }};</script>
+<script>window.__INITIAL_WRITTEN_WORDS__ = {{ initial_written_words or 0 }};</script>
+<script>window.__INITIAL_RAW_CODEPOINTS__ = {{ initial_raw_codepoints or 0 }};</script>
 <div class="tle-layout">
-<h1>✍️ 写作台</h1>
-{{ info_bar(
-    title=state.title or '(待定)',
-    pen_name=state.pen_name,
-    progress='第 ' ~ (book.current_chapter or 0) ~ ' 章 · 共 ' ~ (book.total_words or 0) ~ ' 字',
-    status_html=status_badge(book.status) if book else status_badge('writing'),
-    extra='<span>每章：<strong>' ~ storyline.words_per_chapter ~ '字</strong></span>'
-) }}
+<div class="desk-head">
+    <h1 class="desk-title">✍️ 写作台</h1>
+    <div class="desk-meta" aria-label="写作信息">
+        <span class="dm-item dm-author">作者 {{ state.pen_name }}</span>
+        <span class="dm-item dm-chapter">第 {{ (book.current_chapter if book else 0) or 0 }} 章</span>
+        <span class="dm-item dm-words"><b id="wf-total-written">{{ initial_written_words or 0 }}</b> 字</span>
+        {{ status_badge(book.status) if book else status_badge('writing') }}
+        <span class="dm-item dm-target">每章 {{ storyline.words_per_chapter }} 字</span>
+    </div>
+</div>
+
+{# ─── 规划提示条（横幅）已删除 ───
+     用户明确「整个横幅三行都删」：下一段 H0 提示 / 🟡 边界告警 / ⛔ 规划门禁都不进写作台。
+     横幅背后是 `_planning_ui.html` + `planning_ui.js`（连同清单徽标与故事线版本号），两者已一并删除。
+     它们的**唯一不可替代职责**是给故事线 Gantt 喂规划叠层（已写红线 / 承诺黄线 / H1-H2 方向条），
+     这里用两行内联赋值替代——页面本来就拿到了 planning_state / planning_boundary；
+     之后 desk 的 3s 轮询会持续把最新的 `planning` 合并进这两个全局并调 StoryLine.updateProgress。
+     `syncStoryline`（revision 前进时拉取新故事线）也在下面那段轮询里内联实现。 ─── #}
+<script>window.__PLANNING_STATE__ = {{ planning_state|tojson }};
+window.__PLANNING_BOUNDARY__ = {{ planning_boundary|tojson }};</script>
+
+{# ─── 全宽两栏（置于两栏编辑器之上）：左=上一段（已完成）的六类事实 | 右=全员角色状态 ───
+     左栏服务下一段写作：只读最近已完成 Plot 的结构化事实六项，不从正文推断；右栏展示 Bible 中全部人物。
+     角色不再按是否出场分组，所有人物统一显示位置/状态/动作三行，并按最近出场排序。
+     也**刻意不**放章号与字数进度：页头已经有章号与总字数，重复即噪音。 #}
+<section class="wf-latest-context" id="wf-latest-context" role="region" aria-label="上一情节段与全员角色状态">
+    <article class="wf-context-card">
+        <header class="wf-context-head"><h2>上一段（已完成）</h2></header>
+        <div id="wf-last-plot"><div class="wf-context-empty">正在读取上一情节段…</div></div>
+    </article>
+    <section class="wf-context-card">
+        <header class="wf-context-head"><h2>角色状态</h2>
+            <span class="wf-context-hint" title="位置/状态/动作来自正式角色状态 + 本章已上报的变化（后者标「本章已上报」）。">?</span>
+        </header>
+        <div id="wf-current-cast"><div class="wf-context-empty">正在读取本段角色…</div></div>
+    </section>
+</section>
 
 {# ─── 两栏：左=故事线（可拖拽） | 右=按章分页阅读器（书式翻页 + 目录抽屉） ─── #}
 <div class="editor-split" id="editor-split" style="position:relative">
-    <button type="button" class="el-expand-btn" id="el-expand-btn" title="展开故事线" onclick="toggleStorylinePanel()">▶ 故事线</button>
     <div class="editor-left" id="editor-left">
-        <div class="gen-split-title">📋 故事线（点击桥段高亮对应正文）<button type="button" class="el-collapse-btn" title="折叠故事线" onclick="toggleStorylinePanel()">◀</button></div>
         <div class="editor-scroll"><div id="editor-storyline" class="editor-storyline"></div></div>
     </div>
 
     <div class="editor-divider" id="editor-divider" title="拖动调整故事线宽度"></div>
 
     <div class="editor-mid">
-        {# ─── 顶部：继续写正文（原样式大卡，运行态+停止） ───#}
+        {# ─── 顶部：继续写正文（压缩为工具栏卡片，内嵌运行态停止按钮） ───#}
         <div class="wf-skill-cards">
-            <div class="wf-skill-card" id="wf-continue-card" onclick="runWritingTask()">
-                <div class="wsc-title">✍️ 继续写正文</div>
-                <div class="wsc-sub">侧栏 Agent 逐桥段续写本章，实时汇报进度/字数/切章</div>
+            <div class="wf-skill-card" id="wf-continue-card" aria-busy="false">
+                <button type="button" class="wf-skill-card-action" id="wf-continue-start" onclick="runWritingTask()" aria-describedby="wf-write-status">
+                    <span class="wsc-title">✍️ 继续写正文</span>
+                    <span class="wsc-sub">Agent 将自动判断写作或续规划，直到当前章完成</span>
+                </button>
                 <button type="button" class="wf-stop-btn" id="wf-stop-btn" style="display:none" onclick="stopWritingTask(event)">⏹ 停止</button>
             </div>
         </div>
-        {# ─── 正文：当前章单章渲染，CSS columns 分页，桥段包 span.m-bridge 供点击高亮 ───#}
+        <div class="wf-write-status" id="wf-write-status" role="status" aria-live="polite"></div>
+        {# ─── 正文：当前章单章渲染，CSS columns 分页，情节段包 span.m-bridge 供点击高亮 ───#}
         <div class="reader-viewport" id="reader-viewport">
             <div class="reader-pages" id="reader-pages"></div>
             <div class="reader-pages reader-pages-next" id="reader-pages-next" aria-hidden="true"></div>
@@ -66,27 +98,9 @@
     </div>
 </div>
 
-<script src="/static/js/story_line.js?v=4"></script>
+<script src="/static/js/story_line.js?v=12"></script>
 <script src="/static/js/reader_core.js"></script>
-<script>
-function toggleStorylinePanel() {
-    var split = document.getElementById('editor-split');
-    var left = document.getElementById('editor-left');
-    if (!split || !left) return;
-    var collapsed = split.classList.toggle('collapsed-left');
-    left.classList.toggle('collapsed', collapsed);
-    if (collapsed) {
-        left.style.width = '0';              /* 覆盖拖拽分栏持久化的内联宽度 */
-    } else {
-        try {
-            var w = parseFloat(localStorage.getItem('ne_storyline_w') || '');
-            if (w >= 20 && w <= 70) left.style.width = w + '%';   /* 展开恢复拖拽宽度 */
-            else left.style.width = '';
-        } catch (e) { left.style.width = ''; }
-    }
-}
-</script>
-<script>/* ═══ 阅读器（共享分页核心 ReaderCore）+ 写作台专属：桥段渲染/高亮/轮询 ═══ */
+<script>/* ═══ 阅读器（共享分页核心 ReaderCore）+ 写作台专属：情节段渲染/高亮/轮询 ═══ */
 function _ms_esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
@@ -96,15 +110,16 @@ function _ms_esc(s) {
 function _selEsc(s) {
     return String(s == null ? '' : s).replace(/["\\]/g, '\\$&');
 }
-/* 字数：桥段优先（sum text），否则 content */
+/* 字数：情节段优先（sum text），否则 content */
 function _wordCount(ch) {
+    if (ch && ch.word_count != null) return Number(ch.word_count) || 0;
     if (ch && ch.bridges && ch.bridges.length) return ch.bridges.reduce(function (n, b) { return n + (b.text || '').length; }, 0);
     return (ch && ch.content) ? ch.content.length : 0;
 }
 
-var _activePid = '';   // 当前高亮桥段（轮询重渲染后恢复）
+var _activePid = '';   // 用户选中高亮；绝不被运行态覆盖
 
-/* ─── 共享分页核心实例化：写作台章节注入（含桥段），双容器推入动画；目录/持久化/键盘滚轮由核心负责 ─── */
+/* ─── 共享分页核心实例化：写作台章节注入（含情节段），双容器推入动画；目录/持久化/键盘滚轮由核心负责 ─── */
 var __WRITER_CHS = (window.__BOOK_CHAPTERS__ || []).map(function (ch) {
     if (ch.word_count == null) ch.word_count = _wordCount(ch);
     return ch;
@@ -115,7 +130,7 @@ var Reader = ReaderCore.create({
     pagesNext: 'reader-pages-next',        // 双容器推入动画
     chapters: __WRITER_CHS,
     persistKey: 'ne_reader_' + (window.__STORYLINE_ID__ || ''),
-    /* 渲染：桥段包 span.m-bridge（data-bridge 供高亮），草稿加徽标 */
+    /* 渲染：情节段包 span.m-bridge（data-bridge 供高亮），草稿加徽标 */
     renderChapter: function (ch, content, container) {
         if (!container) return;
         if (!ch) { container.innerHTML = ''; return; }
@@ -135,8 +150,18 @@ var Reader = ReaderCore.create({
     /* 正文已注入，同步返回 */
     getChapterContent: function (ch, cb) { cb(ch && ch.content); },
 });
+/* 首次进入写作台定位到当前章节；之后的翻页/轮询不再抢回用户位置。 */
+(function openCurrentChapter() {
+    var n = Number(window.__BOOK_CURRENT_CHAPTER__ || 0);
+    if (!n || !Reader.chapters || !Reader.chapters.length) return;
+    var idx = -1;
+    for (var i = 0; i < Reader.chapters.length; i++) {
+        if (Number(Reader.chapters[i].num) === n) { idx = i; break; }
+    }
+    if (idx >= 0) Reader.goToChapter(idx, {page: 0});
+})();
 
-/* ═══ 桥段点击 → 高亮右侧对应正文（事件来自 story_line.js 的 sl:plot-click / sl:outline-click） ═══ */
+/* ═══ 情节段点击 → 高亮右侧对应正文（事件来自 story_line.js 的 sl:plot-click / sl:outline-click） ═══ */
 (function bindBridgeHighlight() {
     var mount = document.getElementById('editor-storyline');
     if (!mount) return;
@@ -163,14 +188,14 @@ function highlightBridgeContent(pid) {
     if (!pid) return;
     var ci = _chapterIdxOfPlot(pid);
     if (ci < 0) {
-        // 未写桥段：阅读器无对应内容，清掉上一处高亮与 activePid（否则旧高亮残留不消失、轮询还会恢复它）
+        // 未写情节段：阅读器无对应内容，清掉上一处高亮与 activePid（否则旧高亮残留不消失、轮询还会恢复它）
         if (window.StoryLine) window.StoryLine.highlight({ plot_id: pid });
         _clearBridgeActive();
         _activePid = '';
         return;
     }
     if (ci !== Reader.idx()) Reader.goToChapter(ci, { page: 0 });
-    var root = document.getElementById('reader-pages');   // 只查主容器：防未清理副容器内同 plot_id 桥段被双份匹配/页码算错
+    var root = document.getElementById('reader-pages');   // 只查主容器：防未清理副容器内同 plot_id 情节段被双份匹配/页码算错
     var el = root ? root.querySelector('.m-bridge[data-bridge="' + _selEsc(pid) + '"]') : null;
     _clearBridgeActive();
     // 只高亮第一处匹配：同一 plot_id 重复（重写/修订）不再全文亮起
@@ -190,7 +215,7 @@ function highlightOutlineContent(oid) {
         for (var j = 0; j < br.length; j++) { if (pids.indexOf(br[j].plot_id) >= 0) { ci = i; break; } }
     }
     if (ci < 0) {
-        // 该弧的桥段都未写：阅读器无对应内容，清掉上一处高亮（防残留）
+        // 该弧的情节段都未写：阅读器无对应内容，清掉上一处高亮（防残留）
         if (window.StoryLine) window.StoryLine.highlight({ outline_id: oid });
         _clearBridgeActive();
         _activePid = '';
@@ -213,11 +238,47 @@ function highlightOutlineContent(oid) {
 
 /* ─── 初始化故事线 ─── */
 function refreshStoryline(sl) {
-    if (window.StoryLine) window.StoryLine.init('editor-storyline', sl || {}, { scrollable: true });
+    if (window.StoryLine) window.StoryLine.init('editor-storyline', sl || {}, {
+        scrollable: true, planning: window.__PLANNING_STATE__ || {}, boundary: window.__PLANNING_BOUNDARY__ || {},
+        currentWord: (window.__PLANNING_STATE__ || {}).written_until_word || 0
+    });
 }
 (function initStoryline() {
     refreshStoryline(window.__BOOK_STORYLINE__);
 })();
+/* 规划叠层的刷新不走事件：desk 的 3s 轮询直接合并 planning 并调 updateProgress（见 pollReader）。
+   （横幅删除后 `ne:planning-updated` 在写作台没有派发方，故不再监听它。）
+   故事线本身前进时换一份新数据重画——原由 planning_ui.syncStoryline 做，现内联于此。 */
+window.addEventListener('ne:storyline-updated', function (e) {
+    var d = (e && e.detail) || {};
+    if (d.storyline) refreshStoryline(d.storyline);
+});
+/* 保留旧故事线里服务端不返回的运行态字段（actual_words 等），避免重画后 Gantt 丢掉已写进度 */
+function _mergeStorylineRuntimeFields(next) {
+    var old = window.__BOOK_STORYLINE__ || {};
+    var oldPlots = {};
+    (old.plots || []).forEach(function (p) { if (p && p.id) oldPlots[String(p.id)] = p; });
+    (next.plots || []).forEach(function (p) {
+        var o = (p && p.id) ? oldPlots[String(p.id)] : null;
+        if (o && o.actual_words != null && p.actual_words == null) p.actual_words = o.actual_words;
+    });
+    return next;
+}
+function syncStoryline(targetRevision) {
+    var cur = Number((window.__BOOK_STORYLINE__ || {}).storyline_revision || 0);
+    if (Number(targetRevision || 0) <= cur) return;
+    fetch('/api/storyline/' + encodeURIComponent(window.__STORYLINE_ID__ || ''))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d || !d.ok || !d.storyline) return;
+            var incoming = _mergeStorylineRuntimeFields(d.storyline);
+            if (Number(incoming.storyline_revision || 0) < cur) return;   // 迟到的旧响应不覆盖
+            window.__BOOK_STORYLINE__ = incoming;
+            window.dispatchEvent(new CustomEvent('ne:storyline-updated',
+                {detail: {storyline: incoming, revision: Number(incoming.storyline_revision || 0)}}));
+        })
+        .catch(function () { /* 取不到就等下一轮轮询再试 */ });
+}
 
 /* ─── 可拖拽分栏：故事线宽度 20%–70%，持久化 localStorage；阅读器由 ResizeObserver 自动重排 ─── */
 (function initResize() {
@@ -254,54 +315,106 @@ function refreshStoryline(sl) {
 })();
 </script>
 <script>
-/* ═══ 续写任务：运行态 + 停止 + 防二次误触；构造任务文本发给侧栏 Agent（dsh）═══ */
+/* ═══ 一键完成一章：父任务由服务端 FSM 在写作 / 续规划 / 收章之间自主循环 ═══ */
+var _wfStarting = false, _wfOwnTaskRunning = false, _wfStopRequested = false;
+var _wfTargetChapter = 0, _wfChapterCompleted = false, _wfLastError = '';
+var _wfBookId = window.__STORYLINE_ID__ || '';
+function _wfSetStatus(text, kind) {
+    var el = document.getElementById('wf-write-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = 'wf-write-status' + (kind ? ' ' + kind : '');
+}
+/* 唯一运行态源（本地任务标记 + 全局 agent 忙标）。任何要显示「正在写作/运行中」的地方只准读它，
+   禁止用 plot_run.run 之类的对象真值判断——那个对象恒非空，会永久误报。 */
+function _wfAgentRunning() {
+    return !!(_wfStarting || _wfOwnTaskRunning || (window.agentIsBusy && window.agentIsBusy()));
+}
 function _wfSetRunning(running) {
     var card = document.getElementById('wf-continue-card');
+    var startBtn = document.getElementById('wf-continue-start');
     var stop = document.getElementById('wf-stop-btn');
-    if (card) card.classList.toggle('running', !!running);
+    if (card) {
+        card.classList.toggle('running', !!running);
+        card.setAttribute('aria-busy', running ? 'true' : 'false');
+    }
+    if (startBtn) {
+        startBtn.disabled = !!running;
+        startBtn.setAttribute('aria-disabled', running ? 'true' : 'false');
+        var t = startBtn.querySelector('.wsc-title');
+        if (t) t.textContent = running ? '⏳ 正在完成本章…' : '✍️ 继续写正文';
+    }
     if (stop) {
         stop.style.display = running ? '' : 'none';
         stop.disabled = false;
         stop.textContent = '⏹ 停止';
     }
-    if (card) {
-        var t = card.querySelector('.wsc-title');
-        if (t) t.textContent = running ? '⏳ 续写运行中…' : '✍️ 继续写正文';
-    }
 }
 window.addEventListener('ne:agent-state', function(e) {
-    _wfSetRunning(!!(e.detail && e.detail.busy));
+    var busy = !!(e.detail && e.detail.busy);
+    if (!busy && _wfStopRequested && _wfOwnTaskRunning) {
+        _wfOwnTaskRunning = false;
+        _wfStarting = false;
+        _wfStopRequested = false;
+        _wfSetStatus('已停止，已写草稿和已提交情节段已保留。', 'stopped');
+    }
+    _wfSetRunning(busy || _wfStarting || _wfOwnTaskRunning);
 });
 // 页面加载恢复：agent_panel 的首次 ne:agent-state 可能在本监听注册前已发出，这里补查一次
-if (window.agentIsBusy && window.agentIsBusy()) _wfSetRunning(true);
+if (window.agentIsBusy && window.agentIsBusy()) {
+    _wfOwnTaskRunning = true;
+    _wfSetRunning(true);
+    _wfSetStatus('已有 Agent 任务运行中，请等待或停止后再续写。', 'running');
+}
 
 function runWritingTask() {
-    // 防二次误触：Agent 已在运行（本卡触发或侧栏触发）→ 忽略，不打断、不排队
-    if (window.agentIsBusy && window.agentIsBusy()) {
+    // 立即锁定，覆盖章节状态 fetch 尚未返回时的双击窗口；不取消、不排队已有任务。
+    if (_wfStarting || _wfOwnTaskRunning || (window.agentIsBusy && window.agentIsBusy())) {
         if (window.showToast) showToast('Agent 正在运行，请先停止当前任务再继续', 'error');
         return;
     }
-    if (window.switchAgentTab) window.switchAgentTab('chat');   // 保证侧栏对话页签可见
-    var bid = window.__STORYLINE_ID__ || '';
+    _wfStarting = true;
+    _wfStopRequested = false;
+    _wfChapterCompleted = false;
+    _wfLastError = '';
+    _wfSetRunning(true);
+    _wfSetStatus('正在读取最新章节状态……', 'running');
+    if (window.switchAgentTab) window.switchAgentTab('chat');
+    var bid = _wfBookId;
     var title = (window.__BOOK_STORYLINE__ && window.__BOOK_STORYLINE__.book_title) || '';
     var pen = window.__BOOK_PEN_NAME__ || '';
     _resolveNextChapterAndSend(bid, title, pen);
 }
-// 该写第几章：现查 /api/desk/chapters/<bid> 拿磁盘最新 current_chapter（跨进程写盘后刷新，防陈旧注入值），
-// 进行中草稿（draft:true）章号优先，否则 current_chapter + 1；接口失败回退页面注入值。
+// 该写第几章：现查 /api/desk/chapters/<bid> 拿磁盘最新 current_chapter；draft 章号优先。
 function _resolveNextChapterAndSend(bid, title, pen) {
     var fallback = (window.__BOOK_CURRENT_CHAPTER__ || 0);
     var send = function (nextCh) {
+        if (!_wfStarting) return;
         var wpc = (window.__BOOK_STORYLINE__ && window.__BOOK_STORYLINE__.words_per_chapter) || 3000;
-        var task = '请继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：写下一章（第' + nextCh + '章）正文。'
-            + '本章目标约 ' + wpc + ' 字，未写满会被门禁拦下（save_chapter_text 会拒收短章）。'
-            + '写正文前先 get_writing_context 读风格规则（style_rules）并严格遵守。'
-            + '逐桥段写：每写完一个桥段场景就 save_bridge_draft；写完本章全部未写桥段、累计字数达标后再 save_chapter_text，'
-            + '且 bridge_segments 必须列出本章每个桥段（缺一即正文丢失）。'
-            + '章末跑 chapter_quality_gate 门禁汇报。';
-        if (task && window.agentSendTask) {
-            window.agentSendTask(task, { card: true, cardLabel: '📝 写作任务 · 第' + nextCh + '章' });
-            _wfSetRunning(true);   // 立即置运行态（ne:agent-state 事件同步兜底）
+        var task = '请继续写这本' + (title ? '「' + title + '」' : '') + '（book ' + bid + '）：完成第' + nextCh + '章正文，目标约 ' + wpc + ' 字。'
+            + '这是一次章级父任务：请由服务端流程自主判断写作、收章或续规划，直到本章完成。';
+        if (!task || !window.agentSendTask) {
+            _wfStarting = false;
+            _wfSetRunning(false);
+            _wfSetStatus('未找到 Agent 发送入口，本章尚未完成。', 'error');
+            return;
+        }
+        _wfStarting = false;
+        _wfOwnTaskRunning = true;
+        _wfTargetChapter = Number(nextCh) || 0;
+        _wfSetStatus('正在完成第 ' + _wfTargetChapter + ' 章；系统会按需自动续规划。', 'running');
+        var accepted = window.agentSendTask(task, {
+            card: true,
+            cardLabel: '📝 写作任务 · 第' + nextCh + '章',
+            bookId: bid,
+            flowMode: 'chapter_to_completion',
+            busyPolicy: 'reject',
+            taskKind: 'chapter-write'
+        });
+        if (accepted === false) {
+            _wfOwnTaskRunning = false;
+            _wfSetRunning(false);
+            _wfSetStatus('Agent 正在运行，本章任务未启动。', 'error');
         }
     };
     if (!bid) { send(fallback + 1); return; }
@@ -309,7 +422,8 @@ function _resolveNextChapterAndSend(bid, title, pen) {
         .then(function (r) { return r.json(); })
         .then(function (d) {
             if (!d || typeof d.current_chapter !== 'number') { send(fallback + 1); return; }
-            window.__BOOK_CURRENT_CHAPTER__ = d.current_chapter;   // 顺带刷新注入值
+            window.__BOOK_CURRENT_CHAPTER__ = d.current_chapter;
+            // boundary 只是 FSM 的输入信号，不能在前端提前切走写作任务。
             var draft = (d.chapters || []).filter(function (c) { return c.draft; })[0];
             send(draft ? draft.num : (d.current_chapter + 1));
         })
@@ -317,33 +431,235 @@ function _resolveNextChapterAndSend(bid, title, pen) {
 }
 function stopWritingTask(e) {
     if (e && e.stopPropagation) e.stopPropagation();
+    if (!_wfOwnTaskRunning && !_wfStarting) return;
+    _wfStopRequested = true;
     var stop = document.getElementById('wf-stop-btn');
     if (stop) { stop.disabled = true; stop.textContent = '停止中…'; }
+    _wfSetStatus('正在请求停止；已写内容会保留。', 'stopping');
     if (window.agentStopTask) window.agentStopTask();
 }
+window.addEventListener('ne:desk-refresh', function(e) {
+    var d = (e && e.detail) || {};
+    if (d.book_id && d.book_id !== _wfBookId) return;
+    if (d.name === 'plan_committed' && _wfOwnTaskRunning) {
+        _wfSetStatus('近期 / 远期规划已更新，继续完成第 ' + (_wfTargetChapter || '当前') + ' 章。', 'running');
+    } else if (d.name === 'chapter_changed' && (_wfOwnTaskRunning || _wfStarting)) {
+        _wfChapterCompleted = true;
+        _wfOwnTaskRunning = false;
+        _wfStarting = false;
+        _wfStopRequested = false;
+        var chapter = d.chapter || _wfTargetChapter || '';
+        _wfSetRunning(false);
+        _wfSetStatus('第 ' + chapter + ' 章已完成。', 'success');
+    }
+});
+window.addEventListener('ne:agent-task-event', function(e) {
+    var d = (e && e.detail) || {}, evt = d.event || {};
+    if (d.taskKind !== 'chapter-write' || (evt.book_id && evt.book_id !== _wfBookId)) return;
+    if (evt.type === 'error') {
+        // 内部校验/流程细节留给 Agent 与后台日志；用户只看到脱敏结论。
+        _wfLastError = evt.message || '任务失败';
+        if (window.console && console.warn) console.warn('章级写作失败详情', _wfLastError);
+        _wfSetStatus('本章尚未完成：自动流程未能继续，已写内容已保留，请稍后重试。', 'error');
+    } else if (evt.type === 'domain' && evt.name === 'plan_committed') {
+        _wfSetStatus('近期 / 远期规划已更新，继续完成第 ' + (_wfTargetChapter || '当前') + ' 章。', 'running');
+    } else if (evt.type === 'done') {
+        _wfOwnTaskRunning = false;
+        _wfStarting = false;
+        _wfSetRunning(false);
+        if (!_wfChapterCompleted) _wfSetStatus('本次任务已结束，但第 ' + (_wfTargetChapter || '当前') + ' 章尚未完成，请查看 Agent 状态。', 'warning');
+    }
+});
 
 
 
-/* ═══ 正文实时刷新：轮询 /api/desk/chapters/<bid>，agent 写完桥段/章节即重渲染（保留当前章/页/高亮） ═══ */
+/* ═══ 顶部两栏：（左）故事事实 + 最近 Plot 增量 |（右）角色状态 ═══
+   左侧是有界的累计事实读模型，最近 Plot 只作为独立承接提示；右侧仍回答「人现在在哪、什么状态、在干什么」。
+   旧的三列对照矩阵（上一情节段 | 字段轴 | 本情节段）与它那个五组折叠的审计区是 agent 对账视图，已删。 */
+var _ctxFingerprint = '';
+
+function _ctxMissing(v) { return v === null || v === undefined || String(v).trim() === ''; }
+function _ctxGap(text) { return '<span class="wf-context-empty">' + text + '</span>'; }
+
+/* 单张角色卡：位置 / 状态 / 动作 三行。**没有数据就写「未记录」，绝不从人设/身份推断**。 */
+function _renderCharacterCard(card, events) {
+    card = card || {};
+    var dyn = card.dyn || {};
+    var loc = _ctxMissing(dyn.location) ? card.location : dyn.location;
+    var goal = _ctxMissing(dyn.goal) ? card.goal : dyn.goal;
+    var chips = [];
+    ['power_level', 'arc_stage', 'relationship_to_mc'].forEach(function (k) {
+        var v = _ctxMissing(dyn[k]) ? card[k] : dyn[k];
+        if (!_ctxMissing(v)) chips.push('<span class="character-state-chip">' + _ms_esc(v) + '</span>');
+    });
+    var ev = card.latest_event || (events || {})[card.name] || null;
+    var action = _ctxMissing(goal) ? '' : _ms_esc(goal);
+    if (ev && !_ctxMissing(ev.to) && String(ev.to) !== String(goal || '')) {
+        action += (action ? ' · ' : '') + _ms_esc(ev.to);
+        if (!_ctxMissing(ev.reason)) action += ' <span class="character-action-reason">' + _ms_esc(ev.reason) + '</span>';
+    }
+    var identity = card.identity || card.title || card.role || '';
+    return '<article class="character-state-card">'
+        + '<header class="character-state-head"><div><strong>' + _ms_esc(card.name || '未具名') + '</strong>'
+        + (identity ? '<span class="character-identity">' + _ms_esc(identity) + '</span>' : '') + '</div>'
+        + (card.state_source === 'accepted_staged' ? '<span class="character-staged-mark">本章已接受</span>' : '')
+        + '</header>'
+        + '<dl class="character-state-lines">'
+        + '<div><dt>位置</dt><dd>' + (_ctxMissing(loc) ? _ctxGap('未记录') : _ms_esc(loc)) + '</dd></div>'
+        + '<div><dt>状态</dt><dd>' + (chips.length ? chips.join('') : _ctxGap('未记录')) + '</dd></div>'
+        + '<div><dt>动作</dt><dd>' + (action || _ctxGap('暂无明确行动')) + '</dd></div>'
+        + '</dl></article>';
+}
+
+/* 上一情节段的对账结果 → 人话。只保留这一张短映射（不搬旧对照表那套行模型）。 */
+var _LAST_RECON_ZH = {clean: '✅ 与预期一致', prediction_drift: '🟡 实际发展与预期不同',
+                      missed_prediction: '🟡 预计变化尚未发生', unpredicted_fact: '🔵 出现新的变化'};
+
+/* 左栏：上一段的六类结构化事实，服务下一段写作。全部字段来自 desk 响应，不从正文推断。 */
+function renderLastPlot(data) {
+    var el = document.getElementById('wf-last-plot');
+    if (!el) return;
+    data = data || {};
+    var last = data.recent_plot_outcome || {};
+    if (_ctxMissing(last.plot_name)) {
+        el.innerHTML = _ctxGap('还没有已完成的段落');
+        return;
+    }
+    var rec = last.reconcile || {};
+    var recText = [_LAST_RECON_ZH[rec.kind] || '', _ctxMissing(rec.summary) ? '' : rec.summary]
+        .filter(function (x) { return x; }).join(' · ');
+    var head = '<div class="wf-last-title">' + _ms_esc(last.plot_name)
+        + (recText ? '<span class="wf-last-stamp">' + _ms_esc(recText) + '</span>' : '') + '</div>';
+    var summary = _ctxMissing(last.plot_summary) ? ''
+        : '<div class="wf-last-fact"><span class="wf-last-fact-label">承接</span><span class="wf-last-fact-value">'
+          + _ms_esc(last.plot_summary) + '</span></div>';
+    var facts = last.facts || {};
+    var FACT_ROWS = [['choices_made', '已作选择'], ['information_revealed', '已知信息'],
+                     ['relationship_changes', '关系变化'], ['resource_changes', '资源变化'],
+                     ['promise_updates', '承诺更新'], ['new_story_questions', '新问题']];
+    var rows = FACT_ROWS.map(function (pair) {
+        var text = _factText(facts[pair[0]]);
+        if (!text) return '';
+        return '<div class="wf-last-fact"><span class="wf-last-fact-label">' + _ms_esc(pair[1])
+            + '</span><span class="wf-last-fact-value">' + _ms_esc(text) + '</span></div>';
+    }).join('');
+    el.innerHTML = head + summary + rows + _renderPlanContext(data);
+}
+function _factText(value) {
+    function one(v) {
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'object') return String(v.text || v.description || v.title || v.question || v.desc || v.intent || '');
+        return String(v);
+    }
+    if (Array.isArray(value)) return value.map(one).filter(function (x) { return x.trim(); }).join('；');
+    return one(value);
+}
+/* planning.story_questions 是跨段问题集合；不根据文字自行判断是否已经解决。 */
+function _renderPlanContext(data) {
+    var planning = (data || {}).planning || {};
+    var questions = (planning.story_questions || []).map(function (x) {
+        return typeof x === 'string' ? x : String((x && (x.question || x.text || x.title)) || '');
+    }).filter(function (x) { return x.trim(); });
+    if (!questions.length) return '';
+    return '<details class="wf-last-plan"><summary>待解问题 ' + questions.length + '</summary>'
+        + '<div class="wf-last-fact"><span class="wf-last-fact-label">待解问题</span><span class="wf-last-fact-value">'
+        + questions.map(function (line) { return _ms_esc(line); }).join('；') + '</span></div></details>';
+}
+
+/* 右栏：全员角色状态。服务端已按最近出场排序，前端不再按是否出场分组。 */
+function renderCurrentCast(data) {
+    var el = document.getElementById('wf-current-cast');
+    if (!el) return;
+    data = data || {};
+    var roster = data.character_roster || data.character_states || [];
+    if (!roster.length) {
+        el.innerHTML = _ctxGap('尚未配置角色');
+        return;
+    }
+    el.innerHTML = roster.map(function (card) { return _renderCharacterCard(card, {}); }).join('');
+}
+
+/* 统一入口：既有 3s desk 轮询直接调它（不新增轮询）。fingerprint 不变则不重建 DOM。
+   顶部已不展示待写段，也不再向任何规划 UI 发信号——横幅连同 planning_ui.js 已整体删除。 */
+function renderLatestContext(data) {
+    data = data || {};
+    var fp = JSON.stringify([data.writing_chapter, data.recent_plot_outcome, data.planning,
+                             data.character_roster, (data.chapters || []).length]);
+    if (fp !== _ctxFingerprint) {
+        _ctxFingerprint = fp;
+        renderLastPlot(data);
+        renderCurrentCast(data);
+    }
+}
+
+/* ═══ 正文 → 故事线反向高亮：点击右侧正文情节段 span.m-bridge → Gantt 高亮该 plot + 同弧 + 同线程 ═══ */
+document.addEventListener('click', function (e) {
+    if (!window.__STORYLINE_ID__) return;   // 仅写作台
+    var el = e.target && e.target.closest ? e.target.closest('.m-bridge') : null;
+    if (!el) return;
+    var pid = el.getAttribute('data-bridge');
+    if (!pid || !window.StoryLine || !window.StoryLine.highlight) return;
+    window.StoryLine.highlight({ plot_id: pid });
+});
+
+/* ═══ 正文实时刷新：轮询 /api/desk/chapters/<bid>，agent 写完情节段/章节即重渲染（保留当前章/页/高亮） ═══ */
 (function pollReader() {
     var bid = window.__STORYLINE_ID__;
     if (!bid) return;
     var lastFp = '';
-    setInterval(function () {
+    function run() {
         fetch('/api/desk/chapters/' + encodeURIComponent(bid))
             .then(function (r) { return r.json(); })
             .then(function (d) {
+                var totalEl = document.getElementById('wf-total-written');
+                if (totalEl && d.planning && d.planning.written_until_word != null) {
+                    totalEl.textContent = String(d.planning.written_until_word);
+                }
+                var rawEl = document.getElementById('wf-total-raw');
+                if (rawEl && d.planning && d.planning.raw_codepoints != null) rawEl.textContent = String(d.planning.raw_codepoints);
+                // 对照区随轮询刷新（当前情节段推进后自动切换）；表格投影与两侧共用这一次响应
+                renderLatestContext(d);
+                if (d.planning) {
+                    var oldPlanning = window.__PLANNING_STATE__ || {};
+                    /* desk 轮询只返回运行态规划字段：合并而非整体覆盖，保留 display_horizon/checklist 等详情页字段。 */
+                    window.__PLANNING_STATE__ = Object.assign({}, oldPlanning, d.planning);
+                    window.__PLANNING_BOUNDARY__ = d.planning.boundary || window.__PLANNING_BOUNDARY__ || {};
+                    if (window.StoryLine && window.StoryLine.updateProgress) window.StoryLine.updateProgress({
+                        currentWord: d.planning.written_until_word || 0,
+                        planning: window.__PLANNING_STATE__,
+                        boundary: window.__PLANNING_BOUNDARY__
+                    });
+                    // 故事线版本前进了就换一份新故事线（原由已删的规划提示条 JS 负责，现内联）
+                    var renderedRevision = Number((window.__BOOK_STORYLINE__ || {}).storyline_revision || 0);
+                    if (d.planning.storyline_revision > renderedRevision) {
+                        syncStoryline(d.planning.storyline_revision);
+                    }
+                }
                 // 顺带刷新注入的当前章号，让「继续写正文」按钮用上跨进程写盘后的最新值
                 if (d && typeof d.current_chapter === 'number' && d.current_chapter !== window.__BOOK_CURRENT_CHAPTER__) {
                     window.__BOOK_CURRENT_CHAPTER__ = d.current_chapter;
                 }
                 var chs = d.chapters || [];
                 var fp = chs.map(function (c) {
-                    return c.num + ':' + (c.content || '').length + ':' + (c.bridges || []).length;
+                    return c.num + ':' + (c.word_count || 0) + ':' + (c.content || '').length + ':' + (c.bridges || []).length;
                 }).join('|');
                 if (fp === lastFp) return;
                 lastFp = fp;
                 chs.forEach(function (c) { if (c.word_count == null) c.word_count = _wordCount(c); });
+                // 轮询到新桥接段后，用统一统计器更新故事线已写字数；刷新会让红线后的段整体顺移。
+                var actualByPlot = {};
+                chs.forEach(function (c) {
+                    (c.bridges || []).forEach(function (b) {
+                        if (!b.plot_id) return;
+                        actualByPlot[b.plot_id] = (actualByPlot[b.plot_id] || 0) + _wordCount({content: b.text || ''});
+                    });
+                });
+                if (window.__BOOK_STORYLINE__ && window.__BOOK_STORYLINE__.plots) {
+                    window.__BOOK_STORYLINE__.plots.forEach(function (p) {
+                        p.actual_words = actualByPlot[p.id] || 0;
+                    });
+                    refreshStoryline(window.__BOOK_STORYLINE__);
+                }
                 var prevNum = (Reader.chapters[Reader.idx()] || {}).num;
                 var ni = -1;
                 // 目标章节优先按 _activePid 所在章节定位（草稿固化/章号变化后仍对齐，防高亮错位）
@@ -358,7 +674,7 @@ function stopWritingTask(e) {
                 var wasPage = Reader.getState().page;
                 // 核心 setChapters：瞬时落位（无动画、不打断翻页）+ 重分页/目录/持久化
                 Reader.setChapters(chs, ni, wasPage);
-                // 重渲染后恢复高亮桥段（只高亮单处，同 plot_id 重复不再全文亮起）
+                // 重渲染后恢复高亮情节段（只高亮单处，同 plot_id 重复不再全文亮起）
                 if (_activePid) {
                     var ap = _activePid;
                     var root = document.getElementById('reader-pages');
@@ -371,7 +687,12 @@ function stopWritingTask(e) {
                 }
             })
             .catch(function () {});
-    }, 3000);
+    }
+    run();                 // 进页立即渲染一次（Plot Run 面板不等 3s 轮询）
+    setInterval(run, 3000);
+    // WS6：agent SSE 的 domain 事件（chapter_changed/plot_run_changed/plan_committed）
+    // 由 agent_panel 转发为 ne:desk-refresh → 立即刷；3s 轮询保留作 fallback。
+    window.addEventListener('ne:desk-refresh', function () { run(); });
 })();
 
 </script>

@@ -1,0 +1,173 @@
+{
+  "meta": {
+    "profile_id": "profile_003",
+    "pen_name": "星烬",
+    "language": "zh",
+    "description": "末世重生囤货爽文向：苟命发育、资源博弈、复仇打脸不圣母（参考冰河末世风）",
+    "exported_at": "2026-09-07T21:51:11"
+  },
+  "identity": {
+    "style_fingerprint": {
+      "humor_style": "冷幽默吐槽型（内心自我吐槽、戳穿套路为主，不刻意抖机灵）",
+      "action_style": "动词短句直给（转身/掏出/冷笑/喝下一大瓶，动作推进快、情绪交给短句与叹号）"
+    },
+    "tropes": {
+      "preferred_plots": [],
+      "preferred_gags": [],
+      "avoid_plots": [],
+      "character_archetypes": [
+        "重生者（前世被背叛惨死）",
+        "拜金白莲花女配",
+        "眼红邻居群像",
+        "忠犬伙伴"
+      ],
+      "scene_pacing": "快节奏爽点（短句一句一段推进，冲突/打脸/囤货信息密集出现）",
+      "chapter_hook_style": "断在下一个爽点/冲突将要发生处，或一个信息反差（如摸到金手指/撞见故人）"
+    }
+  },
+  "language_hint": "",
+  "discipline": [],
+  "rules": [
+    {
+      "id": "prefer_32",
+      "kind": "prefer",
+      "pattern": "节奏快：短句为主，单句成段常见（一段一句地砸出来），多句段以 2-3 句为度，不写大段描写压节奏",
+      "desc": "短句一句一段推进",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "prefer_33",
+      "kind": "prefer",
+      "pattern": "情绪外放靠叹号与问号：惊叹/自得/反问/挑衅直接给（！！、？？可连用），语未尽或心理翻转用省略号收；不用含蓄克制藏情绪",
+      "desc": "叹问承载情绪、外放",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "prefer_34",
+      "kind": "prefer",
+      "pattern": "主角内心戏多且直白：直接写想法（想/心中冷笑/暗骂/盘算），情绪交给动作与短句（转身/掏出/喝下一大口/把手机一扔），不说漂亮场面话",
+      "desc": "内心直白+动作代情绪",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "prefer_35",
+      "kind": "prefer",
+      "pattern": "对话标签以说道/问道/冷笑/大喊/吼道 直给为主，常前置“谁说道：……”；打脸/嘲讽台词直白锋利（你算什么东西？/就凭你？/想多了）",
+      "desc": "对话标签直给、嘴炮锋利",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "prefer_36",
+      "kind": "prefer",
+      "pattern": "转折与顺承用口语连接：但/可是/不过/所以/于是 起步，少用 然而/因此/此外 类书面连接",
+      "desc": "口语化连接词",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "prefer_37",
+      "kind": "prefer",
+      "pattern": "金手指/设定/异能的规则用大白话边做边解说（主角自己试、自己推断限制与用法），信息直接给、少故弄玄虚",
+      "desc": "设定边做边讲、不藏",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "prefer_38",
+      "kind": "prefer",
+      "pattern": "冷幽默吐槽：主角对反派/邻居/路人内心或当面的嘲讽要具体辛辣，常落在“就这？/你搁这跟我演呢？/真以为我傻？”一类大白话上",
+      "desc": "黑幽吐槽具体直给",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "ban_16",
+      "kind": "ban",
+      "pattern": "与此同时",
+      "desc": "AI 高频，改用 这时/就在这时",
+      "severity": "warning",
+      "replacements": [
+        "这时"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "ban_17",
+      "kind": "ban",
+      "pattern": "微微一笑",
+      "desc": "AI 高频，改用 笑了笑/嘴角一翘",
+      "severity": "warning",
+      "replacements": [
+        "笑了笑"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "ban_18",
+      "kind": "ban",
+      "pattern": "淡淡道",
+      "desc": "AI 高频腔调副词，改用 说道/平静道",
+      "severity": "warning",
+      "replacements": [
+        "说道"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "ban_19",
+      "kind": "ban",
+      "pattern": "眼中闪过一丝",
+      "desc": "AI 高频，改写为具体动作（眼神一沉/扫了他一眼/没接话）",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "ban_20",
+      "kind": "ban",
+      "pattern": "缓缓",
+      "desc": "AI 高频缓启动词，非必要别用；动作直接给",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "ban_21",
+      "kind": "ban",
+      "pattern": "不要每个段落都主动制造金句、反转或悬念收尾；让打脸/爽点的落点自然出现在剧情该出现处",
+      "desc": "样本驱动负约束：防句句求漂亮",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "ban_22",
+      "kind": "ban",
+      "pattern": "不要为了显得文笔好而堆排比、长句、哲理升华；本书语感是短句直给，情绪靠内容不靠修辞",
+      "desc": "样本驱动负约束：防堆砌修辞",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    },
+    {
+      "id": "ban_23",
+      "kind": "ban",
+      "pattern": "不要每个发现信息后立即长篇解释其意义或价值；设定解释要给在主角使用/盘算的当下，别抽离成作者旁白",
+      "desc": "样本驱动负约束：防过度解释",
+      "severity": "warning",
+      "replacements": [],
+      "enabled": true
+    }
+  ]
+}

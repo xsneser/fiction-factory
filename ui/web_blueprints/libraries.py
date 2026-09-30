@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context, abort
 from .ctx import *
 from libraries.profiles import KNOWN_PLATFORMS, PLATFORM_LABELS  # noqa: E402
+from libraries import style_samples  # noqa: E402  # 笔名样文池 samples.json(收敛 <sample> 解析于此处)
 
 bp = Blueprint("libraries", __name__)
 
@@ -27,12 +28,106 @@ def _parse_platform_accounts(form):
             accounts[pl] = entry
     return accounts
 
+
+def _project_root():
+    """项目根目录（libraries.py 在 ui/web_blueprints/ 下，上溯三层）。"""
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _read_text_file(path):
+    """读取文本文件；不存在/异常返回空串（样文/MD 等可选文件）。"""
+    try:
+        if path and os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+    except Exception:
+        pass
+    return ""
+
+
+def _parse_samples(content):
+    """(兼容壳)把样文文本拆成多条样本；解析实现已收敛到 libraries/style_samples。"""
+    return style_samples.parse_blocks(content)
+
+
+def _samples_all():
+    """全局样文池词条(StyleSample 列表);无文件 → []。"""
+    return style_samples.load_samples() or []
+
+
+def _samples_categories():
+    """样文池顶部分类按钮 = 全部词条 scene_tags 并集(去重、按首现序)。"""
+    seen, out = set(), []
+    for s in _samples_all():
+        for t in s.scene_tags or []:
+            if t and t not in seen:
+                seen.add(t)
+                out.append(t)
+    return out
+
+
+def _samples_upsert(records):
+    """把记录(含 id)合并进全局样文池:有 id 覆盖、无 id 追加、空正文跳过;保存并再生镜像。
+
+    返回 (final_list, warnings)。records 元素为 dict(缺省字段兼容)。"""
+    items = [s.to_dict() for s in _samples_all()]
+    for r0 in records or []:
+        if not isinstance(r0, dict):
+            continue
+        txt = (r0.get("text") or "").strip()
+        if not txt:
+            continue
+        rid = (r0.get("id") or "").strip()
+        src = (r0.get("source") or "").strip()
+        sb = (r0.get("source_book") or "").strip() or style_samples._book_from_source(src)
+        rec = {"id": rid,
+               "title": (r0.get("title") or "").strip(),
+               "scene_tags": [str(t).strip() for t in (r0.get("scene_tags") or []) if str(t).strip()],
+               "source": src,
+               "source_book": sb,
+               "note": (r0.get("note") or "").strip(),
+               "text": txt,
+               "no_warn": bool(r0.get("no_warn")),
+               "dims": r0.get("dims") or {}}
+        hit = False
+        if rid:
+            for i, it in enumerate(items):
+                if it["id"] == rid:
+                    items[i] = rec
+                    hit = True
+                    break
+        if not hit:
+            items.append(rec)
+    style_samples.save_samples(samples=items)
+    final = _samples_all()
+    warnings = _warn_short(final) + [
+        f"样文 {w['id']} 与 {w['dup_of']} 内容重复(子段)——浪费预算,建议去重"
+        for w in style_samples.duplicate_warnings(final)]
+    return final, warnings
+
+
+def _warn_short(samples):
+    """单条字数软预警：<800 字可能只是金句/片段(选样方法论:完整连续场景,1500~3000 为佳)。
+    no_warn(人工确认保留,如天然短的开场/对白聚焦)不预警。"""
+    out = []
+    for s in samples:
+        if getattr(s, "no_warn", False):
+            continue
+        if s.word_count and s.word_count < 800:
+            label = s.title or s.id
+            out.append(f"样文 {label} 约 {s.word_count} 字,<800 可能只是金句/片段——"
+                       "建议改喂一段「完整连续场景」")
+    return out
+
 @bp.route("/plots")
 def plots():
     cat = request.args.get("category","")
     templates = plot_lib.search(category=cat) if cat else plot_lib.templates
+    # 分类页签只保留仍有内容的（其余几库同规则，统一角色库式样）
+    cats = [c for c in plot_lib.categories()
+            if any(t.category == c for t in plot_lib.templates)]
     return render_template("plots.html",
-        templates=templates, categories=plot_lib.categories(),
+        templates=templates, categories=cats,
         current_cat=cat)
 
 
@@ -90,40 +185,13 @@ def struct_toggle(struct_id): return _lib_toggle("structures", struct_id)
 
 
 @bp.route("/api/structures/<struct_id>/delete", methods=["POST"])
-def struct_delete(struct_id): return _lib_delete("structures", struct_id)
-
-
-@bp.route("/api/structures/<struct_id>/node/themes", methods=["POST"])
-def struct_stage_themes(struct_id):
-    """编辑某个弧/阶段节点的节点级内涵 [{name, position, how}]（含插入位置+表达手法）。
-    path 为沿 stages→children 的索引列表（如 [0,2] = 顶层第0个子弧的第2个孙弧），支持多层嵌套。"""
-    t = struct_lib.get_by_id(struct_id)
-    if not t:
+def struct_delete(struct_id):
+    """删除一根情节弧：删除该根弧及其全部后代节点（防扁平库留下孤儿子行）。"""
+    lib = struct_lib
+    if not any(x.id == struct_id for x in lib.templates):
         return jsonify({"ok": False, "error": "not found"}), 404
-    path = (request.json or {}).get("path")
-    if not isinstance(path, list) or not path:
-        return jsonify({"ok": False, "error": "path must be non-empty list"}), 400
-    # 沿 stages→children 递归寻址目标节点
-    nodes = t.stages
-    node = None
-    for p in path:
-        if not isinstance(p, int) or not (0 <= p < len(nodes)):
-            return jsonify({"ok": False, "error": "path out of range"}), 400
-        node = nodes[p]
-        nodes = node.children
-    themes = (request.json or {}).get("themes")
-    if not isinstance(themes, list):
-        return jsonify({"ok": False, "error": "themes must be list"}), 400
-    clean = []
-    for m in themes:
-        if not isinstance(m, dict) or not str(m.get("name", "") or "").strip():
-            continue
-        clean.append({"name": str(m["name"]).strip(),
-                      "position": str(m.get("position", "") or "").strip(),
-                      "how": str(m.get("how", "") or "").strip()})
-    node.themes = clean
-    struct_lib._save()
-    return jsonify({"ok": True, "themes": clean})
+    removed = lib.delete_tree(struct_id)
+    return jsonify({"ok": True, "removed": removed})
 
 
 @bp.route("/api/gags/<gag_id>/toggle", methods=["POST"])
@@ -146,8 +214,14 @@ def character_delete(char_id): return _lib_delete("characters", char_id)
 def characters():
     cat = request.args.get("tag", "")
     archetypes = char_lib.search(tag=cat) if cat else char_lib.archetypes
+    # 分类页签只保留仍有内容的
+    counts: dict = {}
+    for a in char_lib.archetypes:
+        for tg in (a.tags or []):
+            counts[tg] = counts.get(tg, 0) + 1
+    cats = [c for c in char_lib.categories() if counts.get(c, 0) > 0]
     return render_template("characters.html",
-        archetypes=archetypes, categories=char_lib.categories(),
+        archetypes=archetypes, categories=cats,
         current_cat=cat)
 
 
@@ -229,12 +303,26 @@ def style_rule_delete(rule_id):
 
 @bp.route("/structures")
 def structures():
-    return render_template("structures.html", templates=struct_lib.templates)
+    """情节弧库页：**平级独立弧**；顶栏「全部 + 各题材标签」页签过滤（类情节段库）。"""
+    tag = (request.args.get("tag") or "").strip()
+    lib = struct_lib
+    all_arcs = list(lib.templates)
+    cats = sorted({x for t in all_arcs for x in (t.tags or [])})
+    arcs = all_arcs if not tag else [t for t in all_arcs if tag in (t.tags or [])]
+    return render_template("structures.html",
+                           arc_cards=[n.to_dict() for n in arcs],
+                           categories=cats, current_tag=tag, total=len(all_arcs))
 
 
 @bp.route("/gags")
 def gags():
-    return render_template("gags.html", patterns=gag_lib.patterns)
+    cat = (request.args.get("category") or "").strip()
+    patterns = [p for p in gag_lib.patterns
+                if (p.category or "").strip() == cat] if cat else list(gag_lib.patterns)
+    cats = sorted({(p.category or "").strip() for p in gag_lib.patterns if (p.category or "").strip()})
+    return render_template("gags.html",
+        patterns=patterns, categories=cats,
+        current_cat=cat)
 
 
 @bp.route("/profiles")
@@ -266,18 +354,260 @@ def profile_list():
         own_p = style_rules.rules_for(p.id)
         pr = [r for r in own_p if r.kind == "prefer" and r.enabled]
         bn = [r for r in own_p if r.kind == "ban" and r.enabled]
+        _pj = (" · ".join(r.pattern for r in pr[:3]) + ("…" if len(pr) > 3 else "")) if pr else ""
+        _bf = "、".join(r.pattern for r in bn[:3]) if bn else ""
         summaries[p.id] = {
-            "prefers_joined": (" · ".join(r.pattern for r in pr[:3]) + ("…" if len(pr) > 3 else "")) if pr else "",
+            "prefers_joined": (_pj[:140] + "…" if len(_pj) > 140 else _pj),
             "ban_count": len(bn),
-            "bans_first": "、".join(r.pattern for r in bn[:3]) if bn else "",
+            "bans_first": (_bf[:60] + "…" if len(_bf) > 60 else _bf),
         }
+    # 写作风格页只留 风格 MD（styles/<笔名>.md）;样文已拆到独立全局样文池页 /samples
+    _root = _project_root()
+    md_content = _read_text_file(os.path.join(_root, "styles", scope_label + ".md")) if (selected and not is_new) else ""
+    # 样文池词条(全量,含 id/source_book/dims) + 场景分类(dims.scene)+来源书 + 已选 id/书 ——
+    # 供「样文池」标签勾选/展示。分类标签统一源 = dims.scene(英文枚举→DIM_LABELS 中文)，与 /samples 页一致。
+    all_samples = [s.to_dict() for s in _samples_all()]
     return render_template("profiles.html",
         profiles=all_profiles, selected=selected, is_new=is_new,
         current_scope=current_scope, scope_label=scope_label,
         prefers=[r for r in own if r.kind == "prefer"],
         bans=[r for r in own if r.kind == "ban"],
         summaries=summaries,
-        platform_labels=PLATFORM_LABELS)
+        platform_labels=PLATFORM_LABELS,
+        md_content=md_content,
+        all_samples=all_samples,
+        sample_scenes=_samples_scenes(),
+        sample_books=_samples_books(),
+        selected_sample_ids=list(selected.sample_ids or []) if selected else [],
+        selected_sample_books=list(selected.sample_books or []) if selected else [],
+        dim_choices=style_samples.DIM_CHOICES,
+        dim_labels=style_samples.DIM_LABELS,
+        dim_field_zh=style_samples.DIM_FIELD_ZH)
+
+
+@bp.route("/api/profile/<profile_id>/md", methods=["POST"])
+def profile_md_save(profile_id):
+    """保存笔名风格 MD 到 styles/<笔名>.md（直接覆盖；后续 sync 可能按手写源回写）。"""
+    p = profiles.get(profile_id)
+    if not p:
+        return jsonify({"ok": False, "error": "笔名不存在"}), 404
+    d = request.get_json(silent=True) or {}
+    content = str(d.get("content") or "")
+    path = os.path.join(_project_root(), "styles", p.pen_name + ".md")
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+    return jsonify({"ok": True, "path": path})
+
+
+def _samples_scenes():
+    """样文池顶部分类按钮 = 库内词条 scene 维枚举(按 DIM_CHOICES 顺序、有内容才显示)。"""
+    order = style_samples.DIM_CHOICES.get("scene", [])
+    seen, out = set(), []
+    for s in _samples_all():
+        for v in (s.dims or {}).get("scene", []) or []:
+            if v in order and v not in seen:
+                seen.add(v)
+                out.append(v)
+    return out
+
+
+def _samples_books():
+    """样文池来源书枚举 = 库内词条 source_book 去重保序(供顶部「来源书」分组页签)。"""
+    seen, out = set(), []
+    for s in _samples_all():
+        b = (s.source_book or "").strip()
+        if b and b not in seen:
+            seen.add(b)
+            out.append(b)
+    return out
+
+
+@bp.route("/samples")
+def samples_page():
+    """样文池(全局词条库)独立页:顶部按 scene 维 + 来源书 双行分类 + 词条卡 + 新增/编辑/删除。"""
+    scene = (request.args.get("scene") or "").strip()
+    book = (request.args.get("book") or "").strip()
+    samples = _samples_all()
+    if scene:
+        samples = [s for s in samples if scene in ((s.dims or {}).get("scene") or [])]
+    if book:
+        samples = [s for s in samples if (s.source_book or "") == book]
+    return render_template("samples.html",
+        samples=[s.to_dict() for s in samples],
+        scenes=_samples_scenes(), current_scene=scene,
+        books=_samples_books(), current_book=book,
+        total=len(_samples_all()),
+        dim_choices=style_samples.DIM_CHOICES,
+        dim_labels=style_samples.DIM_LABELS,
+        dim_field_zh=style_samples.DIM_FIELD_ZH)
+
+
+@bp.route("/api/samples")
+def samples_list_api():
+    """列全局样文池词条元数据(id/title/维度/字数/来源/备注,不含正文)。"""
+    rows = [{"id": s.id, "title": s.title, "scene_tags": s.scene_tags,
+             "dims": s.dims, "source": s.source, "source_book": s.source_book,
+             "note": s.note, "word_count": s.word_count} for s in _samples_all()]
+    return jsonify({"ok": True, "count": len(rows), "samples": rows})
+
+
+@bp.route("/api/samples/annotate", methods=["POST"])
+def samples_annotate_api():
+    """一键预标:给 {text, scene_tags?} 返回多维权表建议(不落库),供表单填充后人工微调再保存。"""
+    d = request.get_json(silent=True) or {}
+    text = str(d.get("text") or "")
+    if not text:
+        return jsonify({"ok": False, "error": "text 不能为空"}), 400
+    from libraries.style_annotate import suggest_dims
+    dims = suggest_dims(text, [str(t) for t in (d.get("scene_tags") or [])])
+    return jsonify({"ok": True, "dims": dims})
+
+
+@bp.route("/api/samples", methods=["POST"])
+def samples_save_api():
+    """新增/编辑样文池词条(全局):入参 {samples:[…]} 或 {sample:{…}};有 id 覆盖、无 id 追加。
+
+    返回 {ok, saved, warnings, samples};warnings = 短块/重复子段软提示(no_warn 条除外),不阻断。
+    """
+    d = request.get_json(silent=True) or {}
+    if "sample" in d and isinstance(d["sample"], dict):
+        records = [d["sample"]]
+    elif isinstance(d.get("samples"), list):
+        records = d["samples"]
+    else:
+        return jsonify({"ok": False, "error": "入参须为 {samples:[...]} 或 {sample:{...}}"}), 400
+    final, warnings = _samples_upsert(records)
+    return jsonify({"ok": True, "saved": len(records), "warnings": warnings,
+                    "samples": [s.to_dict() for s in final]})
+
+
+@bp.route("/api/samples/selector-preview", methods=["POST"])
+def samples_selector_preview_api():
+    """样本选择器模拟(Plot Run 取样的可视化):给一个情节的维度 query → 候选池/命中分/
+    选中权重/加权随机结果/近期避重,供样文池「样本选择器模拟」区块展示。
+
+    与 Agent 实际注入共用 libraries.style_samples.preview_pick(同一条评分/轮盘/避重链),
+    保证 UI 展示的就是写作时真正会用的取样逻辑。入参:
+      {query: {scene:[..], dramatic_state:'..', ..}, k: 1-5,
+       avoid: [sample_id,...](显式近期避重;缺省时 profile_id 非空读该笔名 pick_history),
+       profile_id: '..'(笔名,可选)}
+    """
+    d = request.get_json(silent=True) or {}
+    raw_q = d.get("query") or {}
+    # 清洗 query:只认合法维/合法枚举值;scene/narrative_action 为 list,其余单值
+    query = {}
+    for f, choices in style_samples.DIM_CHOICES.items():
+        v = raw_q.get(f)
+        if f in ("scene", "narrative_action"):
+            vals = [str(x) for x in (v if isinstance(v, list) else [v]) if str(x) in choices]
+            if vals:
+                query[f] = vals
+        else:
+            v = str(v or "")
+            if v in choices:
+                query[f] = v
+    try:
+        k = max(1, min(int(d.get("k") or 1), 5))
+    except (TypeError, ValueError):
+        k = 1
+    avoid = d.get("avoid")
+    if not isinstance(avoid, list):
+        profile_id = str(d.get("profile_id") or "")
+        avoid = style_samples.load_pick_history(profile_id) if profile_id else []
+    avoid = [str(x) for x in avoid if str(x)]
+    samples = _samples_all()
+    import random as _random
+    picked, meta, candidates = style_samples.preview_pick(
+        samples, query=query, k=k, avoid=avoid, rng=_random.Random())
+    return jsonify({
+        "ok": True,
+        "picked": [s.id for s in picked],
+        "picked_detail": [{"id": s.id, "title": s.title or s.id,
+                           "word_count": s.word_count} for s in picked],
+        "candidates": candidates,
+        "avoid": avoid,
+        "meta": meta,
+        "dim_labels": style_samples.DIM_LABELS,
+    })
+
+
+@bp.route("/api/samples/<sample_id>/delete", methods=["POST"])
+def samples_delete_api(sample_id):
+    """删除样文池一个词条(按 id)。"""
+    cur = _samples_all()
+    if not any(s.id == sample_id for s in cur):
+        return jsonify({"ok": False, "error": f"词条 {sample_id} 不存在"}), 404
+    cur = [s for s in cur if s.id != sample_id]
+    style_samples.save_samples(samples=cur)
+    return jsonify({"ok": True, "deleted": sample_id, "total": len(cur)})
+
+
+# ── 兼容(旧 /profiles 样文端点 → 全局词条库;写作风格页已不含样文)──
+
+@bp.route("/api/profile/<profile_id>/samples", methods=["POST"])
+def profile_samples_save(profile_id):
+    """(兼容)样文已拆为全局词条库;此端点把入参整体 upsert 进全局(不再按笔名键)。"""
+    d = request.get_json(silent=True) or {}
+    records = d.get("samples")
+    if not isinstance(records, list):
+        return jsonify({"ok": False, "error": "samples 须为数组"}), 400
+    final, warnings = _samples_upsert(records)
+    return jsonify({"ok": True, "saved": len(records), "warnings": warnings,
+                    "samples": [s.to_dict() for s in final]})
+
+
+@bp.route("/api/profile/<profile_id>/reference", methods=["POST"])
+def profile_reference_save(profile_id):
+    """(兼容)旧整包 <sample> 文本 → 拆块追加进全局样文池。"""
+    d = request.get_json(silent=True) or {}
+    content = str(d.get("content") or "")
+    blocks = style_samples.parse_blocks(content)
+    records = [{"id": "", "title": "", "scene_tags": [], "source": "",
+                "note": "", "text": b} for b in blocks]
+    final, _w = _samples_upsert(records)
+    return jsonify({"ok": True, "saved": len(records), "total": len(final),
+                    "samples": [s.to_dict() for s in final]})
+
+
+@bp.route("/api/profile/<profile_id>/samples/select", methods=["POST"])
+def profile_samples_select(profile_id):
+    """保存笔名在样文池的选取(词条 id 列表 + 来源书白名单)——AI 写作时按此注入对应样文。
+
+    入参 {sample_ids:[...], sample_books:[...]} 各自全量覆盖;缺省/空数组 = 该项不设(空语义)。
+    sample_ids 只保留库中真实存在的 id;sample_books 只保留库中真实出现的来源书键。
+    sample_books 声明后,写作只从这些来源书的样文里选(与 sample_ids 交)。
+    """
+    p = profiles.get(profile_id)
+    if not p:
+        return jsonify({"ok": False, "error": "笔名不存在"}), 404
+    d = request.get_json(silent=True) or {}
+    out = {"ok": True, "profile_id": profile_id}
+    if "sample_ids" in d:
+        ids = d.get("sample_ids")
+        if not isinstance(ids, list):
+            return jsonify({"ok": False, "error": "sample_ids 须为数组"}), 400
+        valid = {s.id for s in _samples_all()}
+        clean = []
+        for i in ids:
+            i = str(i).strip()
+            if i and i in valid and i not in clean:
+                clean.append(i)
+        p.sample_ids = clean
+        out["sample_ids"] = clean
+    if "sample_books" in d:
+        books = d.get("sample_books")
+        if not isinstance(books, list):
+            return jsonify({"ok": False, "error": "sample_books 须为数组"}), 400
+        valid_b = {s.source_book for s in _samples_all() if (s.source_book or "").strip()}
+        clean_b = []
+        for b in books:
+            b = str(b).strip()
+            if b and b in valid_b and b not in clean_b:
+                clean_b.append(b)
+        p.sample_books = clean_b
+        out["sample_books"] = clean_b
+    profiles.update(p)
+    return jsonify(out)
 
 
 @bp.route("/profiles/<profile_id>/delete", methods=["POST"])

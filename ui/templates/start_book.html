@@ -4,7 +4,7 @@
 {# 页面 CSS 放 content 顶部（而非 head）：SPA 导航只替换 main 内容、不应用 head 样式表，
    放这里让侧栏点「启动新书」经 navigateTo 跳转时也能加载（对齐写作台/书详情约定）。
    缺了 workspace.css 时步3 .editor-split 的 display:flex 失效 → 两栏叠成竖排（老 bug）。 #}
-<link rel="stylesheet" href="/static/css/story_line.css?v=4">
+<link rel="stylesheet" href="/static/css/story_line.css?v=22">
 <link rel="stylesheet" href="/static/css/workspace.css?v=2">
 <h1>🔰 启动新书</h1>
 
@@ -95,6 +95,32 @@
                 <div><label>每章字数</label><input id="wz-words" type="number" value="3000" min="1000" max="10000" step="500"></div>
             </div>
             <div class="form-row hint" id="wz-world-status">进入本步时已由 AI 自动补全，可手动微调。</div>
+            <!-- 规划进度：阶段（流程走到哪）+ 待填清单（东西填得怎么样）。
+                 数据来自 GET /api/build/draft（页面已在轮询），不额外开通道。 -->
+            <div class="form-row" id="wz-stale-banner" role="alert" style="display:none"></div>
+            <details id="wz-checklist" style="display:none;margin:4px 0 10px">
+                <summary style="cursor:pointer;font-weight:600">
+                    🧭 规划进度 <span class="hint" id="wz-checklist-summary"></span>
+                </summary>
+                <div id="wz-checklist-body" style="margin-top:6px"></div>
+            </details>
+            <!-- 构建历史：每次落盘留一版**完整快照**（可无损回退）。回退不删历史，
+                 而是写成新的一版——历史同时是审计。 -->
+            <details id="wz-history" style="display:none;margin:4px 0 10px">
+                <summary style="cursor:pointer;font-weight:600">
+                    🕘 构建历史 <span class="hint" id="wz-history-summary"></span>
+                </summary>
+                <div id="wz-history-body" style="margin-top:6px"></div>
+            </details>
+            <!-- agent 草稿状态：canonical 拉取结果 + 允许从服务端恢复（用户改过表单时不自动覆盖） -->
+            <div class="form-row hint" id="wz-agent-draft-status" role="status" aria-live="polite"></div>
+            <div class="form-row" id="wz-agent-draft-errors" role="alert" style="display:none"></div>
+            <div class="form-row">
+                <button type="button" id="wz-restore-canonical" class="btn" style="display:none;padding:8px 16px"
+                        onclick="WZ.syncCanonicalDraft({force:true})">↻ 从服务端恢复 Agent 草稿</button>
+                <button type="button" id="wz-next-phase" class="btn" style="display:none;padding:8px 16px"
+                        onclick="WZ.continuePhase()">➡ 继续下一阶段</button>
+            </div>
             <div class="form-row">
                 <label>设定概述 world_summary</label>
                 <textarea id="wz-wb-world_summary" rows="3" style="overflow:hidden;resize:vertical" oninput="WZ.autoSize(this)"></textarea>
@@ -225,15 +251,29 @@ main { overflow-y:auto; }   /* 页面可上下滚动：workspace.css 的 main{ov
 .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
 </style>
 
-<script src="/static/js/story_line.js?v=4"></script>
+<script src="/static/js/story_line.js?v=12"></script>
 <script>
+// 规划阶段的中文名（与 libraries/build_phases.py 的 CHAINS 同源；只影响显示）
+var WZ_PHASE_LABEL = {
+    planning_thesis: '立命题', mirror: '查库对镜', scaffold: '世界观与人物',
+    stop_A: '等你确认骨架', executable_horizon: '近期规划', forecast_horizon: '远期规划',
+    promise_reconciliation: '伏笔对账', validate: '自查回打', stop_B: '等你提交',
+    preview_confirm: '等你确认预览', done: '完成',
+};
 var WZ = {
     cur: 1, bookId: '', creating: false, _picked: false, submitError: '',
+    // 脏标记按**字段**记（不是全局布尔）：分阶段落盘下，一次脏就永久拒绝回灌，会让
+    // 「改过阶段 1 的字段后，阶段 2/3 的内容再也灌不进来」。
+    _dirtyFields: {}, _lastCanonicalDraft: null, _phaseAcking: false,
+    // 步 3 草稿同步：_buildRevision = 提交时用的 canonical 版本号（CAS）；
+    // _canonicalRevision = 已回灌进表单的版本（幂等）；_step3Dirty = 回灌后用户手工改过
+    _buildRevision: null, _canonicalRevision: null, _step3Dirty: false, _syncingCanonical: false,
     _worldFilled: false, _worldFilling: false,
     _agentDriving: false,   // 已挑选完毕 → 已把步 3 交给 agent 驱动（抑制 show(3) 自动一键补全）
     _task2Fired: false,   // 本次候选下已触发过第二个建书任务（重选候选后复位允许再触发）
     __ARCHETYPES__: [],   // 角色原型库（fetch /api/characters 后填充，供原型下拉/套用原型）
     state: { idea: '', pen_name: '', tags: [], borrow: { source_book_id: '', tweak: '' },
+             build_session_id: '', target_word_budget: 120000,
              genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
              storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
              protag_personality: '', protag_golden_finger: '',
@@ -242,6 +282,15 @@ var WZ = {
              _outline_picks: null, _outline_picks_names: null, _outline_data: null },
 
     el: function(id) { return document.getElementById(id); },
+
+    ensureBuildSession: function() {
+        if (!this.state.build_session_id) {
+            this.state.build_session_id = (window.crypto && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : ('build-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+        }
+        return this.state.build_session_id;
+    },
 
     /* textarea 自动增高：内容多时完全展开，不出现滚动条 */
     autoSize: function(el) {
@@ -265,6 +314,9 @@ var WZ = {
             s.onclick = (sn < n && !self.bookId) ? function() { self.show(sn); } : null;
         });
         this.cur = n;
+        // 进步 3 就同步一次 canonical 草稿：agent 可能已经写过（页面没开的时候写完、
+        // 或投影事件丢失），按 revision 幂等，重复触发是 no-op。
+        if (n === 3 && !this.bookId) this.syncCanonicalDraft();
         // 步3 两栏布局放宽（故事线左栏 + 世界观表单右栏），其余步保持 800px 卡片
         var wrap = document.querySelector('.wz-panels');
         if (wrap) wrap.classList.toggle('wide', n === 3);
@@ -312,8 +364,12 @@ var WZ = {
             plots: (d.plots && d.plots.length) ? d.plots : [],
             threads: (d.threads && d.threads.length) ? d.threads : [],
             themes: (d.themes && d.themes.length) ? d.themes : [],
-            promises: []
-        }, {scrollable: true});
+            promises: (d.promises && d.promises.length) ? d.promises : []
+        }, {
+            scrollable: true,
+            // 步 3 的 H1/H2 直接消费 canonical 草稿中的 storyline.planning。
+            planning: (d.planning && typeof d.planning === 'object') ? d.planning : {}
+        });
     },
 
     validate: function(n) {
@@ -332,23 +388,76 @@ var WZ = {
             }
             return;
         }
-        // 步 2「已挑选完毕」→ 交给 agent 继续建书：自动发第二个建书任务（dsh 侧 skill 已于 2026-08-24 删除，agent 用 MCP 直驱），
-        // 步 3 由 agent 分阶段补全世界观 → submit → 弧。取代旧「前端自动跳步 + 一键补全」路径。
+        // 步 2「已挑选完毕」→ 交给 agent 继续建书。
+        //
+        // ⚠️ **顺序是硬要求：先把状态原子落服务端（transition），成功后才派发 agent。**
+        // 2026-09-10 事故：此前先 `agentSendTask`、再在 show(3) 里异步 reportStatus，于是
+        // 服务端 _build_fsm 判阶段时读到的还是 cur=2 → 起了 build-candidates profile 的子 run
+        // （那个工具面没有 set_world/set_outline/set_characters），模型整轮只能做「平台错误恢复」。
+        // 状态没能在服务端落盘就**绝不**启动依赖它的模型——宁可让用户多等几十毫秒。
         if (this.cur === 2 && this._picked && !this._task2Fired) {
             this._task2Fired = true;
             this._agentDriving = true;
-            var task = '请继续建这本新书（步 2 已选定候选「' + (this.state.title || '') + '」），自主生成填写步 3 内容表单及故事线：挑选弧 → 构建核心矛盾core_conflict → 创建势力 → 挑选桥段 → 创建各势力人物适配 → 补全其余表单 → 评判合理性及阅读吸引力并修改。填完表单后停下，向用户汇报设定概要并等待确认；用户明确确认后再提交建书。';
-            if (typeof window.agentSendTask === 'function') {
-                window.agentSendTask(task, { card: true });
-            } else if (typeof showToast === 'function') {
-                showToast('Agent 面板未就绪，请刷新页面后点「已挑选完毕」继续', 'error');
-                this._task2Fired = false;
-                this._agentDriving = false;
-            }
+            var self = this;
+            this.transitionTo(3).then(function(ok) {
+                if (!ok) {
+                    self._task2Fired = false;    // 允许用户再点一次重试
+                    self._agentDriving = false;
+                    if (typeof showToast === 'function')
+                        showToast('状态没能在服务端落盘，已取消本次建书；请再点一次「已挑选完毕」', 'error');
+                    return;
+                }
+                self.show(3);
+                var task = '请继续建这本新书（步 2 已选定候选「' + (self.state.title || '') + '」），按 novel-build 的**分阶段构思**流程推进：先 get_build_context 读回权威输入，看清 plan_meta.phase 与 plan_meta.stale_phases，**从当前阶段续跑**（有失效阶段就从最靠前的那个重做；已经落过盘的内容不要重复生成），每完成一个阶段就 save_build_draft 落一版草稿。到停点 A（世界观与人物落盘后）停下，向用户汇报本阶段产出与待填清单并等用户确认；用户确认后再继续排弧与近期/远期规划。'
+                    + ' [build_session=' + self.ensureBuildSession() + ']';   // 机器标记：服务端据此把本次任务钉到本向导会话（build_status 是全局单快照）
+                if (typeof window.agentSendTask === 'function') {
+                    window.agentSendTask(task, { card: true });
+                } else if (typeof showToast === 'function') {
+                    showToast('Agent 面板未就绪，请刷新页面后点「已挑选完毕」继续', 'error');
+                    self._task2Fired = false;
+                    self._agentDriving = false;
+                }
+            });
+            return;   // 切步与派发都在 transition 成功之后进行
         }
         this.show(this.cur + 1);
     },
-    prev: function() { this.show(this.cur - 1); },
+
+    /* 阶段转场：把 step + 表单事实**原子**写进服务端 canonical 记录
+       （POST /api/build/transition）。返回 Promise<bool>；false = 未落盘，调用方不得派发 agent。
+       服务端记录才是阶段权威——build_status.json 只是 UI 现状快照。 */
+    transitionTo: function(step) {
+        var body = {
+            build_session_id: this.ensureBuildSession(),
+            step: step,
+            // idea/标签读 DOM 而非 state（agentBuild() 会把 state.tags 清空而 chip 仍是 .on）
+            idea: (this.el('wz-idea') ? this.el('wz-idea').value.trim() : ''),
+            tags: Array.prototype.slice.call(document.querySelectorAll('.chip.on'))
+                    .map(function(b) { return b.dataset.tag; }),
+            pen_name: (this.state && this.state.pen_name) || '',
+            selected_candidate: (this.state && this.state.selected_candidate) || null
+        };
+        var self = this;
+        try {
+            return fetch('/api/build/transition', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            }).then(function(r) {
+                return r.json().catch(function() { return { ok: false }; });
+            }).then(function(d) {
+                if (d && d.ok) { self._buildRevision = d.revision; return true; }
+                return false;
+            }).catch(function() { return false; });
+        } catch (e) { return Promise.resolve(false); }
+    },
+    // 回退同样要同步服务端阶段权威：否则从步 3 退回步 2 后 canonical 记录仍写着 step=3，
+    // 下一条任务会被判成步 3（用户明明在重选候选）。
+    prev: function() {
+        var target = this.cur - 1;
+        this.show(target);
+        if (this.bookId || target < 1 || target > 3) return;
+        this.transitionTo(target);
+    },
 
     toggleTag: function(btn) {
         btn.classList.toggle('on');
@@ -390,6 +499,7 @@ var WZ = {
         // 前端自动 reset（清 state 除笔名 + 清表单 + 清 draft）→ 重新填 idea/pen/tags → 自动进步 2
         var keepPen = this.state.pen_name || '';
         this.state = { idea: '', pen_name: keepPen, tags: [], borrow: { source_book_id: '', tweak: '' },
+                       build_session_id: '', target_word_budget: 120000,
                        genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
                        storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
                        protag_personality: '', protag_golden_finger: '',
@@ -420,7 +530,8 @@ var WZ = {
         var task = '请为这本新书生成世界观候选（已完成步 1 填表、已自动进步 2）：一句话设定「' + idea + '」'
             + '题材标签「' + (tags.join('、') || '（未选）') + '」'
             + '笔名「' + (pen || '（未选，请帮我选）') + '」。'
-            + '笔名未选就 query_profiles 查一个最匹配的并 drive_ui(set_field pen) 补填。';
+            + '笔名未选就 query_profiles 查一个最匹配的并 drive_ui(set_field pen) 补填。'
+            + ' [build_session=' + this.ensureBuildSession() + ']';   // 机器标记：与服务端 build_status 的会话 id 同源（步 1 也要能认会话）
         if (typeof window.agentSendTask === 'function') {
             window.agentSendTask(task, { card: true });   // 右侧显示「🚀 建书任务」卡片，而非用户气泡
         } else {
@@ -448,6 +559,18 @@ var WZ = {
         this._worldFilled = false;   // 新候选方向 → 步 3 按新种子重新补全
         this._outline_picks = null;
         this._task2Fired = false;   // 重选候选后允许再次触发第二个建书任务
+        // 选择落服务端（canonical 记录）——「用户选了什么」不再只活在 window 状态里，
+        // 服务端据此在步 3 读回权威上下文（而不是把整段聊天转发给模型）。失败不阻断选择本身。
+        this.state.selected_candidate = { title: c.title || '',
+                                          one_liner: c.one_liner || '',
+                                          world_brief: c.world_brief || '' };
+        try {
+            fetch('/api/build/pick', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ build_session_id: this.ensureBuildSession(),
+                                       candidate: this.state.selected_candidate })
+            }).catch(function() {});
+        } catch (e) {}
         if (typeof showToast === 'function') showToast('已选中：' + c.title + '，点「已挑选完毕」交给 Agent 建书', 'success');
     },
     // 候选卡渲染（set_candidates 整体替换 / add_candidate 增量追加共用）：只渲染不选中，
@@ -732,11 +855,60 @@ var WZ = {
     emptyChar: function() {
         return { name: '', role: '配角', importance: 2, identity: '', title: '', gender: '',
                  personality: '', catchphrase: '', brief: '', golden_finger: '', faction: '',
-                 age: 0, death_year: 0, archetype_id: '', relations: [] };
+                 age: 0, death_year: 0, archetype_id: '', relations: [],
+                 behavior: {}, speech_profile: {}, development_plan: '' };
     },
     esc: function(s) {
         return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    },
+    /* 嵌套字段读写（行为模型/语言倾向等 data-path 输入；.cc[data-f] 只收顶层扁平键） */
+    getPath: function(o, path) {
+        var cur = o, seg = String(path || '').split('.');
+        for (var i = 0; i < seg.length; i++) {
+            if (cur == null) return '';
+            cur = cur[seg[i]];
+        }
+        return cur;
+    },
+    setPath: function(o, path, val) {
+        var seg = String(path || '').split('.');
+        var cur = o;
+        for (var i = 0; i < seg.length - 1; i++) {
+            if (cur[seg[i]] == null || typeof cur[seg[i]] !== 'object') cur[seg[i]] = {};
+            cur = cur[seg[i]];
+        }
+        cur[seg[seg.length - 1]] = val;
+    },
+    /* 行为模型（情境→一贯反应）+ 语言倾向（非固定口头禅）折叠编辑区 */
+    behaviorSectionHTML: function(c) {
+        c = c || {};
+        var sp = c.speech_profile || {};
+        var pathIn = function(path, ph) {
+            return '<input class="bh" data-path="' + path + '" placeholder="' + (ph || '') + '" value="' + WZ.esc(WZ.getPath(c, path)) + '" style="width:100%">';
+        };
+        var pairs = [['decision_style', 'under_pressure', '压力下'], ['decision_style', 'danger', '危险时'],
+                     ['decision_style', 'betrayal', '遭背叛'], ['communication_style', 'stranger', '对陌生人'],
+                     ['communication_style', 'friend', '对朋友'], ['communication_style', 'enemy', '对敌人'],
+                     ['emotion_expression', 'anger', '愤怒时'], ['emotion_expression', 'fear', '恐惧时'],
+                     ['emotion_expression', 'sadness', '悲伤时']];
+        var g = pairs.map(function(x) {
+            return '<div style="flex:1 1 30%;min-width:150px"><label style="font-size:11px;color:#8b949e">' + x[2] + '</label>' + pathIn('behavior.' + x[0] + '.' + x[1]) + '</div>';
+        }).join('');
+        var list = function(path, ph, arr) {
+            return '<textarea class="bh" data-path="' + path + '" data-list="1" placeholder="' + ph + '" rows="2" style="width:100%;box-sizing:border-box">' + WZ.esc((arr || []).join('\n')) + '</textarea>';
+        };
+        return '<details style="margin-top:8px;border:1px solid #30363d;border-radius:6px;padding:6px 8px">'
+            + '<summary style="cursor:pointer;font-size:12px;color:#8b949e">🎭 行为模型 &amp; 语言倾向（进阶，可选）</summary>'
+            + '<div style="font-size:12px;color:#8b949e;margin:6px 0">情境→一贯反应：人物稳定感来自不同刺激下反应一致（每格 1-3 短句）</div>'
+            + '<div style="display:flex;flex-wrap:wrap;gap:6px">' + g + '</div>'
+            + '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'
+            + '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#8b949e">句长倾向（如 短句）</label>' + pathIn('speech_profile.rhythm') + '</div>'
+            + '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:#8b949e">语气（如 克制）</label>' + pathIn('speech_profile.tone') + '</div>'
+            + '</div>'
+            + '<div style="margin-top:6px"><label style="font-size:11px;color:#8b949e">说话习惯 / 句式倾向（适时自然，不固定复读）</label>' + list('speech_profile.habits', '先确认事实、避免直接表达情绪…（每行一条）', sp.habits) + '</div>'
+            + '<div style="margin-top:6px"><label style="font-size:11px;color:#8b949e">绝不说 / 禁开口癖</label>' + list('speech_profile.forbidden', '夸张感叹、连续解释…（每行一条）', sp.forbidden) + '</div>'
+            + '</details>';
     },
     /* 角色 role/importance 归一化（防 agent 传非枚举 role / 漏 importance）：
        role 只取 主角/配角/反派/其他 四选一——非枚举值按 importance 推断（importance===1→主角，否则配角）；
@@ -754,7 +926,7 @@ var WZ = {
             return c;
         });
     },
-    /* 弧/桥段结构归一化（防 agent 漏 id/notes/outline_id/order，导致故事线渲染空/桥段丢失）：
+    /* 弧/情节段结构归一化（防 agent 漏 id/notes/outline_id/order，导致故事线渲染空/情节段丢失）：
        outline 补 id（缺省 outline_N）、notes（description 兼容）；plot 补 id（plot_N）、order（按序）、
        outline_id（缺省时按序均分到各弧，保持先后）。返回 {outlines, plots} 新数组，不改入参。 */
     normalizeOutlineData: function(outlines, plots) {
@@ -823,7 +995,8 @@ var WZ = {
             + '<div class="char-relations">'
             + '<div style="font-size:12px;color:#8b949e;margin:6px 0 4px">人物关系（对方姓名 / 关系）</div>'
             + '<div class="rel-rows"></div>'
-            + '<button type="button" class="small" onclick="WZ.addRelRow(this)">➕ 加关系</button></div>';
+            + '<button type="button" class="small" onclick="WZ.addRelRow(this)">➕ 加关系</button></div>'
+            + WZ.behaviorSectionHTML(c);
         (container || this.el('wz-wb-factions')).appendChild(card);
         var relWrap = card.querySelector('.rel-rows');
         // relations 容错：agent 可能传字符串/字符串数组（而非 [{name,relation}]）——非数组直接跳过，不中断渲染
@@ -932,6 +1105,15 @@ var WZ = {
                 var r = row.querySelector('.cc-rel-rel').value.trim();
                 if (n) c.relations.push({name: n, relation: r});
             });
+            // 嵌套字段（行为模型/语言倾向）：data-path 输入 → setPath 写进嵌套 dict；data-list 按换行转数组
+            card.querySelectorAll('[data-path]').forEach(function(inp) {
+                var p = inp.getAttribute('data-path');
+                if (!p) return;
+                var v = inp.getAttribute('data-list')
+                    ? inp.value.split('\n').map(function(s) { return s.trim(); }).filter(Boolean)
+                    : inp.value.trim();
+                WZ.setPath(c, p, v);
+            });
             if (c.name) out.push(c);
         });
         return out;
@@ -994,6 +1176,7 @@ var WZ = {
         return {
             description: (this.state.world_building || {}).description || '',   // 一句话设定保留在 state，步3 不展示/编辑
             tags: Array.isArray(this.state.tags) ? this.state.tags : [],
+            differentiation: (this.state.world_building || {}).differentiation || '',  // 反模板差异化完整论述：只存不编辑（随 set_world 并入 state，透传落库）
             era: this.el('wz-wb-era').value.trim(),
             power_system: this.el('wz-wb-power_system').value.trim(),
             geography: this.el('wz-wb-geography').value.trim(),
@@ -1079,10 +1262,28 @@ var WZ = {
             return;
         }
         if (this.creating) return;
+        // 提交前再同步一次 canonical：agent 可能刚写过、或本页还没同步过。拿到最新 revision
+        // 才不会因版本不等而回退表单；用户改过表单时不会覆盖（走 form 模式）。
+        var self0 = this;
+        this.syncCanonicalDraft().then(function() { self0._submitBook(); });
+    },
+    _submitBook: function() {
+        if (this.creating) return;
         this.creating = true;
         this.submitError = '';   // 清旧错误,防 agent 读到上一次失败
         this.reportStatus();
+        this.ensureBuildSession();
         this.collect();
+        // canonical 草稿优先：带上会话 id + revision + 来源，服务端命中即用**它校验过的
+        // 草稿**建书（表单只是投影）；用户手工改过（或本来就没有草稿）走 form 模式。
+        this.state.build_session_id = this.ensureBuildSession();
+        if (this._canonicalRevision != null && !this._step3Dirty) {
+            this.state.build_source = 'canonical';
+            this.state.build_revision = this._canonicalRevision;
+        } else {
+            this.state.build_source = 'form';
+            delete this.state.build_revision;
+        }
         var btn = this.el('wz-submit');
         btn.disabled = true; btn.textContent = '⏳ 创建中…';
         var self = this;
@@ -1106,7 +1307,7 @@ var WZ = {
             self.bookId = d.book_id;
             self.reportStatus();   // 上报 bookId → agent get_build_status 拿到建书结果
             try { sessionStorage.removeItem(self.PERSIST_KEY); } catch (e) {}   // 建书成功清空草稿
-            // 3 步建书结束：直接入库 → 跳书详情；世界观/弧/桥段/人物已在步 3 分阶段构建
+            // 3 步建书结束：直接入库 → 跳书详情；世界观/弧/情节段/人物已在步 3 分阶段构建
             // 并随 submit 落库（书创建即 phase=ready），直接进入写作台。
             // SPA 跳转（navigateTo 失败自动 fallback 整页）：不卸载页面，保留进行中的
             // SSE 事件流会话，使 dsh 的最终 reply 与工具卡不因页面刷新而丢失
@@ -1127,6 +1328,7 @@ var WZ = {
     persist: function() {
         if (this.bookId) return;   // 建书后不存草稿：避免恢复已完成向导到生成中的步骤
         try {
+            this.ensureBuildSession();
             this.collect();   // 从 DOM 刷新 state（含 characters）
             sessionStorage.setItem(this.PERSIST_KEY, JSON.stringify({
                 state: this.state,
@@ -1142,14 +1344,28 @@ var WZ = {
     },
     // 上报建书状态到后端（storage/build_status.json，供 MCP 工具 get_build_status 读）
     reportStatus: function() {
+        // 返回 Promise：调用方可 await 它来保证「状态已到服务端」再决定下一步
+        // （步 2→3 的转场就是靠这个顺序修掉 2026-09-10 那次「先发任务后上报」的竞态）。
         try {
-            fetch('/api/agent/build-status', {
+            return fetch('/api/agent/build-status', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     cur: this.cur,
                     bookId: this.bookId || '',
+                    // 保证首次上报就带上会话 id（此前只在 createBook 附近 ensure，
+                    // 步 3 交接时服务端可能还拿不到）——与交接任务里的 [build_session=…] 同源
+                    buildSessionId: this.ensureBuildSession(),
+                    // 表单内容：提交前服务端没有别的副本，候选生成/步3 深化都要靠它。
+                    // 取值直接读 DOM，**不用 this.state.tags**——agentBuild() 会把 state.tags
+                    // 重置为 [] 而 chip 仍是 .on，用 state 会报出与页面不符的空标签。
+                    // 也**别**在这里调 collect()：它会用 DOM 覆盖 state.title，而步 3 用
+                    // state.title 覆盖 #wz-title，可能把步 2→3 交接要用的候选书名清掉。
+                    idea: (this.el('wz-idea') ? this.el('wz-idea').value.trim() : ''),
+                    tags: Array.prototype.slice.call(document.querySelectorAll('.chip.on'))
+                        .map(function(b) { return b.dataset.tag; }),
                     creating: !!this.creating,
                     _picked: !!this._picked,
+                    pen_selected: !!(this.state && this.state.pen_name),
                     has_world: !!(this.state && this.state.world_building),
                     has_picks: !!(this.state && this.state._outline_picks),
                     has_outline: !!(this.state && this.state._outline_data
@@ -1157,8 +1373,8 @@ var WZ = {
                                     && this.state._outline_data.outlines.length),
                     submit_error: this.submitError || ''
                 })
-            }).catch(function() {});
-        } catch (e) {}
+            }).catch(function() { return null; });
+        } catch (e) { return Promise.resolve(null); }
     },
     restore: function() {
         var raw;
@@ -1196,12 +1412,329 @@ var WZ = {
         if (s.borrow && s.borrow.tweak) this.el('wz-borrow-tweak').value = s.borrow.tweak;
         // 人物卡（按所属势力分组还原）
         this.renderCharCards(s.characters || []);
+    },
+    /* ─── 步 3 草稿：从 canonical 拉取并回灌表单 ───
+
+       canonical（服务端 storage/build_drafts/<sid>.json）是提交源，表单只是它的投影。
+       早先由 save_build_draft 内部 push 三条 ui 命令过来，但那条队列在 agent 忙时会被
+       浏览器取走清空（防与 SSE ui_command 双触发），而内部投影没有 SSE 伴随事件
+       → 草稿在服务端、表单永远空白（2026-09-13 事故）。
+       现在页面主动拉：进步 3 / 页面初始化 / 收到 build_draft_status 事件 / 刷新（pageshow）
+       各同步一次，按 revision 幂等，因此刷新、断线、换标签页都能恢复。 */
+    syncCanonicalDraft: function(opts) {
+        opts = opts || {};
+        var sid = opts.sid || this.ensureBuildSession();
+        if (!sid || this._syncingCanonical) return Promise.resolve(false);
+        this._syncingCanonical = true;
+        var self = this;
+        return fetch('/api/build/draft?sid=' + encodeURIComponent(sid))
+            .then(function(r) { return r.json(); })
+            .then(function(rec) {
+                if (!rec || !rec.ok) return false;
+                if (rec.build_session_id !== self.ensureBuildSession()) return false;   // 别把别的会话灌进来
+                // 清单/阶段独立于草稿应用：用户脏表单时 applyCanonicalRecord 会早退，
+                // 但"还差什么没填"仍然要如实刷新
+                self.renderChecklist(rec);
+                if (!rec.exists || !rec.draft) return false;
+                return self.applyCanonicalRecord(rec, opts);
+            })
+            .catch(function(e) {
+                if (opts.force) self.showDraftIssues(['服务端草稿读取失败：' + (e && e.message || e)]);
+                return false;
+            })
+            .then(function(ok) { self._syncingCanonical = false; return ok; });
+    },
+    applyCanonicalRecord: function(rec, opts) {
+        opts = opts || {};
+        var rev = Number(rec.revision || 0);
+        if (!opts.force && this._canonicalRevision != null && rev <= this._canonicalRevision) {
+            return false;                                  // 同版本幂等：重复触发不再动表单
+        }
+        var draft = rec.draft || {};
+        this._lastCanonicalDraft = draft;
+        var dispatch = function(cmd, args) {
+            window.dispatchEvent(new CustomEvent('ne:command', { detail: { cmd: cmd, args: args } }));
+        };
+        // 顺序固定 world → characters → storyline：set_world 会重建势力 DOM，人物卡是按势力
+        // 分组渲染的，先画人物会被随后重建的势力区覆盖掉。
+        // **段级跳过**：只跳过用户改过的那一段，其余照常回灌——不是一次脏就全部冻结
+        var skipped = [];
+        if (draft.world) {
+            if (this._hasDirtyIn('wz-wb-')) { skipped.push('世界观'); }
+            else { dispatch('set_world', draft.world); this._clearDirtyIn('wz-wb-'); }
+        }
+        if (draft.characters) {
+            if (this._hasDirtyIn('wz-char-')) { skipped.push('人物'); }
+            else { dispatch('set_characters', { characters: draft.characters }); this._clearDirtyIn('wz-char-'); }
+        }
+        // 空故事线不 dispatch：set_outline 传空结构会把左栏 Gantt 清空
+        var sl = draft.storyline || {};
+        if ((sl.outlines || []).length || (sl.plots || []).length) dispatch('set_outline', sl);
+        this._canonicalRevision = rev;
+        this._buildRevision = rev;                         // 提交时 CAS 用，必须同步到最新
+        var name = (rec.selected_candidate && rec.selected_candidate.title) || this.state.title || '';
+        if (skipped.length) {
+            this.showDraftStatus('服务端草稿已更新到 revision ' + rev + '；' + skipped.join('、')
+                + ' 你改过，未自动覆盖（点「➡ 继续下一阶段」会先保存你的版本）。', 'warning');
+            this.showRestoreButton(true);
+        } else {
+            this.showDraftStatus('已从服务端载入 agent 草稿（revision ' + rev + '）'
+                + (name ? '：' + name : '') + '，请 review 后自己点「创建并进入写作台」提交。', 'success');
+            this.showRestoreButton(false);
+        }
+        this.persist();
+        this.reportStatus();
+        return true;
+    },
+    /* ─── 规划进度：阶段（流程走到哪）+ 待填清单（东西填得怎么样）───
+       两者刻意分开：内容填满了不代表"查库对镜"发生过，反之亦然。 */
+    renderChecklist: function(rec) {
+        var box = this.el('wz-checklist');
+        var body = this.el('wz-checklist-body');
+        var sum = this.el('wz-checklist-summary');
+        if (!box || !body) return;
+        var meta = (rec && rec.plan_meta) || {};
+        this.renderStale(meta);
+        var nextBtn = this.el('wz-next-phase');
+        if (nextBtn) {
+            var atStop = meta.phase === 'stop_A';
+            nextBtn.style.display = atStop ? '' : 'none';
+            if (atStop) {
+                nextBtn.textContent = '➡ 继续下一阶段（先保存我在表单里的修改）';
+                nextBtn.disabled = !!this._phaseAcking;
+            }
+        }
+        this.renderHistory(rec);
+        var cl = rec && rec.checklist;
+        if (!cl) { box.style.display = 'none'; body.innerHTML = ''; return; }
+        box.style.display = '';
+        var label = WZ_PHASE_LABEL[meta.phase] || meta.phase || '';
+        if (sum) sum.textContent = (cl.summary || '') + (label ? ' · 现在：' + label : '');
+        var esc = (typeof escapeHtml === 'function') ? escapeHtml : function(s) { return String(s); };
+        var color = {missing: '#f85149', thin: '#d29922', ok: '#3fb950', validated: '#3fb950'};
+        var mark = {missing: '✗', thin: '△', ok: '✓', validated: '✓'};
+        body.innerHTML = (cl.items || []).map(function(it) {
+            var c = color[it.status] || '#8b949e';
+            return '<div style="display:flex;gap:6px;padding:2px 0;font-size:12px;line-height:1.5">'
+                + '<span style="color:' + c + ';width:12px;flex:none">' + (mark[it.status] || '·') + '</span>'
+                + '<span style="flex:none;' + (it.gate ? 'font-weight:600' : '') + '">' + esc(it.title) + '</span>'
+                + (it.gate ? '<span style="flex:none;color:#f85149;font-size:11px">门禁</span>' : '')
+                + '<span class="hint" style="flex:1">' + esc(it.detail || '') + '</span>'
+                + '</div>';
+        }).join('');
+    },
+    /* 构建历史：列表只回摘要，点「查看」才拉那一版的正文；「回退」= 把该版快照
+       通过 phase-save 写成**新的一版**（append-only，审计不丢）。 */
+    renderHistory: function(rec) {
+        var box = this.el('wz-history');
+        var body = this.el('wz-history-body');
+        var sum = this.el('wz-history-summary');
+        if (!box || !body) return;
+        var rows = (rec && rec.versions) || [];
+        if (!rows.length) { box.style.display = 'none'; body.innerHTML = ''; return; }
+        box.style.display = '';
+        if (sum) sum.textContent = rows.length + ' 版（最近在最后）';
+        var esc = (typeof escapeHtml === 'function') ? escapeHtml : function(s) { return String(s); };
+        body.innerHTML = rows.slice().reverse().map(function(v) {
+            var d = v.diff_summary || {};
+            var bits = [];
+            var ch = d.changed || [];
+            ch.slice(0, 3).forEach(function(c) {
+                bits.push(esc(c.path) + '：' + esc(c.before) + ' → ' + esc(c.after));
+            });
+            if ((d.added || []).length) bits.push('新增 ' + d.added.length + ' 项');
+            if ((d.removed || []).length) bits.push('删除 ' + d.removed.length + ' 项');
+            var c = v.counts || {};
+            return '<div style="border-top:1px solid #30363d;padding:4px 0;font-size:12px">'
+                + '<b>r' + esc(v.revision) + '</b> '
+                + '<span class="hint">' + esc(WZ_PHASE_LABEL[v.phase] || v.phase || '')
+                + ' · ' + esc(v.actor || '') + ' · ' + esc(v.at || '') + '</span> '
+                + '<span class="hint">弧 ' + (c.outlines || 0) + ' / 情节段 ' + (c.plots || 0)
+                + ' / 人物 ' + (c.characters || 0) + '</span>'
+                + (v.recovery ? ' <span style="color:#d29922">（崩溃恢复补记）</span>' : '')
+                + (bits.length ? '<div class="hint">' + bits.join('；') + '</div>' : '')
+                + '<button type="button" class="btn-secondary" style="margin-top:3px;padding:2px 8px" '
+                + 'onclick="WZ.rollbackVersion(' + Number(v.revision) + ')">↩ 回退到此版本</button>'
+                + '</div>';
+        }).join('');
+    },
+    rollbackVersion: function(revision) {
+        var self = this;
+        var sid = this.ensureBuildSession();
+        if (!sid) return;
+        fetch('/api/build/version?sid=' + encodeURIComponent(sid) + '&revision=' + revision)
+            .then(function(r) { return r.json(); })
+            .then(function(rec) {
+                if (!rec.ok) throw new Error(rec.error || '读取该版本失败');
+                var snap = rec.snapshot || {};
+                return fetch('/api/build/phase-save', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ build_session_id: sid,
+                                           expected_revision: self._buildRevision,
+                                           sections: { world: snap.world,
+                                                       characters: snap.characters,
+                                                       storyline: snap.storyline } })
+                }).then(function(r) { return r.json(); });
+            })
+            .then(function(d) {
+                if (!d.ok) throw new Error(d.error || '回退失败');
+                // 回退后强制回灌表单（否则"回退了但界面还是旧的"）
+                self._dirtyFields = {};
+                self._step3Dirty = false;
+                return self.syncCanonicalDraft({ force: true });
+            })
+            .then(function() {
+                if (typeof showToast === 'function')
+                    showToast('已回退到 r' + revision + '（记为新的一版，历史不丢）', 'success');
+            })
+            .catch(function(e) {
+                if (typeof showToast === 'function') showToast('回退失败：' + e.message, 'error');
+            });
+    },
+    renderStale: function(meta) {
+        var el = this.el('wz-stale-banner');
+        if (!el) return;
+        var stale = (meta && meta.stale_phases) || [];
+        if (!stale.length) { el.style.display = 'none'; el.textContent = ''; return; }
+        el.style.display = '';
+        el.style.color = '#d29922';
+        el.textContent = '⚠ 上游内容改过了，这些阶段需要重新检查：'
+            + stale.map(function(p) { return WZ_PHASE_LABEL[p] || p; }).join('、')
+            + '——让 Agent 从最靠前的那个重做。';
+    },
+    // 用户手工改过步 3 的投影内容（程序化回灌的 isTrusted=false 不算）
+    markStep3Dirty: function(ev) {
+        if (this.cur !== 3 || this._canonicalRevision == null) return;
+        if (ev && ev.isTrusted === false) return;
+        var id = (ev && ev.target && ev.target.id) || '';
+        if (id) this._dirtyFields[id] = true;
+        this._step3Dirty = true;
+    },
+    _hasDirtyIn: function(prefix) {
+        var f = this._dirtyFields || {};
+        for (var k in f) { if (f[k] && k.indexOf(prefix) === 0) return true; }
+        return false;
+    },
+    _clearDirtyIn: function(prefix) {
+        var f = this._dirtyFields || {};
+        for (var k in f) { if (k.indexOf(prefix) === 0) delete f[k]; }
+        this._step3Dirty = Object.keys(f).length > 0;
+    },
+    /* 继续下一阶段：把用户改过的段回写 canonical → 确认停点 → 派发下一轮构思。
+       为什么先回写：用户改的是表单，而 agent 的权威输入是 canonical；不回写等于用户白改。
+       顺序也不能颠倒——先派任务的话，agent 读到的是旧草稿。 */
+    continuePhase: function() {
+        var self = this;
+        var sid = this.ensureBuildSession();
+        if (!sid || this._phaseAcking) return;
+        this._phaseAcking = true;
+        var sections = {};
+        var prev = (this._lastCanonicalDraft && this._lastCanonicalDraft.world) || {};
+        if (this._hasDirtyIn('wz-wb-') || this._hasDirtyIn('wz-title') || this._hasDirtyIn('wz-words')) {
+            var w = { world_building: this.worldToBi() };
+            // world 顶层的 tone/pov/… 表单没有编辑控件，照抄旧值，别在归一里丢掉
+            ['tone', 'target_audience', 'pov', 'era_language'].forEach(function(k) {
+                if (prev[k]) w[k] = prev[k];
+            });
+            sections.world = w;
+        }
+        if (this._hasDirtyIn('wz-char-')) sections.characters = this.collectCharCards();
+        fetch('/api/build/phase-save', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ build_session_id: sid, expected_revision: this._buildRevision,
+                                   sections: sections })
+        }).then(function(r) { return r.json().then(function(d) { return { status: r.status, d: d }; }); })
+            .then(function(res) {
+                if (!res.d.ok) throw new Error(res.d.error || '保存失败');
+                return fetch('/api/build/phase-ack', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ build_session_id: sid })
+                }).then(function(r) { return r.json(); });
+            })
+            .then(function(d) {
+                if (!d.ok) throw new Error(d.error || '阶段确认失败');
+                self._phaseAcking = false;
+                self._dirtyFields = {};
+                self._step3Dirty = false;
+                self.syncCanonicalDraft();
+                var task = '继续建书步 3 的下一个阶段：先 get_build_context 看清 plan_meta.phase 与 '
+                    + 'plan_meta.stale_phases，从当前阶段继续（有失效阶段就从最靠前的重做），'
+                    + '完成后落一版草稿。 [build_session=' + sid + ']';
+                if (typeof window.agentSendTask === 'function') window.agentSendTask(task, { card: true });
+            })
+            .catch(function(e) {
+                self._phaseAcking = false;
+                if (typeof showToast === 'function') showToast('继续下一阶段失败：' + e.message, 'error');
+                self.syncCanonicalDraft();
+            });
+    },
+    showDraftStatus: function(text, kind) {
+        var el = this.el('wz-agent-draft-status');
+        if (!el) return;
+        el.style.color = kind === 'error' ? '#f85149' : kind === 'warning' ? '#d29922' : '#3fb950';
+        el.textContent = !text ? ''
+            : (kind === 'error' ? '❌ ' : kind === 'warning' ? '⚠️ ' : '✅ ') + text;
+    },
+    showDraftIssues: function(items) {
+        var el = this.el('wz-agent-draft-errors');
+        if (!el) return;
+        var list = (items || []).filter(Boolean);
+        if (!list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        var esc = (typeof escapeHtml === 'function') ? escapeHtml : function(s) { return String(s); };
+        el.style.display = 'block';
+        el.innerHTML = '<div class="alert error" style="margin:0">Agent 校验/落盘问题：'
+            + '<ul style="margin:6px 0 0 18px">'
+            + list.map(function(s) { return '<li>' + esc(String(s)) + '</li>'; }).join('')
+            + '</ul></div>';
+    },
+    showRestoreButton: function(on) {
+        var b = this.el('wz-restore-canonical');
+        if (b) b.style.display = on ? 'inline-block' : 'none';
     }
 };
 // 初始化：恢复草稿（若有）→ 显示对应步骤；否则从第 1 步开始
 var __restored = WZ.restore();
 if (__restored) WZ.applyState();
 WZ.show(__restored ? WZ.cur : 1);
+
+// canonical 草稿同步（步 3）：
+//  - URL 带 ?build_session=<sid>&restore=1 → 显式恢复某个会话（救回"agent 写完了但
+//    表单是空的"那种会话，不必让 agent 重跑）
+//  - 否则若当前就停在步 3，静默同步一次（刷新/断线后恢复）
+(function() {
+    var params = new URLSearchParams(window.location.search);
+    var recover = params.get('build_session');
+    if (recover) {
+        WZ.state.build_session_id = recover;
+        WZ.show(3);
+        WZ.syncCanonicalDraft({ sid: recover, force: true });
+    }
+})();
+window.addEventListener('pageshow', function() {
+    if (WZ.cur === 3 && !WZ.bookId) WZ.syncCanonicalDraft();
+});
+// 侧栏派发的建书草稿状态（save_build_draft / validate_build 的压缩结果）
+window.addEventListener('ne:build-draft-status', function(e) {
+    var d = (e && e.detail) || {};
+    if (d.build_session_id && d.build_session_id !== WZ.ensureBuildSession()) return;   // 别的会话
+    if (d.issues && d.issues.length) {
+        WZ.showDraftIssues(d.issues);
+    } else if (d.tool === 'save_build_draft' && !d.saved) {
+        WZ.showDraftIssues([d.message || 'Agent 未成功落盘']);
+    } else {
+        WZ.showDraftIssues([]);
+    }
+    // 有 revision 或落盘成功 → 拉一次 canonical（validate 失败时不会落盘，不必拉）
+    if (d.saved || d.revision) WZ.syncCanonicalDraft();
+});
+// 用户在步 3 手工改过投影内容 → 之后 canonical 更新只提示、不自动覆盖（避免抹掉用户编辑）
+(function() {
+    var panel = document.getElementById('panel-3');
+    if (!panel) return;
+    ['input', 'change'].forEach(function(ev) {
+        panel.addEventListener(ev, function(e) { WZ.markStep3Dirty(e); }, true);
+    });
+})();
 // 角色原型库：晚于首次渲染到达时回填所有 .char-archetype 下拉（保留当前/agent 选中）
 fetch('/api/characters')
     .then(function(r){ return r.json(); })
@@ -1344,7 +1877,7 @@ window.onnecommand = function(e) {
         if (st) st.textContent = '✅ Agent 分阶段已填入，可编辑';
         if (typeof showToast === 'function') showToast('世界观内容已更新，可直接编辑', 'success');
     } else if (cmd === 'set_picks') {
-        // 开篇弧/桥段选择（分阶段②）：存 _outline_picks（扁平 id 列表），submit 后由 generate_full_outline 消费
+        // 开篇弧/情节段选择（分阶段②）：存 _outline_picks（扁平 id 列表），submit 后由 generate_full_outline 消费
         // 支持 {id,name} 对象或纯 id 字符串
         var tplNames = [], tplIds = [];
         (args.templates || []).forEach(function(x) {
@@ -1358,23 +1891,30 @@ window.onnecommand = function(e) {
         });
         WZ.state._outline_picks = { templates: tplIds, plots: plotIds };
         WZ.state._outline_picks_names = { templates: tplNames, plots: plotNames };
-        if (typeof showToast === 'function') showToast('已记录开篇弧/桥段选择', 'success');
+        if (typeof showToast === 'function') showToast('已记录开篇弧/情节段选择', 'success');
     } else if (cmd === 'set_outline') {
-        // 步3②生成的弧+桥段（generate_outline_preview 产出）：先归一化结构（补 id/notes/outline_id/order），
-        // 存 state，submit 时随 POST 落库——否则 StoryLine 按 outline_id 归组会因缺 id 丢桥段
+        // 步3②生成的弧+情节段（generate_outline_preview 产出）：先归一化结构（补 id/notes/outline_id/order），
+        // 存 state，submit 时随 POST 落库——否则 StoryLine 按 outline_id 归组会因缺 id 丢情节段
         var _norm = WZ.normalizeOutlineData(args.outlines, args.plots);
         WZ.state._outline_data = {
             outlines: _norm.outlines,
             plots: _norm.plots,
             threads: Array.isArray(args.threads) ? args.threads : [],
             themes: Array.isArray(args.themes) ? args.themes : [],
+            planning: (args.planning && typeof args.planning === 'object') ? args.planning : null,
             basic_info: (args.basic_info && typeof args.basic_info === 'object') ? args.basic_info : null
         };
+        if (args.planning && typeof args.planning === 'object') {
+            WZ.state.target_word_budget = args.planning.target_word_budget || WZ.state.target_word_budget;
+            WZ.state.future_intents = args.planning.future_intents || [];
+            WZ.state.story_questions = args.planning.story_questions || [];
+            WZ.state.decision_points = args.planning.decision_points || [];
+        }
         WZ.renderStoryline();   // 展示故事线 Gantt
         WZ.persist();   // 存草稿（刷新后 restore 也能渲染故事线）
         if (typeof showToast === 'function') {
             showToast('故事线已生成：' + WZ.state._outline_data.outlines.length
-                + ' 条弧 / ' + WZ.state._outline_data.plots.length + ' 个桥段', 'success');
+                + ' 条弧 / ' + WZ.state._outline_data.plots.length + ' 个情节段', 'success');
         }
     } else if (cmd === 'next') { WZ.next(); }
     else if (cmd === 'prev') { WZ.prev(); }
@@ -1385,6 +1925,7 @@ window.onnecommand = function(e) {
         // 清空向导 state（除 pen_name 与库表字段），防上一本残留草稿干扰建书保真度
         var keepPen = WZ.state.pen_name || '';
         WZ.state = { idea: '', pen_name: keepPen, tags: [], borrow: { source_book_id: '', tweak: '' },
+                     build_session_id: '', target_word_budget: 120000,
                      genre: '', platform: 'fanqie', sub_genre: '', title: '', words_per_chapter: 3000,
                      storyline_hint: '', world_desc: '', protag_name: '', protag_identity: '',
                      protag_personality: '', protag_golden_finger: '',

@@ -15,7 +15,14 @@ def apply_word_replacements(text: str) -> tuple[str, int]:
     """规则层：替换 AI 高频词 → (替换后文本, 替换次数)。
 
     词表读 style_rules 库（用户编辑后生效）；空词表 = 跳过替换。
+    样本驱动闸门：默认笔名存在 styles/<pen>.md（sample_driven）→ 跳过词级硬替换
+    （工作文件 4.3：不再逐词强制改写；词表只作低优先级警告）。env DEAI_FORCE_WORDS=1 可强制开启。
     """
+    import os as _os
+    if _os.environ.get("DEAI_FORCE_WORDS") != "1":
+        from .style_md import default_profile, has_style_md
+        if has_style_md(default_profile()):
+            return text, 0
     from .style_rules import StyleRuleLibrary
     word_map = StyleRuleLibrary().get_word_map()
     if not word_map:

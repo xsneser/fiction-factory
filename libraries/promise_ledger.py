@@ -52,7 +52,7 @@ def _seen_in_recent(chapters, keywords, current_chapter, recent_n):
 
 # 读者承诺六操作分级（AI-NWA payoff_directives，规则层，零 LLM）
 # seed=刚埋设保持存在感；touch=活跃维持/轻提；pressure=临期/逾期施压；
-# partial_reveal=部分揭示留悬念；payoff=已兑现/本桥段收束；forbid=明确不兑现（暂不自动标）
+# partial_reveal=部分揭示留悬念；payoff=已兑现/本情节段收束；forbid=明确不兑现（暂不自动标）
 _PARTIAL_REVEAL_HINTS = ("半", "部分", "露出一角", "一角", "线索", "碎屑", "片段")
 
 
@@ -63,6 +63,8 @@ def promise_op(q: dict, chapter_num: int) -> str:
         return "touch"
     if q.get("status") == "fulfilled":
         return "payoff"
+    if q.get("status") == "planned":
+        return "planned"          # 已规划·未落笔：还没欠读者任何东西
     deadline = int(q.get("deadline_chapter") or 0)
     if deadline and deadline <= chapter_num:
         return "pressure"
@@ -77,6 +79,48 @@ def promise_op(q: dict, chapter_num: int) -> str:
     return "touch"
 
 
+def reconcile_planned_promises(tl) -> dict:
+    """正式规划提交后，把"规划已放弃"的 `planned` 伏笔标 `cancelled` / `superseded`。
+
+    **只在正式 planning commit 之后调用**（replan preview、建书中间草稿一律不碰正式台账）
+    ——预测层不得改写事实层，这与"批准规划不是故事事实"是同一条边界。
+    只动 `planned`：`pending` 及以后是已经欠下读者的债，不能因为规划变动就抹掉。
+
+    判定：设局情节段已不在故事线里 ⇒
+      · 另有同 desc 的新承诺 → `superseded`（带 `superseded_by`）；
+      · 否则 → `cancelled`（带 `cancelled_reason`）。
+    """
+    stats = {"cancelled": 0, "superseded": 0}
+    if tl is None:
+        return stats
+    promises = list(getattr(tl, "promises", None) or [])
+    plot_ids = {getattr(p, "id", "") for p in (getattr(tl, "plots", None) or [])}
+    alive_desc = {str(q.get("desc") or "") for q in promises
+                  if str(q.get("setup_plot_id") or "") in plot_ids}
+    changed = False
+    for q in promises:
+        if q.get("status") != "planned":
+            continue
+        if str(q.get("setup_plot_id") or "") in plot_ids:
+            continue
+        desc = str(q.get("desc") or "")
+        repl = next((o for o in promises
+                     if o is not q and str(o.get("desc") or "") == desc and desc
+                     and str(o.get("setup_plot_id") or "") in plot_ids), None)
+        if repl is not None:
+            q["status"] = "superseded"
+            q["superseded_by"] = str(repl.get("id") or "")
+            stats["superseded"] += 1
+        else:
+            q["status"] = "cancelled"
+            q["cancelled_reason"] = "规划放弃了该设局情节段"
+            stats["cancelled"] += 1
+        changed = True
+    if changed:
+        tl.promises = promises
+    return stats
+
+
 def scan_promises(tl, chapters, current_chapter, recent_n: int = 10) -> dict:
     """伏笔台账全量扫描。
 
@@ -88,9 +132,16 @@ def scan_promises(tl, chapters, current_chapter, recent_n: int = 10) -> dict:
     返回 {overdue[], advanced[], stalled[], fulfilled_recently[], counts{}, suggestions[]}
     """
     promises = getattr(tl, "promises", None) or []
-    overdue, advanced, stalled, fulfilled_recently = [], [], [], []
+    overdue, advanced, stalled, fulfilled_recently, planned = [], [], [], [], []
     for q in promises:
         status = q.get("status", "pending")
+        if status == "planned":
+            # 规划中（未落笔）：**不算欠读者的债**，因此不参与逾期/停滞判定，单列一组
+            planned.append({"id": q.get("id", ""), "desc": q.get("desc", ""),
+                            "setup_plot_id": q.get("setup_plot_id", ""),
+                            "payoff_plot_id": q.get("payoff_plot_id", ""),
+                            "op": "planned"})
+            continue
         desc = q.get("desc", "") or ""
         setup_ch = int(q.get("setup_chapter") or 0)
         payoff_ch = int(q.get("payoff_chapter") or 0)
@@ -118,9 +169,11 @@ def scan_promises(tl, chapters, current_chapter, recent_n: int = 10) -> dict:
         elif status == "fulfilled" and payoff_ch and payoff_ch >= current_chapter - recent_n:
             fulfilled_recently.append(item)
 
+    cancelled = [q for q in promises if q.get("status") in ("cancelled", "superseded")]
     counts = {
         "overdue": len(overdue), "advanced": len(advanced),
         "stalled": len(stalled), "fulfilled_recently": len(fulfilled_recently),
+        "planned": len(planned), "cancelled": len(cancelled),
         "total": len(promises),
     }
     suggestions = []
@@ -129,7 +182,8 @@ def scan_promises(tl, chapters, current_chapter, recent_n: int = 10) -> dict:
     if stalled:
         suggestions.append(f"{len(stalled)} 条承诺近期无推进，注意别让伏笔冷掉。")
     if not promises:
-        suggestions.append("尚无读者承诺台账（大纲设局/收局桥段会生成）。")
+        suggestions.append("尚无读者承诺台账（规划期的设局/收局情节段会登记）。")
     return {"overdue": overdue, "advanced": advanced, "stalled": stalled,
-            "fulfilled_recently": fulfilled_recently, "counts": counts,
+            "fulfilled_recently": fulfilled_recently, "planned": planned,
+            "cancelled": cancelled, "counts": counts,
             "suggestions": suggestions}

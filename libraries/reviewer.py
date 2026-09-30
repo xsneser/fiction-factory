@@ -204,7 +204,7 @@ class ContentReviewer:
             result.issues.append(ReviewIssue(
                 severity="error", category="word_count",
                 description=f"字数 {wc} 低于本章下限 {hard_min}，正文不完整",
-                suggestion="请继续写满本章（逐桥段补全全部场景）后再保存",
+                suggestion="请继续写满本章（逐情节段补全全部场景）后再保存",
             ))
             score = min(score, 55)      # 强制 passed=False（55 < 60）
         elif not ok:

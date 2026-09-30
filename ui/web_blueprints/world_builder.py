@@ -354,7 +354,7 @@ def api_stage_rest_world():
 
 @bp.route("/api/world-builder/characters", methods=["POST"])
 def api_stage_characters():
-    """分阶段构建④：从一句话+已定核心矛盾/势力/开篇大纲桥段生成角色候选。
+    """分阶段构建④：从一句话+已定核心矛盾/势力/开篇大纲情节段生成角色候选。
 
     body {idea, world_brief?, core_conflict?, factions?, outline_preview?, tags?, title?,
           genre?, sub_genre?} → {protagonists, supporting_cast}。

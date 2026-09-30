@@ -1,5 +1,5 @@
 """
-NovelEngine — 完整 Web UI v2.0 (Flask + Jinja2)
+NovelEngine — 完整 Web UI v2.4.7 (Flask + Jinja2)
 引擎集成版：新书启动 / 续写 / 管理面板
 路由已按域拆分到 ui/web_blueprints/（dashboard/storyline/desk/books/libraries/tools/settings），
 本文件只负责 app 创建、日志配置与蓝图注册。
@@ -41,11 +41,16 @@ if __name__ == "__main__":
     os.makedirs("ui/static", exist_ok=True)
     from libraries.token_proxy import ensure_proxy
     from libraries.dsh_bridge import clear_task_events
-    ensure_proxy()   # 拉起本地 LLM API 代理（token 流量检测器）
+    # 拉起本地 LLM API 代理（token 流量检测器 + dsh 的唯一 LLM 出口）。
+    # 端口被占用时这里就报出来：那个进程若是旧代码，dsh 会出现"改完设置不生效"。
+    if not ensure_proxy():
+        from libraries.token_proxy import PROXY_PORT, probe_proxy
+        print(f"[WARN] token 代理未能监听 127.0.0.1:{PROXY_PORT}：{probe_proxy().get('error', '')}")
+        print("[WARN] dsh 侧栏任务将被拒绝启动，请关闭占用该端口的旧进程后重启。")
     clear_task_events()   # 清空上次进程残留的 task-events：侧栏工具/debug 卡片只在当前进程内有效，
                           # 否则重启后页面加载会重放旧事件（renderConversation 拉 /api/agent/task-events）
     # debug 由环境变量控制：开发用 NOVEL_DEBUG=1，默认关闭（避免 reloader 干扰自动化）
     debug = os.environ.get("NOVEL_DEBUG") == "1"
     host = os.environ.get("NOVEL_HOST", "127.0.0.1")
-    print(f"NovelEngine Web UI v2.0: http://localhost:58080")
+    print(f"NovelEngine Web UI v2.4.7: http://localhost:58080")
     app.run(host=host, port=58080, debug=debug, use_reloader=debug)

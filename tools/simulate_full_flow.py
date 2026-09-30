@@ -27,8 +27,8 @@ try:
 except Exception:
     pass
 
+from core.api_config import load_api_config, is_api_configured
 from core.llm_client import LLMClient
-from core.models import APIConfig
 from libraries.outline_generator import OutlineGenerator
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
@@ -40,13 +40,11 @@ from libraries.publisher import Publisher
 
 
 def make_llm():
-    cfg = json.load(open("api.json", encoding="utf-8"))
-    return LLMClient(APIConfig(
-        api_key=cfg.get("api_key", ""), base_url=cfg.get("base_url", "https://api.deepseek.com"),
-        model=cfg.get("model", "deepseek-chat"),
-        http_timeout_seconds=cfg.get("http_timeout_seconds", 300),
-        verify_ssl=cfg.get("verify_ssl", True),
-    ))
+    # 配置一律走 core.api_config（仓库根 api.json，与 cwd 无关）
+    cfg = load_api_config()
+    if not is_api_configured(cfg):
+        raise RuntimeError("LLM 未配置：请先在 /settings 保存 API 地址与 Key")
+    return LLMClient(cfg)
 
 
 def stage(tag, msg):
@@ -61,7 +59,7 @@ def main():
     ap.add_argument("--words-per-chapter", type=int, default=800)
     ap.add_argument("--max-outlines", type=int, default=2)
     ap.add_argument("--chapters", type=int, default=1, help="新书阶段写满几章再续写")
-    ap.add_argument("--continue-bridges", type=int, default=1, help="续写阶段写几个桥段")
+    ap.add_argument("--continue-bridges", type=int, default=1, help="续写阶段写几个情节段")
     ap.add_argument("--min-total-words", type=int, default=800, help="上架检查的字数线（覆盖真实阈值）")
     ap.add_argument("--min-chapters", type=int, default=1, help="上架检查的章节线")
     ap.add_argument("--keep-book", action="store_true", help="保留测试书不清理")
@@ -94,9 +92,9 @@ def main():
         sl = BookStoryline.from_dict(result)
         n_o, n_p = len(sl.outlines), len(sl.plots)
         total_ch = max((o.end_chapter for o in sl.outlines), default=0)
-        print(f"✅ 大纲生成：{n_o} 条大纲 / {n_p} 个桥段 / 共 {total_ch} 章")
+        print(f"✅ 大纲生成：{n_o} 条大纲 / {n_p} 个情节段 / 共 {total_ch} 章")
         if n_o < 1 or n_p < 1:
-            print("❌ 大纲或桥段为空")
+            print("❌ 大纲或情节段为空")
             return 1
 
         # ═══ ② 开始写作 → 建正式书（模拟用户点「开始写作」）═══
@@ -122,14 +120,14 @@ def main():
             print("❌ book.json / storyline.json 未落盘")
             return 1
 
-        # ═══ ③ 章节写作（逐桥段，写满 args.chapters 章）═══
-        stage("③ 章节写作", f"逐桥段写入（目标 {args.chapters} 章）")
+        # ═══ ③ 章节写作（逐情节段，写满 args.chapters 章）═══
+        stage("③ 章节写作", f"逐情节段写入（目标 {args.chapters} 章）")
         chapter_done = 0
         error_evt = None
         for i in range(15):
             if chapter_done >= args.chapters:
                 break
-            for evt in engine._write_next_bridge_stream():
+            for evt in engine._write_next_plot_stream():
                 t = evt.get("type")
                 if t == "bridge_start":
                     print(f"   [写] {evt.get('plot_name')} (预计 {evt.get('planned_words')}字)")
@@ -149,11 +147,11 @@ def main():
             return 1
         print(f"✅ 写作固化 {chapter_done} 章")
 
-        # ═══ ④ 续写（continue_book → 再写 1 桥段）═══
-        stage("④ 续写", "continue_book 恢复引擎 → 写下一桥段")
+        # ═══ ④ 续写（continue_book → 再写 1 情节段）═══
+        stage("④ 续写", "continue_book 恢复引擎 → 写下一情节段")
         engine2 = NovelEngine(llm_client=llm)
         engine2.continue_book(book_id)
-        cont_events = list(engine2._write_next_bridge_stream())
+        cont_events = list(engine2._write_next_plot_stream())
         cont_err = [e for e in cont_events if e.get("type") == "error"]
         cont_done = [e for e in cont_events if e.get("type") == "chapter_done"]
         print(f"   续写事件: {[e.get('type') for e in cont_events]}")

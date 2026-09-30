@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 
 echo ""
 echo "========================================"
-echo "   📖 NovelEngine — 小说工厂 v2.0"
+echo "   📖 NovelEngine — 小说工厂 v2.4.7"
 echo "========================================"
 echo ""
 
@@ -20,12 +20,12 @@ fi
 echo -e "${GREEN}✅${NC} $(python3 --version)"
 
 # ── api.json 检查 ──
+# 缺失时复制空模板后**继续启动**：API 地址与 Key 在 /settings 页面填写，
+# 引擎与 dsh 都从这一份 api.json 读，不必先手工编辑文件。
 if [ ! -f "api.json" ]; then
-    echo -e "${YELLOW}⚠️  未检测到 api.json${NC}"
     if [ -f "api.example.json" ]; then
         cp api.example.json api.json
-        echo -e "${YELLOW}⚠️  已从模板复制 api.json，请编辑填入 API Key 后重新运行${NC}"
-        exit 1
+        echo -e "${YELLOW}ℹ️  已生成 api.json，请启动后在 http://localhost:58080/settings 配置 API 地址与 Key${NC}"
     fi
 fi
 

@@ -103,7 +103,7 @@ def run_smoke():
         print("[5] confirm ->", d.get("ok"), "| redirect:", d.get("redirect"))
         assert d.get("ok") and "/storyline/" in d.get("redirect", "")
 
-        # 6) GET 确认后的跳转目标 → 应渲染写作台（规划态，非错误页，无写桥段按钮）
+        # 6) GET 确认后的跳转目标 → 应渲染写作台（规划态，非错误页，无写情节段按钮）
         r = client.get(d["redirect"], follow_redirects=True)
         html = r.get_data(as_text=True)
         print("[6] GET", d["redirect"], "->", r.status_code,

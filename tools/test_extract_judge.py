@@ -33,12 +33,12 @@ plot_ok = {"name": "规则揭晓·人人自危", "category": "冲突", "sub_cate
            "structure": "[揭晓规则]→[人人自危]→[主角冷眼旁观]",
            "slots": [{"name": "惩罚", "options": ["杀人", "逐出", "扣分"]}]}
 d = judge_candidate("plot", plot_ok, [])
-check("桥段完整无近似 → four_lib", d["decision"] == "four_lib", str(d["decision"]))
+check("情节段完整无近似 → four_lib", d["decision"] == "four_lib", str(d["decision"]))
 
 # 结构不完整（无 slots）→ incomplete
 plot_bad = {"name": "规则揭晓", "category": "冲突", "structure": "[揭晓规则]→[人人自危]"}
 d = judge_candidate("plot", plot_bad, [])
-check("桥段缺 slots → incomplete", d["decision"] == "incomplete",
+check("情节段缺 slots → incomplete", d["decision"] == "incomplete",
       f"reasons={d['reasons']}")
 
 # 真实污染场景：同名骨架逐字相同、只改名称 → duplicate（骨架高重合）
@@ -81,12 +81,12 @@ check("split 拆出 1 进库 / 1 丢弃",
       f"keep={len(keep)} dropped={list(dropped)}")
 
 # ── 5. 四类各自判据 ──
-check("structure 缺 stages → incomplete",
+check("structure 缺 description → incomplete",
       judge_candidate("structure", {"name": "孤例弧"}, [])["decision"] == "incomplete")
-s_ok = {"name": "规则副本通关弧", "total_words": 20000,
-        "stages": [{"name": "入场", "description": "进入规则副本"},
-                   {"name": "破局", "description": "破解规则"}]}
-check("structure 有 stages → four_lib",
+s_ok = {"name": "规则副本通关弧",
+        "description": "入场→探清规则→破局登顶的一整段弧（可复用内容主体）",
+        "min_words": 12000, "max_words": 24000}
+check("structure 有 description → four_lib",
       judge_candidate("structure", s_ok, [])["decision"] == "four_lib")
 check("gag 缺 pattern_description → incomplete",
       judge_candidate("gag", {"name": "某段子"}, [])["decision"] == "incomplete")
@@ -113,7 +113,7 @@ try:
     r = agent_tools.ingest_library_assets(
         plots=[plot_ok], source="test", gate=True)
     after = len(tl.templates)
-    check("闸门放行完整桥段并入库(临时库 +1)",
+    check("闸门放行完整情节段并入库(临时库 +1)",
           after == before + 1 and r.get("plots") == 1,
           f"before={before} after={after} stats={r.get('plots')}")
 
@@ -129,6 +129,39 @@ try:
           f"after2={after2} judge={ {k: len(v) for k, v in judge.items() if isinstance(v, list)} }")
 finally:
     agent_tools.plot_lib = orig
+
+# ── 7. structure 平级独立弧闸门 + 逐条落盘（隔离临时库，不污染真实库）──
+from libraries.structure import StructureLibrary
+StructureLibrary._instance = None
+stmp = tempfile.mkdtemp()
+sl = StructureLibrary(data_dir=stmp)
+orig_sl = agent_tools.struct_lib
+agent_tools.struct_lib = sl
+try:
+    arcs = [
+        {"name": "复仇·夺嫡清算弧", "description": "被夺权者蛰伏反杀、当众清算的一整段弧",
+         "min_words": 20000, "max_words": 30000, "tags": ["复仇", "爽文"]},
+        {"name": "蛰伏攒底牌", "description": "示弱潜伏、暗中串联旧部", "min_words": 3000, "max_words": 6000,
+         "tags": ["复仇"]},
+    ]
+    j = agent_tools.judge_extraction(structures=arcs)
+    check("judge_extraction 平级逐弧判 four_lib",
+          len(j["structures"]) == 2 and all(x["decision"] == "four_lib" for x in j["structures"]),
+          str(j["structures"]))
+    before3 = len(sl.templates)
+    rr = agent_tools.ingest_library_assets(structures=arcs, source="fanqie", gate=True)
+    after3 = len(sl.templates)
+    check("平级 gate=True 落 2 弧", after3 == before3 + 2 and rr.get("structures") == 2,
+          f"before={before3} after={after3} stats={rr.get('structures')}")
+    added = [t for t in sl.templates if t.id.startswith("scout_fanqie_")]
+    check("每条独立弧落 1 行(id规范, 无parent, 自带tags)",
+          len(added) == 2 and all("parent_arc_id" not in t.to_dict() for t in added)
+          and all(t.tags for t in added), str([(t.id, t.tags) for t in added]))
+    before4 = len(sl.templates)
+    agent_tools.ingest_library_assets(structures=arcs, source="fanqie", gate=True)
+    check("重复逐条跳过", len(sl.templates) == before4)
+finally:
+    agent_tools.struct_lib = orig_sl
 
 print("\n" + "=" * 50)
 print(f"extract_judge 自测: {len(PASS)} 通过 / {len(FAIL)} 失败")

@@ -38,7 +38,8 @@ def log_tool_call(entry: dict) -> None:
         _TOOL_LOG.append(entry)
         if len(_TOOL_LOG) > _MAX_TOOL_LOG:
             del _TOOL_LOG[:len(_TOOL_LOG) - _MAX_TOOL_LOG]
-    if entry.get("source") == "mcp":
+    # dsh 事件走 task_events；所有其它 MCP source（如 claude-story）写入外部日志。
+    if entry.get("source") and entry.get("source") != "dsh":
         _append_ext(entry)
 
 

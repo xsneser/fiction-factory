@@ -52,7 +52,7 @@ def extract_writing_style(llm, novel_title: str, chapters: list[dict]) -> dict:
     try:
         from core.llm_client import extract_json
         raw = llm.call("你是一位专业的文学风格分析师。只返回JSON。",
-                       prompt, temperature=0.5, max_tokens=2048)
+                       prompt, temperature=0.5)
         data = json.loads(extract_json(raw))
         style = data.get("style_analysis", {})
         logger.info(f"风格分析完成: {style.get('summary','')[:50]}")

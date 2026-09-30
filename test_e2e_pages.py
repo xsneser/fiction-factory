@@ -140,7 +140,7 @@ def run_tests():
         ("Books", "/books", ["书库", "book"]),
         ("Start New Book", "/books/start", ["启动新书", "form"]),
         ("Writing Desk", "/desk", ["书库"]),  # /desk 已 302 到书库（写作台按书进入）
-        ("Plots", "/plots", ["桥段库", "plot"]),
+        ("Plots", "/plots", ["情节段库", "plot"]),
         ("Structures", "/structures", ["情节弧库", "structure"]),
         ("Gags", "/gags", ["笑点库", "gag"]),
         ("Characters", "/characters", ["角色原型库", "char"]),
@@ -179,10 +179,11 @@ def run_tests():
               "启动新书" in r.text,
               "keyword not found in redirect target")
 
-    # ═══ API endpoints（web_ui.py 是 Flask 面板，无 /api/health） ═══
+    # ═══ API endpoints ═══
     print("\n--- API Endpoints ---")
     apis = [
         ("Tasks", "/api/status/tasks"),
+        ("Service health", "/api/system/health"),
     ]
 
     for name, path in apis:
@@ -198,7 +199,7 @@ def run_tests():
         ("/books/start", "启动新书"),
         ("/books", "书库"),
         ("/publish", "上架管理"),
-        ("/plots", "桥段库"),
+        ("/plots", "情节段库"),
         ("/structures", "情节弧库"),
         ("/gags", "笑点库"),
         ("/characters", "角色原型库"),
@@ -213,6 +214,10 @@ def run_tests():
     r = get("/")
     sidebar_links = re.findall(r'<a\s+href="([^"]+)"[^>]*>([^<]+)</a>', r.text)
     found_links = {href: text.strip() for href, text in sidebar_links}
+    check("Sidebar restart footer", 'id="platform-restart"' in r.text
+          and 'class="nav-content"' in r.text
+          and 'class="nav-footer"' in r.text,
+          "restart footer or scroll wrapper missing")
 
     for href, expected_text in expected_links:
         check(f"Sidebar link: {expected_text}",
@@ -242,6 +247,27 @@ def run_tests():
                           "window.StoryLine.init('detail-storyline'" in r.text
                           and "/static/js/story_line.js" in r.text,
                           "storyline Gantt not wired in detail")
+                    # 书详情不再有规划面板：它改用不渲染的极简 loader 取数（保 Gantt 的规划叠层）
+                    check(f"Detail planning panel removed ({bid})",
+                          'id="planning-state-panel"' not in r.text
+                          and "_planning_ui.html" not in r.text
+                          and "/api/storyline/" in r.text and "'/planning-state'" in r.text
+                          and "window.__PLANNING_STATE__" in r.text,
+                          "detail should fetch planning state without rendering the panel")
+                    # 四个 agent 向面板已删；角色状态留下并默认展开
+                    check(f"Detail agent panels removed ({bid})",
+                          all(x not in r.text for x in ("运行时决策中心", "读者承诺台账",
+                                                        "质量诊断", "历史快照",
+                                                        "loadDecisionCenter", "runDiagnose")),
+                          "detail still renders agent-facing panels")
+                    check(f"Detail character state default expanded ({bid})",
+                          "🎭 角色状态" in r.text
+                          and 'class="accordion-body show"' in r.text
+                          and "/character-states" in r.text,
+                          "character state panel missing or not expanded by default")
+                    ps = get(f"/api/storyline/{bid}/planning-state")
+                    check(f"Planning state API ({bid})", ps.status_code == 200
+                          and isinstance(ps.json().get("boundary"), dict), f"got {ps.status_code}")
                 # 顶部按钮行不再含跳转设定/大纲的按钮（设定=页内锚点 #world-edit）
                 check(f"Detail no world/outline jump ({bid})",
                       f'href="/books/{bid}/world"' not in r.text
@@ -256,6 +282,22 @@ def run_tests():
                 check(f"Write flow title in page",
                       "✍️ 写作台" in r.text or bid in r.text,
                       f"write flow marker not found for {bid}")
+                check(f"Write flow planning banner removed ({bid})",
+                      'id="planning-state-panel"' not in r.text
+                      and "/static/js/planning_ui.js" not in r.text
+                      and "NEPlanning" not in r.text
+                      # 但规划叠层的接线必须在（否则 Gantt 丢掉已写红线/承诺黄线/H1-H2）
+                      and "window.__PLANNING_STATE__" in r.text
+                      and "window.__PLANNING_BOUNDARY__" in r.text,
+                      "write flow should have no planning banner but keep the Gantt overlay wiring")
+                check(f"Write flow autonomous chapter UI ({bid})",
+                      'id="wf-continue-card"' in r.text
+                      and 'id="wf-stop-btn"' in r.text
+                      and 'flowMode' in r.text
+                      and 'id="replan-drawer"' not in r.text
+                      and 'id="replan-backdrop"' not in r.text
+                      and 'id="boundary-banner"' not in r.text,
+                      "autonomous chapter-writing UI or drawer removal missing")
 
             # /world 已并入详情页：始终 302 到书详情（旧入口/书签兼容；confirm 会 mutate，交给 tools/smoke_world_card.py）
             r = s.get(urljoin(BASE, f"/books/{bid}/world"), timeout=15, allow_redirects=False)
@@ -303,8 +345,39 @@ def run_tests():
     else:
         for marker, label in [("window.StoryLine.init('editor-storyline'", "gantt init wired"),
                               ("window.__BOOK_STORYLINE__", "storyline data injected"),
+                              ("/static/js/story_line.js", "story_line.js loaded"),
                               ("/static/js/story_line.js", "story_line.js loaded")]:
             check(f"Write flow {label}", marker in tl_editor.text, f"'{marker}' missing")
+        # 顶部两栏（本段最新 + 角色状态）：断言真实 DOM 挂载点存在（只匹配 JS 字面量会假阳性）
+        check("Write flow two-column context mounted",
+              all(x in tl_editor.text for x in ('id="wf-latest-context"', 'id="wf-last-plot"',
+                                                'id="wf-current-cast"'))
+              and "上一段（已完成）" in tl_editor.text and "角色状态" in tl_editor.text
+              and "renderLatestContext(" in tl_editor.text,
+              "two-column context mount or headers missing")
+        check("Write flow old compare/audit area removed",
+              all(x not in tl_editor.text for x in ('id="wf-compare"', 'wf-cmp-prev', 'wf-cmp-axis',
+                                                    'wf-cmp-next', 'wf-cmp-grid', '完整状态审计',
+                                                    'wf-cmp-grid')),
+              "old three-column compare area must not come back")
+        check("Write flow two-column context is full-width above the two columns",
+              tl_editor.text.index('id="wf-latest-context"') < tl_editor.text.index('class="editor-split"'),
+              "context must sit above .editor-split (full-width, not nested in a column)")
+        check("Write flow old stacked panels removed",
+              all(x not in tl_editor.text for x in ('id="wf-plot-run"', 'id="wf-plot-outcome"',
+                                                    'id="wpr-body"', 'id="wf-left-panels"')),
+              "old stacked panels should be gone")
+        check("Write flow stale status strip removed",
+              "wf-context-strip" not in tl_editor.text and "wf-past-meta" not in tl_editor.text
+              and "wf-current-meta" not in tl_editor.text and "wf-dir-btn" not in tl_editor.text,
+              "stale status strip should be gone (panels carry the context)")
+
+    story_js = get("/static/js/story_line.js")
+    if story_js.status_code == 200:
+        check("Storyline lightweight progress update", "updateProgress: function" in story_js.text,
+              "StoryLine.updateProgress missing")
+        check("Storyline has no forecast zone", "sl-forecast-zone" not in story_js.text,
+              "forecast cards still rendered inside Gantt")
 
     # ═══ CSS/JS consistency ═══
     print("\n--- Style Consistency ---")

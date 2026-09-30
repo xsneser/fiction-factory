@@ -491,7 +491,7 @@ def scout_hot_rankings():
 
 @bp.route("/api/scout/ingest", methods=["POST"])
 def scout_ingest():
-    """入库选中的分析结果（五库：桥段/弧/笑点/角色 + 风格规则按笔名）。
+    """入库选中的分析结果（五库：情节段/弧/笑点/角色 + 风格规则按笔名）。
 
     纯规则落盘、不强制 LLM；agent 驱动链路上由 dsh 分析后经 set_review 呈现、
     用户在本页确认后 POST 到此端点落库。
@@ -556,8 +556,8 @@ def scout_ingest():
             stats["style_rules"] += 1
         srl._save()
 
-    task_manager.done(task_id, message=f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲")
-    task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
+    task_manager.done(task_id, message=f"入库完成: +{stats['plots']}情节段 +{stats['structures']}大纲")
+    task_manager.log(task_id, f"✅ 入库完成: +{stats['plots']}情节段 +{stats['structures']}大纲 "
                               f"+{stats['gags']}笑点 +{stats['characters']}角色 "
                               f"+{stats['style_rules']}风格规则", "success")
     if folder:
@@ -575,7 +575,7 @@ def scout_ingest():
     return jsonify({
         "ok": True,
         "stats": stats,
-        "message": (f"入库完成: +{stats['plots']}桥段 +{stats['structures']}大纲 "
+        "message": (f"入库完成: +{stats['plots']}情节段 +{stats['structures']}大纲 "
                     f"+{stats['gags']}笑点 +{stats['characters']}角色 "
                     f"+{stats['style_rules']}风格规则"),
     })

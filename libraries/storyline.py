@@ -1,10 +1,10 @@
 """
-书籍故事线（Book Storyline）— 多大纲序列 + 桥段嵌套配置
+书籍故事线（Book Storyline）— 多大纲序列 + 情节段嵌套配置
 
 核心理念：
   一本书不是一个大纲走到头，而是多个大纲按故事线串接，
   大纲之间可以重叠交叉（A 还没结束 B 已经开始），
-  桥段在大纲阶段内可以嵌套、包含、重叠。
+  情节段在大纲阶段内可以嵌套、包含、重叠。
 """
 from dataclasses import dataclass, field
 from typing import Optional
@@ -43,9 +43,109 @@ DEFAULT_WORLD_BUILDING = {
 # 单条角色条目键（顺序即 to_dict 展示顺序）
 _CHAR_FIELDS = ("name", "role", "importance", "identity", "gender", "personality",
                 "catchphrase", "brief", "title", "golden_finger", "faction",
-                "age", "death_year", "archetype_id", "relations")
+                "age", "death_year", "archetype_id", "relations",
+                "behavior", "speech_profile", "development_plan")
 
 _CHAR_DEFAULT_ROLE = "配角"
+
+# 行为模型（情境→一贯反应）与语言倾向（非固定句式/口头禅复读）的嵌套结构键
+_BEHAVIOR_SLOT_KEYS = {
+    "decision_style": ("under_pressure", "danger", "betrayal"),
+    "communication_style": ("stranger", "friend", "enemy"),
+    "emotion_expression": ("anger", "fear", "sadness"),
+}
+_SPEECH_LIST_KEYS = ("habits", "forbidden")
+# 语言**生成规律**（描述「怎么说话」，不是台词表）。四键任一有内容即算有 voice。
+_SPEECH_STR_KEYS = ("rhythm", "tone", "logic", "emotion", "social_register")
+# 标志短语的稀疏度档位；非法值降 rare（绝不升格——口癖越少越好）
+_SIGNATURE_FREQ = ("rare", "occasional", "often")
+_SIGNATURE_DEFAULT_FREQ = "rare"
+
+
+def _norm_behavior(v) -> dict:
+    """归一 behavior：{group:{slot:str}}，非 dict 组 → 全空。"""
+    if not isinstance(v, dict):
+        v = {}
+    out = {}
+    for grp, slots in _BEHAVIOR_SLOT_KEYS.items():
+        g = v.get(grp) if isinstance(v.get(grp), dict) else {}
+        out[grp] = {s: str(g.get(s, "") or "").strip() for s in slots}
+    return out
+
+
+def _norm_signature_phrases(v) -> list[dict]:
+    """归一 signature_phrases → [{text, frequency, contexts}]。
+
+    text 空则丢、同名去重；frequency 非法一律降 `rare`（不是升格——口癖越少越好）；
+    允许 `["台词"]` 这类字符串简写。**完全可选**：多数好角色不需要标志短语。
+    """
+    out, seen = [], set()
+    for item in (v or []):
+        if isinstance(item, str):
+            item = {"text": item}
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text", "") or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        freq = str(item.get("frequency", "") or "").strip().lower()
+        if freq not in _SIGNATURE_FREQ:
+            freq = _SIGNATURE_DEFAULT_FREQ
+        out.append({"text": text, "frequency": freq,
+                    "contexts": [str(c).strip() for c in (item.get("contexts") or [])
+                                 if isinstance(c, str) and str(c).strip()]})
+    return out
+
+
+def _norm_speech_profile(v) -> dict:
+    """归一 speech_profile：语言**生成规律**，不是台词表。
+
+    rhythm/tone/logic/emotion/social_register 描述「怎么说话」；
+    habits/forbidden 是句式与表达倾向、绝不说（**不得装字面台词**——「每次先说某句」
+    属于 signature_phrases，且那也应是稀疏特征而非每条出场都复读）。
+    """
+    if not isinstance(v, dict):
+        v = {}
+    _lst = lambda x: [str(i).strip() for i in (x or []) if isinstance(i, str) and str(i).strip()]
+    out = {k: str(v.get(k, "") or "").strip() for k in _SPEECH_STR_KEYS}
+    out["habits"] = _lst(v.get("habits"))
+    out["forbidden"] = _lst(v.get("forbidden"))
+    out["signature_phrases"] = _norm_signature_phrases(v.get("signature_phrases"))
+    return out
+
+
+def voice_keys_with_content(sp) -> list[str]:
+    """speech_profile 里**有实质内容**的生成规律键（四键之一，tone 不算）。
+
+    「有 voice」的判据是这个，不是有没有 catchphrase/signature_phrases——
+    要求人人有标志短语只会把模型逼回「给每个角色造一句口癖」的老路。
+    """
+    sp = sp if isinstance(sp, dict) else {}
+    return [k for k in ("rhythm", "logic", "emotion", "social_register")
+            if str(sp.get(k, "") or "").strip()]
+
+
+def signature_phrases_of(char) -> list[dict]:
+    """角色的标志短语（稀疏特征）——**可选**。
+
+    `signature_phrases` 为空时把 legacy `catchphrase` 降级成一条 `rare`（保留既有
+    人物的辨识点，但不再当「每次出场都要说」的台词表用；`frequency` 只降不升）。
+    """
+    char = char if isinstance(char, dict) else {}
+    sp = char.get("speech_profile") if isinstance(char.get("speech_profile"), dict) else {}
+    phrases = _norm_signature_phrases(sp.get("signature_phrases"))
+    if phrases:
+        return phrases
+    legacy = str(char.get("catchphrase", "") or "").strip()
+    return [{"text": legacy, "frequency": _SIGNATURE_DEFAULT_FREQ, "contexts": []}] if legacy else []
+
+
+def _norm_development_plan(v):
+    """development_plan：str 一句成长方向，或 {growth_target,notes}；空 → ""。"""
+    if isinstance(v, dict):
+        return {k: str(x) for k, x in v.items() if str(x or "").strip()} or ""
+    return str(v or "").strip()
 
 
 def _canon_char(c) -> dict:
@@ -75,6 +175,10 @@ def _canon_char(c) -> dict:
             rels.append({"name": str(r["name"]).strip(),
                          "relation": str(r.get("relation", "") or "")})
     out["relations"] = rels
+    # 行为模型 / 语言倾向 / 成长规划（可选嵌套；空 → 默认空结构，不随人物丢弃）
+    out["behavior"] = _norm_behavior(c.get("behavior"))
+    out["speech_profile"] = _norm_speech_profile(c.get("speech_profile"))
+    out["development_plan"] = _norm_development_plan(c.get("development_plan"))
     return out
 
 
@@ -97,6 +201,9 @@ def _char_from_protagonist(p) -> dict:
         "death_year": int(p.get("death_year") or 0),
         "archetype_id": "",
         "relations": [],
+        "behavior": _norm_behavior(None),
+        "speech_profile": _norm_speech_profile(None),
+        "development_plan": "",
     }
 
 
@@ -123,6 +230,9 @@ def _char_from_support(c, mc_name) -> dict:
         "death_year": int(c.get("death_year") or 0),
         "archetype_id": str(c.get("archetype_id", "") or ""),
         "relations": rels,
+        "behavior": _norm_behavior(c.get("behavior")),
+        "speech_profile": _norm_speech_profile(c.get("speech_profile")),
+        "development_plan": _norm_development_plan(c.get("development_plan")),
     }
 
 
@@ -147,7 +257,9 @@ def normalize_basic_info(bi) -> dict:
         for c in (bi.get("supporting_cast") or []):
             if isinstance(c, dict) and str(c.get("name", "") or "").strip():
                 chars.append(_char_from_support(c, mc_name))
-        bi["characters"] = chars
+    # 统一写回：if 分支（characters 已存在）同样落 _canon_char 的归一化结果，
+    # 保证缺省字段（behavior/speech_profile/development_plan/relations 等）被补全/归一
+    bi["characters"] = chars
     # 兜底自动标主角（复刻旧"主角恒首"语义）：importance 未设时置 1
     if not any(str(c.get("role", "") or "").strip() == "主角"
                and str(c.get("name", "") or "").strip()
@@ -233,6 +345,202 @@ def reconcile_outline(o, wpc):
         o.end_chapter = max(o.start_chapter, word_to_chapter_end(o.end_word, wpc))
 
 
+def _payload_int(v):
+    """int 或纯整数字符串 → int；None/bool/其他 → None（对齐 save_outlines int() 与前端 parseInt）。"""
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if s and s.lstrip("+-").isdigit():
+            try:
+                return int(s)
+            except ValueError:
+                return None
+    return None
+
+
+def _arc_fields(o):
+    """dict 或 OutlineSlot → (id, name, start_chapter, end_chapter, start_word, end_word, parent_arc_id)。"""
+    if isinstance(o, dict):
+        return (str(o.get("id") or "").strip(), o.get("name") or "",
+                o.get("start_chapter"), o.get("end_chapter"),
+                o.get("start_word"), o.get("end_word"),
+                str(o.get("parent_arc_id") or "").strip())
+    return (str(getattr(o, "id", "") or "").strip(), getattr(o, "name", "") or "",
+            getattr(o, "start_chapter", None), getattr(o, "end_chapter", None),
+            getattr(o, "start_word", None), getattr(o, "end_word", None),
+            str(getattr(o, "parent_arc_id", "") or "").strip())
+
+
+def _plot_fields(p):
+    """dict 或 PlotSlot → (id, name, outline_id)。"""
+    if isinstance(p, dict):
+        return (str(p.get("id") or "").strip(), p.get("name") or "",
+                str(p.get("outline_id") or "").strip())
+    return (str(getattr(p, "id", "") or "").strip(), getattr(p, "name", "") or "",
+            str(getattr(p, "outline_id", "") or "").strip())
+
+
+def _plot_size_fields(p) -> tuple:
+    """dict 或 PlotSlot → (words, primary_turn)（粒度校验用；缺权威 → (0, "")）。"""
+    get = (p.get if isinstance(p, dict) else lambda k, d=None: getattr(p, k, d))
+    try:
+        words = int(get("words", 0) or 0)
+    except (TypeError, ValueError):
+        words = 0
+    return words, str(get("primary_turn", "") or "").strip()
+
+
+def outline_payload_problems(outlines, plots, known_outlines=(), known_plots=(),
+                             legacy_plot_ids=()):
+    """校验提交的 outlines/plots 载荷结构（结构必填，缺则拒收、不自动换算兜底）。
+
+    每条弧须 id 非空唯一 + name 非空 + 一组完整跨度（字数对 0<=start<end 或 章对
+    1<=start<=end；半组/全缺非法）。每个情节段须 id 非空唯一 + outline_id 指向
+    存在的最底层（叶）弧。known_outlines/known_plots 只作上下文（save_outlines
+    append 可把 plots 挂到已落盘弧、防 id 撞），自身不被校验。
+
+    `legacy_plot_ids`：已在盘上的存量情节段 id 集合。**新情节段**（不在该集合里）额外
+    强制粒度规则——`words <= PLOT_HARD_MAX` 且 `primary_turn` 非空，违反即拒收；存量
+    情节段两条都只当 warning（旧书按 300~2500 规划，整批打成非法等于无法读写旧书）。
+    返回问题字符串列表，空 = 通过。"""
+    probs = []
+    new_arcs = [_arc_fields(o) for o in (outlines or [])]
+    known_arcs = [_arc_fields(o) for o in (known_outlines or [])]
+    seen_arc_ids = {a[0] for a in known_arcs if a[0]}
+    for i, (aid, aname, sc, ec, sw, ew, _parent) in enumerate(new_arcs):
+        who = f"弧[{i}]" + (f" id={aid}" if aid else "（未命名）")
+        if not aid:
+            probs.append(f"{who} 缺 id")
+        elif aid in seen_arc_ids:
+            probs.append(f"弧 id={aid} 重复（第 {i} 项与已有弧 id 冲突）")
+        else:
+            seen_arc_ids.add(aid)
+        if not aname:
+            probs.append(f"弧[id={aid or '?'}] 缺 name")
+        _sw, _ew = _payload_int(sw), _payload_int(ew)
+        _sc, _ec = _payload_int(sc), _payload_int(ec)
+        if _sw is not None and _ew is not None:
+            if _sw < 0 or _ew <= _sw:
+                probs.append(f"弧[id={aid or '?'}] 字数跨度非法：须整数且 0<=start_word<end_word"
+                             f"（当前 start_word={sw!r}, end_word={ew!r}）")
+        elif _sc is not None and _ec is not None:
+            if _sc < 1 or _ec < _sc:
+                probs.append(f"弧[id={aid or '?'}] 章节跨度非法：须整数且 1<=start_chapter<=end_chapter"
+                             f"（当前 start_chapter={sc!r}, end_chapter={ec!r}）")
+        else:
+            given = [k for k, v in (("start_word", sw), ("end_word", ew),
+                                    ("start_chapter", sc), ("end_chapter", ec))
+                     if _payload_int(v) is not None]
+            probs.append(f"弧[id={aid or '?'}] 缺完整跨度（当前只有 {given or '无'}）："
+                         "须成对传 start_word&end_word（0<=start<end）或 start_chapter&end_chapter"
+                         "（1<=start<=end）；不再自动按每章字数换算")
+    id_set = {a[0] for a in (new_arcs + known_arcs) if a[0]}
+    non_leaf = {a[6] for a in (new_arcs + known_arcs) if a[6] and a[6] in id_set}
+    known_plot_fields = [_plot_fields(p) for p in (known_plots or [])]
+    seen_plot_ids = {p[0] for p in known_plot_fields if p[0]}
+    for i, (pid, _pname, oid) in enumerate(_plot_fields(p) for p in (plots or [])):
+        who = f"情节段[{i}]" + (f" id={pid}" if pid else "（未命名）")
+        if not pid:
+            probs.append(f"{who} 缺 id")
+        elif pid in seen_plot_ids:
+            probs.append(f"情节段 id={pid} 重复（第 {i} 项与已有情节段 id 冲突）")
+        else:
+            seen_plot_ids.add(pid)
+        if not oid:
+            probs.append(f"情节段[id={pid or '?'}] 缺 outline_id（须指向叶弧 id）")
+        elif oid not in id_set:
+            probs.append(f"情节段[id={pid or '?'}] outline_id={oid} 未指向任何弧")
+        elif oid in non_leaf:
+            probs.append(f"情节段[id={pid or '?'}] outline_id={oid} 非叶弧（{oid} 含子弧，情节段只能挂最底层弧）")
+    # 粒度硬规则：只卡**新情节段**（存量走 legacy_plot_size_warnings）。
+    probs.extend(plot_size_problems(plots, legacy_plot_ids=legacy_plot_ids))
+    return probs
+
+
+def plot_size_problems(plots, legacy_plot_ids=()) -> list[str]:
+    """新情节段的粒度硬规则：`words <= PLOT_HARD_MAX` 且 `primary_turn` 非空。
+
+    **独立函数**（不是 outline_payload_problems 的内联片段）——validate_storyline 需要对
+    盘上情节段单独跑这一条，而那时它没有弧列表，内联版本会因 id_set 为空把每个情节段都误判成
+    「outline_id 未指向任何弧」。存量的提示语见 legacy_plot_size_warnings()。
+    """
+    legacy_ids = {str(x or "").strip() for x in (legacy_plot_ids or [])}
+    out = []
+    for p in (plots or []):
+        pid, pname, _oid = _plot_fields(p)
+        if pid and pid in legacy_ids:
+            continue
+        words, turn = _plot_size_fields(p)
+        who = f"情节段「{pname or pid or '未命名'}」"
+        if words > PLOT_HARD_MAX:
+            out.append(f"{who} 目标字数 {words} 超过硬上限 {PLOT_HARD_MAX}："
+                       f"一个情节段 = 一个主要戏剧变化，请按拆段判据（时间跳跃/地点转换/"
+                       f"主导冲突对象变化/新问题/双高潮）拆成多个情节段。{plot_word_guidance()}")
+        if not turn:
+            out.append(f"{who} 缺 primary_turn（本段唯一的主要戏剧变化，一句话）；"
+                       f"没有它无法判断这一段是否其实是几个戏剧转向合写。")
+    return out
+
+
+def legacy_plot_size_warnings(plots, legacy_plot_ids=()) -> list[str]:
+    """存量情节段的粒度提示（**不拒收**）：返回 warning 文案列表，供 decision_points 展示。
+
+    与 outline_payload_problems 的新段硬规则互补——同一条规则，两种强度：
+    新段违反 = 拒收（写入端拦住，从此不再产生 2200 字 Plot）；
+    存量违反 = 提示（旧书照常读写，不迁移）。
+    """
+    legacy_ids = {str(x or "").strip() for x in (legacy_plot_ids or [])}
+    out = []
+    for p in (plots or []):
+        pid, pname, _oid = _plot_fields(p)
+        if not pid or pid not in legacy_ids:
+            continue
+        words, turn = _plot_size_fields(p)
+        who = f"情节段「{pname or pid}」"
+        if words > PLOT_HARD_MAX:
+            out.append(f"{who} 是存量情节段且目标字数 {words} > {PLOT_HARD_MAX}（legacy_oversized_plot）："
+                       f"旧书不迁移、照常写作；续写/扩展时请按新粒度拆段")
+        if not turn:
+            out.append(f"{who} 是存量情节段且缺 primary_turn（legacy_missing_turn）："
+                       f"不影响旧书写作；新规情节段必须填")
+    return out
+
+
+# ═══════════════════════════════════════════
+# 情节段字数粒度（2026-09-11 重基线）
+# ═══════════════════════════════════════════
+# 旧口径「300~2500」把 Plot 当成「一大段故事发展」，实测生成了 2200 字的单段
+# （book_002 pl15 ≈ 该章 73%），一章只切出 2~3 段、每段还各抽一篇样文 → 章内文风断层。
+# 新口径：Plot = 一个主要戏剧变化（见 PlotSlot.primary_turn），一章 4~6 段。
+#
+# **注意 `MAX_PLAN_WORDS`（storyline_writer.py:25）不随本表下调**：那是 planned_words 的
+# 钳位上限，下调会静默改写存量 Plot 的规划字数，让弧内覆盖校验把旧书报成大段叙事空白。
+# 这里的新上限只用于**新 Plot 的校验拒收**（legacy 走 outline_payload_problems 白名单）。
+PLOT_WORD_BANDS = {
+    "transition": (250, 450),    # 过渡/信息
+    "normal":     (450, 700),    # 普通推进
+    "conflict":   (600, 850),    # 冲突/人物变化
+    "key":        (800, 1050),   # 关键转折
+    "climax":     (850, 1100),   # 高潮
+}
+PLOT_PREFERRED_MAX = 1100        # 超此值即「建议再拆」，不拒收
+PLOT_HARD_MAX = 1200             # 新 Plot 硬上限：超过直接拒收（legacy 只 warning）
+
+# chapter_break_after 合法值（Planner 表达语义，Server 结合字数预算决定是否断章）
+PLOT_BREAK_AFTER = ("preferred", "allowed", "avoid")
+
+
+def plot_word_guidance() -> str:
+    """给指令层/校验提示复用的一段字数口径文案（避免多处手写漂移）。"""
+    bands = "、".join(f"{k} {lo}~{hi}" for k, (lo, hi) in PLOT_WORD_BANDS.items())
+    return (f"一个情节段 = 一个主要戏剧变化（primary_turn），一章通常 4~6 段；"
+            f"目标字数按类型给（{bands}），建议不超过 {PLOT_PREFERRED_MAX}，"
+            f"硬上限 {PLOT_HARD_MAX}（新情节段超过直接拒收）")
+
+
 @dataclass
 class OutlineSlot:
     """一个大纲（情节弧）在故事线上的位置：树状目标节点，字数跨度（0 基，start 含/end 不含），可多层嵌套（parent_arc_id）；start_chapter/end_chapter 为兼容/推导视图。"""
@@ -244,7 +552,7 @@ class OutlineSlot:
     start_word: Optional[int] = None  # 0-based inclusive 字数，权威；None=由 chapter 推导
     end_word: Optional[int] = None    # exclusive 字数，权威；None=由 chapter 推导
     stages: list = field(default_factory=list)   # 从模板展开的阶段 [{name,min_ch,max_ch,events,description,foreshadow_opportunities,themes}]
-    expanded: bool = False         # 是否已展开填充了桥段
+    expanded: bool = False         # 是否已展开填充了情节段
     notes: str = ""                # 用户备注
 
     # 与其他大纲的关系
@@ -258,10 +566,16 @@ class OutlineSlot:
     narrative: str = "chronological"   # chronological(顺叙)|flashback(倒叙)|interleaved(插叙)
     narrative_target: str = ""         # flashback: 回忆的时间段/章节；interleaved: 所嵌入的主弧 id
 
+    # 结构化设计意图 {goal, conflict_function, deviation}：本弧目标 / 在全局冲突里承担什么 /
+    # 偏离库模板的地方。**刻意做成结构化字段而不是"从 notes 里搜关键词"**——后者最后只会
+    # 得到满屏"目标：… 目标：…"，UI 绿了但内容不一定更好（与人物语音从字面台词改成
+    # 生成规律的方向一致）。notes 仍是自由备注，不做格式要求。
+    design_intent: dict = field(default_factory=dict)
+
 
 @dataclass
 class PlotSlot:
-    """一个桥段在大纲阶段内的位置"""
+    """一个情节段在大纲阶段内的位置"""
     id: str                        # 唯一标识
     template_id: str               # 对应 PlotLibrary 里的模板
     name: str                      # 显示名称
@@ -269,13 +583,23 @@ class PlotSlot:
     sub_category: str = ""         # 子分类
     outline_id: str = ""           # 属于哪个大纲
     stage_index: int = 0           # 属于哪个阶段（outline.stages 的索引）
-    parent_plot_id: str = ""       # 嵌套：父桥段 id，空=顶级
-    children_plot_ids: list[str] = field(default_factory=list)  # 子桥段
+    parent_plot_id: str = ""       # 嵌套：父情节段 id，空=顶级
+    children_plot_ids: list[str] = field(default_factory=list)  # 子情节段
 
     # 位置信息（用于故事线展示）
     order: int = 0                 # 阶段内排序
     cover_beats: int = 4           # 预计覆盖多少个节拍
-    template_structure: str = ""   # 桥段模板结构字符串（箭头流程）
+    words: int | None = None       # 目标字数（agent 按内容浓淡给的规划字数；0/None=回退 cover_beats×200）
+    # 剧情单位自洽性（2026-09-11）：一个 Plot = 一个主要戏剧变化。
+    # primary_turn 是**硬校验字段**（新 Plot 必填）——没有它，validator 无法判「这一段到底
+    # 是几个戏剧转向」，字数上限就只是唯一可查的代理指标（book_002 的 pl15 写了 2200 字、
+    # 一章塞 4 个转向，正是这个洞）。时间跳跃/地点转换/第二冲突等判据不可自动校验，留在
+    # 指令层当强生成规则；这里只强制「你必须说出这一段唯一的那一转」。
+    primary_turn: str = ""         # 本 Plot 唯一的主要戏剧变化（一句话）
+    # 写完这一段是否适合断章：preferred 建议断 | allowed 可以断 | avoid 尽量不断。
+    # 由 Planner 表达语义、Server 结合字数预算决定（见 write_flow.chapter_status）。
+    chapter_break_after: str = "allowed"
+    template_structure: str = ""   # 情节段模板结构字符串（箭头流程）
     slots: list = field(default_factory=list)  # 变量槽位
 
     # 注入的加料
@@ -290,11 +614,26 @@ class PlotSlot:
     # 叙事线程（主线/副线/伏笔线；主角可多线并存）
     thread_id: str = "主线"          # 所属线程
     thread_seq: int = 0              # 线程内序号（组内 tie-break）
-    resolves_plot_id: str = ""       # 收局槽位：解决/呼应哪个设局桥段 id（非空=收局）
-    resolves_name: str = ""          # 冗余存设局桥段名，供 prompt/前端免查
+    resolves_plot_id: str = ""       # 收局槽位：解决/呼应哪个设局情节段 id（非空=收局）
+    resolves_name: str = ""          # 冗余存设局情节段名，供 prompt/前端免查
 
-    # 出场人物（主角恒在；配角按名规则匹配到桥段事件/骨架/槽位）
+    # 规划期伏笔（**一等公民**，不再只在写作期由规则从 resolves_plot_id 反推）：
+    #   [{id, kind: "setup"|"payoff", desc, promise_id?, deadline_word?, note?}]
+    # 同一段可以埋多条（"钥匙来源""第三层禁区""角色身份"），所以身份靠 promise.id，
+    # setup_plot_id 只是索引——一个 plot 三条 promise 时必须能各归各。
+    foreshadow: list[dict] = field(default_factory=list)
+    # 收局端：**精确**兑现哪几条 promise（resolves_plot_id 是 plot 级的 legacy，
+    # 无法表达"同一 setup 埋的三条只兑现其中一条"）。
+    resolves_promise_ids: list[str] = field(default_factory=list)
+
+    # 出场人物（主角恒在；配角按名规则匹配到情节段事件/骨架/槽位）
     roles: list[str] = field(default_factory=list)
+    no_named_cast: bool = False     # 合法的无具名人物场景；否则 roles 必须为角色 bible 中的名字
+    protocol_version: int = 1       # 新规划默认由 save_outlines 写为 2；旧书保持影子校验
+    execution_brief: dict = field(default_factory=dict)   # 为什么写这一段（目标/冲突/选择/不可逆变化/钩子；自然语言，供 Agent 阅读）
+    character_impact: list[dict] = field(default_factory=list)  # 写前人物变化预测（自然语言，供 Agent 阅读）
+    expected_facts: list[dict] = field(default_factory=list)    # 可机器比较的写前预测（reconcile 只比它）：
+        # [{subject, type, expected_to, strength: must|likely|possible}]；type 与 character_state 事件白名单对齐
 
 
 @dataclass
@@ -322,9 +661,16 @@ class BookStoryline:
     # 叙事线程定义（[{"id","name","desc"}, ...]）
     threads: list[dict] = field(default_factory=list)
 
-    # 读者承诺台账（设局→收局的伏笔生命周期，写作时免费规则登记/兑现）
-    # 每项: {id, setup_plot_id, type, desc, status: pending|advanced|fulfilled,
-    #        setup_chapter, deadline_chapter, payoff_plot_id, payoff_chapter}
+    # 读者承诺台账（设局→收局的伏笔生命周期）。
+    # 每项: {id, setup_plot_id, type, desc, status, setup_chapter, deadline_chapter,
+    #        payoff_plot_id, payoff_chapter, source?, payoff_arc_id?, payoff_intent_id?,
+    #        cancelled_reason?, superseded_by?}
+    # **六态**：planned -（设局情节段的正文写入并提交章节）-> pending -> advanced
+    #          -> fulfilled；planned 另可 -> cancelled（规划放弃了该设局）
+    #          / superseded（被新版承诺替代）。
+    # **只有 pending 及以后才是"故事事实层欠读者的债"**；planned 只是规划承诺——
+    # 批准规划也依然不是故事事实（replan 确认后仍停 planned）。
+    # 身份主键是 promise.id，`setup_plot_id` 只是索引（允许一对多）。
     promises: list[dict] = field(default_factory=list)
 
     # 全书贯穿元素
@@ -335,6 +681,7 @@ class BookStoryline:
     phase: str = "config"          # config|outlines|plots|gags|ready
     generated_at: str = ""
     updated_at: str = ""
+    storyline_revision: int = 0   # 乐观并发版本；每次结构写入成功后 +1
 
     def to_dict(self) -> dict:
         def _outline_dict(o):
@@ -350,6 +697,7 @@ class BookStoryline:
                 "narrative": o.narrative,
                 "narrative_target": o.narrative_target,
                 "parent_arc_id": o.parent_arc_id,
+                "design_intent": o.design_intent,
             }
         return {
             "book_title": self.book_title,
@@ -365,6 +713,9 @@ class BookStoryline:
                 "parent_plot_id": p.parent_plot_id,
                 "children_plot_ids": p.children_plot_ids,
                 "order": p.order, "cover_beats": p.cover_beats,
+                "words": p.words,
+                "primary_turn": p.primary_turn,
+                "chapter_break_after": p.chapter_break_after,
                 "template_structure": p.template_structure,
                 "slots": p.slots,
                 "gag_ids": p.gag_ids, "theme_hints": p.theme_hints,
@@ -375,7 +726,14 @@ class BookStoryline:
                 "thread_id": p.thread_id, "thread_seq": p.thread_seq,
                 "resolves_plot_id": p.resolves_plot_id,
                 "resolves_name": p.resolves_name,
+                "foreshadow": p.foreshadow,
+                "resolves_promise_ids": p.resolves_promise_ids,
                 "roles": p.roles,
+                "no_named_cast": p.no_named_cast,
+                "protocol_version": p.protocol_version,
+                "execution_brief": p.execution_brief,
+                "character_impact": p.character_impact,
+                "expected_facts": p.expected_facts,
             } for p in self.plots],
             "threads": self.threads,
             "promises": self.promises,
@@ -384,6 +742,7 @@ class BookStoryline:
             "phase": self.phase,
             "generated_at": self.generated_at,
             "updated_at": self.updated_at,
+            "storyline_revision": self.storyline_revision,
         }
 
     @classmethod
@@ -399,6 +758,7 @@ class BookStoryline:
             phase=d.get("phase", "config"),
             generated_at=d.get("generated_at", ""),
             updated_at=d.get("updated_at", ""),
+            storyline_revision=int(d.get("storyline_revision", 0) or 0),
         )
         tl.outlines = []
         for o in d.get("outlines", []):
@@ -422,6 +782,7 @@ class BookStoryline:
                 narrative=o.get("narrative", "chronological"),
                 narrative_target=o.get("narrative_target", ""),
                 parent_arc_id=o.get("parent_arc_id", ""),
+                design_intent=o.get("design_intent") or {},
             )
             reconcile_outline(_slot, tl.words_per_chapter or 3000)
             tl.outlines.append(_slot)
@@ -433,6 +794,9 @@ class BookStoryline:
             parent_plot_id=p.get("parent_plot_id", ""),
             children_plot_ids=p.get("children_plot_ids", []),
             order=p.get("order", 0), cover_beats=p.get("cover_beats", 4),
+            words=p.get("words"),
+            primary_turn=p.get("primary_turn", ""),
+            chapter_break_after=p.get("chapter_break_after", "allowed"),
             template_structure=p.get("template_structure", ""),
             slots=p.get("slots", []),
             gag_ids=p.get("gag_ids", []),
@@ -445,7 +809,14 @@ class BookStoryline:
             thread_seq=p.get("thread_seq", 0),
             resolves_plot_id=p.get("resolves_plot_id", ""),
             resolves_name=p.get("resolves_name", ""),
+            foreshadow=p.get("foreshadow", []),
+            resolves_promise_ids=p.get("resolves_promise_ids", []),
             roles=p.get("roles", []),
+            no_named_cast=bool(p.get("no_named_cast", False)),
+            protocol_version=int(p.get("protocol_version", 1) or 1),
+            execution_brief=p.get("execution_brief", {}),
+            character_impact=p.get("character_impact", []),
+            expected_facts=p.get("expected_facts", []),
         ) for p in d.get("plots", [])]
         tl.threads = d.get("threads", [])
         tl.promises = d.get("promises", [])
@@ -456,9 +827,10 @@ class BookStoryline:
 # 故事线生成器
 # ═══════════════════════════════════════════
 
-def structure_to_stages(tmpl, words_per_chapter: int = 3000) -> list[dict]:
-    """把结构模板的阶段展开为 stage dict（name/min_ch/max_ch/events/description/foreshadow_opportunities/themes）——多实现共用防漂移。
-    模板只表述字数（min_words/max_words），此处按每章字数换算成章数（book 侧 stage 兼容视图）。"""
+def structure_to_stages(stage_nodes, words_per_chapter: int = 3000) -> list[dict]:
+    """把若干弧节点（ArcNode，平级库通常传选中弧自身一个）展开为 stage dict（name/min_ch/max_ch/events/description/foreshadow_opportunities/themes）——多实现共用防漂移。
+    弧库平级后无子弧可再拆，故「选中的整段弧」即作为书弧内的一条阶段展开；模板只表述字数
+    （min_words/max_words），此处按每章字数换算成章数（book 侧 stage 兼容视图）。"""
     wpc = max(1, words_per_chapter or 3000)
     return [
         {"name": s.name,
@@ -467,31 +839,31 @@ def structure_to_stages(tmpl, words_per_chapter: int = 3000) -> list[dict]:
          "events": s.key_events[:5],
          "description": getattr(s, "description", ""),
          "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or []),
-         "themes": list(s.themes or [])}
-        for s in tmpl.stages
+         "themes": []}
+        for s in (stage_nodes or [])
     ]
 
 
-# 内涵→桥段兼容映射（免费规则，替代 theme_lib.compatible_plots）
-# 由内置内涵 compatible_plots 反查：桥段模板 id → 可承载内涵名（保留完整名，与 tl.themes 一致）。
-# 删除 theme_lib 后此常量是「内涵跟随桥段」的唯一数据源。
+# 内涵→情节段兼容映射（免费规则，替代 theme_lib.compatible_plots）
+# 由内置内涵 compatible_plots 反查：情节段模板 id → 可承载内涵名（保留完整名，与 tl.themes 一致）。
+# 删除 theme_lib 后此常量是「内涵跟随情节段」的唯一数据源。
+# 2026-09-06 段库种子从零重编(id 换新),旧 plot_dating_* 键一并迁移到新功能类种子。
 THEME_PLOT_COMPAT = {
-    "plot_dating_001": ["公平（Justice）", "身份与伪装（Identity & Disguise）"],
-    "plot_dating_003": ["归属感（Belonging）", "传承与突破（Legacy & Breakthrough）"],
-    "plot_dating_004": ["成长的代价（Cost of Growth）", "传承与突破（Legacy & Breakthrough）"],
-    "plot_dating_005": ["公平（Justice）"],
-    "plot_dating_006": ["成长的代价（Cost of Growth）", "牺牲（Sacrifice）"],
-    "plot_dating_008": ["身份与伪装（Identity & Disguise）"],
-    "plot_dating_010": ["公平（Justice）", "成长的代价（Cost of Growth）",
-                        "牺牲（Sacrifice）", "归属感（Belonging）"],
+    "plot_confront_001": ["公平（Justice）", "身份与伪装（Identity & Disguise）"],
+    "plot_reveal_001": ["身份与伪装（Identity & Disguise）", "公平（Justice）"],
+    "plot_reveal_003": ["公平（Justice）", "身份与伪装（Identity & Disguise）"],
+    "plot_rel_001": ["归属感（Belonging）"],
+    "plot_rel_003": ["归属感（Belonging）"],
+    "plot_action_003": ["牺牲（Sacrifice）", "成长的代价（Cost of Growth）"],
+    "plot_after_001": ["成长的代价（Cost of Growth）", "牺牲（Sacrifice）", "归属感（Belonging）"],
 }
 
 
 def mount_themes_and_hooks(plot: "PlotSlot", storyline_themes: list) -> None:
-    """给桥段挂载内涵并标注吸睛点 —— StorylineBuilder/OutlineGenerator 共用，单一实现防漂移。
+    """给情节段挂载内涵并标注吸睛点 —— StorylineBuilder/OutlineGenerator 共用，单一实现防漂移。
 
     内涵来源优先级：
-      1) 桥段已从所属阶段继承 theme_moments（阶段级内涵，含位置/手法）→ theme_hints 取其名
+      1) 情节段已从所属阶段继承 theme_moments（阶段级内涵，含位置/手法）→ theme_hints 取其名
       2) 否则按 THEME_PLOT_COMPAT 命中书级内涵（免费规则兜底），不强挂
     未命中的内涵仍作为书级可用线索随「书级设定卡」注入写作；笑点完全涌现，不在此分配。
     """
@@ -518,7 +890,7 @@ def mount_themes_and_hooks(plot: "PlotSlot", storyline_themes: list) -> None:
 
 
 class StorylineBuilder:
-    """根据题材方向和用户需求，生成大纲故事线 + 桥段配置"""
+    """根据题材方向和用户需求，生成大纲故事线 + 情节段配置"""
 
     def __init__(self, structure_lib=None, plot_lib=None, gag_lib=None, llm_client=None):
         self.structures = structure_lib
@@ -552,16 +924,12 @@ class StorylineBuilder:
         if not self.structures:
             return []
 
-        # 题材方向→常见弧模板序列
-        genre_map = {
-            "玄幻": ["arc_xuanhuan_01", "arc_xuanhuan_01"],  # 试炼扬名×2
-            "都市": ["arc_dushi_01", "arc_dushi_01"],
-            "言情": ["arc_tianwen_01", "arc_tianwen_01"],
-            "悬疑": ["arc_xuanyi_01", "arc_xuanyi_01"],
-            "穿越": ["arc_chuanyue_01", "arc_xuanhuan_01"],
-        }
-
-        template_ids = genre_map.get(genre, ["arc_xuanhuan_01"])
+        # 题材方向→弧模板序列：按 tags 首词匹配 genre；无匹配则取库前 2 条。
+        # （旧 genre_map 硬编码 arc_xuanhuan_01 等 id 已不存在，属死路径；2026-09-06 重编种子后改为现取）
+        roots = self.structures.roots()
+        by_tag = [t for t in roots if (t.tags or [""])[0] == genre]
+        pick = (by_tag or roots)[:2]
+        template_ids = [t.id for t in pick]
         outlines = []
         ch = 1
         for i, tid in enumerate(template_ids):
@@ -575,7 +943,7 @@ class StorylineBuilder:
                 name=f"{tmpl.name}{f'(第{i+1}部分)' if len(template_ids)>1 else ''}",
                 start_chapter=ch,
                 end_chapter=ch + max(1, tmpl.total_words // 3000) - 1,
-                stages=structure_to_stages(tmpl),
+                stages=structure_to_stages([tmpl]),
                 predecessor=outlines[-1].id if outlines else "",
                 transition_type="sequential",
             ))
@@ -590,9 +958,9 @@ class StorylineBuilder:
         """AI 辅助生成大纲序列"""
         available = ""
         if self.structures:
-            templates = self.structures.templates[:20]  # 最多 20 个候选
+            templates = self.structures.roots()[:30]  # 最多 30 个平级弧候选
             available = "\n".join(
-                f"- {t.id}: {t.name} ({t.total_words}字) | 阶段: {'→'.join(s.name for s in t.stages[:5])}"
+                f"- {t.id}: {t.name} ({t.total_words}字) | 简介: {(t.description or '')[:60]}"
                 for t in templates
             )
 
@@ -628,7 +996,7 @@ class StorylineBuilder:
         try:
             raw = self.llm.call(
                 "你是一位专业的网络小说策划编辑。请只返回JSON，不要加任何额外文字。",
-                prompt, temperature=0.7, max_tokens=2048)
+                prompt, temperature=0.7)
             from core.llm_client import extract_json
             data = json.loads(extract_json(raw))
             outlines_data = data.get("outlines", [])
@@ -645,7 +1013,7 @@ class StorylineBuilder:
             if self.structures:
                 tmpl = self.structures.get_by_id(tid)
                 if tmpl:
-                    stages = structure_to_stages(tmpl)
+                    stages = structure_to_stages([tmpl])
             outline = OutlineSlot(
                 id=oid,
                 template_id=tid,
@@ -673,9 +1041,9 @@ class StorylineBuilder:
         self, outline: OutlineSlot, storyline: BookStoryline,
     ) -> list[PlotSlot]:
         """
-        给一个大纲的每个阶段填充桥段。
+        给一个大纲的每个阶段填充情节段。
 
-        支持嵌套：第一个桥段作为"框"，后续桥段嵌入其中。
+        支持嵌套：第一个情节段作为"框"，后续情节段嵌入其中。
         """
         if not self.plots:
             return []
@@ -685,7 +1053,7 @@ class StorylineBuilder:
             stage_name = stage.get("name", "")
             events = stage.get("events", [])
 
-            # 匹配桥段：阶段名+事件描述+题材方向
+            # 匹配情节段：阶段名+事件描述+题材方向
             context = f"{outline.name} {stage_name} {' '.join(events)}"
             candidates = self.plots.match_for_chapter(context, genre_from_tags(storyline))
             if not candidates:
@@ -693,7 +1061,7 @@ class StorylineBuilder:
                 if not candidates:
                     candidates = self.plots.templates[:1]
 
-            # 取 1-3 个桥段（支持嵌套）
+            # 取 1-3 个情节段（支持嵌套）
             selected = candidates[:min(3, len(candidates))]
             parent_id = ""
             for pi, tmpl in enumerate(selected):
@@ -716,18 +1084,18 @@ class StorylineBuilder:
                 )
                 new_plots.append(p)
                 if parent_id:
-                    # 找到父桥段并添加子关系
+                    # 找到父情节段并添加子关系
                     for existing in storyline.plots + new_plots:
                         if existing.id == parent_id:
                             existing.children_plot_ids.append(pid)
                             break
-                parent_id = pid  # 链式嵌套（每个桥段包下一个）
+                parent_id = pid  # 链式嵌套（每个情节段包下一个）
 
         outline.expanded = True
         return new_plots
 
     def fill_themes_and_hooks(self, plots: list[PlotSlot], storyline: BookStoryline):
-        """给桥段挂载内涵（跟随桥段）并标注吸睛点（委托共享 mount_themes_and_hooks）。"""
+        """给情节段挂载内涵（跟随情节段）并标注吸睛点（委托共享 mount_themes_and_hooks）。"""
         for p in plots:
             mount_themes_and_hooks(p, storyline.themes)
 
@@ -870,8 +1238,8 @@ _ROLE_STOPWORDS = {
     "他们", "我们", "你们", "老板", "经理", "同事", "身份", "金手指",
 }
 
-# 分类启发式兜底：桥段模板文本是泛化的，名字规则匹配常落空；
-# 按桥段 category 推断该出现的配角类型（凭 role/relation 关键词匹配）
+# 分类启发式兜底：情节段模板文本是泛化的，名字规则匹配常落空；
+# 按情节段 category 推断该出现的配角类型（凭 role/relation 关键词匹配）
 _CATEGORY_RELATION = {
     "职场": ("同事", "上司", "老板", "主管", "员工", "老员工"),
     "爽文": ("同事", "上司", "老板", "主管"),
@@ -886,9 +1254,9 @@ _CATEGORY_RELATION = {
 
 
 def annotate_plot_roles(tl: BookStoryline) -> int:
-    """规则标注每个桥段的出场人物（主角恒在首位；配角名出现在桥段事件/骨架/槽位/吸睛文本 → 出场）。
+    """规则标注每个情节段的出场人物（主角恒在首位；配角名出现在情节段事件/骨架/槽位/吸睛文本 → 出场）。
 
-    幂等：重跑覆盖。返回标注到出场人物的桥段数。
+    幂等：重跑覆盖。返回标注到出场人物的情节段数。
     """
     if not tl or not tl.plots:
         return 0
@@ -930,7 +1298,7 @@ def annotate_plot_roles(tl: BookStoryline) -> int:
         for n in names:
             if n != protag_name and n in text:
                 roles.append(n)
-        # 2. 分类启发式兜底：名字没命中时，按桥段 category 推断出场配角
+        # 2. 分类启发式兜底：名字没命中时，按情节段 category 推断出场配角
         if len(roles) <= 1:
             rel_kws = _CATEGORY_RELATION.get(str(getattr(p, "category", "") or ""), ())
             for n, c in cast_map.items():

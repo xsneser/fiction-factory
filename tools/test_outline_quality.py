@@ -12,8 +12,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["NOVEL_ENGINE_DIR"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+from core.api_config import load_api_config, is_api_configured
 from core.llm_client import LLMClient
-from core.models import APIConfig
 from libraries.outline_generator import OutlineGenerator
 from libraries.plot import PlotLibrary
 from libraries.structure import StructureLibrary
@@ -29,14 +29,10 @@ def main():
     ap.add_argument("--save", default="")
     args = ap.parse_args()
 
-    cfg_data = json.load(open("api.json", encoding="utf-8"))
-    api_cfg = APIConfig(
-        api_key=cfg_data.get("api_key", ""),
-        base_url=cfg_data.get("base_url", "https://api.deepseek.com"),
-        model=cfg_data.get("model", "deepseek-chat"),
-        http_timeout_seconds=cfg_data.get("http_timeout_seconds", 300),
-        verify_ssl=cfg_data.get("verify_ssl", True),
-    )
+    # 配置一律走 core.api_config（仓库根 api.json，与 cwd 无关）
+    api_cfg = load_api_config()
+    if not is_api_configured(api_cfg):
+        raise RuntimeError("LLM 未配置：请先在 /settings 保存 API 地址与 Key")
     llm = LLMClient(api_cfg)
 
     gen = OutlineGenerator(
@@ -107,13 +103,13 @@ def main():
         for s in stages[:3]:
             evs = "、".join(s.get("events", [])[:3])
             print(f"      · {s.get('name')}（{s.get('min_ch')}-{s.get('max_ch')}章）: {evs}")
-    print(f"桥段 {len(plots)} 个:")
+    print(f"情节段 {len(plots)} 个:")
     by_outline = {}
     for p in plots:
         by_outline.setdefault(p.get("outline_id"), []).append(p)
     for o in outlines:
         pl = by_outline.get(o.get("id"), [])
-        print(f"  - {o.get('name')}: {len(pl)} 个桥段")
+        print(f"  - {o.get('name')}: {len(pl)} 个情节段")
         for p in pl[:4]:
             print(f"      · {p.get('name')} [{p.get('category')}] 笑点{len(p.get('gag_ids',[]))} 内涵{p.get('theme_hints')}")
     total_gags = sum(len(p.get("gag_ids", [])) for p in plots)
@@ -135,7 +131,7 @@ def main():
     if max_end < 10:
         probs.append(f"全书仅覆盖 {max_end} 章，偏短")
     if not plots:
-        probs.append("没有任何桥段")
+        probs.append("没有任何情节段")
     for o in outlines:
         if not o.get("stages"):
             probs.append(f"大纲「{o.get('name')}」没有阶段")
@@ -144,7 +140,7 @@ def main():
     if probs:
         print("⚠️ ", "；".join(probs))
     else:
-        print("✅ 大纲=故事线结构完整（大纲→阶段→桥段→笑点/内涵）")
+        print("✅ 大纲=故事线结构完整（大纲→阶段→情节段→笑点/内涵）")
     return 0
 
 

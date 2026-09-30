@@ -8,6 +8,106 @@ from libraries.world_tags import genre_from_tags
 
 bp = Blueprint("storyline", __name__)
 
+
+def _planning_ui_payload(book_id, include_preview: bool = False):
+    """聚合故事合同与规划草稿；UI 只消费本结果，不在浏览器推断边界。
+
+    `include_preview=False`（默认，也是页面用的公开 GET）：只给正式规划事实。
+    preview 草稿的校验明细、owner、revision 属于 Agent/内部诊断面，不回浏览器。
+    """
+    from libraries.storyline import load_storyline
+    from libraries.planning_state import detect_story_boundary, load_planning_state
+    tl = load_storyline(_storyline_filepath(book_id))
+    book = book_mgr.get(book_id)
+    if tl is None or book is None:
+        return None
+    state = load_planning_state(book_id, tl, book, persist=False)
+    # 「已写字数」与服务端 FSM / prepare_plot_run 共用同一口径（_runtime_written_words：
+    # 已落盘章节正文计字 + 草稿计字），否则 UI 显示的边界会和 FSM 的判定不一致。
+    from agent_tools import _draft_read, _runtime_written_words
+    draft = _draft_read(book_id) or {}
+    draft_ids = {str(x.get("plot_id") or "") for x in (draft.get("bridges") or []) if x.get("plot_id")}
+    unwritten = [p for p in (tl.plots or [])
+                 if not int(getattr(p, "written_chapter", 0) or 0) and p.id not in draft_ids]
+    written_now = _runtime_written_words(book_id, tl, book, draft)
+    boundary = detect_story_boundary(
+        written_until_word=written_now,
+        committed_until_word=int(state.get("committed_until_word") or 0),
+        remaining_plots=len(unwritten), words_per_batch=int(tl.words_per_chapter or 3000),
+        storyline_revision=int(getattr(tl, "storyline_revision", 0) or 0),
+        last_replan=state.get("last_replan") or {},
+    )
+    raw_horizon = state.get("horizon") if isinstance(state.get("horizon"), dict) else {}
+    # H1 只认 `horizon.h1`（不再兼容 `near` 别名：两套形状会让"这一条到底属于哪一层"
+    # 没有唯一答案）。H2 的唯一真源是 `future_intents`，这里直接映射，不再另存一份。
+    h1 = raw_horizon.get("h1")
+    if not isinstance(h1, list):
+        h1 = []
+    display = {
+        "h0": [{"id": p.id, "name": p.name, "outline_id": p.outline_id,
+                "words": int(p.words or 0)} for p in unwritten[:8]],
+        "h1": h1,
+        "h2": state.get("future_intents") or [],
+    }
+    # 规划期伏笔（未落笔）：与写作期台账在**同一个面板**连续呈现，不另开面板
+    try:
+        from libraries import build_checklist
+        planned_promises = [q for q in (getattr(tl, "promises", None) or [])
+                            if isinstance(q, dict) and q.get("status") == "planned"]
+        state["checklist"] = build_checklist.replan_checklist(tl, state)
+    except Exception:  # noqa: BLE001 —— 清单算不出来不该让规划面板整页挂掉
+        planned_promises = []
+        state["checklist"] = None
+    state["planned_promises"] = planned_promises
+    state = dict(state)
+    state["written_until_word"] = written_now
+    state["storyline_revision"] = int(getattr(tl, "storyline_revision", 0) or 0)
+    state["display_horizon"] = display
+    payload = {
+        "ok": True, "book_id": book_id, "planning_state": state,
+        "storyline_snapshot": {
+            "revision": int(getattr(tl, "storyline_revision", 0) or 0),
+            "outline_count": len(tl.outlines or []), "plot_count": len(tl.plots or []),
+            "remaining_plot_count": len(unwritten),
+            "threads": [{"id": getattr(t, "id", ""), "name": getattr(t, "name", "")}
+                        if not isinstance(t, dict) else {"id": t.get("id", ""), "name": t.get("name", "")}
+                        for t in (tl.threads or [])],
+            "promise_count": len(tl.promises or []),
+        },
+        "boundary": boundary,
+    }
+    if include_preview:
+        from libraries.planning_state import load_replan_preview
+        payload["replan_preview"] = load_replan_preview(book_id)
+    return payload
+
+
+@bp.route("/api/storyline/<book_id>/planning-state", methods=["GET"])
+def api_planning_state(book_id):
+    payload = _planning_ui_payload(book_id)
+    if payload is None:
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    return jsonify(payload)
+
+
+@bp.route("/api/storyline/<book_id>/commit-plan", methods=["POST"])
+def api_commit_plan(book_id):
+    """用户确认暂存预览后，走共享 replan 提交服务（修订 2：UI 与 auto orchestrator 同一点）。"""
+    from libraries.replan_service import commit_replan_preview
+    data = request.get_json(silent=True) or {}
+    result = commit_replan_preview(book_id, data.get("preview_id"),
+                                   data.get("expected_revision"))
+    status = result.pop("status", 200) if isinstance(result, dict) else 200
+    return jsonify(result), status
+
+
+@bp.route("/api/storyline/<book_id>/replan-preview/<preview_id>", methods=["DELETE"])
+def api_delete_replan_preview(book_id, preview_id):
+    from libraries.planning_state import delete_replan_preview
+    if not book_mgr.get(book_id):
+        return jsonify({"ok": False, "error": "not_found"}), 404
+    return jsonify({"ok": True, "deleted": delete_replan_preview(book_id, preview_id)})
+
 # ═══════════════════════════════════════════
 # ⏱️ 故事线编辑（新书启动 v2）
 @bp.route("/storyline/<storyline_id>/edit")
@@ -61,7 +161,7 @@ def _build_next_arc(builder, tl, mode="rule"):
 
     # rule：按书题材标签匹配模板循环取下一个
     _tags = ((tl.basic_info or {}).get("world_building") or {}).get("tags") or []
-    structs = struct_lib.search(tags=_tags) or struct_lib.templates
+    structs = struct_lib.search(tags=_tags) or struct_lib.roots()
     if not structs:
         return None
     idx = len(tl.outlines) % len(structs)
@@ -82,7 +182,7 @@ def _build_next_arc(builder, tl, mode="rule"):
              "events": s.key_events[:5],
              "description": getattr(s, "description", ""),
              "foreshadow_opportunities": list(getattr(s, "foreshadow_opportunities", None) or [])}
-            for s in tmpl.stages
+            for s in [tmpl]
         ],
         predecessor=tl.outlines[-1].id if tl.outlines else "",
         transition_type="sequential",
@@ -94,7 +194,7 @@ def _build_next_arc(builder, tl, mode="rule"):
 
 @bp.route("/api/storyline/<storyline_id>/extend-outline", methods=["POST"])
 def extend_outline(storyline_id):
-    """续写时扩展故事线：末尾追加新大纲弧 + 填充桥段 + 加料（book_* 与 tl_* 通用）。"""
+    """续写时扩展故事线：末尾追加新大纲弧 + 填充情节段 + 加料（book_* 与 tl_* 通用）。"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -146,7 +246,7 @@ def extend_outline(storyline_id):
                        phase="完成", url=f"/storyline/{storyline_id}/edit")
     if mode == "ai":
         pass
-    task_manager.log(tid, f"扩展故事线：新弧「{new_arc.name}」第{new_arc.start_chapter}-{new_arc.end_chapter}章 +{len(added)}桥段", "success")
+    task_manager.log(tid, f"扩展故事线：新弧「{new_arc.name}」第{new_arc.start_chapter}-{new_arc.end_chapter}章 +{len(added)}情节段", "success")
     task_manager.done(tid, message="扩展完成")
 
     return jsonify({
@@ -195,7 +295,7 @@ def generate_title(storyline_id):
     try:
         from core.llm_client import extract_json
         raw = llm.call("你是网文书名策划。只返回JSON。", prompt,
-                       temperature=0.8, max_tokens=1024)
+                       temperature=0.8)
         data = json.loads(extract_json(raw))
         titles = [t for t in (data.get("titles") or [])
                   if isinstance(t, str) and t.strip()]
@@ -260,8 +360,9 @@ def api_generate_outlines(storyline_id):
 
 
 @bp.route("/api/storyline/<storyline_id>/confirm-outlines", methods=["POST"])
+# 已废弃（老路径收敛）：phase 翻转统一走 books 蓝图 /api/book/<id>/confirm-storyline（plots→ready，仅 UI 确认）；agent 不可达本路由。
 def api_confirm_outlines(storyline_id):
-    """确认大纲配置，进入桥段编排阶段"""
+    """确认大纲配置，进入情节段编排阶段"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -272,7 +373,7 @@ def api_confirm_outlines(storyline_id):
 
 @bp.route("/api/storyline/<storyline_id>/fill-plots", methods=["POST"])
 def api_fill_plots(storyline_id):
-    """给每个大纲填充桥段"""
+    """给每个大纲填充情节段"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -284,20 +385,20 @@ def api_fill_plots(storyline_id):
         structure_lib=struct_lib, plot_lib=plot_lib,
         gag_lib=gag_lib, llm_client=llm,
     )
-    # seed 计数器，避免新桥段 id 与已有桥段撞号（否则去重会静默丢弃）
+    # seed 计数器，避免新情节段 id 与已有情节段撞号（否则去重会静默丢弃）
     _seed_builder_counter(builder, [p.id for p in tl.plots])
 
     from plugins import task_manager
-    task_manager.ensure_single("桥段编排")
+    task_manager.ensure_single("情节段编排")
     tid = f"fillplots_{storyline_id}_{int(time.time())}"
-    task_manager.start(tid, name="桥段编排",
+    task_manager.start(tid, name="情节段编排",
                        title=tl.book_title or tl.pen_name or "",
                        phase="编排中...", url=f"/storyline/{storyline_id}/edit")
 
     new_plots = []
     try:
         for i, o in enumerate(tl.outlines, 1):
-            task_manager.progress(tid, current=i, phase=f"桥段填充 · {o.name or '大纲'}{i}...")
+            task_manager.progress(tid, current=i, phase=f"情节段填充 · {o.name or '大纲'}{i}...")
             new_plots.extend(builder.fill_plots_for_outline(o, tl))
     except Exception as e:
         task_manager.fail(tid, str(e))
@@ -312,15 +413,16 @@ def api_fill_plots(storyline_id):
     from libraries.storyline import annotate_plot_roles
     annotate_plot_roles(tl)
     _save_storyline(tl, storyline_id)
-    task_manager.log(tid, f"共填充 {len(new_plots)} 个桥段（累计 {len(tl.plots)}）", "success")
-    task_manager.done(tid, message="桥段编排完成")
+    task_manager.log(tid, f"共填充 {len(new_plots)} 个情节段（累计 {len(tl.plots)}）", "success")
+    task_manager.done(tid, message="情节段编排完成")
     return jsonify({"ok": True, "plots_added": len(new_plots),
                     "total_plots": len(tl.plots)})
 
 
 @bp.route("/api/storyline/<storyline_id>/fill-gags", methods=["POST"])
+# 已废弃（老路径收敛）：plots→ready 翻转统一走 books 蓝图 /api/book/<id>/confirm-storyline（仅 UI 确认）；本路由仅供旧编辑器兼容、agent 不可达。
 def api_fill_gags(storyline_id):
-    """注入笑点和吸睛点"""
+    """注入笑点和吸睛点（废弃，仅旧编辑器兼容）"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -342,14 +444,14 @@ def api_fill_gags(storyline_id):
     annotate_plot_roles(tl)
     tl.phase = "ready" if tl.plots else "gags"
     _save_storyline(tl, storyline_id)
-    task_manager.log(tid, f"内涵/吸睛已挂载（{len(tl.plots)} 桥段）", "success")
+    task_manager.log(tid, f"内涵/吸睛已挂载（{len(tl.plots)} 情节段）", "success")
     task_manager.done(tid, message="加料注入完成")
     return jsonify({"ok": True, "phase": tl.phase})
 
 
 @bp.route("/api/storyline/<storyline_id>/plot-confirm", methods=["POST"])
 def api_plot_confirm(storyline_id):
-    """切换单个桥段的确认状态"""
+    """切换单个情节段的确认状态"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -453,7 +555,7 @@ def api_move_outline(storyline_id):
 
 @bp.route("/api/storyline/<storyline_id>/delete-outline", methods=["POST"])
 def api_delete_outline(storyline_id):
-    """删除一个大纲（同时删除其下的桥段）"""
+    """删除一个大纲（同时删除其下的情节段）"""
     tl = _resolve_storyline(storyline_id)
     if not tl:
         return jsonify({"ok": False, "error": "not found"}), 404
@@ -539,8 +641,8 @@ def _decision_log_message(kind: str, data: dict) -> str:
         else:
             names = []
         if names:
-            return f"🧩 桥段选择[{step}]：候选 {cands} → 选中「{'、'.join(names)}」"
-        return f"🧩 桥段选择[{step}]：候选 {cands}"
+            return f"🧩 情节段选择[{step}]：候选 {cands} → 选中「{'、'.join(names)}」"
+        return f"🧩 情节段选择[{step}]：候选 {cands}"
     if kind == "theme_review":
         themes = "、".join((chosen.get("themes") or [])[:3]) or "无"
         return f"🎭 内涵挂载[{step}]：内涵 {themes}"
@@ -559,7 +661,7 @@ def api_generate_full(storyline_id):
     """一键生成完整大纲（5 阶段 OutlineGenerator，SSE 流式），原地累加并逐步落盘。
 
     - 生成器直接操作当前 storyline 对象（storyline=tl），每阶段结束 on_save 落盘，
-      实现"大纲→桥段→笑点/内涵挨个步骤写进配置文件"。
+      实现"大纲→情节段→笑点/内涵挨个步骤写进配置文件"。
     - 新增 SSE 事件：thinking（AI 流式思考 token）、decision（候选→选中→理由），
       前端右侧"AI 思考过程"面板展示；decision 同时写入右侧栏任务日志。
     - phase_done 附带 storyline 快照，前端据此实时刷新左侧故事线视图。
@@ -648,19 +750,19 @@ def api_generate_full(storyline_id):
                                   "theme_injected", "phase_done", "done"):
                     payload["storyline"] = tl.to_dict()
 
-                # 每个决策写进右侧栏日志（用户能看到"确定了哪个大纲/桥段/笑点"）
+                # 每个决策写进右侧栏日志（用户能看到"确定了哪个大纲/情节段/笑点"）
                 if event_type == "decision" and data_dict:
                     task_manager.log(task_id,
                                      _decision_log_message(data_dict.get("kind", "decision"), data_dict),
                                      "success")
-                    # 决策后也落一次盘（桥段/加料已变化）
+                    # 决策后也落一次盘（情节段/加料已变化）
                     _save_storyline(tl, storyline_id)
 
                 if event_type == "done":
                     _save_storyline(tl, storyline_id)
                     payload["storyline"] = tl.to_dict()
                     task_manager.done(task_id, message="完整大纲生成完成")
-                    # 大纲已变化：失效续写引擎缓存，让前端 reload 后重建（含桥段写作者）
+                    # 大纲已变化：失效续写引擎缓存，让前端 reload 后重建（含情节段写作者）
                     _engines.pop(f"cont_{storyline_id}", None)
 
                 yield "data: " + _json.dumps(payload, ensure_ascii=False) + "\n\n"
@@ -677,7 +779,7 @@ def api_generate_full(storyline_id):
 
 @bp.route("/api/storyline/<storyline_id>/agent", methods=["POST"])
 def api_storyline_agent(storyline_id):
-    """大纲助手：用自然语言调整故事线配置（改桥段/加笑点/改大纲/增删桥段等）。
+    """大纲助手：用自然语言调整故事线配置（改情节段/加笑点/改大纲/增删情节段等）。
 
     由前端右侧「大纲助手」聊天面板调用；改动直接落盘，返回最新 storyline 供前端重绘。
     """

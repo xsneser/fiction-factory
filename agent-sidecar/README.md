@@ -3,7 +3,7 @@
 用 **DeepSeek Harness(`@deepseek-ai/dsh`,Node 侧车)** 作为现成开源 agent,经 MCP 客户端驱动 NovelEngine。
 Spike 结论与 dsh 现状见 `docs/架构总览.md` §七(3 摩擦点;spike 文档已删)。
 
-> ⚠️ **状态**:spike 已验证「桥接 + 建书向导」可行,但暴露长工具超时 / 建书保真度差 / 自主循环失控三个摩擦点(已被护栏层解决)。**侧车已是侧栏唯一大脑(`libraries/dsh_bridge.py`),事件流推送 2026-08-20 落地后实时工具卡/导航不再靠轮询。** **2026-08-24:dsh 侧 skill 已全部删除、仅剩 MCP 工具面,重写待后续会话;Claude 侧 `.claude/skills/` 未动。** 本目录同时是复现模板与交付物(events-runner 为生产运行文件)。
+> ⚠️ **状态**:spike 已验证「桥接 + 建书向导」可行,但暴露长工具超时 / 建书保真度差 / 自主循环失控三个摩擦点(已被护栏层解决)。**侧车已是侧栏唯一大脑(`libraries/dsh_bridge.py`),事件流推送 2026-08-20 落地后实时工具卡/导航不再靠轮询。** **2026-08-28+:dsh 侧 skill 已重写为 6 个(`agent-sidecar/skills/novel-*`: build-candidates / build / story / replan / publish / scout);profiles-on 时 bridge 直接读本目录注入,镜像需 `cp` 到 `.dsh/skills/`(有契约测试 `tools/test_skill_profile_contract.py` 校验引用⊆profile 与镜像一致)。** 本目录同时是复现模板与交付物(events-runner 为生产运行文件)。
 
 ## 环境
 
@@ -14,8 +14,20 @@ Spike 结论与 dsh 现状见 `docs/架构总览.md` §七(3 摩擦点;spike 文
 ## 配置
 
 1. `cordis.patch.yml`(本目录)拷到 `~/.dsh/profiles/headless/cordis.patch.yml` —— 挂 `python mcp_server.py` 为 MCP 客户端 + 注入四阶段 persona。
-2. ~~`skills/`(novel-build/outline/write/publish)复制到 `D:\NovelEngine\.dsh\skills\`~~——**dsh 侧 skill 已于 2026-08-24 全部删除，仅保留 MCP 工具面**（`agent-sidecar/skills/` 与 `.dsh/skills/` 均已移除；skill 重写待后续会话）。`dsh-skill-filesystem` 原本扫 `<projectRoot>/.dsh/skills`，现为空目录。
-3. 首次 `dsh --profile headless` 自动初始化 profile。
+
+> 运行入口说明：dsh 是主支持入口，由 `dsh_bridge` 按任务动态选择 profile。项目 `.mcp.json` 与通用外部 MCP 客户端接入仅作 Deprecated 兼容用途；多服务注册不等于单 session 只启一个 profile，legacy 只能显式启用。
+2. **skill 镜像**：`agent-sidecar/skills/<name>/SKILL.md` 是源；改后跑
+   `python tools/sync_skills_mirror.py` 同步到 `.dsh/skills/`（profiles-on 时 bridge 直读源注入，
+   不依赖镜像；fallback/原生 skill 发现仍扫 `.dsh/skills`）。契约测试
+   `tools/test_skill_profile_contract.py` 校验引用⊆profile 与镜像 byte-identical。
+3. **规划流程内核**：`agent-sidecar/skills/_shared/plan-core.md` 是**唯一 authoring 真源**
+   （建书步 3 与续写大纲共用的七步构思流程）。它被**逐字节内联**进两个入口的
+   `<!-- plan-core:begin/end -->` 标记块——dsh 的 skill 注入只读单个 SKILL.md，外部引用收不到。
+   改内核后跑 `python tools/sync_plan_core.py`（刷两个标记块 + 同步镜像）。
+   内核里**不许出现任何工具名**（`referenced_tools()` 是整词匹配注册表名，连"不要调 X"里的
+   X 也算引用，而两个 profile 的工具面交集只有两个查询工具）。
+3. 首次 `dsh --profile headless` 自动初始化 profile；编排模式上线前运行
+   `python tools/sync_dsh_headless_profile.py --apply`，或用 `--check` 验证仓库模板与用户态配置一致。
 
 ## 运行
 
@@ -43,9 +55,9 @@ node vendor/dsh-ne/lib/bin.js --profile headless \
 - **长工具超时**:`generate_full_outline` 阻塞数分钟,`toolCallTimeoutMs` 必须 ≥600000。
 - **循环失控**:phase 未达 ready 时 agent 会反复轮询 `get_book_detail`,需护栏层熔断。
 - **建书保真度**:set_field/set_tags/pick_candidate 未忠实传达任务设定,需向导状态保护。
-- **护栏**:直建/直删工具不存在(41 工具),建书必须经浏览器向导 drive_ui。
-- **系统工具已禁(2026-08-20)**:dsh 自带 tool-fs/tool-bash/subagent 等系统工具默认会暴露(cwd=D:/NovelEngine 无沙箱,可绕过 MCP 直操文件)。`cordis.patch.yml` 已用 `disabled: true` 批量禁掉,只留 MCP + 联网(web 三件;skill 已于 2026-08-24 删除)。改此模板须同步 `~/.dsh/profiles/headless/cordis.patch.yml`。
+- **护栏**:直建/直删工具不存在(45 工具),建书必须经浏览器向导 drive_ui。
+- **系统工具护栏**：dsh 的 filesystem/shell 仍全部禁用，防止绕过 MCP 直操文件；主 Agent 编排所需的 spawn provider 与具名 Writer/Planner/Critic 委派工具按精确 MCP allowlist 开放，通用 subagent、fork、后台 jobs、workflow 仍禁用。修改此模板须同步 `~/.dsh/profiles/headless/cordis.patch.yml`。
 
 ## 结论
 
-侧车路线已投产为侧栏唯一大脑:三摩擦点分别被 `toolCallTimeoutMs=600000`(长工具超时)、`loop_guard.py` 语义环熔断(循环失控)、`tool_policy.py` phase 门控 + 建书 reset(建书保真度/越权)承接;事件流 runner 让工具进度/导航实时推送。历史结论(v0.4 自建 / 纯 Claude Code 外部驱动)已被用户拍板的 dsh 替换路线取代,见 `docs/架构文档-内置agent-dsh.md`。
+侧车路线已投产为侧栏唯一大脑:三摩擦点分别被 `toolCallTimeoutMs=600000`(长工具超时)、`loop_guard.py` 语义环熔断(循环失控)、`tool_policy.py` phase 门控 + 建书 reset(建书保真度/越权)承接;事件流 runner 让工具进度/导航实时推送。历史结论(v0.4 自建 / 纯 Claude Code 外部驱动)已被用户拍板的 dsh 替换路线取代,见 `docs/架构总览.md` §七(dsh 侧车架构)。

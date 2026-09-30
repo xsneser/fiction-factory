@@ -3,6 +3,7 @@ import sys, os, json, threading, logging, time, re
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, Response, stream_with_context
+from urllib.parse import quote
 from .ctx import *
 
 bp = Blueprint("books", __name__)
@@ -128,6 +129,9 @@ def _basic_info_from_outline(outline, book):
             item = dict(c)
             item.setdefault("role", "主角" if first else "配角")
             item.setdefault("relations", [])
+            item.setdefault("behavior", {})
+            item.setdefault("speech_profile", {})
+            item.setdefault("development_plan", "")
             bi["characters"].append(item)
             first = False
     return bi
@@ -156,8 +160,77 @@ def book_detail(book_id):
         if ch:
             ch["word_count"] = count_prose_units(ch.get("content") or "")
             chapters.append(ch)
-    # 进行中章节草稿（按桥段撰写中断时落盘；详情页展示未固化内容，写作台才有写入）
+    # 进行中章节草稿（按情节段撰写中断时落盘；详情页展示未固化内容，写作台才有写入）
     draft = None
+    draft_bridges = []
+    draft_path = f"books/{book_id}/draft_chapter.json"
+    if os.path.exists(draft_path):
+        try:
+            with open(draft_path, encoding="utf-8") as f:
+                _d = json.load(f)
+            _buf = _d.get("buffer") or []
+            draft_bridges = _d.get("bridges") or []
+            if _buf:
+                draft = {
+                    "chapter_num": _d.get("chapter_num", 0),
+                    "text": "\n\n".join(_buf),
+                    "segments": [{"seq": i + 1, "text": text} for i, text in enumerate([x for x in _buf if x])],
+                    "words": count_prose_units("\n\n".join(_buf)),
+                }
+        except Exception as e:
+            logger.warning("读取章节草稿失败: %s", e)
+    # 与写作台共用同一份桥接段实测字数，避免两页的红线锚点不同。
+    storyline_data = storyline.to_dict() if storyline else None
+    if storyline_data:
+        actual_plot_words = {}
+        for chapter in chapters:
+            for bridge in chapter.get("bridges") or []:
+                pid = str(bridge.get("plot_id") or "")
+                if pid:
+                    actual_plot_words[pid] = actual_plot_words.get(pid, 0) + count_prose_units(bridge.get("text") or "")
+        for bridge in draft_bridges:
+            pid = str(bridge.get("plot_id") or "")
+            if pid:
+                actual_plot_words[pid] = actual_plot_words.get(pid, 0) + count_prose_units(bridge.get("text") or "")
+        for plot in storyline_data.get("plots") or []:
+            plot["actual_words"] = int(actual_plot_words.get(str(plot.get("id") or ""), 0))
+    # 「从已有书借鉴」已挪到启动新书向导②（dashboard GET 提供 borrow_books），详情页不再传
+    return render_template("book_detail.html", book=book,
+        outline=outline, chapters=chapters,
+        storyline=storyline,
+        storyline_data=storyline_data,
+        basic_info=basic_info,
+        draft=draft)
+
+
+@bp.route("/books/<book_id>/export-txt")
+def book_export_txt(book_id):
+    """书详情：一键导出全部章节（标题+正文）为 .txt 文件（含未固化草稿）。"""
+    from libraries.book_manager import chapter_display_title
+    book_mgr.list_all()   # mtime 感知重扫，与详情页同一数据口径
+    book = book_mgr.get(book_id)
+    if not book:
+        return "Not found", 404
+    title = book.title or "(待定)"
+    lines = [f"《{title}》",
+             f"笔名：{book.pen_name or ''}",
+             f"导出时间：{time.strftime('%Y-%m-%d %H:%M:%S')}",
+             ""]
+    sep = "=" * 40
+    wrote = False
+    for n in range(1, book.current_chapter + 1):
+        ch = book_mgr.load_chapter(book_id, n)
+        if not ch:
+            continue
+        wrote = True
+        lines.append(sep)
+        # 裸标题（存量「第1章 xxx」不归一就会显示成「第1章 第1章 xxx」）；没标题只写章号
+        _bare = chapter_display_title(ch)
+        lines.append(f"第{n}章 {_bare}" if _bare else f"第{n}章")
+        lines.append(sep)
+        lines.append((ch.get("content") or "").strip())
+        lines.append("")
+    # 进行中草稿（详情页同样展示，导出时一并带上，避免丢内容）
     draft_path = f"books/{book_id}/draft_chapter.json"
     if os.path.exists(draft_path):
         try:
@@ -165,19 +238,63 @@ def book_detail(book_id):
                 _d = json.load(f)
             _buf = _d.get("buffer") or []
             if _buf:
-                draft = {
-                    "chapter_num": _d.get("chapter_num", 0),
-                    "text": "\n\n".join(_buf),
-                    "words": count_prose_units("\n\n".join(_buf)),
-                }
+                wrote = True
+                lines.append(sep)
+                lines.append(f"第{_d.get('chapter_num', '?')}章 进行中草稿（未固化）")
+                lines.append(sep)
+                lines.append("\n\n".join(_buf))
+                lines.append("")
         except Exception as e:
-            logger.warning("读取章节草稿失败: %s", e)
-    # 「从已有书借鉴」已挪到启动新书向导②（dashboard GET 提供 borrow_books），详情页不再传
-    return render_template("book_detail.html", book=book,
-        outline=outline, chapters=chapters,
-        storyline=storyline,
-        basic_info=basic_info,
-        draft=draft)
+            logger.warning("导出时读取章节草稿失败: %s", e)
+    if not wrote:
+        lines.append("（本书暂无已固化章节）")
+    txt = "\n".join(lines)
+    filename = re.sub(r'[\\/:*?"<>|\r\n]', "_", f"{title}_{time.strftime('%Y%m%d_%H%M%S')}.txt")
+    resp = Response(txt, mimetype="text/plain")
+    resp.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return resp
+
+
+@bp.route("/api/book/<book_id>/confirm-storyline", methods=["POST"])
+def api_confirm_storyline(book_id):
+    """用户确认弧+情节段（plots 草案 → ready）：挂内涵/吸睛 + phase=ready。
+
+    2026-09-05 起正常新书提交即 ready（深化并入步3），本端点仅剩 config/补弧失败兜底
+    恢复用（agent 工具面已删 fill_gags/confirm_outlines，agent 无翻 ready 工具）。
+    """
+    tl = book_mgr.load_storyline(book_id)
+    if tl is None:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if tl.phase == "ready":
+        return jsonify({"ok": True, "phase": "ready", "idempotent": True})
+    if tl.phase != "plots":
+        return jsonify({"ok": False,
+                        "error": f"仅 plots 草案可确认（当前 phase={tl.phase}）"}), 400
+    if not tl.plots:
+        return jsonify({"ok": False,
+                        "error": "尚无情节段，请先补弧落盘再确认"}), 400
+    # phase 翻 ready 是规划相关事实：加书锁 + bump revision，避免与写作/续规划并发互相覆盖
+    # （此前用裸 book_mgr.save_storyline，不 bump revision，旧 replan preview 会看起来仍新鲜）。
+    from libraries.book_lock import BookBusyError, BookLock
+    lock = BookLock(book_id)
+    if not lock.acquire(timeout=30.0, purpose="confirm_storyline"):
+        raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
+    try:
+        tl = book_mgr.load_storyline(book_id)      # 锁内重读，取最新
+        if tl is None:
+            return jsonify({"ok": False, "error": "not found"}), 404
+        builder = StorylineBuilder(structure_lib=struct_lib, plot_lib=plot_lib,
+                                   gag_lib=gag_lib)
+        builder.fill_themes_and_hooks(tl.plots, tl)
+        from libraries.storyline import annotate_plot_roles
+        annotate_plot_roles(tl)
+        tl.phase = "ready"
+        tl.storyline_revision = int(getattr(tl, "storyline_revision", 0) or 0) + 1
+        tl.updated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        book_mgr.save_storyline(book_id, tl)
+    finally:
+        lock.release()
+    return jsonify({"ok": True, "phase": "ready", "plots": len(tl.plots)})
 
 
 @bp.route("/api/book/<book_id>/generate-meta", methods=["POST"])
@@ -229,21 +346,72 @@ def delete_book(book_id):
 # 竞品规则层组件 UI 化：书详情运行时面板（只读/按需算）
 # ═══════════════════════════════════════════
 
+def _current_chapter_of(book_id: str) -> int:
+    """书的已完成章节号（book.json）。读不到按 0。"""
+    try:
+        with open(os.path.join("books", book_id, "book.json"), encoding="utf-8") as fh:
+            return int((json.load(fh) or {}).get("current_chapter") or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _protagonist_roles(book_id: str) -> dict:
+    """静态人物设定里 {name: (role, importance)}——用来判谁该默认展开。"""
+    try:
+        from agent_tools import load_tl
+        from libraries.storyline import get_characters
+        tl = load_tl(book_id)
+        if tl is None:
+            return {}
+        return {str(c.get("name") or ""): (str(c.get("role") or ""), c.get("importance"))
+                for c in (get_characters(tl.basic_info) or []) if c.get("name")}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("读取人物设定失败 book=%s: %s", book_id, e)
+        return {}
+
+
 @bp.route("/api/book/<book_id>/character-states")
 def api_character_states(book_id):
-    """书详情：角色状态面板（books/<id>/character_states.json，写作时落盘）。"""
-    from libraries.character_state import CharacterStateMachine
+    """书详情：角色状态面板（books/<id>/character_states.json，写作时落盘）。
+
+    除状态机原样字段外，补三个**展示标记**（纯磁盘读 + 内存拼装，不调模型）：
+      · `role` / `is_protagonist`：来自静态人物设定——接口原本不返回 role，前端无从判断谁是主角，
+        只能按状态机顺序平铺，于是「主角 + 本章出场展开、其余折叠」在浏览器侧做不到；
+      · `appears_in_current_chapter`：`last_appeared_chapter == current_chapter`。
+        这里的「本章」= **最近已完成、已收章**的章节：正式状态机只在收章时落账
+        （`update_from_chapter` 按章正文更新出场/离线），把进行中的草稿扫进来会把
+        staged 事实与正式落账混为一谈——章内实时口径属于写作台，不属于这里。
+    """
+    from libraries.character_state import CharacterStateMachine, project_character_roster
+    current_chapter = _current_chapter_of(book_id)
     path = os.path.join("books", book_id, "character_states.json")
-    if not os.path.exists(path):
-        return jsonify({"characters": [], "warnings": []})
     try:
+        from agent_tools import load_tl
+        from libraries.storyline import get_characters
+        tl = load_tl(book_id)
+        raw_bible = get_characters(tl.basic_info) if tl else []
         csm = CharacterStateMachine()
-        csm.load(path)
-        return jsonify({"characters": csm.to_dict().get("characters", []),
-                        "warnings": csm.warnings()})
+        if os.path.exists(path):
+            csm.load(path)
+        roster = project_character_roster(raw_bible, csm)
+        chars = []
+        for item in roster:
+            dyn = item.get("dyn") or {}
+            card = dict(item)
+            # 书详情旧模板读取扁平字段；保留原始事件与展示标记兼容旧调用方。
+            card.update(dyn)
+            state = csm.get(item["name"])
+            card["events"] = list((state.events if state else []) or [])
+            card["is_protagonist"] = bool(item.get("role") == "主角" or item.get("importance") == 1)
+            card["appears_in_current_chapter"] = bool(
+                current_chapter > 0 and int(item.get("last_appeared_chapter") or 0) == current_chapter)
+            chars.append(card)
+        return jsonify({"characters": chars, "warnings": csm.warnings(),
+                        "current_chapter": current_chapter})
     except Exception as e:
         logger.warning("读取角色状态失败: %s", e)
-        return jsonify({"characters": [], "warnings": [], "error": str(e)})
+        return jsonify({"characters": [], "warnings": [], "error": str(e),
+                        "current_chapter": current_chapter})
 
 
 @bp.route("/api/book/<book_id>/promises")
@@ -267,20 +435,49 @@ def api_book_promises(book_id):
 
 @bp.route("/api/book/<book_id>/diagnose", methods=["POST"])
 def api_book_diagnose(book_id):
-    """书详情：质量诊断（连续性/追读/承诺，规则层零成本聚合）。
-
-    复用 agent_tools 的三个 diagnose_*（MCP 同源），点按钮跑一次全量扫描。
+    """书详情：Longitudinal 诊断（WS4）——走 diagnose_story_window（内部 service），
+    chapter_quality_gate 保持 Local/chapter；两者共享 primitives、统一 DecisionPoint。
+    保留 legacy continuity/retention/promises 分区给既有面板，另带统一 decision_points。
     """
     import agent_tools
+    from libraries.diagnose_window import diagnose_story_window
     try:
+        window = diagnose_story_window(book_id)
         return jsonify({
             "continuity": agent_tools.diagnose_continuity(book_id),
             "retention": agent_tools.diagnose_retention(book_id),
             "promises": agent_tools.diagnose_promises(book_id),
+            "scope": window.get("scope"),
+            "decision_points": window.get("decision_points") or [],
+            "summary": window.get("summary") or "",
+            "counts": window.get("counts") or {},
         })
     except Exception as e:
         logger.warning("诊断失败: %s", e)
         return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/book/<book_id>/decision-center")
+def api_book_decision_center(book_id):
+    """书详情 Decision Center 数据源（WS7）：统一决策点 = Longitudinal(window) + Local(gate)。
+    UI 只读本聚合，不再自拼 diagnose（gate 为 chapter scope、window 为 recent-N/arc/book scope）。"""
+    from libraries.diagnose_window import diagnose_story_window
+    from libraries.decision_feed import collect_decision_points
+    from agent_tools import chapter_quality_gate, book_mgr
+    groups = []
+    cur = 0
+    try:
+        bk = book_mgr.get(book_id)
+        cur = int(getattr(bk, "current_chapter", 0) or 0) if bk else 0
+        groups.append((diagnose_story_window(book_id)).get("decision_points") or [])
+        if cur >= 1:
+            gate = chapter_quality_gate(book_id, chapter_num=cur)
+            groups.append(gate.get("decision_points") or [])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("decision-center 聚合失败: %s", e)
+    feed = collect_decision_points(groups)
+    feed.update({"book_id": book_id, "recent_chapter": cur})
+    return jsonify(feed)
 
 
 # ═══ 历史快照（diff 审查 + 回滚；写工具落库前自动留底） ═══
@@ -355,5 +552,3 @@ def api_chapter_punch_points(book_id, chapter_num):
         out["ok"] = False
         out["error"] = str(e)
     return jsonify(out)
-
-

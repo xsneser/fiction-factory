@@ -1,7 +1,7 @@
 """书籍组装器（Book Assembler）—— 仅保留旧书兼容
 
-历史：按大纲结构匹配桥段/笑点/内涵、生成写作计划的组装管线。
-现状：桥段写作 storyline_writer 不再依赖 assembler_plan；BookAssembler 已在 P2 下线评估中移除。
+历史：按大纲结构匹配情节段/笑点/内涵、生成写作计划的组装管线。
+现状：情节段写作 storyline_writer 不再依赖 assembler_plan；BookAssembler 已在 P2 下线评估中移除。
 本模块只保留 BookAssemblerPlan / StageWritingPlan 数据结构与 load_plan，
 供 continue_book 加载旧书遗留的 assembler_plan.json（不再生成新计划）。
 """
@@ -15,14 +15,14 @@ from .gag import GagPattern
 
 
 class StageWritingPlan:
-    """一个阶段的写作计划 —— 包含该阶段要用的桥段/笑点/内涵"""
+    """一个阶段的写作计划 —— 包含该阶段要用的情节段/笑点/内涵"""
     stage_index: int
     stage_name: str               # 如 "入门试炼"
     stage_description: str        # 阶段描述
     chapter_range: tuple[int, int] # (min_chapters, max_chapters)
 
-    plot: Optional[PlotTemplate] = None       # 选中的桥段（核心）
-    plot_match_reason: str = ""               # 为什么匹配这个桥段
+    plot: Optional[PlotTemplate] = None       # 选中的情节段（核心）
+    plot_match_reason: str = ""               # 为什么匹配这个情节段
 
     gags: list[GagPattern] = field(default_factory=list)  # 选中的笑点（1-3个）
     gag_slot_assignments: list[dict] = field(default_factory=list)

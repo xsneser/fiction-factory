@@ -3,14 +3,14 @@
 从番茄平台爬取热榜小说 → LLM拆解 → 沉淀到四大库
 
 流程：
-  热榜发现 → 下载前N章 → 逐书分析 → 提取桥段/大纲/笑点/内涵 → 入库
+  热榜发现 → 下载前N章 → 逐书分析 → 提取情节段/大纲/笑点/内涵 → 入库
 
 ⚠️ 合规声明：
   本模块仅供个人学习、研究网文结构技巧使用。请遵守目标网站的服务条款与
   相关法律法规：
   - 番茄小说等内容平台的服务协议普遍禁止自动化数据采集，请勿用于商业用途
   - 请勿大量下载并二次传播受著作权保护的正文内容，分析应以「模式/结构/
-    桥段」等抽象技巧为主，避免全文存储与转载
+    情节段」等抽象技巧为主，避免全文存储与转载
   - PUA 字体解码属于对技术保护措施的绕过，请仅用于个人学习研究
   使用本模块产生的任何法律风险由使用者自行承担。
 """
@@ -822,7 +822,7 @@ class NovelAnalyzer:
         result = {}
 
         if on_progress:
-            on_progress("analyze", 1, 4, "提取桥段...")
+            on_progress("analyze", 1, 4, "提取情节段...")
         result["plots"] = self.extract_plots(novel, samples)
 
         if on_progress:
@@ -844,31 +844,31 @@ class NovelAnalyzer:
         return [chapters[i] for i in indices if 0 <= i < len(chapters)]
 
     def extract_plots(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
-        """提取桥段模式"""
+        """提取情节段模式"""
         text = self._build_sample_text(samples, 3000)
 
         prompt = f"""分析以下番茄小说《{novel.title}》（{novel.genre}/{novel.sub_genre}）的前几章，
-提取出 3-5 个可复用的桥段模式。
+提取出 3-5 个可复用的情节段模式。
 
-每个桥段需要：
-1. 桥段名称（如"退婚打脸""系统激活""拍卖会捡漏"）
-2. 桥段结构骨架（用箭头表示流程，如 [挑衅]→[隐忍]→[爆发]→[震惊全场]）
+每个情节段需要：
+1. 情节段名称（如"退婚打脸""系统激活""拍卖会捡漏"）
+2. 情节段结构骨架（用箭头表示流程，如 [挑衅]→[隐忍]→[爆发]→[震惊全场]）
 3. 关键变量槽位（如 主角身份、对手身份、冲突起因、反转方式）
-4. 使用该桥段时的注意事项
+4. 使用该情节段时的注意事项
 
 【小说内容样本】
 {text}
 
 返回 JSON：
 {{"plots": [
-  {{"name":"桥段名", "category":"爽文", "sub_category":"打脸/反转/...",
+  {{"name":"情节段名", "category":"爽文", "sub_category":"打脸/反转/...",
    "structure":"[步骤1]→[步骤2]→...",
    "slots":[{{"name":"变量名","options":["选项1","选项2"]}}],
    "notes":"使用注意", "word_range":[800,2500], "quality_rating":4}}
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的网文拆书分析师。只返回JSON。",
-                                prompt, temperature=0.5, max_tokens=4096)
+                                prompt, temperature=0.5)
             from core.llm_client import extract_json
             data = json.loads(extract_json(raw))
             return data.get("plots", [])
@@ -877,41 +877,44 @@ class NovelAnalyzer:
             return []
 
     def extract_structure(self, novel: NovelInfo, samples: list[dict]) -> list[dict]:
-        """提取大纲结构模式（多层弧树：每模板 = 单个可复用弧，stages 可嵌套 children）"""
+        """提取大纲结构模式（**平级独立弧**：structures 数组每行 = 一条可复用的独立弧模板，
+        无父子层级；入库按行落盘）"""
         text = self._build_sample_text(samples, 2000)
         ch_count = novel.chapter_count or len(samples) * 10
 
         prompt = f"""分析番茄小说《{novel.title}》（{novel.genre}，约{ch_count}章）的章节结构，
 从书中识别出**若干个典型的、可复用的叙事弧**（每个弧是一个有明确目标/方向的剧情单元，
-如 重生复仇弧、试炼扬名弧、误会和解弧）。
+如 重生复仇弧、试炼扬名弧、误会和解弧、末日囤货弧、误会和解小弧）。
 
-每个弧都要拆成**多层的弧树**（大弧 → 子弧 → 阶段）：深度与各层分支数按书里真实结构定，
-**不要均匀**——有的弧只有一层（直接平铺几个阶段），有的弧两层，有的子弧内还要再拆到三层。
-子弧/阶段的 min_words/max_words 按它在书里实际占用的**字数区间**填（如 3000~6000 字，按每章约 3000 字估算）。
+**弧库是平级独立弧**：structures 数组里**每个元素 = 一条独立的弧模板**，相互之间**没有
+父子/包含关系**，不要产出树层级、不要写 parent 类字段。
+
+每条弧字段统一：
+  - name: 弧名（一句话能讲清这弧干什么）
+  - description: 这个弧做什么 / 本弧内情节怎么发展（关键：能被复用的内容主体）
+  - min_words / max_words: 该弧在书里实际占用的字数区间（按每章约 3000 字估算；大弧
+    （如跨十几章）与小弧（如几章的小目标）都可以收，粒度为真实可复用的那个「弧」）
+  - key_events: 关键事件；foreshadow_opportunities: 埋坑机会
+  - tags: 题材/可复用场景标签（每弧都要给，便于入库后按题材检索）
+长度/粒度按书里真实结构定、**不要求均匀**。
 
 【小说内容样本】
 {text}
 
-返回 JSON：
+返回 JSON（独立弧数组）：
 {{"structures": [
-  {{"name":"弧名（如 重生复仇弧）",
-   "total_words":{ch_count * 3000},
-   "tags":["题材标签","可复用场景"],
-   "description":"这个弧做什么、适合什么情境",
-   "stages":[
-     {{"name":"子弧名","description":"这个子弧做什么",
-       "min_words":30000,"max_words":60000,
-       "key_events":["事件1","事件2"],
-       "children":[
-         {{"name":"孙弧/阶段名","description":"...",
-           "min_words":9000,"max_words":24000,
-           "key_events":["事件1","事件2"]}}
-       ]}}
-   ]}}
+  {{"name":"重生复仇弧","description":"被夺权者蛰伏反杀，当众清算并夺回一切的一整段弧：藏拙→串联旧部→在清算场合翻盘",
+    "min_words":30000,"max_words":45000,
+    "key_events":["蛰伏示弱","收买旧部","当众反杀"],"foreshadow_opportunities":["幕后黑手另有其人"],
+    "tags":["复仇","爽文"]}},
+  {{"name":"末日囤货开局","description":"灾变前用先知囤物资、抢住所，抢在秩序崩塌前站稳脚跟的小弧",
+    "min_words":6000,"max_words":12000,
+    "key_events":["变卖资产","扫货","加固住所"],"foreshadow_opportunities":[],
+    "tags":["末世","求生"]}}
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的小说结构分析师。只返回JSON。",
-                                prompt, temperature=0.5, max_tokens=4096)
+                                prompt, temperature=0.5)
             from core.llm_client import extract_json
             data = json.loads(extract_json(raw))
             return data.get("structures", [])
@@ -943,7 +946,7 @@ class NovelAnalyzer:
 ]}}"""
         try:
             raw = self.llm.call("你是一位专业的喜剧写作分析师。只返回JSON。",
-                                prompt, temperature=0.5, max_tokens=4096)
+                                prompt, temperature=0.5)
             from core.llm_client import extract_json
             data = json.loads(extract_json(raw))
             return data.get("gags", [])
@@ -971,7 +974,7 @@ class NovelAnalyzer:
 # ═══════════════════════════════════════════
 
 class LibraryIngestor:
-    """将分析结果导入各库（桥段/大纲/笑点）"""
+    """将分析结果导入各库（情节段/大纲/笑点）"""
 
     def __init__(self, plot_lib=None, struct_lib=None, gag_lib=None,
                  char_lib=None):
@@ -989,9 +992,9 @@ class LibraryIngestor:
                 self._add_plot(plot, source)
                 stats["plots"] += 1
 
-        for struct in analysis.get("structures", []):
+        for arc in analysis.get("structures", []):
             if self.struct_lib:
-                self._add_structure(struct, source)
+                self._add_structure(arc, source)
                 stats["structures"] += 1
 
         for gag in analysis.get("gags", []):
@@ -1025,37 +1028,24 @@ class LibraryIngestor:
         self.plot_lib.templates.append(template)
 
     def _add_structure(self, data: dict, source: str):
-        from libraries.structure import StageNode, StructureTemplate
-        sid = f"scout_{source}_{data.get('name','unknown')}"
+        """把**一条平级独立弧 dict** 写入情节弧库（每行一弧）。
+
+        id = scout_{source}_{清洗名}（精确去重，已存在则跳过）。data 各字段
+        （name/description/min/max_words/key_events/tags/…）即 ArcNode 字段。
+        """
+        from datetime import datetime
+        from libraries.structure import ArcNode, make_root_id
+        sid = make_root_id(data.get("name", ""), source)
         for t in self.struct_lib.templates:
             if t.id == sid:
-                return
+                return  # 已存在跳过
 
-        def _node(s) -> StageNode:
-            if isinstance(s, str):
-                return StageNode(name=s, description="")
-            return StageNode(
-                name=s.get("name",""), description=s.get("description",""),
-                # 兼容旧数据 min_chapters/max_chapters → ×3000
-                min_words=s.get("min_words", s.get("min_chapters", 10) * 3000),
-                max_words=s.get("max_words", s.get("max_chapters", 20) * 3000),
-                key_events=s.get("key_events",[]),
-                foreshadow_opportunities=s.get("foreshadow_opportunities",[]),
-                themes=s.get("themes",[]),
-                children=[_node(c) for c in s.get("children", [])],
-            )
-
-        template = StructureTemplate(
-            id=sid, name=data.get("name",""),
-            description=data.get("description",""),
-            # 兼容旧 total_chapters（×3000 估字数，与 structure.py from_dict 口径一致）
-            total_words=data.get("total_words", data.get("total_chapters", 500) * 3000),
-            stages=[_node(s) for s in data.get("stages", [])],
-            tags=data.get("tags", []),
-            source=source,
-            created_at=data.get("created_at", ""),
-        )
-        self.struct_lib.templates.append(template)
+        created = str(data.get("created_at") or "") or datetime.now().strftime("%Y-%m-%d %H:%M")
+        d = dict(data)
+        d["id"] = sid
+        d["source"] = source
+        d["created_at"] = d.get("created_at") or created
+        self.struct_lib.templates.append(ArcNode.from_dict(d))
 
     def _add_gag(self, data: dict, source: str):
         from libraries.gag import GagPattern
@@ -1371,14 +1361,12 @@ class FanqieScoutAgent:
                 self.ingestor._add_plot(item, source)
                 stats["plots"] += 1
             if on_progress:
-                on_progress("ingest", stats["plots"], len(plots), f"桥段已入库 {stats['plots']}/{len(plots)}")
+                on_progress("ingest", stats["plots"], len(plots), f"情节段已入库 {stats['plots']}/{len(plots)}")
             self.plot_lib._save()
 
         if structures and self.struct_lib:
-            for item in structures:
-                item["source"] = source
-                item["created_at"] = now
-                self.ingestor._add_structure(item, source)
+            for arc in structures:
+                self.ingestor._add_structure(arc, source)
                 stats["structures"] += 1
             if on_progress:
                 on_progress("ingest", 1, 1, f"大纲已入库 {stats['structures']}个")
@@ -1423,22 +1411,15 @@ if __name__ == "__main__":
     book_count = int(sys.argv[2]) if len(sys.argv) > 2 else 3
     chapters = int(sys.argv[3]) if len(sys.argv) > 3 else 30
 
-    # 初始化 LLM
-    api_path = Path("api.json")
-    if api_path.exists():
-        cfg = json.loads(api_path.read_text(encoding="utf-8"))
-        from core.models import APIConfig
-        from core.llm_client import LLMClient
-        api_cfg = APIConfig(
-            api_key=cfg.get("api_key",""),
-            base_url=cfg.get("base_url","https://api.deepseek.com"),
-            model=cfg.get("model","deepseek-chat"),
-            http_timeout_seconds=cfg.get("http_timeout_seconds",300),
-        )
+    # 初始化 LLM（配置一律走 core.api_config：仓库根 api.json，与 cwd 无关）
+    from core.api_config import load_api_config, is_api_configured
+    from core.llm_client import LLMClient
+    api_cfg = load_api_config()
+    if is_api_configured(api_cfg):
         llm = LLMClient(api_cfg)
     else:
         llm = None
-        print("No api.json found, running in download-only mode")
+        print("No usable api.json found, running in download-only mode")
 
     # 初始化库
     from libraries.plot import PlotLibrary

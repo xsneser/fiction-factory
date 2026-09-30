@@ -1,11 +1,56 @@
 {
-  "api_key": "sk-your-api-key-here",
-  "base_url": "http://127.0.0.1:58082",
-  "url_strict": false,
-  "model": "deepseek-v4-flash",
-  "max_tokens": 0,
-  "http_timeout_seconds": 300,
+  "version": 2,
+  "default_provider": "deepseek",
+  "providers": {
+    "deepseek": {
+      "id": "deepseek",
+      "name": "DeepSeek 官方",
+      "enabled": true,
+      "protocol": "openai_chat",
+      "base_url": "https://api.deepseek.com",
+      "api_key": "",
+      "url_strict": false,
+      "verify_ssl": true,
+      "http_timeout_seconds": 300,
+      "default_model": "deepseek-chat",
+      "reasoning_wire": "deepseek",
+      "chat_completions_endpoint": "",
+      "models_endpoint": "",
+      "models": [
+        {
+          "id": "deepseek-chat",
+          "name": "DeepSeek Chat",
+          "context_window": 128000,
+          "max_tokens": 8192,
+          "reasoning_efforts": ["default", "off"]
+        },
+        {
+          "id": "deepseek-reasoner",
+          "name": "DeepSeek Reasoner",
+          "context_window": 128000,
+          "max_tokens": 64000,
+          "reasoning_efforts": ["default", "high"]
+        }
+      ]
+    }
+  },
+  "subagents": {
+    "orchestrator": {"provider_id": "deepseek", "model": "deepseek-chat", "max_tokens": 0, "reasoning_effort": "default"},
+    "writer": {"provider_id": "deepseek", "model": "deepseek-chat", "max_tokens": 0, "reasoning_effort": "default"},
+    "planner": {"provider_id": "deepseek", "model": "deepseek-chat", "max_tokens": 0, "reasoning_effort": "default"},
+    "critic": {"provider_id": "deepseek", "model": "deepseek-chat", "max_tokens": 0, "reasoning_effort": "default"},
+    "builder": {"provider_id": "deepseek", "model": "deepseek-chat", "max_tokens": 0, "reasoning_effort": "default"},
+    "candidates": {"provider_id": "deepseek", "model": "deepseek-chat", "max_tokens": 0, "reasoning_effort": "default"},
+    "scout": {"provider_id": "deepseek", "model": "deepseek-chat", "max_tokens": 0, "reasoning_effort": "default"},
+    "publisher": {"provider_id": "deepseek", "model": "deepseek-chat", "max_tokens": 0, "reasoning_effort": "default"},
+    "style": {"provider_id": "deepseek", "model": "deepseek-chat", "max_tokens": 0, "reasoning_effort": "default"}
+  },
+  "backend": {
+    "provider_id": "deepseek",
+    "model": "deepseek-chat",
+    "max_tokens": 0,
+    "reasoning_effort": "default"
+  },
   "context_budget_tokens": 300000,
-  "verify_ssl": true,
-  "real_base_url": "https://api.deepseek.com"
+  "max_tokens": 0
 }

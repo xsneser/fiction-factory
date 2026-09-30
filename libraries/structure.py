@@ -1,116 +1,324 @@
 """
 情节弧库（Structure Library）
-各类网文题材的故事骨架结构模板
+各类网文题材的故事骨架结构模板。
+
+存储模型（2026-09 v3 平级独立）：
+  每行 = 一个**平级独立弧模板**（ArcNode），无父子层级、无 parent_arc_id；
+  每个弧自带完整内容：字数区间 / 描述(本弧情节怎么发展) / key_events /
+  tags(题材) / source / created_at / enabled。原树中的「整段壳」与各层子弧在
+  迁移/内置构造时都各自成为独立弧，tags/来源/收录 从原树根平铺到每个独立弧。
+  兼容别名 StructureTemplate = ArcNode（旧引用/类型注解可继续用）。
+  2026-09 起弧库**已删除「内涵/themes」字段**（不再在弧模板上承载母题）。
 """
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
+
 from .base_library import JsonLibrary
 
 
+# ─── 统一的平级弧节点 ───
+
 @dataclass
-class StageNode:
-    """情节弧/阶段节点（树形：有 children = 中间弧，描述其下可挂的子弧；无 = 叶弧/阶段）
-    只表述字数（min_words/max_words 为该节点建议字数区间，与运行时字数轴一致，不含章数）"""
-    name: str            # 阶段/子弧名，如 "先发布局"
-    description: str     # 描述
-    min_words: int = 9000
-    max_words: int = 30000
+class ArcNode:
+    """一个平级独立情节弧模板。
+    只表述字数（min_words/max_words 为该弧建议字数区间，与运行时字数轴一致，不含章数）。
+    全库每个弧字段集完全相同；无父-子关联。"""
+    id: str                        # 唯一 id（arc_xxx / scout_src_名）
+    name: str
+    description: str = ""          # 本弧情节怎么发展（可复用内容主体）
+    min_words: int = 0
+    max_words: int = 0
     key_events: list[str] = field(default_factory=list)
     foreshadow_opportunities: list[str] = field(default_factory=list)  # 埋坑机会
-    themes: list = field(default_factory=list)   # 节点级内涵 [{name, position, how}]，含插入位置
-    children: list["StageNode"] = field(default_factory=list)   # 子弧（多层嵌套；无 = 叶）
+    tags: list[str] = field(default_factory=list)              # 题材标签（每弧可搜）
+    opening_patterns: list[str] = field(default_factory=list)  # 开篇情节段模板引用
+    climax_patterns: list[str] = field(default_factory=list)   # 高潮情节段模板引用
+    source: str = ""               # 来源
+    created_at: str = ""           # 收录时间
+    enabled: bool = True           # 启用状态
+
+    @property
+    def total_words(self) -> int:
+        """整段字数量（兼容旧模板字段读取；整段跨度弧 min=max=整段）。"""
+        return self.max_words or self.min_words or 0
 
     def to_dict(self) -> dict:
-        d = {
-            "name": self.name, "description": self.description,
-            "min_words": self.min_words, "max_words": self.max_words,
-            "key_events": self.key_events,
-            "foreshadow_opportunities": self.foreshadow_opportunities,
-            "themes": self.themes,
-        }
-        if self.children:
-            d["children"] = [c.to_dict() for c in self.children]
-        return d
-
-    @classmethod
-    def from_dict(cls, s) -> "StageNode":
-        if isinstance(s, str):
-            return cls(name=s, description="")
-        return cls(
-            name=s.get("name", ""), description=s.get("description", ""),
-            # 兼容旧数据（min_chapters/max_chapters 章节数 ×3000 换算）
-            min_words=s.get("min_words", s.get("min_chapters", 3) * 3000),
-            max_words=s.get("max_words", s.get("max_chapters", 10) * 3000),
-            key_events=s.get("key_events", []),
-            foreshadow_opportunities=s.get("foreshadow_opportunities", []),
-            themes=s.get("themes", []),
-            children=[cls.from_dict(c) for c in s.get("children", [])],
-        )
-
-
-@dataclass
-class StructureTemplate:
-    """情节弧结构模板（题材已换标签，tags 是唯一题材来源）"""
-    id: str
-    name: str
-    description: str = ""
-    total_words: int = 1500000
-    stages: list[StageNode] = field(default_factory=list)
-    opening_patterns: list[str] = field(default_factory=list)
-    climax_patterns: list[str] = field(default_factory=list)
-    tags: list[str] = field(default_factory=list)
-    source: str = ""                 # 来源
-    created_at: str = "2026-05-01"   # 收录时间
-    enabled: bool = True              # 启用状态
-
-    def to_dict(self) -> dict:
+        # 永远输出统一键集（无 parent）：全库字段结构一致
         return {
             "id": self.id, "name": self.name,
             "description": self.description,
-            "total_words": self.total_words,
-            "stages": [s.to_dict() for s in self.stages],
+            "min_words": self.min_words, "max_words": self.max_words,
+            "key_events": self.key_events,
+            "foreshadow_opportunities": self.foreshadow_opportunities,
+            "tags": self.tags,
             "opening_patterns": self.opening_patterns,
             "climax_patterns": self.climax_patterns,
-            "tags": self.tags,
             "source": self.source,
             "created_at": self.created_at,
             "enabled": self.enabled,
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "StructureTemplate":
-        # 旧数据仍可能带 genre/sub_genre 键：忽略即可，下次 _save() 自动清掉
-        return StructureTemplate(
-            id=d["id"], name=d.get("name", ""),
-            description=d.get("description", ""),
-            total_words=d.get("total_words", d.get("total_chapters", 500) * 3000),
-            stages=[StageNode.from_dict(s) for s in d.get("stages", [])],
-            opening_patterns=d.get("opening_patterns", []),
-            climax_patterns=d.get("climax_patterns", []),
-            tags=d.get("tags", []),
-            source=d.get("source", ""),
-            created_at=d.get("created_at", "2026-05-01"),
-            enabled=d.get("enabled", True),
+    def from_dict(cls, d) -> "ArcNode":
+        if isinstance(d, str):
+            return cls(id=d, name=d)
+        mn, mx = _words_of(d)
+        return cls(
+            id=str(d.get("id") or d.get("name") or ""),
+            name=str(d.get("name") or ""),
+            description=str(d.get("description") or ""),
+            min_words=mn, max_words=mx,
+            key_events=list(d.get("key_events") or []),
+            foreshadow_opportunities=list(d.get("foreshadow_opportunities") or []),
+            tags=list(d.get("tags") or []),
+            opening_patterns=list(d.get("opening_patterns") or []),
+            climax_patterns=list(d.get("climax_patterns") or []),
+            source=str(d.get("source") or ""),
+            created_at=str(d.get("created_at") or ""),
+            enabled=bool(d.get("enabled", True)),
         )
 
 
+# 兼容别名：旧代码/类型注解（如 libraries/assembler.py）仍可 import StructureTemplate。
+StructureTemplate = ArcNode
+
+
+def _int(v, default: int = 0) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _words_of(d: dict) -> tuple:
+    """取一个节点 dict 的字数区间 (min,max)，兼容多代字段：
+    优先 min_words/max_words；其次整弧 total_words/total_chapters（min=max=整段）；
+    最次旧阶段 min_chapters/max_chapters（×3000）。"""
+    if "min_words" in d or "max_words" in d:
+        return _int(d.get("min_words")), _int(d.get("max_words"))
+    whole = d.get("total_words") or d.get("total_chapters")
+    if whole:
+        v = _int(whole)
+        return v, v
+    mn, mx = d.get("min_chapters"), d.get("max_chapters")
+    if mn or mx:
+        return _int(mn) * 3000, max(_int(mn), _int(mx)) * 3000
+    return 0, 0
+
+
+# ─── 平级化 helper（内置构造 / 旧数据迁移） ───
+
+def flatten_nested_tree(tree: dict, root_id: str = "", source: str = "", created_at: str = "") -> list[dict]:
+    """把一棵旧嵌套弧树 dict（顶层用 stages，子层用 children，可多层）摊平成
+    「带 parent_arc_id 的节点行 dict」列表（父级内 0 基 DFS 链 id）。仅供随后
+    independentize_rows 转平级，或旧格式迁移用；最终落盘不含 parent。"""
+    root_id = root_id or str(tree.get("id") or "")
+    rows: list[dict] = []
+
+    def node_row(node: dict, node_id: str, parent_id: str) -> dict:
+        mn, mx = _words_of(node)
+        return {
+            "id": node_id,
+            "name": str(node.get("name") or ""),
+            "description": str(node.get("description") or ""),
+            "min_words": mn, "max_words": mx,
+            "key_events": list(node.get("key_events") or []),
+            "foreshadow_opportunities": list(node.get("foreshadow_opportunities") or []),
+            "themes": list(node.get("themes") or []),
+            "parent_arc_id": parent_id,
+            "tags": list(node.get("tags") or []),
+            "opening_patterns": list(node.get("opening_patterns") or []),
+            "climax_patterns": list(node.get("climax_patterns") or []),
+            "source": str(node.get("source") or ""),
+            "created_at": str(node.get("created_at") or ""),
+            "enabled": bool(node.get("enabled", True)),
+        }
+
+    root = dict(tree)
+    root["id"] = root_id
+    root["parent_arc_id"] = ""
+    root.setdefault("key_events", [])
+    root.setdefault("themes", [])
+    root.setdefault("foreshadow_opportunities", [])
+    if source and not root.get("source"):
+        root["source"] = source
+    if created_at and not root.get("created_at"):
+        root["created_at"] = created_at
+    rows.append(node_row(root, root_id, ""))
+
+    def walk(parent_row_id: str, children: list) -> None:
+        for i, child in enumerate(children):
+            cid = f"{parent_row_id}::{i}"
+            rows.append(node_row(child, cid, parent_row_id))
+            sub = child.get("children") or child.get("stages") or []
+            if sub:
+                walk(cid, sub)
+
+    top = tree.get("stages") or tree.get("children") or []
+    if top:
+        walk(root_id, top)
+    return rows
+
+
+def independentize_rows(rows: list[dict]) -> list[dict]:
+    """把「带 parent_arc_id 的扁平行」转成**平级独立弧行**：
+    ① 每棵树的根 tags/source/created_at 平铺到每个后代（后代原本无 tags）→ 各自可搜；
+    ② 每行去掉 parent_arc_id（及可能的 children/stages 残留）。
+    返回可直接 ArcNode.from_dict 的统一行。"""
+    rows = [dict(r) for r in rows if isinstance(r, dict)]
+    if not rows:
+        return rows
+    id_map = {str(r.get("id")): r for r in rows if r.get("id")}
+
+    def root_of(r: dict) -> dict:
+        seen = set()
+        pid = str(r.get("parent_arc_id") or "")
+        while pid and pid in id_map and pid not in seen:
+            seen.add(pid)
+            r = id_map[pid]
+            pid = str(r.get("parent_arc_id") or "")
+        return r
+
+    out = []
+    for r in rows:
+        root = root_of(r)
+        nr = dict(r)
+        for k in ("tags", "source", "created_at"):
+            if not nr.get(k) and root is not r and root.get(k):
+                v = root.get(k)
+                nr[k] = list(v) if isinstance(v, list) else v
+        nr.pop("parent_arc_id", None)
+        nr.pop("children", None)
+        nr.pop("stages", None)
+        out.append(nr)
+    return out
+
+
+def normalize_structures(items) -> list:
+    """入库/评审前的结构载荷归一：弧库 = 平级独立弧，**每个候选即一条独立弧 dict**，
+    原样返回（不做任何聚树）。兼容：候选带旧嵌套 stages 时按其顶层节点数摊平为独立弧。"""
+    items = list(items or [])
+    out = []
+    for it in items:
+        if isinstance(it, dict) and ("stages" in it or "children" in it) and "parent_arc_id" not in it:
+            # 旧嵌套树形态（整棵模板）→ 摊平成平级独立弧（含原根壳 + 各层子节点）
+            out.extend(independentize_rows(flatten_nested_tree(it)))
+        else:
+            out.append(it)
+    return out
+
+
+def make_root_id(name, source: str = "fanqie") -> str:
+    """生成 scout 入库弧 id：scout_{source}_{清洗(name)[:40]}。"""
+    base = re.sub(r"[^0-9A-Za-z一-鿿\-]", "", str(name or ""))[:40]
+    if not base:
+        base = "arc"
+    return f"scout_{source}_{base}"
+
+
+# ─── 库管理器 ───
+
 class StructureLibrary(JsonLibrary):
-    """情节弧库管理器（进程内单例，JSONL 一行一模板，持久化由基类按 .jsonl 后缀处理）"""
+    """情节弧库管理器（进程内单例，JSONL 一行一个**平级独立弧**）。
+    旧嵌套/带父子的数据在加载时自动迁移为平级。"""
     _instance = None
-    _list_attr = "templates"
+    _list_attr = "templates"     # 平级弧列表（每个 = 一条可独立挑选的弧模板）
     _key = "templates"
     _file_name = "structures.jsonl"
 
     @classmethod
-    def _from_dict(cls, d: dict) -> "StructureTemplate":
-        return StructureTemplate.from_dict(d)
+    def _from_dict(cls, d: dict) -> "ArcNode":
+        return ArcNode.from_dict(d)
 
     @classmethod
     def _builtin(cls) -> list:
         return BUILTIN_STRUCTURES
 
-    def search(self, tags=None, word_count: int = 0) -> list[StructureTemplate]:
-        """按标签（任一命中）/总字数筛选模板。tags 为列表或逗号/空格分隔字符串。"""
-        results = self.templates
+    def _load_jsonl(self):
+        """优先读 .jsonl；同名旧单 JSON（.json）自动迁移；v1 嵌套树 / v2 带 parent 的
+        数据在此统一迁移为平级独立弧行并落盘。"""
+        from core.json_store import read_json, read_jsonl
+        save = Path(str(self._save_path))
+        legacy = save.with_suffix(".json")
+        raw = None
+        if not save.exists() and legacy.exists():
+            data = read_json(legacy, {})
+            raw = data.get(self._key, [])
+        elif save.exists():
+            raw = read_jsonl(save)
+        if raw is None:
+            out = list(self._builtin())
+            setattr(self, self._list_attr, out)
+            return
+
+        migrated = False
+        flat: list = []
+        for d in raw:
+            if isinstance(d, dict) and ("stages" in d or "children" in d) and "parent_arc_id" not in d:
+                # v1：一整棵嵌套模板 → 摊平成带 parent 的行（稍后转平级）
+                flat.extend(flatten_nested_tree(d))
+                migrated = True
+            else:
+                flat.append(d)
+        # v2：扁平行带 parent_arc_id → 平级化（tags 平铺 + 去 parent）
+        if any(isinstance(d, dict) and d.get("parent_arc_id") for d in flat):
+            flat = independentize_rows(flat)
+            migrated = True
+        elif any(isinstance(d, dict) and "parent_arc_id" in d for d in flat):
+            # 带空 parent 键的旧行：只去掉键
+            flat = independentize_rows(flat)
+            migrated = True
+        out = [ArcNode.from_dict(d) for d in flat if isinstance(d, dict)]
+        setattr(self, self._list_attr, out)
+        if migrated:
+            self._save()
+
+    # ── 查询（无层级：每个弧都是独立模板） ──
+    def roots(self, include_disabled: bool = True) -> list:
+        """全部弧（无层级 = 全库即候选模板清单）；默认含已禁用（与原全量语义一致）。"""
+        return [t for t in self.templates if include_disabled or t.enabled]
+
+    def get_by_id(self, node_id: str):
+        for t in self.templates:
+            if t.id == node_id:
+                return t
+        return None
+
+    def get_node(self, node_id: str):
+        return self.get_by_id(node_id)
+
+    def children_of(self, parent_id: str) -> list:
+        """无父子层级：恒空（兼容旧调用点）。"""
+        return []
+
+    def root_of(self, node_id: str):
+        return self.get_by_id(node_id)
+
+    def descendant_ids(self, node_id: str) -> set:
+        return {node_id} if self.get_by_id(node_id) else set()
+
+    def subtree_dicts(self, node_id: str) -> dict:
+        node = self.get_by_id(node_id)
+        return node.to_dict() if node else {}
+
+    def display_trees(self, include_disabled: bool = True) -> list:
+        """全弧浅拷列表（无 children；兼容旧展示调用点）。"""
+        import copy
+        return [copy.copy(t) for t in self.templates
+                if include_disabled or t.enabled]
+
+    def delete_tree(self, node_id: str) -> int:
+        """删除单个弧（无层级，无连坐）。返回删除行数。"""
+        ids = self.descendant_ids(node_id)
+        before = len(self.templates)
+        self.templates = [t for t in self.templates if t.id not in ids]
+        self._save()
+        return before - len(self.templates)
+
+    def search(self, tags=None, word_count: int = 0) -> list:
+        """按标签（任一命中）/整段字数筛选弧模板。tags 为列表或逗号/空格分隔字符串。"""
+        results = self.roots(include_disabled=True)
         if isinstance(tags, str):
             tags = [x.strip() for x in tags.replace("，", " ").replace(",", " ").split() if x.strip()]
         if tags:
@@ -118,213 +326,111 @@ class StructureLibrary(JsonLibrary):
             results = [t for t in results if tag_set.intersection(t.tags or [])]
             results.sort(key=lambda t: -len(tag_set.intersection(t.tags or [])))  # 命中多的排前
         if word_count:
-            # 找总字数最接近的模板
             results.sort(key=lambda t: abs(t.total_words - word_count))
         return results
 
-    def get_by_id(self, template_id: str):
-        for t in self.templates:
-            if t.id == template_id:
-                return t
-        return None
 
+# ─── 内置情节弧（2026-09 精选库：平级独立弧，真实 min-max 区间，无整段壳单点）───
+# ─── 内置情节弧（2026-09-06 重编：从零新编，平级独立弧，真实 min-max 区间）───
 
-# ─── 内置情节弧结构模板 ───
-
-BUILTIN_STRUCTURES = [
-    StructureTemplate(
-        id="arc_chuanyue_01", name="穿越重生·先发优势弧",
-        description="重生/穿越后利用先知先觉抢占先机的一段弧：确认处境→布局→第一次碾压→局势反转",
-        total_words=36000,
-        stages=[
-            StageNode("确认处境", "穿越/重生、弄清身份与时间点、盘算先发优势",
-                      3000, 6000,
-                      ["高能开局（穿越/重生）", "弄清身份处境", "盘点先知信息"],
-                      ["穿越/重生的原因存疑"]),
-            StageNode("先发布局", "抢在未来关键节点前埋下棋子、避开前世雷区",
-                      9000, 15000,
-                      ["提前获取关键资源", "拉拢关键人物", "避开前世踩过的坑"],
-                      ["蝴蝶效应引发的新变量"],
-                      children=[
-                          StageNode("提前埋子", "在关键节点前布下棋子", 3000, 6000, ["占住资源位", "提前示好关键人"]),
-                          StageNode("拉拢关键人物", "收编前世可用的盟友", 3000, 6000, ["救下前世恩人", "结盟军需官"]),
-                          StageNode("避开雷区", "绕开前世踩过的坑", 3000, 3000, ["识破前世陷阱", "改变致命选择"]),
-                      ]),
-            StageNode("第一次碾压", "用先发优势正面碾压第一个前世仇人/竞争者",
-                      6000, 12000,
-                      ["打脸第一个敌人", "身份地位突变", "被多方关注"],
-                      ["更高层对手投来的目光"]),
-            StageNode("局势反转", "顺风局的暗涌：新对手出手、旧雷区爆炸",
-                      6000, 9000,
-                      ["新对手试探", "此前布局被反将一军", "亮出更深底牌"],
-                      ["幕后黑手的阴影"],
-                      [{"name": "复仇（Revenge）", "position": "结尾",
-                        "how": "先发碾压与局势反转的高光时刻以复仇意志引爆"}]),
-        ],
-        opening_patterns=["plot_dating_011", "plot_dating_012"],
-        climax_patterns=["plot_dating_001", "plot_dating_005"],
-        tags=["穿越", "重生", "爽文", "快节奏"],
-        source="创作积累", created_at="2026-08-27",
-    ),
-    StructureTemplate(
-        id="arc_xuanhuan_01", name="玄幻·试炼扬名弧",
-        description="入门后在一场试炼/赛事中快速扬名的一段弧：入门危机→初试锋芒→试炼夺魁",
-        total_words=30000,
-        stages=[
-            StageNode("入门危机", "初入势力即遭打压/考验，证明资格",
-                      3000, 9000,
-                      ["被看轻/刁难", "第一次出手", "赢得入门资格"],
-                      ["考验背后有人在布局"]),
-            StageNode("初试锋芒", "在局部冲突中展露实力、攒下第一波声名",
-                      6000, 12000,
-                      ["越级战胜对手", "获得长辈/组织认可", "结交第一批盟友"],
-                      ["被更强的同辈盯上"]),
-            StageNode("试炼夺魁", "试炼/赛事中挫败劲敌、脱颖而出",
-                      9000, 15000,
-                      ["试炼开启", "与种子选手硬碰硬", "夺魁/达成目标"],
-                      ["试炼背后更大的图谋"],
-                      [{"name": "成长的代价（Cost of Growth）", "position": "结尾",
-                        "how": "付出代价换取的胜利，在夺魁时刻点题成长"}],
-                      children=[
-                          StageNode("试炼开启", "入场、立规则、初见强敌", 3000, 6000, ["抽签/分组", "种子选手亮相"]),
-                          StageNode("硬碰强敌", "与劲敌正面交锋", 3000, 6000, ["越级硬刚", "压箱底底牌"]),
-                      ]),
-        ],
-        opening_patterns=["plot_dating_012"],
-        climax_patterns=["plot_dating_007", "plot_dating_010"],
-        tags=["玄幻", "修仙", "升级", "爽文"],
-        source="创作积累", created_at="2026-08-27",
-    ),
-    StructureTemplate(
-        id="arc_dushi_01", name="都市·逆袭打脸弧",
-        description="低谷中借金手指逆袭、当众打脸的反转爽感弧：低谷受辱→金手指初现→正面打脸→立足声名",
-        total_words=30000,
-        stages=[
-            StageNode("低谷受辱", "展示最狼狈处境、被当众羞辱",
-                      3000, 6000,
-                      ["被退婚/被辞退/被看不起", "当众难堪", "绝境中触发金手指"],
-                      ["羞辱者背后的靠山"]),
-            StageNode("金手指初现", "第一次用金手指扳回局面、让人刮目相看",
-                      3000, 9000,
-                      ["首次施展能力", "小范围证明自己", "赢得初步尊重"],
-                      ["金手指的升级条件"]),
-            StageNode("正面打脸", "在公开场合碾压此前羞辱者、彻底翻盘",
-                      6000, 12000,
-                      ["约战/对赌/竞争", "当众反杀", "靠山出手又被反制"],
-                      ["更大的对手记恨上主角"],
-                      children=[
-                          StageNode("约战对赌", "当众立约、把事闹大", 3000, 6000, ["立下赌约", "围观起哄"]),
-                          StageNode("当众反杀", "在众目睽睽下翻盘", 3000, 6000, ["绝境反转", "当众打脸"]),
-                      ]),
-            StageNode("立足声名", "逆袭后的余波：收获人脉、露出更大的舞台",
-                      6000, 9000,
-                      ["声名传开", "新势力抛来橄榄枝", "埋下下一段冲突"],
-                      ["幕后黑手浮现"]),
-        ],
-        opening_patterns=["plot_dating_001", "plot_dating_011"],
-        climax_patterns=["plot_dating_001", "plot_dating_005"],
-        tags=["都市", "逆袭", "爽文", "现代"],
-        source="创作积累", created_at="2026-08-27",
-    ),
-    StructureTemplate(
-        id="arc_xuanyi_01", name="悬疑·设局揭晓弧",
-        description="一起离奇事件从入局到真相浮出的完整弧：异常入局→线索排查→设局反杀→真相浮现",
-        total_words=36000,
-        stages=[
-            StageNode("异常入局", "主角被卷入一起明显不对的离奇事件",
-                      3000, 9000,
-                      ["目击/卷入异常事件", "发现第一个疑点", "确认自己被盯上"],
-                      ["事件与主角过往的隐秘关联"]),
-            StageNode("线索排查", "走访/调查，拼凑碎片、遭遇阻力",
-                      9000, 15000,
-                      ["收集线索", "关键证人/物证", "调查方向被误导"],
-                      ["每个线索都指向更大阴谋"],
-                      children=[
-                          StageNode("走访收集", "逐点取证、拼图", 3000, 6000, ["目击者访谈", "现场勘验"]),
-                          StageNode("方向被误导", "假线索引偏调查", 3000, 6000, ["伪证出现", "追查落空"]),
-                      ]),
-            StageNode("设局反杀", "识破误导、反将一军、逼近核心",
-                      6000, 12000,
-                      ["识破谎言", "设局引蛇出洞", "当面揭穿伪证"],
-                      ["真正的幕后另有其人"]),
-            StageNode("真相浮现", "核心真相揭晓、事件收束（可留悬念）",
-                      6000, 12000,
-                      ["动机真相", "与真凶正面交锋", "事件落幕/新疑点"],
-                      ["更大的局等下一次揭晓"]),
-        ],
-        opening_patterns=["plot_dating_004"],
-        climax_patterns=["plot_dating_004", "plot_dating_010"],
-        tags=["悬疑", "推理", "反转", "阴谋"],
-        source="创作积累", created_at="2026-08-27",
-    ),
-    StructureTemplate(
-        id="arc_tianwen_01", name="言情·误会和解弧",
-        description="从意外相识到关系确认的甜中带虐小弧：意外初遇→暧昧升温→误会波折→和解确认",
-        total_words=30000,
-        stages=[
-            StageNode("意外初遇", "被迫/巧合的相遇，留下第一印象",
-                      3000, 6000,
-                      ["意外相遇", "一方先动心或双方嘴硬", "留下一个共同的小秘密"],
-                      ["未说出口的心结"]),
-            StageNode("暧昧升温", "日常互动里感情悄悄加深",
-                      6000, 12000,
-                      ["多次碰面/合作", "体贴细节", "第一个脸红/心动场景"],
-                      ["对方的过去痛点"]),
-            StageNode("误会波折", "小误会或外部压力让关系跌入冰点",
-                      6000, 12000,
-                      ["误会产生", "一方受伤/遇险", "第三方搅局"],
-                      ["误会的真正来源"],
-                      children=[
-                          StageNode("误会产生", "一句话/一个误会引爆", 3000, 6000, ["被撞见暧昧", "旧事被翻出"]),
-                          StageNode("第三方搅局", "外人加剧误会", 3000, 3000, ["绿茶/情敌挑拨", "家人反对"]),
-                      ]),
-            StageNode("和解确认", "误会解开、关系正式确认/升级",
-                      3000, 9000,
-                      ["真相大白", "告白/和解", "关系升温定格"],
-                      ["下一段感情线伏笔"]),
-        ],
-        opening_patterns=["plot_dating_006"],
-        climax_patterns=["plot_dating_006", "plot_dating_009"],
-        tags=["言情", "甜文", "日常", "短篇"],
-        source="创作积累", created_at="2026-08-27",
-    ),
-    StructureTemplate(
-        id="arc_scifi_01", name="科幻·末日求生弧",
-        description="灾变降临后从求存到重建秩序的一段弧：灾变降临→求存囤积→冲突突围→秩序重建",
-        total_words=36000,
-        stages=[
-            StageNode("灾变降临", "秩序崩塌的瞬间，主角失去一切",
-                      3000, 9000,
-                      ["灾变爆发", "逃出生天", "确认幸存者身份"],
-                      ["灾变的真正源头成谜"]),
-            StageNode("求存囤积", "搜集物资、加固据点、为活下去积累底牌",
-                      9000, 15000,
-                      ["搜集物资", "加固据点", "与第一批幸存者结盟"],
-                      ["幸存者中混入异类"],
-                      children=[
-                          StageNode("搜集物资", "搜刮补给、装备", 3000, 6000, ["超市/军械库搜刮", "抢到第一辆车"]),
-                          StageNode("加固据点", "把落脚点改造成堡垒", 3000, 6000, ["选址封堵", "囤粮储水"]),
-                      ]),
-            StageNode("冲突突围", "遭遇强敌/人性之恶，杀出重围",
-                      6000, 12000,
-                      ["被掠夺者围困", "背水一战", "付出代价换生存"],
-                      ["更深层的阴谋浮出"],
-                      children=[
-                          StageNode("被掠夺者围困", "恶徒围攻据点", 3000, 3000, ["围城", "人质要挟"]),
-                          StageNode("背水一战", "绝境反击杀出血路",
-                                    3000, 6000, ["突破包围", "火并头目"],
-                                    children=[
-                                        StageNode("绝境反击", "绝处逢生的反杀", 3000, 3000, ["引爆弹药库", "斩首头目"]),
-                                    ]),
-                      ]),
-            StageNode("秩序重建", "短暂的喘息与新秩序的萌芽（可续接下一弧）",
-                      6000, 12000,
-                      ["重建小秩序", "收容更多幸存者", "灾变真相露出一角"],
-                      ["更大危机的信号"]),
-        ],
-        opening_patterns=["plot_dating_011"],
-        climax_patterns=["plot_dating_007", "plot_dating_010"],
-        tags=["科幻", "末世", "求生", "爽文"],
-        source="创作积累", created_at="2026-08-27",
-    ),
+_CURATED_ARCS = [
+    {"id": "arc_talent_fall_reverse", "name": "天才坠落·试炼翻身",
+     "description": "公认的天才一朝沦为废体，从被同门踩进泥里到在入门试炼中反杀登顶的弧：当众跌落遭奚落→藏住残存底牌暗中蓄力→试炼场越级反杀全场→获长老青眼却引动更深的夺因。",
+     "min_words": 16000, "max_words": 38000,
+     "key_events": ["境界跌落/当众奚落", "藏底牌蛰伏", "试炼越级反杀", "扬名与真相苗头"],
+     "foreshadow_opportunities": ["天赋被废并非天灾，而是被人为抽走的引子"],
+     "tags": ["玄幻", "宗门", "逆袭", "爽文"]},
+    {"id": "arc_pill_rise_fame", "name": "丹道废柴·一味成名",
+     "description": "炼丹废柴被逐出丹房，靠旁门偏方一炉成名、被全城争抢的弧：被逐出师门丹房→路遇绝症当街试手一鸣惊人→大宗门招揽与下毒暗算同至→以一味奇丹扬名立万。",
+     "min_words": 13000, "max_words": 30000,
+     "key_events": ["被逐丹房", "当街救人一丹成名", "招揽与暗算同至", "丹成扬名"],
+     "foreshadow_opportunities": ["那味丹方出自一本被烧掉半卷的残谱"],
+     "tags": ["玄幻", "丹道", "逆袭", "轻松"]},
+    {"id": "arc_sect_contest_champion", "name": "山门大比·力压群雄",
+     "description": "一场宗门大比从分组被刻意刁难到横扫对手夺魁的弧：报名分组遭遇排挤→种子选手轮番挑衅→一路碾压晋级决赛→力压群雄夺魁并看清有人在操纵赛制。",
+     "min_words": 18000, "max_words": 42000,
+     "key_events": ["报名分组遭排挤", "种子选手挑衅", "连胜晋级", "夺魁与赛制黑幕"],
+     "foreshadow_opportunities": ["主持大比的长老与对手家有旧"],
+     "tags": ["玄幻", "大比", "扬名", "爽文"]},
+    {"id": "arc_son_in_law_turnover", "name": "赘婿临门·当众翻盘",
+     "description": "被全族看轻的赘婿在满堂宾客前被逼出手，隐藏身份顺势揭开、让前倨后恭的弧：寿宴当众受辱被逼退婚→危局中被迫出手解围→真实身份在众人眼前掀开→看人下菜的亲戚仓皇改口与更大靠山现身。",
+     "min_words": 14000, "max_words": 34000,
+     "key_events": ["寿宴受辱逼退婚", "被迫出手解围", "隐藏身份曝光", "态度反转与幕后浮现"],
+     "foreshadow_opportunities": ["当年替他挡下灾祸的老人并不简单"],
+     "tags": ["都市", "赘婿", "逆袭", "爽文"]},
+    {"id": "arc_doctor_hidden_rise", "name": "都市神医·低调惊人",
+     "description": "隐居街巷的年轻神医卷入豪门恩怨、在众目睽睽下以一手医术镇住全场、被迫从低调走到台前的弧：街巷坐诊被人嘲讽→豪门千金绝症求医先声夺人→当众拆穿庸医骗局→名动全城却惹来旧敌。",
+     "min_words": 13000, "max_words": 30000,
+     "key_events": ["街头坐诊被看轻", "疑难重症一展身手", "当面拆穿骗局", "声名鹊起树敌"],
+     "foreshadow_opportunities": ["他避世行医，是为了躲一桩旧案"],
+     "tags": ["都市", "神医", "打脸", "爽文"]},
+    {"id": "arc_biz_comeback", "name": "商海浮沉·绝地反攻",
+     "description": "被合伙人釜底抽薪、几近破产的创业者从废墟里反手做局、夺回一切的弧：核心团队被挖空濒临清盘→靠一纸旧合同布下暗棋→对手趁胜追击反被套牢→公开清算拿回公司。",
+     "min_words": 18000, "max_words": 42000,
+     "key_events": ["团队被挖濒临破产", "旧合同暗棋", "诱敌深入", "反杀夺回"],
+     "foreshadow_opportunities": ["当年低价卖出的那家公司才是真正的后手"],
+     "tags": ["都市", "商战", "权谋", "逆袭"]},
+    {"id": "arc_mystery_chain", "name": "连环谜局·抽丝剥茧",
+     "description": "数起表面互不相干的命案被逐一串成一张网、最终指向埋藏多年的旧案主使的弧：首起命案现场出现说不通的细节→第二起命案推翻此前的推论→顺着共同线索摸到旧案→当众设局逼出真凶。",
+     "min_words": 22000, "max_words": 50000,
+     "key_events": ["首案说不通的细节", "次案推翻前论", "顺藤摸到旧案", "设局逼出真凶"],
+     "foreshadow_opportunities": ["死者之间只存在一个被刻意抹去的共同点"],
+     "tags": ["悬疑", "推理", "连环", "反转"]},
+    {"id": "arc_haunted_human_scheme", "name": "灵宅夜访·人祸作祟",
+     "description": "受委托调查一座闹鬼老宅、发现所谓冤魂其实是一场精心活人作局、真相翻盘的弧：夜探鬼宅异象频发→线索反而指向宅中旧仆→第二夜守株待兔撞破机关与伪装→揭穿活人扮鬼与夺产阴谋。",
+     "min_words": 18000, "max_words": 40000,
+     "key_events": ["夜探鬼宅异象", "旧仆疑点", "守夜撞破机关", "活人扮鬼真相"],
+     "foreshadow_opportunities": ["老宅地窖里那具无名尸骨的身份才是钥匙"],
+     "tags": ["悬疑", "灵异", "探案", "反转"]},
+    {"id": "arc_frame_reverse", "name": "替罪之局·真凶另有其人",
+     "description": "被推出来顶罪的普通人从认命到反查、发现整局是一场更大阴谋引子的弧：命案发生后被指认顶罪→关键证人一句证词露出破绽→暗中翻查发现真凶有备而来→反将一军把局掀回幕后之人身上。",
+     "min_words": 16000, "max_words": 36000,
+     "key_events": ["被按头顶罪", "证人证词破绽", "反查真凶", "掀翻幕后"],
+     "foreshadow_opportunities": ["安排他顶罪的人反而最不希望他死"],
+     "tags": ["悬疑", "反转", "替身", "涉案"]},
+    {"id": "arc_apocalypse_holdout", "name": "末世囤积·据守求生",
+     "description": "灾变将至时抢先囤货占地、把一处据点守成活人区的弧：预知灾变低价囤货→抢先占住易守难攻的据点并拢人→首波灾变如期而至众人倚仗物资撑过→外部幸存者与内部异心同时考验。",
+     "min_words": 15000, "max_words": 34000,
+     "key_events": ["预知灾变抢囤", "占点拢人", "首波灾变硬扛", "内忧外患求生"],
+     "foreshadow_opportunities": ["混进据点的幸存者里有人知道他的秘密"],
+     "tags": ["科幻", "末世", "求生", "囤货"]},
+    {"id": "arc_relic_scramble", "name": "星海遗迹·夺宝突围",
+     "description": "一座刚开启的远古遗迹引来多方势力，主角在结盟与背叛里抢到关键遗物并全身而退的弧：遗迹开启各方入场→组队探路即遭背叛→核心舱室夺宝混战→挟遗物突围却被更高层盯上。",
+     "min_words": 20000, "max_words": 46000,
+     "key_events": ["遗迹开启群雄入场", "结盟即背叛", "核心夺宝混战", "突围与被盯上"],
+     "foreshadow_opportunities": ["这件遗物是某个已灭绝文明留下的警告"],
+     "tags": ["科幻", "星际", "冒险", "爽文"]},
+    {"id": "arc_fake_lovers_real", "name": "欢喜冤家·假戏真做",
+     "description": "为应付家中安排而假扮情侣的两人从针锋相对到默契升温、最后假戏真做的弧：被迫组队应付双方家长→日常互怼里慢慢对齐生活习惯→一场共同难关让两人看清心意→在亲友起哄里坦白在一起。",
+     "min_words": 10000, "max_words": 26000,
+     "key_events": ["被迫假扮", "互怼磨合出默契", "共同难关动真心", "坦白定情"],
+     "foreshadow_opportunities": ["她当初答应假扮其实另有一桩不能说的盘算"],
+     "tags": ["言情", "甜文", "欢喜冤家", "日常"]},
+    {"id": "arc_reconcile_truth", "name": "错位真心·破镜重圆",
+     "description": "因一场误会分道扬镳的恋人，在真相慢慢浮出水面后从旧伤里重新走到一起的弧：误会被坐实决绝分开→各自辗转却屡屡被共同旧事拉回→当年真相一点一点揭开→旧伤结痂、破镜重圆。",
+     "min_words": 16000, "max_words": 38000,
+     "key_events": ["误会坐实分手", "各自辗转", "真相揭开", "破镜重圆"],
+     "foreshadow_opportunities": ["当年那封没有送到的信其实被另一个人截下了"],
+     "tags": ["言情", "误会", "虐恋", "和解"]},
+    {"id": "arc_rules_deathgame", "name": "规则副本·极限求生",
+     "description": "一群玩家被投入规则怪谈副本，从各自试探、互相设局到合力解出隐藏规则通关的弧：入场规则浮现众人各怀心思→试探与内斗中先折几人→顺着死亡倒推隐藏规则→卡在临界通关并惊动更高存在。",
+     "min_words": 22000, "max_words": 52000,
+     "key_events": ["副本规则浮现", "试探与内斗", "死亡倒推规则", "极限通关"],
+     "foreshadow_opportunities": ["通关者里混着一个上一轮就死过的人"],
+     "tags": ["无限流", "副本", "规则", "求生"]},
+    {"id": "arc_loop_escape", "name": "无限轮回·破局而出",
+     "description": "被困在一天轮回里的主角从按部就班求生到识破循环核心、最终撬动根源逃出生天的弧：第一次循环在混乱中结束→察觉时间重置后开始记录线索→发现循环并非惩罚而是封印→在终点与看守者摊牌破局。",
+     "min_words": 20000, "max_words": 48000,
+     "key_events": ["初醒循环", "记录线索找规律", "识破循环本质", "摊牌破局"],
+     "foreshadow_opportunities": ["每天准时在街角卖糖葫芦的老头从不进入循环"],
+     "tags": ["无限流", "轮回", "揭秘", "悬疑"]},
+    {"id": "arc_court_dark_undercurrent", "name": "朝堂暗涌·步步为营",
+     "description": "初入朝堂的寒门新贵在党争漩涡里从被人当刀使到站稳脚跟、反手布下一盘大棋的弧：初入朝被当作棋子→几番献言立功却触了谁的逆鳞→旧党清算时亮出深埋的底牌→扳倒首恶却也让皇权投来审视目光。",
+     "min_words": 24000, "max_words": 56000,
+     "key_events": ["入朝为棋子", "献言立功招忌", "清算中亮底牌", "扳倒首恶引皇忌"],
+     "foreshadow_opportunities": ["提拔他的那位贵人才是朝局真正的执棋人"],
+     "tags": ["历史", "权谋", "朝堂", "成长"]},
 ]
+
+BUILTIN_STRUCTURES = [ArcNode.from_dict(x) for x in _CURATED_ARCS]
+

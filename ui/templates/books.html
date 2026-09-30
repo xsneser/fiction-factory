@@ -16,7 +16,7 @@
         <td>{% if r.tags %}{% for t in r.tags[:6] %}<span class="tag">{{ t }}</span>{% endfor %}{% else %}—{% endif %}</td>
         <td>
             {% if r.has_storyline %}
-            <span class="tag blue">{{ r.storyline_outlines }}故事线 · {{ r.storyline_plots }}桥段</span>
+            <span class="tag blue">{{ r.storyline_outlines }}故事线 · {{ r.storyline_plots }}情节段</span>
             {% elif r.outline_count %}
             <span class="tag green">结构 {{ r.outline_count }}阶段</span>
             {% else %}

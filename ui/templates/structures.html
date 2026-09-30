@@ -1,88 +1,49 @@
 {% extends "base.html" %}
 {% block content %}
-{% macro render_stage_node(stages, path_prefix, tpl_id) %}
-  {% for s in stages %}
-    {% set node_path = path_prefix + (loop.index0 | string) %}
-    <div style="margin:6px 0;border-left:{% if path_prefix %}2px solid #30363d{% else %}none{% endif %};padding-left:{% if path_prefix %}10px{% else %}0{% endif %}">
-      <span class="tag" title="{{ s.description }}" style="max-width:100%;white-space:normal">{{ s.name }} ({{ s.min_words }}-{{ s.max_words }}字){% if s.children %} · {{ s.children|length }} 子弧{% endif %}</span>
-      {% if s.themes %}
-      <details class="stage-themes" style="margin:4px 0;font-size:12px">
-        <summary style="cursor:pointer;color:#8b949e">🎭 {{ s.name }} 内涵{% if s.themes %}<span class="tag yellow" style="margin-left:6px">{{ s.themes|length }}</span>{% endif %}</summary>
-        <div class="stage-theme-editor" data-id="{{ tpl_id }}" data-path="{{ node_path }}" style="padding:6px 0 2px 12px">
-          {% for m in (s.themes or []) %}
-          <div class="st-row" style="display:flex;gap:6px;margin:4px 0;align-items:center">
-            <input class="st-name" placeholder="内涵名（如：复仇（Revenge））" value="{{ m.name }}" style="flex:1;min-width:0">
-            <input class="st-position" placeholder="位置（开头/中段/结尾）" value="{{ m.position }}" style="width:130px">
-            <input class="st-how" placeholder="表达手法" value="{{ m.how }}" style="flex:1.2;min-width:0">
-            <button type="button" class="small" onclick="removeStageTheme(this)">✕</button>
-          </div>
-          {% endfor %}
-          <button type="button" class="small" onclick="addStageTheme(this)">➕ 内涵</button>
-          <button type="button" class="small" onclick="saveStageThemes(this)">💾 保存节点内涵</button>
-        </div>
-      </details>
-      {% endif %}
-      {% if s.children %}
-      {{ render_stage_node(s.children, node_path + ',') }}
-      {% endif %}
+{# 情节弧库：全库 = 平级独立弧模板（每行一弧，无父子层级）。
+   每个弧一张完全一样的卡，标题右 ⏸/🗑 每张都有、只作用于该弧自己。
+   顶栏「全部 + 各题材标签」页签过滤（类情节段库）。 #}
+<h1>📋 情节弧库 <span style="font-size:14px;color:#8b949e">（共 {{ total }} 弧 · 当前 {{ arc_cards|length }} 条）</span></h1>
+
+<div class="tabs char-tabs">
+    <a href="/structures" class="{{ 'active' if not current_tag else '' }}">全部</a>
+    {% for cat in categories %}
+    <a href="/structures?tag={{ cat }}" class="{{ 'active' if current_tag==cat else '' }}">{{ cat }}</a>
+    {% endfor %}
+</div>
+
+{% for c in arc_cards %}
+<div class="card" style="margin-bottom:10px;opacity:{{ '0.6' if not c.enabled else '1' }}">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+        <span style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+            <strong>{{ c.name }}</strong>
+            {% if not c.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
+        </span>
+        <span style="display:flex;gap:6px;align-items:center">
+            <button class="small" style="font-size:12px" onclick="toggleStruct('{{ c.id }}')">{{ '✅ 启用' if not c.enabled else '⏸ 禁用' }}</button>
+            <button class="small danger" style="font-size:12px" onclick="deleteStruct('{{ c.id }}')">🗑 删除</button>
+        </span>
     </div>
-  {% endfor %}
-{% endmacro %}
-<h1>📋 情节弧库 <span style="font-size:14px;color:#8b949e">（{{ templates|length }} 模板 · 单弧可多层嵌套）</span></h1>
-{% for t in templates %}
-<div class="card" style="margin-bottom:16px;opacity:{{ '0.5' if not t.enabled else '1' }}">
-    <div class="title">
-        {{ t.name }}
-        {% if not t.enabled %}<span class="tag red" style="background:#330d0d;color:#f85149">已禁用</span>{% endif %}
-    </div>
-    <p style="font-size:13px;margin:8px 0">{{ t.description }}</p>
-    <p style="font-size:12px;color:#8b949e">总字数: {{ t.total_words }} · 子弧数: {{ t.stages|length }}</p>
-    <div style="margin-top:12px">
-        {{ render_stage_node(t.stages, '', t.id) }}
-    </div>
-    {% if t.tags %}<p style="margin-top:8px">{% for tag in t.tags %}<span class="tag green">{{ tag }}</span>{% endfor %}</p>{% endif %}
-    <p style="color:#484f58;font-size:11px;margin-top:8px">
-        收录: {{ t.created_at }}
-        · 来源: {{ t.source or '创作积累' }}
+    <p style="font-size:12px;color:#8b949e;margin:6px 0 4px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        {% if c.min_words and c.min_words == c.max_words %}
+        <span class="tag" style="font-size:11px">约 {{ c.max_words }} 字</span>
+        {% elif c.min_words or c.max_words %}
+        <span class="tag" style="font-size:11px">({{ c.min_words }}-{{ c.max_words }}字)</span>
+        {% endif %}
+        {% if c.tags %}{% for tag in c.tags %}<span class="tag green" style="font-size:11px">{{ tag }}</span>{% endfor %}{% endif %}
+        {% if c.created_at %}<span style="font-size:11px">收录 {{ c.created_at }}</span>{% endif %}
+        {% if c.source %}<span style="font-size:11px">来源 {{ c.source }}</span>{% endif %}
     </p>
-    <p style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button class="small" onclick="toggleStruct('{{ t.id }}')">{{ '✅ 启用' if not t.enabled else '⏸ 禁用' }}</button>
-        <button class="small danger" onclick="deleteStruct('{{ t.id }}')">🗑 删除</button>
-    </p>
+    {% if c.description %}
+    <p style="font-size:13px;margin:6px 0">{{ c.description }}</p>
+    {% endif %}
+    {% if c.key_events %}
+    <p style="font-size:12px;color:#a5b3c2;margin:2px 0">事件：{{ c.key_events | join(' / ') }}</p>
+    {% endif %}
 </div>
 {% endfor %}
 
 <script>
-function addStageTheme(btn) {
-    var ed = btn.closest('.stage-theme-editor');
-    var row = document.createElement('div');
-    row.className = 'st-row';
-    row.style.cssText = 'display:flex;gap:6px;margin:4px 0;align-items:center';
-    row.innerHTML = '<input class="st-name" placeholder="内涵名（如：复仇（Revenge））" style="flex:1;min-width:0">'
-        + '<input class="st-position" placeholder="位置（开头/中段/结尾）" style="width:130px">'
-        + '<input class="st-how" placeholder="表达手法" style="flex:1.2;min-width:0">'
-        + '<button type="button" class="small" onclick="removeStageTheme(this)">✕</button>';
-    ed.insertBefore(row, btn);
-}
-function removeStageTheme(btn) { btn.closest('.st-row').remove(); }
-async function saveStageThemes(btn) {
-    var ed = btn.closest('.stage-theme-editor');
-    var themes = [];
-    ed.querySelectorAll('.st-row').forEach(function(row) {
-        var name = row.querySelector('.st-name').value.trim();
-        var position = row.querySelector('.st-position').value.trim();
-        var how = row.querySelector('.st-how').value.trim();
-        if (name) themes.push({name: name, position: position, how: how});
-    });
-    var path = (ed.dataset.path || '').split(',').filter(function(x){return x!==''}).map(Number);
-    const r = await fetch('/api/structures/' + ed.dataset.id + '/node/themes', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({themes: themes, path: path})
-    });
-    const d = await r.json();
-    if (d.ok) { showToast('✅ 节点内涵已保存', 'success'); location.reload(); }
-    else showToast('保存失败: ' + (d.error||''), 'error');
-}
 async function toggleStruct(id) {
     const r = await fetch('/api/structures/' + id + '/toggle', {method:'POST'});
     const d = await r.json();

@@ -1,0 +1,22 @@
+﻿python.exe : C:\Users\lenovo\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic_settings\sources\utils.
+py:47: IncompleteFieldDefinitionWarning: Field 'lifespan' has an incomplete definition: its annotation contains an unre
+solved forward reference, so settings sources may fail to correctly resolve its value. Call `model_rebuild()` on the mo
+del where the field is defined, once all the referenced types are defined.
+所在位置 行:1 字符: 20
++ ... ovelEngine; & "C:\Users\lenovo\AppData\Local\Programs\Python\Python31 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\lenovo...es are defined.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  warnings.warn(
+[09/08/26 19:03:46] INFO     Processing request of type           server.py:733
+                             ListToolsRequest                                  
+[OK] write: 6 tools
+C:\Users\lenovo\AppData\Local\Programs\Python\Python310\lib\site-packages\pydantic_settings\sources\utils.py:47: Incomp
+leteFieldDefinitionWarning: Field 'lifespan' has an incomplete definition: its annotation contains an unresolved forwar
+d reference, so settings sources may fail to correctly resolve its value. Call `model_rebuild()` on the model where the
+ field is defined, once all the referenced types are defined.
+  warnings.warn(
+[09/08/26 19:03:48] INFO     Processing request of type           server.py:733
+                             ListToolsRequest                                  
+[OK] replan: 7 tools

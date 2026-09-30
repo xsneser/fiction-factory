@@ -67,7 +67,7 @@ def test_normalize():
 
 def test_picks_distribute():
     tids = [t.id for t in struct_lib.search(tags=["都市"])[:2]] \
-        or [t.id for t in struct_lib.templates[:2]]
+        or [t.id for t in struct_lib.roots()[:2]]
     pids = [t.id for t in plot_lib.templates[:6]]
     if not tids or not pids:
         print("  ⚠️ 三库为空，跳过分布断言")

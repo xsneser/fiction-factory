@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>😂 笑点库 <span style="font-size:14px;color:#8b949e">（{{ patterns|length }} 模式）</span></h1>
+
+<div class="tabs char-tabs">
+    <a href="/gags" class="{{ 'active' if not current_cat else '' }}">全部</a>
+    {% for cat in categories %}
+    <a href="/gags?category={{ cat }}" class="{{ 'active' if current_cat==cat else '' }}">{{ cat }}</a>
+    {% endfor %}
+</div>
+
 {% for p in patterns %}
 <div class="accordion" id="gag-{{ p.id }}" style="opacity:{{ '0.5' if not p.enabled else '1' }}">
     <div class="accordion-header">

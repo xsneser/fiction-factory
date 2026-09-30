@@ -9,6 +9,7 @@ phase 语义：storyline.phase ∈ config/outlines/plots/ready。
 PHASE_GATES 未收录的工具 = 不门控（只读/导航/建书向导工具，空集安全）。
 """
 import functools
+import os
 from typing import Optional
 
 # 工具名 → 允许调用时的 storyline.phase 集合（未收录 = 不门控）
@@ -18,12 +19,28 @@ PHASE_GATES = {
     # 薄工具（agent 生成后落盘；无 LLM）
     "save_outlines": {"config", "outlines", "plots", "ready"},
     "save_book_meta": {"ready"},
-    "save_bridge_draft": {"ready"},
+    "save_plot_draft": {"ready"},
     "save_chapter_text": {"ready"},
-    # 大纲链 —— config/outlines/plots 阶段推进用；ready 放行（新流程书创建即 ready，重跑走 regenerate=True）
-    "fill_gags": {"plots"},
-    # 建书规划 —— 仅 config 阶段（未建大纲前）
-    "save_basic_info": {"config"},
+    "prepare_plot_run": {"ready"},
+    "prepare_plot_revision": {"ready"},
+    "save_plot_revision": {"ready"},
+    "get_orchestration_state": {"ready"},
+    "get_plot_review_context": {"ready"},
+    "plot_quality_gate": {"ready"},
+    "accept_plot_draft": {"ready"},
+    # 编排收章 / Critic 判决写入（主 Agent 编排链路）
+    "finalize_draft_chapter": {"ready"},
+    "record_plot_review": {"ready"},
+    # 章计划（运行时，不改故事线）
+    "set_chapter_plan": {"ready"},
+    # 续规划原子提交（编排路径的提交口；UI 端点共用同一 service）
+    "commit_replan_preview": {"ready"},
+    # 写作风格取样 —— Plot Run 每段抽单篇样文
+    "pick_plot_sample": {"ready"},
+    # 建书规划 —— config 落基本盘；plots 草案期放行。
+    # ready 期仅在 save_basic_info 内部走「受限人物修正」分支（只准 characters + 必带 revision），
+    # 世界观/书名/POV 等在写作期由函数内硬拒，不放给 Agent。
+    "save_basic_info": {"config", "outlines", "plots", "ready"},
     # 上架 —— 需已有正文
     "publish_check": {"ready"},
     "publish_book": {"ready"},
@@ -48,11 +65,32 @@ def _resolve_phase(book_id: Optional[str]) -> Optional[str]:
         return None
 
 
+def _gate_book_id(kwargs: dict) -> str:
+    """门控要判哪本书的 phase。
+
+    多数工具签名里有 book_id；但 Writer 面只有 `save_plot_draft(commit_token, …)`，
+    书号由服务端经 `NOVEL_WRITE_BOOK_ID` 注入子进程。这里把 commit_token 解析成归属书，
+    让写作提交也受 phase 门控（否则 phase 已回退/未就绪时仍能写盘）。
+    """
+    book_id = kwargs.get("book_id") or ""
+    if book_id:
+        return str(book_id)
+    token = kwargs.get("commit_token") or ""
+    if not token:
+        return ""
+    try:
+        from libraries.plot_commit_tokens import resolve_book_id
+        return resolve_book_id(str(token), os.environ.get("NOVEL_WRITE_BOOK_ID", ""))
+    except Exception:
+        return ""
+
+
 def _wrap_phase_gate(fn):
     """把工具包上 phase 门控（未收录于 PHASE_GATES 的工具原样返回）。
 
     gate 先于书锁（_build_registry 里包在 _wrap_book_lock 外层）：phase 不对
-    就不去等锁，减少无谓阻塞。
+    就不去等锁，减少无谓阻塞。注意 `_SELF_LOCKED_TOOLS`（如 save_plot_draft）自己
+    在函数体内加锁，门控这里只解析书号、**不加锁**。
     """
     allowed = PHASE_GATES.get(fn.__name__)
     if not allowed:
@@ -60,7 +98,7 @@ def _wrap_phase_gate(fn):
 
     @functools.wraps(fn)
     def wrapper(**kwargs):
-        book_id = kwargs.get("book_id") or ""
+        book_id = _gate_book_id(kwargs)
         phase = _resolve_phase(book_id)
         if phase is not None and phase not in allowed:
             raise RuntimeError(

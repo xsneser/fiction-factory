@@ -21,6 +21,7 @@ from libraries.de_ai import DeAIEngine
 from libraries.character_state import CharacterStateMachine
 from libraries.reviewer import ContentReviewer
 from libraries.engine import NovelEngine, BookMode, Op, Instruction
+from core.api_config import load_api_config, is_api_configured
 from core.llm_client import LLMClient
 from core.models import APIConfig
 from core.json_store import read_json, write_json_atomic
@@ -29,6 +30,8 @@ from libraries.storyline import (
     BookStoryline, save_storyline, load_storyline, StorylineBuilder,
     get_mc, get_characters, relation_to_mc, normalize_basic_info,
 )
+
+log = logging.getLogger("web_ctx")
 
 # ─── 全局服务 ───
 plot_lib = PlotLibrary()
@@ -43,32 +46,30 @@ book_mgr = BookManager("books")
 _llm_client = None
 
 def get_llm():
+    """共享 LLM 客户端（按 api.json 构造；未配置好则返回 None）。
+
+    配置一律经 core.api_config 读取，不要在这里手写字段 —— 手写必然漏字段。
+    """
     global _llm_client
     if _llm_client is not None:
         return _llm_client
-    api_path = os.path.join(_REPO_ROOT, "api.json")
-    if os.path.exists(api_path):
-        cfg = read_json(api_path, {})
-        api_cfg = APIConfig(
-            api_key=cfg.get("api_key",""),
-            base_url=cfg.get("base_url","https://api.deepseek.com"),
-            model=cfg.get("model","deepseek-chat"),
-            http_timeout_seconds=cfg.get("http_timeout_seconds",300),
-            # verify_ssl 跟随 api.json：默认开启；旧证书环境可显式设为 false
-            verify_ssl=cfg.get("verify_ssl", True),
-        )
-        _llm_client = LLMClient(api_cfg)
-        return _llm_client
-    return None
+    api_cfg = load_api_config()
+    if not is_api_configured(api_cfg):
+        return None
+    _llm_client = LLMClient(api_cfg)
+    return _llm_client
 
 
 def invalidate_llm():
-    """清除缓存的 LLM 客户端：设置保存后调用，使下一次 get_llm() 按新配置重建。
+    """清除缓存的 LLM 客户端与引擎实例：设置保存后调用，使下一次请求按新配置重建。
 
     必须在本模块内改全局（from .ctx import * 只会拷贝引用，外部赋值清不掉缓存）。
+    `_engines` 里的 NovelEngine 持有构造时注入的旧 client（DeAIEngine/ContentReviewer 同理），
+    只清 `_llm_client` 会让已缓存的那本书继续用旧地址/旧 key —— 这正是"改了设置不生效"的来源。
     """
     global _llm_client
     _llm_client = None
+    _engines.clear()
 
 
 def sse_stream_response(gen):
@@ -84,6 +85,7 @@ def sse_stream_response(gen):
 # ─── 引擎实例缓存 ───
 _engines: dict[str, NovelEngine] = {}
 _storylines: dict[str, dict] = {}  # 故事线配置缓存
+_storylines_mtime: dict[str, int] = {}  # 缓存对应的 storyline.json st_mtime_ns（跨进程失效）
 _storyline_lock = threading.Lock()  # 保护故事线缓存读写（Flask 多线程）
 
 # ─── 故事线统一存取：每本书的故事线都在书目录内 books/<id>/storyline.json ───
@@ -94,21 +96,64 @@ def _storyline_filepath(storyline_id: str) -> str:
 
 
 def _resolve_storyline(storyline_id):
-    """从内存缓存或磁盘加载 BookStoryline。"""
+    """从内存缓存或磁盘加载 BookStoryline（缓存按文件 st_mtime_ns 失效）。
+
+    外部 agent（MCP，独立进程）会直接写 storyline.json；若本进程缓存不带 mtime 失效，
+    Web 会一直读到陈旧故事线（R3 修订 6：用纳秒 mtime，Windows 下快速连续写入也可靠）。
+    """
+    import os as _os
+    path = _storyline_filepath(storyline_id)
+    try:
+        stat = _os.stat(path).st_mtime_ns if _os.path.exists(path) else None
+    except OSError:
+        stat = None
     with _storyline_lock:
         sl = _storylines.get(storyline_id)
-        if sl is None:
-            sl = load_storyline(_storyline_filepath(storyline_id))
+        cached_mtime = _storylines_mtime.get(storyline_id)
+        if sl is None or stat is None or cached_mtime != stat:
+            sl = load_storyline(path)
             if sl:
                 _storylines[storyline_id] = sl
+                if stat is not None:
+                    _storylines_mtime[storyline_id] = stat
+            else:
+                _storylines.pop(storyline_id, None)
+                _storylines_mtime.pop(storyline_id, None)
     return sl
 
 
 def _save_storyline(sl, storyline_id):
-    """写入内存缓存并落盘。"""
-    with _storyline_lock:
-        _storylines[storyline_id] = sl
-    save_storyline(sl, _storyline_filepath(storyline_id))
+    """写入内存缓存并落盘；结构写入自动推进乐观并发 revision。
+
+    UI 直写路径也必须与 MCP/dsh 侧互斥：加书锁 + 在锁内重新读盘抬 revision（避免两处
+    「读旧版本→各写一份→互相覆盖」）。mtime 在**写盘之后**记录，否则记的是写前时间戳，
+    下一次读必然 cache miss。
+    """
+    from libraries.book_lock import BookBusyError, BookLock
+    path = _storyline_filepath(storyline_id)
+    book_id = str(storyline_id or "")
+    lock = BookLock(book_id) if book_id.startswith("book_") else None
+    if lock is not None and not lock.acquire(timeout=30.0, purpose="_save_storyline"):
+        raise BookBusyError(f"另一进程正在操作这本书，请稍后再试：{book_id}")
+    try:
+        try:
+            disk = load_storyline(path)
+            disk_revision = int(getattr(disk, "storyline_revision", 0) or 0) if disk else -1
+            if int(getattr(sl, "storyline_revision", 0) or 0) <= disk_revision:
+                sl.storyline_revision = disk_revision + 1
+        except Exception as e:  # noqa: BLE001
+            log.warning("_save_storyline 读盘抬版本失败（按传入版本写入）%s: %s", storyline_id, e)
+        save_storyline(sl, path)
+        with _storyline_lock:
+            _storylines[storyline_id] = sl
+            try:
+                import os as _os
+                _storylines_mtime[storyline_id] = _os.stat(path).st_mtime_ns   # 写盘后记录
+            except OSError:
+                _storylines_mtime.pop(storyline_id, None)
+    finally:
+        if lock is not None:
+            lock.release()
 
 
 def _max_id_suffix(ids) -> int:
@@ -128,6 +173,7 @@ def _seed_builder_counter(builder, ids) -> None:
 
 
 __all__ = [
+    "log",
     "plot_lib", "struct_lib", "gag_lib", "char_lib", "style_rules", "profiles", "book_mgr",
     "get_llm", "invalidate_llm", "sse_stream_response",
     "_engines", "_storylines", "_storyline_lock",

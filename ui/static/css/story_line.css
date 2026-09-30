@@ -1,5 +1,5 @@
 /* ─── 故事线（Story Line）组件样式 ─── */
-/* 垂直 Gantt：字数轴 + 大纲/桥段/线程通道。所有类以 sl- 前缀隔离，避免与 base 冲突。
+/* 垂直 Gantt：字数轴 + 大纲/情节段/线程通道。所有类以 sl- 前缀隔离，避免与 base 冲突。
    全部颜色/字体/圆角/间距对齐 base.css 设计令牌（GitHub Dark）。 */
 
 .sl-root {
@@ -13,6 +13,7 @@
   overflow: hidden;
   font-size: 13px;
   color: var(--fg);
+  container-type: inline-size;
   /* 语义色 alpha 变体（令牌不支持透明度，集中定义便于维护） */
   --sl-flashback-border: rgba(210, 153, 34, .7);   /* --warn @ 70% */
   --sl-interleaved-border: rgba(63, 185, 80, .8); /* --success-fg @ 80% */
@@ -53,15 +54,23 @@
 
 .sl-main {
   display: flex;
+  flex-direction: column;
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
 }
+.sl-formal-row {
+  display: flex;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+}
 
 /* ─── 轴线 ─── */
 .sl-axis-panel { width: 34px; position: relative; flex-shrink: 0; }
-.sl-axis-panel .sl-axis-line { position: absolute; left: 4px; top: 0; bottom: 0; width: 2px; background: linear-gradient(to bottom, var(--border), var(--border-soft) 20%, var(--border-soft) 80%, var(--border)); transform: translateX(-50%); }
+.sl-axis-panel .sl-axis-line { position: absolute; left: 4px; top: 24px; bottom: 4px; width: 2px; background: linear-gradient(to bottom, var(--border), var(--border-soft) 20%, var(--border-soft) 80%, var(--border)); transform: translateX(-50%); }
 .sl-axis-panel .sl-tick { position: absolute; left: 4px; transform: translate(-50%, -50%); width: 8px; height: 1px; background: var(--border); }
 .sl-axis-panel .sl-tick-label { position: absolute; left: 10px; transform: translateY(-50%); font-size: 9px; color: var(--fg-dim); white-space: nowrap; }
 
@@ -70,7 +79,7 @@
 .sl-lane { flex: 1; position: relative; border-left: 1px solid var(--border-soft); min-width: 0; }
 .sl-lane:first-child { border-left: none; }
 .sl-lane-header {
-  position: sticky; top: 0; left: 0; right: 0; z-index: 30;
+  position: sticky; top: 0; left: 0; right: 0; z-index: 70;
   padding: var(--space-1) var(--space-2);
   font-size: 11px; font-weight: 600; line-height: 1.3;
   color: var(--fg-strong);
@@ -80,7 +89,7 @@
 .sl-lane-body { position: absolute; top: 24px; left: 4px; right: 4px; bottom: 4px; }
 
 /* ─── 进度光标 ─── */
-.sl-cursor { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger-fg); box-shadow: 0 0 8px var(--danger-fg); z-index: 8; pointer-events: none; }
+.sl-cursor { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger-fg); box-shadow: 0 0 8px var(--danger-fg); z-index: 60; pointer-events: none; }
 
 /* ─── 条 ─── */
 .sl-bar {
@@ -101,7 +110,7 @@
 .sl-bar.sl-flashback { border: 1px solid var(--sl-flashback-border); box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
 .sl-bar.sl-interleaved { border: 1px dashed var(--sl-interleaved-border); box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
 
-/* ─── 桥段层级（JS 内联覆盖 left/width/z-index，此处兜底） ─── */
+/* ─── 情节段层级（JS 内联覆盖 left/width/z-index，此处兜底） ─── */
 .sl-bar-plot.level-0 { left: 0; right: 8px; z-index: 3; }
 .sl-bar-plot.level-1 { left: 14px; right: 4px; z-index: 4; }
 .sl-bar-plot.level-2 { left: 28px; right: 0; z-index: 5; }
@@ -110,7 +119,7 @@
 .sl-bar-outline.level-1 { left: 10px; right: 6px; z-index: 11; }
 .sl-bar-outline.level-2 { left: 20px; right: 4px; z-index: 12; }
 
-/* ─── 叙事线程横带 + 桥段线程/收局/设局徽标 ─── */
+/* ─── 叙事线程横带 + 情节段线程/收局/设局徽标 ─── */
 .sl-bar-thread { border: 1px solid rgba(255,255,255,.08); overflow: visible; }
 .sl-payoff-badge { position: absolute; bottom: 2px; right: 3px; font-size: 9px; color: var(--danger-fg); font-weight: 700; pointer-events: none; }
 .sl-setup-badge { position: absolute; top: 2px; right: 3px; font-size: 9px; color: var(--warn); font-weight: 700; pointer-events: none; }
@@ -126,7 +135,7 @@
 /* ─── 图例：设局→收局连线样例（琥珀虚线，与设局线一致） ─── */
 .sl-legend-swatch.payoff-line { background: transparent; border: 1px dashed var(--warn); }
 
-/* ─── 读者承诺标记：设局⏳待兑现(黄) / 收局✅已兑现(绿)，叠在桥段条右下 ─── */
+/* ─── 读者承诺标记：设局⏳待兑现(黄) / 收局✅已兑现(绿)，叠在情节段条右下 ─── */
 .sl-promise { position: absolute; bottom: 2px; left: 3px; font-size: 9px; line-height: 1; pointer-events: none; padding: 1px 2px; border-radius: 3px; }
 .sl-promise.pending { background: var(--sl-promise-pending-bg); border: 1px solid var(--warn); }
 .sl-promise.ok { background: var(--sl-promise-ok-bg); border: 1px solid var(--success); }
@@ -167,3 +176,192 @@
 
 /* ─── 书详情页故事线展示框：高度固定，边框/圆角由 .sl-root 提供（避免双边框） ─── */
 .sl-frame { height: clamp(600px, 75vh, 960px); overflow: hidden; margin-bottom: 20px; }
+
+/* ─── 写作台顶部两栏：上一段六类事实 | 全员角色状态 ───
+   旧的三列对照矩阵（上一段 | 对照字段 | 本段）与它那个五组折叠的审计区已删除：
+   左栏服务下一段写作，右栏统一展示人物当前的「位置/状态/动作」。 */
+.wf-latest-context {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  margin: 0 0 8px;
+  min-width: 0;
+  /* 不做等高拉伸：两栏内容长度天然不等（本段 3 行 vs 角色 N 人），拉伸只会让短的那栏
+     空出一大片——顶部区每省 10px 都直接给下面的故事线与阅读器。 */
+  align-items: start;
+}
+.wf-context-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* 角色多时卡内滚动，而不是把下方 Gantt/阅读器挤没。
+     300 是实测分界：2~3 个出场角色（约 85px/人）+ 底部「其他人物意图」约 90px 仍能完整显示；
+     再多才滚动——顶部区每 10px 都直接给下面的故事线与阅读器。 */
+  max-height: min(32vh, 300px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 6px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+.wf-context-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.wf-context-head h2 { margin: 0; font-size: 11.5px; font-weight: 600; color: var(--fg-muted); letter-spacing: .3px; }
+.wf-context-hint { display: inline-grid; place-items: center; width: 14px; height: 14px;
+  border: 1px solid var(--border); border-radius: 50%; color: var(--fg-muted); font-size: 9.5px; cursor: help; }
+.wf-context-empty { color: var(--fg-muted); font-size: 11px; line-height: 1.5; }
+.wf-last-title { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  color: var(--fg-strong); font-size: 13.5px; font-weight: 600; line-height: 1.35; }
+.wf-last-stamp { color: var(--fg-muted); font-size: 10.5px; font-weight: 400; white-space: nowrap; }
+/* 事实行：固定宽的标签列 + 可换行的值列（沿用旧对照表的「标签 值」读法，但不再三列对照） */
+.wf-last-fact { display: flex; gap: 8px; margin-top: 4px; font-size: 11.5px; line-height: 1.5; }
+.wf-last-fact-label { flex: 0 0 52px; color: var(--fg-muted); white-space: nowrap; }
+.wf-last-fact-value { flex: 1; min-width: 0; color: var(--fg); overflow-wrap: anywhere; }
+/* 规划上下文折叠组：去掉原生三角，必须自己给开合标记，否则看起来就是普通灰字、没人会点 */
+.wf-last-plan { margin-top: 5px; }
+.wf-last-plan > summary { cursor: pointer; color: var(--fg-muted); font-size: 10.5px; list-style: none; }
+.wf-last-plan > summary::-webkit-details-marker { display: none; }
+.wf-last-plan > summary::before { content: '▸ '; color: var(--fg-dim); }
+.wf-last-plan[open] > summary::before { content: '▾ '; }
+.wf-last-plan > summary:hover { color: var(--fg-dim); }
+/* 右栏底部「其他人物意图」：本段没出现在卡片上的人（他们本来无处可见）。与卡片用虚线分隔。 */
+.character-intent-block { margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--border-soft); }
+.character-intent-head { color: var(--fg-muted); font-size: 10.5px; margin-bottom: 1px; }
+
+/* ─── 角色状态（写作台右栏与书详情共用）───
+   刻意**不给每个角色加卡片框**：外层已经有一个容器框，再套一层就是框套框，人物一多就变成
+   一堵墙。改成同一容器内的「虚线分隔的扁平条目」，只在人与人之间画分隔线。 */
+.character-state-card { margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.character-state-card + .character-state-card {
+  margin-top: 5px; padding-top: 5px; border-top: 1px dashed var(--border-soft);
+}
+.character-state-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.character-state-head strong { color: var(--fg-strong); font-size: 12.5px; }
+.character-identity { margin-left: 5px; color: var(--fg-muted); font-size: 10.5px; }
+.character-badges { display: flex; gap: 4px; flex-shrink: 0; }
+.character-badges span { padding: 0 5px; border-radius: 999px; font-size: 9.5px; font-weight: 600;
+  background: rgba(155,187,244,.14); color: #a9c7ff; }
+.character-staged-mark { padding: 0 5px; border-radius: 999px; font-size: 9.5px; font-weight: 600;
+  background: rgba(63,185,80,.15); color: var(--success-fg); white-space: nowrap; }
+.character-state-lines { display: grid; gap: 1px; margin: 3px 0 0; font-size: 11.5px; line-height: 1.5; }
+.character-state-lines > div { display: flex; gap: 7px; }
+.character-state-lines dt { flex: 0 0 30px; color: var(--fg-muted); }
+.character-state-lines dd { flex: 1; min-width: 0; margin: 0; color: var(--fg); overflow-wrap: anywhere; }
+.character-state-chip { display: inline-block; margin: 0 3px 1px 0; padding: 0 5px; border-radius: 999px;
+  font-size: 10px; background: rgba(139,148,158,.14); color: var(--fg-dim); }
+.character-action-reason { color: var(--fg-muted); font-size: 10.5px; }
+.character-inference, .character-events, .character-other-group { margin-top: 3px; }
+.character-inference > summary, .character-events > summary, .character-other-group > summary {
+  cursor: pointer; color: var(--fg-muted); font-size: 10.5px; list-style: none; }
+/* 去掉原生三角后必须自己给一个开合标记，否则这些折叠行看起来就是普通灰字、没人会去点 */
+.character-inference > summary::before,
+.character-events > summary::before,
+.character-other-group > summary::before { content: '▸ '; color: var(--fg-dim); }
+.character-inference[open] > summary::before,
+.character-events[open] > summary::before,
+.character-other-group[open] > summary::before { content: '▾ '; }
+.character-inference > summary:hover,
+.character-events > summary:hover,
+.character-other-group > summary:hover { color: var(--fg-dim); }
+.character-inference > summary::-webkit-details-marker,
+.character-events > summary::-webkit-details-marker,
+.character-other-group > summary::-webkit-details-marker { display: none; }
+.character-inference[open] > summary, .character-events[open] > summary,
+.character-other-group[open] > summary { color: var(--fg-dim); }
+.character-inference-body { margin-top: 4px; color: #d29922; font-size: 11px; line-height: 1.5; }
+.character-event-row { padding: 2px 0; font-size: 11.5px; color: var(--fg-dim); line-height: 1.5; }
+.character-event-row .ce-chapter { color: var(--fg-muted); }
+.character-event-tag { display: inline-block; margin: 0 4px 0 0; padding: 0 5px; border-radius: 8px;
+  font-size: 10px; background: rgba(121,192,255,.14); color: #79c0ff; }
+@media (max-width: 900px) {
+  .wf-latest-context { grid-template-columns: minmax(0, 1fr); }
+  .wf-context-card { max-height: 30vh; }
+}
+/* 面板页头共用的小字（写作台 desk-head / 书详情仍在用） */
+.wpr-dim { color: var(--fg-muted); }
+
+.planning-strip { display:flex; flex-wrap:wrap; gap:10px 18px; margin:10px 0 12px; padding:10px 14px;
+  border:1px solid #30363d; border-radius:8px; background:#0d1117; color:#8b949e; font-size:12px; }
+.planning-strip strong { color:#c9d1d9; }
+.planning-strip .planning-warn { color:#d29922; font-weight:600; }
+.forecast-card { margin:-2px 0 12px; padding:8px 14px; border-left:3px dashed #8957e5;
+  background:rgba(137,87,229,.08); color:#8b949e; font-size:12px; }
+.forecast-card summary { color:#bc8cff; cursor:pointer; }
+.forecast-card ul { margin:8px 0 2px 18px; }
+
+/* 增量规划：Gantt 只保留有字数坐标的正式合同与承诺边界。 */
+.sl-boundary { position:absolute; left:0; right:0; height:0; border-top:2px dashed #d29922; z-index:45; pointer-events:auto; }
+.sl-boundary span { position:absolute; right:8px; top:-18px; padding:1px 6px; border-radius:9px; background:#2d2412; color:#e3b341; font-size:10px; }
+.sl-legend-swatch.boundary { height:0; border-top:2px dashed #d29922; background:none; }
+
+.planning-panel { margin:10px 0 14px; border:1px solid var(--border-soft); border-radius:10px; background:var(--bg-card); overflow:hidden; }
+.planning-panel-head { display:flex; justify-content:space-between; padding:10px 14px; color:var(--fg-strong); font-weight:600; border-bottom:1px solid var(--border-soft); }
+.planning-revision { color:var(--fg-muted); font-size:11px; font-weight:400; }
+.planning-panel-body { padding:12px 14px; }
+/* ─── 写作台 Planning 提示条（详情页保留完整规划矩阵） ─── */
+.planning-panel.compact { margin:4px 0 8px; border:0; background:transparent; }
+.planning-panel.compact .planning-panel-head { display:none; }
+.planning-panel.compact .planning-panel-body { padding:0; }
+.planning-minibar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; color:var(--fg-muted); min-height:24px; }
+.pm-h0 { color:var(--fg-strong); }
+.pm-boundary { padding:1px 7px; border-radius:999px; font-size:11px; }
+.pm-boundary.warn { color:#e3b341; background:rgba(210,153,34,.10); border:1px solid rgba(210,153,34,.35); }
+.pm-boundary.crit { color:#ff7b72; background:rgba(248,81,73,.10); border:1px solid rgba(248,81,73,.4); font-weight:600; }
+.pm-alert { color:#e3b341; background:rgba(210,153,34,.10); border:1px solid rgba(210,153,34,.35); border-radius:999px; padding:1px 8px; font-size:11px; }
+.pm-alert-danger { color:var(--danger-fg); background:rgba(248,81,73,.10); border-color:rgba(248,81,73,.4); }
+
+/* H1/H2 预测条带：不属于字数轴，位于正式三泳道下方，斜纹+虚线区别于已承诺内容。 */
+.sl-forecast-strip {
+  flex: 0 0 auto;
+  width: 100%; min-width: 0;
+  overflow: visible;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-inset);
+}
+.sl-forecast-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 120px) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  min-width: 0;
+}
+.sl-forecast-row:last-child { border-bottom: 0; }
+.sl-forecast-row-title {
+  color: var(--fg-strong);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  padding-top: 3px;
+}
+.sl-forecast-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+.sl-forecast-card {
+  flex: 1 1 180px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 10px; line-height: 1.4; padding: 4px 6px; border-radius: 3px;
+  border: 1px dashed var(--sl-border, #30363d);
+  background: repeating-linear-gradient(45deg, rgba(139,148,158,.10) 0 4px, transparent 4px 8px);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.sl-forecast-layer {
+  font-size: 9px; opacity: .75; border: 1px solid var(--sl-border, #30363d);
+  border-radius: 2px; padding: 0 2px; margin-right: 2px;
+}
+.sl-forecast-fh { font-size: 9px; opacity: .8; overflow-wrap: anywhere; }
+.sl-forecast-empty { color: var(--fg-muted); font-size: 10px; padding: 3px 0; }
+
+@container (max-width: 460px) {
+  .sl-forecast-row { display: block; padding: 5px 6px; }
+  .sl-forecast-row-title { padding: 0 0 4px; }
+  .sl-forecast-card { flex-basis: 100%; }
+}

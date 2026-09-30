@@ -6,11 +6,40 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime
 import logging
+import re
 
 from core.json_store import read_json, write_json_atomic
 from core.safe_paths import ensure_child_path, is_safe_book_id
 
 logger = logging.getLogger("novel-engine.book_manager")
+
+# 章节标题**库里存裸标题**（「天闪裂空」），前缀由展示端加：`publisher` 是
+# `f"第{n}章 {title}"`、阅读器是 `'第'+num+'章 '+title`。存量第 1~4 章的标题是
+# 「第1章 天闪裂空」这种带前缀的旧数据（不迁移），读取/展示时必须剥掉，否则渲染成
+# 「第1章 第1章 天闪裂空」。这是**展示层**的规范，不是写入口的一次性清洗——
+# 写入口的修改不会自动修好已经落盘的章节。
+_TITLE_PREFIX = re.compile(r"^\s*第\s*[0-9一二三四五六七八九十百千零两]+\s*章[\s:：·\-—]*")
+
+
+def normalize_chapter_title(title, *, limit: int = 30) -> str:
+    """章节标题归一：剥「第N章」前缀与装饰、压空白、限长。空 → ""。
+
+    `limit` 是**关键字限定**的：曾有调用方把章号当第二个位置参数传进来，结果标题被截成
+    一个字（limit=5）。这类静默截断不值得靠 review 拦，直接用签名拦住。
+    """
+    t = str(title or "").strip()
+    if not t:
+        return ""
+    t = re.sub(r"\s+", " ", _TITLE_PREFIX.sub("", t)).strip(" ·-—:：")
+    return t[:limit].strip()
+
+
+def chapter_display_title(ch, num: int = 0) -> str:
+    """章节的**可读标题**（不含前缀）：裸标题 → 归一后的存量标题 → 空串。
+
+    调用方自己决定前缀怎么加（导出是「第N章 标题」，文件名场景不要前缀）。
+    """
+    return normalize_chapter_title((ch or {}).get("title"))
 
 
 @dataclass
@@ -26,7 +55,7 @@ class BookConfig:
     total_words: int = 0
     status: str = "planning"              # planning/ready/writing/reviewing/finished/published/paused
     structure_template_id: str = ""        # 使用的大纲模板ID
-    assigned_profiles: list[str] = field(default_factory=list)  # 使用的桥段列表
+    assigned_profiles: list[str] = field(default_factory=list)  # 使用的情节段列表
     assigned_gags: list[str] = field(default_factory=list)      # 使用的笑点列表
     assigned_themes: list[str] = field(default_factory=list)    # 使用的内涵主题
     opening_template_id: str = ""          # 开篇模板ID
@@ -180,19 +209,27 @@ class BookManager:
     def save_chapter(self, book_id: str, chapter_num: int,
                      title: str, content: str, summary: str = "",
                      review: dict | None = None,
-                     bridges: list | None = None):
+                     bridges: list | None = None,
+                     plot_spans: list | None = None):
         """保存章节（review：规则审查结果 dict，随章节落盘供详情页展示；
-        bridges：本桥段逐段去AI味后的 [{plot_id, plot_name, text}]，供写作台
-        点击桥段→高亮对应正文；旧文件无此键，向前兼容。
-        content 为派生缓存，落盘时保证 == "\n\n".join(bridges[].text)）"""
+        bridges：本情节段逐段去AI味后的 [{plot_id, plot_name, text, run_id?, facts?}]，
+        供写作台点击情节段→高亮对应正文与 Prediction→Fact 对照；旧文件无此键，向前兼容。
+        content 为派生缓存，落盘时保证 == "\n\n".join(bridges[].text)。
+        plot_spans（可选，WS5）：[{plot_id, plot_name, run_id, start, end}]，start 含/end 不含，
+        offset 以 content 的 Python 字符串下标计（段间以 "\n\n" 两个换行连接）；供精确跳转/定位备查，
+        前端高亮优先 plot_id + DOM 段，不按字符 offset 重切（避免 Unicode 切分漂移）。"""
         book_dir = self.dir / book_id / "chapters"
         book_dir.mkdir(parents=True, exist_ok=True)
         chapter_file = book_dir / f"{chapter_num:04d}.json"
+        from core.text_utils import count_prose_units
         write_json_atomic(chapter_file, {
             "num": chapter_num, "title": title,
             "content": content, "summary": summary,
+            "actual_prose_units": count_prose_units(content or ""),
+            "raw_codepoints": len(content or ""),
             "review": review,
             "bridges": bridges,
+            "plot_spans": plot_spans,
             "created_at": datetime.now().isoformat(),
         })
 

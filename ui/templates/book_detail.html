@@ -4,7 +4,7 @@
 {% endblock %}
 {% block content %}
 {% from "_flow_stepper.html" import status_badge %}
-<link rel="stylesheet" href="/static/css/story_line.css?v=4">
+<link rel="stylesheet" href="/static/css/story_line.css?v=22">
 <h1 id="book-title" style="cursor:pointer" title="点击编辑书名">📖 {{ book.title or '(待定)' }}</h1>
 
 <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
@@ -12,10 +12,25 @@
     <a href="/books/{{ book.book_id }}/continue" class="btn" style="background:#238636;color:#fff;text-decoration:none">✍️ 进入写作台</a>
     {% endif %}
     <a href="/books/{{ book.book_id }}/publish" class="btn" style="background:#1f6feb;color:#fff;text-decoration:none">🚀 上架 / 导出</a>
+    <a href="/books/{{ book.book_id }}/export-txt" class="btn" style="background:#8957e5;color:#fff;text-decoration:none" title="导出全部章节标题+正文为 .txt 文件">📤 一键导出章节+正文(.txt)</a>
     <form method="POST" action="/books/{{ book.book_id }}/delete" style="display:inline;background:none;border:none;padding:0;margin:0" onsubmit="return confirm('确认删除《{{ book.title }}》？')">
         <button class="small danger" style="padding:8px 16px">删除</button>
     </form>
 </div>
+
+{% if storyline and storyline.phase == 'plots' %}
+{# plots 现仅 config/补弧失败兜底恢复用（正常新书提交即 ready，不出现此横幅）；深化已并入步3，无深化按钮 #}
+<div class="card" style="border:1px solid #d29922;background:rgba(210,153,34,.08);padding:12px 16px;margin-bottom:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div style="color:#d29922;font-weight:600">📐 故事线待确认 <span style="color:#8b949e;font-weight:400">（补弧落盘，确认后才解锁写作）</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="small" onclick="var h=document.getElementById('sl-toggle');if(h){var t=h.nextElementSibling;if(t){t.classList.toggle('show');window.initStoryline&&window.initStoryline();}}">🔍 预览故事线</button>
+            <button type="button" class="small" style="background:#238636;color:#fff" id="confirm-storyline-btn">✅ 确认弧+情节段，开始写作</button>
+        </div>
+    </div>
+    <div id="storyline-confirm-msg" style="margin-top:6px;color:#8b949e;font-size:12px"></div>
+</div>
+{% endif %}
 
 <div class="detail-grid">
     <div class="detail-item"><div class="label">笔名</div><div class="value">{{ book.pen_name }}</div></div>
@@ -25,6 +40,44 @@
     <div class="detail-item"><div class="label">进度</div><div class="value">{{ book.total_words }} 字 · 已完成 {{ book.current_chapter }} 章</div></div>
     <div class="detail-item"><div class="label">状态</div><div class="value">{{ status_badge(book.status) }}</div></div>
 </div>
+
+{# ─── 增量规划面板已移除：它是 agent 决策视图（H0/H1/H2、待解问题、人物意图、续规划记录），
+       人不看。但**故事线 Gantt 需要规划数据**（已写字数红线、承诺边界黄线、H1/H2 方向条带），
+       所以这里不加载 planning_ui.js，只用一个极简只读 loader 把规划状态喂给下面那段脚本。 ─── #}
+{% if storyline %}
+<script>
+(function () {
+    var BOOK = "{{ book.book_id }}";
+    function pull() {
+        return fetch('/api/storyline/' + encodeURIComponent(BOOK) + '/planning-state')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d || !d.ok) return;
+                window.__PLANNING_STATE__ = d.planning_state || {};
+                window.__PLANNING_BOUNDARY__ = d.boundary || {};
+                /* 与 planning_ui.js 同一对全局变量 + 同一个事件：Gantt 无论先初始化还是后初始化都能拿到数据 */
+                window.dispatchEvent(new CustomEvent('ne:planning-updated', {detail: d}));
+                var rev = Number((d.storyline_snapshot || {}).revision || 0);
+                var cur = Number((window.__BOOK_STORYLINE__ || {}).storyline_revision || 0);
+                if (rev > cur) {
+                    return fetch('/api/storyline/' + encodeURIComponent(BOOK))
+                        .then(function (r) { return r.json(); })
+                        .then(function (s) {
+                            if (s && s.ok && s.storyline) window.__BOOK_STORYLINE__ = s.storyline;
+                            window.dispatchEvent(new CustomEvent('ne:storyline-updated', {detail: {storyline: window.__BOOK_STORYLINE__, revision: rev}}));
+                        });
+                }
+            })
+            .catch(function () { /* 取不到只影响 Gantt 的规划叠层，不影响页面 */ });
+    }
+    pull();
+    /* 只有「续规划提交」才改规划事实，其它 desk 刷新不必重取 */
+    window.addEventListener('ne:desk-refresh', function (e) {
+        if (((e && e.detail) || {}).name === 'plan_committed') pull();
+    });
+})();
+</script>
+{% endif %}
 
 {# ─── 设定：直铺可编辑表单（原 world_card.html 迁移；故事线已内嵌于两字段集之间） ─── #}
 <script>
@@ -40,16 +93,8 @@ var storylineId = "{{ book.book_id }}";
 <div class="card" style="margin-bottom:16px"><div class="title">📝 简介</div><p style="color:#8b949e;margin:0">{{ basic_info.get('synopsis') }}</p></div>
 {% endif %}
 
-{% if draft %}
-<div class="accordion"><div class="accordion-header"><span>✍️ 进行中草稿：第{{ draft.chapter_num }}章（未固化）</span><span style="color:#8b949e;font-size:12px">📊 {{ draft.words }} 字 · 写作台中断时保留</span></div>
-    <div class="accordion-body">
-        <pre style="white-space:pre-wrap;max-height:480px;overflow-y:auto;background:#1c2128;border:1px solid #30363d;padding:12px;border-radius:6px">{{ draft.text }}</pre>
-    </div>
-</div>
-{% endif %}
-
-{% if chapters %}
-<h3>📑 目录 ({{ chapters|length }})</h3>
+{% if chapters or draft %}
+<h3>📑 目录 ({{ chapters|length + (1 if draft else 0) }})</h3>
 <div class="toc-split">
     <!-- 左栏：章节目录（独立滚动） -->
     <div class="toc-list">
@@ -59,6 +104,12 @@ var storylineId = "{{ book.book_id }}";
             <div class="toc-meta">📊 {{ ch.word_count }} 字{% if ch.created_at %} · {{ ch.created_at[:16] }}{% endif %}</div>
         </div>
         {% endfor %}
+        {% if draft %}
+        <div class="toc-item draft-toc-item {{ 'active' if not chapters }}" data-num="{{ draft.chapter_num }}" onclick="showTocChapter({{ draft.chapter_num }})">
+            <div>第{{ draft.chapter_num }}章: 进行中草稿 <span class="m-draft-tag">未固化</span></div>
+            <div class="toc-meta">📊 {{ draft.words }} 字 · 写作台中断时保留</div>
+        </div>
+        {% endif %}
     </div>
     <!-- 右栏：点开章节的展开内容（独立滚动） -->
     <div class="toc-detail">
@@ -75,6 +126,19 @@ var storylineId = "{{ book.book_id }}";
             <div class="toc-ch-content"><pre>{{ ch.content }}</pre></div>
         </div>
         {% endfor %}
+        {% if draft %}
+        <div class="toc-chapter draft-toc-chapter" id="toc-ch-{{ draft.chapter_num }}" {% if chapters %}hidden{% endif %}>
+            <div class="toc-ch-head">第{{ draft.chapter_num }}章: 进行中草稿 <span class="toc-ch-meta">📊 {{ draft.words }} 字 · 未固化</span></div>
+            <div class="draft-segments">
+            {% for segment in draft.segments %}
+            <div class="draft-segment">
+                <div class="draft-segment-label">第{{ segment.seq }}段</div>
+                <pre>{{ segment.text }}</pre>
+            </div>
+            {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 <style>
@@ -84,12 +148,20 @@ var storylineId = "{{ book.book_id }}";
 .toc-item:hover { background:#1f2937; color:#f0f6fc; }
 .toc-item.active { background:rgba(31,111,235,.15); color:#58a6ff; border:1px solid rgba(31,111,235,.35); }
 .toc-meta { font-size:11px; color:#6e7681; margin-top:2px; }
+.toc-item .m-draft-tag { display:inline-block; margin-left:4px; padding:1px 6px; font-size:11px; color:#8b949e; border:1px dashed #30363d; border-radius:999px; }
+.toc-item.draft-toc-item { color:#d29922; background:rgba(210,153,34,.07); border:1px dashed rgba(210,153,34,.55); }
+.toc-item.draft-toc-item:hover, .toc-item.draft-toc-item.active { color:#f2cc60; background:rgba(210,153,34,.16); border-color:#d29922; }
 .toc-detail { flex:1; min-width:0; max-height:min(520px,65vh); overflow-y:auto; border:1px solid #30363d; border-radius:8px; padding:12px; }
 .toc-ch-head { font-weight:600; color:#f0f6fc; margin-bottom:8px; }
 .toc-ch-meta { font-weight:normal; font-size:12px; color:#8b949e; }
 .toc-ch-summary { color:#8b949e; margin:4px 0 8px; }
 .toc-ch-review { font-size:12px; margin:4px 0 8px; }
 .toc-ch-content pre { white-space:pre-wrap; margin:0; }
+.draft-toc-chapter { border:1px dashed rgba(210,153,34,.65); background:rgba(210,153,34,.05); padding:12px; border-radius:6px; }
+.draft-segment { margin:0 0 12px; padding:10px 12px; border-left:3px solid #d29922; background:rgba(210,153,34,.09); border-radius:4px; }
+.draft-segment:last-child { margin-bottom:0; }
+.draft-segment-label { margin-bottom:6px; color:#f2cc60; font-size:12px; font-weight:600; }
+.draft-segment pre { white-space:pre-wrap; margin:0; color:#e6edf3; }
 </style>
 <script>
 function showTocChapter(n) {
@@ -100,8 +172,9 @@ function showTocChapter(n) {
 {% else %}
 <div class="empty"><div class="icon">✍️</div><p>还没有生成章节</p><p style="margin-top:6px"><a href="/books/{{ book_id }}/continue" class="btn">→ 进入写作台</a></p></div>
 {% endif %}
-<script>window.__BOOK_STORYLINE__ = {{ storyline.to_dict() | tojson if storyline else 'null' }};</script>
-<script src="/static/js/story_line.js?v=4"></script>
+
+<script>window.__BOOK_STORYLINE__ = {{ storyline_data | tojson if storyline_data else 'null' }};</script>
+<script src="/static/js/story_line.js?v=12"></script>
 <script>
 /* 故事线区块默认折叠：Gantt 在隐藏态容器高度为 0，改为首次展开 #sl-toggle 时再初始化 */
 var _slInited = false;
@@ -109,13 +182,30 @@ function initStoryline() {
     if (_slInited) return;
     var mount = document.getElementById('detail-storyline');
     if (window.StoryLine && window.__BOOK_STORYLINE__ && mount) {
-        window.StoryLine.init('detail-storyline', window.__BOOK_STORYLINE__, {scrollable: true});
+        window.StoryLine.init('detail-storyline', window.__BOOK_STORYLINE__, {scrollable: true, planning: window.__PLANNING_STATE__ || {}, boundary: window.__PLANNING_BOUNDARY__ || {}, currentWord:(window.__PLANNING_STATE__ || {}).written_until_word || 0});
         _slInited = true;
     }
 }
 document.addEventListener('click', function(e) {
     var h = e.target && e.target.closest ? e.target.closest('#sl-toggle') : null;
     if (h && h.nextElementSibling && h.nextElementSibling.classList.contains('show')) {
+        initStoryline();
+    }
+});
+window.addEventListener('ne:planning-updated', function(e) {
+    if (!_slInited || !window.StoryLine || !window.StoryLine.updateProgress) return;
+    var d = (e && e.detail) || {};
+    window.StoryLine.updateProgress({
+        currentWord: (d.planning_state || window.__PLANNING_STATE__ || {}).written_until_word || 0,
+        planning: d.planning_state || window.__PLANNING_STATE__ || {},
+        boundary: d.boundary || window.__PLANNING_BOUNDARY__ || {}
+    });
+});
+window.addEventListener('ne:storyline-updated', function(e) {
+    var d = (e && e.detail) || {};
+    if (d.storyline) window.__BOOK_STORYLINE__ = d.storyline;
+    if (_slInited && window.__BOOK_STORYLINE__) {
+        _slInited = false;
         initStoryline();
     }
 });
@@ -183,4 +273,24 @@ if (h1El) h1El.addEventListener('click', function() {
     startEditTitle();
 });
 </script>
+{% if storyline and storyline.phase == 'plots' %}
+<script>
+/* plots 兜底恢复（config/补弧后）：确认门——挂内涵并翻 ready；正常新书提交即 ready，无自动深化 */
+(function () {
+    var confirmBtn = document.getElementById('confirm-storyline-btn');
+    if (confirmBtn) confirmBtn.addEventListener('click', function () {
+        confirmBtn.disabled = true;
+        var m = document.getElementById('storyline-confirm-msg');
+        if (m) m.textContent = '⏳ 正在挂内涵并解锁写作…';
+        fetch('/api/book/' + BOOK_ID + '/confirm-storyline', {method: 'POST'})
+            .then(function (r) { return r.json().then(function (d) { return {ok: r.ok, d: d}; }); })
+            .then(function (res) {
+                if (res.ok && res.d.ok) { window.showToast && showToast('✅ 故事线已确认，进入 ready', 'success'); location.reload(); }
+                else { window.showToast && showToast('确认失败：' + ((res.d && res.d.error) || ''), 'error'); confirmBtn.disabled = false; }
+            })
+            .catch(function (e) { window.showToast && showToast('确认失败：' + e, 'error'); confirmBtn.disabled = false; });
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}

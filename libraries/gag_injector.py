@@ -16,8 +16,8 @@ from core.llm_client import extract_json
 logger = logging.getLogger("novel-engine.gag_injector")
 
 DETECTOR_TEMPERATURE = 0.3
-# 探测器输出上限：JSON 正文 + flash 推理余量（推理过长会吃掉 max_tokens 导致空返回）
-DETECTOR_MAX_TOKENS = 400
+# 输出预算不在这里设：全站统一走 core.llm_client.DSH_MAX_TOKENS（推理型模型的思考
+# token 会吃掉预算，按功能给小值会导致空返回）。
 DETECTOR_MAX_HINT_CHARS = 60
 
 
@@ -28,7 +28,7 @@ class GagInjector:
         self.llm = llm
         self.harness = harness
         self.gag_lib = gag_lib
-        # 桥段内最近命中（供 SSE gag_hit 事件 / 日志）
+        # 情节段内最近命中（供 SSE gag_hit 事件 / 日志）
         self._last_hits: list[dict] = []
 
     def prescreen_pool(self, plot, book_id: str = "") -> list:
@@ -55,8 +55,7 @@ class GagInjector:
         d = self.harness.render_detector_prompt(recent_text, humor_style, pool)
         try:
             raw = self.llm.call(d["system"], d["user"],
-                                temperature=DETECTOR_TEMPERATURE,
-                                max_tokens=DETECTOR_MAX_TOKENS)
+                                temperature=DETECTOR_TEMPERATURE)
             data = json.loads(extract_json(raw))
         except Exception as e:
             logger.debug("探测器调用/解析失败，视为未命中: %s", e)

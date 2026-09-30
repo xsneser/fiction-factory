@@ -13,6 +13,14 @@ window.ReaderCore = (function () {
             return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
         });
     }
+    // 章节标题库里存**裸标题**，前缀由展示端加（`'第'+num+'章 '+title`）。存量数据里
+    // 有「第1章 天闪裂空」这种自带前缀的，直接用会渲染成「第1章 第1章 天闪裂空」——
+    // 与后端 libraries/book_manager.normalize_chapter_title 同一口径。
+    function _ms_bareTitle(s) {
+        return String(s == null ? '' : s)
+            .replace(/^\s*第\s*[0-9一二三四五六七八九十百千零两]+\s*章[\s:：·\-—]*/, '')
+            .trim();
+    }
     function _fmtWords(n) {
         n = parseInt(n) || 0;
         return n >= 1000 ? (Math.round(n / 1000 * 10) / 10) + 'k' : String(n);
@@ -106,7 +114,7 @@ window.ReaderCore = (function () {
                 var _src = ch.source === 'fanqie' ? '番茄' : (ch.source === 'merged' ? '多源合并' : ch.source);
                 srcHtml = '<div class="m-chapter-src">获取来源：' + _ms_esc(_src) + '</div>';
             }
-            container.innerHTML = '<div class="m-chapter-title">第' + _ms_esc(num) + '章 ' + _ms_esc(ch.title || '') + '</div>'
+            container.innerHTML = '<div class="m-chapter-title">第' + _ms_esc(num) + '章 ' + _ms_esc(_ms_bareTitle(ch.title)) + '</div>'
                 + srcHtml
                 + _ms_esc(content == null ? '' : content);
         }
@@ -196,7 +204,7 @@ window.ReaderCore = (function () {
             if (token !== R._flipToken) { _abortAnim(); return; }
             R._anim = null;
             _swapContentInstant(function () {
-                pages.innerHTML = sec.innerHTML;   // 桥段纯 HTML span + data，无监听器，安全
+                pages.innerHTML = sec.innerHTML;   // 情节段纯 HTML span + data，无监听器，安全
                 R.idx = targetIdx;
                 R.page = targetPage;
                 paginate();
@@ -300,7 +308,7 @@ window.ReaderCore = (function () {
             return Math.max(0, Math.floor(x / (colW + PAGE_GAP)));
         }
 
-        /* 外部更新章节（写作台轮询：agent 写完桥段/章节后整体替换章节数据并重渲染当前章） */
+        /* 外部更新章节（写作台轮询：agent 写完情节段/章节后整体替换章节数据并重渲染当前章） */
         function setChapters(chs, targetIdx, page) {
             R._flipToken++;
             _abortAnim();

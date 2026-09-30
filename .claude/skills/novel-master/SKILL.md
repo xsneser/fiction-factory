@@ -3,9 +3,10 @@ name: novel-master
 description: >-
   NovelEngine 创作平台的统一入口。Use when the user wants to 写小说/开新书/生成弧/写正文/上架/续写
   (start the platform and drive any novel creation task on NovelEngine)。
-  职责：① 确保平台服务（58080）已启动；② 按用户意图分发到分 skill（novel-build / novel-outline /
-  novel-write / novel-publish）并执行；③ 用 get_book_detail 校验阶段，跨阶段时引导到正确 skill，
-  不跨阶段硬做。本 skill 是调度器，具体流程见各分 skill 正文。
+  职责：① 确保平台服务（58080）已启动；② 按用户意图分发到分 skill（novel-build / novel-publish；
+  正文写作由 dsh 侧栏 novel-story 驱动，Claude 侧不再直接写作）并执行；③ 用 get_book_detail 校验阶段，
+  跨阶段时引导到正确 skill，不跨阶段硬做。本 skill 是调度器，具体流程见各分 skill 正文。
+  注：弧构建/深化已并入 dsh 建书步3（深化式生成、用户提交即 phase=ready）；Claude 侧不做弧构建。
 ---
 # NovelEngine 主 skill（启动器 + 调度表）
 
@@ -25,8 +26,8 @@ description: >-
 | 用户意图（中英触发词） | 分 skill | 分 skill 文件 |
 |---|---|---|
 | 开新书 / 建书 / 写设定 / 构思世界观 / 借鉴已有书 / 生成书名 / 开头几章 | `novel-build` | `.claude/skills/novel-build/SKILL.md`（注：dsh 侧/按钮流程已拆为 `novel-build-candidates`（步 1 候选呈现）→ `novel-build`（步 2 建书），与 Claude 侧交互式 `novel-build` 独立、不做镜像） |
-| 生成弧 / 排故事线 / 选桥段 / 一键完整弧 / 续写 / 扩写 | `novel-outline` | `.claude/skills/novel-outline/SKILL.md` |
-| 写正文 / 写下一章 / 继续写 / 写桥段 | `novel-write` | `.claude/skills/novel-write/SKILL.md` |
+| 生成弧 / 排故事线 / 深化弧 / 一键完整弧 | 交给 dsh 侧（建书步3 深化式生成 → 用户提交即 ready）；config 兜底补弧 → `save_outlines` → 用户在书详情「✅ 确认弧+情节段」；Claude 不代跑排弧 | `.claude/skills/novel-build/SKILL.md` |
+| 写正文 / 写下一章 / 继续写 / 写情节段 / 续写 / 扩写（正文续写） | **dsh 侧栏 novel-story**（Claude 侧不直接写作；`novel-write` skill 已废弃仅存档） | `navigate("/books/<id>/continue")` 打开写作台，请用户点「继续写正文」/在侧栏对话里继续 → 由调度方逐 Plot 编排（一次性 Plot Writer + 章满收章/门禁/续规划；编排开启时=主编排 Agent，关闭时=服务端 `_legacy_writer_fsm`） |
 | 上架 / 发布 / 完本 / 导出 / 生成书名简介 / 检查能否发书 | `novel-publish` | `.claude/skills/novel-publish/SKILL.md` |
 | 删书 / 删除一本书 | 无 skill——`navigate("/books")` 让用户**手动点删除按钮**（护栏：直删工具不在工具面，外部 agent 不能删） | — |
 
@@ -35,9 +36,9 @@ description: >-
 ## 第三步：跨阶段引导（防硬做）
 
 - 拿不准用户在哪个阶段 → 先 `mcp__novel-engine__list_books` 看有哪些书，再 `mcp__novel-engine__get_book_detail` 看目标书 `phase`：
-  - `config` → 在 build（未锁定世界观）或 outline（已锁定，准备排弧）之间判断。
-  - `outlines` / `plots` → 弧已建，引导到 write 或 outline 续写。
-  - `ready` → 引导到 write（写作）或 publish（上架）。
+  - `config` → 未落弧：引导 dsh 建弧（建书步3 深化式生成），或 Claude 侧只做设定不排弧。
+  - `plots`（config 补弧后/遗留恢复；新书提交即 ready，正常不经此）→ 弧+情节段已落未 ready：引导用户在书详情页「✅ 确认弧+情节段」进 ready。
+  - `ready` → 引导到 dsh 写作（打开写作台让侧栏 novel-story 继续）或 publish（上架）。
 - 用户没指定具体书 → 先问「对哪本书操作？」；书多时列出书名让用户挑。
 
 ## 退出状态

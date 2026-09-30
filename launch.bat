@@ -3,7 +3,7 @@ cd /d "%~dp0"
 title NovelEngine
 
 echo.
-echo   [NovelEngine v2.0] Novel Factory
+echo   [NovelEngine v2.4.7] Novel Factory
 echo   Starting...
 echo.
 
@@ -31,13 +31,14 @@ if "%PYTHON%"=="" (
 echo [OK] Python: %PYTHON%
 
 :: --- Check api.json ---
+:: Keep this file ASCII-only: cmd.exe reads .bat in the OEM codepage (GBK here),
+:: so UTF-8 Chinese comments get mis-decoded and eat neighbouring characters
+:: (an "echo" can turn into "cho"), which kills the whole script.
+:: Missing api.json -> copy template and CONTINUE (configure API at /settings).
 if not exist "api.json" (
     if exist "api.example.json" (
         copy /y "api.example.json" "api.json" >nul
-        echo [WARN] api.json created. Edit it first!
-        start notepad "api.json"
-        pause
-        exit /b 0
+        echo [INFO] api.json created. Configure API address / Key at http://localhost:58080/settings
     ) else (
         echo [ERROR] api.json and api.example.json missing
         pause
@@ -62,7 +63,9 @@ echo     Close this window to stop.
 echo   ========================================
 echo.
 
-start "" http://localhost:58080
+set SKIP_BROWSER=%NE_SKIP_BROWSER%
+if /i "%~1"=="--no-browser" set SKIP_BROWSER=1
+if /i not "%SKIP_BROWSER%"=="1" start "" http://localhost:58080
 
 %PYTHON% ui/web_ui.py
 set ERR=%errorlevel%

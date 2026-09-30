@@ -1,15 +1,17 @@
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════
 // 库审查卡片 + 入库 公共逻辑（仅 extract.html 提取工作台使用）
 // 依赖：escapeHtml（base.html <head> 提供）
 // 数据源：window._lastReviewData = agent set_review 的 args
 //   { title, platform, folder, downloaded_chapters, profile_id, profile_name,
 //     plots[], structures[], gags[], characters[], style_rules[] }
 // 兼容旧字段：plot_details / structure_details / gag_details / character_details
-// ═══════════════════════════════════════════════════
+// structure 载荷 = **扁平行**（每个弧/子弧一个节点，parent_arc_id 关联）；
+// 展示/勾选按「每棵根弧 = 一张卡」，入库仍发送扁平行节点行。
+// ═══════════════════════════════════════════════
 
 // 五分类字段映射：key(tab) → 数据源字段（兼容新旧键名）
 var REVIEW_CATS = [
-    { key: 'plot',       label: '🧩 桥段',   field: 'plots',       src: function(d){ return d.plots || d.plot_details || []; } },
+    { key: 'plot',       label: '🧩 情节段',   field: 'plots',       src: function(d){ return d.plots || d.plot_details || []; } },
     { key: 'structure',  label: '📋 情节弧', field: 'structures',  src: function(d){ return d.structures || d.structure_details || []; } },
     { key: 'gag',        label: '😂 笑点',   field: 'gags',        src: function(d){ return d.gags || d.gag_details || []; } },
     { key: 'character',  label: '🎭 角色',   field: 'characters',  src: function(d){ return d.characters || d.character_details || []; } },
@@ -19,6 +21,60 @@ var REVIEW_CATS = [
 // 数组字段防御：LLM 可能把单值发成字符串/对象，join 前必须 Array.isArray 守卫（否则 .join 抛异常）
 function _arr(v) { return Array.isArray(v) ? v : []; }
 function _join(v, sep) { var a = _arr(v); return a.length ? a.join(sep) : ''; }
+
+// ─── structure 扁平行 → 展示/勾选单元 ───
+// 每个「可勾选单元」= 一棵根弧：{ item: 根节点行, idxs: 该树全部行的数组下标 }
+function _makeUnits(key, items) {
+    items = _arr(items);
+    if (key !== 'structure') {
+        return items.map(function(it, i){ return { item: it, idxs: [i] }; });
+    }
+    // 判定扁平行：任一行含 parent_arc_id 键，或缺少 stages 树容器 → 扁平
+    var flat = items.some(function(it){ return it && (('parent_arc_id' in it) || !('stages' in it)); });
+    if (!flat) {  // 已是「一棵树一对象」（兼容旧/树形态）
+        return items.map(function(it, i){ return { item: it, idxs: [i] }; });
+    }
+    return _structureTrees(items);
+}
+
+function _structureTrees(rows) {
+    rows = _arr(rows);
+    if (!rows.length) return [];
+    var idToIdx = {}, parentMap = {};
+    function key(i) { var id = rows[i] && rows[i].id != null ? String(rows[i].id) : ''; return id; }
+    rows.forEach(function(r, i) {
+        var id = key(i);
+        if (id) idToIdx[id] = i;
+    });
+    rows.forEach(function(r, i) {
+        var pid = r && (r.parent_arc_id || r.parent || '');
+        pid = pid ? String(pid) : '';
+        (parentMap[pid] = parentMap[pid] || []).push(i);
+    });
+    var cards = [], seen = {};
+    rows.forEach(function(r, i) {
+        var pid = r && (r.parent_arc_id || r.parent || '');
+        var isRoot = !pid || idToIdx[String(pid)] === undefined;
+        if (!isRoot || seen[i]) return;
+        var idxs = [];
+        (function dfs(ri) {
+            seen[ri] = 1; idxs.push(ri);
+            var id = key(ri);
+            (id ? (parentMap[id] || []) : []).forEach(dfs);
+        })(i);
+        cards.push({ item: rows[i], idxs: idxs });
+    });
+    rows.forEach(function(r, i) { if (!seen[i]) { seen[i] = 1; cards.push({ item: rows[i], idxs: [i] }); } });
+    return cards;
+}
+
+function _unitRows(key, idx) {
+    var items = _reviewItems(key);
+    var units = _makeUnits(key, items);
+    var u = units[idx];
+    if (!u) return [];
+    return u.idxs.map(function(i){ return items[i]; });
+}
 
 // 渲染审查卡片到指定区域（areaId）。防御式：任何单项渲染失败只降级该卡，不中断整批。
 function renderReviewCards(d, areaId) {
@@ -35,36 +91,51 @@ function renderReviewCards(d, areaId) {
     html += '<div class="tabs" style="margin-bottom:12px">';
     REVIEW_CATS.forEach(function(c, i) {
         var items = c.src(d) || [];
-        html += '<a href="javascript:;" class="review-tab ' + (i===0?'active':'') + '" data-tab="' + c.key + '" onclick="switchReviewTab(\'' + c.key + '\')">' + c.label + ' (' + items.length + ')</a>';
+        var cnt = _makeUnits(c.key, items).length;
+        html += '<a href="javascript:;" class="review-tab ' + (i===0?'active':'') + '" data-tab="' + c.key + '" onclick="switchReviewTab(\'' + c.key + '\')">' + c.label + ' (' + cnt + ')</a>';
     });
     html += '</div>';
 
     // 复用角色原型库卡片网格样式（char-grid / char-card）
     REVIEW_CATS.forEach(function(c) {
         var items = c.src(d) || [];
+        var units = _makeUnits(c.key, items);
         html += '<div class="review-panel" id="review-' + c.key + '"' + (c.key!=='plot'?' style="display:none"':'') + '>';
-        if (items.length === 0) {
+        if (units.length === 0) {
             html += '<div class="empty" style="padding:30px"><p style="color:#484f58">无提取结果</p></div>';
         } else {
             html += '<div class="char-grid review-grid">';
-            items.forEach(function(item, idx) {
+            units.forEach(function(unit, uidx) {
+                var item = unit.item || {};
                 var itemHtml = '';
                 try {
                     itemHtml += '<label class="char-card review-card">';
-                    itemHtml += '<input type="checkbox" class="review-cb" data-cat="' + c.key + '" data-idx="' + idx + '" checked>';
+                    itemHtml += '<input type="checkbox" class="review-cb" data-cat="' + c.key + '" data-idx="' + uidx + '" checked>';
                     if (c.key === 'plot') {
-                        itemHtml += '<span class="cc-head"><span class="cc-title"><code class="tag blue">' + escapeHtml(item.category||'桥段') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></span></span>';
+                        itemHtml += '<span class="cc-head"><span class="cc-title"><code class="tag blue">' + escapeHtml(item.category||'情节段') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></span></span>';
                         itemHtml += '<div class="rc-desc">' + escapeHtml(item.description||'') + '</div>';
                         if (item.structure) itemHtml += '<div class="rc-meta">结构: ' + escapeHtml(item.structure) + '</div>';
                     } else if (c.key === 'structure') {
+                        // structure：一张卡 = 一棵根弧（勾选整棵 → 其全部节点行一起入库）
                         itemHtml += '<span class="cc-head"><span class="cc-title"><code class="tag blue">情节弧</code> <strong>' + escapeHtml(item.name||'') + '</strong></span></span>';
                         itemHtml += '<div class="rc-desc">' + escapeHtml(item.description||'') + '</div>';
-                        // stages 是对象数组（StageNode），逐层取 name 而非整对象 join（防 [object Object]）
-                        var stageArr = _arr(item.stages);
-                        if (stageArr.length) {
-                            var stageNames = stageArr.map(function(s){ return (s && s.name) ? s.name : String(s); });
-                            itemHtml += '<div class="rc-meta">阶段: ' + escapeHtml(stageNames.join(' → ')) + '</div>';
+                        var nodeCnt = unit.idxs ? unit.idxs.length : 1;
+                        var extra = nodeCnt > 1 ? nodeCnt + ' 个弧节点（勾选整棵）' : '';
+                        // 直接子弧名（扁平行里扫 parent；已是树形态则取 item.stages 首层）
+                        var childNames = [];
+                        if (item.stages) {
+                            _arr(item.stages).forEach(function(s){ childNames.push((s && s.name) || String(s)); });
+                        } else {
+                            var myId = item.id != null ? String(item.id) : '';
+                            items.forEach(function(x){
+                                var pid = x && (x.parent_arc_id || x.parent || '');
+                                if (myId && pid && String(pid) === myId && x.name) childNames.push(x.name);
+                            });
                         }
+                        var parts = [];
+                        if (extra) parts.push(extra);
+                        if (childNames.length) parts.push('子弧: ' + escapeHtml(childNames.join('、')));
+                        if (parts.length) itemHtml += '<div class="rc-meta">' + parts.join(' · ') + '</div>';
                     } else if (c.key === 'gag') {
                         itemHtml += '<span class="cc-head"><span class="cc-title"><code class="tag blue">' + escapeHtml(item.category||'笑点') + '</code> <strong>' + escapeHtml(item.name||'') + '</strong></span></span>';
                         itemHtml += '<div class="rc-desc">' + escapeHtml(item.pattern_description||item.description||'') + '</div>';
@@ -131,10 +202,7 @@ function getCheckedItems() {
         var idx = parseInt(cb.getAttribute('data-idx'));
         var c = null;
         for (var i = 0; i < REVIEW_CATS.length; i++) { if (REVIEW_CATS[i].key === key) { c = REVIEW_CATS[i]; break; } }
-        if (c) {
-            var items = _reviewItems(key);
-            if (items[idx]) result[c.field].push(items[idx]);
-        }
+        if (c) result[c.field] = result[c.field].concat(_unitRows(key, idx));
     });
     return result;
 }

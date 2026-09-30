@@ -94,6 +94,42 @@ class ContinuityChecker:
                     })
         return issues
 
+    def check_signature_phrase_repeat(self, chapters, characters, recent_n: int = 3) -> list[dict]:
+        """标志短语跨章重复 → warning（防人物退化成口头禅 NPC）。
+
+        只扫**登记过的** `signature_phrases`，且长度 ≥4——像「报告」这种军队高频普通词
+        因此不进规则（它被系统注入过就会变成模板痕迹，而不是人物特征）。
+
+        **不做 speaker 归因**：正文里搜到「情况是这样」并不能判定是谁说的（可能是旁白、
+        引用、模仿），所以报告写「标志短语『X』近 N 章重复」，绝不写「角色 X 说了 N 次」。
+        """
+        from libraries.storyline import signature_phrases_of
+        recent = sorted(chapters, key=lambda c: int(c.get("num", 0) or 0))[-max(1, recent_n):]
+        if not recent:
+            return []
+        joined = "\n".join(str(c.get("content") or "") for c in recent)
+        nums = [int(c.get("num", 0) or 0) for c in recent]
+        span = f"第 {nums[0]}-{nums[-1]} 章" if len(nums) > 1 else f"第 {nums[0]} 章"
+        issues = []
+        for ch in (characters or []):
+            if not isinstance(ch, dict) or not ch.get("name"):
+                continue
+            for p in signature_phrases_of(ch):
+                text = str(p.get("text") or "")
+                if len(text) < 4:
+                    continue
+                n = joined.count(text)
+                if n >= 2:
+                    issues.append({
+                        "severity": "warning", "category": "signature_phrase_repeat",
+                        # 故意不写「角色 X 说了 N 次」——那是伪精确的归因
+                        "description": f"标志短语「{text}」（登记于「{ch['name']}」）在 {span} 内出现 {n} 次，已近模板痕迹",
+                        "location": span,
+                        "suggestion": f"「{text}」只在该短语登记的语境里稀疏使用，不要当人物标签复读；"
+                                      f"要区分人物请改差异化的判断习惯与表达倾向",
+                    })
+        return issues
+
     def check_time_transition(self, chapters) -> list[dict]:
         """场景切换处普遍无时间词 → info（弱启发，高误报，仅参考）。"""
         issues = []
@@ -139,18 +175,26 @@ class ContinuityChecker:
         return issues
 
     def _characters_from(self, tl, char_states) -> list[dict]:
-        """取角色性别清单：优先 character_states，回退 basic_info.characters。"""
-        chars = []
+        """取角色清单：优先 character_states，回退 basic_info.characters。
+
+        **不再按 gender 过滤**：人称检测（check_pronoun_gender）自己会跳过无性别的条目，
+        而标志短语检测需要完整的 `speech_profile`——按性别裁剪会让一整个检测器静默失效。
+        character_states 侧的条目只有性别等有限字段，故 speech_profile 只能从 bible 拿：
+        两边按名字合并，bible 的完整条目优先。
+        """
+        by_name: dict[str, dict] = {}
         if char_states and getattr(char_states, "characters", None):
             for c in char_states.characters:
-                if c.name and c.gender:
-                    chars.append({"name": c.name, "gender": c.gender})
-        if not chars and tl:
+                if c.name:
+                    by_name[c.name] = {"name": c.name, "gender": c.gender}
+        if tl:
             bi = getattr(tl, "basic_info", None) or {}
             for c in bi.get("characters", []) or []:
-                if isinstance(c, dict) and c.get("name") and c.get("gender"):
-                    chars.append({"name": c["name"], "gender": c["gender"]})
-        return chars
+                if isinstance(c, dict) and c.get("name"):
+                    merged = dict(by_name.get(c["name"]) or {})
+                    merged.update(c)          # bible 是权威（含 speech_profile）
+                    by_name[c["name"]] = merged
+        return list(by_name.values())
 
     def check_all(self, tl, chapters, current_chapter, char_states) -> dict:
         """全量扫描，返回 {issue_count, issues[], suggestions[], scanned_chapters, checks{}}。
@@ -163,8 +207,12 @@ class ContinuityChecker:
         tt = self.check_time_transition(chapters)
         co = self.check_character_offline(char_states)
         op = self.check_overdue_promises(getattr(tl, "promises", None), current_chapter)
+        try:
+            sp = self.check_signature_phrase_repeat(chapters, self._characters_from(tl, char_states))
+        except Exception:  # noqa: BLE001 — 检测器异常不该让整份连续性报告失败
+            sp = []
 
-        issues = sb + pg + co + op + nc + tt
+        issues = sb + pg + co + op + nc + tt + sp
         checks = {
             "system_binding": {"status": "warn" if sb else "ok",
                                "detail": sb[0]["description"] if sb else "未发现重复绑定"},
@@ -178,6 +226,8 @@ class ContinuityChecker:
                                 "detail": nc[0]["description"] if nc else "数值词均多次出现（弱启发，仅供参考）"},
             "time_transition": {"status": "partial",
                                 "detail": tt[0]["description"] if tt else "场景切换处时间词正常（弱启发，仅供参考）"},
+            "signature_phrase_repeat": {"status": "warn" if sp else "ok",
+                                        "detail": sp[0]["description"] if sp else "未发现标志短语近章重复"},
         }
         suggestions = []
         for i in issues:

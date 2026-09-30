@@ -1,6 +1,6 @@
 /*
  * 故事线（Story Line）组件 — 垂直 Gantt
- * 从 BookStoryline dict 渲染：字数轴 + 弧/桥段/线程通道。
+ * 从 BookStoryline dict 渲染：字数轴 + 弧/情节段/线程通道。
  * 支持叙事手法视觉区分：顺叙(chronological)/倒叙(flashback)/插叙(interleaved)。
  *
  * 用法：StoryLine.init('mount-id', bookStorylineDict, {currentChapter: N})
@@ -9,16 +9,32 @@
   'use strict';
 
   var TOTAL_WORDS = 0;
+  var WRITTEN_UNTIL_WORD = 0;  // 红线：最后一个连续已写情节段的底边，永不穿过情节段
+  var COMMITTED_UNTIL_WORD = 0; // 黄线：全部已承诺下级弧/段字数相加后的终点
   var WPC = 3000;
-  var CHARS_PER_BEAT = 200, MAX_BRIDGE_WORDS = 1200;   // 与后端 storyline_writer.py:23-24 同一公式
+  var CHARS_PER_BEAT = 200, MAX_BRIDGE_WORDS = 1200, MAX_PLAN_WORDS = 3000;   // 与后端 storyline_writer.py 同一公式/口径
   var outlines = [], plots = [], threads = [];
-  var promises = [], promiseByPlot = {};   // 读者承诺台账：桥段id → [{kind:setup/payoff, pr}]
-  var setupIds = {};                       // 设局桥段 id 集合（被 resolves_plot_id 引用的桥段）
+
+  /* 按 plot_id 找其所属线程 id（正文段反向高亮联动线程 band 用）。plots 为 adapt 后的
+     [{id, oid, thread, ...}]，thread 空间与线程 band 的 data-tid 一致。 */
+  function _plotThreadOf(pid) {
+    for (var i = 0; i < plots.length; i++) {
+      if (plots[i].id === pid) return plots[i].thread || '';
+    }
+    return '';
+  }
+  /* 属性值转义：防 id 含引号/特殊字符注入 selector。 */
+  function _escAttr(v) {
+    return String(v == null ? '' : v).replace(/["'\\\]]/g, '\\$&');
+  }
+  var promises = [], promiseByPlot = {};   // 读者承诺台账：情节段id → [{kind:setup/payoff, pr}]
+  var setupIds = {};                       // 设局情节段 id 集合（被 resolves_plot_id 引用的情节段）
   var PALETTE = ['#f97583', '#79c0ff', '#56d364', '#e3b341', '#d2a8ff', '#ffa657', '#c084fc', '#7ee787'];
   var THREAD_PALETTE = ['#ffa657', '#79c0ff', '#d2a8ff', '#56d364', '#e3b341', '#ff7b72', '#7ee787'];
 
   var _lastRender = null;
   var _lastMountId = null;
+  var _progressState = null;
   if (!window._sl_resize_bound) {
     window.addEventListener('resize', function () { if (_lastRender) _lastRender(); });
     window._sl_resize_bound = true;
@@ -30,6 +46,30 @@
   var _baseScrollH = 720;   // scrollable 模式下未缩放的基准内容高度
   var _panels = [];         // 需随缩放改高度的面板（轴/内容区）
   var _scrollableMode = false;
+  var _highlightTarget = null;
+  var _SCROLL_EPSILON = 12;
+
+  function captureScrollState(mount) {
+    var main = mount && mount.querySelector ? mount.querySelector('.sl-main') : null;
+    if (!main) return null;
+    var max = Math.max(0, main.scrollHeight - main.clientHeight);
+    return {
+      scrollTop: main.scrollTop,
+      bottomGap: Math.max(0, max - main.scrollTop),
+      atBottom: max > 0 && (max - main.scrollTop) <= _SCROLL_EPSILON,
+      highlightTarget: _highlightTarget ? {
+        outline_id: _highlightTarget.outline_id || '',
+        plot_id: _highlightTarget.plot_id || ''
+      } : null
+    };
+  }
+  function restoreScrollState(main, state) {
+    if (!main || !state) return;
+    var max = Math.max(0, main.scrollHeight - main.clientHeight);
+    main.scrollTop = state.atBottom
+      ? max
+      : Math.min(Math.max(0, state.scrollTop), max);
+  }
 
   function zoomHeight() {
     return Math.max(300, Math.min(8000, Math.round((_baseScrollH || 720) * _zoom)));
@@ -40,11 +80,37 @@
   function wordToPercent(w) {
     return (TOTAL_WORDS > 0) ? (w / TOTAL_WORDS) * 100 : 0;
   }
-  function fmtW(w) {
-    return (w >= 1000) ? (Math.round(w / 1000 * 10) / 10) + 'k' : String(Math.round(w));
+  /* 弧/情节段都画在通道标题（24px）下、底部留白（4px）上的 lane body 内。
+     红线、黄线与左侧刻度必须使用同一可绘制区，才会落在情节段边界。 */
+  function wordToLaneY(container, w) {
+    var h = container && container.clientHeight;
+    if (!h) return wordToPercent(w) + '%';
+    return (24 + Math.max(0, h - 28) * wordToPercent(w) / 100) + 'px';
   }
-  /* 桥段预计字数 = cover_beats × 200，封顶 1200（与后端 storyline_writer.planned_words 同一公式） */
+  function fmtW(w) {
+    return Number(w || 0).toLocaleString('zh-CN') + '字';
+  }
+  function fmtAxisW(w) {
+    var n = Number(w || 0);
+    return n >= 1000 ? ((Math.round(n / 100) / 10) + 'K') : String(Math.round(n));
+  }
+  function escHtml(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function intentText(v) {
+    if (typeof v === 'string') return v;
+    v = v || {};
+    return v.intent || v.question || v.title || v.name || v.goal || v.summary || '';
+  }
+  /* 情节段预计字数（规划/预估）：plot.words 优先（agent 目标字数，clamp 3000），否则节拍制 cover_beats×200 封顶 1200
+     ——与后端 storyline_writer.planned_words 同一口径（words 覆盖 + beat 兜底） */
   function plannedWords(p) {
+    if (p) {
+      var w = parseInt((p && p.words) || 0, 10) || 0;
+      if (w > 0) return Math.max(200, Math.min(w, MAX_PLAN_WORDS));
+    }
     var beats = Math.max(parseInt((p && p.cover_beats) || 0, 10) || 0, 2);
     return Math.min(beats * CHARS_PER_BEAT, MAX_BRIDGE_WORDS);
   }
@@ -63,10 +129,10 @@
     return THREAD_PALETTE[h % THREAD_PALETTE.length];
   }
 
-  /* ─── 数据适配：BookStoryline → 平铺数组（桥段按真实规划字数定位，预计=实际） ───
+  /* ─── 数据适配：BookStoryline → 平铺数组（情节段按真实规划字数定位，预计=实际） ───
      legacy 书 outline/plot/thread 缺 id：在此合成稳定 id + 建 raw→syn 映射，
      保证泳道/连线/徽标/高亮全自洽，前端不崩。 */
-  function adapt(bt) {
+  function adapt(bt, opts) {
     bt = bt || {};
     WPC = bt.words_per_chapter || 3000;
     setupIds = {};
@@ -82,7 +148,7 @@
       if (o.id) rawOutlineToSyn[String(o.id)] = syn;
     });
 
-    // Pass 2：桥段按所属弧分组（syn outline id 作键；空/dangling outline_id 按位置均分保序）
+    // Pass 2：情节段按所属弧分组（syn outline id 作键；空/dangling outline_id 按位置均分保序）
     var byOutline = {};
     rawPlots.forEach(function (p, i) {
       var synPid = p.id ? String(p.id) : '__plot_' + (i + 1);
@@ -142,7 +208,7 @@
       if (o.end > TOTAL_WORDS) TOTAL_WORDS = o.end;
     });
 
-    // 桥段 → 在弧内按序比例均分章节段（弧 [s,e] 内 n 个桥段均分）
+    // 情节段 → 在弧内按序比例均分章节段（弧 [s,e] 内 n 个情节段均分）
     plots = [];
     var outlineById = {};
     outlines.forEach(function (o) { outlineById[o.id] = o; });
@@ -153,18 +219,20 @@
       var o = outlineById[key];
       if (!o) return;
       var rootColor = outlineColorById[key] || '#79c0ff';
-      // 桥段按 planned_words 在弧内累计定位（字数轴，与后端 storyline_writer.planned_words 同公式）
+      // 初步按规划字数定位；已写段随后会用正文实测字数重排。
       var cursor = o.start;
       list.forEach(function (x) {
         var p = x.p;
         var s = cursor;
-        var pw = plannedWords(p);
+        var actual = Math.max(0, parseInt(p.actual_words, 10) || 0);
+        var planned = plannedWords(p);
+        var pw = actual > 0 ? actual : planned;
         var e = Math.min(cursor + pw, o.end);
         if (e <= s) e = Math.min(s + MAX_BRIDGE_WORDS, o.end);   // cover_beats 缺失兜底
         cursor = e;
         var parentSyn = resolvePlotId(p.parent_plot_id);
         var resolvesSyn = resolvePlotId(p.resolves_plot_id);
-        if (resolvesSyn) setupIds[resolvesSyn] = true;   // 设局桥段登记（供设局徽标/设局→收局线）
+        if (resolvesSyn) setupIds[resolvesSyn] = true;   // 设局情节段登记（供设局徽标/设局→收局线）
         plots.push({
           id: x.synPid, name: p.name,
           oid: key,
@@ -177,8 +245,54 @@
           resolves: resolvesSyn || '',
           resolves_name: p.resolves_name || '',
           roles: p.roles || [],
+          actual_words: actual,
+          planned_words: planned,
+          written: actual > 0 || !!p.written_chapter,
         });
       });
+    });
+
+    // 红线前使用正文实测字数；红线后的情节段顺序后移，但每段仍保持自己的规划字数。
+    // 新写完一段只推动后续内容，不拉伸或压缩后续情节段。
+    var reflowCursor = 0;
+    plots.sort(function (a, b) { return a.start - b.start || a.end - b.end; });
+    var sawUnwritten = false;
+    WRITTEN_UNTIL_WORD = 0;
+    plots.forEach(function (p) {
+      var length = p.written && p.actual_words > 0 ? p.actual_words : p.planned_words;
+      p.start = reflowCursor;
+      p.end = reflowCursor + length;
+      reflowCursor = p.end;
+      if (!sawUnwritten && p.written) WRITTEN_UNTIL_WORD = p.end;
+      else sawUnwritten = true;
+    });
+    // 当前故事线中的所有情节段都是已承诺内容；黄线必须取它们的真实累计终点，
+    // 不能取旧规划里可能已过期的 outline.end_word。
+    COMMITTED_UNTIL_WORD = reflowCursor;
+    TOTAL_WORDS = Math.max(COMMITTED_UNTIL_WORD, 1);
+    var outlineByIdForSpan = {};
+    outlines.forEach(function (o) { outlineByIdForSpan[o.id] = o; });
+    function isDescendantPlot(plot, outlineId) {
+      var oid = plot.oid;
+      var guard = 0;
+      while (oid && guard++ <= outlines.length) {
+        if (oid === outlineId) return true;
+        oid = outlineByIdForSpan[oid] && outlineByIdForSpan[oid].parent;
+      }
+      return false;
+    }
+    outlines.forEach(function (o) {
+      // 父弧覆盖其所有后代段；因此父弧字数严格等于下级弧/段的累计字数，与是否已写无关。
+      var members = plots.filter(function (p) { return isDescendantPlot(p, o.id); });
+      if (!members.length) return;
+      o.start = Math.min.apply(null, members.map(function (p) { return p.start; }));
+      o.end = Math.max.apply(null, members.map(function (p) { return p.end; }));
+      o.start_w = o.start;
+      o.end_w = o.end;
+      o.start_ch = Math.floor(o.start / WPC) + 1;
+      o.end_ch = Math.max(o.start_ch, Math.ceil(o.end / WPC));
+      o.actual_words = members.reduce(function (n, p) { return n + (p.actual_words || 0); }, 0);
+      o.written = members.some(function (p) { return p.written; });
     });
 
     // 叙事线程 → 横带区间（id/name 双表匹配，解决存量「thread_id 与 threads 列表不闭合」；
@@ -210,7 +324,7 @@
       if (t.start === Infinity) { t.start = 0; t.end = Math.max(t.end, 1); }
     });
 
-    // 读者承诺台账：设局桥段→⏳待兑现，收局桥段→✅已兑现；按 syn id 映射（legacy 书不错位）
+    // 读者承诺台账：设局情节段→⏳待兑现，收局情节段→✅已兑现；按 syn id 映射（legacy 书不错位）
     promises = (bt.promises || []);
     promiseByPlot = {};
     promises.forEach(function (pr) {
@@ -242,11 +356,11 @@
     function addTick(w) {
       var yPct = wordToPercent(w);
       var tick = document.createElement('div');
-      tick.className = 'sl-tick'; tick.style.top = yPct + '%';
+      tick.className = 'sl-tick'; tick.style.top = wordToLaneY(axisPanel, w);
       axisPanel.appendChild(tick);
       var label = document.createElement('div');
-      label.className = 'sl-tick-label'; label.style.top = yPct + '%';
-      label.textContent = fmtW(w);
+      label.className = 'sl-tick-label'; label.style.top = wordToLaneY(axisPanel, w);
+      label.textContent = fmtAxisW(w);
       axisPanel.appendChild(label);
     }
     for (var w = 0; w < TOTAL_WORDS; w += step) addTick(w);
@@ -259,13 +373,18 @@
     var bodyW = outlineBody.clientWidth, bodyH = outlineBody.clientHeight;
     if (!bodyH || bodyH < 40) bodyH = 400;
 
-    // 弧树层级：沿 parent（parent_arc_id）递归，父缺失→0 防环
-    function getArcLevel(o, cache) {
+    // 弧树层级：沿 parent（parent_arc_id）递归，父缺失→0 防环；
+    // stack 记录求深中的祖先 id，parent_arc_id 成环（异常数据）时在此截断为 0，避免无限递归栈溢出
+    function getArcLevel(o, cache, stack) {
       if (cache[o.id] !== undefined) return cache[o.id];
+      stack = stack || {};
+      if (stack[o.id]) return (cache[o.id] = 0);
       if (!o.parent) return (cache[o.id] = 0);
       var parent = null;
       for (var i = 0; i < outlines.length; i++) { if (outlines[i].id === o.parent) { parent = outlines[i]; break; } }
-      cache[o.id] = parent ? getArcLevel(parent, cache) + 1 : 0;
+      stack[o.id] = true;
+      cache[o.id] = parent ? getArcLevel(parent, cache, stack) + 1 : 0;
+      delete stack[o.id];
       return cache[o.id];
     }
     var levels = {};
@@ -327,6 +446,7 @@
         title: o.name,
         rows: [
           ['字数', fmtW(o.start_w) + '—' + fmtW(o.end_w)],
+          o.written ? ['已写实测', fmtW(o.actual_words)] : null,
           ['约第', o.start_ch + '—' + o.end_ch + '章'],
           ['手法', o.narrative === 'chronological' ? '顺叙' : (o.narrative === 'flashback' ? '倒叙' : '插叙')],
           parentName ? ['父弧', parentName] : null,
@@ -359,7 +479,7 @@
       outlineBody.appendChild(bar);
     });
 
-    // 父子弧连线（SVG 贝塞尔，复用桥段父子线的 px/py/barCenterX 机制）
+    // 父子弧连线（SVG 贝塞尔，复用情节段父子线的 px/py/barCenterX 机制）
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
     svg.style.position = 'absolute'; svg.style.top = '0'; svg.style.left = '0';
@@ -393,12 +513,12 @@
     outlineBody.appendChild(svg);
   }
 
-  /* ─── 渲染：桥段（嵌套 + 通道 + SVG 连线） ─── */
+  /* ─── 渲染：情节段（嵌套 + 通道 + SVG 连线） ─── */
   function renderPlots(plotBody, tooltip, showTooltip, moveTooltip, hideTooltip) {
     plotBody.innerHTML = '';
     var bodyW = plotBody.clientWidth, bodyH = plotBody.clientHeight;
     if (!bodyH || bodyH < 40) bodyH = 400;
-    var contentH = zoomHeight();   // 可滚动内容区高度：桥段条实际像素高 = height% × contentH / 100（标签阈值按像素判断）
+    var contentH = zoomHeight();   // 可滚动内容区高度：情节段条实际像素高 = height% × contentH / 100（标签阈值按像素判断）
     var plotById = {};
     plots.forEach(function (p) { plotById[p.id] = p; });
 
@@ -452,7 +572,7 @@
       bar.style.width = 'calc(' + barW + '% - ' + (li.totalLanes * gap) + 'px)';
       bar.style.right = 'auto';
       bar.style.zIndex = 5 + level;
-      var barColor = threadColor(p.thread);   // 桥段条颜色 = 所属线程色（去右上角色点后，条本身颜色即线程标识）
+      var barColor = threadColor(p.thread);   // 情节段条颜色 = 所属线程色（去右上角色点后，条本身颜色即线程标识）
       if (level === 0) {
         bar.style.background = 'linear-gradient(135deg,' + barColor + ',' + barColor + 'cc)';
         bar.style.border = '1px solid rgba(255,255,255,.2)';
@@ -474,13 +594,14 @@
       bar.dataset.tooltip = JSON.stringify({
         title: p.name,
         rows: [
-          ['层级', level === 0 ? '主桥段' : '子桥段 L' + level],
+          ['层级', level === 0 ? '主情节段' : '子情节段 L' + level],
           ['字数', fmtW(p.start) + '—' + fmtW(p.end)],
+          p.written ? ['已写实测', fmtW(p.actual_words)] : ['规划字数', fmtW(p.planned_words)],
           ['线程', p.thread || '主线'],
           p.resolves ? ['收局', '解决「' + p.resolves_name + '」'] : null,
           (p.roles && p.roles.length) ? ['出场', p.roles.join('、')] : null,
         ].filter(Boolean).concat(promiseRows),
-        tag: '桥段',
+        tag: '情节段',
       });
       if ((height / 100) * contentH >= 12) {   // 实际像素高 ≥12px 才显示名称：默认4x缩放下 1%≈28px 可显示；缩小到薄条时自动隐藏避免重叠
         var label = document.createElement('span');
@@ -495,15 +616,15 @@
         pbadge.textContent = '↪ 收局';
         bar.appendChild(pbadge);
       }
-      // 设局徽标：被其他桥段 resolves_plot_id 引用的桥段（top-right，与收局徽标并存）
+      // 设局徽标：被其他情节段 resolves_plot_id 引用的情节段（top-right，与收局徽标并存）
       if (setupIds[p.id]) {
         var sbadge = document.createElement('span');
         sbadge.className = 'sl-setup-badge';
         sbadge.textContent = '◉ 设局';
-        sbadge.title = '设局桥段：被后续桥段收束';
+        sbadge.title = '设局情节段：被后续情节段收束';
         bar.appendChild(sbadge);
       }
-      // 读者承诺标记：设局⏳(待兑现) / 收局✅(已兑现)，直接画在桥段条上
+      // 读者承诺标记：设局⏳(待兑现) / 收局✅(已兑现)，直接画在情节段条上
       pms.forEach(function (pm) {
         var badge = document.createElement('span');
         badge.className = 'sl-promise ' + (pm.kind === 'payoff' ? 'ok' : 'pending');
@@ -554,7 +675,7 @@
       svg.appendChild(path);
     });
 
-    // 设局→收局连线：resolves_plot_id 指向的设局桥段 → 本收局桥段的语义色虚线（与父子实线区分）
+    // 设局→收局连线：resolves_plot_id 指向的设局情节段 → 本收局情节段的语义色虚线（与父子实线区分）
     plots.forEach(function (p) {
       if (!p.resolves) return;
       var target = plotById[p.resolves];
@@ -608,7 +729,7 @@
       band.style.right = 'auto';
       band.style.background = 'linear-gradient(135deg,' + t.color + '44,' + t.color + '22)';
       band.style.borderLeft = '2px solid ' + t.color;
-      // 成员列表：哪几个桥段构成这条线、哪处设局哪处收局
+      // 成员列表：哪几个情节段构成这条线、哪处设局哪处收局
       var memberRows = (t.members || []).map(function (m) {
         var tag = m.setup ? '设局' : (m.resolves ? '收局' : '');
         return tag ? [m.name, tag] : [m.name, ''];
@@ -636,7 +757,7 @@
         label.style.borderRadius = '3px';
         band.appendChild(label);
       }
-      // 设局/收局点：在横带上标出成员桥段位置（设局琥珀 / 收局绿）
+      // 设局/收局点：在横带上标出成员情节段位置（设局琥珀 / 收局绿）
       var bandH = wordToPercent(t.end - t.start);
       (t.members || []).forEach(function (m) {
         var point = document.createElement('span');
@@ -656,7 +777,51 @@
   }
 
   /* ─── 渲染：进度光标（字数轴：currentWord=累计已写字数；兼容 currentChapter×WPC） ─── */
+  /* H1/H2 是没有字数坐标的可变方向：放在 Gantt 底部整条带中，分行展示，不伪装成 plot。 */
+  function forecastRows(planning) {
+    planning = planning || {};
+    var rawH1 = planning.horizon && planning.horizon.h1;
+    var rawH2 = planning.future_intents;
+    var h1 = Array.isArray(rawH1) ? rawH1 : (rawH1 ? [rawH1] : []);
+    var h2 = Array.isArray(rawH2) ? rawH2 : (rawH2 ? [rawH2] : []);
+    return {h1: h1, h2: h2};
+  }
+  function forecastTitle(row, layer) {
+    row = row || {};
+    return layer === 'H1'
+      ? (row.title || row.arc_intent || intentText(row))
+      : (row.title || row.intent || intentText(row));
+  }
+  function renderForecastRow(body, rows, layer, emptyText) {
+    if (!body) return;
+    if (!rows || !rows.length) {
+      body.innerHTML = '<div class="sl-forecast-empty">' + escHtml(emptyText) + '</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i] || {};
+      var fh = '';
+      var list = Array.isArray(row.foreshadow) ? row.foreshadow : [];
+      for (var j = 0; j < list.length; j++) {
+        fh += '<div class="sl-forecast-fh">⟢ ' + escHtml(intentText(list[j])) + '</div>';
+      }
+      html += '<div class="sl-forecast-card">'
+        + '<span class="sl-forecast-layer">' + escHtml(layer) + '</span> '
+        + escHtml(forecastTitle(row, layer)) + fh + '</div>';
+    }
+    body.innerHTML = html;
+  }
+  function renderForecast(strip, h1Body, h2Body, planning) {
+    if (!strip) return;
+    var rows = forecastRows(planning);
+    strip.style.display = '';
+    renderForecastRow(h1Body, rows.h1, 'H1', '尚未形成近期方向');
+    renderForecastRow(h2Body, rows.h2, 'H2', '远期保持开放');
+  }
+
   function renderCursor(contentArea, currentWord, currentChapter) {
+    if (WRITTEN_UNTIL_WORD > 0) currentWord = WRITTEN_UNTIL_WORD;
     if (currentWord === undefined || currentWord === null || currentWord === 0) {
       if (!currentChapter || currentChapter <= 0) return;
       currentWord = currentChapter * WPC;
@@ -665,8 +830,19 @@
     var y = wordToPercent(w);
     var cursor = document.createElement('div');
     cursor.className = 'sl-cursor';
-    cursor.style.top = y + '%';
+    cursor.style.top = wordToLaneY(contentArea, w);
     contentArea.appendChild(cursor);
+  }
+
+  function renderBoundary(contentArea, planning, boundary) {
+    if (!contentArea || !plots.length || COMMITTED_UNTIL_WORD <= 0) return;
+    var committed = COMMITTED_UNTIL_WORD || parseInt((planning || {}).committed_until_word || TOTAL_WORDS, 10) || TOTAL_WORDS;
+    committed = Math.min(Math.max(0, committed), TOTAL_WORDS);
+    var line = document.createElement('div');
+    line.className = 'sl-boundary'; line.style.top = wordToLaneY(contentArea, committed);
+    line.title = '已承诺至约 ' + fmtW(committed) + ' · 剩余 ' + ((boundary || {}).remaining_plots || 0) + ' plots';
+    line.innerHTML = '<span>已承诺至 ' + fmtW(committed) + '</span>';
+    contentArea.appendChild(line);
   }
 
   /* ─── 工具提示 ─── */
@@ -686,16 +862,40 @@
     return { show: show, move: move, hide: hide };
   }
 
+  function applyHighlight(mount, target) {
+    if (!mount) return null;
+    var prev = mount.querySelectorAll('.sl-bar.sl-highlight');
+    for (var i = 0; i < prev.length; i++) prev[i].classList.remove('sl-highlight');
+    if (!target || (!target.outline_id && !target.plot_id)) return null;
+    var sel = [];
+    if (target.outline_id) sel.push('.sl-bar-outline[data-oid="' + _escAttr(target.outline_id) + '"]');
+    if (target.plot_id) {
+      sel.push('.sl-bar-plot[data-pid="' + _escAttr(target.plot_id) + '"]');
+      var pbar = mount.querySelector('.sl-bar-plot[data-pid="' + _escAttr(target.plot_id) + '"]');
+      if (pbar && pbar.dataset.oid) sel.push('.sl-bar-outline[data-oid="' + _escAttr(pbar.dataset.oid) + '"]');
+      var tid = _plotThreadOf(target.plot_id);
+      if (tid) sel.push('.sl-bar-thread[data-tid="' + _escAttr(tid) + '"]');
+    }
+    if (!sel.length) return null;
+    var els = mount.querySelectorAll(sel.join(','));
+    var anchor = null;
+    for (var j = 0; j < els.length; j++) {
+      els[j].classList.add('sl-highlight');
+      if (!anchor) anchor = els[j];
+    }
+    return anchor;
+  }
+
   /* ─── 对外入口 ─── */
   window.StoryLine = {
     init: function (mountId, bt, opts) {
       var mount = document.getElementById(mountId);
       if (!mount) return;
+      var previousScroll = captureScrollState(mount);
       opts = opts || {};
-      adapt(bt);
-      // 可选：按章节数拉长内容（仍是百分比渲染 → 每个百分比映射更多像素 → 条间距更大、可上下滚动）。
-      // 内容条用 min-height（非 height）：内容短于容器 → flex stretch 填满容器、无滚动条（空故事线=干净固定容器）；
-      // 内容长于容器 → 内部 .sl-main 滚动，画布随内容增长（无限长）。仅 scrollable 调用方生效。
+      adapt(bt, opts);
+      // 可选：按章节数拉长正式区（仍是百分比渲染 → 每个百分比映射更多像素 → 条间距更大、可上下滚动）。
+      // 正式区与 H1/H2 方向区共享 .sl-main；方向区不进入字数坐标，只作为正式区之后的自然流内容。
       var scrollH = 0;
       if (opts.scrollable) {
         var totalCh = Math.max(1, Math.round(TOTAL_WORDS / Math.max(WPC, 1)));   // 预计章数（字数轴）
@@ -723,20 +923,27 @@
         '<div class="sl-root">' +
         '<div class="sl-header"><h1><span class="dot"></span>故事线</h1>' +
         '<div class="sl-header-right">' + zoomHtml +
-        '<div class="sl-meta">总字数 <span>' + fmtW(TOTAL_WORDS) + '</span> · 预计 <span>' + Math.max(1, Math.ceil(TOTAL_WORDS / Math.max(WPC, 1))) + '</span> 章 · 每章约 <span>' + WPC + '</span> 字 · 弧 <span>' + outlines.length + '</span> · 桥段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
+        '<div class="sl-meta">已承诺 <span class="sl-meta-committed">' + fmtW(COMMITTED_UNTIL_WORD || TOTAL_WORDS) + '</span> · 每章约 <span>' + WPC + '</span> 字 · 弧 <span>' + outlines.length + '</span> · 情节段 <span>' + plots.length + '</span> · 线程 <span>' + threads.length + '</span></div></div></div>' +
         '<div class="sl-main">' +
+        '<div class="sl-formal-row">' +
         '<div class="sl-axis-panel"' + hstyle + ' id="' + mountId + '-ax"></div>' +
         '<div class="sl-content-area"' + hstyle + ' id="' + mountId + '-ct">' +
         '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">📋 弧</div><div class="sl-lane-body" id="' + mountId + '-ob"></div></div>' +
-        '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">🔗 桥段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
+        '<div class="sl-lane" style="flex:4"><div class="sl-lane-header">🔗 情节段</div><div class="sl-lane-body" id="' + mountId + '-pb"></div></div>' +
         '<div class="sl-lane" style="flex:2"><div class="sl-lane-header">🧵 线程</div><div class="sl-lane-body" id="' + mountId + '-tb"></div></div>' +
+        '</div></div>' +
+        /* H1/H2 没有字数坐标，但属于同一纵向滚动画布，紧随正式故事线之后。 */
+        '<div class="sl-forecast-strip" id="' + mountId + '-fs">' +
+        '<div class="sl-forecast-row sl-forecast-h1"><div class="sl-forecast-row-title">🧭 近期方向 H1</div><div class="sl-forecast-cards" id="' + mountId + '-h1b"></div></div>' +
+        '<div class="sl-forecast-row sl-forecast-h2"><div class="sl-forecast-row-title">🔭 远期方向 H2</div><div class="sl-forecast-cards" id="' + mountId + '-h2b"></div></div>' +
         '</div></div>' +
         '<div class="sl-legend">' +
         '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#f97583"></span> 弧</div>' +
-        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#79c0ff"></span> 主桥段</div>' +
-        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#a5d6ff"></span> 子桥段</div>' +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#79c0ff"></span> 主情节段</div>' +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch" style="background:#a5d6ff"></span> 子情节段</div>' +
         threadLegendHtml +
         '<div class="sl-legend-item"><span class="sl-legend-swatch payoff-line"></span> ◉设局 → ↪收局</div>' +
+        '<div class="sl-legend-item"><span class="sl-legend-swatch boundary"></span> 黄线：决定到哪里</div>' +
         (narrCount.flashback ? '<div class="sl-legend-item"><span class="sl-legend-swatch flashback"></span> 倒叙</div>' : '') +
         (narrCount.interleaved ? '<div class="sl-legend-item"><span class="sl-legend-swatch interleaved"></span> 插叙</div>' : '') +
         '</div></div>';
@@ -752,6 +959,9 @@
       var outlineBody = document.getElementById(mountId + '-ob');
       var plotBody = document.getElementById(mountId + '-pb');
       var threadBody = document.getElementById(mountId + '-tb');
+      var forecastStrip = document.getElementById(mountId + '-fs');
+      var forecastH1Body = document.getElementById(mountId + '-h1b');
+      var forecastH2Body = document.getElementById(mountId + '-h2b');
       var contentArea = document.getElementById(mountId + '-ct');
 
       // 纵向缩放控件：记录需改高度的面板 + 绑定 + / − / 1x 按钮
@@ -768,44 +978,71 @@
       }
 
       function renderAll() {
+        var scrollState = captureScrollState(mount);
         renderAxis(axisPanel);
         renderOutlines(outlineBody, tooltip, tt.show, tt.move, tt.hide);
         renderPlots(plotBody, tooltip, tt.show, tt.move, tt.hide);
         renderThreads(threadBody, tooltip, tt.show, tt.move, tt.hide);
+        renderForecast(forecastStrip, forecastH1Body, forecastH2Body, opts.planning || {});
         var existing = contentArea.querySelector('.sl-cursor');
         if (existing) existing.remove();
+        var oldBoundary = contentArea.querySelector('.sl-boundary');
+        if (oldBoundary) oldBoundary.remove();
         renderCursor(contentArea, opts.currentWord, opts.currentChapter);
+        renderBoundary(contentArea, opts.planning || {}, opts.boundary || {});
+        applyHighlight(mount, _highlightTarget);
+        restoreScrollState(mount.querySelector('.sl-main'), scrollState);
       }
       _lastRender = renderAll;
       _lastMountId = mountId;
+      _progressState = {mount: mount, main: mount.querySelector('.sl-main'), contentArea: contentArea, options: opts,
+                        forecastStrip: forecastStrip, forecastH1Body: forecastH1Body, forecastH2Body: forecastH2Body};
       renderAll();
+      restoreScrollState(_progressState.main, previousScroll);
     },
 
-    /* 高亮：按 outline_id / plot_id 给故事线里对应的弧/桥段条加高亮并滚动到可见位置。
-       写作流页面在 plot_start / plot_done 时调用。 */
+    /* 增量刷新进度线、承诺线与底部预测条带，不重建正式区，因而保留缩放、滚动与高亮。 */
+    updateProgress: function (state) {
+      if (!_progressState || !_progressState.contentArea) return;
+      state = state || {};
+      var ps = _progressState;
+      var opts = ps.options;
+      var scrollState = captureScrollState(ps.mount);
+      if (state.currentWord !== undefined) opts.currentWord = state.currentWord;
+      if (state.planning) {
+        opts.planning = state.planning;
+        renderForecast(ps.forecastStrip, ps.forecastH1Body, ps.forecastH2Body, opts.planning);
+      }
+      if (state.boundary) opts.boundary = state.boundary;
+      var cursor = ps.contentArea.querySelector('.sl-cursor');
+      if (cursor) cursor.remove();
+      var boundary = ps.contentArea.querySelector('.sl-boundary');
+      if (boundary) boundary.remove();
+      renderCursor(ps.contentArea, opts.currentWord, opts.currentChapter);
+      renderBoundary(ps.contentArea, opts.planning || {}, opts.boundary || {});
+      var committed = ps.mount.querySelector('.sl-meta-committed');
+      if (committed) committed.textContent = fmtW(COMMITTED_UNTIL_WORD || TOTAL_WORDS);
+      restoreScrollState(ps.main, scrollState);
+    },
+
+    /* 高亮：按 outline_id / plot_id 给正式故事线里对应的弧/情节段条加高亮并滚动到可见位置。
+       写作流页面在 plot_start / plot_done 时调用。plot_id 时联动同弧 + 同线程 band。 */
     highlight: function (target) {
       var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
       if (!mount) return;
+      _highlightTarget = target && (target.outline_id || target.plot_id) ? {
+        outline_id: target.outline_id || '', plot_id: target.plot_id || ''
+      } : null;
       var main = mount.querySelector('.sl-main');
-      var prev = mount.querySelectorAll('.sl-bar.sl-highlight');
-      for (var i = 0; i < prev.length; i++) prev[i].classList.remove('sl-highlight');
-      var sel = [];
-      // 用类限定：弧条只匹配 sl-bar-outline；桥段条只匹配 sl-bar-plot（避免 data-oid 把整个弧的桥段全点亮）
-      if (target && target.outline_id) sel.push('.sl-bar-outline[data-oid="' + target.outline_id + '"]');
-      if (target && target.plot_id) sel.push('.sl-bar-plot[data-pid="' + target.plot_id + '"]');
-      if (!sel.length) return;
-      var els = mount.querySelectorAll(sel.join(','));
-      var anchor = null;
-      for (var j = 0; j < els.length; j++) {
-        els[j].classList.add('sl-highlight');
-        if (!anchor) anchor = els[j];
-      }
+      var anchor = applyHighlight(mount, target);
       if (anchor && main) {
-        main.scrollTop = Math.max(0, anchor.offsetTop - main.clientHeight * 0.3);
+        var mainRect = main.getBoundingClientRect();
+        var anchorRect = anchor.getBoundingClientRect();
+        main.scrollTop = Math.max(0, main.scrollTop + anchorRect.top - mainRect.top - main.clientHeight * 0.3);
       }
     },
 
-    /* 纯滚动：把故事线滚动到目标弧/桥段条可见（不改变高亮状态）。
+    /* 纯滚动：把故事线滚动到目标弧/情节段条可见（不改变高亮状态）。
        Agent 画布控制 scroll_to_plot / scroll_to_outline 使用。 */
     scrollTo: function (target) {
       var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
@@ -818,7 +1055,22 @@
       if (!anchor && target && target.outline_id) {
         anchor = mount.querySelector('.sl-bar-outline[data-oid="' + target.outline_id + '"]');
       }
-      if (anchor && main) main.scrollTop = Math.max(0, anchor.offsetTop - main.clientHeight * 0.3);
+      if (anchor && main) {
+        var mainRect = main.getBoundingClientRect();
+        var anchorRect = anchor.getBoundingClientRect();
+        main.scrollTop = Math.max(0, main.scrollTop + anchorRect.top - mainRect.top - main.clientHeight * 0.3);
+      }
+    },
+
+    /* 滚到同一故事线画布的底部方向区，不创建第二个滚动容器。 */
+    scrollToDirections: function () {
+      var mount = _lastMountId ? document.getElementById(_lastMountId) : null;
+      var main = mount && mount.querySelector('.sl-main');
+      var strip = mount && mount.querySelector('.sl-forecast-strip');
+      if (!main || !strip) return;
+      var mainRect = main.getBoundingClientRect();
+      var stripRect = strip.getBoundingClientRect();
+      main.scrollTop = Math.max(0, main.scrollTop + stripRect.bottom - mainRect.bottom);
     },
 
     /* 纵向缩放：调整内容高度（放大=条间距更大可细看，缩小=更紧凑看全貌）。

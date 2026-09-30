@@ -6,14 +6,16 @@
 驱动同一套工具；MCP 是独立进程，与 Web 通过 books/ 文件 JSON 协调。
 
 用法（项目根目录）：
-    claude mcp add --scope project novel-engine -- python mcp_server.py
+    dsh 由 dsh_bridge 按任务传入 --profile；外部客户端的 .mcp.json 接入为 Deprecated 兼容入口。
 """
 import functools
 import inspect
 import json
 import os
+import re
 import sys
 import time
+from typing import Literal
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _ROOT)
@@ -25,14 +27,24 @@ except ImportError:  # pragma: no cover
     from fastmcp import FastMCP
 
 from agent_tools import TOOL_REGISTRY  # noqa: E402
+from libraries.agent_tool_router import filter_registry, resolve_profile, selected_profile  # noqa: E402
 from libraries.tool_log import log_tool_call  # noqa: E402
 from libraries.loop_guard import get_loop_guard  # noqa: E402
+from libraries.mcp_runtime import record_startup  # noqa: E402
 
 # 工具日志 source 区分：dsh 内部调用经 runtime overlay 带 `--source dsh` 拉起
 # （source=dsh，tool_log 不写 storage/tool_log.jsonl——「工具日志」页签只展示
 # 外部 agent 的 source=mcp 调用，内部 dsh 不混入）；外部拉起（.mcp.json / mcp_smoke）
 # 无此参数 → source=mcp。
-_SOURCE = "dsh" if "--source" in sys.argv else "mcp"
+def _arg_value(name: str, default: str = "") -> str:
+    try:
+        i = sys.argv.index(name)
+        return sys.argv[i + 1] if i + 1 < len(sys.argv) else default
+    except ValueError:
+        return default
+
+
+_SOURCE = _arg_value("--source", "mcp")
 
 mcp = FastMCP("novel-engine")
 
@@ -62,7 +74,7 @@ def _mcp_summary(result) -> str:
         if isinstance(cand, dict) and cand.get("title") and total:
             return f"候选{total}：{cand['title']}"
         # 动态进度字段优先于 status：write_next_bridge 同参但字数/章节增长时摘要须不同，
-        # 否则 status 常量会让 LoopGuard 把正常推进误判为无进展循环（桥段写作被熔断）。
+        # 否则 status 常量会让 LoopGuard 把正常推进误判为无进展循环（情节段写作被熔断）。
         for k in ("ok", "words", "word_count", "chapter", "count", "phase",
                   "status", "plots_added", "total_plots", "total_chapters",
                   "passed", "score", "chosen", "book_id", "deleted", "cmd",
@@ -128,17 +140,63 @@ def _wrap_logged(fn):
                     "summary": summary,
                     "duration_ms": round((time.time() - t0) * 1000),
                     "source": _SOURCE,
+                    "profile_name": globals().get("_PROFILE", ""),
+                    "visible_tool_count": len(globals().get("_EXPOSED_REGISTRY", TOOL_REGISTRY)),
                 })
             except Exception:
                 pass
     return _wrapped
 
 
+# ─── drive_ui 的**可见 schema** 按 profile 裁剪（P1）──────────────────────────
+# 为什么必须做（2026-09-10 实测）：drive_ui 是「一个工具 + 十几个子命令」的命令桥，
+# `filter_registry` 只裁工具级；命令级此前只在**调用时**由 check_ui_command 拒绝
+# （JSON Schema 里 cmd 是裸 string）。于是 build-candidates 的 run 里模型**看得见**
+# set_world、调了才吃 ui_command_forbidden —— 模型随后把整轮预算花在
+# 「试 set_world → 试 set_characters → navigate → 再读状态」这种平台错误恢复上，
+# 小说设计一次都没做。**可见 schema 必须等于能力边界**：description 与 cmd enum 一起裁。
+# 实现在 libraries/agent_tool_router.py（可离线测试，import 本文件会触发注册副作用）。
+
+
+def _drive_ui_for_profile(profile: str):
+    from libraries.agent_tool_router import make_drive_ui_for_profile
+    base = next((e["func"] for e in TOOL_REGISTRY if e["name"] == "drive_ui"), None)
+    return make_drive_ui_for_profile(profile, base)
+
+
 # 逐个注册（工具名/描述/schema 由函数签名+docstring 自动生成）。
 # 护栏：直建/直删工具不存在于注册表——建书走「启动新书」向导 UI
 # （drive_ui 驱动）、删书走书库页手动；navigate/drive_ui 经意图桥驱动浏览器/向导。
-for _entry in TOOL_REGISTRY:
+_PROFILE = selected_profile(sys.argv)
+_EXPOSED_REGISTRY = filter_registry(TOOL_REGISTRY, _PROFILE)
+if _PROFILE in {"build", "build-candidates"}:
+    try:
+        from libraries.build_status import get_build_status
+        _bs = get_build_status() or {}
+        _resolved = resolve_profile(_PROFILE, book_exists=bool(_bs.get("book_id")),
+                                    storyline_exists=bool(_bs.get("book_id")),
+                                    pen_selected=bool(_bs.get("pen_selected")))
+        _allowed = set(_resolved["allowed_tools"])
+        _EXPOSED_REGISTRY = [entry for entry in _EXPOSED_REGISTRY if entry["name"] in _allowed]
+    except Exception:
+        pass
+for _entry in _EXPOSED_REGISTRY:
+    if _entry["name"] == "drive_ui":
+        _dui, _dui_desc = _drive_ui_for_profile(_PROFILE)
+        if _dui is not None:
+            mcp.tool(name="drive_ui", description=_dui_desc)(_wrap_logged(_dui))
+            continue
     mcp.tool()(_wrap_logged(_entry["func"]))
+
+_RUNTIME_INSTANCE = record_startup(
+    profile=_PROFILE,
+    source=_SOURCE,
+    tools=[entry["name"] for entry in _EXPOSED_REGISTRY],
+    registry_tool_count=len(TOOL_REGISTRY),
+    flow_id=os.environ.get("NOVEL_WRITE_FLOW_ID", ""),
+    child_run_id=os.environ.get("NOVEL_WRITE_CHILD_RUN_ID", ""),
+    book_id=os.environ.get("NOVEL_WRITE_BOOK_ID", ""),
+)
 
 if __name__ == "__main__":
     mcp.run()   # stdio transport

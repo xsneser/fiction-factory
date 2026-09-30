@@ -1,7 +1,7 @@
 // Agent 聊天助手面板（OpenClaw 式）：侧栏对话，Agent 通过 function calling 操作引擎并导航页面。
 // 后端 /api/agent/chat（SSE）。对话历史仅存 user/assistant 文本，工具步骤卡临时展示不入历史。
 // 版本标记：新 JS（事件流实时工具卡）会在控制台打印 v3；旧 JS 无此输出——用于排查浏览器缓存。
-console.log('[agent-panel] v28 events-stream');
+console.log('[agent-panel] v29 delegation-tree');
 (function() {
     var chat = document.getElementById('agent-chat');
     var input = document.getElementById('agent-input');
@@ -20,10 +20,12 @@ console.log('[agent-panel] v28 events-stream');
     var sessionTokens = 0;                      // 当前任务累计 token 流量（每个 tool_call 的 usage 相加；新任务/清空重置）
     var activeSse = false;                      // 是否有活跃 SSE 会话（活跃时 busy 由事件流管理；刷新后无 SSE 则区分后台任务）
     var pendingTask = null;                     // busy 时排队待发任务（done 后接力）
+    var activeTaskOptions = {};                 // 当前任务的流程模式/忙碌策略（随 SSE 请求传递）
     var currentToolRun = null;                  // 当前工具卡引用
     var toolPollTimer = null;                   // 工具日志轮询定时器
-    var toolCards = {};                         // callId → 工具卡（事件流配对）
-    var _buildCards = [];                       // 任务卡（建书/写作）列表：done 时移除其停止按钮
+    var toolCards = {};                         // sessionId:callId → 工具卡（父子 Agent 事件流配对）
+    var delegationCards = {};                   // delegation_id → 委派父卡对象（树状折叠组）
+    var activeDelegationId = null;              // 当前处于运行中的委派子代理 ID
     var toolCardOrder = [];                     // 工具卡创建顺序（上限裁剪用）
     var taskStartedAt = 0;                      // 当前任务起始时间（unix 秒）：SSE 断线后补渲染 task_events 的 since
     var renderedCallIds = {};                   // 已渲染过的工具卡 callId：断线补渲染防重
@@ -45,31 +47,31 @@ console.log('[agent-panel] v28 events-stream');
     // ─── 工具卡中文化：工具名 → 中文动作；drive_ui cmd → 中文效果；JSON 键 → 中文 ───
     var TOOL_ZH = {
         drive_ui: '驱动建书向导',
-        export_book: '导出投稿包', extend_outline: '续写故事线', fill_gags: '挂载笑点',
-        fill_plots: '填充桥段', generate_book_meta: '生成书名+简介', generate_characters: '生成角色',
+        export_book: '导出投稿包', extend_outline: '续写故事线',
+        fill_plots: '填充情节段', generate_book_meta: '生成书名+简介', generate_characters: '生成角色',
         generate_core_conflict: '生成核心矛盾', generate_factions: '生成势力', generate_full_outline: '生成完整大纲',
         generate_outlines: '生成大纲序列', generate_rest_world: '补全其余世界观', generate_title: '生成书名',
         generate_world: '生成世界观', get_book_detail: '读取书详情', get_book_state: '读取书状态',
         get_build_status: '读取建书状态', get_storyline: '读取故事线', list_books: '列出书库',
         mark_finished: '标记完本', navigate: '页面跳转', outline_agent: '大纲助手',
         arc_material_candidates: '取选材候选', publish_book: '上架', publish_check: '上架检查',
-        query_characters: '查角色原型', query_gags: '查笑点库', query_plots: '查桥段库',
+        query_characters: '查角色原型', query_gags: '查笑点库', query_plots: '查情节段库',
         query_profiles: '查笔名档案', query_arc_library: '查情节弧库',
         save_basic_info: '保存基础设定', world_candidates: '生成世界观候选',
-        write_chapter: '写章节', write_next_bridge: '写下一桥段',
-        save_bridge_draft: '保存桥段', save_chapter_text: '保存整章',
+        write_chapter: '写章节', write_next_bridge: '写下一情节段',
+        save_plot_draft: '保存情节段', save_chapter_text: '保存整章',
         save_outlines: '保存大纲', save_book_meta: '保存书名简介',
         skill: '技能', chapter_quality_gate: '章节质量门禁',
         discover_hot: '侦察热榜', list_rankings: '榜单分类', fetch_novel: '抓取小说',
         list_crawled_novels: '已抓取书库', read_crawled_novel: '读抓取书', ingest_library_assets: '提取入库',
-        get_writing_context: '读取写作上下文'
+        prepare_plot_run: '准备情节段运行上下文'
     };
     var CMD_ZH = {
         set_world: '写入世界观', set_characters: '写入角色', set_candidates: '填入候选',
         pick_candidate: '选中候选', set_field: '填写字段', set_tags: '设置标签',
         next: '下一步', prev: '上一步', reset: '重置向导', submit: '提交建书',
         skip_candidates: '跳过候选', load_candidates: '加载候选', fill_world: '重新补全',
-        set_picks: '记录选材'
+        set_picks: '记录选材', set_replan_preview: '暂存续规划预览'
     };
     var KEY_ZH = {
         core_conflict: '核心矛盾', genre: '题材', sub_genre: '题材细分', factions: '势力', faction: '势力',
@@ -85,7 +87,7 @@ console.log('[agent-panel] v28 events-stream');
         world_building: '世界观', cmd: '命令', __ui_command__: '命令', book: '书', chapter: '章节',
         words_per_chapter: '每章字数', archetype_id: '原型', age: '年龄', death_year: '去世年份',
         gender: '性别', borrow: '借鉴', tweak: '微调', category: '分类', keyword: '关键词',
-        mode: '模式', plot: '桥段', plots: '桥段', structure: '结构', structures: '模板',
+        mode: '模式', plot: '情节段', plots: '情节段', structure: '结构', structures: '模板',
         gag: '梗', gags: '梗', count: '数量', total: '总计', storyline: '时间线',
         outlines: '大纲', timeline: '时间线', source: '来源', id: 'ID', pen: '笔名',
         url: '地址', words: '字数', word_count: '字数', target_words: '目标字数',
@@ -111,6 +113,9 @@ console.log('[agent-panel] v28 events-stream');
     }
     function zhSummary(tool, args, summary) {
         if (tool === 'drive_ui') {
+            // 服务端已按 ok 生成摘要（失败时是「失败：…」）；直接复用，别在这里无条件
+            // 改写成成功文案，否则失败会被显示成「已暂存续规划预览」。
+            if (summary) return summary;
             var cmd = (args && args.cmd) || '';
             return '已' + (CMD_ZH[cmd] || cmd || '执行向导命令');
         }
@@ -162,15 +167,6 @@ console.log('[agent-panel] v28 events-stream');
         head.title = '点击展开/收起详情';
         var label = el('span', 'agent-tool-head-label', '🔧 ' + escapeHtml(toolLabel(tool, args)));
         var meta = el('span', 'agent-tool-head-meta', '');   // 第一行右侧：⏱ 运行时长 · token 用量
-        // 卡片内停止按钮：打断当前 Agent 任务（复用全局 cancel 通道），工具完成/会话结束自动移除
-        var stop = el('button', 'agent-tool-stop', '⏹ 停止');
-        stop.type = 'button';
-        stop.title = '打断当前 Agent 任务';
-        stop.addEventListener('click', function (e) {
-            e && e.stopPropagation();   // 不触发头部展开/折叠
-            stop.disabled = true; stop.textContent = '停止中…';
-            fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function () {});
-        });
         var detail = el('div', 'agent-tool-detail', '');
         // 默认折叠成两行（头部 + 单行结果摘要，参数默认隐藏）；点击头部展开/收起全部，参数首次展开时懒加载
         head.onclick = function () {
@@ -182,7 +178,6 @@ console.log('[agent-panel] v28 events-stream');
             }
         };
         head.appendChild(label);
-        head.appendChild(stop);
         head.appendChild(meta);
         var status = el('div', 'agent-tool-status', '运行中…');
         card.appendChild(head);
@@ -190,7 +185,7 @@ console.log('[agent-panel] v28 events-stream');
         card.appendChild(status);
         chat.appendChild(card);
         scrollBottom();
-        var run = { card: card, status: status, meta: meta, stopBtn: stop, t0: performance.now(), ts0: null, tool: tool, args: args, timer: null };
+        var run = { card: card, status: status, meta: meta, t0: performance.now(), ts0: null, tool: tool, args: args, timer: null };
         // 运行中实时计时：活跃卡用 performance 基；刷新重建卡 run.ts0=事件 ts，用 Date.now 基算真实已用时长。
         // 运行中只显示 ⏱（token 是决策那轮已消耗的固定值，工具完成时才与最终时长一起显示，避免「token 已出现却仍运行中」误解）。
         run.timer = setInterval(function() {
@@ -284,6 +279,7 @@ console.log('[agent-panel] v28 events-stream');
         pollTokenUsage();
     }
     function resetTokenFlow() {
+        activeDelegationId = null;
         sessionTokens = 0;
         _tokenFlowShown = 0;
         if (_tokenFlowRaf) { cancelAnimationFrame(_tokenFlowRaf); _tokenFlowRaf = null; }
@@ -292,12 +288,127 @@ console.log('[agent-panel] v28 events-stream');
         fetch('/api/agent/token-usage/clear', { method: 'POST' }).catch(function() {});   // 清零代理累计
     }
 
-    // 事件流工具卡：按 callId 建档，超上限裁剪最旧（防 DOM 无限膨胀）
-    function addToolCardFor(name, args, callId, usage) {
-        var run = addToolCard(name, args);
-        run.usage = usage || null;   // dsh agent 该工具调用的真实 token 用量
-        if (callId) { toolCards[callId] = run; renderedCallIds[callId] = true; }   // 断线补渲染防重
-        toolCardOrder.push(callId || ('#' + toolCardOrder.length));
+    function eventCallKey(evt) {
+        if (!evt || !evt.callId) return '';
+        return String(evt.sessionId || evt.session_id || 'root') + ':' + String(evt.callId);
+    }
+
+    // 委派主卡（Writer / Critic / Planner 父卡容器）
+    function addDelegationCard(tool, args, delegationId, role) {
+        var roleZh = {
+            writer: '🤖 Writer · 创作子代理',
+            critic: '🔎 Critic · 规则评审子代理',
+            planner: '🧭 Planner · 故事线规划子代理'
+        }[role] || ('🤖 ' + (role || '子代理') + ' · 委派运行');
+
+        var card = el('div', 'agent-delegation-card');
+        var head = el('div', 'agent-delegation-head');
+        head.title = '点击展开/折叠内部步骤';
+        var label = el('span', 'agent-tool-head-label', escapeHtml(roleZh));
+        var meta = el('span', 'agent-tool-head-meta', '⏱ 0s');
+        head.appendChild(label);
+        head.appendChild(meta);
+
+        var status = el('div', 'agent-tool-status', '正在执行子任务…');
+        var childrenContainer = el('div', 'agent-delegation-children');
+
+        head.onclick = function() {
+            card.classList.toggle('open');
+        };
+
+        card.appendChild(head);
+        card.appendChild(status);
+        card.appendChild(childrenContainer);
+        chat.appendChild(card);
+        scrollBottom();
+
+        var run = {
+            card: card,
+            status: status,
+            meta: meta,
+            children: childrenContainer,
+            isDelegation: true,
+            delegationId: delegationId || '',
+            t0: performance.now(),
+            ts0: null,
+            subCount: 0,
+            tool: tool,
+            args: args,
+            timer: null
+        };
+        run.timer = setInterval(function() {
+            if (!run.meta) return;
+            var ms = run.ts0 ? (Date.now() / 1000 - run.ts0) * 1000 : (performance.now() - run.t0);
+            run.meta.textContent = '⏱ ' + formatDur(ms);
+        }, 1000);
+
+        if (delegationId) delegationCards[delegationId] = run;
+        return run;
+    }
+
+    // 子代理内嵌卡片（挂在委派父卡内部）
+    function addSubToolCard(tool, args, parentContainer) {
+        var card = el('div', 'agent-subtool-card');
+        var head = el('div', 'agent-tool-head');
+        head.title = '点击展开/收起详情';
+        var label = el('span', 'agent-tool-head-label', '├─ ⚙️ ' + escapeHtml(toolLabel(tool, args)));
+        var meta = el('span', 'agent-tool-head-meta', '');
+        var detail = el('div', 'agent-tool-detail', '');
+        head.onclick = function(e) {
+            e && e.stopPropagation();
+            var open = card.classList.toggle('open');
+            if (open && args && typeof args === 'object' && Object.keys(args).length && !detail.dataset.filled) {
+                detail.dataset.filled = '1';
+                detail.textContent = JSON.stringify(zhKeys(args), null, 2);
+            }
+        };
+        head.appendChild(label);
+        head.appendChild(meta);
+        var status = el('div', 'agent-tool-status', '运行中…');
+        card.appendChild(head);
+        card.appendChild(detail);
+        card.appendChild(status);
+        parentContainer.appendChild(card);
+        scrollBottom();
+
+        var run = { card: card, status: status, meta: meta, t0: performance.now(), ts0: null, tool: tool, args: args, timer: null };
+        run.timer = setInterval(function() {
+            if (!run.meta) return;
+            var ms = run.ts0 ? (Date.now() / 1000 - run.ts0) * 1000 : (performance.now() - run.t0);
+            run.meta.textContent = '⏱ ' + formatDur(ms);
+        }, 1000);
+        return run;
+    }
+
+    // 事件流工具卡：按 sessionId:callId 建档，支持委派树挂载与超上限裁剪
+    function addToolCardFor(name, args, callId, usage, sessionId, delegationId, role) {
+        // 若为主 Agent 的委派调用：创建委派父卡
+        if (name && name.indexOf('delegate_') === 0) {
+            var delId = delegationId || ('dg_' + callId);
+            var targetRole = name.replace('delegate_', '');
+            var run = addDelegationCard(name, args, delId, targetRole);
+            activeDelegationId = delId;
+            run.usage = usage || null;
+            var key = callId ? String(sessionId || 'root') + ':' + String(callId) : '';
+            if (key) { toolCards[key] = run; renderedCallIds[key] = true; }
+            return run;
+        }
+
+        // 若为已知委派的子工具，挂在父卡折叠容器内
+        var parentDel = (delegationId && delegationCards[delegationId]) ? delegationCards[delegationId] : null;
+        var run = null;
+        if (parentDel) {
+            run = addSubToolCard(name, args, parentDel.children);
+            parentDel.subCount = (parentDel.subCount || 0) + 1;
+            parentDel.status.textContent = '执行中 · 已包含 ' + parentDel.subCount + ' 个内部动作';
+        } else {
+            run = addToolCard(name, args);
+        }
+        run.usage = usage || null;
+        run.delegationId = delegationId || '';
+        var key = callId ? String(sessionId || 'root') + ':' + String(callId) : '';
+        if (key) { toolCards[key] = run; renderedCallIds[key] = true; }
+        toolCardOrder.push(key || ('#' + toolCardOrder.length));
         if (toolCardOrder.length > TOOL_CARD_LIMIT) {
             var old = toolCardOrder.shift();
             var oldRun = toolCards[old];
@@ -308,12 +419,10 @@ console.log('[agent-panel] v28 events-stream');
         return run;
     }
 
-    // 工具卡收尾：清计时器；第一行右侧 meta 显示 ⏱ 时长（durMs 供重建卡用事件 ts 差，活跃卡用 performance 差）+ token 用量；状态行只留摘要
+    // 工具卡收尾：清计时器；第一行右侧 meta 显示 ⏱ 时长 + token 用量；状态行只留摘要
     function finishToolCard(run, text, durMs) {
         if (!run || !run.status) return;
         if (run.timer) { clearInterval(run.timer); run.timer = null; }
-        // 工具完成/会话结束：移除卡片内停止按钮
-        if (run.stopBtn) { try { if (run.stopBtn.parentNode) run.stopBtn.parentNode.removeChild(run.stopBtn); } catch (e) {} run.stopBtn = null; }
         var durStr = '';
         if (durMs !== undefined && durMs !== null) {
             durStr = '⏱ ' + formatDur(durMs);
@@ -322,13 +431,33 @@ console.log('[agent-panel] v28 events-stream');
         }
         var tok = run.usage ? ' · ' + formatTokens(run.usage) : '';
         if (run.meta) run.meta.textContent = durStr + tok;
+
+        if (run.isDelegation) {
+            if (activeDelegationId && (delegationCards[activeDelegationId] === run || run.delegationId === activeDelegationId)) {
+                activeDelegationId = null;
+            }
+            var isOk = (text && text.indexOf('✅') === 0);
+            run.status.textContent = isOk
+                ? '✅ 委派完成 (共 ' + (run.subCount || 0) + ' 个步骤)'
+                : '❌ 委派未通过或异常';
+            run.status.className = isOk ? 'agent-tool-status ok' : 'agent-tool-status err';
+            if (run.card) {
+                run.card.classList.remove('ok', 'err');
+                run.card.classList.add(isOk ? 'ok' : 'err');
+            }
+            return;
+        }
+
         run.status.textContent = (text || '');
-        run.status.className = (text && text.indexOf('✅') === 0)
-            ? 'agent-tool-status ok' : 'agent-tool-status err';
-        // 卡片本体也标 ok/err（左边框变色），折叠态也能一眼看出成败；用 classList 保留可能已加的 open
+        var isSubOk = (text && text.indexOf('✅') === 0);
+        run.status.className = isSubOk ? 'agent-tool-status ok' : 'agent-tool-status err';
         if (run.card) {
             run.card.classList.remove('ok', 'err');
-            run.card.classList.add((text && text.indexOf('✅') === 0) ? 'ok' : 'err');
+            run.card.classList.add(isSubOk ? 'ok' : 'err');
+        }
+        // 若子工具失败，自动展开其所属父卡，让失败处直观可见
+        if (!isSubOk && run.delegationId && delegationCards[run.delegationId]) {
+            try { delegationCards[run.delegationId].card.classList.add('open'); } catch (e) {}
         }
     }
     // ─── LLM 调用调试卡（调试模式：每次 LLM 调用的提示词 / MCP 工具 / 返回 JSON 原文）───
@@ -361,14 +490,23 @@ console.log('[agent-panel] v28 events-stream');
         var msgs = req.messages || [];
         var tools = req.tools || [];
         var seq = evt.seq;   // 调试卡完整原文按需拉取用（storage/debug-prompts/<seq>.json）
+        // 标题统一显示真实消息总数（events-runner 在 SSE 只发最近 12 条预览，total_messages 带未裁剪全长），
+        // 随轮次累加递增；折叠精简只护 SSE/管线，展开提示词/返回JSON 段即 fetch seq 全量原文（全量消息）。
+        var total = (typeof req.total_messages === 'number') ? req.total_messages : msgs.length;
         var card = el('div', 'agent-llm-card');
         var head = el('div', 'agent-llm-head');
         head.appendChild(el('span', 'agent-llm-head-label', '🤖 LLM 调用 · ' + (req.model || '?')));
-        head.appendChild(el('span', 'agent-llm-head-meta', evt.usage ? '⚡ ' + formatTokens(evt.usage) : ''));
+        var budget = evt.input_budget || {};
+        var budgetLabel = (budget.total_chars !== undefined)
+            ? '📊 ' + budget.total_chars + ' chars ≈ ' + (budget.estimated_tokens || '—') + ' tok' : '';
+        var meta = [];
+        if (evt.usage) meta.push('⚡ ' + formatTokens(evt.usage));
+        if (budgetLabel) meta.push(budgetLabel);
+        head.appendChild(el('span', 'agent-llm-head-meta', meta.join(' · ')));
         card.appendChild(head);
         // kind：'prompt'/'response' 段支持展开时按需拉完整原文（初始仍是裁剪预览）；null 段只用预览
         var sections = [
-            ['💬 提示词（system + ' + msgs.length + ' 条消息）',
+            ['💬 提示词（system + ' + total + ' 条消息）',
              { system: capDeep(req.system, 2000) || '', messages: capDeep(msgs.slice(-12), 600) }, 'prompt'],
             ['🧰 MCP 工具（' + tools.length + ' 个）', capToolsLite(tools), null],
             ['📦 返回 JSON', evt.response !== undefined ? capDeep(evt.response, 1500) : null, 'response']
@@ -409,7 +547,19 @@ console.log('[agent-panel] v28 events-stream');
             }
             card.appendChild(det);
         }
-        chat.appendChild(card);
+
+        var targetDelId = evt.delegation_id || (evt.agent_role && evt.agent_role !== 'root' ? activeDelegationId : null);
+        if (!targetDelId && activeDelegationId && evt.session_id && evt.session_id !== 'root') {
+            targetDelId = activeDelegationId;
+        }
+        var parentDel = (targetDelId && delegationCards[targetDelId]) ? delegationCards[targetDelId] : null;
+        if (parentDel) {
+            card.classList.add('agent-subllm-card');
+            parentDel.children.appendChild(card);
+            parentDel.card.classList.add('open');
+        } else {
+            chat.appendChild(card);
+        }
         scrollBottom();
         llmCards.push(card);
         if (llmCards.length > LLM_CARD_LIMIT) {
@@ -457,8 +607,10 @@ console.log('[agent-panel] v28 events-stream');
                 var h0 = toolsLog.scrollHeight;
                 var ratio = h0 ? toolsLog.scrollTop / h0 : 0;
                 var nearBottom = h0 - toolsLog.scrollTop - toolsLog.clientHeight < 80;
+                var fmtCount = function(v) { return (v === null || v === undefined) ? '—' : v; };
                 var html = '<div style="position:sticky;top:0;z-index:1;background:#161b22;font-size:12px;color:#8b949e;padding:4px 0 8px;margin-bottom:4px">'
-                    + '已暴露 <strong>' + d.tools_exposed + '</strong> 工具 · MCP 调用 <strong>' + log.length
+                    + '注册 <strong>' + fmtCount(d.registry_tool_count) + '</strong> · 当前 MCP <strong>' + fmtCount(d.profile_mcp_tool_count)
+                    + '</strong> · Host <strong>' + fmtCount(d.host_tool_count) + '</strong> · 调用 <strong>' + log.length
                     + '</strong> 次 · 成功 <span style="color:#3fb950">' + success
                     + '</span> 失败 <span style="color:#f85149">' + (log.length - success) + '</span>'
                     + ' <button class="small" onclick="window.loadToolLog()">🔄 刷新</button>'
@@ -567,13 +719,16 @@ console.log('[agent-panel] v28 events-stream');
             .then(function(d) {
                 var cards = (d && d.ok && d.events) ? d.events : [];
                 cards.forEach(function(e) {
+                    // Planner 内部事件只作后台诊断，断线补渲染时也不能复活成用户可见卡片
+                    if (e.internal) return;
                     if (e.type === 'tool_call') {
                         if (e.callId && renderedCallIds[e.callId]) return;
-                        var run = addToolCardFor(e.name, e.args, e.callId, e.usage);
+                        var run = addToolCardFor(e.name, e.args, e.callId, e.usage,
+                            e.sessionId || e.session_id, e.delegation_id, e.agent_role);
                         if (run) run.ts0 = e.ts;
                     } else if (e.type === 'tool_result') {
-                        var run = toolCards[e.callId] ? toolCards[e.callId] : null;
-                        if (e.callId) delete toolCards[e.callId];
+                        var run = toolCards[eventCallKey(e)] ? toolCards[eventCallKey(e)] : null;
+                        if (e.callId) delete toolCards[eventCallKey(e)];
                         if (run) {
                             var durMs = (run.ts0 != null) ? (e.ts - run.ts0) * 1000 : undefined;
                             finishToolCard(run, (e.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, e.summary), durMs);
@@ -589,7 +744,7 @@ console.log('[agent-panel] v28 events-stream');
             if (pendingTask) {
                 var pt = pendingTask; pendingTask = null;
                 renderTaskStart(pt.text, pt.opts || {});
-                startTask(pt.text);
+                startTask(pt.text, pt.opts || {});
                 return undefined;
             }
             return fetch('/api/agent/chat/status').then(function(r) { return r.json(); }).catch(function() { return {}; });
@@ -601,8 +756,15 @@ console.log('[agent-panel] v28 events-stream');
                 emitAgentState();
                 addMsg('assistant', '⚠️ SSE 连接已断开，任务仍在后台运行。可点「⏹ 停止」中断，或刷新页面同步状态。');
             } else {
+                if (activeTaskOptions.taskKind) {
+                    window.dispatchEvent(new CustomEvent('ne:agent-task-event', { detail: {
+                        taskKind: activeTaskOptions.taskKind,
+                        event: {type: 'done', disconnected: true}
+                    }}));
+                }
                 activeSse = false;
                 busy = false;
+                activeTaskOptions = {};
                 setSendEnabled(true);
                 settleInFlightCards();
                 emitAgentState();
@@ -619,16 +781,54 @@ console.log('[agent-panel] v28 events-stream');
 
     function handleEvent(evt) {
         var t = evt.type;
+        /* Planner 子 run 的内部事件（校验失败等）：错误已由 MCP isError 回给 Agent 自行修正，
+           用户侧既不该建工具卡，也不该把它当成章级任务的失败——FSM 会重试。
+           domain / ui_command / navigate / done 仍需照常处理。 */
+        if (evt.internal && t !== 'ui_command' && t !== 'navigate') {
+            if (t === 'domain') {
+                window.dispatchEvent(new CustomEvent('ne:desk-refresh', { detail: evt }));
+            } else if (t === 'build_draft_status') {
+                window.dispatchEvent(new CustomEvent('ne:build-draft-status', { detail: evt }));
+            }
+            return;
+        }
+        if (activeTaskOptions.taskKind && (t === 'domain' || t === 'error' || t === 'done')) {
+            window.dispatchEvent(new CustomEvent('ne:agent-task-event', { detail: {
+                taskKind: activeTaskOptions.taskKind, event: evt
+            }}));
+        }
+        if (t === 'subagent_start' || t === 'subagent_end') {
+            window.dispatchEvent(new CustomEvent('ne:subagent-event', { detail: evt }));
+            return;
+        }
+        if (t === 'progress') {
+            var pLine = el('div', 'agent-progress-line');
+            pLine.textContent = '⏳ ' + (evt.message || '');
+            chat.appendChild(pLine);
+            scrollBottom();
+            setTimeout(function() {
+                try { if (pLine.parentNode) pLine.parentNode.removeChild(pLine); } catch (e) {}
+            }, 8000);
+            return;
+        }
+        if (t === 'domain') {
+            // WS6：写作相关工具成功 → 领域事件（chapter_changed/plot_run_changed/plan_committed）。
+            // 只作为 UI 刷新信号转发（写作台/规划面板监听 ne:desk-refresh），非持久业务状态。
+            window.dispatchEvent(new CustomEvent('ne:desk-refresh', { detail: evt }));
+            return;
+        }
         if (t === 'tool_call') {
             // dsh 核心实时推送：工具开始 → 建卡（usage = 该调用的真实 token 用量）
             if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }   // LLM 已结束，实时行让位给工具卡
-            currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage);
+            currentToolRun = addToolCardFor(evt.name, evt.args, evt.callId, evt.usage,
+                evt.sessionId || evt.session_id, evt.delegation_id, evt.agent_role);
             addSessionTokens(evt.usage);   // 事件驱动累计（dsh 真实 usage）
         } else if (t === 'tool_result') {
             // 按 callId 配对卡；配不到就忽略（绝不 fallback 到别的卡，避免污染）。
             // navigate/drive_ui 的 tool/call 也会建卡，故正常情况都配得到。
-            var run = (evt.callId && toolCards[evt.callId]) ? toolCards[evt.callId] : null;
-            if (evt.callId) delete toolCards[evt.callId];
+            var resultKey = eventCallKey(evt);
+            var run = (resultKey && toolCards[resultKey]) ? toolCards[resultKey] : null;
+            if (resultKey) delete toolCards[resultKey];
             if (run) finishToolCard(run, (evt.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, evt.summary));
         } else if (t === 'navigate') {
             handleNavigate(evt.url);            // dsh 调用 navigate → 实时切页
@@ -643,16 +843,24 @@ console.log('[agent-panel] v28 events-stream');
             addMsg('assistant', evt.content);
             history.push({ role: 'assistant', content: evt.content, ts: Date.now() / 1000 });   // ts 供刷新后与卡片按时间交错
             saveHistory(history);
+        } else if (t === 'notice') {
+            // 非阻塞提示（如「主 Agent 编排未启用 → 本次走 legacy FSM」）：不是失败，
+            // 但必须让用户看见——否则他会以为自己在跑新编排。同样写 history。
+            addMsg('assistant', 'ℹ️ ' + (evt.message || ''));
+            history.push({ role: 'assistant', content: 'ℹ️ ' + (evt.message || ''), ts: Date.now() / 1000 });
+            saveHistory(history);
         } else if (t === 'error') {
+            // 写进 history：否则刷新/切页后这条错误气泡消失，用户只看到一个"正常结束"的任务
             addMsg('assistant', '⚠️ ' + (evt.message || '发生错误'));
+            history.push({ role: 'assistant', content: '⚠️ ' + (evt.message || '发生错误'), ts: Date.now() / 1000 });
+            saveHistory(history);
             if (currentToolRun) finishToolCard(currentToolRun, '❌ 失败');
+        } else if (t === 'build_draft_status') {
+            // 建书薄工具的压缩结果：转发给向导页（进步 3 / 刷新 / 校验失败都要能看到）。
+            // 注意**不能**放进 busy 守卫里——它本来就是在 agent 忙的时候产生的。
+            window.dispatchEvent(new CustomEvent('ne:build-draft-status', { detail: evt }));
         } else if (t === 'done') {
             if (_liveLlml) { _liveLlml.remove(); _liveLlml = null; }   // 会话结束清实时行
-            // 任务结束：移除任务卡（建书/写作）上的停止按钮
-            for (var bi = 0; bi < _buildCards.length; bi++) {
-                try { if (_buildCards[bi].stop && _buildCards[bi].stop.parentNode) _buildCards[bi].stop.parentNode.removeChild(_buildCards[bi].stop); } catch (e) {}
-            }
-            _buildCards = [];
             // C3：收尾所有未 resolve 的工具卡（result 缺失/滞后时兜底），清空映射
             Object.keys(toolCards).forEach(function(id) {
                 finishToolCard(toolCards[id], '⚠️ 会话结束未收尾');
@@ -669,9 +877,10 @@ console.log('[agent-panel] v28 events-stream');
                 // 接力排队任务（busy 保持 true）：先打断已 done，此刻才渲染新任务卡并启动 —— 严格先打断后开始
                 var pt = pendingTask; pendingTask = null;
                 renderTaskStart(pt.text, pt.opts || {});
-                startTask(pt.text);
+                startTask(pt.text, pt.opts || {});
             } else {
                 busy = false;
+                activeTaskOptions = {};
                 setSendEnabled(true);
                 emitAgentState();   // 页面（写作台）感知空闲
             }
@@ -682,8 +891,10 @@ console.log('[agent-panel] v28 events-stream');
     var navTimer = null;
     // 消费意图队列。onlyCmds 非空时只处理指定的 ui_command（busy 中用）。
     // dsh 会话中（busy）所有向导命令（set_field/set_world/set_characters/set_outline/next/submit…）
-    // 均由 drive_ui → SSE ui_command 实时推送（generate_outline_preview 已废弃、无后端直推），
-    // 轮询消费会双触发——busy 时只取走清空队列、不派发，残留由 done 后 C1 drain 丢弃。
+    // 均由 drive_ui → SSE ui_command 实时推送，轮询消费会双触发——busy 时只取走清空队列、
+    // 不派发，残留由 done 后 C1 drain 丢弃。
+    // ⚠️ 因此这条队列**不能**用来做服务端内部的数据投影（没有 SSE 伴随事件、busy 时必被丢）。
+    // 步 3 草稿改为页面从 canonical 拉取（见 start_book.html 的 syncCanonicalDraft）。
     function consumeNavIntents(onlyCmds) {
         return fetch('/api/agent/nav-intents')
             .then(function(r) { return r.json(); })
@@ -757,7 +968,9 @@ console.log('[agent-panel] v28 events-stream');
             stopBtn.textContent = '⏹ 停止';
         }
     }
-    function startTask(text) {
+    function startTask(text, opts) {
+        opts = opts || {};
+        activeTaskOptions = opts;
         busy = true;
         resetTokenFlow();                    // 新任务：token 流量归零
         activeSse = true;                    // 活跃 SSE 会话开始
@@ -765,15 +978,30 @@ console.log('[agent-panel] v28 events-stream');
         setSendEnabled(false);
         emitAgentState();                    // 页面（写作台）感知运行态
         removeRunningBanner();   // 新任务接管：清掉恢复期的「后台运行中」卡（SSE 实时流展示）
-        consumeSSE({ messages: history, debug: isDebugOn() }).catch(function(err) {
+        var body = { messages: history, debug: isDebugOn() };
+        if (opts.flowMode) body.flow_mode = opts.flowMode;
+        if (opts.bookId) body.book_id = opts.bookId;
+        if (opts.busyPolicy) body.busy_policy = opts.busyPolicy;
+        if (opts.taskKind) body.task_kind = opts.taskKind;
+        consumeSSE(body).catch(function(err) {
             addMsg('assistant', '⚠️ 请求失败：' + err.message);
+            if (activeTaskOptions.taskKind) {
+                var failedTask = activeTaskOptions.taskKind;
+                window.dispatchEvent(new CustomEvent('ne:agent-task-event', { detail: {
+                    taskKind: failedTask, event: {type: 'error', message: err.message || '请求失败'}
+                }}));
+                window.dispatchEvent(new CustomEvent('ne:agent-task-event', { detail: {
+                    taskKind: failedTask, event: {type: 'done'}
+                }}));
+            }
             if (pendingTask) {
                 var pt = pendingTask; pendingTask = null;
                 renderTaskStart(pt.text, pt.opts || {});
-                startTask(pt.text);
+                startTask(pt.text, pt.opts || {});
             } else {
                 activeSse = false;
                 busy = false;
+                activeTaskOptions = {};
                 setSendEnabled(true);
                 emitAgentState();
             }
@@ -784,21 +1012,12 @@ console.log('[agent-panel] v28 events-stream');
         var card = el('div', 'agent-tool-card agent-task-card');   // 任务卡：body 常显，无折叠（头部箭头需 CSS 隐藏）
         var head = el('div', 'agent-tool-head');
         head.appendChild(el('span', 'agent-tool-head-label', label || '🚀 建书任务'));
-        var stop = el('button', 'agent-tool-stop', '⏹ 停止');
-        stop.type = 'button';
-        stop.title = '打断当前 Agent 任务';
-        stop.addEventListener('click', function () {
-            stop.disabled = true; stop.textContent = '停止中…';
-            fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function () {});
-        });
-        head.appendChild(stop);
         card.appendChild(head);
         var body = el('div', 'agent-tool-detail', text || '');
         body.style.display = 'block';
         card.appendChild(body);
         chat.appendChild(card);
         scrollBottom();
-        _buildCards.push({ card: card, stop: stop });
         return card;
     }
     // 渲染任务卡/气泡（由 agentSendTask 或 done 接力调用；busy 排队时等上一个任务被打断才渲染）
@@ -807,23 +1026,27 @@ console.log('[agent-panel] v28 events-stream');
         else addMsg('user', text);
     }
     function agentSendTask(text, opts) {
+        opts = opts || {};
         var taskText = String(text || '').trim();
-        if (!taskText) return;
+        if (!taskText) return false;
+        // 写作台章级入口不允许取消/排队别的 Agent 任务；普通侧栏仍保留原接力语义。
+        if (opts.busyPolicy === 'reject' && (busy || activeSse)) return false;
         // card 标记：刷新后 restore 时渲染为卡片而非「你」气泡（SSE 后端只看 role/content，card 无副作用）
-        history.push({ role: 'user', content: taskText, card: !!(opts && opts.card),
-                       label: (opts && opts.cardLabel) || undefined,
+        history.push({ role: 'user', content: taskText, card: !!opts.card,
+                       label: opts.cardLabel || undefined,
                        ts: Date.now() / 1000 });   // ts 供刷新后与卡片按时间交错
         saveHistory(history);
         input.value = '';
         if (busy && activeSse) {
             // 活跃 SSE 会话中：先打断当前任务，新任务卡等当前任务 done（被打断）后再渲染并启动 —— 严格先打断后开始
-            pendingTask = { text: taskText, opts: opts || {} };
+            pendingTask = { text: taskText, opts: opts };
             fetch('/api/agent/chat/cancel', { method: 'POST' }).catch(function() {});
         } else {
             // 非活跃 SSE（刷新后的后台任务 / 空闲）：直接启动，run_dsh_task 内部自动打断后台任务，无死锁
-            renderTaskStart(taskText, opts || {});
-            startTask(taskText);
+            renderTaskStart(taskText, opts);
+            startTask(taskText, opts);
         }
+        return true;
     }
     // 供向导「让 Agent 构建」按钮 / 侧栏统一调用
     window.agentSendTask = agentSendTask;
@@ -894,7 +1117,7 @@ console.log('[agent-panel] v28 events-stream');
     function renderConversation() {
         chat.innerHTML = '';
         renderedCallIds = {};   // 全量重建：清掉断线补渲染用的防重记录
-        addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个桥段」\n· 「打开书库看看」');
+        addMsg('assistant', '👋 我是 NovelEngine 的 Agent，可以帮你完成从建书到上架的全部创作流程。\n试试：\n· 「创建一本都市爽文 by 枫落」\n· 「给 book_001 生成完整大纲」\n· 「续写 book_001，写下一个情节段」\n· 「打开书库看看」');
         fetch('/api/agent/task-events').then(function(r) { return r.json(); }).then(function(ld) {
             var cards = (ld && ld.ok && ld.events) ? ld.events : [];
             var items = [];
@@ -915,20 +1138,29 @@ console.log('[agent-panel] v28 events-stream');
                     else addMsg(it.m.role, it.m.content);
                 } else {
                     var e = it.c;
+                    // 与实时流同一规则：Planner 内部事件不重建为用户可见卡片
+                    if (e.internal && e.type !== 'build_draft_status') return;
                     if (e.type === 'tool_call') {
                         if (seen[e.callId]) return;
                         seen[e.callId] = true;
-                        var run = addToolCardFor(e.name, e.args, e.callId, e.usage);   // 重建卡：计时器用事件 ts 基
+                        var run = addToolCardFor(e.name, e.args, e.callId, e.usage,
+                            e.sessionId || e.session_id, e.delegation_id, e.agent_role);   // 重建卡：计时器用事件 ts 基
                         if (run) run.ts0 = e.ts;
                     } else if (e.type === 'tool_result') {
-                        var run = toolCards[e.callId] ? toolCards[e.callId] : null;
-                        if (e.callId) delete toolCards[e.callId];
+                        var run = toolCards[eventCallKey(e)] ? toolCards[eventCallKey(e)] : null;
+                        if (e.callId) delete toolCards[eventCallKey(e)];
                         if (run) {
                             var durMs = (run.ts0 != null) ? (e.ts - run.ts0) * 1000 : undefined;
                             finishToolCard(run, (e.ok ? '✅ ' : '❌ ') + zhSummary(run.tool, run.args, e.summary), durMs);
                         }
                     } else if (e.type === 'llm_call') {
                         addLlmCallCard(e);
+                    } else if (e.type === 'error') {
+                        // 持久化的错误：刷新/切页后仍看得到（此前 error 只即时追加、不落盘，
+                        // 用户回来只看得到一个"正常结束"的任务）
+                        addMsg('assistant', '⚠️ ' + (e.message || '发生错误'));
+                    } else if (e.type === 'build_draft_status') {
+                        window.dispatchEvent(new CustomEvent('ne:build-draft-status', { detail: e }));
                     }
                 }
             });
